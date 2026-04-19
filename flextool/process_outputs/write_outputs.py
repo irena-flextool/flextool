@@ -495,9 +495,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
             write_lean_parquet(df, f'{parquet_dir}/{name}.parquet')
 
-        # Copy timeline_breaks from output_raw to parquet dir
+        # Copy timeline_breaks from solve_data to parquet dir.  It moved
+        # out of output_raw with the rest of the derived-parameter printfs.
         raw_dir = raw_output_dir or 'output_raw'
-        breaks_csv = os.path.join(raw_dir, 'timeline_breaks.csv')
+        work_dir = os.path.dirname(raw_dir) or '.'
+        breaks_csv = os.path.join(work_dir, 'solve_data', 'timeline_breaks.csv')
         if os.path.exists(breaks_csv):
             breaks_df = pd.read_csv(breaks_csv)
             write_lean_parquet(breaks_df, f'{parquet_dir}/timeline_breaks.parquet', index=False)

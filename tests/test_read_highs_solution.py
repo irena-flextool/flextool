@@ -351,7 +351,8 @@ def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) 
     """Value = −raw_dual × 1e6 / inflation[period]; trailing 4 indices skipped."""
     (tmp_path / "output_raw").mkdir()
     (tmp_path / "input").mkdir()
-    (tmp_path / "output_raw" / "p_inflation_factor_operations_yearly.csv").write_text(
+    (tmp_path / "solve_data").mkdir()
+    (tmp_path / "solve_data" / "p_inflation_factor_operations_yearly.csv").write_text(
         "solve,period,value\ns1,p2020,1.0\ns1,p2025,2.0\n"
     )
     h = _fake_highs(

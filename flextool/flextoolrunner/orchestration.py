@@ -55,6 +55,8 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         os.mkdir(wf / 'solve_data')
     except FileExistsError:
         state.logger.debug("solve_data folder existed")
+    # output_raw/ holds the intermediate HiGHS → parquet dumps (both
+    # pathways) plus the legacy phase-3 CSVs (``--use-old-raw-csv`` only).
     try:
         os.mkdir(wf / 'output_raw')
     except FileExistsError:

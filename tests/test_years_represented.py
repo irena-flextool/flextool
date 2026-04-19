@@ -54,15 +54,15 @@ def _run_scenario(
 
 
 def _read_inflation_factor_operations(workdir: Path) -> pd.DataFrame:
-    """Read p_inflation_factor_operations_yearly.csv from output_raw/."""
-    csv_path = workdir / "output_raw" / "p_inflation_factor_operations_yearly.csv"
+    """Read p_inflation_factor_operations_yearly.csv from solve_data/."""
+    csv_path = workdir / "solve_data" / "p_inflation_factor_operations_yearly.csv"
     assert csv_path.exists(), f"Missing {csv_path}"
     return pd.read_csv(csv_path)
 
 
 def _read_inflation_factor_investment(workdir: Path) -> pd.DataFrame:
-    """Read p_inflation_factor_investment_yearly.csv from output_raw/."""
-    csv_path = workdir / "output_raw" / "p_inflation_factor_investment_yearly.csv"
+    """Read p_inflation_factor_investment_yearly.csv from solve_data/."""
+    csv_path = workdir / "solve_data" / "p_inflation_factor_investment_yearly.csv"
     assert csv_path.exists(), f"Missing {csv_path}"
     return pd.read_csv(csv_path)
 

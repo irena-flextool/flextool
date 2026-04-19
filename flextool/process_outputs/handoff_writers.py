@@ -33,16 +33,12 @@ The writers source SOLVER values directly from ``highspy.Highs``:
   ``read_highs_solution.py``).
 * constraint duals — same machinery, with ``source="row_dual"``.
 
-PARAMETER values are read from ``output_raw/`` — i.e. from what
-``glpsol`` phase 3 just wrote.  This is intentional for the PoC:
-
-* These CSVs are pure parameter snapshots (input data after model-side
-  derivations).  Reading them is cheaper than re-implementing the GMPL
-  derivations in Python.
-* Phase 3 currently runs anyway, so the files are guaranteed to exist
-  when our writers execute (we wire after phase 3).
-* Once phase 3 is dropped, the same params can be sourced from
-  ``input/`` + Python-side derivation — a separable follow-up.
+PARAMETER values are read from ``input/`` (write-once) and
+``solve_data/`` (per-solve) — both written by glpsol phase 1 now that
+the derived-parameter printfs have moved above ``solve;``.  These CSVs
+are pure parameter snapshots (input data after model-side derivations);
+reading them is cheaper than re-implementing the GMPL derivations in
+Python.
 
 Hooking into the solve loop
 ---------------------------
@@ -60,6 +56,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from flextool.process_outputs.read_highs_solution import (
+    _actual_solve_name,
     _load_realized_periods,
     _load_realized_set,
     extract_variable,
@@ -78,18 +75,19 @@ _INV_SCALE_THE_OBJECTIVE = 1e6
 # ---------------------------------------------------------------------------
 # Parameter / set loaders
 #
-# All parameter CSVs in ``output_raw/`` are written by glpsol phase 3.
-# These small helpers normalise their varied shapes into Python dicts.
+# Parameter CSVs come from ``input/`` (write-once) or ``solve_data/``
+# (per-solve), both written by glpsol phase 1.  These small helpers
+# normalise their varied shapes into Python dicts.
 # ---------------------------------------------------------------------------
 
 
 def _load_unitsize(work_folder: Path) -> dict[str, float]:
-    """Return ``{entity: unitsize}`` from ``output_raw/p_entity_unitsize.csv``.
+    """Return ``{entity: unitsize}`` from ``input/p_entity_unitsize.csv``.
 
     The CSV is wide: header row = entity names, second row labelled
     ``value`` = the unitsize per entity.
     """
-    path = work_folder / "output_raw" / "p_entity_unitsize.csv"
+    path = work_folder / "input" / "p_entity_unitsize.csv"
     df = pd.read_csv(path, index_col=0)
     return df.loc["value"].astype(float).to_dict()
 
@@ -100,7 +98,7 @@ def _load_pre_existing(work_folder: Path) -> dict[tuple[str, str], float]:
     CSV layout: rows indexed by (solve, period); entity columns.  Solve
     level is collapsed — the same value applies for any solve.
     """
-    path = work_folder / "output_raw" / "p_entity_pre_existing.csv"
+    path = work_folder / "solve_data" / "p_entity_pre_existing.csv"
     df = pd.read_csv(path, index_col=[0, 1])
     if df.empty:
         return {}
@@ -182,8 +180,8 @@ def _load_node_state(work_folder: Path) -> set[str]:
 
 
 def _load_entity(work_folder: Path) -> set[str]:
-    """Return the full ``entity`` set from ``output_raw/set_entity.csv``."""
-    path = work_folder / "output_raw" / "set_entity.csv"
+    """Return the full ``entity`` set from ``input/set_entity.csv``."""
+    path = work_folder / "input" / "set_entity.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)
@@ -195,11 +193,11 @@ def _load_entity(work_folder: Path) -> set[str]:
 def _load_entity_divest(work_folder: Path) -> set[str]:
     """Return ``entityDivest`` — entities allowed to divest.
 
-    Sourced from ``output_raw/set_entityDivest.csv`` (phase 3 dump);
+    Sourced from ``input/set_entityDivest.csv`` (phase 1 dump);
     matches the ``setof {(e,m) in entity__invest_method : m not in
     divest_method_not_allowed} (e)`` derivation in the model.
     """
-    path = work_folder / "output_raw" / "set_entityDivest.csv"
+    path = work_folder / "input" / "set_entityDivest.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)
@@ -235,8 +233,8 @@ def _load_complete_period_share_of_year(
     work_folder: Path,
 ) -> dict[str, float]:
     """Return ``{period: share_of_year}`` from
-    ``output_raw/complete_period_share_of_year.csv``."""
-    path = work_folder / "output_raw" / "complete_period_share_of_year.csv"
+    ``solve_data/complete_period_share_of_year.csv``."""
+    path = work_folder / "solve_data" / "complete_period_share_of_year.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path)
@@ -250,8 +248,8 @@ def _load_inflation_factor_operations_yearly(
     work_folder: Path,
 ) -> dict[str, float]:
     """Return ``{period: inflation_factor}`` from
-    ``output_raw/p_inflation_factor_operations_yearly.csv``."""
-    path = work_folder / "output_raw" / "p_inflation_factor_operations_yearly.csv"
+    ``solve_data/p_inflation_factor_operations_yearly.csv``."""
+    path = work_folder / "solve_data" / "p_inflation_factor_operations_yearly.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path)
@@ -435,8 +433,8 @@ def write_p_entity_period_existing_capacity(
         invested = (not first_solve & (e,d) in history → prior_invested[e,d])
                  + ((e,d) in ed_invest & d in d_realize_invest → v_invest[e,d] * unitsize[e])
 
-    The phase-3 ``ed_history_realized`` set is read from
-    ``output_raw/set_ed_invest.csv`` (entity, period) for the
+    The ``ed_history_realized`` set is read from
+    ``solve_data/set_ed_invest.csv`` (entity, period) for the
     "(e,d) in ed_invest" predicate, plus the prior history file's keys.
     """
     out_path = work_folder / "solve_data" / "p_entity_period_existing_capacity.csv"
@@ -484,10 +482,10 @@ def write_p_entity_period_existing_capacity(
         work_folder / "solve_data" / "period_first.csv"
     ) or ({min(realize_invest)} if realize_invest else set())
 
-    # ed_invest set (entity, period) — phase-3 dump.  CSV layout is
+    # ed_invest set (entity, period) — phase-1 dump.  CSV layout is
     # ``solve, entity, period`` (3 columns); we drop the solve column.
     ed_invest: set[tuple[str, str]] = set()
-    ei_path = work_folder / "output_raw" / "set_ed_invest.csv"
+    ei_path = work_folder / "solve_data" / "set_ed_invest.csv"
     if ei_path.exists():
         ei_df = pd.read_csv(ei_path)
         if not ei_df.empty and {"entity", "period"}.issubset(ei_df.columns):
@@ -711,6 +709,431 @@ def write_fix_storage_usage(
 
 
 # ---------------------------------------------------------------------------
+# Cross-solve capacity accumulators
+#
+# These four writers are conceptually handoffs too — the file they emit
+# is the cumulative output-so-far across every solve that has run.  On
+# the first solve they truncate + write the header; later solves append
+# only the rows whose period is not already in
+# ``solve_data/period_capacity.csv`` (so rolling windows don't write
+# the same period twice).  Together they replicate the tail of phase 3
+# that produced ``solve_data/unit_capacity__period.csv`` etc. — so when
+# phase 3 is skipped, the user-facing capacity outputs stay intact.
+# ---------------------------------------------------------------------------
+
+
+def _load_entity_class_set(work_folder: Path, set_name: str) -> list[str]:
+    """Return the ordered list of entities in ``input/<set_name>.csv``.
+
+    Column order in the dump file must match the order phase 3 would
+    use, which is the order entities appear in this set file.
+    """
+    path = work_folder / "input" / f"{set_name}.csv"
+    if not path.exists():
+        return []
+    df = pd.read_csv(path)
+    if df.empty or len(df.columns) == 0:
+        return []
+    return df.iloc[:, 0].astype(str).tolist()
+
+
+def _load_unitsize_map(work_folder: Path) -> dict[str, float]:
+    """Wrapper around :func:`_load_unitsize` that never raises on a
+    missing file (some scenarios don't use any entities with unitsize)."""
+    path = work_folder / "input" / "p_entity_unitsize.csv"
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path, index_col=0)
+    return df.loc["value"].astype(float).to_dict() if "value" in df.index else {}
+
+
+def _load_pd_map(
+    work_folder: Path, csv_name: str, roll: str,
+) -> set[tuple[str, str]]:
+    """Load ``{(entity, period)}`` from a ``solve,entity,period`` CSV,
+    filtered to the given roll."""
+    path = work_folder / "solve_data" / csv_name
+    if not path.exists():
+        return set()
+    df = pd.read_csv(path, dtype=str)
+    if df.empty or not {"entity", "period"}.issubset(df.columns):
+        return set()
+    df = df[df["solve"] == roll]
+    return {(str(r.entity), str(r.period)) for r in df.itertuples(index=False)}
+
+
+def _load_edd_invest(
+    work_folder: Path, roll: str,
+) -> list[tuple[str, str, str]]:
+    """Return ``[(entity, d_invest, d), ...]`` for this roll."""
+    path = work_folder / "solve_data" / "set_edd_invest.csv"
+    if not path.exists():
+        return []
+    df = pd.read_csv(path, dtype=str)
+    if df.empty:
+        return []
+    df = df[df["solve"] == roll]
+    return [
+        (str(r.entity), str(r.d_invest), str(r.d))
+        for r in df.itertuples(index=False)
+    ]
+
+
+def _load_p_entity_all_existing(
+    work_folder: Path, roll: str,
+) -> dict[tuple[str, str], float]:
+    """Return ``{(entity, period): p_entity_all_existing[e, d]}`` for the
+    given roll (``solve`` column filtered)."""
+    path = work_folder / "solve_data" / "p_entity_all_existing.csv"
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path, index_col=[0, 1]).astype(float)
+    df.index.names = ["solve", "period"]
+    if roll not in df.index.get_level_values("solve"):
+        return {}
+    sub = df.xs(roll, level="solve")
+    out: dict[tuple[str, str], float] = {}
+    for period, row in sub.iterrows():
+        for entity, value in row.items():
+            if pd.notna(value):
+                out[(str(entity), str(period))] = float(value)
+    return out
+
+
+def _load_period_capacity(work_folder: Path) -> set[str]:
+    """Periods already output by a previous roll's capacity dump."""
+    path = work_folder / "solve_data" / "period_capacity.csv"
+    if not path.exists():
+        return set()
+    df = pd.read_csv(path)
+    if df.empty or "period" not in df.columns:
+        return set()
+    return set(df["period"].astype(str))
+
+
+def _load_drdi(work_folder: Path, roll: str) -> list[str]:
+    """Periods in this roll's ``d_realize_dispatch_or_invest`` set, in
+    file order."""
+    path = work_folder / "solve_data" / "set_d_realize_dispatch_or_invest.csv"
+    if not path.exists():
+        return []
+    df = pd.read_csv(path, dtype=str)
+    if df.empty:
+        return []
+    df = df[df["solve"] == roll]
+    return df["period"].tolist()
+
+
+def _load_years_map(work_folder: Path, roll: str) -> dict[str, float]:
+    """Return ``{period: p_years_d}`` for this roll."""
+    path = work_folder / "solve_data" / "p_years_from_start_d.csv"
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path)
+    if df.empty:
+        return {}
+    df = df[df["solve"] == roll]
+    return dict(zip(df["period"].astype(str), df["value"].astype(float)))
+
+
+def _exclude_entity_outputs_active(work_folder: Path) -> bool:
+    """True iff ``yes`` is in ``input/exclude_entity_outputs.csv`` — the
+    GMPL guard that disables the per-period capacity dumps."""
+    path = work_folder / "input" / "exclude_entity_outputs.csv"
+    if not path.exists():
+        return False
+    df = pd.read_csv(path)
+    if df.empty:
+        return False
+    col = df.columns[0]
+    return "yes" in df[col].astype(str).tolist()
+
+
+def _append_period_capacity(work_folder: Path, new_periods: list[str]) -> None:
+    """Write ``solve_data/period_capacity.csv`` = prior_set ∪ new_periods.
+
+    Ports the per-solve rewrite the GMPL writer does at
+    ``fn_period_capacity`` (truncate + re-emit union) so the next roll
+    sees an up-to-date set.
+    """
+    path = work_folder / "solve_data" / "period_capacity.csv"
+    existing = _load_period_capacity(work_folder)
+    union = existing | set(new_periods)
+    # GMPL's ``for {d in period_capacity union ...}`` has no stable order,
+    # so downstream mustn't rely on row order here.  We emit sorted for
+    # determinism.
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("period\n")
+        for p in sorted(union):
+            f.write(p + "\n")
+
+
+def _compute_entity_all_capacity(
+    *,
+    roll: str,
+    entities: list[str],
+    periods_to_emit: list[str],
+    unitsize: dict[str, float],
+    existing: dict[tuple[str, str], float],
+    edd_invest: list[tuple[str, str, str]],
+    ed_divest_set: set[tuple[str, str]],
+    years_map: dict[str, float],
+    v_invest_df: pd.DataFrame,
+    v_divest_df: pd.DataFrame,
+) -> dict[tuple[str, str], float]:
+    """Compute ``entity_all_capacity[e, d]`` for the (entity, period)
+    product ``entities × periods_to_emit``.
+
+    Formula mirrors ``param entity_all_capacity`` in ``flextool.mod``::
+
+        existing[e, d]
+          + sum_{(e, d_inv, d) in edd_invest}   v_invest[e, d_inv] * unitsize[e]
+          - sum_{(e, d_dv)   in ed_divest,
+                 years[d_dv] <= years[d]}       v_divest[e, d_dv]  * unitsize[e]
+    """
+    def _v(df: pd.DataFrame, entity: str, period: str) -> float:
+        if entity not in df.columns or period not in df.index:
+            return 0.0
+        return float(df.loc[period, entity])
+
+    # invest contributions keyed by (e, d)
+    invest_contrib: dict[tuple[str, str], float] = {}
+    for e, d_inv, d in edd_invest:
+        contribution = _v(v_invest_df, e, d_inv) * unitsize.get(e, 0.0)
+        invest_contrib[(e, d)] = invest_contrib.get((e, d), 0.0) + contribution
+
+    # divest — evaluate v_divest × unitsize per (e, d_divest) then
+    # distribute to each d in periods_to_emit with years[d] >= years[d_dv].
+    per_divest: dict[tuple[str, str], float] = {}
+    for e, d_dv in ed_divest_set:
+        per_divest[(e, d_dv)] = _v(v_divest_df, e, d_dv) * unitsize.get(e, 0.0)
+    divest_contrib: dict[tuple[str, str], float] = {}
+    for (e, d_dv), val in per_divest.items():
+        yrs_dd = years_map.get(d_dv)
+        if yrs_dd is None:
+            continue
+        for d in periods_to_emit:
+            yrs_d = years_map.get(d)
+            if yrs_d is not None and yrs_dd <= yrs_d:
+                divest_contrib[(e, d)] = divest_contrib.get((e, d), 0.0) + val
+
+    out: dict[tuple[str, str], float] = {}
+    for e in entities:
+        for d in periods_to_emit:
+            out[(e, d)] = (
+                existing.get((e, d), 0.0)
+                + invest_contrib.get((e, d), 0.0)
+                - divest_contrib.get((e, d), 0.0)
+            )
+    return out
+
+
+def _write_capacity_per_period(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    work_folder: Path,
+    entity_class_set: str,
+    first_header_col: str,
+    csv_filename: str,
+) -> Path:
+    """Shared implementation for unit/connection/node capacity dumps.
+
+    Mirrors phase 3's per-class printf block byte-for-byte:
+    header line ``<class>,solve,period,existing,invested,divested,total``
+    on the first solve, data rows appended on every solve for
+    ``(entity, period)`` where the period is in
+    ``d_realize_dispatch_or_invest`` but not yet in ``period_capacity``.
+    """
+    out_path = work_folder / "output_raw" / csv_filename
+    roll = _actual_solve_name(work_folder, solve_name)
+
+    if _exclude_entity_outputs_active(work_folder):
+        # GMPL guard: ``'yes' not in exclude_entity_outputs`` short-
+        # circuits every row.  Still write the header on first solve so
+        # downstream readers don't trip on a missing file.
+        if _is_first_solve(work_folder):
+            out_path.write_text(
+                f"{first_header_col},solve,period,existing,invested,divested,total\n"
+            )
+        return out_path
+
+    entities = _load_entity_class_set(work_folder, entity_class_set)
+    period_seen = _load_period_capacity(work_folder)
+    periods_to_emit = [d for d in _load_drdi(work_folder, roll) if d not in period_seen]
+
+    unitsize = _load_unitsize_map(work_folder)
+    existing = _load_p_entity_all_existing(work_folder, roll)
+    pd_invest = _load_pd_map(work_folder, "set_ed_invest.csv", roll)
+    pd_divest = _load_pd_map(work_folder, "set_ed_divest.csv", roll)
+    edd_invest = _load_edd_invest(work_folder, roll)
+    years_map = _load_years_map(work_folder, roll)
+
+    v_invest_df = extract_variable(
+        h, "v_invest", ("entity",), solve_name=solve_name, has_time=False,
+    )
+    v_divest_df = extract_variable(
+        h, "v_divest", ("entity",), solve_name=solve_name, has_time=False,
+    )
+    if not v_invest_df.empty:
+        v_invest_df = v_invest_df.droplevel("solve")
+    if not v_divest_df.empty:
+        v_divest_df = v_divest_df.droplevel("solve")
+
+    entity_all_cap = _compute_entity_all_capacity(
+        roll=roll, entities=entities, periods_to_emit=periods_to_emit,
+        unitsize=unitsize, existing=existing,
+        edd_invest=edd_invest, ed_divest_set=pd_divest,
+        years_map=years_map,
+        v_invest_df=v_invest_df, v_divest_df=v_divest_df,
+    )
+
+    def _v(df: pd.DataFrame, e: str, d: str) -> float:
+        if e not in df.columns or d not in df.index:
+            return 0.0
+        return float(df.loc[d, e])
+
+    is_first = _is_first_solve(work_folder)
+    mode = "w" if is_first else "a"
+    with open(out_path, mode, encoding="utf-8") as f:
+        if is_first:
+            f.write(
+                f"{first_header_col},solve,period,existing,invested,divested,total\n"
+            )
+        for e in entities:
+            usize = unitsize.get(e, 0.0)
+            for d in periods_to_emit:
+                exist = existing.get((e, d), 0.0)
+                inv = _v(v_invest_df, e, d) * usize if (e, d) in pd_invest else 0.0
+                div = _v(v_divest_df, e, d) * usize if (e, d) in pd_divest else 0.0
+                total = entity_all_cap.get((e, d), 0.0)
+                f.write(
+                    f"{e},{roll},{d},"
+                    f"{format(exist, '.8g')},"
+                    f"{format(inv, '.8g')},"
+                    f"{format(div, '.8g')},"
+                    f"{format(total, '.8g')}\n"
+                )
+    _logger.info(
+        "wrote %s (roll '%s', %d × %d rows)",
+        out_path, roll, len(entities), len(periods_to_emit),
+    )
+    return out_path
+
+
+def write_unit_capacity(
+    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+) -> Path:
+    """Write ``solve_data/unit_capacity__period.csv``.  Replaces the
+    phase-3 unit-capacity block in ``flextool.mod``."""
+    return _write_capacity_per_period(
+        h, solve_name=solve_name, work_folder=work_folder,
+        entity_class_set="set_process_unit",
+        first_header_col="unit",
+        csv_filename="unit_capacity__period.csv",
+    )
+
+
+def write_connection_capacity(
+    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+) -> Path:
+    """Write ``solve_data/connection_capacity__period.csv``."""
+    return _write_capacity_per_period(
+        h, solve_name=solve_name, work_folder=work_folder,
+        entity_class_set="set_process_connection",
+        first_header_col="connection",
+        csv_filename="connection_capacity__period.csv",
+    )
+
+
+def write_node_capacity(
+    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+) -> Path:
+    """Write ``solve_data/node_capacity__period.csv``.  Iterates the
+    ``nodeState`` set, not ``node``."""
+    return _write_capacity_per_period(
+        h, solve_name=solve_name, work_folder=work_folder,
+        entity_class_set="set_nodeState",
+        first_header_col="node",
+        csv_filename="node_capacity__period.csv",
+    )
+
+
+def write_entity_all_capacity(
+    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+) -> Path:
+    """Write ``solve_data/entity_all_capacity.csv`` — wide CSV with
+    ``solve,period`` index + entity columns.
+
+    Same ports the GMPL ``param entity_all_capacity`` derivation: for
+    every ``d in d_realize_dispatch_or_invest``, the value is existing +
+    cumulative invest − divest.  On the first solve the header is
+    written (truncate), later solves append only the current solve's
+    rows.  Replaces the phase-3 CSV write once phase 3 is retired;
+    during the transition both this and phase 3 write to the same path
+    and produce byte-equivalent output.
+    """
+    out_path = work_folder / "output_raw" / "entity_all_capacity.csv"
+    roll = _actual_solve_name(work_folder, solve_name)
+
+    entities = _load_entity_class_set(work_folder, "set_entity")
+    unitsize = _load_unitsize_map(work_folder)
+    existing = _load_p_entity_all_existing(work_folder, roll)
+    edd_invest = _load_edd_invest(work_folder, roll)
+    ed_divest_set = _load_pd_map(work_folder, "set_ed_divest.csv", roll)
+    years_map = _load_years_map(work_folder, roll)
+    drdi = _load_drdi(work_folder, roll)
+
+    v_invest_df = extract_variable(
+        h, "v_invest", ("entity",), solve_name=solve_name, has_time=False,
+    )
+    v_divest_df = extract_variable(
+        h, "v_divest", ("entity",), solve_name=solve_name, has_time=False,
+    )
+    if not v_invest_df.empty:
+        v_invest_df = v_invest_df.droplevel("solve")
+    if not v_divest_df.empty:
+        v_divest_df = v_divest_df.droplevel("solve")
+
+    cap = _compute_entity_all_capacity(
+        roll=roll, entities=entities, periods_to_emit=drdi,
+        unitsize=unitsize, existing=existing,
+        edd_invest=edd_invest, ed_divest_set=ed_divest_set,
+        years_map=years_map,
+        v_invest_df=v_invest_df, v_divest_df=v_divest_df,
+    )
+
+    is_first = _is_first_solve(work_folder)
+    mode = "w" if is_first else "a"
+    with open(out_path, mode, encoding="utf-8") as f:
+        if is_first:
+            f.write("solve,period")
+            for e in entities:
+                f.write("," + e)
+        for d in drdi:
+            f.write("\n" + roll + "," + d)
+            for e in entities:
+                f.write("," + format(cap.get((e, d), 0.0), ".8g"))
+    _logger.info(
+        "wrote %s (roll '%s', %d periods × %d entities)",
+        out_path, roll, len(drdi), len(entities),
+    )
+    return out_path
+
+
+def _bump_period_capacity(work_folder: Path, solve_name: str) -> None:
+    """Accumulate this solve's realized periods into ``period_capacity.csv``.
+
+    Called once per solve AFTER the four capacity writers above.  Later
+    rolls read this set via :func:`_load_period_capacity` to skip periods
+    already emitted — matches the GMPL flow at ``fn_period_capacity``.
+    """
+    roll = _actual_solve_name(work_folder, solve_name)
+    new_periods = _load_drdi(work_folder, roll)
+    _append_period_capacity(work_folder, new_periods)
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -731,9 +1154,19 @@ def write_all_handoffs(
         write_p_entity_period_existing_capacity,
         write_fix_storage_price,
         write_fix_storage_usage,
+        write_entity_all_capacity,
+        write_unit_capacity,
+        write_connection_capacity,
+        write_node_capacity,
     ):
         try:
             written.append(fn(h, solve_name=solve_name, work_folder=work_folder))
         except Exception as exc:  # noqa: BLE001
             _logger.warning("handoff writer %s failed: %s", fn.__name__, exc)
+    # Accumulate this solve's realized periods for the next roll's
+    # capacity dump (see ``_write_capacity_per_period``'s period filter).
+    try:
+        _bump_period_capacity(work_folder, solve_name)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("period_capacity accumulation failed: %s", exc)
     return written

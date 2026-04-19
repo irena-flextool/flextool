@@ -395,18 +395,43 @@ def extract_variable(
         col_keys.append(col_vals)
         vals.append(float(val) * value_scale)
 
-    # Empty-result shortcut — a pivot on no rows would fail, and we want a
-    # correctly-typed empty DataFrame with the right index/column names.
+    # No variable values matched.  Phase-3 CSV writers would still iterate
+    # ``for {s in solve_current, (d, t) in dt_realize_dispatch}`` — i.e.
+    # produce N_rows × 0-columns rather than (0, 0).  Downstream pandas
+    # code (``DataFrame.mul(axis=1, level=0)``) breaks when one operand
+    # has an empty MultiIndex row while the other has populated rows, so
+    # fabricate the same ``(solve, period[, time])`` row index here using
+    # the realized-dispatch data the caller already pointed us at.
     if not vals:
-        if len(row_index_names) == 1:
-            empty_rows: pd.Index = pd.Index([], name=row_index_names[0])
-        else:
-            empty_rows = pd.MultiIndex.from_tuples([], names=row_index_names)
         if len(col_names) >= 2:
             empty_cols: pd.Index = pd.MultiIndex.from_tuples([], names=list(col_names))
         else:
             empty_cols = pd.Index([], name=col_names[0])
-        return pd.DataFrame(index=empty_rows, columns=empty_cols, dtype=float)
+
+        row_keys_synth: list[tuple] = []
+        if has_period and has_time and realized_dt is not None:
+            row_keys_synth = [(solve_name, d, t) for (d, t) in realized_dt]
+        elif has_period and not has_time and realized_p is not None:
+            row_keys_synth = [(solve_name, d) for d in realized_p]
+        elif not has_period:
+            row_keys_synth = [(solve_name,)]
+
+        if not row_keys_synth:
+            if len(row_index_names) == 1:
+                empty_rows: pd.Index = pd.Index([], name=row_index_names[0])
+            else:
+                empty_rows = pd.MultiIndex.from_tuples([], names=row_index_names)
+            return pd.DataFrame(index=empty_rows, columns=empty_cols, dtype=float)
+
+        if len(row_index_names) == 1:
+            rows = pd.Index(
+                [k[0] for k in row_keys_synth], name=row_index_names[0],
+            )
+        else:
+            rows = pd.MultiIndex.from_tuples(
+                row_keys_synth, names=row_index_names,
+            )
+        return pd.DataFrame(index=rows, columns=empty_cols, dtype=float)
 
     long_data: dict[str, list] = {
         rn: [k[i] for k in row_keys] for i, rn in enumerate(row_index_names)
@@ -494,13 +519,12 @@ def _load_entity_class(work_folder: Path, set_name: str) -> set[str]:
 
 
 def _load_inflation_factor(work_folder: Path) -> dict[str, float]:
-    """``{period: p_inflation_factor_operations_yearly}`` (phase-3 dump).
+    """``{period: p_inflation_factor_operations_yearly}``.
 
-    TODO: this parameter is model-derived (Category B); once the
-    derivation is written to ``solve_data/`` during phase 1, switch
-    source.
+    Written by the model during phase 1 (derived parameter moved above
+    ``solve;``).
     """
-    path = work_folder / "output_raw" / "p_inflation_factor_operations_yearly.csv"
+    path = work_folder / "solve_data" / "p_inflation_factor_operations_yearly.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path)
@@ -510,8 +534,8 @@ def _load_inflation_factor(work_folder: Path) -> dict[str, float]:
 
 
 def _load_complete_period_share_of_year(work_folder: Path) -> dict[str, float]:
-    """``{period: complete_period_share_of_year}`` (phase-3 dump)."""
-    path = work_folder / "output_raw" / "complete_period_share_of_year.csv"
+    """``{period: complete_period_share_of_year}`` (phase-1 dump)."""
+    path = work_folder / "solve_data" / "complete_period_share_of_year.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path)
@@ -736,6 +760,40 @@ def write_v_dual_reserve_balance(
     return out_path
 
 
+def _is_first_solve_from_p_model(work_folder: Path) -> bool:
+    """True iff ``input/p_model.csv`` says ``solveFirst`` is 1 (or missing)."""
+    path = work_folder / "input" / "p_model.csv"
+    if not path.exists():
+        return True
+    df = pd.read_csv(path)
+    matches = df.loc[df["modelParam"] == "solveFirst", "p_model"]
+    if matches.empty:
+        return True
+    return bool(int(matches.iloc[0]))
+
+
+def _actual_solve_name(work_folder: Path, fallback: str) -> str:
+    """Return the roll-level solve name from ``solve_data/solve_current.csv``.
+
+    In rolling-window scenarios, ``solver.run(complete_solve[solve])`` is
+    invoked with the PARENT solve name (the ``complete_solve``) while
+    every phase-1 CSV in ``solve_data/`` stores the child ROLL name
+    under its ``solve`` column (the set ``solve_current`` in the model).
+    When filtering those CSVs or emitting CSV rows whose format the model
+    produced, use the ROLL name — otherwise Python output won't line up
+    with phase 3's.
+    """
+    path = work_folder / "solve_data" / "solve_current.csv"
+    if not path.exists():
+        return fallback
+    df = pd.read_csv(path)
+    if df.empty or len(df.columns) == 0:
+        return fallback
+    return str(df.iloc[0, 0])
+
+
+
+
 def write_all_variables(
     h: "highspy.Highs",
     *,
@@ -786,6 +844,10 @@ def write_all_variables(
             h, solve_name=solve_name, output_dir=output_dir,
             realized_dispatch_csv=realized_dispatch_csv,
         )),
+        # ``entity_all_capacity`` moved to ``handoff_writers.py`` — it's
+        # conceptually a solve-to-solve handoff (accumulates across
+        # solves) and needs the same CSV layout phase 3 produces, not a
+        # per-solve parquet.
     )
     for label, fn in _custom_writers:
         try:

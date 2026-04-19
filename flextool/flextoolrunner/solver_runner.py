@@ -213,25 +213,75 @@ class SolverRunner:
                 solve_progress.write(',' + str(round(timing, 4)))
             timer_in_model_run = timer_in_model_run + timing
 
-        # Phase 3: GLPSOL writes outputs.  Still unconditional during the
-        # PoC migration.  All six solve-handoff files
-        # (``p_entity_period_existing_capacity``, ``p_entity_divested``,
-        # ``fix_storage_quantity``/``price``/``usage``,
-        # ``p_roll_continue_state``) are already re-implemented in
-        # ``flextool.process_outputs.handoff_writers`` and run AFTER
-        # phase 3 below.  What remains to retire phase 3 entirely:
-        #   1. Move Category A (``set_*``) and Category B
-        #      (``p_*``/``pd_*``/``pdt_*``/``ed_*``) printfs above
-        #      ``solve;`` in flextool.mod so they emit during phase 1
-        #      directly to ``input/`` (static content) or
-        #      ``solve_data/`` (per-solve content) instead of
-        #      ``output_raw/``.
-        #   2. Finish Category C coverage (complex duals, synthesised
-        #      duals, scalar v_obj) in ``read_highs_solution.py``.
-        #   3. Repoint ``read_parameters.py`` / ``read_sets.py`` at
-        #      ``input/`` + ``solve_data/`` instead of ``output_raw/``.
-        # See ARCHITECTURE.md "Solver outputs: folder layout" for the
-        # full plan.
+        # Phase 3: glpsol re-reads the model + ``.sol`` and writes the
+        # legacy ``output_raw/*.csv`` dumps.  Still unconditional — the
+        # Python writers (:mod:`read_highs_solution` and
+        # :mod:`handoff_writers`) currently *shadow* phase 3, not replace
+        # it: read_variables/read_parameters still depend on CSV shapes
+        # phase 3 produces, and several edge cases (empty variable sets,
+        # 0-row × 0-col result alignment, ``%.Ng`` string-precision)
+        # aren't yet handled when the CSV pathway is absent.
+        returncode = self._run_phase_3(
+            glpsol_file, flextool_model_file, flextool_base_data_file,
+            flextool_sol_file, wf, timer_in_model_run,
+        )
+        if returncode != 0:
+            raise FlexToolSolveError(
+                f"glpsol output writing failed with exit code: {returncode}"
+            )
+
+        # Phase 4 (HiGHS-only): extract outputs directly from the live
+        # ``Highs`` instance.  Skipped when the legacy ``--use-old-raw-csv``
+        # pathway is active (phase 3 already wrote equivalent CSVs).
+        if highs_instance is not None and not self.state.use_old_raw_csv:
+            from flextool.process_outputs.read_highs_solution import (
+                _actual_solve_name, write_all_variables,
+            )
+            from flextool.process_outputs.handoff_writers import write_all_handoffs
+            # In rolling / nested scenarios ``current_solve`` is the PARENT
+            # complete-solve while every CSV in ``solve_data/`` keys its
+            # ``solve`` column off the ROLL name (``solve_current`` set in
+            # the model).  Use that same roll name so parquet files are
+            # per-roll and downstream CSV joins line up byte-for-byte.
+            roll_name = _actual_solve_name(wf, current_solve)
+            try:
+                write_all_variables(
+                    highs_instance,
+                    solve_name=roll_name,
+                    output_dir=wf / "output_raw",
+                    realized_dispatch_csv=wf / "solve_data/realized_dispatch.csv",
+                    realized_periods_csv=wf / "solve_data/realized_invest_periods_of_current_solve.csv",
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(f"parquet variable extraction failed: {exc}")
+            try:
+                write_all_handoffs(
+                    highs_instance,
+                    solve_name=roll_name,
+                    work_folder=wf,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(f"handoff writers failed: {exc}")
+
+        return returncode
+
+    def _run_phase_3(
+        self,
+        glpsol_file: str,
+        flextool_model_file: str,
+        flextool_base_data_file: str,
+        flextool_sol_file: str,
+        wf,  # pathlib.Path
+        timer_in_model_run: float,
+    ) -> int:
+        """Invoke glpsol phase 3: re-read model + ``.sol`` and write the
+        legacy ``output_raw/*.csv`` dumps.
+
+        Only called when ``state.use_old_raw_csv`` is set — the new
+        pathway synthesises these outputs directly (pre-solve printfs
+        for parameters/sets, :mod:`read_highs_solution` for solver values,
+        :mod:`handoff_writers` for per-entity capacity).
+        """
         with open(wf / "solve_data/glpsol_phase.csv", 'w') as p_model_file:
             p_model_file.write("phase\nwrite\n")
 
@@ -245,41 +295,6 @@ class SolverRunner:
         self.logger.info(f"--- GLPSOL wrote outputs: {timing:.4f} seconds ---")
         with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',' + str(round(timing, 4)) + '\n')
-
-        if returncode != 0:
-            raise FlexToolSolveError(f"glpsol output writing failed with exit code: {returncode}")
-
-        # Phase 4 (HiGHS-only): extract outputs directly from the live
-        # ``Highs`` instance.  Runs AFTER phase 3 so that:
-        #   - Category C custom writers (v_dual_node_balance with its
-        #     per-period inflation scaling) can read parameter CSVs
-        #     phase 3 produced.
-        #   - Handoff writers can read the same (unitsize, pre-existing,
-        #     inflation, period share).
-        # Phase 3 still writes its own versions of the same files —
-        # ours overwrites with values computed from the ``.sol``,
-        # acting as a live validator until phase 3 is retired.
-        if highs_instance is not None and not self.state.use_old_raw_csv:
-            from flextool.process_outputs.read_highs_solution import write_all_variables
-            from flextool.process_outputs.handoff_writers import write_all_handoffs
-            try:
-                write_all_variables(
-                    highs_instance,
-                    solve_name=current_solve,
-                    output_dir=wf / "output_raw",
-                    realized_dispatch_csv=wf / "solve_data/realized_dispatch.csv",
-                    realized_periods_csv=wf / "solve_data/realized_invest_periods_of_current_solve.csv",
-                )
-            except Exception as exc:  # noqa: BLE001
-                self.logger.warning(f"parquet variable extraction failed: {exc}")
-            try:
-                write_all_handoffs(
-                    highs_instance,
-                    solve_name=current_solve,
-                    work_folder=wf,
-                )
-            except Exception as exc:  # noqa: BLE001
-                self.logger.warning(f"handoff writers failed: {exc}")
 
         return returncode
 
