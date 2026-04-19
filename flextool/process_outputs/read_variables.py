@@ -80,7 +80,22 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
         # concatenating them in would widen the index dtype to object.
         frames = [f for f in frames if not (f.empty and f.shape[1] == 0)] or frames
         out = pd.concat(frames, axis=0).astype(float)
-        if isinstance(out.index, pd.MultiIndex) and len(out.index) > 1:
+        # Sort the row MultiIndex so it has full ``_lexsort_depth``.
+        # ``DataFrame.mul(other, axis=1, level=0)`` aligns operands by
+        # both row and column index; when the two row MultiIndexes have
+        # different lexsort depths, pandas raises "Join on level between
+        # two MultiIndex objects is ambiguous".  Concatenating per-solve
+        # parquets gives a partial-depth row index by default — sorting
+        # restores full depth.
+        #
+        # The CSV reader does NOT sort (some downstream ops in
+        # ``out_capacity.py`` depend on file insertion order).  When the
+        # parquet pathway is exercised end-to-end (phase 3 retired),
+        # cross-reader mul callers must align operand depths themselves,
+        # or the latent ordering dependency in ``out_capacity.py`` needs
+        # a deterministic-by-construction fix.  See step 4 of the
+        # phase-3 retirement plan.
+        if isinstance(out.index, pd.MultiIndex):
             out = out.sort_index()
         # Collapse 1-level MultiIndex columns to plain Index.  The CSV
         # pathway produces a plain Index here; downstream code (e.g.
