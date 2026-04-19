@@ -25,8 +25,12 @@ def unit_outputNode(par, s, v, r, debug):
     # Return timestep results
     results.append((result_multi_dt, 'unit_outputNode_dt_ee'))
 
-    # Aggregate to period level
-    result_multi_d = result_multi_dt.groupby(level='period').sum()
+    # Aggregate to period level.  v_flow is in MW (MWh/h) — multiply by
+    # step_duration to get MWh per step, then sum to per-period MWh.
+    result_multi_d = (
+        result_multi_dt.mul(par.step_duration, axis=0)
+        .groupby(level='period').sum()
+    )
 
     # Divide by period shares to annualize
     result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
@@ -61,8 +65,12 @@ def unit_inputNode(par, s, v, r, debug):
     # Return timestep results
     results.append((result_multi_dt, 'unit_inputNode_dt_ee'))
 
-    # Aggregate to period level
-    result_multi_d = result_multi_dt.groupby(level='period').sum()
+    # Aggregate to period level.  v_flow is MW — multiply by step_duration
+    # to get MWh per step before summing.
+    result_multi_d = (
+        result_multi_dt.mul(par.step_duration, axis=0)
+        .groupby(level='period').sum()
+    )
 
     # Divide by period shares to annualize
     result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
@@ -120,11 +128,18 @@ def unit_VRE_curtailment_and_potential(par, s, v, r, debug):
         curtail_share_dt = (curtail_dt / potential_dt).where(potential_dt != 0, 0)
         results.append((curtail_share_dt, 'unit_curtailment_share_outputNode_dt_ee'))
 
-        # Aggregate to period level
-        curtail_period = curtail_dt.groupby(level='period').sum()
-        potential_period = potential_dt.groupby(level='period').sum()
+        # Aggregate to period level.  curtail_dt / potential_dt are MW —
+        # multiply by step_duration to get MWh per step before summing.
+        curtail_period = (
+            curtail_dt.mul(par.step_duration, axis=0)
+            .groupby(level='period').sum()
+        )
+        potential_period = (
+            potential_dt.mul(par.step_duration, axis=0)
+            .groupby(level='period').sum()
+        )
 
-        # Calculate curtailment share at period level
+        # Calculate curtailment share at period level (ratio — step_duration cancels)
         curtail_share_period = (curtail_period / potential_period).where(potential_period != 0, 0)
 
         results.append((curtail_period, 'unit_curtailment_outputNode_d_ee'))

@@ -46,6 +46,14 @@ def nodeGroup_indicators(par, s, v, r, debug):
         # 2. Sum of annualized inflows [MWh]
         annualized_inflow = group_inflow.div(par.complete_period_share_of_year)
 
+        # Flow-derived quantities (r.flow_dt, potentialVREgen_dt) and q_state
+        # slacks are MW at the timestep.  Multiply by step_duration so the
+        # stored timestep value is MWh/step — matching '5. Timestep inflow'
+        # (par.node_inflow is already MWh/step).  This keeps all columns in
+        # consistent energy units so shares and period aggregations work for
+        # any step_duration.
+        step_dur = par.step_duration
+
         # 3. VRE share (actual flow)
         vre_processes = s.process_VRE.get_level_values('process')
         vre_cols = r.flow_dt.columns[
@@ -53,7 +61,7 @@ def nodeGroup_indicators(par, s, v, r, debug):
             r.flow_dt.columns.get_level_values('process').isin(vre_processes) &
             r.flow_dt.columns.isin(s.process_source_sink_alwaysProcess)
         ]
-        vre_flow_sum = r.flow_dt[vre_cols].sum(axis=1)
+        vre_flow_sum = r.flow_dt[vre_cols].mul(step_dur, axis=0).sum(axis=1)
 
         # VRE share calculation (avoid division by zero)
         vre_share = vre_flow_sum / group_inflow.where(group_inflow != 0, pd.NA)
@@ -63,7 +71,7 @@ def nodeGroup_indicators(par, s, v, r, debug):
             r.potentialVREgen_dt.columns.get_level_values(1).isin(group_nodes) &
             r.potentialVREgen_dt.columns.get_level_values(0).isin(vre_processes)
         ]
-        potential_sum = r.potentialVREgen_dt[potential_cols].sum(axis=1)
+        potential_sum = r.potentialVREgen_dt[potential_cols].mul(step_dur, axis=0).sum(axis=1)
         curtailed_vre = (potential_sum - vre_flow_sum).clip(lower=0)
         curtailed_vre_share = curtailed_vre / group_inflow.where(group_inflow != 0, pd.NA)
         curtailed_vre_of_potential_vre = curtailed_vre / potential_sum
@@ -72,15 +80,17 @@ def nodeGroup_indicators(par, s, v, r, debug):
         balance_set = set(s.node_balance) | set(s.node_balance_period)
         balance_nodes = [n for n in group_nodes if n in balance_set]
 
-        # 5. Upward slack
+        # 5. Upward slack (MWh/step)
         if balance_nodes and not v.q_state_up.empty:
             upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).sum(axis=1).clip(lower=0)
+            upward_slack = upward_slack.mul(step_dur)
         else:
             upward_slack = pd.Series(0, index=dt_index)
 
-        # 6. Downward slack
+        # 6. Downward slack (MWh/step)
         if balance_nodes and not v.q_state_down.empty:
             downward_slack = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).sum(axis=1).clip(lower=0)
+            downward_slack = downward_slack.mul(step_dur)
         else:
             downward_slack = pd.Series(0, index=dt_index)
 
@@ -191,7 +201,9 @@ def nodeGroup_VRE_share(par, s, v, r, debug):
                     if p in vre_processes and (p, snk) in s.process_sink and snk in group_nodes]
 
         if vre_cols:
-            vre_flow = r.flow_dt[vre_cols].sum(axis=1)
+            # r.flow_dt is MW — multiply by step_duration to get MWh/step so
+            # the share against total_inflow (MWh/step) is a proper ratio.
+            vre_flow = r.flow_dt[vre_cols].mul(par.step_duration, axis=0).sum(axis=1)
         else:
             vre_flow = pd.Series(0.0, index=r.flow_dt.index)
 
@@ -252,12 +264,32 @@ def nodeGroup_total_inflow(par, s, v, r, debug):
 
 
 def nodeGroup_flows(par, s, v, r, debug):
-    """Group output flows for periods and time"""
+    """Group output flows for periods and time.
+
+    result_multi_dt combines sources that arrive in different units: slacks
+    and inflow are already MWh/step, but the v_flow-derived columns
+    (unit/connection flows, internal losses) are MW.  We multiply the
+    latter by step_duration at assignment so every column is MWh/step at
+    the timestep level — then the period-level groupby-sum is correct
+    MWh for any step_duration.
+    """
 
     results = []
 
     if s.outputNodeGroup_does_generic_flows.empty or s.dt_realize_dispatch.empty:
         return results
+
+    step_dur = par.step_duration
+
+    def _to_energy(df: pd.DataFrame) -> pd.DataFrame:
+        """Multiply a (period, time)-indexed MW frame by step_duration → MWh/step.
+
+        Guards against empty placeholder frames whose index lacks 'period'/'time'
+        level names (pandas' align-on-index would raise).
+        """
+        if df.empty:
+            return df
+        return df.mul(step_dur, axis=0)
 
     # Calculate timestep-level results first
     result_multi_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'type', 'item']))
@@ -277,7 +309,7 @@ def nodeGroup_flows(par, s, v, r, debug):
         ['from_unitGroup'] * len(r.group_output__group_aggregate_Unit_to_group__dt.columns),
         r.group_output__group_aggregate_Unit_to_group__dt.columns.get_level_values(1)
     ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output__group_aggregate_Unit_to_group__dt.columns] = r.group_output__group_aggregate_Unit_to_group__dt
+    result_multi_dt[r.group_output__group_aggregate_Unit_to_group__dt.columns] = _to_energy(r.group_output__group_aggregate_Unit_to_group__dt)
 
     # Units not in aggregate (unit to group) - sum across nodes
     r.group_output__unit_to_node_not_in_aggregate__dt.columns = pd.MultiIndex.from_arrays([
@@ -285,7 +317,7 @@ def nodeGroup_flows(par, s, v, r, debug):
         ['from_unit'] * len(r.group_output__unit_to_node_not_in_aggregate__dt.columns),
         r.group_output__unit_to_node_not_in_aggregate__dt.columns.get_level_values('process')
     ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output__unit_to_node_not_in_aggregate__dt.columns] = r.group_output__unit_to_node_not_in_aggregate__dt
+    result_multi_dt[r.group_output__unit_to_node_not_in_aggregate__dt.columns] = _to_energy(r.group_output__unit_to_node_not_in_aggregate__dt)
 
     # Connection aggregates (from connections to group) - sum across nodes
     r.group_output__from_connection_aggregate__dt.columns = pd.MultiIndex.from_arrays([
@@ -293,7 +325,7 @@ def nodeGroup_flows(par, s, v, r, debug):
         ['from_connectionGroup'] * len(r.group_output__from_connection_aggregate__dt.columns),
         r.group_output__from_connection_aggregate__dt.columns.get_level_values(1)
     ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output__from_connection_aggregate__dt.columns] = r.group_output__from_connection_aggregate__dt
+    result_multi_dt[r.group_output__from_connection_aggregate__dt.columns] = _to_energy(r.group_output__from_connection_aggregate__dt)
 
     # Connections not in aggregate (from connections)
     r.group_output__from_connection_not_in_aggregate__dt.columns = pd.MultiIndex.from_arrays([
@@ -301,7 +333,7 @@ def nodeGroup_flows(par, s, v, r, debug):
         ['from_connection'] * len(r.group_output__from_connection_not_in_aggregate__dt.columns),
         r.group_output__from_connection_not_in_aggregate__dt.columns.get_level_values('process')
     ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output__from_connection_not_in_aggregate__dt.columns] = r.group_output__from_connection_not_in_aggregate__dt
+    result_multi_dt[r.group_output__from_connection_not_in_aggregate__dt.columns] = _to_energy(r.group_output__from_connection_not_in_aggregate__dt)
 
     # Connections not in aggregate (to connections)
     r.group_output__to_connection_not_in_aggregate__dt.columns = pd.MultiIndex.from_arrays([
@@ -309,7 +341,7 @@ def nodeGroup_flows(par, s, v, r, debug):
         ['to_connection'] * len(r.group_output__to_connection_not_in_aggregate__dt.columns),
         r.group_output__to_connection_not_in_aggregate__dt.columns.get_level_values('process')
     ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output__to_connection_not_in_aggregate__dt.columns] = -r.group_output__to_connection_not_in_aggregate__dt
+    result_multi_dt[r.group_output__to_connection_not_in_aggregate__dt.columns] = -_to_energy(r.group_output__to_connection_not_in_aggregate__dt)
 
     # Connection aggregates (to connections) - sum across nodes
     r.group_output__to_connection_aggregate__dt.columns = pd.MultiIndex.from_arrays([
@@ -317,7 +349,7 @@ def nodeGroup_flows(par, s, v, r, debug):
         ['to_connectionGroup'] * len(r.group_output__to_connection_aggregate__dt.columns),
         r.group_output__to_connection_aggregate__dt.columns.get_level_values(1)
     ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output__to_connection_aggregate__dt.columns] = -r.group_output__to_connection_aggregate__dt
+    result_multi_dt[r.group_output__to_connection_aggregate__dt.columns] = -_to_energy(r.group_output__to_connection_aggregate__dt)
 
     # Group to aggregate units (negative)
     r.group_output__group_aggregate_Group_to_unit__dt.columns = pd.MultiIndex.from_arrays([
@@ -325,7 +357,7 @@ def nodeGroup_flows(par, s, v, r, debug):
         ['to_unitGroup'] * len(r.group_output__group_aggregate_Group_to_unit__dt.columns),
         r.group_output__group_aggregate_Group_to_unit__dt.columns.get_level_values(1)
     ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output__group_aggregate_Group_to_unit__dt.columns] = -r.group_output__group_aggregate_Group_to_unit__dt
+    result_multi_dt[r.group_output__group_aggregate_Group_to_unit__dt.columns] = -_to_energy(r.group_output__group_aggregate_Group_to_unit__dt)
 
     # Node to unit not in aggregate (negative)
     r.group_output__node_to_unit_not_in_aggregate__dt.columns = pd.MultiIndex.from_arrays([
@@ -333,7 +365,7 @@ def nodeGroup_flows(par, s, v, r, debug):
         ['to_unit'] * len(r.group_output__node_to_unit_not_in_aggregate__dt.columns),
         r.group_output__node_to_unit_not_in_aggregate__dt.columns.get_level_values('process')
     ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output__node_to_unit_not_in_aggregate__dt.columns] = -r.group_output__node_to_unit_not_in_aggregate__dt
+    result_multi_dt[r.group_output__node_to_unit_not_in_aggregate__dt.columns] = -_to_energy(r.group_output__node_to_unit_not_in_aggregate__dt)
 
     # Inflow
     r.group_node_inflow_dt.columns = pd.MultiIndex.from_arrays([
@@ -351,7 +383,7 @@ def nodeGroup_flows(par, s, v, r, debug):
             ['internal_losses'] * len(r.group_output_Internal_connection_losses__dt.columns),
             ['connections'] * len(r.group_output_Internal_connection_losses__dt.columns)
         ], names=['group', 'type', 'item'])
-        result_multi_dt[r.group_output_Internal_connection_losses__dt.columns] = r.group_output_Internal_connection_losses__dt
+        result_multi_dt[r.group_output_Internal_connection_losses__dt.columns] = _to_energy(r.group_output_Internal_connection_losses__dt)
 
     # Internal losses - units (sum across processes, negate)
     if not r.group_output_Internal_unit_losses__dt.empty:
@@ -361,7 +393,7 @@ def nodeGroup_flows(par, s, v, r, debug):
             ['internal_losses'] * len(r.group_output_Internal_unit_losses__dt.columns),
             ['units'] * len(r.group_output_Internal_unit_losses__dt.columns)
         ], names=['group', 'type', 'item'])
-        result_multi_dt[r.group_output_Internal_unit_losses__dt.columns] = r.group_output_Internal_unit_losses__dt
+        result_multi_dt[r.group_output_Internal_unit_losses__dt.columns] = _to_energy(r.group_output_Internal_unit_losses__dt)
 
     # Internal losses - storages (negate)
     r.group_node_state_losses__dt.columns = pd.MultiIndex.from_arrays([
@@ -369,7 +401,7 @@ def nodeGroup_flows(par, s, v, r, debug):
         ['internal_losses'] * len(r.group_node_state_losses__dt.columns),
         ['storages'] * len(r.group_node_state_losses__dt.columns)
     ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_node_state_losses__dt.columns] = r.group_node_state_losses__dt
+    result_multi_dt[r.group_node_state_losses__dt.columns] = _to_energy(r.group_node_state_losses__dt)
 
     # Slack downward
     r.group_node_down_slack__dt.columns = pd.MultiIndex.from_arrays([

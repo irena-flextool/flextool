@@ -10,10 +10,10 @@ def connection(par, s, v, r, debug):
     results.append((r.connection_dt, 'connection_dt_eee'))
     results.append((r.connection_losses_dt, 'connection_losses_dt_eee'))
 
-    # Aggregate to period level
-    r.connection_d = r.connection_dt.groupby(level='period').sum()
+    # Annualize: r.connection_d / r.connection_losses_d from calc_connections
+    # are already in MWh (v_flow × step_duration summed per period); dividing
+    # by complete_period_share_of_year scales them to MWh/year.
     r.connection_d = r.connection_d.div(par.complete_period_share_of_year, axis=0)
-    r.connection_losses_d = r.connection_losses_dt.groupby(level='period').sum()
     r.connection_losses_d = r.connection_losses_d.div(par.complete_period_share_of_year, axis=0)
 
     # Return period results
@@ -45,7 +45,14 @@ def connection_cf(par, s, v, r, debug):
     connection_cols = r.process_sink_flow_d.columns[r.process_sink_flow_d.columns.get_level_values(0).isin(s.process_connection)]
     connection_capacity = r.entity_all_capacity[connection_cols.droplevel(1).unique()].rename_axis('process', axis=1)
     connection_capacity.columns = connection_capacity.columns.get_level_values(0)
-    results = r.connection_dt.abs().groupby('period').sum().div(connection_capacity, level=0).div(complete_hours, axis=0)
+    # v_flow is MW (MWh/h); multiply by step_duration for MWh before the CF ratio.
+    results = (
+        r.connection_dt.abs()
+        .mul(par.step_duration, axis=0)
+        .groupby('period').sum()
+        .div(connection_capacity, level=0)
+        .div(complete_hours, axis=0)
+    )
     results.columns.names = ['connection']
     return results, 'connection_cf_d_e'
 

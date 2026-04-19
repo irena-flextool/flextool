@@ -83,7 +83,11 @@ def compute_storage_and_vre(par, s, v, r) -> None:
         .mul(r.entity_all_capacity, axis=1, level=0)
         .droplevel(axis=1, level=['profile', 'profile_method'])
     )
-    r.potentialVREgen_d = r.potentialVREgen_dt.groupby('period').sum()
+    # potentialVREgen_dt is MW (profile × availability × capacity); multiply
+    # by step_duration to get MWh per step before summing to MWh per period.
+    r.potentialVREgen_d = (
+        r.potentialVREgen_dt.mul(step_duration, axis=0).groupby('period').sum()
+    )
 
     # storage_usage_dt (for nested model storage fixing)
     dt_fix_idx = s.dt_fix_storage_timesteps

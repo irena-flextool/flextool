@@ -65,12 +65,15 @@ def compute_connection_flows(par, s, v, r) -> None:
     )
     r.connection_to_left_node__dt = conn_to_left.sub(left_to_conn, fill_value=0)
     r.connection_to_right_node__dt = conn_to_right.sub(right_to_conn, fill_value=0)
+    # v_flow is MW — multiply by step_duration for MWh before summing.
     r.connection_to_left_node__d = (
-        r.connection_to_left_node__dt.groupby('period').sum()
+        r.connection_to_left_node__dt.mul(step_duration, axis=0)
+        .groupby('period').sum()
         .div(par.complete_period_share_of_year, axis=0)
     )
     r.connection_to_right_node__d = (
-        r.connection_to_right_node__dt.groupby('period').sum()
+        r.connection_to_right_node__dt.mul(step_duration, axis=0)
+        .groupby('period').sum()
         .div(par.complete_period_share_of_year, axis=0)
     )
 

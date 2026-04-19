@@ -10,13 +10,13 @@ def compute_slacks(par, s, v, r) -> None:
     period_hours = par.complete_period_share_of_year * 8760
     r.reserves_d = r.reserves_dt.groupby('period').sum().div(period_hours, axis=0)
 
+    # upward_node_slack_dt is already MWh per step (q_state_up × capacity × step_duration),
+    # so the period aggregate is a plain groupby-sum; no extra step_duration.
     r.upward_node_slack_dt = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).mul(par.step_duration, axis=0)
-    r.upward_node_slack_d_not_annualized = r.upward_node_slack_dt.mul(par.step_duration, axis=0) \
-        .groupby('period').sum()
+    r.upward_node_slack_d_not_annualized = r.upward_node_slack_dt.groupby('period').sum()
     r.upward_node_slack_d = r.upward_node_slack_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
     r.downward_node_slack_dt = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).mul(par.step_duration, axis=0)
-    r.downward_node_slack_d_not_annualized = r.downward_node_slack_dt.mul(par.step_duration, axis=0) \
-        .groupby('period').sum()
+    r.downward_node_slack_d_not_annualized = r.downward_node_slack_dt.groupby('period').sum()
     r.downward_node_slack_d = r.downward_node_slack_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
     upward_node_penalty = r.upward_node_slack_dt.mul(par.node_penalty_up[v.q_state_up.columns])
     downward_node_penalty = r.downward_node_slack_dt.mul(par.node_penalty_down[v.q_state_down.columns])
