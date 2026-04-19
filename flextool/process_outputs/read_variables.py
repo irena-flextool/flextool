@@ -22,27 +22,6 @@ import pandas as pd
 from flextool.lean_parquet import read_lean_parquet
 
 
-def _round_to_sig(series: pd.Series, sig: int) -> pd.Series:
-    """Round ``series`` to ``sig`` significant digits.
-
-    Mimics the ``%.Ng`` formatting the phase-3 CSV writer applies to each
-    cell — needed so the parquet pathway produces the same numeric values
-    downstream tooling sees, not an extra trailing digit or two of
-    float64 precision.
-    """
-    import numpy as np
-    arr = series.to_numpy(dtype=float, copy=True)
-    finite = np.isfinite(arr) & (arr != 0)
-    if not finite.any():
-        return series
-    # %g rounds to N significant digits (away from zero).
-    magnitude = np.zeros_like(arr)
-    magnitude[finite] = np.floor(np.log10(np.abs(arr[finite])))
-    factor = 10.0 ** (sig - 1 - magnitude)
-    arr[finite] = np.round(arr[finite] * factor) / factor
-    return pd.Series(arr, index=series.index, name=series.name)
-
-
 def read_variables(output_dir):
     """Read all variable outputs into a :class:`SimpleNamespace`.
 
@@ -73,19 +52,10 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
     """
     v = SimpleNamespace()
 
-    def _read(name: str, precision: int = 6) -> pd.DataFrame:
-        # Concatenate every per-solve parquet for this variable, then
-        # sort by the row MultiIndex.  Sorting matters: some downstream
-        # pandas ops (``DataFrame.mul(..., level=0)``) raise
-        # "Join on level between two MultiIndex objects is ambiguous"
-        # unless BOTH operands have the same ``_lexsort_depth``.  Having
-        # every DataFrame sorted guarantees that.
-        #
-        # ``precision`` rounds values to match the ``%.Ng`` format the
-        # phase-3 CSV writer uses (most vars write ``%.6g``, some duals
-        # use ``%.8g``).  Without this, parquet's full float64 precision
-        # produces more decimal digits than the golden CSVs and the
-        # downstream ``summary_solve.csv`` diff fails by a trailing digit.
+    def _read(name: str) -> pd.DataFrame:
+        # Concatenate every per-solve parquet for this variable.  Parquet
+        # carries full float64 precision; no rounding is applied — that
+        # belongs only at the final user-facing CSV write boundary.
         parts = sorted(parquet_dir.glob(f"{name}__*.parquet"))
         if not parts:
             return pd.DataFrame()
@@ -104,49 +74,42 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
             out.columns = pd.Index(
                 [c[0] for c in out.columns], name=out.columns.names[0],
             )
-        # Round to match the phase-3 CSV writer's ``%.Ng`` precision,
-        # then fill missing combinations with 0 (same as the CSV reader).
-        out = out.apply(lambda col: _round_to_sig(col, precision))
         return out.fillna(0.0)
 
-    # Precision matches the phase-3 CSV format strings in flextool.mod:
-    #   - ``%.6g`` for primal variables and slack penalties
-    #   - ``%.8g`` for duals and voltage angles
-    #   - ``%.10g`` for the scalar objective
-    v.obj = _read("v_obj", precision=10)
-    v.flow = _read("v_flow", precision=6)
-    v.ramp = _read("v_ramp", precision=6)
-    v.reserve = _read("v_reserve", precision=6)
-    v.state = _read("v_state", precision=6)
-    v.online_linear = _read("v_online_linear", precision=6)
-    v.startup_linear = _read("v_startup_linear", precision=6)
-    v.shutdown_linear = _read("v_shutdown_linear", precision=6)
-    v.online_integer = _read("v_online_integer", precision=6)
-    v.startup_integer = _read("v_startup_integer", precision=6)
-    v.shutdown_integer = _read("v_shutdown_integer", precision=6)
-    v.q_state_up = _read("vq_state_up", precision=6)
-    v.q_state_down = _read("vq_state_down", precision=6)
-    v.q_reserve = _read("vq_reserve", precision=6)
-    v.q_inertia = _read("vq_inertia", precision=6)
-    v.q_non_synchronous = _read("vq_non_synchronous", precision=6)
-    v.q_state_up_group = _read("vq_state_up_group", precision=6)
-    v.q_capacity_margin = _read("vq_capacity_margin", precision=6)
-    v.invest = _read("v_invest", precision=6)
-    v.divest = _read("v_divest", precision=6)
-    v.dual_node_balance = _read("v_dual_node_balance", precision=8)
-    v.dual_reserve_balance = _read("v_dual_reserve__upDown__group__period__t", precision=8)
-    v.angle = _read("v_angle", precision=8)
-    v.dual_invest_unit = _read("v_dual_invest_unit", precision=8)
-    v.dual_invest_connection = _read("v_dual_invest_connection", precision=8)
-    v.dual_invest_node = _read("v_dual_invest_node", precision=8)
-    v.dual_maxInvest_period = _read("v_dual_maxInvest_period", precision=8)
-    v.dual_maxInvest_total = _read("v_dual_maxInvest_total", precision=8)
-    v.dual_maxCumulative = _read("v_dual_maxCumulative", precision=8)
-    v.dual_maxInvestGroup_period = _read("v_dual_maxInvestGroup_period", precision=8)
-    v.dual_maxInvestGroup_total = _read("v_dual_maxInvestGroup_total", precision=8)
-    v.dual_maxInvestGroup_cumulative = _read("v_dual_maxInvestGroup_cumulative", precision=8)
-    v.dual_co2_max_period = _read("v_dual_co2_max_period", precision=8)
-    v.dual_co2_max_total = _read("v_dual_co2_max_total", precision=8)
+    v.obj = _read("v_obj")
+    v.flow = _read("v_flow")
+    v.ramp = _read("v_ramp")
+    v.reserve = _read("v_reserve")
+    v.state = _read("v_state")
+    v.online_linear = _read("v_online_linear")
+    v.startup_linear = _read("v_startup_linear")
+    v.shutdown_linear = _read("v_shutdown_linear")
+    v.online_integer = _read("v_online_integer")
+    v.startup_integer = _read("v_startup_integer")
+    v.shutdown_integer = _read("v_shutdown_integer")
+    v.q_state_up = _read("vq_state_up")
+    v.q_state_down = _read("vq_state_down")
+    v.q_reserve = _read("vq_reserve")
+    v.q_inertia = _read("vq_inertia")
+    v.q_non_synchronous = _read("vq_non_synchronous")
+    v.q_state_up_group = _read("vq_state_up_group")
+    v.q_capacity_margin = _read("vq_capacity_margin")
+    v.invest = _read("v_invest")
+    v.divest = _read("v_divest")
+    v.dual_node_balance = _read("v_dual_node_balance")
+    v.dual_reserve_balance = _read("v_dual_reserve__upDown__group__period__t")
+    v.angle = _read("v_angle")
+    v.dual_invest_unit = _read("v_dual_invest_unit")
+    v.dual_invest_connection = _read("v_dual_invest_connection")
+    v.dual_invest_node = _read("v_dual_invest_node")
+    v.dual_maxInvest_period = _read("v_dual_maxInvest_period")
+    v.dual_maxInvest_total = _read("v_dual_maxInvest_total")
+    v.dual_maxCumulative = _read("v_dual_maxCumulative")
+    v.dual_maxInvestGroup_period = _read("v_dual_maxInvestGroup_period")
+    v.dual_maxInvestGroup_total = _read("v_dual_maxInvestGroup_total")
+    v.dual_maxInvestGroup_cumulative = _read("v_dual_maxInvestGroup_cumulative")
+    v.dual_co2_max_period = _read("v_dual_co2_max_period")
+    v.dual_co2_max_total = _read("v_dual_co2_max_total")
 
     # ``group_entity_invest`` is a static map (solveFirst-only) written
     # during phase 1 directly to ``input/`` — same as the CSV pathway.
