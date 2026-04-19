@@ -2575,8 +2575,48 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
       * 1000
 ;
 
+# storage_state_start_binding: pin the storage state so that
+# storage_state_start × capacity means "state just before TS01 of the solve
+# horizon" — consistent with how bind_forward_only handles it inline.
+#
+# For bind_within_period and bind_within_solve (single cyclic chain per
+# period / solve): the balance at TS01 is cyclic, with t_previous wrapping
+# to TS_last. So pinning v_state[TS_last of period_first] equals "state
+# before TS01 of period_first" through the cyclic wrap, and TS01 inflow is
+# absorbed correctly into v_state[TS01] = start × cap + flows_TS01.
+#
+# For bind_within_timeset and bind_intraperiod_blocks the cycle is
+# per-block, not per-period, so TS_last of period_first sits inside the
+# last block rather than the first — the old TS_first pin is kept for
+# those methods (bind_intraperiod_blocks already routes TS01 flows
+# correctly via nodeBalanceBlock_eq; bind_within_timeset has the same
+# first-block absorption bug but needs a per-block fix, out of scope for
+# this patch).
+#
+# (bind_forward_only handles this inline inside nodeBalance_eq via an
+#  explicit v_state[TS01] − start × cap term; it is excluded from both
+#  constraints below via the filters.)
+
+s.t. storage_state_start_binding_cyclic_period {n in nodeState, (d, t) in period__time_last
+     : p_nested_model['solveFirst']
+	 && ((n, 'bind_within_period') in node__storage_binding_method
+	     || (n, 'bind_within_solve') in node__storage_binding_method)
+	 && d in period_first
+	 && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)} :
+  + v_state[n, d, t] * p_entity_unitsize[n]
+  =
+  + p_node[n,'storage_state_start']
+    * ( + p_entity_all_existing[n, d]
+        + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
+        - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
+	  )
+;
+
 s.t. storage_state_start_binding {n in nodeState, (d, t) in period__time_first
-     : p_nested_model['solveFirst'] && (n, 'bind_forward_only') not in node__storage_binding_method
+     : p_nested_model['solveFirst']
+	 && (n, 'bind_forward_only') not in node__storage_binding_method
+	 && (n, 'bind_within_period') not in node__storage_binding_method
+	 && (n, 'bind_within_solve') not in node__storage_binding_method
 	 && d in period_first
 	 && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)} :
   + v_state[n, d, t] * p_entity_unitsize[n]
