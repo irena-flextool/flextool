@@ -402,6 +402,40 @@ def migrate_database(database_path, up_to: int | None = None):
                         "entities where flow_coefficient ≠ 1.0")
                 except SpineDBAPIError:
                     pass
+            elif next_version == 37:
+                # v35/v36 introduced flow_coefficient with the *old* sink
+                # semantics (v_flow divided by flow_coefficient in the
+                # balance — asymmetric with the source side, which
+                # multiplies). v37 flips the sink side to multiplication in
+                # flextool.mod so both sides mean "fuel-equivalent energy
+                # per unit of flow". To preserve numerical results for
+                # existing databases, invert every explicit non-zero
+                # flow_coefficient value on unit__outputNode: replace x
+                # with 1/x. Defaults (1.0) are left alone; 0 (hydro-
+                # pass-through marker) is left alone.
+                parameter_values = db.mapped_table("parameter_value")
+                for pv in list(db.find_parameter_values(
+                        entity_class_name="unit__outputNode",
+                        parameter_definition_name="flow_coefficient")):
+                    try:
+                        val = float(pv["parsed_value"])
+                    except (TypeError, ValueError):
+                        continue
+                    if val == 0.0 or val == 1.0:
+                        continue
+                    inv = 1.0 / val
+                    new_val, new_type = to_database(inv)
+                    db.update_item(
+                        "parameter_value",
+                        id=pv["id"],
+                        value=new_val, type=new_type)
+                try:
+                    db.commit_session(
+                        "Flipped unit__outputNode.flow_coefficient values "
+                        "to 1/x to match the new multiplicative semantics "
+                        "on the sink side of the balance")
+                except SpineDBAPIError:
+                    pass
             else:
                 print("Version invalid")
             next_version += 1

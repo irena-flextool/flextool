@@ -1443,7 +1443,7 @@
     [
       "model",
       "version",
-      36.0,
+      37.0,
       null,
       "Contains database version information.",
       null
