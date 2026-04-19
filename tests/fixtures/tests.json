@@ -1450,6 +1450,32 @@
       ],
       "wind_no_investment_10yr",
       true
+    ],
+    [
+      "constraint",
+      [
+        "coal_chp_fix"
+      ],
+      "coal_chp_extraction",
+      false
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "west"
+      ],
+      "coal_chp_extraction",
+      true
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "heat"
+      ],
+      "coal_chp_extraction",
+      true
     ]
   ],
   "parameter_value_lists": [
@@ -4146,16 +4172,6 @@
     ],
     [
       "unit__inputNode",
-      "coefficient",
-      [
-        "MQ==",
-        "float"
-      ],
-      null,
-      "[factor] Coefficient to scale the output from a unit to a particular node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints). Constant."
-    ],
-    [
-      "unit__inputNode",
       "constraint_flow_coefficient",
       [
         "bnVsbA==",
@@ -4243,16 +4259,6 @@
       ],
       "profile_methods",
       "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n"
-    ],
-    [
-      "unit__outputNode",
-      "coefficient",
-      [
-        "MQ==",
-        "float"
-      ],
-      null,
-      "[factor] Coefficient to scale the output from a unit to a particular node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints). Constant."
     ],
     [
       "unit__outputNode",
@@ -4373,6 +4379,66 @@
       ],
       null,
       "Per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year. Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so uniform input reproduces weight = 1 per step. Must not be combined with representative_period_weights on the same timeset."
+    ],
+    [
+      "unit__inputNode",
+      "flow_coefficient",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations."
+    ],
+    [
+      "unit__inputNode",
+      "max_capacity_coefficient",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap."
+    ],
+    [
+      "unit__inputNode",
+      "min_capacity_coefficient",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online."
+    ],
+    [
+      "unit__outputNode",
+      "flow_coefficient",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations."
+    ],
+    [
+      "unit__outputNode",
+      "max_capacity_coefficient",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap."
+    ],
+    [
+      "unit__outputNode",
+      "min_capacity_coefficient",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online."
     ]
   ],
   "parameter_types": [
@@ -5890,12 +5956,6 @@
     ],
     [
       "unit__inputNode",
-      "coefficient",
-      "float",
-      0
-    ],
-    [
-      "unit__inputNode",
       "constraint_flow_coefficient",
       "map",
       1
@@ -5958,12 +6018,6 @@
       "unit__node__profile",
       "profile_method",
       "str",
-      0
-    ],
-    [
-      "unit__outputNode",
-      "coefficient",
-      "float",
       0
     ],
     [
@@ -6049,6 +6103,42 @@
       "timeset_weights",
       "map",
       1
+    ],
+    [
+      "unit__inputNode",
+      "flow_coefficient",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "max_capacity_coefficient",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "min_capacity_coefficient",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
+      "flow_coefficient",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
+      "max_capacity_coefficient",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
+      "min_capacity_coefficient",
+      "float",
+      0
     ]
   ],
   "parameter_values": [
@@ -9712,7 +9802,7 @@
         "water_pump",
         "water_source"
       ],
-      "coefficient",
+      "flow_coefficient",
       [
         "MQ==",
         "float"
@@ -9738,7 +9828,7 @@
         "water_pump",
         "west"
       ],
-      "coefficient",
+      "flow_coefficient",
       [
         "MA==",
         "float"
@@ -10022,6 +10112,58 @@
         "float"
       ],
       "wind_no_investment_10yr"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "west"
+      ],
+      "flow_coefficient",
+      [
+        "Mi4w",
+        "float"
+      ],
+      "coal_chp_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "west"
+      ],
+      "max_capacity_coefficient",
+      [
+        "MC44",
+        "float"
+      ],
+      "coal_chp_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "heat"
+      ],
+      "flow_coefficient",
+      [
+        "MC4y",
+        "float"
+      ],
+      "coal_chp_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "heat"
+      ],
+      "max_capacity_coefficient",
+      [
+        "MS4w",
+        "float"
+      ],
+      "coal_chp_extraction"
     ]
   ],
   "alternatives": [
@@ -10251,6 +10393,10 @@
     ],
     [
       "wind_no_investment_10yr",
+      ""
+    ],
+    [
+      "coal_chp_extraction",
       ""
     ]
   ],
@@ -10547,6 +10693,11 @@
     ],
     [
       "multi_year_wind_no_investment",
+      false,
+      ""
+    ],
+    [
+      "coal_chp_extraction",
       false,
       ""
     ]
@@ -12930,6 +13081,31 @@
     [
       "multi_year_wind_no_investment",
       "wind_no_investment_10yr",
+      null
+    ],
+    [
+      "coal_chp_extraction",
+      "init",
+      "west"
+    ],
+    [
+      "coal_chp_extraction",
+      "west",
+      "coal_chp"
+    ],
+    [
+      "coal_chp_extraction",
+      "coal_chp",
+      "heat"
+    ],
+    [
+      "coal_chp_extraction",
+      "heat",
+      "coal_chp_extraction"
+    ],
+    [
+      "coal_chp_extraction",
+      "coal_chp_extraction",
       null
     ]
   ]

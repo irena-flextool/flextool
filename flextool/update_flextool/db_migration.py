@@ -290,6 +290,118 @@ def migrate_database(database_path, up_to: int | None = None):
                 add_value_list_manual(db, [
                     ["lifetime_methods", "no_investment"],
                 ])
+            elif next_version == 35:
+                # Split the old `coefficient` parameter on unit__inputNode /
+                # unit__outputNode into three separate parameters:
+                #   - flow_coefficient: energy-unit conversion for the flow
+                #     in node-balance and conversion_indirect equations
+                #     (renamed from 'coefficient', same semantics).
+                #   - max_capacity_coefficient: scales the per-edge upper cap
+                #     (maxToSink / maxToSource / maxFromSource / ramp-up).
+                #     Default 1.0.
+                #   - min_capacity_coefficient: scales the per-edge lower cap
+                #     (minToSink_minload / minFromSource_minload / min-load
+                #     terms / ramp-down). Default 1.0.
+                # Use case that forced the split: extraction CHP with a
+                # heat output whose flow_coefficient < 1 (small balance
+                # scaler) but whose max capacity is still full nameplate.
+                flow_desc = (
+                    "[factor] Energy-unit conversion factor for this flow "
+                    "in the node balance and conversion_indirect equations. "
+                    "Value of 0 removes the edge from capacity / ramp / min-"
+                    "load constraints entirely (hydro-pass-through pattern)."
+                )
+                maxcap_desc = (
+                    "[factor, default 1.0] Fraction of the unit's capacity "
+                    "available to this edge's upper cap (maxToSink / "
+                    "maxFromSource / ramp). For extraction CHP set to 1.0 "
+                    "on each output so each can reach full capacity when "
+                    "the other drops."
+                )
+                mincap_desc = (
+                    "[factor, default 1.0] Fraction of the unit's capacity "
+                    "imposed as a lower cap on this edge when online "
+                    "(combined multiplicatively with the unit-level "
+                    "min_load). Set to 0 to remove the lower cap on this "
+                    "edge (e.g. heat output of an extraction CHP that may "
+                    "drop to zero in pure-condensing mode)."
+                )
+                parameter_definitions = db.mapped_table("parameter_definition")
+                default_one_val, default_one_type = to_database(1.0)
+                for cls in ("unit__inputNode", "unit__outputNode"):
+                    param = db.item(parameter_definitions,
+                                    entity_class_name=cls, name="coefficient")
+                    if param:
+                        db.update_parameter_definition(
+                            id=param["id"],
+                            name="flow_coefficient",
+                            description=flow_desc)
+                    db.add_update_item("parameter_definition",
+                        entity_class_name=cls,
+                        name="max_capacity_coefficient",
+                        default_value=default_one_val,
+                        default_type=default_one_type,
+                        description=maxcap_desc)
+                    db.add_update_item("parameter_definition",
+                        entity_class_name=cls,
+                        name="min_capacity_coefficient",
+                        default_value=default_one_val,
+                        default_type=default_one_type,
+                        description=mincap_desc)
+                db.commit_session(
+                    "Renamed coefficient → flow_coefficient; added "
+                    "max_capacity_coefficient and min_capacity_coefficient "
+                    "on unit__inputNode and unit__outputNode")
+            elif next_version == 36:
+                # Backfill v35: preserve the OLD coefficient behaviour for
+                # existing databases where coefficient was set to a non-
+                # default value. The old formulas were:
+                #   sink (unit__outputNode): v_flow ≤ online × coef
+                #     → new:  max_capacity_coefficient = coef
+                #   source (unit__inputNode): v_flow × coef ≤ online
+                #                           ⇔ v_flow ≤ online / coef
+                #     → new:  max_capacity_coefficient = 1 / coef
+                # For min-load the coefficient scaled both sides the same
+                # way, so min_capacity_coefficient = coef on both classes
+                # preserves behaviour.
+                # Only entities whose flow_coefficient was *explicitly set*
+                # are affected; those relying on the default 1.0 already
+                # get max/min = 1.0 from the defaults introduced in v35.
+                parameter_values = db.mapped_table("parameter_value")
+                for cls in ("unit__outputNode", "unit__inputNode"):
+                    existing = list(db.find_parameter_values(
+                        entity_class_name=cls,
+                        parameter_definition_name="flow_coefficient"))
+                    for pv in existing:
+                        try:
+                            coef = float(pv["parsed_value"])
+                        except (TypeError, ValueError):
+                            continue
+                        # Skip default-valued rows — backfill is a no-op.
+                        if coef == 1.0:
+                            continue
+                        if cls == "unit__outputNode":
+                            max_cap = coef
+                        else:
+                            max_cap = (1.0 / coef) if coef != 0 else 0.0
+                        min_cap = coef
+                        for pname, pval in (("max_capacity_coefficient", max_cap),
+                                            ("min_capacity_coefficient", min_cap)):
+                            value, vtype = to_database(pval)
+                            db.add_update_item(
+                                "parameter_value",
+                                entity_class_name=cls,
+                                entity_byname=pv["entity_byname"],
+                                parameter_definition_name=pname,
+                                alternative_name=pv["alternative_name"],
+                                value=value, type=vtype)
+                try:
+                    db.commit_session(
+                        "Backfilled max_capacity_coefficient and "
+                        "min_capacity_coefficient from flow_coefficient for "
+                        "entities where flow_coefficient ≠ 1.0")
+                except SpineDBAPIError:
+                    pass
             else:
                 print("Version invalid")
             next_version += 1
@@ -649,7 +761,9 @@ def get_parameter_type_list_v23():
              ["connection__node", "constraint_flow_coefficient", ("1d_map",)],
              ["connection__profile", "profile_method", ("str",)],
              ["node__profile", "profile_method", ("str",)],
-             ["unit__inputNode", "coefficient", ("float",)],
+             ["unit__inputNode", "flow_coefficient", ("float",)],
+             ["unit__inputNode", "max_capacity_coefficient", ("float",)],
+             ["unit__inputNode", "min_capacity_coefficient", ("float",)],
              ["unit__inputNode", "constraint_flow_coefficient", ("1d_map",)],
              ["unit__inputNode", "inertia_constant", ("float",)],
              ["unit__inputNode", "is_non_synchronous", ("str",)],
@@ -658,7 +772,9 @@ def get_parameter_type_list_v23():
              ["unit__inputNode", "ramp_method", ("str",)],
              ["unit__inputNode", "ramp_speed_down", ("float",)],
              ["unit__inputNode", "ramp_speed_up", ("float",)],
-             ["unit__outputNode", "coefficient", ("float",)],
+             ["unit__outputNode", "flow_coefficient", ("float",)],
+             ["unit__outputNode", "max_capacity_coefficient", ("float",)],
+             ["unit__outputNode", "min_capacity_coefficient", ("float",)],
              ["unit__outputNode", "constraint_flow_coefficient", ("1d_map",)],
              ["unit__outputNode", "inertia_constant", ("float",)],
              ["unit__outputNode", "is_non_synchronous", ("str",)],

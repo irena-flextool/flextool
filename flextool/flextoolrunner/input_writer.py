@@ -198,7 +198,7 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/node__node_type.csv",
     },
     {
-        "cl_pars": [("node", "profile_method")],
+        "cl_pars": [("node__profile", "profile_method")],
         "header": "node,profile,profile_method",
         "filename": "input/node__profile__profile_method.csv",
     },
@@ -290,15 +290,39 @@ _PARAMETER_SPECS: list[dict] = [
     },
     # --- process parameters ---
     {
-        "cl_pars": [("unit__outputNode", "coefficient")],
-        "header": "process,sink,p_process_sink_coefficient",
-        "filename": "input/p_process_sink_coefficient.csv",
+        "cl_pars": [("unit__outputNode", "flow_coefficient")],
+        "header": "process,sink,p_process_sink_flow_coefficient",
+        "filename": "input/p_process_sink_flow_coefficient.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {
-        "cl_pars": [("unit__inputNode", "coefficient")],
-        "header": "process,source,p_process_source_coefficient",
-        "filename": "input/p_process_source_coefficient.csv",
+        "cl_pars": [("unit__inputNode", "flow_coefficient")],
+        "header": "process,source,p_process_source_flow_coefficient",
+        "filename": "input/p_process_source_flow_coefficient.csv",
+        "filter_in_type": ["float", "str", "bool"],
+    },
+    {
+        "cl_pars": [("unit__outputNode", "max_capacity_coefficient")],
+        "header": "process,sink,p_process_sink_max_capacity_coefficient",
+        "filename": "input/p_process_sink_max_capacity_coefficient.csv",
+        "filter_in_type": ["float", "str", "bool"],
+    },
+    {
+        "cl_pars": [("unit__outputNode", "min_capacity_coefficient")],
+        "header": "process,sink,p_process_sink_min_capacity_coefficient",
+        "filename": "input/p_process_sink_min_capacity_coefficient.csv",
+        "filter_in_type": ["float", "str", "bool"],
+    },
+    {
+        "cl_pars": [("unit__inputNode", "max_capacity_coefficient")],
+        "header": "process,source,p_process_source_max_capacity_coefficient",
+        "filename": "input/p_process_source_max_capacity_coefficient.csv",
+        "filter_in_type": ["float", "str", "bool"],
+    },
+    {
+        "cl_pars": [("unit__inputNode", "min_capacity_coefficient")],
+        "header": "process,source,p_process_source_min_capacity_coefficient",
+        "filename": "input/p_process_source_min_capacity_coefficient.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {

@@ -1443,7 +1443,7 @@
     [
       "model",
       "version",
-      34.0,
+      36.0,
       null,
       "Contains database version information.",
       null
@@ -2346,18 +2346,18 @@
     ],
     [
       "unit__inputNode",
-      "coefficient",
-      1.0,
-      null,
-      "[factor] Coefficient to scale the output from a unit to a particular node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints). Constant.",
-      null
-    ],
-    [
-      "unit__inputNode",
       "constraint_flow_coefficient",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "flow_coefficient",
+      1.0,
+      null,
+      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from capacity / ramp / min-load constraints entirely (hydro-pass-through pattern).",
       null
     ],
     [
@@ -2374,6 +2374,22 @@
       null,
       "is_non_synchronous",
       "Chooses whether the unit is synchronously connected to this node.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "max_capacity_coefficient",
+      1.0,
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "min_capacity_coefficient",
+      1.0,
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
       null
     ],
     [
@@ -2426,18 +2442,18 @@
     ],
     [
       "unit__outputNode",
-      "coefficient",
-      1.0,
-      null,
-      "[factor] Coefficient to scale the output from a unit to a particular node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints). Constant.",
-      null
-    ],
-    [
-      "unit__outputNode",
       "constraint_flow_coefficient",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "flow_coefficient",
+      1.0,
+      null,
+      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from capacity / ramp / min-load constraints entirely (hydro-pass-through pattern).",
       null
     ],
     [
@@ -2454,6 +2470,22 @@
       null,
       "is_non_synchronous",
       "Chooses whether the unit is synchronously connected to this node.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "max_capacity_coefficient",
+      1.0,
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "min_capacity_coefficient",
+      1.0,
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
       null
     ],
     [
@@ -4066,15 +4098,15 @@
     ],
     [
       "unit__inputNode",
-      "coefficient",
-      "float",
-      0
-    ],
-    [
-      "unit__inputNode",
       "constraint_flow_coefficient",
       "map",
       1
+    ],
+    [
+      "unit__inputNode",
+      "flow_coefficient",
+      "float",
+      0
     ],
     [
       "unit__inputNode",
@@ -4138,15 +4170,15 @@
     ],
     [
       "unit__outputNode",
-      "coefficient",
-      "float",
-      0
-    ],
-    [
-      "unit__outputNode",
       "constraint_flow_coefficient",
       "map",
       1
+    ],
+    [
+      "unit__outputNode",
+      "flow_coefficient",
+      "float",
+      0
     ],
     [
       "unit__outputNode",
