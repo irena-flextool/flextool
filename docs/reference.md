@@ -264,8 +264,21 @@ Finally, the retirements work similar to investments using the same `inflation_r
 ### Properties of unit--inputNode and unit--outputNode entities
 
 - `is_non_synchronous` - Chooses whether the unit is synchronously connected to this node.
-- `coefficient` - [factor] Coefficient to scale the output from a unit to a particular node or the input from a node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints).
-Note that in the case of unit--outputNode the `coefficient` affects *after* the capacity and the other unit constraints. Constant.
+- `flow_coefficient` - [factor, default 1] Energy-unit conversion factor applied to this flow in the node-balance equation and in `conversion_indirect` (for indirect-method units with multiple sources/sinks). Use for unit-of-measurement conversions, fuel-grade energy scaling, or CHP extraction ratios. Setting `flow_coefficient = 0` removes the edge from every per-edge capacity / ramp / min-load constraint — the pattern used for hydro plants that pass water forward without charging it against the unit's capacity. Constant.
+- `max_capacity_coefficient` - [factor, default 1] Fraction of the unit's capacity available to this edge's upper cap. Applied in `maxToSink`, `maxFromSource`, `maxToSource` (reverse-direction 2-way), `minToSink_1var` (reverse-direction 2-way 1-var cap), and ramp-up constraints. Constant.
+- `min_capacity_coefficient` - [factor, default 1] Fraction of the unit's capacity imposed as a lower cap on this edge when online — combined multiplicatively with the unit-level `min_load`. Applied in `minToSink_minload`, `minFromSource_minload`, `minToSource`, and ramp-down constraints. Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may fall to zero in pure-condensing mode). Constant.
+
+Typical use patterns for the three coefficients:
+
+| case | flow | max_cap | min_cap |
+|---|---|---|---|
+| standard unit, 1 source + 1 sink | 1 (default) | 1 (default) | 1 (default) |
+| hydro pass-through (water sink on hydro plant) | 0 | any (skipped) | any (skipped) |
+| extraction CHP, electricity output | 1 or custom | 1 | 1 (elec must produce min_load when online) |
+| extraction CHP, heat output | α (extraction ratio) | 1 (allow full-heat mode) | 0 (allow zero-heat pure-condensing mode) |
+| multi-fuel, high-energy grade (e.g. 2 MWh/unit) | 2 | 0.5 (= 1 / flow) to preserve per-fuel capacity cap | 0.5 |
+
+Note that in the case of unit--outputNode the `flow_coefficient` affects *after* the capacity and the other unit constraints — it only shows up in the node balance and in the fuel/efficiency equation. The capacity caps themselves are set by `max_capacity_coefficient` and `min_capacity_coefficient`.
 - `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant, period or time. 
 - `inertia_constant` - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
 - `ramp_method` - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).
