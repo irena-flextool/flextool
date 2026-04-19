@@ -19,10 +19,10 @@ def read_parameters(output_dir):
     # These could be empty of data, so they'll return an empty series in that case
     df = pd.read_csv(output_path / 'p_commodity_co2_content.csv', header=[0], index_col=0).astype(float)
     p.commodity_co2_content = df.loc['value'] if 'value' in df.index else pd.Series(dtype=float)
-    df = pd.read_csv(output_path / 'p_process_sink_coefficient.csv', header=[0, 1], index_col=0).astype(float)
-    p.process_sink_coefficient = df.loc['value'] if 'value' in df.index else pd.Series(dtype=float)
-    df = pd.read_csv(output_path / 'p_process_source_coefficient.csv', header=[0, 1], index_col=0).astype(float)
-    p.process_source_coefficient = df.loc['value'] if 'value' in df.index else pd.Series(dtype=float)
+    df = pd.read_csv(output_path / 'p_process_sink_flow_coefficient.csv', header=[0, 1], index_col=0).astype(float)
+    p.process_sink_flow_coefficient = df.loc['value'] if 'value' in df.index else pd.Series(dtype=float)
+    df = pd.read_csv(output_path / 'p_process_source_flow_coefficient.csv', header=[0, 1], index_col=0).astype(float)
+    p.process_source_flow_coefficient = df.loc['value'] if 'value' in df.index else pd.Series(dtype=float)
     df = pd.read_csv(output_path / 'p_reserve_upDown_group_penalty.csv', header=[0, 1, 2], index_col=0).astype(float)
     p.reserve_upDown_group_penalty = df.loc['value'] if 'value' in df.index else pd.Series(dtype=float)
 
@@ -99,12 +99,12 @@ def read_parameters(output_dir):
         names=['reserve', 'updown', 'node_group']
     )
     # These have only one row of data and are therefore interpreted as Series by pd.read_csv (using index instead of columns)
-    p.process_sink_coefficient.index = pd.MultiIndex.from_tuples(
-        [(col[0], col[1]) for col in p.process_sink_coefficient.index],
+    p.process_sink_flow_coefficient.index = pd.MultiIndex.from_tuples(
+        [(col[0], col[1]) for col in p.process_sink_flow_coefficient.index],
         names=['process', 'sink']
     )
-    p.process_source_coefficient.index = pd.MultiIndex.from_tuples(
-        [(col[0], col[1]) for col in p.process_source_coefficient.index],
+    p.process_source_flow_coefficient.index = pd.MultiIndex.from_tuples(
+        [(col[0], col[1]) for col in p.process_source_flow_coefficient.index],
         names=['process', 'source']
     )
     p.reserve_upDown_group_penalty.index = pd.MultiIndex.from_tuples(

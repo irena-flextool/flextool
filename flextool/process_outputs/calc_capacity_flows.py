@@ -53,8 +53,8 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
                 orig_source == always_source and orig_sink != always_sink):
             flow_val = flow_val.mul(slope[p], axis=0)
             if p in s.process_unit:
-                flow_val /= (par.process_sink_coefficient.loc[p, orig_sink] *
-                             par.process_source_coefficient.loc[p, orig_source])
+                flow_val /= (par.process_sink_flow_coefficient.loc[p, orig_sink] *
+                             par.process_source_flow_coefficient.loc[p, orig_source])
             if (p, 'min_load_efficiency') in s.process__ct_method:
                 flow_val = flow_val.add(r.process_online_dt[p] * section[p] * unitsize[p], axis=0)
         r.flow_dt[p, always_source, always_sink] = flow_val
