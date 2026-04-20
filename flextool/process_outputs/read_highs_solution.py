@@ -529,12 +529,36 @@ def extract_variable(
     long_data["value"] = vals
 
     long = pd.DataFrame(long_data)
+    # ``sort=False`` keeps the first-appearance row order from the HiGHS
+    # MPS variable-name iteration — but glpsol's iteration over
+    # ``node_state__dt`` etc. can differ from its iteration over
+    # ``dt_realize_dispatch`` used by phase-1 printfs (notably for
+    # representative-period scenarios and storage-reference timesteps).
+    # Reindex to the canonical ``(solve, period[, time])`` order the
+    # phase-1 CSVs use so cross-reader ``mul(axis=1, level=0)`` aligns.
     wide = long.pivot_table(
         index=row_index_names,
         columns=list(col_names),
         values="value",
         fill_value=0.0,
+        sort=False,
     )
+    if has_period and has_time and realized_dt is not None:
+        realized_list = _load_realized_list(realized_dispatch_csv)
+        if realized_list is not None:
+            canonical = pd.MultiIndex.from_tuples(
+                [(solve_name, d, t) for (d, t) in realized_list],
+                names=row_index_names,
+            )
+            wide = wide.reindex(canonical, fill_value=0.0)
+    elif has_period and not has_time and realized_p is not None:
+        realized_p_list = _load_realized_periods_list(realized_periods_csv)
+        if realized_p_list is not None:
+            canonical = pd.MultiIndex.from_tuples(
+                [(solve_name, d) for d in realized_p_list],
+                names=row_index_names,
+            )
+            wide = wide.reindex(canonical, fill_value=0.0)
     return wide
 
 
