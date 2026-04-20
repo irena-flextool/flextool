@@ -501,22 +501,27 @@ def write_empty_investment_file(work_folder: Path | None = None) -> None:
 
 
 def write_empty_cumulative_files(work_folder: Path | None = None) -> None:
-    """Seed header-only cumulative-quota handoff files for the first solve.
+    """Seed header-only ladder rolling accumulator files for the first solve.
 
-    The mod reads ``solve_data/cumulative_ladder_remaining.csv`` at the
-    start of every solve via a ``table data IN 'CSV' ...`` block.  On
-    the very first roll there is no prior solve to emit that CSV, so
-    we write a header-only file here — the CSV reader loads zero rows
-    and the mod's ``p_cumulative_ladder_remaining`` defaults (1e30)
-    leave ``ladder_tier_cap_cumulative`` inactive, giving a bit-identical
-    LP to a single-solve run.  Later rolls overwrite this file via
-    :func:`flextool.process_outputs.cumulative_handoffs.write_cumulative_ladder_remaining`.
+    The mod reads ``solve_data/ladder_cum_realized_mwh.csv`` and
+    ``solve_data/ladder_cum_sim_hours.csv`` at the start of every solve
+    via ``table data IN 'CSV' ...`` blocks.  On the very first roll there
+    is no prior solve to emit them, so we write header-only files here —
+    the CSV readers load zero rows, the mod's default 0 for both params
+    makes ``f_d_k[d]`` collapse to ``horizon_hours / (share * 8760)``
+    (= 1.0 on a full single solve) and ``cum_realized_mwh = 0``, so the
+    rolling caps reduce to their pre-refactor form bit-for-bit on a
+    single solve.  Later rolls overwrite these via
+    :func:`flextool.process_outputs.cumulative_handoffs.write_ladder_rolling_accumulators`.
     """
     wf = work_folder if work_folder is not None else Path.cwd()
     (wf / "solve_data").mkdir(exist_ok=True)
-    with open(wf / "solve_data/cumulative_ladder_remaining.csv", 'w', newline='') as firstfile:
-        writer = csv.writer(firstfile)
-        writer.writerow(["commodity", "tier", "p_cumulative_ladder_remaining"])
+    with open(wf / "solve_data/ladder_cum_realized_mwh.csv", 'w', newline='') as f:
+        csv.writer(f).writerow(
+            ["commodity", "tier", "period", "p_ladder_cum_realized_mwh"]
+        )
+    with open(wf / "solve_data/ladder_cum_sim_hours.csv", 'w', newline='') as f:
+        csv.writer(f).writerow(["period", "p_ladder_cum_sim_hours"])
 
 
 def write_empty_storage_fix_file(work_folder: Path | None = None) -> None:

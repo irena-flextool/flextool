@@ -372,14 +372,24 @@ param p_commodity_ladder_price {(c, i) in commodity__tier} default 0;
 # 1e30 for user-provided +Infinity values and this default matches.
 param p_commodity_ladder_quantity {(c, i) in commodity__tier} default 1e30;
 
-# Per-roll remaining quota for price_ladder_cumulative tiers.  Rewritten
-# at the end of each rolling solve by the Python cumulative-handoff writer
-# (flextool/process_outputs/cumulative_handoffs.py).  Default 1e30
-# matches the "infinite / inactive" sentinel convention used throughout
-# the ladder; an empty seed CSV on the first solve therefore leaves
-# ladder_tier_cap_cumulative trivially satisfied (same numeric behaviour
-# as before the handoff machinery).
-param p_cumulative_ladder_remaining {c in commodity, i in tier} default 1e30;
+# Per-period rolling accumulators for price_ladder_{annual,cumulative} tiers.
+# Rewritten at the end of each rolling solve by the Python cumulative-handoff
+# writer (flextool/process_outputs/cumulative_handoffs.py) as:
+#   p_ladder_cum_realized_mwh[c, i, d] : realized sim-MWh of tier i of commodity
+#       c that fell into period d across all prior rolls.  Zero on the first
+#       solve (header-only seed).
+#   p_ladder_cum_sim_hours[d]          : realized sim-hours of period d across
+#       all prior rolls.  Zero on the first solve.
+# Together with the current roll's horizon these let the LP compute, per
+# period, the fraction of that period "filled" so far and cap v_trade on a
+# rolling-partition basis (see ladder_tier_cap_annual_roll and
+# ladder_tier_cap_cumulative_roll below).
+# Indexed over periodAll (not period_in_use) because the prior roll's CSV
+# may contain rows for periods that are not in the current roll's solve
+# window — the CSV reader rejects out-of-domain rows, and periodAll is
+# the superset that covers every period the model knows about.
+param p_ladder_cum_realized_mwh {c in commodity, i in tier, d in periodAll} default 0;
+param p_ladder_cum_sim_hours {d in periodAll} default 0;
 
 # Commodity-ladder derived sets (used by v_trade and the ladder constraints).
 # 'price' is the default scalar-price behaviour; the two ladder methods route
@@ -703,13 +713,16 @@ table data IN 'CSV' 'solve_data/period_block_succ.csv' : period_block_succ <- [p
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
-# Rolling cumulative-quota handoff for price_ladder_cumulative tiers.
-# Written at the end of each roll by cumulative_handoffs.py as
-# prior + allotment - realized consumption.  Header-only CSV on the
-# first solve (seeded by Python) → zero rows loaded → default 1e30 =
-# inactive constraint.
-table data IN 'CSV' 'solve_data/cumulative_ladder_remaining.csv'
-    : [commodity, tier], p_cumulative_ladder_remaining;
+# Rolling per-period accumulators for price_ladder_* tiers.  Written at
+# the end of each roll by cumulative_handoffs.write_ladder_rolling_accumulators.
+# Header-only CSVs on the first solve (seeded by Python) → zero rows loaded
+# → both params default to 0 → the caps collapse to their single-solve form
+# (f_d_k[d] = horizon_hours_d / (share_of_year[d] * 8760) = 1.0 for a full
+# single solve, and cum_realized_mwh = 0).
+table data IN 'CSV' 'solve_data/ladder_cum_realized_mwh.csv'
+    : [commodity, tier, period], p_ladder_cum_realized_mwh;
+table data IN 'CSV' 'solve_data/ladder_cum_sim_hours.csv'
+    : [period], p_ladder_cum_sim_hours;
 table data IN 'CSV' 'solve_data/branch_all.csv' : branch_all <- [branch];
 table data IN 'CSV' 'solve_data/time_branch_all.csv' : time_branch_all <- [time_branch];
 table data IN 'CSV' 'solve_data/period__branch.csv' : period__branch <- [period, branch];
@@ -1271,6 +1284,17 @@ param p_years_represented_d{d in periodAll} := sum {y in year : (d, y) in period
 
 param complete_hours_in_period{d in period_in_use} := sum {(d2, t) in dt_complete: (d2, d) in period__branch} (complete_step_duration[d2, t]);
 param complete_period_share_of_year{d in period_in_use} := complete_hours_in_period[d] / 8760;
+
+# Rolling "fraction of period d filled" — central to the rolling-aware
+# ladder caps below.  Numerator = sim-hours of period d already realized
+# across prior rolls (p_ladder_cum_sim_hours[d]) plus sim-hours of d seen
+# in the current roll's horizon.  Denominator = full sim-hours of d for
+# one representative year (share_of_year * 8760).  On a single solve
+# covering all of period d this is exactly 1.0 so the rolling caps reduce
+# to their pre-refactor form bit-for-bit.
+param f_d_k {d in period_in_use} :=
+  (p_ladder_cum_sim_hours[d] + sum {(d, t) in dt} step_duration[d, t])
+  / (complete_period_share_of_year[d] * 8760);
 
 param period_share_of_annual_flow {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
         && pdNode[n, 'annual_flow', d]} := abs(sum{(d, t) in dt_complete} (ptNode_inflow[n, t])) / pdNode[n, 'annual_flow', d];
@@ -3599,54 +3623,74 @@ s.t. commodity_ladder_balance {(c, n, d) in cnd_ladder} :
         * step_duration[d, t] * p_rp_cost_weight[d, t] * pdt_branch_weight[d, t]
 ;
 
-# Annual tier cap for price_ladder_annual commodities.  p_commodity_ladder_quantity
-# is user-provided per-year MWh.  After commodity_ladder_balance, v_trade *
-# p_commodity_unitsize has units of realized-timeline MWh (flow accumulated
-# over the active timeline of one representative year).  Annualizing
-# (÷ complete_period_share_of_year) yields per-year MWh; the annual cap is
-# on that value, so the RHS becomes tier_quantity × share.  No
-# years_represented factor — years_represented only scales cost in the
-# objective's inflation factor, not the per-year physical decision.
-# The ladder is on the commodity, so pool the trade across all (c, n) pairs.
-s.t. ladder_tier_cap_annual {c in commodity_with_ladder_annual, d in period_in_use, i in tier
-    : (c, i) in commodity__tier && p_commodity_ladder_quantity[c, i] < 1e29} :
+# Rolling-aware ANNUAL tier cap for price_ladder_annual commodities.
+# p_commodity_ladder_quantity is user-provided per-year MWh.  Across a
+# rolling run that partitions one period into several rolls, each roll
+# is allowed its share f_d_k[d] of the annual cap, minus whatever prior
+# rolls already realized into d (p_ladder_cum_realized_mwh[c, i, d]).
+#
+# On a single solve covering all of period d the accumulators are zero
+# and f_d_k[d] = 1.0, reducing the RHS to p_commodity_ladder_quantity —
+# the pre-refactor form bit-for-bit.  When a prior roll overspent within
+# d (cum_realized > f_d_k * cap), the RHS would go negative and LHS >= 0
+# is infeasible; the overspent-override below handles that case.
+s.t. ladder_tier_cap_annual_roll
+    {c in commodity_with_ladder_annual, d in period_in_use, (c, i) in commodity__tier
+     : p_commodity_ladder_quantity[c, i] < 1e29
+       && f_d_k[d] * p_commodity_ladder_quantity[c, i] >= p_ladder_cum_realized_mwh[c, i, d]} :
   + sum {(c, n) in commodity_node} v_trade[c, n, d, i] * p_commodity_unitsize[c]
   <=
-  + p_commodity_ladder_quantity[c, i] * complete_period_share_of_year[d]
+  + p_commodity_ladder_quantity[c, i] * f_d_k[d]
+  - p_ladder_cum_realized_mwh[c, i, d]
 ;
 
-# Cumulative tier cap for price_ladder_cumulative commodities.  The cap
-# is one total across the whole model horizon (not per-year).  LHS
-# converts realized-timeline MWh to full-horizon MWh by multiplying each
-# period's realized-timeline MWh by years_represented_d /
-# complete_period_share_of_year (annualize then scale to years).  The
-# RHS is the running-balance remaining quota maintained across rolling
-# solves by the Python cumulative-handoff writer — on the first solve
-# the seed CSV is header-only so the default 1e30 keeps the constraint
-# inactive (bit-identical LP to a single-solve run); subsequent rolls
-# read `prior + allotment - realized consumption` from the handoff CSV.
-s.t. ladder_tier_cap_cumulative {(c, i) in ci_ladder_cumulative
-    : p_cumulative_ladder_remaining[c, i] < 1e29
-      && p_cumulative_ladder_remaining[c, i] >= 0} :
+# Annual overspent override — whenever f_d_k[d] × cap < prior realized
+# MWh for (c, i, d), the main cap's RHS would be negative.  Force
+# v_trade = 0 for that period/tier on every commodity_node to keep the
+# LP feasible.  The filter predicate on the main constraint already
+# ensures these two constraints' activation regions are disjoint.
+s.t. ladder_tier_cap_annual_overspent
+    {c in commodity_with_ladder_annual, (c, n) in commodity_node, d in period_in_use, (c, i) in commodity__tier
+     : p_commodity_ladder_quantity[c, i] < 1e29
+       && f_d_k[d] * p_commodity_ladder_quantity[c, i] < p_ladder_cum_realized_mwh[c, i, d]} :
+  + v_trade[c, n, d, i]
+  <=
+  + 0
+;
+
+# Rolling-aware CUMULATIVE tier cap for price_ladder_cumulative commodities.
+# The cap is one total across the whole model horizon (not per-year).
+# LHS is current-roll v_trade × unitsize summed over periods and nodes
+# (realized-timeline MWh); RHS partitions the cap by the sum of f_d_k[d]
+# over periods in this roll's view, minus MWh already realized across
+# ALL prior rolls (the p_ladder_cum_realized_mwh sum ranges over
+# periodAll, not period_in_use, because prior rolls may have realized
+# periods that are not in this roll's window).  On a single full solve
+# the sum of f_d_k reduces to the fraction of the model horizon
+# covered by dt, matching the pre-refactor years_represented /
+# period_share derivation in a non-binding regime.
+s.t. ladder_tier_cap_cumulative_roll
+    {(c, i) in ci_ladder_cumulative
+     : p_commodity_ladder_quantity[c, i] < 1e29
+       && (sum {d in period_in_use} f_d_k[d]) * p_commodity_ladder_quantity[c, i]
+          >= sum {d in periodAll} p_ladder_cum_realized_mwh[c, i, d]} :
   + sum {(c, n) in commodity_node, d in period_in_use}
       v_trade[c, n, d, i] * p_commodity_unitsize[c]
-        * p_years_represented_d[d] / complete_period_share_of_year[d]
   <=
-  + p_cumulative_ladder_remaining[c, i]
+  + p_commodity_ladder_quantity[c, i] * (sum {d in period_in_use} f_d_k[d])
+  - sum {d in periodAll} p_ladder_cum_realized_mwh[c, i, d]
 ;
 
-# Overspend branch of the cumulative cap: when a previous roll
-# consumed more than the remaining quota on tier i, the Python
-# writer records a negative p_cumulative_ladder_remaining[c, i] as
-# a diagnostic signal.  `sum(v_trade >= 0) <= <negative>` is
-# structurally infeasible, so instead of letting the LP die we
-# lock the tier out for every (c, n, d) by forcing v_trade to
-# zero.  A `<= 0` upper bound combined with the variable's
-# `>= 0` lower bound fixes it at zero without assuming GMPL
-# accepts an equality style in indexed constraints.
-s.t. ladder_tier_cap_cumulative_overspent {(c, n, d, i) in cndi_ladder
-    : (c, i) in ci_ladder_cumulative
-      && p_cumulative_ladder_remaining[c, i] < 0} :
+# Cumulative overspent override — mirrors the annual overspent branch.
+# When prior realized MWh summed across all periods exceeds the running
+# cap allotment, force v_trade = 0 on every (c, n, d, i) with tier i in
+# the cumulative ladder.  The filter predicates keep the main cap and
+# this override on disjoint activation regions.
+s.t. ladder_tier_cap_cumulative_overspent
+    {c in commodity_with_ladder_cumulative, (c, n) in commodity_node, d in period_in_use, (c, i) in commodity__tier
+     : p_commodity_ladder_quantity[c, i] < 1e29
+       && (sum {d2 in period_in_use} f_d_k[d2]) * p_commodity_ladder_quantity[c, i]
+          < sum {d2 in periodAll} p_ladder_cum_realized_mwh[c, i, d2]} :
   + v_trade[c, n, d, i]
   <=
   + 0
@@ -4353,29 +4397,6 @@ for {s in solve_current, d in d_realize_dispatch_or_invest} {
     for {e in entity} {
         printf ",%.8g", p_entity_all_existing[e, d] >> "solve_data/p_entity_all_existing.csv";
     }
-}
-
-# Cumulative-handoff total-weight snapshot.  Written exactly once, on
-# the first solve of a rolling run.  The Python cumulative-handoff
-# writer (flextool/process_outputs/cumulative_handoffs.py) uses this
-# scalar as the denominator when proportioning each roll's allotment of
-# a price_ladder_cumulative tier's total cap to the realized span of
-# that roll: allotment = total_cap * span_weight / total_weight.
-# Formula: sum over distinct periods d that appear in dt_complete of
-# p_years_represented_d[d] / complete_period_share_of_year_d, where
-# complete_period_share_of_year_d = (sum of complete_step_duration over
-# rows of dt_complete with that same d) / 8760.  No step_duration and
-# no rp_cost_weight in this per-period weight because v_trade is
-# period-level (see cumulative_handoffs.py consumption formula, which
-# mirrors this weight).  The outer sum ranges over ``period`` with an
-# "exists a t in dt_complete" filter rather than ``setof{} (d)`` — GMPL
-# disallows ``in`` bindings over a setof expression.
-if p_model["solveFirst"] == 1 then {
-  printf "total_weight\n%.12g\n",
-    sum {d2 in period : exists{(d2, tt) in dt_complete} 1}
-      ( p_years_represented_d[d2] * 8760
-        / sum {(d2, t) in dt_complete} complete_step_duration[d2, t] )
-    > "solve_data/cumulative_weight_total.csv";
 }
 
 # Write p_entity_pre_existing

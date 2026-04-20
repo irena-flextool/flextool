@@ -1,24 +1,22 @@
-"""Tests for the rolling cumulative-quota handoff writer.
+"""Tests for the rolling ladder accumulator handoff writer (Bug #1 fix).
 
-Unit tests only — the running-balance formula's correctness hinges on
-three independent pieces (allotment ratio, realized consumption, prior
-carryover) so the tests exercise each in isolation with a mocked HiGHS
-instance and hand-crafted on-disk parameter CSVs.  The end-to-end
-validation (real rolling solve, two-roll underspend + overspend
-assertions) is step 4e in the project plan and lands in a separate
-commit.
+Unit tests only — the writer's correctness hinges on three independent
+pieces (uniform-split realized-MWh attribution, per-period horizon/
+realized hours split, prior-accumulator carryover) so the tests exercise
+each in isolation with a mocked HiGHS instance and hand-crafted on-disk
+parameter CSVs.  The end-to-end validation (real rolling solve, within-
+period rolling for both annual and cumulative) lives in
+``test_commodity_ladder_rolling.py``.
 
 Test matrix:
-    * Single-period solve where ``span_weight == total_weight`` →
-      allotment equals the full cap, and ``remaining = cap − consumption``.
-    * First solve with header-only prior CSV → ``prior_q == 0``.
-    * Infinite tier (quantity >= 1e29) → silently dropped from output.
-    * Commodity without ``price_ladder_cumulative`` price method →
-      ignored even if it appears in ``commodity_ladder.csv``.
-    * Second solve with non-empty prior CSV → prior_remaining flows
-      into the new row.
-    * Missing ``cumulative_weight_total.csv`` → header-only seed (no
-      arithmetic possible, constraint stays inactive next roll).
+    * First-solve empty-prior path → writes header-only files, or adds
+      this-roll contributions when v_trade is non-zero.
+    * Uniform-split logic (v_trade = 100, 25 % realized → 25 MWh added).
+    * Infinite tier (quantity >= 1e29) → no accumulator row written.
+    * Non-ladder commodity (``price`` method) → no accumulator row.
+    * Second solve with non-empty prior → prior + this-roll = new total.
+    * Per-period sim-hours accumulator: zero on first solve, prior +
+      this-roll realized hours on second.
 """
 from __future__ import annotations
 
@@ -31,12 +29,13 @@ import pandas as pd
 import pytest
 
 from flextool.process_outputs.cumulative_handoffs import (
+    _horizon_and_realized_hours,
     _load_commodity_unitsize,
-    _load_cumulative_weight_total,
-    _load_price_ladder_cumulative,
-    _load_prior_cumulative_ladder_remaining,
-    _span_weight,
-    write_cumulative_ladder_remaining,
+    _load_finite_ladder_tiers,
+    _load_ladder_commodities,
+    _load_prior_cum_realized_mwh,
+    _load_prior_cum_sim_hours,
+    write_ladder_rolling_accumulators,
 )
 
 
@@ -71,16 +70,13 @@ def _write_standard_params(
     price_methods: dict[str, str],
     ladder_rows: list[tuple[str, int, float, float]],
     unitsize: dict[str, float],
-    years_map: dict[str, float],
-    period_share: dict[str, float],
-    total_weight: float | None,
-    realized_periods: list[str],
+    realized_pairs: list[tuple[str, str]],
+    horizon_pairs: list[tuple[str, str, float]],
 ) -> None:
     """Seed every CSV the writer loads.
 
-    ``ladder_rows`` is a list of ``(commodity, tier, price, quantity)``
-    tuples matching the ``commodity,tier,price,quantity`` layout written
-    by ``input_writer._write_commodity_ladder``.
+    ``realized_pairs`` go into ``realized_dispatch.csv``; ``horizon_pairs``
+    go into ``steps_in_use.csv`` as ``(period, step, step_duration)``.
     """
     with open(work / "input" / "p_commodity_price_method.csv", "w", newline="") as f:
         w = csv.writer(f)
@@ -100,30 +96,17 @@ def _write_standard_params(
         for c, us in unitsize.items():
             w.writerow([c, us])
 
-    with open(work / "solve_data" / "p_years_represented_d.csv", "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["solve", "period", "value"])
-        for d, yrs in years_map.items():
-            w.writerow(["s1", d, yrs])
-
-    with open(work / "solve_data" / "complete_period_share_of_year.csv", "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["solve", "period", "value"])
-        for d, share in period_share.items():
-            w.writerow(["s1", d, share])
-
-    if total_weight is not None:
-        with open(work / "solve_data" / "cumulative_weight_total.csv", "w", newline="") as f:
-            f.write("total_weight\n")
-            f.write(f"{total_weight}\n")
-
     with open(work / "solve_data" / "realized_dispatch.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["period", "step"])
-        for d in realized_periods:
-            # Single fake step per period — the writer only looks at the
-            # period projection of realized_dispatch.csv.
-            w.writerow([d, "t0001"])
+        for d, t in realized_pairs:
+            w.writerow([d, t])
+
+    with open(work / "solve_data" / "steps_in_use.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["period", "step", "step_duration"])
+        for d, t, dur in horizon_pairs:
+            w.writerow([d, t, dur])
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +114,24 @@ def _write_standard_params(
 # ---------------------------------------------------------------------------
 
 
-def test_load_price_ladder_cumulative_filters_on_method(tmp_path: Path) -> None:
+def test_load_ladder_commodities_includes_annual_and_cumulative(tmp_path: Path) -> None:
+    work = _make_workfolder(tmp_path)
+    _write_standard_params(
+        work,
+        price_methods={
+            "coal": "price_ladder_cumulative",
+            "oil": "price_ladder_annual",
+            "gas": "price",  # ignored
+        },
+        ladder_rows=[],
+        unitsize={"coal": 1.0},
+        realized_pairs=[],
+        horizon_pairs=[],
+    )
+    assert _load_ladder_commodities(work) == {"coal", "oil"}
+
+
+def test_load_finite_ladder_tiers_drops_infinite_and_non_ladder(tmp_path: Path) -> None:
     work = _make_workfolder(tmp_path)
     _write_standard_params(
         work,
@@ -139,15 +139,13 @@ def test_load_price_ladder_cumulative_filters_on_method(tmp_path: Path) -> None:
         ladder_rows=[
             ("coal", 1, 10.0, 100.0),
             ("coal", 2, 50.0, 1e30),         # infinite tier dropped
-            ("gas",  1, 5.0, 999.0),         # non-cumulative method dropped
+            ("gas",  1, 5.0, 999.0),         # non-ladder method dropped
         ],
         unitsize={"coal": 1.0},
-        years_map={"p2020": 1.0},
-        period_share={"p2020": 1.0},
-        total_weight=1.0,
-        realized_periods=["p2020"],
+        realized_pairs=[],
+        horizon_pairs=[],
     )
-    assert _load_price_ladder_cumulative(work) == {("coal", 1): 100.0}
+    assert _load_finite_ladder_tiers(work) == {("coal", 1): 100.0}
 
 
 def test_load_commodity_unitsize_round_trip(tmp_path: Path) -> None:
@@ -158,223 +156,248 @@ def test_load_commodity_unitsize_round_trip(tmp_path: Path) -> None:
     assert _load_commodity_unitsize(work) == {"coal": 2.5, "oil": 10.0}
 
 
-def test_load_cumulative_weight_total_missing_returns_none(tmp_path: Path) -> None:
+def test_load_prior_cum_realized_mwh_header_only(tmp_path: Path) -> None:
     work = _make_workfolder(tmp_path)
-    assert _load_cumulative_weight_total(work) is None
+    path = work / "solve_data" / "ladder_cum_realized_mwh.csv"
+    path.write_text("commodity,tier,period,p_ladder_cum_realized_mwh\n")
+    assert _load_prior_cum_realized_mwh(path) == {}
 
 
-def test_load_cumulative_weight_total_zero_returns_none(tmp_path: Path) -> None:
+def test_load_prior_cum_realized_mwh_round_trip(tmp_path: Path) -> None:
     work = _make_workfolder(tmp_path)
-    (work / "solve_data" / "cumulative_weight_total.csv").write_text(
-        "total_weight\n0\n"
-    )
-    assert _load_cumulative_weight_total(work) is None
-
-
-def test_load_cumulative_weight_total_positive(tmp_path: Path) -> None:
-    work = _make_workfolder(tmp_path)
-    (work / "solve_data" / "cumulative_weight_total.csv").write_text(
-        "total_weight\n12.5\n"
-    )
-    assert _load_cumulative_weight_total(work) == 12.5
-
-
-def test_load_prior_cumulative_ladder_remaining_header_only(tmp_path: Path) -> None:
-    """Header-only seed → empty prior dict."""
-    work = _make_workfolder(tmp_path)
-    path = work / "solve_data" / "cumulative_ladder_remaining.csv"
-    path.write_text("commodity,tier,p_cumulative_ladder_remaining\n")
-    assert _load_prior_cumulative_ladder_remaining(path) == {}
-
-
-def test_load_prior_cumulative_ladder_remaining_round_trip(tmp_path: Path) -> None:
-    work = _make_workfolder(tmp_path)
-    path = work / "solve_data" / "cumulative_ladder_remaining.csv"
+    path = work / "solve_data" / "ladder_cum_realized_mwh.csv"
     path.write_text(
-        "commodity,tier,p_cumulative_ladder_remaining\ncoal,1,42.5\ncoal,2,-3.0\n"
+        "commodity,tier,period,p_ladder_cum_realized_mwh\n"
+        "coal,1,p2020,42.5\ncoal,1,p2025,7.0\n"
     )
-    assert _load_prior_cumulative_ladder_remaining(path) == {
-        ("coal", 1): 42.5, ("coal", 2): -3.0,
+    assert _load_prior_cum_realized_mwh(path) == {
+        ("coal", 1, "p2020"): 42.5,
+        ("coal", 1, "p2025"): 7.0,
     }
 
 
-# ---------------------------------------------------------------------------
-# Span-weight helper
-# ---------------------------------------------------------------------------
-
-
-def test_span_weight_sums_years_over_share_over_realized() -> None:
-    realized = {"p2020", "p2025"}
-    years = {"p2020": 2.0, "p2025": 5.0, "p2030": 10.0}  # p2030 not realized
-    share = {"p2020": 1.0, "p2025": 0.5, "p2030": 1.0}
-    # realized contributions: 2/1 + 5/0.5 = 2 + 10 = 12.
-    assert _span_weight(realized, years, share) == 12.0
-
-
-def test_span_weight_skips_zero_share() -> None:
-    realized = {"p2020"}
-    years = {"p2020": 1.0}
-    share = {"p2020": 0.0}  # guard in _span_weight skips div-by-zero
-    assert _span_weight(realized, years, share) == 0.0
+def test_load_prior_cum_sim_hours_round_trip(tmp_path: Path) -> None:
+    work = _make_workfolder(tmp_path)
+    path = work / "solve_data" / "ladder_cum_sim_hours.csv"
+    path.write_text(
+        "period,p_ladder_cum_sim_hours\np2020,4.0\np2025,12.5\n"
+    )
+    assert _load_prior_cum_sim_hours(path) == {"p2020": 4.0, "p2025": 12.5}
 
 
 # ---------------------------------------------------------------------------
-# write_cumulative_ladder_remaining
+# Horizon / realized-hours helper
 # ---------------------------------------------------------------------------
 
 
-def _read_output(path: Path) -> dict[tuple[str, int], float]:
+def test_horizon_and_realized_hours_partition() -> None:
+    step_duration = {
+        ("p2020", "t0001"): 1.0,
+        ("p2020", "t0002"): 1.0,
+        ("p2020", "t0003"): 1.0,
+        ("p2020", "t0004"): 1.0,
+    }
+    realized_set = {("p2020", "t0001"), ("p2020", "t0002")}
+    horizon, realized = _horizon_and_realized_hours(step_duration, realized_set)
+    assert horizon == {"p2020": 4.0}
+    assert realized == {"p2020": 2.0}
+
+
+def test_horizon_and_realized_hours_empty_realized() -> None:
+    # Lookahead-only horizon: no realized hours in this roll.
+    step_duration = {("p2020", "t0001"): 1.0}
+    horizon, realized = _horizon_and_realized_hours(step_duration, set())
+    assert horizon == {"p2020": 1.0}
+    assert realized == {"p2020": 0.0}
+
+
+# ---------------------------------------------------------------------------
+# write_ladder_rolling_accumulators
+# ---------------------------------------------------------------------------
+
+
+def _read_mwh(path: Path) -> dict[tuple[str, int, str], float]:
     rows = list(csv.DictReader(open(path)))
     return {
-        (r["commodity"], int(r["tier"])): float(r["p_cumulative_ladder_remaining"])
+        (r["commodity"], int(r["tier"]), r["period"]):
+            float(r["p_ladder_cum_realized_mwh"])
         for r in rows
     }
 
 
-def test_first_solve_span_equals_total_weight(tmp_path: Path) -> None:
-    """Single-period solve where the realized span covers the whole
-    horizon → span_weight == total_weight → allotment == cap.
-    Expected: remaining = 0 (prior) + cap * 1.0 - consumption."""
-    work = _make_workfolder(tmp_path, first_solve=True)
-    _write_standard_params(
-        work,
-        price_methods={"coal": "price_ladder_cumulative"},
-        ladder_rows=[
-            ("coal", 1, 10.0, 100.0),   # finite, binding tier
-            ("coal", 2, 50.0, 1e30),    # infinite tail — dropped from output
-        ],
-        unitsize={"coal": 2.0},
-        years_map={"p2020": 1.0},
-        period_share={"p2020": 1.0},   # total_weight = 1 / 1 = 1.0
-        total_weight=1.0,
-        realized_periods=["p2020"],
-    )
-
-    # v_trade[coal, west, p2020, 1] = 30 — both in MWh / unitsize units.
-    # consumption = 30 * unitsize 2 * years 1 / share 1 = 60.
-    # allot = 100 * 1 / 1 = 100.
-    # remaining = 0 + 100 - 60 = 40.
-    h = _fake_highs(
-        variable_names=["v_trade[coal,west,p2020,1]"],
-        col_values=[30.0],
-    )
-    write_cumulative_ladder_remaining(h, solve_name="s1", work_folder=work)
-    out = _read_output(work / "solve_data" / "cumulative_ladder_remaining.csv")
-    assert out == {("coal", 1): 40.0}
+def _read_hrs(path: Path) -> dict[str, float]:
+    rows = list(csv.DictReader(open(path)))
+    return {
+        r["period"]: float(r["p_ladder_cum_sim_hours"]) for r in rows
+    }
 
 
-def test_prior_carryover_accumulates(tmp_path: Path) -> None:
-    """Second solve: prior CSV non-empty → ``prior + allot - consumed``."""
-    work = _make_workfolder(tmp_path, first_solve=False)
-    # Prior roll left remaining = 25.  span/total = 0.5 this roll;
-    # total_cap = 100.  v_trade sums to 10 (unitsize 1, yrs/share 1).
-    # allot = 100 * 0.5 = 50.  remaining = 25 + 50 - 10 = 65.
-    (work / "solve_data" / "cumulative_ladder_remaining.csv").write_text(
-        "commodity,tier,p_cumulative_ladder_remaining\ncoal,1,25\n"
-    )
-    _write_standard_params(
-        work,
-        price_methods={"coal": "price_ladder_cumulative"},
-        ladder_rows=[("coal", 1, 10.0, 100.0)],
-        unitsize={"coal": 1.0},
-        years_map={"p2020": 1.0, "p2025": 1.0},
-        period_share={"p2020": 1.0, "p2025": 1.0},
-        total_weight=2.0,  # 1/1 + 1/1 across dt_complete's two periods
-        realized_periods=["p2020"],  # this roll realizes one period → span 1.0
-    )
-    h = _fake_highs(
-        variable_names=["v_trade[coal,west,p2020,1]"],
-        col_values=[10.0],
-    )
-    write_cumulative_ladder_remaining(h, solve_name="s2", work_folder=work)
-    out = _read_output(work / "solve_data" / "cumulative_ladder_remaining.csv")
-    assert out[("coal", 1)] == pytest.approx(65.0)
-
-
-def test_overspend_yields_negative_remaining(tmp_path: Path) -> None:
-    """Realized-span consumption > allotment → negative remaining
-    (legal, forces the tier out in the next roll)."""
-    work = _make_workfolder(tmp_path, first_solve=True)
-    _write_standard_params(
-        work,
-        price_methods={"coal": "price_ladder_cumulative"},
-        ladder_rows=[("coal", 1, 10.0, 50.0)],
-        unitsize={"coal": 1.0},
-        years_map={"p2020": 1.0, "p2025": 1.0},
-        period_share={"p2020": 1.0, "p2025": 1.0},
-        total_weight=2.0,
-        realized_periods=["p2020"],
-    )
-    # Consumed 40 MWh in the realized span; allot = 50 * 0.5 = 25.
-    # remaining = 0 + 25 - 40 = -15.
-    h = _fake_highs(
-        variable_names=["v_trade[coal,west,p2020,1]"],
-        col_values=[40.0],
-    )
-    write_cumulative_ladder_remaining(h, solve_name="s1", work_folder=work)
-    out = _read_output(work / "solve_data" / "cumulative_ladder_remaining.csv")
-    assert out[("coal", 1)] == pytest.approx(-15.0)
-
-
-def test_no_cumulative_commodities_writes_header_only(tmp_path: Path) -> None:
-    """Every commodity uses scalar price → header-only CSV, no rows."""
-    work = _make_workfolder(tmp_path, first_solve=True)
-    _write_standard_params(
-        work,
-        price_methods={"gas": "price"},
-        ladder_rows=[],
-        unitsize={"gas": 1.0},
-        years_map={"p2020": 1.0},
-        period_share={"p2020": 1.0},
-        total_weight=1.0,
-        realized_periods=["p2020"],
-    )
-    h = _fake_highs(variable_names=[], col_values=[])
-    write_cumulative_ladder_remaining(h, solve_name="s1", work_folder=work)
-    text = (work / "solve_data" / "cumulative_ladder_remaining.csv").read_text()
-    assert text.strip() == "commodity,tier,p_cumulative_ladder_remaining"
-
-
-def test_missing_total_weight_writes_header_only(tmp_path: Path) -> None:
-    """First solve where cumulative_weight_total.csv was never written
-    (e.g. a seed bug) → writer bails out with header-only CSV so the
-    constraint stays inactive on the next roll."""
-    work = _make_workfolder(tmp_path, first_solve=True)
-    _write_standard_params(
-        work,
-        price_methods={"coal": "price_ladder_cumulative"},
-        ladder_rows=[("coal", 1, 10.0, 100.0)],
-        unitsize={"coal": 1.0},
-        years_map={"p2020": 1.0},
-        period_share={"p2020": 1.0},
-        total_weight=None,  # file absent
-        realized_periods=["p2020"],
-    )
-    h = _fake_highs(
-        variable_names=["v_trade[coal,west,p2020,1]"],
-        col_values=[30.0],
-    )
-    write_cumulative_ladder_remaining(h, solve_name="s1", work_folder=work)
-    text = (work / "solve_data" / "cumulative_ladder_remaining.csv").read_text()
-    assert text.strip() == "commodity,tier,p_cumulative_ladder_remaining"
-
-
-def test_pools_v_trade_across_nodes_and_into_per_tier_sums(tmp_path: Path) -> None:
-    """Ladder is commodity-level — consumption pools across all (c, n)
-    pairs for each tier."""
+def test_first_solve_full_realized_horizon(tmp_path: Path) -> None:
+    """Single-roll scenario where every horizon hour is realized.
+    Expected: cum_realized_mwh = v_trade * unitsize (no split); cum_sim_hours
+    = horizon hours."""
     work = _make_workfolder(tmp_path, first_solve=True)
     _write_standard_params(
         work,
         price_methods={"coal": "price_ladder_cumulative"},
         ladder_rows=[
             ("coal", 1, 10.0, 100.0),
-            ("coal", 2, 20.0, 50.0),
+            ("coal", 2, 50.0, 1e30),        # infinite — dropped
+        ],
+        unitsize={"coal": 2.0},
+        realized_pairs=[("p2020", "t0001"), ("p2020", "t0002")],
+        horizon_pairs=[("p2020", "t0001", 1.0), ("p2020", "t0002", 1.0)],
+    )
+    # v_trade[coal, west, p2020, 1] = 30; realized fraction = 2/2 = 1.
+    # realized_mwh = 30 * unitsize 2 * 1.0 = 60.
+    h = _fake_highs(
+        variable_names=["v_trade[coal,west,p2020,1]"],
+        col_values=[30.0],
+    )
+    write_ladder_rolling_accumulators(h, solve_name="s1", work_folder=work)
+
+    mwh = _read_mwh(work / "solve_data" / "ladder_cum_realized_mwh.csv")
+    assert mwh == {("coal", 1, "p2020"): 60.0}
+
+    hrs = _read_hrs(work / "solve_data" / "ladder_cum_sim_hours.csv")
+    assert hrs == {"p2020": 2.0}
+
+
+def test_uniform_split_partial_realized(tmp_path: Path) -> None:
+    """v_trade = 100 MWh period-level, but only 25 % of horizon realized.
+    Uniform-split assumption → 25 MWh accumulated this roll."""
+    work = _make_workfolder(tmp_path, first_solve=True)
+    _write_standard_params(
+        work,
+        price_methods={"coal": "price_ladder_cumulative"},
+        ladder_rows=[("coal", 1, 10.0, 500.0)],
+        unitsize={"coal": 1.0},
+        # 1 of 4 hours realized → fraction = 0.25
+        realized_pairs=[("p2020", "t0001")],
+        horizon_pairs=[
+            ("p2020", "t0001", 1.0),
+            ("p2020", "t0002", 1.0),
+            ("p2020", "t0003", 1.0),
+            ("p2020", "t0004", 1.0),
+        ],
+    )
+    h = _fake_highs(
+        variable_names=["v_trade[coal,west,p2020,1]"],
+        col_values=[100.0],
+    )
+    write_ladder_rolling_accumulators(h, solve_name="s1", work_folder=work)
+
+    mwh = _read_mwh(work / "solve_data" / "ladder_cum_realized_mwh.csv")
+    assert mwh == pytest.approx({("coal", 1, "p2020"): 25.0})
+    hrs = _read_hrs(work / "solve_data" / "ladder_cum_sim_hours.csv")
+    assert hrs == {"p2020": 1.0}
+
+
+def test_prior_accumulation_second_roll(tmp_path: Path) -> None:
+    """Second solve: prior accumulators non-empty → prior + this-roll = new."""
+    work = _make_workfolder(tmp_path, first_solve=False)
+    # Seed prior roll's CSVs.
+    (work / "solve_data" / "ladder_cum_realized_mwh.csv").write_text(
+        "commodity,tier,period,p_ladder_cum_realized_mwh\ncoal,1,p2020,25\n"
+    )
+    (work / "solve_data" / "ladder_cum_sim_hours.csv").write_text(
+        "period,p_ladder_cum_sim_hours\np2020,1\n"
+    )
+    _write_standard_params(
+        work,
+        price_methods={"coal": "price_ladder_cumulative"},
+        ladder_rows=[("coal", 1, 10.0, 500.0)],
+        unitsize={"coal": 1.0},
+        realized_pairs=[("p2020", "t0002")],
+        horizon_pairs=[
+            ("p2020", "t0002", 1.0),
+            ("p2020", "t0003", 1.0),
+        ],
+    )
+    # v_trade = 20 MWh period-level; realized fraction = 1/2 = 0.5.
+    # this-roll contribution = 20 * 1 * 0.5 = 10.  updated = 25 + 10 = 35.
+    # this-roll realized hours = 1.0.  updated cum_sim_hours = 1 + 1 = 2.
+    h = _fake_highs(
+        variable_names=["v_trade[coal,west,p2020,1]"],
+        col_values=[20.0],
+    )
+    write_ladder_rolling_accumulators(h, solve_name="s2", work_folder=work)
+
+    mwh = _read_mwh(work / "solve_data" / "ladder_cum_realized_mwh.csv")
+    assert mwh == pytest.approx({("coal", 1, "p2020"): 35.0})
+
+    hrs = _read_hrs(work / "solve_data" / "ladder_cum_sim_hours.csv")
+    assert hrs == pytest.approx({"p2020": 2.0})
+
+
+def test_lookahead_only_period_not_accumulated(tmp_path: Path) -> None:
+    """v_trade on a period with zero realized hours → nothing accumulated
+    for that period (pure lookahead has no realized MWh).  The period's
+    sim-hours accumulator also stays unchanged."""
+    work = _make_workfolder(tmp_path, first_solve=True)
+    _write_standard_params(
+        work,
+        price_methods={"coal": "price_ladder_cumulative"},
+        ladder_rows=[("coal", 1, 10.0, 500.0)],
+        unitsize={"coal": 1.0},
+        # p2020 realized, p2025 is lookahead only (in horizon, no realize).
+        realized_pairs=[("p2020", "t0001")],
+        horizon_pairs=[
+            ("p2020", "t0001", 1.0),
+            ("p2025", "t0001", 1.0),
+        ],
+    )
+    h = _fake_highs(
+        variable_names=[
+            "v_trade[coal,west,p2020,1]",
+            "v_trade[coal,west,p2025,1]",
+        ],
+        col_values=[10.0, 10.0],
+    )
+    write_ladder_rolling_accumulators(h, solve_name="s1", work_folder=work)
+
+    # Only p2020 contributes; p2025's 10 MWh is lookahead only.
+    mwh = _read_mwh(work / "solve_data" / "ladder_cum_realized_mwh.csv")
+    assert mwh == pytest.approx({("coal", 1, "p2020"): 10.0})
+    hrs = _read_hrs(work / "solve_data" / "ladder_cum_sim_hours.csv")
+    # p2025 present at 0 realized hours; writer still records 0.
+    assert hrs == pytest.approx({"p2020": 1.0, "p2025": 0.0})
+
+
+def test_no_ladder_commodities_writes_header_only(tmp_path: Path) -> None:
+    """Every commodity uses scalar price → header-only CSVs."""
+    work = _make_workfolder(tmp_path, first_solve=True)
+    _write_standard_params(
+        work,
+        price_methods={"gas": "price"},
+        ladder_rows=[],
+        unitsize={"gas": 1.0},
+        realized_pairs=[("p2020", "t0001")],
+        horizon_pairs=[("p2020", "t0001", 1.0)],
+    )
+    h = _fake_highs(variable_names=[], col_values=[])
+    write_ladder_rolling_accumulators(h, solve_name="s1", work_folder=work)
+
+    mwh_text = (work / "solve_data" / "ladder_cum_realized_mwh.csv").read_text()
+    hrs_text = (work / "solve_data" / "ladder_cum_sim_hours.csv").read_text()
+    assert mwh_text.strip() == "commodity,tier,period,p_ladder_cum_realized_mwh"
+    assert hrs_text.strip() == "period,p_ladder_cum_sim_hours"
+
+
+def test_pools_v_trade_across_nodes_and_tiers(tmp_path: Path) -> None:
+    """Ladder is commodity-level — MWh pools across all (c, n) pairs for
+    each tier, with separate rows per tier."""
+    work = _make_workfolder(tmp_path, first_solve=True)
+    _write_standard_params(
+        work,
+        price_methods={"coal": "price_ladder_cumulative"},
+        ladder_rows=[
+            ("coal", 1, 10.0, 500.0),
+            ("coal", 2, 20.0, 500.0),
         ],
         unitsize={"coal": 1.0},
-        years_map={"p2020": 1.0},
-        period_share={"p2020": 1.0},
-        total_weight=1.0,
-        realized_periods=["p2020"],
+        realized_pairs=[("p2020", "t0001")],
+        horizon_pairs=[("p2020", "t0001", 1.0)],
     )
     # Tier 1: 5 at west + 7 at east = 12.  Tier 2: 3 at west only.
     h = _fake_highs(
@@ -385,8 +408,10 @@ def test_pools_v_trade_across_nodes_and_into_per_tier_sums(tmp_path: Path) -> No
         ],
         col_values=[5.0, 7.0, 3.0],
     )
-    write_cumulative_ladder_remaining(h, solve_name="s1", work_folder=work)
-    out = _read_output(work / "solve_data" / "cumulative_ladder_remaining.csv")
-    # Tier 1: remaining = 100 - 12 = 88.  Tier 2: 50 - 3 = 47.
-    assert out[("coal", 1)] == pytest.approx(88.0)
-    assert out[("coal", 2)] == pytest.approx(47.0)
+    write_ladder_rolling_accumulators(h, solve_name="s1", work_folder=work)
+
+    mwh = _read_mwh(work / "solve_data" / "ladder_cum_realized_mwh.csv")
+    assert mwh == pytest.approx({
+        ("coal", 1, "p2020"): 12.0,
+        ("coal", 2, "p2020"): 3.0,
+    })

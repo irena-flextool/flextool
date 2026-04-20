@@ -1,51 +1,51 @@
 """
-Rolling cumulative-quota handoff writers.
+Rolling per-period accumulator writers for price-ladder tiers.
 
-These writers maintain a running balance across rolling solves for
-commodity-ladder tiers whose ``price_method == 'price_ladder_cumulative'``.
-The cap on such a tier is a single MWh total across the whole model
-horizon; in a rolling run each solve only sees a window, so the
-per-roll constraint RHS must subtract what prior rolls already
-consumed and add this roll's share of the total cap.
+These writers maintain two accumulators across rolling solves so the
+LP's ladder caps (annual and cumulative alike) can partition a period's
+quota across rolls that share that period:
 
-Formula (per (commodity, tier) with a finite total cap)::
+* ``solve_data/ladder_cum_realized_mwh.csv`` — ``(commodity, tier, period)
+  → realized sim-MWh of that tier of that commodity that fell into that
+  period across all prior rolls``.  Loaded by the mod into
+  ``p_ladder_cum_realized_mwh[c, i, d]``.
 
-    allot[c, i]          = total_cap[c, i] * span_weight / total_weight
-    new_remaining[c, i]  = prior_remaining[c, i] + allot[c, i]
-                         - consumption_in_realized_span[c, i]
+* ``solve_data/ladder_cum_sim_hours.csv`` — ``period → realized sim-hours
+  of that period across all prior rolls``.  Loaded by the mod into
+  ``p_ladder_cum_sim_hours[d]``.
 
-Where:
+Together with the current roll's horizon these let the mod compute
+``f_d_k[d]``, the fraction of period d "filled" by prior-realized hours
+plus this-roll hours, and cap v_trade on a rolling-partition basis (see
+``flextool.mod`` ladder_tier_cap_annual_roll / _cumulative_roll /
+_annual_overspent / _cumulative_overspent).
 
-* ``total_weight`` — written once on the first solve by ``flextool.mod``
-  into ``solve_data/cumulative_weight_total.csv``.  Equals
-  ``sum{d in distinct periods of dt_complete}
-     p_years_represented_d[d] / complete_period_share_of_year[d]``.
-* ``span_weight`` — sum of the same per-period weight across the
-  realized span of THIS roll (the periods emitted in
-  ``solve_data/realized_dispatch.csv``).
-* ``prior_remaining`` — value in the previous roll's
-  ``solve_data/cumulative_ladder_remaining.csv``.  Absent → 0.0 on
-  the first solve; the seed CSV there is header-only.
-* ``consumption_in_realized_span`` —
-  ``sum over (n, d) in realized-periods, i in tier of
-      v_trade[c, n, d, i] * p_commodity_unitsize[c]
-        * p_years_represented_d[d] / complete_period_share_of_year[d]``.
+Uniform-split assumption (Bug #1 fix, commit #7)
+------------------------------------------------
+``v_trade[c, n, d, i]`` is period-level in the LP (no time index — the
+LP makes one trade decision per (commodity, node, period, tier)).  A
+roll's horizon covers only some of period d's hours, realizes a subset
+(the dispatch window), and looks ahead at the rest.  When attributing
+a roll's v_trade MWh to the "realized" slice, we assume the LP's
+period-level decision distributes uniformly over the horizon's hours:
 
-Because ``v_trade`` is period-level (no time, no branch), the
-consumption formula has **no** ``step_duration`` and **no**
-``p_rp_cost_weight`` — the plan document predates the v_trade design
-and its per-(d,t) formulas must be re-derived to match this period
-indexing.
+    realized_mwh_this_roll[c, i, d] =
+        sum_n v_trade[c, n, d, i] * p_commodity_unitsize[c]
+          * (realized_sim_hours_d / horizon_sim_hours_d)
+
+This is a modelling choice — the LP itself cannot distinguish "realized"
+from "lookahead" hours within a single v_trade number — but it matches
+how cost and dispatch are already attributed at the period-level in the
+rest of the model.  Under it the accumulators form a proper partition:
+summing across all rolls of a run reconstructs the full realized MWh.
 
 Hooked into ``solver_runner._run_highs_or_cplex`` after
 :func:`flextool.process_outputs.handoff_writers.write_all_handoffs`.
-HiGHS-only — the CPLEX fallback still writes cumulative CSVs via the
-legacy glpsol phase-3 pipeline.
+HiGHS-only.
 """
 from __future__ import annotations
 
 import logging
-import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -53,7 +53,7 @@ import pandas as pd
 
 from flextool.process_outputs.handoff_writers import (
     _is_first_solve,
-    _load_complete_period_share_of_year,
+    _load_step_duration,
 )
 from flextool.process_outputs.read_highs_solution import (
     _load_realized_set,
@@ -65,10 +65,17 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-# Matches flextool.mod's "infinite / inactive" sentinel
-# (see NOTES_commit2_ladder_decisions.md).  Tiers with total_cap at or
-# above this value are skipped entirely — they're the infinite tail.
+# Matches flextool.mod's "infinite / inactive" sentinel.  Tiers with
+# total_cap at or above this value are the infinite tail — they have no
+# cap, so no accumulator is needed for them.
 _INFINITE_TIER_THRESHOLD = 1e29
+
+# Commodities that need accumulator tracking: anything using a ladder
+# price method (both annual and cumulative).  `price` commodities are
+# skipped entirely.
+_LADDER_PRICE_METHODS = frozenset(
+    {"price_ladder_annual", "price_ladder_cumulative"}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -92,21 +99,31 @@ def _load_price_methods(work_folder: Path) -> dict[str, str]:
     }
 
 
-def _load_price_ladder_cumulative(
+def _load_ladder_commodities(work_folder: Path) -> set[str]:
+    """Return the set of commodities using any ``price_ladder_*`` method.
+
+    Both annual and cumulative tiers need rolling accumulators now — the
+    mod's per-period cap partitions a period's quota across rolls that
+    share that period.  A non-ladder commodity uses scalar price and is
+    skipped.
+    """
+    return {
+        c for c, m in _load_price_methods(work_folder).items()
+        if m in _LADDER_PRICE_METHODS
+    }
+
+
+def _load_finite_ladder_tiers(
     work_folder: Path,
 ) -> dict[tuple[str, int], float]:
-    """Return ``{(commodity, tier): total_cap}`` for every
-    ``price_ladder_cumulative`` tier with a finite cap.
+    """Return ``{(commodity, tier): quantity}`` for every ladder tier of
+    any ``price_ladder_*`` commodity with a finite cap.
 
-    Infinite tiers (quantity >= 1e29 sentinel) are dropped — they're
-    the tail that absorbs overflow and never binds the cumulative
-    constraint.
+    Infinite tiers (quantity >= 1e29 sentinel) are dropped — they never
+    bind and their accumulator row would contribute nothing.
     """
-    methods = _load_price_methods(work_folder)
-    cumulative_commodities = {
-        c for c, m in methods.items() if m == "price_ladder_cumulative"
-    }
-    if not cumulative_commodities:
+    ladder_commodities = _load_ladder_commodities(work_folder)
+    if not ladder_commodities:
         return {}
     path = work_folder / "input" / "commodity_ladder.csv"
     if not path.exists():
@@ -117,17 +134,14 @@ def _load_price_ladder_cumulative(
     out: dict[tuple[str, int], float] = {}
     for _, row in df.iterrows():
         c = str(row["commodity"])
-        if c not in cumulative_commodities:
+        if c not in ladder_commodities:
             continue
         try:
             tier = int(row["tier"])
-        except (ValueError, TypeError):
-            continue
-        try:
             q = float(row["quantity"])
         except (ValueError, TypeError):
             continue
-        if not math.isfinite(q) or q >= _INFINITE_TIER_THRESHOLD:
+        if q != q or q >= _INFINITE_TIER_THRESHOLD:  # NaN guard + sentinel
             continue
         out[(c, tier)] = q
     return out
@@ -149,146 +163,41 @@ def _load_commodity_unitsize(work_folder: Path) -> dict[str, float]:
     }
 
 
-def _load_years_represented_d(work_folder: Path) -> dict[str, float]:
-    """Return ``{period: p_years_represented_d}`` from
-    ``solve_data/p_years_represented_d.csv``.  The file is written by
-    the mod's phase-1 printf once (first solve) and left alone on
-    later solves, so it covers every period in
-    ``d_realize_dispatch_or_invest`` across the full horizon."""
-    path = work_folder / "solve_data" / "p_years_represented_d.csv"
-    if not path.exists():
-        return {}
-    df = pd.read_csv(path)
-    if df.empty or "period" not in df.columns or "value" not in df.columns:
-        return {}
-    # Multiple rolls may have appended rows for the same period — dedup
-    # by keeping the last value (they must match anyway; the parameter
-    # is model-wide constant).
-    return dict(zip(df["period"].astype(str), df["value"].astype(float)))
-
-
-def _load_cumulative_weight_total(work_folder: Path) -> float | None:
-    """Return the scalar ``total_weight`` from
-    ``solve_data/cumulative_weight_total.csv`` (one-line file written
-    by the mod's phase-1 first-solve block).  Missing / empty / zero
-    → None (caller treats this as "skip, no arithmetic possible")."""
-    path = work_folder / "solve_data" / "cumulative_weight_total.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path)
-    if df.empty or "total_weight" not in df.columns:
-        return None
-    try:
-        val = float(df["total_weight"].iloc[0])
-    except (ValueError, TypeError):
-        return None
-    if val <= 0.0 or not math.isfinite(val):
-        return None
-    return val
-
-
-def _load_prior_cumulative_ladder_remaining(
+def _load_prior_cum_realized_mwh(
     path: Path,
-) -> dict[tuple[str, int], float]:
-    """Return ``{(commodity, tier): remaining}`` from the previous
-    roll's output CSV (or the header-only seed on first solve → empty).
-
-    Graceful on any shape issue — missing columns / unparseable tiers
-    are skipped silently (the caller then treats the entry as prior=0).
+) -> dict[tuple[str, int, str], float]:
+    """Return ``{(commodity, tier, period): cum_mwh}`` from the previous
+    roll's accumulator CSV.  Header-only seed → empty.
     """
     if not path.exists():
         return {}
     df = pd.read_csv(path)
-    needed = {"commodity", "tier", "p_cumulative_ladder_remaining"}
+    needed = {"commodity", "tier", "period", "p_ladder_cum_realized_mwh"}
     if df.empty or not needed.issubset(df.columns):
         return {}
-    out: dict[tuple[str, int], float] = {}
+    out: dict[tuple[str, int, str], float] = {}
     for _, row in df.iterrows():
         try:
             tier = int(row["tier"])
-            val = float(row["p_cumulative_ladder_remaining"])
+            val = float(row["p_ladder_cum_realized_mwh"])
         except (ValueError, TypeError):
             continue
-        out[(str(row["commodity"]), tier)] = val
+        out[(str(row["commodity"]), tier, str(row["period"]))] = val
     return out
 
 
-# ---------------------------------------------------------------------------
-# Arithmetic helpers
-# ---------------------------------------------------------------------------
-
-
-def _span_weight(
-    realized_periods: set[str],
-    years_map: dict[str, float],
-    period_share: dict[str, float],
-) -> float:
-    """Sum ``years_represented[d] / period_share[d]`` over realized
-    periods.  The denominator of the allotment ratio (``total_weight``)
-    uses the same per-period weight summed over ``dt_complete``'s
-    distinct periods, so the ratio is a proper proportional share."""
-    total = 0.0
-    for d in realized_periods:
-        share = period_share.get(d)
-        if share is None or share <= 0.0:
-            continue
-        yrs = years_map.get(d, 0.0)
-        total += yrs / share
-    return total
-
-
-def _ladder_consumption(
-    v_trade_df: pd.DataFrame,
-    realized_periods: set[str],
-    years_map: dict[str, float],
-    period_share: dict[str, float],
-    unitsize: dict[str, float],
-) -> dict[tuple[str, int], float]:
-    """Sum v_trade × unitsize × (years / share) over realized periods
-    and all nodes for each (commodity, tier).
-
-    ``v_trade_df`` row index: ``(solve, period)``.  Column MultiIndex:
-    ``(commodity, node, tier)`` — the ``tier`` level sits last because
-    ``v_trade`` is declared ``v_trade[c, n, d, i]`` in the mod and the
-    extractor drops ``d`` into the row index (see VariableSpec in
-    ``read_highs_solution.py``).  Empty frame → zero consumption for
-    every key (handled by ``dict.get(..., 0.0)`` downstream).
-    """
-    out: dict[tuple[str, int], float] = {}
-    if v_trade_df.empty:
-        return out
-    for row_key, row in v_trade_df.iterrows():
-        # row_key is (solve, period) for has_period=True, has_time=False.
-        if isinstance(row_key, tuple):
-            period = str(row_key[-1])
-        else:
-            period = str(row_key)
-        if period not in realized_periods:
-            continue
-        share = period_share.get(period)
-        if share is None or share <= 0.0:
-            continue
-        yrs = years_map.get(period, 0.0)
-        factor_d = yrs / share
-        if factor_d == 0.0:
-            continue
-        for col_key, val in row.items():
-            if pd.isna(val) or val == 0.0:
-                continue
-            # col_key: (commodity, node, tier).  ``tier`` emerges from
-            # ``trailing_col_names`` in the VariableSpec — often a str
-            # in the wide frame; coerce defensively.
-            if not isinstance(col_key, tuple) or len(col_key) < 3:
-                continue
-            commodity = str(col_key[0])
-            try:
-                tier = int(col_key[-1])
-            except (ValueError, TypeError):
-                continue
-            us = unitsize.get(commodity, 1.0)
-            key = (commodity, tier)
-            out[key] = out.get(key, 0.0) + float(val) * us * factor_d
-    return out
+def _load_prior_cum_sim_hours(path: Path) -> dict[str, float]:
+    """Return ``{period: cum_hours}`` from the previous roll's accumulator."""
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path)
+    needed = {"period", "p_ladder_cum_sim_hours"}
+    if df.empty or not needed.issubset(df.columns):
+        return {}
+    return {
+        str(r["period"]): float(r["p_ladder_cum_sim_hours"])
+        for _, r in df.iterrows()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -296,58 +205,122 @@ def _ladder_consumption(
 # ---------------------------------------------------------------------------
 
 
-def write_cumulative_ladder_remaining(
+def _horizon_and_realized_hours(
+    step_duration: dict[tuple[str, str], float],
+    realized_set: set[tuple[str, str]],
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Compute per-period ``(horizon_hours, realized_hours)``.
+
+    Horizon hours sum ``step_duration`` over every (d, t) this roll's
+    dt loaded from ``steps_in_use.csv``.  Realized hours sum only over
+    the (d, t) pairs listed in ``realized_dispatch.csv``.
+    """
+    horizon: dict[str, float] = {}
+    realized: dict[str, float] = {}
+    for (d, t), dur in step_duration.items():
+        horizon[d] = horizon.get(d, 0.0) + dur
+        if (d, t) in realized_set:
+            realized[d] = realized.get(d, 0.0) + dur
+    # Make sure every horizon period has a realized entry (possibly 0.0)
+    # so iteration below never hits a missing key.
+    for d in horizon:
+        realized.setdefault(d, 0.0)
+    return horizon, realized
+
+
+def _v_trade_realized_mwh_this_roll(
+    v_trade_df: pd.DataFrame,
+    unitsize: dict[str, float],
+    horizon_hours: dict[str, float],
+    realized_hours: dict[str, float],
+    ladder_commodities: set[str],
+) -> dict[tuple[str, int, str], float]:
+    """Sum realized MWh contributions for THIS roll per (commodity, tier, period).
+
+    Uniform-split assumption: v_trade's period-level decision attributes
+    proportionally to realized hours of the roll's view of the period.
+    ``v_trade_df`` row index is ``(solve, period)``; columns are
+    ``(commodity, node, tier)``.  Empty frame → empty dict.
+    """
+    out: dict[tuple[str, int, str], float] = {}
+    if v_trade_df.empty:
+        return out
+    for row_key, row in v_trade_df.iterrows():
+        period = str(row_key[-1]) if isinstance(row_key, tuple) else str(row_key)
+        hz = horizon_hours.get(period, 0.0)
+        if hz <= 0.0:
+            continue
+        rz = realized_hours.get(period, 0.0)
+        if rz <= 0.0:
+            # This roll didn't realize any of period d — v_trade in d is
+            # lookahead only, so no MWh to accumulate.
+            continue
+        fraction = rz / hz
+        for col_key, val in row.items():
+            if pd.isna(val) or val == 0.0:
+                continue
+            if not isinstance(col_key, tuple) or len(col_key) < 3:
+                continue
+            commodity = str(col_key[0])
+            if commodity not in ladder_commodities:
+                continue
+            try:
+                tier = int(col_key[-1])
+            except (ValueError, TypeError):
+                continue
+            us = unitsize.get(commodity, 1.0)
+            key = (commodity, tier, period)
+            out[key] = out.get(key, 0.0) + float(val) * us * fraction
+    return out
+
+
+def write_ladder_rolling_accumulators(
     h: "highspy.Highs",
     *,
     solve_name: str,
     work_folder: Path,
-) -> Path:
-    """Write ``solve_data/cumulative_ladder_remaining.csv`` from the
-    solved HiGHS instance.
+) -> list[Path]:
+    """Write both ladder rolling accumulator CSVs.
 
-    See module docstring for the running-balance formula.  Called once
-    per roll by :func:`write_cumulative_handoffs`; overwrites the file
-    whole (same pattern as :func:`handoff_writers.write_p_entity_divested`).
+    Uses uniform-split assumption: realized MWh of period d in this roll =
+    v_trade_k[c, n, d, i] × unitsize × (realized_sim_hours_d / horizon_sim_hours_d)
+    — i.e., the LP's period-level v_trade decision is assumed to distribute
+    uniformly across the horizon's hours, and the realized portion is a
+    proportional slice.
+
+    Returns [path_to_cum_realized_mwh_csv, path_to_cum_sim_hours_csv].
     """
-    out_path = work_folder / "solve_data" / "cumulative_ladder_remaining.csv"
+    mwh_path = work_folder / "solve_data" / "ladder_cum_realized_mwh.csv"
+    hrs_path = work_folder / "solve_data" / "ladder_cum_sim_hours.csv"
 
-    ladder_total = _load_price_ladder_cumulative(work_folder)
-    if not ladder_total:
-        # No cumulative tiers in this model → keep the seed header so
-        # the mod's ``table data IN`` still finds the file.
-        out_path.write_text(
-            "commodity,tier,p_cumulative_ladder_remaining\n"
-        )
-        return out_path
+    ladder_tiers = _load_finite_ladder_tiers(work_folder)
+    ladder_commodities = {c for (c, _i) in ladder_tiers}
 
-    total_weight = _load_cumulative_weight_total(work_folder)
-    if total_weight is None:
-        _logger.warning(
-            "total_weight missing / zero in %s — emitting seed header only "
-            "(constraint stays inactive on next roll)",
-            work_folder / "solve_data" / "cumulative_weight_total.csv",
+    # Always write at least header-only CSVs so the mod's table-data-in
+    # blocks always find the files (mod defaults cover the empty case).
+    if not ladder_commodities:
+        mwh_path.write_text(
+            "commodity,tier,period,p_ladder_cum_realized_mwh\n"
         )
-        out_path.write_text(
-            "commodity,tier,p_cumulative_ladder_remaining\n"
-        )
-        return out_path
+        # Still need cum_sim_hours — even without ladders the file must
+        # exist.  Zero rows → mod default 0 → f_d_k[d] = horizon / (share
+        # * 8760), which is 1.0 on a full single solve.
+        hrs_path.write_text("period,p_ladder_cum_sim_hours\n")
+        return [mwh_path, hrs_path]
 
-    prior = (
-        {}
-        if _is_first_solve(work_folder)
-        else _load_prior_cumulative_ladder_remaining(out_path)
-    )
+    first_solve = _is_first_solve(work_folder)
+    prior_mwh = {} if first_solve else _load_prior_cum_realized_mwh(mwh_path)
+    prior_hrs = {} if first_solve else _load_prior_cum_sim_hours(hrs_path)
+
+    step_duration = _load_step_duration(work_folder)
     realized_set = _load_realized_set(
         work_folder / "solve_data" / "realized_dispatch.csv"
+    ) or set()
+    horizon_hours, realized_hours = _horizon_and_realized_hours(
+        step_duration, realized_set
     )
-    realized_periods: set[str] = (
-        {p for (p, _t) in realized_set} if realized_set else set()
-    )
-    years_map = _load_years_represented_d(work_folder)
-    period_share = _load_complete_period_share_of_year(work_folder)
-    unitsize = _load_commodity_unitsize(work_folder)
 
-    span_weight = _span_weight(realized_periods, years_map, period_share)
+    unitsize = _load_commodity_unitsize(work_folder)
 
     v_trade_df = extract_variable(
         h,
@@ -357,29 +330,51 @@ def write_cumulative_ladder_remaining(
         has_time=False,
         trailing_col_names=("tier",),
     )
-    consumption = _ladder_consumption(
-        v_trade_df, realized_periods, years_map, period_share, unitsize
+    this_roll_mwh = _v_trade_realized_mwh_this_roll(
+        v_trade_df, unitsize, horizon_hours, realized_hours,
+        ladder_commodities,
     )
 
-    rows: list[tuple[str, int, float]] = []
-    for (c, tier), total_cap in sorted(ladder_total.items()):
-        prior_q = prior.get((c, tier), 0.0)
-        allot = total_cap * span_weight / total_weight
-        consumed = consumption.get((c, tier), 0.0)
-        # Negative remaining is legal — it means an earlier roll
-        # overspent.  The next roll's LP will then strictly exclude
-        # the tier (constraint RHS < 0 with LHS >= 0).
-        rows.append((c, tier, prior_q + allot - consumed))
+    # --- Build updated cum_realized_mwh table -----------------------------
+    # Seed with prior rows, then bump by this roll's contributions.  Only
+    # emit rows for (c, i) actually in ladder_tiers (finite tiers of
+    # ladder commodities) — infinite / non-ladder tiers don't need a row.
+    combined: dict[tuple[str, int, str], float] = dict(prior_mwh)
+    for key, val in this_roll_mwh.items():
+        # Only write rows for finite tiers; this_roll_mwh is already
+        # filtered to ladder commodities via ladder_commodities.
+        if (key[0], key[1]) not in ladder_tiers:
+            continue
+        combined[key] = combined.get(key, 0.0) + val
 
-    out = pd.DataFrame(
-        rows, columns=["commodity", "tier", "p_cumulative_ladder_remaining"]
+    mwh_rows = sorted(
+        ((c, i, d, v) for (c, i, d), v in combined.items()
+         if (c, i) in ladder_tiers),
+        key=lambda r: (r[0], r[1], r[2]),
     )
-    out.to_csv(out_path, index=False, float_format="%.8g")
+    mwh_df = pd.DataFrame(
+        mwh_rows,
+        columns=["commodity", "tier", "period", "p_ladder_cum_realized_mwh"],
+    )
+    mwh_df.to_csv(mwh_path, index=False, float_format="%.8g")
+
+    # --- Build updated cum_sim_hours table --------------------------------
+    # Prior + realized hours from THIS roll.  Include every period
+    # appearing in either.
+    updated_hrs: dict[str, float] = dict(prior_hrs)
+    for d, hrs in realized_hours.items():
+        updated_hrs[d] = updated_hrs.get(d, 0.0) + hrs
+    hrs_rows = sorted(updated_hrs.items(), key=lambda kv: kv[0])
+    hrs_df = pd.DataFrame(
+        hrs_rows, columns=["period", "p_ladder_cum_sim_hours"],
+    )
+    hrs_df.to_csv(hrs_path, index=False, float_format="%.8g")
+
     _logger.info(
-        "wrote %s (%d rows, span_weight=%.6g / total_weight=%.6g)",
-        out_path, len(out), span_weight, total_weight,
+        "wrote %s (%d rows) and %s (%d rows)",
+        mwh_path, len(mwh_df), hrs_path, len(hrs_df),
     )
-    return out_path
+    return [mwh_path, hrs_path]
 
 
 # ---------------------------------------------------------------------------
@@ -396,16 +391,19 @@ def write_cumulative_handoffs(
     """Write every cumulative-quota handoff CSV.
 
     Parallels :func:`flextool.process_outputs.handoff_writers.write_all_handoffs`.
-    Currently just the ladder writer; the CO2 cumulative handoff
-    (``co2_max_total``) is on the roadmap but deferred — see
-    ``project_commodity_ladder.md`` step 4f.
+    Currently just the ladder rolling accumulators; the CO2 cumulative
+    handoff (``co2_max_total``) will mirror this structure in a
+    follow-up commit.
     """
     written: list[Path] = []
-    for fn in (write_cumulative_ladder_remaining,):
-        try:
-            written.append(
-                fn(h, solve_name=solve_name, work_folder=work_folder)
+    try:
+        written.extend(
+            write_ladder_rolling_accumulators(
+                h, solve_name=solve_name, work_folder=work_folder,
             )
-        except Exception as exc:  # noqa: BLE001
-            _logger.warning("%s failed: %s", fn.__name__, exc)
+        )
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "write_ladder_rolling_accumulators failed: %s", exc
+        )
     return written
