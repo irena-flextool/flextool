@@ -71,7 +71,7 @@ Then, add parameter data to the newly minted *west* `node`:
 - First add an `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. This is tedious to do by hand, so you can also copy-paste this from the init database.
 - There are no electricity generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. This represents the cost of not fulfilling the demand. Also downward `penalty_down` is defined although the model is not using it at this stage. Here values of 9000 and 8000 are used respectively. By default the model uses the value 10 000 for these. Therefore, it is not mandatory to set them, but sometimes these values need to be changed, so understanding how they work is nessesary.
 - Penalties and slack variables are tools of linear optimization. They ensure that the problem is feasable at all timesteps even when the in-out-balance of the nodes is violated. If no real penalty values are known, one should just use large enough numbers, so that the system won't prefer penalty to energy production. In the results, you can see at which timesteps the penalties are used.
-- The parameter `has_balance` is related to this and should be set to *yes*. It forces the node to have a balance on inflow and outflow. If the demand is not fulfilled, balance is forced by the slack variable that will "create" the energy with the penalty associated with it. 
+- The parameter `node_type` is related to this and should be set to *balance* (the default). It forces the node to have a balance on inflow and outflow. If the demand is not fulfilled, balance is forced by the slack variable that will "create" the energy with the penalty associated with it. 
 - All parameters here should be part of the *west* `alternative` (column alternative_name) - they will be used whenever a `scenario` includes the *west* `alternative`. The difference between parameter `alternative` and `Entity Alternative` is that the former includes only that specific parameter and the latter includes the entity itself.
 
 ![First_node](./west_node.png)
@@ -188,7 +188,7 @@ Remember to **commit**, execute and have a look at the results (there should be 
 
 The new nodes are kept simple: 
 
-- they have a `has_balance` parameter set to *yes* (to force the node to maintain an energy balance)
+- they have a `node_type` parameter set to *balance* (to force the node to maintain an energy balance — this is the default, so it can be left blank)
 - they have a constant negative `inflow` (i.e. demand)
 - penalty values for violating their energy balance
 

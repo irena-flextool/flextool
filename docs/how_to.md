@@ -182,8 +182,7 @@ The `node` needs to be added to an alternative in the `Entity Alternative` sheet
 
 To make a storage node one the required parameters are:
 
-- `has_balance`: yes
-- `has_storage`: yes
+- `node_type`: storage
 - `existing`: The maximum storage size of battery as the potential energy [MWh]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: a large number to prefer not creating energy from nowhere
@@ -315,7 +314,7 @@ The *heat* `node` needs to be added to an alternative in the `Entity Alternative
 
 The required parameters are:
 
-- `has_balance`: yes
+- `node_type`: balance
 - `inflow`: Map for the heat demand (negative) [MW]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: a large number to prefer not creating energy from nowhere
@@ -382,8 +381,7 @@ Add the *reservoir* node to an alternative in the `Entity Alternative` sheet (if
 
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
-- `has_balance`: yes
-- `has_storage`: yes
+- `node_type`: storage
 - `inflow`: Mapping of the incoming water as volume [m^3/h]
 - `existing`: The maximum size of the reservoir [m^3]
 - `penalty_up`: a larger number than with the demand node to not allow creating extra water if not enough electricity is being created
@@ -414,7 +412,7 @@ Let's start with the downriver demand.
 The downriver node represents the requirement to pass a minimum amount of water through the plant to not dry out the river. The downriver node needs:
 
 - To be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
-- `has_balance`: yes
+- `node_type`: balance
 - `inflow`: Minimum requirement of water flow as the potential power (Map or constant)[m^3/h]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: 0, this makes the requirement to be at least the amount of water as the demand, not the equal to it
@@ -487,8 +485,7 @@ The *reservoir* `node` needs to be added to an alternative in the `Entity Altern
 
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
-- `has_balance`: yes
-- `has_storage`: yes
+- `node_type`: storage
 - `inflow`: Mapping of the incoming water as the potential power [MW]
 - `existing`: The maximum size of the reservoir as the potential energy [MWh]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
@@ -508,8 +505,7 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* 
 
 Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and have same the parameters as the reservoir:
 
-- `has_balance`: yes
-- `has_storage`: yes
+- `node_type`: storage
 - `existing`: The maximum size of the storage [MWh]. Note that this really represents the mass of the water and it should be converted as the potential of the energy of the reservoir-plant system. So that 1 liter of water has the same energy in both storages.
 - `penalty_up`: a large number to avoid creating energy from nowhere
 - `penalty_down`: 0

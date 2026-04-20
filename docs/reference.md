@@ -116,8 +116,11 @@ The tool includes some assumptions about the time structure, in case something p
 These parameters will define how the node will behave and use the data it is given (available choices are marked in *italics*):
 
 - `name` - unique name identifier (case sensitive)
-- `has_balance` - does the node maintain a balance for inputs and outputs: *yes* (if not defined, then balance is not maintained)
-- `has_storage` - does the node represent a storage and therefore have a state: *yes* (if not defined, then no storage)
+- `node_type` - role of the node in the LP (default *balance*):
+    - *commodity* - price-exposed source/sink with no balance constraint (fuel imports, no storage)
+    - *balance* - energy balance maintained every timestep
+    - *storage* - balance plus a state variable (battery, reservoir)
+    - *balance_within_period* - balance aggregated over the whole period (e.g. an annual gas budget)
 - `invest_method` - Choice of investment method: either *not_allowed* or then a combination of 
     - *invest* and/or *retire* 
     - investment limits for each *period* and/or for all periods (*total*) or *no_limit* 
@@ -139,7 +142,7 @@ Input data is set with the following parameters:
 
 - `inflow` - [MWh] Inflow into the node (negative is outflow). Constant or time series.
 - `annual_flow` - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.
-- `existing` - [MWh] Existing storage capacity (requires `has_storage`). Constant or period.
+- `existing` - [MWh] Existing storage capacity (requires `node_type=storage`). Constant or period.
 - `invest_cost` - [CUR/kWh] Investment cost for new storage capacity. Constant or period.
 - `salvage_value` - [CUR/kWh] Salvage value of the storage. Constant or period.
 - `lifetime` - [years] Life time of the storage unit represented by the node. Constant or period.
@@ -160,7 +163,7 @@ Input data is set with the following parameters:
 
 ### Using nodes as storages
 
-FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (`has_balance` set to *yes*). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting `has_storage` to *yes* and by adding storage capacity using the `existing` parameter and/or by letting the model invest in storage capacity (`invest_method`, `invest_cost`, `invest_max_period` and `invest_max_total` parameters).
+FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (`node_type=balance`). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting `node_type=storage` and by adding storage capacity using the `existing` parameter and/or by letting the model invest in storage capacity (`invest_method`, `invest_cost`, `invest_max_period` and `invest_max_total` parameters).
 
 Since FlexTool allows different temporal structures (multi-periods, rolling optimization, etc.) there needs to be ways to define how the storages behave when the model timeline is not fully consequtive. By default, storages are forced to match start level to the end level within timesets. This is an acceptable setting for small storages that do not carry meaningful amounts of energy between longer time periods in the model.
 
