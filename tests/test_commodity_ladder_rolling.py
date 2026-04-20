@@ -500,27 +500,18 @@ class TestCumulativeLadderOverspendRecordsNegativeRemaining:
             f"or the scaling formula changed."
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "mod-side bug: with negative p_cumulative_ladder_remaining, "
-            "the ladder_tier_cap_cumulative constraint (LHS of non-"
-            "negative v_trade terms <= negative RHS) is structurally "
-            "infeasible rather than forcing tier v_trade to zero.  "
-            "Needs a mod-side fix (either clamp RHS at max(0, ...) or "
-            "add an else-branch that fixes v_trade = 0).  Tracked in "
-            "NOTES_commit5_validation_decisions.md."
-        ),
-        strict=True,
-        raises=SystemExit,
-    )
     def test_roll2_uses_tier2_only_after_roll1_overspend(
         self,
         cumulative_db_url_overspend: str,
         test_bin_dir: Path,
         tmp_path_factory: pytest.TempPathFactory,
     ) -> None:
-        """Full two-roll overspend — xfail until the mod's cumulative
-        constraint handles negative remainings by zeroing v_trade."""
+        """Full two-roll overspend — roll 1 exhausts tier 1's tiny cap
+        (writer records negative p_cumulative_ladder_remaining), roll 2
+        sees the negative remaining and the mod's
+        ``ladder_tier_cap_cumulative_overspent`` constraint forces
+        ``v_trade[coal, *, *, 1] = 0`` for every (c, n, d), pushing
+        dispatch onto tier 2."""
         workdir = tmp_path_factory.mktemp("cum_over_roll")
         os.chdir(workdir)
         _run("coal_cum_rolling", cumulative_db_url_overspend,
@@ -531,8 +522,16 @@ class TestCumulativeLadderOverspendRecordsNegativeRemaining:
 
         final_roll = parquets[-1]
         per_tier = _sum_v_trade_per_tier(final_roll)
-        assert per_tier.get(1, 0.0) <= 1e-6
-        assert per_tier.get(2, 0.0) > 0
+        assert per_tier.get(1, 0.0) <= 1e-6, (
+            f"Tier 1 must be locked out in roll 2 after roll-1 "
+            f"overspend recorded a negative remaining.  Got tier-1 "
+            f"sum={per_tier.get(1, 0.0)} in {final_roll.name}."
+        )
+        assert per_tier.get(2, 0.0) > 0, (
+            f"Tier 2 (tail) must absorb roll-2 dispatch when tier 1 "
+            f"is locked out.  Got tier-2 sum={per_tier.get(2, 0.0)} "
+            f"in {final_roll.name}."
+        )
 
 
 class TestCumulativeLadderSingleSolveIsNoop:

@@ -3626,12 +3626,30 @@ s.t. ladder_tier_cap_annual {c in commodity_with_ladder_annual, d in period_in_u
 # inactive (bit-identical LP to a single-solve run); subsequent rolls
 # read `prior + allotment - realized consumption` from the handoff CSV.
 s.t. ladder_tier_cap_cumulative {(c, i) in ci_ladder_cumulative
-    : p_cumulative_ladder_remaining[c, i] < 1e29} :
+    : p_cumulative_ladder_remaining[c, i] < 1e29
+      && p_cumulative_ladder_remaining[c, i] >= 0} :
   + sum {(c, n) in commodity_node, d in period_in_use}
       v_trade[c, n, d, i] * p_commodity_unitsize[c]
         * p_years_represented_d[d] / complete_period_share_of_year[d]
   <=
   + p_cumulative_ladder_remaining[c, i]
+;
+
+# Overspend branch of the cumulative cap: when a previous roll
+# consumed more than the remaining quota on tier i, the Python
+# writer records a negative p_cumulative_ladder_remaining[c, i] as
+# a diagnostic signal.  `sum(v_trade >= 0) <= <negative>` is
+# structurally infeasible, so instead of letting the LP die we
+# lock the tier out for every (c, n, d) by forcing v_trade to
+# zero.  A `<= 0` upper bound combined with the variable's
+# `>= 0` lower bound fixes it at zero without assuming GMPL
+# accepts an equality style in indexed constraints.
+s.t. ladder_tier_cap_cumulative_overspent {(c, n, d, i) in cndi_ladder
+    : (c, i) in ci_ladder_cumulative
+      && p_cumulative_ladder_remaining[c, i] < 0} :
+  + v_trade[c, n, d, i]
+  <=
+  + 0
 ;
 
 # Infinite-tier bound.  When a tier has p_commodity_ladder_quantity = +Infinity
