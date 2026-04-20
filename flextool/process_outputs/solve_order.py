@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -55,29 +56,29 @@ def load_solve_order(work_folder: Path | str) -> dict[str, int]:
 def canonical_sort(
     df: pd.DataFrame, solve_order: dict[str, int],
 ) -> pd.DataFrame:
-    """Reorder rows by solve creation order; preserve other levels.
+    """Reorder rows by solve creation order; preserve within-solve order.
 
     Operates only on frames whose row MultiIndex contains ``solve`` as
-    a level.  For other frames (or empty frames) the input is returned
+    a level.  For other frames (or rowless frames) the input is returned
     unchanged.
 
-    Implementation: prepend a numeric ``_solve_order`` level (mapped via
-    ``solve_order``), ``sort_index()``, then drop the helper level.
-    Solves missing from ``solve_order`` get position ``-1`` and sort
-    first (defensive — won't normally happen since every solve is
-    recorded in ``solve_progress.csv``).
+    **Within-solve row order is preserved** — important for representative-
+    period scenarios where the model emits timesteps in selected-RP order
+    (e.g. ``t0001..t0024, t0121..t0144, ...``) rather than lex order.
+    A naive ``sort_index()`` would lex-sort timesteps and split a frame
+    that only differs from another by being empty (so it skipped sort)
+    out of alignment.
+
+    Implementation: stable ``argsort`` by ``solve_pos`` only — solves
+    missing from ``solve_order`` get position ``-1`` and sort first
+    (defensive; every solve appears in ``solve_progress.csv``).
     """
     if not isinstance(df.index, pd.MultiIndex) or "solve" not in df.index.names:
         return df
-    if df.empty:
+    if len(df) == 0:
         return df
     solve_pos = (
         df.index.get_level_values("solve").map(solve_order).fillna(-1).astype(int)
     )
-    new_idx = pd.MultiIndex.from_arrays(
-        [solve_pos, *(df.index.get_level_values(n) for n in df.index.names)],
-        names=["_solve_order", *df.index.names],
-    )
-    sorted_df = df.set_axis(new_idx, axis=0).sort_index()
-    sorted_df.index = sorted_df.index.droplevel("_solve_order")
-    return sorted_df
+    order = np.argsort(np.asarray(solve_pos), kind="stable")
+    return df.iloc[order]
