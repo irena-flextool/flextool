@@ -1437,6 +1437,16 @@ def _write_commodity_ladder(db, wf: Path, logger: logging.Logger) -> None:
             facets = per_tier[tier_str]
             price = facets.get("price", "0")
             quantity = facets.get("quantity", "inf")
+            # GMPL's CSV reader rejects 'inf'/'Infinity' literals.  Emit a
+            # large numeric sentinel that the mod treats as the infinite
+            # tier (see ladder_tier_cap_infinite in flextool.mod which
+            # pattern-matches on quantity >= INFINITE_TIER_THRESHOLD).
+            try:
+                q_float = float(quantity)
+            except ValueError:
+                q_float = float("inf")
+            if q_float == float("inf") or q_float >= 1e30:
+                quantity = "1e30"
             try:
                 tier_int = int(tier_str)
             except ValueError:

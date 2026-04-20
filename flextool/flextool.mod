@@ -284,8 +284,11 @@ set node_capacity_constraint_prebuilt dimen 2 within {node, constraint};
 set node_state_constraint dimen 2 within {node, constraint};
 set constraint__sense dimen 2 within {constraint, sense};
 set commodity_node dimen 2 within {commodity, node};
-set tier dimen 1;
-set commodity__tier dimen 2 within {commodity, tier};
+# Tier indices used by the commodity price ladder.  The set is populated
+# by the CSV reader at line ~591 (commodity_ladder.csv); downstream
+# `tier` values are drawn from whatever tiers appear there.
+set commodity__tier dimen 2;
+set tier := setof {(c, i) in commodity__tier} (i);
 
 set dt dimen 2 within period_time;
 param dt_jump {(d, t) in dt};
@@ -362,7 +365,19 @@ param pt_commodity {c in commodity, commodityTimeParam, time} default 0;
 param p_commodity_price_method {c in commodity} symbolic in price_method, default 'price';
 param p_commodity_unitsize {c in commodity} default 1.0;
 param p_commodity_ladder_price {(c, i) in commodity__tier} default 0;
-param p_commodity_ladder_quantity {(c, i) in commodity__tier} default +Infinity;
+# Ladder quantity default is a very large sentinel that the mod treats as
+# "infinite" (see ladder_tier_cap_infinite below and the 1e30 sentinel
+# emitted by flextoolrunner/input_writer._write_commodity_ladder).  GMPL's
+# CSV reader rejects literal 'inf' / 'Infinity', so the Python side writes
+# 1e30 for user-provided +Infinity values and this default matches.
+param p_commodity_ladder_quantity {(c, i) in commodity__tier} default 1e30;
+
+# Commodity-ladder derived sets (used by v_trade and the ladder constraints).
+# 'price' is the default scalar-price behaviour; the two ladder methods route
+# into v_trade / tier caps and replace the pdtCommodity price objective term.
+set commodity_with_ladder            := {c in commodity : p_commodity_price_method[c] != 'price'};
+set commodity_with_ladder_annual     := {c in commodity : p_commodity_price_method[c] == 'price_ladder_annual'};
+set commodity_with_ladder_cumulative := {c in commodity : p_commodity_price_method[c] == 'price_ladder_cumulative'};
 
 param p_node {node, nodeParam} default 0;
 param pd_node {node, nodePeriodParam, periodAll} default 0;
@@ -1704,6 +1719,21 @@ set group_commodity_node_period_co2_total :=
 			&& g in group_co2_max_total
 		};
 
+# Commodity-ladder index sets.  cnd_ladder lists (commodity, node, period)
+# triples that need period-level v_trade variables; cndi_ladder adds the
+# tier index; ci_ladder_cumulative is the list of (c, i) subject to the
+# horizon-wide cumulative cap.
+set cnd_ladder dimen 3 := {(c, n) in commodity_node, d in period_in_use : c in commodity_with_ladder};
+# cndi_ladder lists (c, n, d, i) quadruples.  The (c2, i) in commodity__tier
+# predicate with c2 == c enforces that i is drawn from the tiers defined
+# for that particular commodity.  Avoid `setof` / reusing `c` in the inner
+# tuple — GMPL rebinds the name and can yield "no value for tier" errors
+# in dependent expressions.
+set cndi_ladder dimen 4
+    := {(c, n) in commodity_node, d in period_in_use, i in tier
+        : c in commodity_with_ladder && (c, i) in commodity__tier};
+set ci_ladder_cumulative := {(c, i) in commodity__tier : c in commodity_with_ladder_cumulative};
+
 set process__commodity__node := {p in process, (c, n) in commodity_node : (p, n) in process_source || (p, n) in process_sink};
 
 set commodity_node_co2 :=
@@ -1999,6 +2029,15 @@ var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
 var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0;
 var vq_state_up_group {g in group_loss_share, (d,t) in dt} >= 0;
 
+# Commodity-ladder period-level trade variable.  Column unit is
+# MWh / p_commodity_unitsize[c] (matches entity-unitsize convention
+# used by v_flow / v_state).  No t index and no branch index — v_trade
+# is a period-level decision; stochastic branches pool into a single
+# un-branched trade.  Defined only for commodities using a ladder
+# price method; upper bounds are imposed by the tier-cap constraints
+# below.
+var v_trade {(c, n, d, i) in cndi_ladder} >= 0;
+
 #########################
 ## Data checks
 if p_model["solveFirst"] == 1 && 'read' in phase then {
@@ -2148,7 +2187,7 @@ printf ',%s', setup - datetime0 >> solve_progress;
 printf("Constraint generation:\n");
 
 minimize total_cost:
-( + sum {(c, n) in commodity_node, (d, t) in dt}
+( + sum {(c, n) in commodity_node, (d, t) in dt : c not in commodity_with_ladder}
     (+ pdtCommodity[c, 'price', d, t]
 	  * (
 		  # Buying a commodity (increases the objective function)
@@ -2173,6 +2212,20 @@ minimize total_cost:
 		)
 	  * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	)
+  # Commodity-ladder price term.  v_trade * p_commodity_unitsize is the
+  # branch-weighted realized-timeline MWh purchased in period d (set by
+  # commodity_ladder_balance below), so multiplying by
+  # p_inflation_factor_operations_yearly / complete_period_share_of_year
+  # matches the pdtCommodity annualization exactly: when a single-tier
+  # ladder uses price_method='price_ladder_annual' with the same price as
+  # pdtCommodity['price'] and unitsize=1, the objective contribution is
+  # bit-identical to the legacy term.
+  + sum {(c, n, d, i) in cndi_ladder}
+      ( + p_commodity_ladder_price[c, i]
+          * v_trade[c, n, d, i]
+          * p_commodity_unitsize[c]
+          * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
+      )
   + sum {(g, c, n, d, t) in gcndt_co2_price}
     (+ p_commodity[c, 'co2_content'] * pdtGroup[g, 'co2_price', d, t]
 	  * (
@@ -3496,6 +3549,87 @@ s.t. minCumulative_capacity {(e, d) in ed_invest_cumulative : ed_cumulative_min_
   - (if (e, d) in ed_divest then v_divest[e, d] * p_entity_unitsize[e])
   >=
   + ed_cumulative_min_capacity[e, d]
+;
+
+# Commodity-ladder balance link: the sum over tiers of v_trade (scaled by
+# p_commodity_unitsize) equals the branch-weighted realized-timeline MWh
+# that the processes buy from / sell to the (c, n) commodity node during
+# period d.  The aggregation mirrors the pdtCommodity price term (noEff
+# flow, eff flow × slope, and the min_load_efficiency online section) so
+# that a single-tier ∞-quantity ladder at the same price is bit-identical
+# to the legacy objective term.
+s.t. commodity_ladder_balance {(c, n, d) in cnd_ladder} :
+  + sum {(c, n, d, i) in cndi_ladder} v_trade[c, n, d, i] * p_commodity_unitsize[c]
+  =
+  # Buying: flows INTO n (n is sink of a process)
+  + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt}
+      ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] )
+        * step_duration[d, t] * p_rp_cost_weight[d, t] * pdt_branch_weight[d, t]
+  + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt}
+      ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
+            * pdtProcess_slope[p, d, t]
+            * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
+        + (if (p, 'min_load_efficiency') in process__ct_method then
+            + ( + (if p in process_online_linear then v_online_linear[p, d, t])
+                + (if p in process_online_integer then v_online_integer[p, d, t])
+              )
+              * pdtProcess_section[p, d, t]
+              * p_entity_unitsize[p]
+          )
+      ) * step_duration[d, t] * p_rp_cost_weight[d, t] * pdt_branch_weight[d, t]
+  # Selling: flows OUT of n (n is source of a process)
+  - sum {(p, source, n) in process_source_sink, (d, t) in dt}
+      ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] )
+        * step_duration[d, t] * p_rp_cost_weight[d, t] * pdt_branch_weight[d, t]
+;
+
+# Annual tier cap for price_ladder_annual commodities.  p_commodity_ladder_quantity
+# is user-provided per-year MWh.  After commodity_ladder_balance, v_trade *
+# p_commodity_unitsize has units of realized-timeline MWh (flow accumulated
+# over the active timeline of one representative year).  Annualizing
+# (÷ complete_period_share_of_year) yields per-year MWh; the annual cap is
+# on that value, so the RHS becomes tier_quantity × share.  No
+# years_represented factor — years_represented only scales cost in the
+# objective's inflation factor, not the per-year physical decision.
+# The ladder is on the commodity, so pool the trade across all (c, n) pairs.
+s.t. ladder_tier_cap_annual {c in commodity_with_ladder_annual, d in period_in_use, i in tier
+    : (c, i) in commodity__tier && p_commodity_ladder_quantity[c, i] < 1e29} :
+  + sum {(c, n) in commodity_node} v_trade[c, n, d, i] * p_commodity_unitsize[c]
+  <=
+  + p_commodity_ladder_quantity[c, i] * complete_period_share_of_year[d]
+;
+
+# Cumulative tier cap for price_ladder_cumulative commodities.  The cap
+# is one total across the model horizon (not per-year).  LHS converts
+# realized-timeline MWh to full-horizon MWh by multiplying each period's
+# realized-timeline MWh by years_represented_d / complete_period_share_of_year
+# (annualize then scale to years).  Rolling solves currently reset this
+# cap each roll; step 4 of the ladder project will wrap this into a
+# running-balance handoff.
+s.t. ladder_tier_cap_cumulative {(c, i) in ci_ladder_cumulative
+    : p_commodity_ladder_quantity[c, i] < 1e29} :
+  + sum {(c, n) in commodity_node, d in period_in_use}
+      v_trade[c, n, d, i] * p_commodity_unitsize[c]
+        * p_years_represented_d[d] / complete_period_share_of_year[d]
+  <=
+  + p_commodity_ladder_quantity[c, i]
+;
+
+# Infinite-tier bound.  When a tier has p_commodity_ladder_quantity = +Infinity
+# the variable is otherwise unbounded; cap it with the global
+# p_max_flow_for_unconstrained_variables (MW) times the realized-timeline
+# hours (complete_period_share_of_year[d] * 8760).  That matches the MWh
+# ceiling v_trade * unitsize would naturally hit if all connected processes
+# ran at max_flow through the full timeline.
+# TODO decision #1: a tighter bound based on sum of connected
+# process p_flow_max × p_entity_unitsize would be preferable but requires
+# a commodity__node→process connectivity set that is not precomputed;
+# postponed to a follow-up commit.
+s.t. ladder_tier_cap_infinite {(c, n, d, i) in cndi_ladder
+    : p_commodity_ladder_quantity[c, i] >= 1e29} :
+  + v_trade[c, n, d, i] * p_commodity_unitsize[c]
+  <=
+  + p_unconstrained_flow_cap * 8760 * complete_period_share_of_year[d]
 ;
 
 s.t. maxCumulative_flow_solve {g in group : p_group[g, 'max_cumulative_flow']} :
