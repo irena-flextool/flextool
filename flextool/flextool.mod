@@ -634,9 +634,9 @@ if p_model["solveFirst"] == 1 and 'read' in phase then {
   printf "entity,p_entity_invested\n" > "solve_data/p_entity_invested.csv";
   printf "entity,p_entity_divested\n" > "solve_data/p_entity_divested.csv";
   printf "entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n" > "solve_data/p_entity_period_existing_capacity.csv";
-  printf "node, period, step, ndt_fix_storage_price\n" > "solve_data/fix_storage_price.csv";
-  printf "node, period, step, ndt_fix_storage_quantity\n" > "solve_data/fix_storage_quantity.csv";
-  printf "node, period, step, ndt_fix_storage_usage\n" > "solve_data/fix_storage_usage.csv";
+  printf "period,step,node,p_fix_storage_price\n" > "solve_data/fix_storage_price.csv";
+  printf "period,step,node,p_fix_storage_quantity\n" > "solve_data/fix_storage_quantity.csv";
+  printf "period,step,node,p_fix_storage_usage\n" > "solve_data/fix_storage_usage.csv";
   printf "node, p_roll_continue_state\n" > "solve_data/p_roll_continue_state.csv";
   printf 'param_costs,costs_discounted\n' > "solve_data/costs_discounted.csv";
   printf 'param_co2\n' > "solve_data/co2.csv";
@@ -5555,10 +5555,12 @@ for {e in entityDivest}
 
 printf 'Write node state quantity for fixed timesteps ..\n';
 param fn_fix_quantity_nodeState__dt symbolic := "solve_data/fix_storage_quantity.csv";
-for {i in 1..1 : p_model['solveFirst']}
-  { printf 'period,step,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
-  }
-for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
+# Truncate + header only when this solve will write rows — otherwise
+# preserve the prior solve's handoff content.  The canonical header is
+# also written by the phase-1 init (above mod:638) on the very first
+# solve, so a first solve with no fix_storage still produces a
+# well-formed header-only file for the next solve's read at mod:652.
+for {i in 1..1 : exists{(d,t) in dt_fix_storage_timesteps} 1}
   { printf 'period,step,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
   }
 for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}
@@ -5568,10 +5570,7 @@ for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt_fix_sto
 
 printf 'Write node state price for fixed timesteps ..\n';
 param fn_fix_price_nodeState__dt symbolic := "solve_data/fix_storage_price.csv";
-for {i in 1..1 : p_model['solveFirst']}
-  { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
-  }
-for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
+for {i in 1..1 : exists{(d,t) in dt_fix_storage_timesteps} 1}
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
 for {c in solve_current, (n,'fix_price') in node__storage_nested_fix_method, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt: (d, t) in dt_fix_storage_timesteps}
@@ -5581,10 +5580,7 @@ for {c in solve_current, (n,'fix_price') in node__storage_nested_fix_method, (d,
 
 printf 'Write node state usage for fixed timesteps ..\n';
 param fn_fix_usage_nodeState__dt symbolic := "solve_data/fix_storage_usage.csv";
-for {i in 1..1 : p_model['solveFirst']}
-  { printf 'period,step,node,p_fix_storage_usage\n' > fn_fix_usage_nodeState__dt;
-  }
-for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
+for {i in 1..1 : exists{(d,t) in dt_fix_storage_timesteps} 1}
   { printf 'period,step,node,p_fix_storage_usage\n' > fn_fix_usage_nodeState__dt;
   }
 for {(n,'fix_usage') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}
