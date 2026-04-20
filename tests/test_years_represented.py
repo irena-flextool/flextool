@@ -108,6 +108,47 @@ def _add_half_year_scenario(db_url: str) -> None:
         db_map.commit_session("Add coal_half_year scenario")
 
 
+def _add_2_5_year_scenario(db_url: str) -> None:
+    """Add a 'coal_2_5_year' scenario (years_represented = 2.5).
+
+    Exercises the fractional-R > 1 branch of write_years_represented:
+    the fix emits 3 rows of widths (1, 1, 0.5) summing to 2.5.  Before
+    the fix (``int(max(1.0, R))``), only 2 rows of width 1 were emitted
+    and the trailing 0.5 year was silently dropped.
+    """
+    from spinedb_api import Array, DatabaseMapping, Map, import_data
+
+    solves_value = Array(["y2020_2_5_year"], value_type=str, index_name="sequence_index")
+    period_timeset = Map(["p2020"], ["2day"], index_name="period")
+    realized_periods = Array(["p2020"], value_type=str, index_name="period")
+    years_represented = Map(["p2020"], [2.5], index_name="period")
+
+    with DatabaseMapping(db_url) as db_map:
+        count, errors = import_data(
+            db_map,
+            alternatives=[("two_and_half_year", "")],
+            scenarios=[("coal_2_5_year", False, "")],
+            scenario_alternatives=[
+                ("coal_2_5_year", "init", "west"),
+                ("coal_2_5_year", "west", "coal"),
+                ("coal_2_5_year", "coal", "two_and_half_year"),
+                ("coal_2_5_year", "two_and_half_year", None),
+            ],
+            entities=[("solve", "y2020_2_5_year")],
+            parameter_values=[
+                ("model", "flexTool", "solves", solves_value, "two_and_half_year"),
+                ("solve", "y2020_2_5_year", "period_timeset", period_timeset, "two_and_half_year"),
+                ("solve", "y2020_2_5_year", "realized_periods", realized_periods, "two_and_half_year"),
+                ("solve", "y2020_2_5_year", "solve_mode", "single_solve", "two_and_half_year"),
+                ("solve", "y2020_2_5_year", "solver", "glpsol", "two_and_half_year"),
+                ("solve", "y2020_2_5_year", "years_represented", years_represented, "two_and_half_year"),
+            ],
+        )
+        if errors:
+            raise RuntimeError(f"Import errors: {errors}")
+        db_map.commit_session("Add coal_2_5_year scenario")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -118,6 +159,15 @@ def half_year_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     db_path = tmp_path_factory.mktemp("db_half_year") / "tests.sqlite"
     url = json_to_db(TEST_DIR / "fixtures" / "tests.json", db_path)
     _add_half_year_scenario(url)
+    return url
+
+
+@pytest.fixture(scope="module")
+def two_and_half_year_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Create a test DB with the extra coal_2_5_year scenario."""
+    db_path = tmp_path_factory.mktemp("db_2_5_year") / "tests.sqlite"
+    url = json_to_db(TEST_DIR / "fixtures" / "tests.json", db_path)
+    _add_2_5_year_scenario(url)
     return url
 
 
@@ -400,3 +450,74 @@ class TestCostScalingHalfYear:
         assert ratio == pytest.approx(0.5, abs=1e-6), (
             f"Factor ratio should be 0.5, got {ratio}"
         )
+
+
+# ===================================================================
+# Test: years_represented = 2.5 -- coal_2_5_year scenario
+#
+# Regression test for the write_years_represented fractional-R>1 fix.
+# Before the fix: int(max(1.0, 2.5)) = 2, so only 2 rows of width 1
+#   were emitted and the trailing 0.5 year was silently lost.  Factor
+#   computed as 2.0 instead of 2.5 under inflation=0.
+# After the fix: ceil(2.5) = 3 rows of widths 1, 1, 0.5 summing to 2.5.
+#   Factor correctly equals 2.5.
+# ===================================================================
+
+class TestYearsRepresented2_5:
+    """Verify inflation factor = 2.5 when years_represented = 2.5.
+
+    Exercises the fix to ``write_years_represented`` that carries the
+    fractional tail of a non-integer multi-year period.  Rivendell
+    scenarios don't use fractional multi-year periods, but the runner
+    must produce correct factors whenever the user does.
+    """
+
+    @pytest.fixture(scope="class")
+    def run_result(
+        self,
+        two_and_half_year_db_url: str,
+        test_bin_dir: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> Path:
+        workdir = tmp_path_factory.mktemp("yr_2_5")
+        os.chdir(workdir)
+        return _run_scenario("coal_2_5_year", two_and_half_year_db_url, test_bin_dir, workdir)
+
+    def test_p_years_represented_sums_to_2_5(self, run_result: Path) -> None:
+        """solve_data/p_years_represented.csv p2020 rows should sum to 2.5."""
+        csv_path = run_result / "solve_data" / "p_years_represented.csv"
+        assert csv_path.exists(), f"Missing {csv_path}"
+        df = pd.read_csv(csv_path)
+        p2020 = df[df["period"].str.strip() == "p2020"]
+        total = float(p2020["p_years_represented"].sum())
+        assert total == pytest.approx(2.5, abs=1e-9), (
+            f"Sum of p_years_represented over p2020 should be 2.5 "
+            f"(=1+1+0.5 after ceil-based expansion), got {total}. "
+            f"A value of 2.0 indicates the trailing 0.5-year row was lost "
+            f"— regression in write_years_represented."
+        )
+        # Also assert the exact row pattern: widths [1, 1, 0.5]
+        widths = p2020["p_years_represented"].astype(float).tolist()
+        assert widths == pytest.approx([1.0, 1.0, 0.5], abs=1e-9), (
+            f"Expected row widths [1, 1, 0.5] for R=2.5, got {widths}"
+        )
+
+    def test_operations_factor_equals_2_5(self, run_result: Path) -> None:
+        """p_inflation_factor_operations_yearly should be 2.5 for p2020."""
+        df = _read_inflation_factor_operations(run_result)
+        for _, row in df.iterrows():
+            assert row["value"] == pytest.approx(2.5, abs=1e-6), (
+                f"Expected operations factor = 2.5 for period {row['period']}, "
+                f"got {row['value']}.  A value of 2.0 means the trailing "
+                f"fractional year from R=2.5 was dropped."
+            )
+
+    def test_investment_factor_equals_2_5(self, run_result: Path) -> None:
+        """p_inflation_factor_investment_yearly should be 2.5 for p2020."""
+        df = _read_inflation_factor_investment(run_result)
+        for _, row in df.iterrows():
+            assert row["value"] == pytest.approx(2.5, abs=1e-6), (
+                f"Expected investment factor = 2.5 for period {row['period']}, "
+                f"got {row['value']}.  A value of 2.0 means the trailing "
+                f"fractional year from R=2.5 was dropped."
+            )

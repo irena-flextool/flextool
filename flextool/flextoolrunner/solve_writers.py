@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -113,21 +114,34 @@ def write_years_represented(
     years_represented: list[tuple[str, str]],
     filename: str,
 ) -> None:
-    """Write a list of periods with the number of years the period represents."""
+    """Write a list of periods with the number of years the period represents.
+
+    Each period's ``years_represented`` value R is expanded into
+    ``ceil(R)`` one-row-per-year entries of width 1, plus a trailing
+    fractional row carrying the remainder when R is not an integer.
+    Sub-year periods (0 < R < 1) emit a single row of width R.  Periods
+    with R <= 0 are skipped.
+    """
     with open(filename, 'w', newline='') as outfile:
         writer = csv.writer(outfile)
         writer.writerow(['period', 'years_from_solve', 'p_years_from_solve', 'p_years_represented'])
-        year_count = 0
+        year_count: float = 0
         for period__years in years_represented:
-            for i in range(int(max(1.0, float(period__years[1])))):
-                years_to_cover_within_year = min(1, float(period__years[1]))
+            total_represented = float(period__years[1])
+            if total_represented <= 0:
+                continue
+            rows = math.ceil(total_represented)
+            remaining = total_represented
+            for i in range(rows):
+                years_to_cover_within_year = min(1.0, remaining)
                 writer.writerow([period__years[0], str(year_count), str(year_count),
                         str(years_to_cover_within_year)])
                 for pd in period__branch:
                     if pd[0] in period__years[0] and pd[0] != pd[1]:
                         writer.writerow([pd[1], str(year_count), str(year_count),
                         str(years_to_cover_within_year)])
-                year_count = year_count + years_to_cover_within_year
+                year_count += years_to_cover_within_year
+                remaining -= years_to_cover_within_year
 
 
 def write_period_years(
