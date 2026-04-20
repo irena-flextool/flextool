@@ -599,6 +599,8 @@ table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_yea
 table data IN 'CSV' 'solve_data/p_years_represented.csv' : period__year <- [period,years_from_solve], p_years_represented~p_years_represented, p_years_from_solve~p_years_from_solve;
 table data IN 'CSV' 'input/p_inflation_rate.csv' : model <- [model];
 table data IN 'CSV' 'input/p_inflation_rate.csv' : [model], p_inflation_rate;
+table data IN 'CSV' 'input/p_inflation_offset_operations.csv' : [model], p_inflation_offset_operations;
+table data IN 'CSV' 'input/p_inflation_offset_investment.csv' : [model], p_inflation_offset_investment;
 table data IN 'CSV' 'input/default_values.csv' : class_paramName_default <-[class, paramName];
 table data IN 'CSV' 'input/default_values.csv' : [class,paramName], default_value;
 
@@ -1303,8 +1305,19 @@ param group_capacity_for_scaling{g in group, d in period_in_use} := 1;
 param p_inflation := (if sum{m in model} 1 then max{m in model} p_inflation_rate[m] else 0);
 param p_infl_offset_investment := (if sum{m in model} 1 then max{m in model} p_inflation_offset_investment[m] else 0);
 param p_infl_offset_operations := (if sum{m in model} 1 then max{m in model} p_inflation_offset_operations[m] else 0.5);
-param p_years_until_dispatch{(d, y) in period__year} := sum{y2 in year : y2 < y} (p_years_represented[d, y2]) + p_years_represented[d, y] / 2;
-param p_years_until_invest{(d, y) in period__year} := sum{y2 in year : y2 < y} (p_years_represented[d, y2]);
+# Inflation offsets are fractions of the represented window p_years_represented[d, y]:
+#   0   = beginning of the window
+#   0.5 = midway through the window
+#   1   = end of the window
+# Defaults: investment annuity 0 (start-of-year — "paid when built"),
+# operational costs 0.5 (mid-year average).  User-provided values on the
+# model entity override the defaults via p_inflation_offset_*.
+param p_years_until_dispatch{(d, y) in period__year} :=
+    + sum{y2 in year : y2 < y} (p_years_represented[d, y2])
+    + p_years_represented[d, y] * p_infl_offset_operations;
+param p_years_until_invest{(d, y) in period__year} :=
+    + sum{y2 in year : y2 < y} (p_years_represented[d, y2])
+    + p_years_represented[d, y] * p_infl_offset_investment;
 param p_inflation_factor_investment_yearly{d in period} :=
 		if sum{y in year} p_years_represented[d, y]
 		then sum{(d, y) in period__year} p_years_represented[d, y] * ( 1/(1 + p_inflation) ^ (p_years_until_invest[d, y]) )
