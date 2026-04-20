@@ -1,88 +1,88 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-04-19 18:24:10.333455+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-04-20 09:15:37.549315+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
-dispatch_fullYear_roll_roll_0,247.059376
+dispatch_fullYear_roll_roll_0,247.05937604
 dispatch_fullYear_roll_roll_1,6.57
 dispatch_fullYear_roll_roll_2,0
 dispatch_fullYear_roll_roll_3,123.1875
-dispatch_fullYear_roll_roll_4,594.1744786
-dispatch_fullYear_roll_roll_5,488.2349414
+dispatch_fullYear_roll_roll_4,594.174478636
+dispatch_fullYear_roll_roll_5,488.234941363
 dispatch_fullYear_roll_roll_6,25.185
 dispatch_fullYear_roll_roll_7,8.76
-dispatch_fullYear_roll_roll_8,11.13946644
+dispatch_fullYear_roll_roll_8,11.1394664383
 dispatch_fullYear_roll_roll_9,80.4825
-dispatch_fullYear_roll_roll_10,151.8374445
-dispatch_fullYear_roll_roll_11,59.7942184
+dispatch_fullYear_roll_roll_10,151.837444519
+dispatch_fullYear_roll_roll_11,59.7942184043
 dispatch_fullYear_roll_roll_12,0
 dispatch_fullYear_roll_roll_13,0
 dispatch_fullYear_roll_roll_14,0
 dispatch_fullYear_roll_roll_15,168.0825
-dispatch_fullYear_roll_roll_16,514.2394786
+dispatch_fullYear_roll_roll_16,514.239478636
 dispatch_fullYear_roll_roll_17,586.3725
-dispatch_fullYear_roll_roll_18,244.5974414
+dispatch_fullYear_roll_roll_18,244.597441363
 dispatch_fullYear_roll_roll_19,6.57
 dispatch_fullYear_roll_roll_20,0
 dispatch_fullYear_roll_roll_21,123.1875
-dispatch_fullYear_roll_roll_22,594.1744786
-dispatch_fullYear_roll_roll_23,488.2349414
+dispatch_fullYear_roll_roll_22,594.174478636
+dispatch_fullYear_roll_roll_23,488.234941363
 dispatch_fullYear_roll_roll_24,25.185
 dispatch_fullYear_roll_roll_25,8.76
-dispatch_fullYear_roll_roll_26,11.13946644
+dispatch_fullYear_roll_roll_26,11.1394664383
 dispatch_fullYear_roll_roll_27,80.4825
-dispatch_fullYear_roll_roll_28,151.8374445
-dispatch_fullYear_roll_roll_29,59.7942184
+dispatch_fullYear_roll_roll_28,151.837444519
+dispatch_fullYear_roll_roll_29,59.7942184043
 dispatch_fullYear_roll_roll_30,0
 dispatch_fullYear_roll_roll_31,0
 dispatch_fullYear_roll_roll_32,0
 dispatch_fullYear_roll_roll_33,168.0825
-dispatch_fullYear_roll_roll_34,514.2394786
+dispatch_fullYear_roll_roll_34,514.239478636
 dispatch_fullYear_roll_roll_35,586.3725
-dispatch_fullYear_roll_roll_36,244.5974414
+dispatch_fullYear_roll_roll_36,244.597441363
 dispatch_fullYear_roll_roll_37,6.57
 dispatch_fullYear_roll_roll_38,0
 dispatch_fullYear_roll_roll_39,123.1875
-dispatch_fullYear_roll_roll_40,594.1744786
-dispatch_fullYear_roll_roll_41,488.2349414
+dispatch_fullYear_roll_roll_40,594.174478636
+dispatch_fullYear_roll_roll_41,488.234941363
 dispatch_fullYear_roll_roll_42,25.185
 dispatch_fullYear_roll_roll_43,8.76
-dispatch_fullYear_roll_roll_44,11.13946644
+dispatch_fullYear_roll_roll_44,11.1394664383
 dispatch_fullYear_roll_roll_45,80.4825
-dispatch_fullYear_roll_roll_46,151.8374445
-dispatch_fullYear_roll_roll_47,59.7942184
+dispatch_fullYear_roll_roll_46,151.837444519
+dispatch_fullYear_roll_roll_47,59.7942184043
 dispatch_fullYear_roll_roll_48,0
 dispatch_fullYear_roll_roll_49,0
 dispatch_fullYear_roll_roll_50,0
 dispatch_fullYear_roll_roll_51,168.0825
-dispatch_fullYear_roll_roll_52,514.2394786
+dispatch_fullYear_roll_roll_52,514.239478636
 dispatch_fullYear_roll_roll_53,586.3725
-dispatch_fullYear_roll_roll_54,244.5974414
+dispatch_fullYear_roll_roll_54,244.597441363
 dispatch_fullYear_roll_roll_55,6.57
 dispatch_fullYear_roll_roll_56,0
 dispatch_fullYear_roll_roll_57,123.1875
-dispatch_fullYear_roll_roll_58,594.1744786
-dispatch_fullYear_roll_roll_59,488.2349414
+dispatch_fullYear_roll_roll_58,594.174478636
+dispatch_fullYear_roll_roll_59,488.234941363
 dispatch_fullYear_roll_roll_60,25.185
 dispatch_fullYear_roll_roll_61,8.76
-dispatch_fullYear_roll_roll_62,11.13946644
+dispatch_fullYear_roll_roll_62,11.1394664383
 dispatch_fullYear_roll_roll_63,80.4825
-dispatch_fullYear_roll_roll_64,151.8374445
-dispatch_fullYear_roll_roll_65,59.7942184
+dispatch_fullYear_roll_roll_64,151.837444519
+dispatch_fullYear_roll_roll_65,59.7942184043
 dispatch_fullYear_roll_roll_66,0
 dispatch_fullYear_roll_roll_67,0
 dispatch_fullYear_roll_roll_68,0
 dispatch_fullYear_roll_roll_69,168.0825
-dispatch_fullYear_roll_roll_70,514.2394786
+dispatch_fullYear_roll_roll_70,514.239478636
 dispatch_fullYear_roll_roll_71,343.2825
-"Total cost (calculated) full horizon (M CUR)",6047.3421117,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",6047.3421117
+"Total cost (calculated) full horizon (M CUR)",6047.34416828,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",6047.34416828
 "Operational costs for realized periods (M CUR)",0
 "Investment costs for realized periods (M CUR)",0
 "Retirement costs (negative salvage value) for realized periods (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",0
 "Fixed costs for invested entities (M CUR)",0
 "Fixed cost removal due to divested entities (M CUR)",0
-"Penalty (slack) costs for realized periods (M CUR)",6047.3421117
+"Penalty (slack) costs for realized periods (M CUR)",6047.34416828
 
 Period,p2020,p2025,p2030,p2035
 "Time in use in years",0.00821917808219,0.00821917808219,0.00821917808219,0.00821917808219

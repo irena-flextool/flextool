@@ -166,7 +166,7 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # -- Time-indexed decision variables ------------------------------------
     VariableSpec("v_flow",             ("process", "source", "sink")),
     VariableSpec("v_ramp",             ("process", "source", "sink")),
-    VariableSpec("v_reserve",          ("process", "reserve", "upDown", "node")),
+    VariableSpec("v_reserve",          ("process", "reserve", "updown", "node")),
     VariableSpec("v_state",            ("node",)),
     VariableSpec("v_online_linear",    ("process",)),
     VariableSpec("v_startup_linear",   ("process",)),
@@ -179,7 +179,10 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # -- Time-indexed slack / penalty variables -----------------------------
     VariableSpec("vq_state_up",        ("node",)),
     VariableSpec("vq_state_down",      ("node",)),
-    VariableSpec("vq_reserve",         ("reserve", "upDown", "group")),
+    # Column level names must match the CSV reader
+    # (``read_variables._read_from_csv``) so cross-reader mul aligns
+    # cleanly — both readers use ('reserve', 'updown', 'node_group').
+    VariableSpec("vq_reserve",         ("reserve", "updown", "node_group")),
     VariableSpec("vq_inertia",         ("group",)),
     VariableSpec("vq_non_synchronous", ("group",)),
     VariableSpec("vq_state_up_group",  ("group",)),
@@ -835,7 +838,7 @@ def write_v_dual_reserve_balance(
     # Include ``r_m`` (method) in col_names then drop it after extraction.
     df = extract_variable(
         h, "reserveBalance_timeseries_eq",
-        ("reserve", "upDown", "group", "method"),
+        ("reserve", "updown", "node_group", "method"),
         solve_name=solve_name, has_time=True, source="row_dual",
         realized_dispatch_csv=realized_dispatch_csv,
     )
@@ -848,11 +851,12 @@ def write_v_dual_reserve_balance(
         )
         return out_path
 
-    # Drop ``method`` level — phase 3 CSV has only (reserve, upDown, group).
-    # Each (r, ud, g) typically has at most one active method in the
-    # MPS, so the sum equals the single non-zero dual.
+    # Drop ``method`` level — phase 3 CSV has only
+    # (reserve, updown, node_group).  Each (r, ud, g) typically has at
+    # most one active method in the MPS, so the sum equals the single
+    # non-zero dual.
     df = (
-        df.T.groupby(level=["reserve", "upDown", "group"]).sum().T
+        df.T.groupby(level=["reserve", "updown", "node_group"]).sum().T
     )
 
     # Apply × period_share / inflation per period.
