@@ -2,36 +2,6 @@ from types import SimpleNamespace
 from pathlib import Path
 import pandas as pd
 
-from flextool.process_outputs.solve_order import canonical_sort, load_solve_order
-
-
-# All per-solve parameters (have ``solve`` as a row level).  Reordered
-# by solve creation order at the end of ``read_parameters`` so that
-# downstream cross-reader ops align with ``read_variables`` output.
-_SOLVE_INDEXED_PARS = (
-    'step_duration', 'rp_cost_weight',
-    'flow_min', 'flow_max',
-    'process_slope', 'process_section', 'process_availability',
-    'process_source_sink_varCost',
-    'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',
-    'node_inflow', 'commodity_price', 'group_co2_price',
-    'reserve_upDown_group_reservation', 'profile',
-    'years_from_start_d', 'years_represented_d',
-    'entity_max_units', 'entity_all_existing', 'entity_all_capacity',
-    'entity_pre_existing', 'process_startup_cost',
-    'entity_fixed_cost', 'entity_lifetime_fixed_cost',
-    'entity_lifetime_fixed_cost_divest',
-    'node_annual_flow', 'group_penalty_inertia',
-    'group_penalty_non_synchronous', 'group_penalty_capacity_margin',
-    'group_inertia_limit', 'group_capacity_margin',
-    'entity_annuity', 'entity_annual_discounted',
-    'entity_annual_divest_discounted',
-    'inflation_factor_operations_yearly',
-    'inflation_factor_investment_yearly',
-    'node_capacity_for_scaling', 'group_capacity_for_scaling',
-    'complete_period_share_of_year',
-)
-
 
 def read_parameters(output_dir):
     """
@@ -192,15 +162,5 @@ def read_parameters(output_dir):
     p.node_capacity_for_scaling.columns.name = 'node'
     p.group_capacity_for_scaling.columns.name = 'group'
     p.node.columns.name = 'node'
-
-    # Canonicalize row order by solve creation order — see
-    # ``solve_order.canonical_sort``.  Preserves the parent-first
-    # invariant that ``drop_levels.py``'s ``keep='first'`` dedup
-    # depends on, and gives the same row order as ``read_variables``
-    # so cross-reader ``mul(axis=1, level=0)`` aligns cleanly.
-    solve_order = load_solve_order(work_folder)
-    if solve_order:
-        for attr in _SOLVE_INDEXED_PARS:
-            setattr(p, attr, canonical_sort(getattr(p, attr), solve_order))
 
     return p

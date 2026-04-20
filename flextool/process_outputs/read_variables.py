@@ -22,40 +22,7 @@ import pandas as pd
 
 from flextool.lean_parquet import read_lean_parquet
 from flextool.process_outputs.read_highs_solution import empty_variable_frame
-from flextool.process_outputs.solve_order import canonical_sort, load_solve_order
-
-
-_DT_INDEXED_VARS = (
-    'flow', 'ramp', 'reserve', 'state',
-    'online_linear', 'startup_linear', 'shutdown_linear',
-    'online_integer', 'startup_integer', 'shutdown_integer',
-    'q_state_up', 'q_state_down', 'q_reserve',
-    'q_inertia', 'q_non_synchronous', 'q_state_up_group',
-    'q_capacity_margin', 'invest', 'divest',
-    'dual_node_balance', 'dual_reserve_balance', 'angle',
-    'dual_invest_unit', 'dual_invest_connection', 'dual_invest_node',
-    'dual_maxInvest_period', 'dual_maxInvest_total',
-    'dual_maxCumulative',
-    'dual_maxInvestGroup_period', 'dual_maxInvestGroup_total',
-    'dual_maxInvestGroup_cumulative',
-    'dual_co2_max_period',
-)
-
-
-def _apply_solve_order(v: SimpleNamespace, work_folder: Path) -> SimpleNamespace:
-    """Reorder every solve-indexed variable by solve creation order.
-
-    See ``solve_order.canonical_sort`` for why.  No-op for any
-    attribute whose row index has no ``solve`` level (e.g. ``v.obj``
-    after CSV-path single-row collapse).
-    """
-    solve_order = load_solve_order(work_folder)
-    if not solve_order:
-        return v
-    for attr in _DT_INDEXED_VARS:
-        df = getattr(v, attr)
-        setattr(v, attr, canonical_sort(df, solve_order))
-    return v
+from flextool.process_outputs.solve_order import load_solve_order
 
 
 def read_variables(output_dir):
@@ -81,12 +48,20 @@ def read_variables(output_dir):
 def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
     """New pathway: concat per-solve parquets for each variable.
 
-    ``read_lean_parquet`` restores the row / column MultiIndex that
-    ``write_lean_parquet`` persisted, so no column-name post-processing
-    is needed here — unlike the CSV reader, which has to manually
-    install each ``columns.name`` / ``MultiIndex.names``.
+    Per-solve parquets are concatenated in solve **creation** order —
+    the same order the CSV pathway sees rows appended by phase-1
+    printfs.  Reading in creation order avoids any post-concat sort;
+    downstream ``DataFrame.mul(axis=1, level=0)`` aligns operands by
+    row index, and both reader pathways producing the same row order
+    is enough.
     """
     v = SimpleNamespace()
+    work_folder = parquet_dir.parent
+    solve_order = load_solve_order(work_folder)
+
+    def _solve_from_filename(name: str, path: Path) -> str:
+        # ``<output_name>__<solve>.parquet`` — strip prefix + extension.
+        return path.name[len(name) + 2:-len(".parquet")]
 
     def _read(
         name: str,
@@ -95,29 +70,29 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
         has_period: bool = True,
         has_time: bool = True,
     ) -> pd.DataFrame:
-        # Concatenate every per-solve parquet for this variable.  Parquet
-        # carries full float64 precision; no rounding is applied — that
+        # Parquet carries full float64 precision; no rounding — that
         # belongs only at the final user-facing CSV write boundary.
         #
         # When no parquet exists (writer was never called for this variable),
         # fall back to a typed empty frame via ``empty_variable_frame`` so
         # downstream calc code still sees the expected ``columns.name`` /
         # row-index ``names``.
-        parts = sorted(parquet_dir.glob(f"{name}__*.parquet"))
+        parts = list(parquet_dir.glob(f"{name}__*.parquet"))
         if not parts:
             return empty_variable_frame(
                 solve_name="", col_names=col_names,
                 has_period=has_period, has_time=has_time,
             )
+        # Order per-solve parts by solve creation order so the concat
+        # result is already in the correct row order — no post-concat
+        # sort needed.  Solves missing from ``solve_order`` sort first
+        # (shouldn't happen normally; defensive).
+        parts.sort(key=lambda p: solve_order.get(_solve_from_filename(name, p), -1))
         frames = [read_lean_parquet(p) for p in parts]
         # Drop frames that came back entirely empty (0 rows AND 0 columns);
         # concatenating them in would widen the index dtype to object.
         frames = [f for f in frames if not (f.empty and f.shape[1] == 0)] or frames
         out = pd.concat(frames, axis=0).astype(float)
-        # Row order (across solves) is canonicalized later by
-        # ``_apply_solve_order`` — same path as the CSV reader — so
-        # both pathways produce identical row order and downstream
-        # ``DataFrame.mul(axis=1, level=0)`` calls align cleanly.
         # Collapse 1-level MultiIndex columns to plain Index.  The CSV
         # pathway produces a plain Index here; downstream code (e.g.
         # ``DataFrame.mul(..., level=0)``) treats MultiIndex-with-one-level
@@ -169,7 +144,7 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
     # ``group_entity_invest`` is a static map (solveFirst-only) written
     # during phase 1 directly to ``input/`` — same as the CSV pathway.
     v.group_entity_invest = pd.read_csv(input_path / "group_entity_invest.csv")
-    return _apply_solve_order(v, parquet_dir.parent)
+    return v
 
 
 def _read_from_csv(output_path: Path, input_path: Path) -> SimpleNamespace:
@@ -313,4 +288,4 @@ def _read_from_csv(output_path: Path, input_path: Path) -> SimpleNamespace:
         names=['reserve', 'updown', 'node_group']
     )
 
-    return _apply_solve_order(v, output_path.parent)
+    return v

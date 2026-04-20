@@ -233,7 +233,13 @@ VARIABLE_SPECS: list[VariableSpec] = [
 def _load_realized_set(
     realized_dispatch_csv: Path | str | None,
 ) -> set[tuple[str, str]] | None:
-    """Return {(period, time), …} from ``realized_dispatch.csv``, or None."""
+    """Return ``{(period, time), …}`` from ``realized_dispatch.csv``, or None.
+
+    Used for O(1) membership checks in :func:`extract_variable`.  For
+    synthesis of empty-frame row order (which must match the glpsol
+    iteration order in phase-1 printfs), use
+    :func:`_load_realized_list` instead — an ordered variant.
+    """
     if realized_dispatch_csv is None:
         return None
     path = Path(realized_dispatch_csv)
@@ -251,10 +257,36 @@ def _load_realized_set(
     )
 
 
+def _load_realized_list(
+    realized_dispatch_csv: Path | str | None,
+) -> list[tuple[str, str]] | None:
+    """Return ``[(period, time), …]`` from ``realized_dispatch.csv`` in file order.
+
+    The CSV file order matches the glpsol ``for {(d, t) in dt_realize_dispatch}``
+    iteration order that every dt-indexed phase-1 printf uses — so synthesizing
+    empty-frame rows in this order reproduces the CSV-read parameter's row
+    order exactly.
+    """
+    if realized_dispatch_csv is None:
+        return None
+    path = Path(realized_dispatch_csv)
+    if not path.exists():
+        return None
+    realized = pd.read_csv(path)
+    period_col = "period"
+    time_col = "step" if "step" in realized.columns else "time"
+    return list(
+        zip(
+            realized[period_col].astype(str).to_list(),
+            realized[time_col].astype(str).to_list(),
+        )
+    )
+
+
 def _load_realized_periods(
     realized_periods_csv: Path | str | None,
 ) -> set[str] | None:
-    """Return {period, …} from a ``period``-only CSV, or None."""
+    """Return ``{period, …}`` from a ``period``-only CSV, or None."""
     if realized_periods_csv is None:
         return None
     path = Path(realized_periods_csv)
@@ -263,6 +295,19 @@ def _load_realized_periods(
         return None
     realized = pd.read_csv(path)
     return set(realized["period"].astype(str).to_list())
+
+
+def _load_realized_periods_list(
+    realized_periods_csv: Path | str | None,
+) -> list[str] | None:
+    """Return ``[period, …]`` in CSV file order (glpsol iteration order)."""
+    if realized_periods_csv is None:
+        return None
+    path = Path(realized_periods_csv)
+    if not path.exists():
+        return None
+    realized = pd.read_csv(path)
+    return list(realized["period"].astype(str).to_list())
 
 
 def _name_regex(var_name: str) -> re.Pattern[str]:
@@ -290,20 +335,23 @@ def empty_variable_frame(
     *,
     has_period: bool = True,
     has_time: bool = True,
-    realized_dt: set[tuple[str, str]] | None = None,
-    realized_p: set[str] | None = None,
+    realized_dt: "list[tuple[str, str]] | set[tuple[str, str]] | None" = None,
+    realized_p: "list[str] | set[str] | None" = None,
 ) -> pd.DataFrame:
     """Same-shape empty frame: full ``(solve, period[, time])`` row index, zero columns.
 
     Built so downstream pandas ops (``DataFrame.mul(axis=1, level=0)``)
     don't see a ``(0, 0)`` operand on one side and a populated row index
     on the other.  Construction is a single ``DataFrame`` call — no
-    Python loops over rows, just a pre-built MultiIndex from the
-    realized dispatch / period sets.
+    Python loops over rows.
 
-    ``realized_dt`` and ``realized_p`` are pre-loaded sets (use
-    :func:`_load_realized_set` / :func:`_load_realized_periods` if
-    starting from a CSV).
+    ``realized_dt`` / ``realized_p`` should be **ordered** (from
+    :func:`_load_realized_list` / :func:`_load_realized_periods_list`)
+    so the synthesised row order matches the glpsol
+    ``for {(d, t) in dt_realize_dispatch}`` iteration order used by every
+    dt/d-indexed phase-1 printf in ``flextool.mod``.  A ``set`` is accepted
+    (for back-compat) but yields arbitrary iteration order — only safe
+    when the caller doesn't need cross-reader row alignment.
     """
     row_index_names = _row_index_names(has_period=has_period, has_time=has_time)
     empty_cols = _empty_columns(col_names)
@@ -457,10 +505,20 @@ def extract_variable(
     # fabricate the same ``(solve, period[, time])`` row index here using
     # the realized-dispatch data the caller already pointed us at.
     if not vals:
+        # For synthesis we need the realized set in glpsol iteration order
+        # (= CSV file order), so re-load as a list.  The set above was only
+        # for the O(1) membership check in the loop and can't give order.
+        realized_dt_list = (
+            _load_realized_list(realized_dispatch_csv) if has_time else None
+        )
+        realized_p_list = (
+            _load_realized_periods_list(realized_periods_csv)
+            if (has_period and not has_time) else None
+        )
         return empty_variable_frame(
             solve_name, col_names,
             has_period=has_period, has_time=has_time,
-            realized_dt=realized_dt, realized_p=realized_p,
+            realized_dt=realized_dt_list, realized_p=realized_p_list,
         )
 
     long_data: dict[str, list] = {
@@ -595,6 +653,10 @@ def write_v_obj(
     )
     path = output_dir / f"v_obj__{solve_name}.parquet"
     write_lean_parquet(df, path)
+    # Mimic glpsol's ``display total_cost;`` stdout line so that
+    # callers parsing the FlexTool stdout (e.g. test_representative_periods)
+    # still see the objective value when phase 3 is off.
+    print(f"total_cost.val = {obj:.12g}")
     _logger.info("Wrote v_obj for solve '%s' → %s (%.10g)", solve_name, path, obj)
     return path
 

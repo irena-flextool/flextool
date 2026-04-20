@@ -214,21 +214,20 @@ class SolverRunner:
             timer_in_model_run = timer_in_model_run + timing
 
         # Phase 3: glpsol re-reads the model + ``.sol`` and writes the
-        # legacy ``output_raw/*.csv`` dumps.  Still unconditional — the
-        # Python writers (:mod:`read_highs_solution` and
-        # :mod:`handoff_writers`) currently *shadow* phase 3, not replace
-        # it: read_variables/read_parameters still depend on CSV shapes
-        # phase 3 produces, and several edge cases (empty variable sets,
-        # 0-row × 0-col result alignment, ``%.Ng`` string-precision)
-        # aren't yet handled when the CSV pathway is absent.
-        returncode = self._run_phase_3(
-            glpsol_file, flextool_model_file, flextool_base_data_file,
-            flextool_sol_file, wf, timer_in_model_run,
-        )
-        if returncode != 0:
-            raise FlexToolSolveError(
-                f"glpsol output writing failed with exit code: {returncode}"
+        # legacy ``output_raw/*.csv`` dumps.  Only runs under
+        # ``--use-old-raw-csv``; the Python writers
+        # (:mod:`read_highs_solution` + :mod:`handoff_writers`) have
+        # replaced phase 3 in the default path.
+        returncode = 0
+        if self.state.use_old_raw_csv:
+            returncode = self._run_phase_3(
+                glpsol_file, flextool_model_file, flextool_base_data_file,
+                flextool_sol_file, wf, timer_in_model_run,
             )
+            if returncode != 0:
+                raise FlexToolSolveError(
+                    f"glpsol output writing failed with exit code: {returncode}"
+                )
 
         # Phase 4 (HiGHS-only): extract outputs directly from the live
         # ``Highs`` instance.  Skipped when the legacy ``--use-old-raw-csv``
