@@ -140,6 +140,13 @@ class VariableSpec(NamedTuple):
     # trailing_ignore=4``.
     leading_ignore: int = 0
     trailing_ignore: int = 0
+    # Column fields that appear AFTER the period (and time) in the
+    # bracket list but before any ``trailing_ignore`` tail.  Needed for
+    # variables whose declared subscript order puts a column index after
+    # the period — e.g. ``v_trade[c, n, d, i]`` where ``i`` (tier) is a
+    # column but sits to the right of ``d`` (period).  Parsed-out values
+    # are concatenated onto ``col_names`` to form the full column tuple.
+    trailing_col_names: tuple[str, ...] = ()
 
 
 # Registry — add a new line here to add a new variable to the pipeline.
@@ -191,6 +198,18 @@ VARIABLE_SPECS: list[VariableSpec] = [
     VariableSpec("v_invest",           ("entity",), has_time=False),
     VariableSpec("v_divest",           ("entity",), has_time=False),
     VariableSpec("vq_capacity_margin", ("group",),  has_time=False),
+
+    # -- Commodity-ladder period-level trade ---------------------------------
+    # ``v_trade[c, n, d, i]`` — no time, no branch.  ``tier`` sits after
+    # the period in the GMPL bracket order so it's declared via
+    # ``trailing_col_names`` (as opposed to ``col_names`` which are
+    # parsed from the leading positions).  Output column MultiIndex is
+    # ``(commodity, node, tier)`` — the logical column tuple.
+    VariableSpec(
+        "v_trade", ("commodity", "node"),
+        has_time=False,
+        trailing_col_names=("tier",),
+    ),
 
     # -- Investment-cap duals (period-only, simple 1/scale transform) -------
     _invest_dual("maxInvest_entity_period",          "entity", "maxInvest_period"),
@@ -441,6 +460,7 @@ def extract_variable(
     realized_periods_csv: Path | str | None = None,
     leading_ignore: int = 0,
     trailing_ignore: int = 0,
+    trailing_col_names: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Extract one quantity from a solved HiGHS instance as a wide DataFrame.
 
@@ -494,10 +514,16 @@ def extract_variable(
     prefix = f"{name}["
     pattern = _name_regex(name)
     trailing = (2 if has_time else 1) if has_period else 0
+    n_trailing_cols = len(trailing_col_names)
     expected_arity = (
-        leading_ignore + len(col_names) + trailing + trailing_ignore
+        leading_ignore + len(col_names) + trailing + n_trailing_cols
+        + trailing_ignore
     )
     row_index_names = _row_index_names(has_period=has_period, has_time=has_time)
+    # Full column-name tuple — leading cols (before period) + trailing
+    # cols (after period/time).  Used for the column (Multi)Index and
+    # for the empty-frame shape.
+    full_col_names: tuple[str, ...] = tuple(col_names) + tuple(trailing_col_names)
 
     # Canonical row order: read directly from a phase-1 printf CSV that
     # iterates the same set the per-solve parameter CSVs do.  Building
@@ -552,13 +578,21 @@ def extract_variable(
             continue
         col_start = leading_ignore
         col_end = col_start + len(col_names)
-        col_vals = tuple(parts[col_start:col_end])
+        leading_col_vals = tuple(parts[col_start:col_end])
         if has_period and has_time:
             row_key: tuple[str, ...] = (parts[col_end], parts[col_end + 1])
+            row_len = 2
         elif has_period:
             row_key = (parts[col_end],)
+            row_len = 1
         else:
             row_key = ()
+            row_len = 0
+        trailing_start = col_end + row_len
+        trailing_col_vals = tuple(
+            parts[trailing_start:trailing_start + n_trailing_cols]
+        )
+        col_vals = leading_col_vals + trailing_col_vals
         if col_vals not in seen_cols_set:
             seen_cols.append(col_vals)
             seen_cols_set.add(col_vals)
@@ -570,7 +604,7 @@ def extract_variable(
     # against a populated parameter frame doesn't get an empty operand.
     if not seen_cols:
         return empty_variable_frame(
-            solve_name, col_names,
+            solve_name, full_col_names,
             has_period=has_period, has_time=has_time,
             realized_dt=canonical_rows if (has_period and has_time) else None,
             realized_p=(
@@ -583,13 +617,14 @@ def extract_variable(
     # Build the wide matrix by canonical row × first-appearance col
     # position lookup.  Single dict iteration; the lookup itself is
     # O(1) per entry.
+    n_cols_total = len(full_col_names)
     if canonical_rows is None:
         # Defensive: no canonical source available — fall back to
         # first-appearance row order from the HiGHS scan.
         seen_rows_set: set[tuple[str, ...]] = set()
         canonical_rows = []
         for k in values_by_key:
-            row_key = k[: -len(col_names)] if col_names else k
+            row_key = k[: -n_cols_total] if n_cols_total else k
             if row_key not in seen_rows_set:
                 canonical_rows.append(row_key)
                 seen_rows_set.add(row_key)
@@ -599,9 +634,9 @@ def extract_variable(
     col_pos = {c: j for j, c in enumerate(seen_cols)}
     matrix = np.zeros((len(canonical_rows), len(seen_cols)), dtype=float)
     for key, val in values_by_key.items():
-        if col_names:
-            row_key = key[: -len(col_names)]
-            col_key = key[-len(col_names):]
+        if n_cols_total:
+            row_key = key[: -n_cols_total]
+            col_key = key[-n_cols_total:]
         else:
             row_key = key
             col_key = ()
@@ -614,12 +649,14 @@ def extract_variable(
     # ``assert_frame_equal`` distinguishes ``-0.0`` from ``0.0``.
     matrix += 0.0
 
-    if len(col_names) >= 2:
+    if n_cols_total >= 2:
         col_idx: pd.Index = pd.MultiIndex.from_tuples(
-            seen_cols, names=list(col_names),
+            seen_cols, names=list(full_col_names),
         )
     else:
-        col_idx = pd.Index([c[0] for c in seen_cols], name=col_names[0])
+        col_idx = pd.Index(
+            [c[0] for c in seen_cols], name=full_col_names[0],
+        )
 
     if not has_period:
         row_idx: pd.Index = pd.Index([solve_name], name=row_index_names[0])
@@ -660,6 +697,7 @@ def write_variable_parquet(
         realized_periods_csv=realized_periods_csv,
         leading_ignore=spec.leading_ignore,
         trailing_ignore=spec.trailing_ignore,
+        trailing_col_names=spec.trailing_col_names,
     )
     if file_name is None:
         file_name = f"{spec.output_name or spec.name}__{solve_name}.parquet"

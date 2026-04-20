@@ -124,6 +124,15 @@ def binding_ladder_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     Forces v_trade to split across both tiers — tier 'cheap' binds at
     its cap and the tail tier absorbs the remainder.  Used by the
     split-across-tiers assertion below.
+
+    ``tier2_price`` is set to 30 (< 20 of tier 1, nominally more
+    expensive) rather than the original 1000 so that the LP actually
+    prefers routing surplus demand through tier 2 over letting
+    ``vq_state_up`` absorb it at the 10000 $/MW VOLL.  The ladder's
+    annualization factor (× inflation ÷ complete_period_share_of_year)
+    multiplies the per-MWh cost against the 2-day scenario share, so a
+    nominal $30 ladder price scales up by ~1/0.0055 ≈ 182× — still well
+    below VOLL's similar scaling so tier 2 is economical to use.
     """
     db_path = tmp_path_factory.mktemp("db_ladder_bind") / "tests.sqlite"
     url = json_to_db(TEST_DIR / "fixtures" / "tests.json", db_path)
@@ -134,7 +143,7 @@ def binding_ladder_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     _add_coal_ladder_scenario(url,
                               tier1_price=20.0,
                               tier1_quantity_mwh=1.0,
-                              tier2_price=1000.0)
+                              tier2_price=30.0)
     return url
 
 
@@ -201,6 +210,58 @@ class TestLadderLPSolves:
         # (the ∞ tail tier absorbs the rest).
         obj = _read_objective(workdir)
         assert obj > 0, f"Objective should be positive, got {obj}"
+
+
+class TestLadderVTradeParquetExtraction:
+    """v_trade is written to ``output_raw/v_trade__*.parquet`` with the
+    expected (commodity, node, tier) column shape and period row index.
+    """
+
+    def test_v_trade_parquet_shape_and_tier_split(
+        self,
+        binding_ladder_db_url: str,
+        test_bin_dir: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        from flextool.lean_parquet import read_lean_parquet
+
+        workdir = tmp_path_factory.mktemp("ladder_vtrade")
+        os.chdir(workdir)
+        _run("coal_ladder", binding_ladder_db_url, test_bin_dir, workdir)
+
+        # The parquet must exist with the "__<solve>" naming convention
+        # used by the HiGHS-direct extractor (matches e.g. v_invest).
+        matches = list((workdir / "output_raw").glob("v_trade__*.parquet"))
+        assert matches, f"No v_trade parquet in {workdir / 'output_raw'}"
+        df = read_lean_parquet(matches[0])
+
+        # Row index: (solve, period) — no time index (v_trade is
+        # period-level).  Column MultiIndex: (commodity, node, tier).
+        assert df.index.names == ["solve", "period"], df.index.names
+        assert list(df.columns.names) == ["commodity", "node", "tier"], (
+            df.columns.names
+        )
+
+        # At least one (commodity, node) pair should show positive
+        # v_trade on tier 1 (the cheap-and-capped tier).
+        tier1_cols = [c for c in df.columns if str(c[2]) == "1"]
+        assert tier1_cols, "No tier-1 column in v_trade parquet"
+        tier1_max = df[tier1_cols].to_numpy().max() if tier1_cols else 0.0
+        assert tier1_max > 0, (
+            f"Expected tier 1 v_trade > 0 (tier 1 cap = 1 MWh/year), "
+            f"got max {tier1_max}"
+        )
+
+        # Tier 2 (the overflow tier) should also see positive trade —
+        # tier 1 caps at 1 MWh/year but the process demands more, so
+        # the overflow spills onto tier 2 at the higher price.
+        tier2_cols = [c for c in df.columns if str(c[2]) == "2"]
+        assert tier2_cols, "No tier-2 column in v_trade parquet"
+        tier2_max = df[tier2_cols].to_numpy().max()
+        assert tier2_max > 0, (
+            f"Expected tier 2 v_trade > 0 (overflow tier beyond the "
+            f"1 MWh tier-1 cap), got max {tier2_max}"
+        )
 
 
 class TestLadderNonBindingMatchesLegacy:
