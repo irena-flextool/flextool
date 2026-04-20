@@ -501,18 +501,25 @@ def write_empty_investment_file(work_folder: Path | None = None) -> None:
 
 
 def write_empty_cumulative_files(work_folder: Path | None = None) -> None:
-    """Seed header-only ladder rolling accumulator files for the first solve.
+    """Seed header-only rolling accumulator files for the first solve.
 
-    The mod reads ``solve_data/ladder_cum_realized_mwh.csv`` and
-    ``solve_data/ladder_cum_sim_hours.csv`` at the start of every solve
-    via ``table data IN 'CSV' ...`` blocks.  On the very first roll there
-    is no prior solve to emit them, so we write header-only files here —
-    the CSV readers load zero rows, the mod's default 0 for both params
-    makes ``f_d_k[d]`` collapse to ``horizon_hours / (share * 8760)``
-    (= 1.0 on a full single solve) and ``cum_realized_mwh = 0``, so the
-    rolling caps reduce to their pre-refactor form bit-for-bit on a
+    The mod reads three accumulator CSVs at the start of every solve via
+    ``table data IN 'CSV' ...`` blocks:
+
+    * ``solve_data/ladder_cum_realized_mwh.csv`` — ladder tier MWh
+    * ``solve_data/ladder_cum_sim_hours.csv`` — per-period realized hours
+    * ``solve_data/co2_cum_realized_tonnes.csv`` — CO2 cap realized tonnes
+
+    On the very first roll there is no prior solve to emit them, so we
+    write header-only files here — the CSV readers load zero rows, the
+    mod's default 0 for every accumulator param makes ``f_d_k[d]``
+    collapse to ``horizon_hours / (share * 8760)`` (= 1.0 on a full
+    single solve) and every ``cum_realized = 0``, so the rolling caps
+    reduce to their pre-refactor form bit-for-bit on a single-period
     single solve.  Later rolls overwrite these via
-    :func:`flextool.process_outputs.cumulative_handoffs.write_ladder_rolling_accumulators`.
+    :func:`flextool.process_outputs.cumulative_handoffs.write_ladder_rolling_accumulators`
+    and
+    :func:`flextool.process_outputs.cumulative_handoffs.write_co2_rolling_accumulators`.
     """
     wf = work_folder if work_folder is not None else Path.cwd()
     (wf / "solve_data").mkdir(exist_ok=True)
@@ -522,6 +529,8 @@ def write_empty_cumulative_files(work_folder: Path | None = None) -> None:
         )
     with open(wf / "solve_data/ladder_cum_sim_hours.csv", 'w', newline='') as f:
         csv.writer(f).writerow(["period", "p_ladder_cum_sim_hours"])
+    with open(wf / "solve_data/co2_cum_realized_tonnes.csv", 'w', newline='') as f:
+        csv.writer(f).writerow(["group", "period", "p_co2_cum_realized_tonnes"])
 
 
 def write_empty_storage_fix_file(work_folder: Path | None = None) -> None:

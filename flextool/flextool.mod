@@ -391,6 +391,14 @@ param p_commodity_ladder_quantity {(c, i) in commodity__tier} default 1e30;
 param p_ladder_cum_realized_mwh {c in commodity, i in tier, d in periodAll} default 0;
 param p_ladder_cum_sim_hours {d in periodAll} default 0;
 
+# Per-period rolling accumulator for the model-wide CO2 cap (co2_max_total).
+# Stored in tonnes (post-/1000 scaling, matching the mod's RHS convention).
+# Written at the end of each rolling solve by
+# cumulative_handoffs.write_co2_rolling_accumulators.  Reuses
+# p_ladder_cum_sim_hours (same period-level realized-hours accumulator)
+# plus the shared f_d_k[d] for the RHS partition.
+param p_co2_cum_realized_tonnes {g in group, d in periodAll} default 0;
+
 # Commodity-ladder derived sets (used by v_trade and the ladder constraints).
 # 'price' is the default scalar-price behaviour; the two ladder methods route
 # into v_trade / tier caps and replace the pdtCommodity price objective term.
@@ -723,6 +731,11 @@ table data IN 'CSV' 'solve_data/ladder_cum_realized_mwh.csv'
     : [commodity, tier, period], p_ladder_cum_realized_mwh;
 table data IN 'CSV' 'solve_data/ladder_cum_sim_hours.csv'
     : [period], p_ladder_cum_sim_hours;
+# Rolling per-period accumulator for co2_max_total.  Same mechanism as the
+# ladder accumulators above — header-only seed on first solve, rewritten
+# per roll by cumulative_handoffs.write_co2_rolling_accumulators.
+table data IN 'CSV' 'solve_data/co2_cum_realized_tonnes.csv'
+    : [group, period], p_co2_cum_realized_tonnes;
 table data IN 'CSV' 'solve_data/branch_all.csv' : branch_all <- [branch];
 table data IN 'CSV' 'solve_data/time_branch_all.csv' : time_branch_all <- [time_branch];
 table data IN 'CSV' 'solve_data/period__branch.csv' : period__branch <- [period, branch];
@@ -3941,18 +3954,42 @@ s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
   + pdGroup[g, 'co2_max_period', d] / 1000
 ;
 
-s.t. co2_max_total{g in group_co2_max_total} :
+# Rolling-aware model-wide CO2 cap.  Mirrors the ladder_tier_cap_cumulative_roll
+# pattern (commit f78d2de Bug #1 fix): the LHS is the current roll's physical
+# window emissions (step_duration * p_rp_cost_weight only — no year projection),
+# and the RHS partitions the user-declared horizon cap by the sum of f_d_k[d]
+# over periods in this roll's view, minus realized-timeline tonnes already
+# emitted across ALL prior rolls (p_co2_cum_realized_tonnes sum ranges over
+# periodAll because prior rolls may have realized periods that are not in this
+# roll's window).  Single full solve of a one-period scenario: f_d_k[d] = 1.0
+# and the accumulator is zero, so the RHS reduces to p_group['co2_max_total']
+# / 1000 matching the pre-refactor form in physical tonnes.  (For multi-period
+# single solves, the new form caps per-period emissions at cap × f_d_k[d]
+# partitioned across periods — a semantic change from the old year-projected
+# form; mirrors the ladder cumulative cap's design.)
+#
+# No overspent-override variant exists for CO2 (no slack/penalty variable is
+# declared for this constraint, unlike the ladder's *_overspent branches
+# that force v_trade = 0 to absorb an overspend).  If a prior rolling run
+# accidentally overspends the cap, the next roll's RHS goes negative and the
+# LP becomes infeasible.  Rolling CO2 cap users should choose the cap loose
+# enough that a single roll cannot overspend; a future follow-up could add a
+# slack/penalty variable if a softer override is needed.
+s.t. co2_max_total
+    {g in group_co2_max_total
+     : (sum {d in period_in_use} f_d_k[d]) * p_group[g, 'co2_max_total'] / 1000
+        >= sum {d in periodAll} p_co2_cum_realized_tonnes[g, d]} :
   + sum{(g, c, n) in group_commodity_node_period_co2_total }
     (
       + p_commodity[c, 'co2_content'] / 1000
         * (
-            # CO2 increases.  step_duration * p_rp_cost_weight / complete_period_share_of_year
-            # mirrors the objective's annualization; * p_years_represented_d
-            # then sums each period's annual emissions across the horizon.
+            # CO2 increases.  step_duration * p_rp_cost_weight gives the
+            # physical sim-window MWh of flow; multiplied by co2_content/1000
+            # yields sim-window tonnes.  No year-projection (years_represented
+            # / period_share) — that is folded into the RHS via f_d_k[d].
             + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt }
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-                  * step_duration[d, t] * p_rp_cost_weight[d, t]
-                  * p_years_represented_d[d] / complete_period_share_of_year[d] )
+                  * step_duration[d, t] * p_rp_cost_weight[d, t] )
             + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt }
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
                   * step_duration[d, t] * p_rp_cost_weight[d, t]
@@ -3965,17 +4002,17 @@ s.t. co2_max_total{g in group_co2_max_total} :
                       * pdtProcess_section[p, d, t]
                       * p_entity_unitsize[p]
 				  )
-              ) * p_years_represented_d[d] / complete_period_share_of_year[d]
+              )
           # CO2 removals
             - sum {(p, source, n) in process_source_sink, (d, t) in dt }
               ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p]
                   * step_duration[d, t] * p_rp_cost_weight[d, t]
-                  * p_years_represented_d[d] / complete_period_share_of_year[d]
               )
           )
     )
   <=
-  + p_group[g, 'co2_max_total'] / 1000
+  + p_group[g, 'co2_max_total'] / 1000 * (sum {d in period_in_use} f_d_k[d])
+  - sum {d in periodAll} p_co2_cum_realized_tonnes[g, d]
 ;
 
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
@@ -4806,6 +4843,18 @@ if p_model['solveFirst'] then {
   printf "process,source,sink\n" > "input/set_process_source_sink.csv";
   for {(p, source, sink) in process_source_sink} {
       printf "%s,%s,%s\n", p, source, sink >> "input/set_process_source_sink.csv";
+  }
+
+  # process_source_sink_noEff / _eff splits — used by the Python CO2
+  # rolling-accumulator writer to classify flows into "no-eff" and
+  # "simple-eff" branches (matches the mod's co2_max_total LHS split).
+  printf "process,source,sink\n" > "input/set_process_source_sink_noEff.csv";
+  for {(p, source, sink) in process_source_sink_noEff} {
+      printf "%s,%s,%s\n", p, source, sink >> "input/set_process_source_sink_noEff.csv";
+  }
+  printf "process,source,sink\n" > "input/set_process_source_sink_eff.csv";
+  for {(p, source, sink) in process_source_sink_eff} {
+      printf "%s,%s,%s\n", p, source, sink >> "input/set_process_source_sink_eff.csv";
   }
 
   printf "process,method,orig_source,orig_sink,always_source,always_sink\n" > "input/set_process_method_sources_sinks.csv";
