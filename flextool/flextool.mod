@@ -372,6 +372,15 @@ param p_commodity_ladder_price {(c, i) in commodity__tier} default 0;
 # 1e30 for user-provided +Infinity values and this default matches.
 param p_commodity_ladder_quantity {(c, i) in commodity__tier} default 1e30;
 
+# Per-roll remaining quota for price_ladder_cumulative tiers.  Rewritten
+# at the end of each rolling solve by the Python cumulative-handoff writer
+# (flextool/process_outputs/cumulative_handoffs.py).  Default 1e30
+# matches the "infinite / inactive" sentinel convention used throughout
+# the ladder; an empty seed CSV on the first solve therefore leaves
+# ladder_tier_cap_cumulative trivially satisfied (same numeric behaviour
+# as before the handoff machinery).
+param p_cumulative_ladder_remaining {c in commodity, i in tier} default 1e30;
+
 # Commodity-ladder derived sets (used by v_trade and the ladder constraints).
 # 'price' is the default scalar-price behaviour; the two ladder methods route
 # into v_trade / tier caps and replace the pdtCommodity price objective term.
@@ -694,6 +703,13 @@ table data IN 'CSV' 'solve_data/period_block_succ.csv' : period_block_succ <- [p
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
+# Rolling cumulative-quota handoff for price_ladder_cumulative tiers.
+# Written at the end of each roll by cumulative_handoffs.py as
+# prior + allotment - realized consumption.  Header-only CSV on the
+# first solve (seeded by Python) → zero rows loaded → default 1e30 =
+# inactive constraint.
+table data IN 'CSV' 'solve_data/cumulative_ladder_remaining.csv'
+    : [commodity, tier], p_cumulative_ladder_remaining;
 table data IN 'CSV' 'solve_data/branch_all.csv' : branch_all <- [branch];
 table data IN 'CSV' 'solve_data/time_branch_all.csv' : time_branch_all <- [time_branch];
 table data IN 'CSV' 'solve_data/period__branch.csv' : period__branch <- [period, branch];
@@ -3600,19 +3616,22 @@ s.t. ladder_tier_cap_annual {c in commodity_with_ladder_annual, d in period_in_u
 ;
 
 # Cumulative tier cap for price_ladder_cumulative commodities.  The cap
-# is one total across the model horizon (not per-year).  LHS converts
-# realized-timeline MWh to full-horizon MWh by multiplying each period's
-# realized-timeline MWh by years_represented_d / complete_period_share_of_year
-# (annualize then scale to years).  Rolling solves currently reset this
-# cap each roll; step 4 of the ladder project will wrap this into a
-# running-balance handoff.
+# is one total across the whole model horizon (not per-year).  LHS
+# converts realized-timeline MWh to full-horizon MWh by multiplying each
+# period's realized-timeline MWh by years_represented_d /
+# complete_period_share_of_year (annualize then scale to years).  The
+# RHS is the running-balance remaining quota maintained across rolling
+# solves by the Python cumulative-handoff writer — on the first solve
+# the seed CSV is header-only so the default 1e30 keeps the constraint
+# inactive (bit-identical LP to a single-solve run); subsequent rolls
+# read `prior + allotment - realized consumption` from the handoff CSV.
 s.t. ladder_tier_cap_cumulative {(c, i) in ci_ladder_cumulative
-    : p_commodity_ladder_quantity[c, i] < 1e29} :
+    : p_cumulative_ladder_remaining[c, i] < 1e29} :
   + sum {(c, n) in commodity_node, d in period_in_use}
       v_trade[c, n, d, i] * p_commodity_unitsize[c]
         * p_years_represented_d[d] / complete_period_share_of_year[d]
   <=
-  + p_commodity_ladder_quantity[c, i]
+  + p_cumulative_ladder_remaining[c, i]
 ;
 
 # Infinite-tier bound.  When a tier has p_commodity_ladder_quantity = +Infinity
@@ -4316,6 +4335,29 @@ for {s in solve_current, d in d_realize_dispatch_or_invest} {
     for {e in entity} {
         printf ",%.8g", p_entity_all_existing[e, d] >> "solve_data/p_entity_all_existing.csv";
     }
+}
+
+# Cumulative-handoff total-weight snapshot.  Written exactly once, on
+# the first solve of a rolling run.  The Python cumulative-handoff
+# writer (flextool/process_outputs/cumulative_handoffs.py) uses this
+# scalar as the denominator when proportioning each roll's allotment of
+# a price_ladder_cumulative tier's total cap to the realized span of
+# that roll: allotment = total_cap * span_weight / total_weight.
+# Formula: sum over distinct periods d that appear in dt_complete of
+# p_years_represented_d[d] / complete_period_share_of_year_d, where
+# complete_period_share_of_year_d = (sum of complete_step_duration over
+# rows of dt_complete with that same d) / 8760.  No step_duration and
+# no rp_cost_weight in this per-period weight because v_trade is
+# period-level (see cumulative_handoffs.py consumption formula, which
+# mirrors this weight).  The outer sum ranges over ``period`` with an
+# "exists a t in dt_complete" filter rather than ``setof{} (d)`` — GMPL
+# disallows ``in`` bindings over a setof expression.
+if p_model["solveFirst"] == 1 then {
+  printf "total_weight\n%.12g\n",
+    sum {d2 in period : exists{(d2, tt) in dt_complete} 1}
+      ( p_years_represented_d[d2] * 8760
+        / sum {(d2, t) in dt_complete} complete_step_duration[d2, t] )
+    > "solve_data/cumulative_weight_total.csv";
 }
 
 # Write p_entity_pre_existing

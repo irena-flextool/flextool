@@ -305,6 +305,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             first = False
             solve_writers.write_empty_investment_file(work_folder=wf)
             solve_writers.write_empty_storage_fix_file(work_folder=wf)
+            solve_writers.write_empty_cumulative_files(work_folder=wf)
             solve_writers.write_headers_for_empty_output_files(str(wf / 'solve_data/costs_discounted.csv'), 'param_costs,costs_discounted')
             solve_writers.write_headers_for_empty_output_files(str(wf / 'solve_data/co2.csv'), 'param_co2,model_wide')
             solve_writers.write_headers_for_empty_output_files(str(wf / 'solve_data/period_capacity.csv'), 'period')

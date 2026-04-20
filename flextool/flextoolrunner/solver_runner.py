@@ -262,6 +262,17 @@ class SolverRunner:
                 )
             except Exception as exc:  # noqa: BLE001
                 self.logger.warning(f"handoff writers failed: {exc}")
+            try:
+                from flextool.process_outputs.cumulative_handoffs import (
+                    write_cumulative_handoffs,
+                )
+                write_cumulative_handoffs(
+                    highs_instance,
+                    solve_name=roll_name,
+                    work_folder=wf,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(f"cumulative handoff writers failed: {exc}")
 
         return returncode
 

@@ -500,6 +500,25 @@ def write_empty_investment_file(work_folder: Path | None = None) -> None:
         writer.writerow(["entity", "period", "p_entity_period_existing_capacity", "p_entity_period_invested_capacity"])
 
 
+def write_empty_cumulative_files(work_folder: Path | None = None) -> None:
+    """Seed header-only cumulative-quota handoff files for the first solve.
+
+    The mod reads ``solve_data/cumulative_ladder_remaining.csv`` at the
+    start of every solve via a ``table data IN 'CSV' ...`` block.  On
+    the very first roll there is no prior solve to emit that CSV, so
+    we write a header-only file here — the CSV reader loads zero rows
+    and the mod's ``p_cumulative_ladder_remaining`` defaults (1e30)
+    leave ``ladder_tier_cap_cumulative`` inactive, giving a bit-identical
+    LP to a single-solve run.  Later rolls overwrite this file via
+    :func:`flextool.process_outputs.cumulative_handoffs.write_cumulative_ladder_remaining`.
+    """
+    wf = work_folder if work_folder is not None else Path.cwd()
+    (wf / "solve_data").mkdir(exist_ok=True)
+    with open(wf / "solve_data/cumulative_ladder_remaining.csv", 'w', newline='') as firstfile:
+        writer = csv.writer(firstfile)
+        writer.writerow(["commodity", "tier", "p_cumulative_ladder_remaining"])
+
+
 def write_empty_storage_fix_file(work_folder: Path | None = None) -> None:
     """Write empty storage fix files."""
     wf = work_folder if work_folder is not None else Path.cwd()
