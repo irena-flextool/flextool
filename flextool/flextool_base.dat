@@ -40,7 +40,7 @@ set fork_method_no := fork_no;
 set ramp_cost_method := ramp_cost both;
 set ramp_limit_method := ramp_limit both;
 
-set node_type := balance_within_period;
+set node_type := commodity balance storage balance_within_period;
 
 set method :=
   method_1way_1var_off

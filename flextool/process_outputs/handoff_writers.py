@@ -171,12 +171,20 @@ def _load_storage_fix_methods(
 
 
 def _load_node_state(work_folder: Path) -> set[str]:
-    """Return the set of nodes that maintain a state variable."""
-    path = work_folder / "input" / "nodeState.csv"
+    """Return the set of nodes that maintain a state variable.
+
+    Derived from ``input/p_node_type.csv``: rows whose ``p_node_type``
+    equals ``'storage'``.  Nodes absent from the file use the mod's
+    default (``'balance'``), which is not a storage node.
+    """
+    path = work_folder / "input" / "p_node_type.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)
-    return set(df["nodeState"].astype(str).tolist())
+    if df.empty or "p_node_type" not in df.columns:
+        return set()
+    storage = df.loc[df["p_node_type"].astype(str) == "storage", "node"]
+    return set(storage.astype(str).tolist())
 
 
 def _load_entity(work_folder: Path) -> set[str]:
@@ -727,7 +735,19 @@ def _load_entity_class_set(work_folder: Path, set_name: str) -> list[str]:
 
     Column order in the dump file must match the order phase 3 would
     use, which is the order entities appear in this set file.
+
+    Special case: ``set_nodeState`` is no longer dumped by the mod —
+    it's derived from ``input/p_node_type.csv`` (rows with
+    ``p_node_type == 'storage'``), preserving the original node order.
     """
+    if set_name == "set_nodeState":
+        path = work_folder / "input" / "p_node_type.csv"
+        if not path.exists():
+            return []
+        df = pd.read_csv(path)
+        if df.empty or "p_node_type" not in df.columns:
+            return []
+        return df.loc[df["p_node_type"].astype(str) == "storage", "node"].astype(str).tolist()
     path = work_folder / "input" / f"{set_name}.csv"
     if not path.exists():
         return []

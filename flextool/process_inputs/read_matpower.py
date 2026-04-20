@@ -315,7 +315,7 @@ def _add_matpower_data(
         add_entity("node", node_name)
 
         # Enable node balance constraint
-        parameter_values.append(("node", node_name, "has_balance", "yes", alternative))
+        parameter_values.append(("node", node_name, "node_type", "balance", alternative))
 
         if bus.pd != 0.0:
             # Negative inflow = demand in FlexTool

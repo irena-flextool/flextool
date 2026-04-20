@@ -212,7 +212,9 @@ def test_fix_storage_quantity_preserves_prior_when_empty(tmp_path: Path) -> None
 def test_p_roll_continue_state_uses_last_realized_step(tmp_path: Path) -> None:
     work = _make_workfolder(tmp_path)
     _write_unitsize(work, {"battery": 2.0, "non_state_node": 1.0})
-    (work / "input" / "nodeState.csv").write_text("nodeState\nbattery\n")
+    (work / "input" / "p_node_type.csv").write_text(
+        "node,p_node_type\nbattery,storage\n"
+    )
     # Two periods, multiple steps each — last entry per period is the
     # "last realized" boundary.
     (work / "solve_data" / "realized_dispatch.csv").write_text(

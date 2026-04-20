@@ -10,7 +10,7 @@ entity_alternative_classes:
 # Parameters that must appear before the Entity Alternative column.
 # Ensures roundtrip compatibility with the position-based importer.
 pre_entity_alternative_params:
-  node: ["has_balance"]
+  node: ["node_type"]
 
 # Column width settings (unit ≈ width of character '0' in Calibri 11, ~7px).
 minimum_parameter_column_width: 10

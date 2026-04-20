@@ -239,7 +239,7 @@ def write_constant_sheet(
     headers: list[str] = ["alternative"]
     headers.extend(spec.entity_columns)
     headers.extend(spec.extra_entity_columns)
-    # Pre-EA params (e.g. has_balance for node_c) go before Entity Alternative
+    # Pre-EA params (e.g. node_type for node_c) go before Entity Alternative
     if spec.pre_ea_params:
         headers.extend(spec.pre_ea_params)
     if spec.has_entity_alternative:
@@ -331,7 +331,7 @@ def _collect_constant_rows(
                     )
                     row.extend(extras)
 
-                # Pre-EA params (e.g. has_balance for node_c)
+                # Pre-EA params (e.g. node_type for node_c)
                 for pname in spec.pre_ea_params:
                     key = (entity_class, entity_byname, pname, alt)
                     value = db_contents.parameter_values.get(key)

@@ -121,7 +121,7 @@ class ModelBuilder:
 
             for node_name in node_names:
                 self._add_entity("node", node_name)
-                self._add_param("node", node_name, "has_balance", "yes")
+                self._add_param("node", node_name, "node_type", "balance")
                 self._add_entity("group__node", [group_name, node_name])
 
             # Connections
@@ -237,7 +237,7 @@ class ModelBuilder:
             # Create fuel node (single node for the whole model)
             node_name = f"{fuel_name}_source"
             self._add_entity("node", node_name)
-            self._add_param("node", node_name, "has_balance", "yes")
+            self._add_param("node", node_name, "node_type", "balance")
             self.fuel_nodes[fuel_name] = node_name
 
             # Link commodity to node
@@ -341,8 +341,7 @@ class ModelBuilder:
 
                     # Storage node
                     self._add_entity("node", storage_node_name)
-                    self._add_param("node", storage_node_name, "has_balance", "yes")
-                    self._add_param("node", storage_node_name, "has_storage", "yes")
+                    self._add_param("node", storage_node_name, "node_type", "storage")
                     self._add_param("node", storage_node_name, "invest_method", "invest_no_limit")
                     self._add_param("node", storage_node_name, "storage_binding_method", "bind_within_solve")
                     self._add_param("node", storage_node_name, "lifetime", storage_params.get("lifetime", 20))

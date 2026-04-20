@@ -67,13 +67,17 @@ def read_sets(output_dir):
     s.period_in_use = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'set_period_in_use.csv'))
     s.dt_fix_storage_timesteps = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'set_dt_fix_storage_timesteps.csv'))
 
-    # Node-related sets (write-once)
-    df = pd.read_csv(input_path / 'set_nodeState.csv')
-    s.node_state = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(input_path / 'set_nodeBalance.csv')
-    s.node_balance = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(input_path / 'set_nodeBalancePeriod.csv')
-    s.node_balance_period = pd.Index(df.iloc[:, 0])
+    # Node-related sets — derived from per-node p_node_type.
+    # Nodes absent from p_node_type.csv take the mod's default 'balance'
+    # (flextool.mod: `param p_node_type ... default 'balance'`).
+    all_nodes = pd.read_csv(input_path / 'set_node.csv')['node']
+    nt_df = pd.read_csv(input_path / 'p_node_type.csv')
+    nt_map = dict(zip(nt_df['node'], nt_df['p_node_type']))
+    node_types = {n: nt_map.get(n, 'balance') for n in all_nodes}
+    s.node_state           = pd.Index([n for n, t in node_types.items() if t == 'storage'])
+    s.node_balance         = pd.Index([n for n, t in node_types.items() if t in ('balance', 'storage')])
+    s.node_balance_period  = pd.Index([n for n, t in node_types.items() if t == 'balance_within_period'])
+    s.node_commodity       = pd.Index([n for n, t in node_types.items() if t == 'commodity'])
     df = pd.read_csv(input_path / 'set_nodeSelfDischarge.csv')
     s.node_self_discharge = pd.Index(df.iloc[:, 0])
     s.node__storage_binding_method = pd.read_csv(input_path / 'set_node__storage_binding_method.csv').set_index(['node', 'method']).index

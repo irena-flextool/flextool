@@ -149,11 +149,15 @@ def _build_test_db(db_path: str, yaml_path: str, seed: int = 42) -> None:
 
 def _run_flextool(db_path: str, out_path: str, scenario: str) -> float:
     """Run FlexTool and return total_cost."""
+    from pathlib import Path
+    work_cwd = Path(db_path).parent
     result = subprocess.run(
         [sys.executable, "run_flextool.py",
          f"sqlite:///{db_path}", f"sqlite:///{out_path}",
-         "--scenario-name", scenario],
+         "--scenario-name", scenario,
+         "--work-folder", str(work_cwd)],
         capture_output=True, text=True, timeout=120,
+        cwd=str(Path(__file__).resolve().parent.parent),
     )
     if result.returncode != 0:
         pytest.fail(f"FlexTool failed:\n{result.stdout}\n{result.stderr}")

@@ -308,6 +308,11 @@
       null
     ],
     [
+      "constraint",
+      "wind_growth_cap",
+      null
+    ],
+    [
       "group",
       "anti_energy_group",
       null
@@ -1159,11 +1164,6 @@
         "west"
       ],
       null
-    ],
-    [
-      "constraint",
-      "wind_growth_cap",
-      null
     ]
   ],
   "entity_alternatives": [
@@ -1197,6 +1197,22 @@
         "west_north"
       ],
       "network",
+      true
+    ],
+    [
+      "constraint",
+      [
+        "coal_chp_fix"
+      ],
+      "coal_chp_extraction",
+      false
+    ],
+    [
+      "constraint",
+      [
+        "wind_growth_cap"
+      ],
+      "wind_growth_cap_pre_built",
       true
     ],
     [
@@ -1340,6 +1356,14 @@
       true
     ],
     [
+      "timeset",
+      [
+        "2day"
+      ],
+      "weighted_2day",
+      true
+    ],
+    [
       "unit",
       [
         "anti_energy_plant"
@@ -1420,27 +1444,11 @@
       true
     ],
     [
-      "constraint",
-      [
-        "wind_growth_cap"
-      ],
-      "wind_growth_cap_pre_built",
-      true
-    ],
-    [
       "unit",
       [
         "wind_plant"
       ],
       "wind_growth_cap_pre_built",
-      true
-    ],
-    [
-      "timeset",
-      [
-        "2day"
-      ],
-      "weighted_2day",
       true
     ],
     [
@@ -1452,18 +1460,10 @@
       true
     ],
     [
-      "constraint",
-      [
-        "coal_chp_fix"
-      ],
-      "coal_chp_extraction",
-      false
-    ],
-    [
       "unit__outputNode",
       [
         "coal_chp",
-        "west"
+        "heat"
       ],
       "coal_chp_extraction",
       true
@@ -1472,7 +1472,7 @@
       "unit__outputNode",
       [
         "coal_chp",
-        "heat"
+        "west"
       ],
       "coal_chp_extraction",
       true
@@ -1564,13 +1564,6 @@
       ]
     ],
     [
-      "has_balance",
-      [
-        "InllcyI=",
-        "str"
-      ]
-    ],
-    [
       "has_capacity_margin",
       [
         "InllcyI=",
@@ -1593,13 +1586,6 @@
     ],
     [
       "has_non_synchronous",
-      [
-        "InllcyI=",
-        "str"
-      ]
-    ],
-    [
-      "has_storage",
       [
         "InllcyI=",
         "str"
@@ -1837,6 +1823,13 @@
       ]
     ],
     [
+      "lifetime_methods",
+      [
+        "Im5vX2ludmVzdG1lbnQi",
+        "str"
+      ]
+    ],
+    [
       "load_share_type",
       [
         "ImVxdWFsIg==",
@@ -1882,6 +1875,27 @@
       "node_type",
       [
         "ImJhbGFuY2Vfd2l0aGluX3BlcmlvZCI=",
+        "str"
+      ]
+    ],
+    [
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ]
+    ],
+    [
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
+      ]
+    ],
+    [
+      "node_type",
+      [
+        "InN0b3JhZ2Ui",
         "str"
       ]
     ],
@@ -2159,6 +2173,13 @@
       ]
     ],
     [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
+        "str"
+      ]
+    ],
+    [
       "storage_nested_fix_method",
       [
         "ImZpeF9ub3RoaW5nIg==",
@@ -2283,20 +2304,6 @@
         "Im5vIg==",
         "str"
       ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
-        "str"
-      ]
-    ],
-    [
-      "lifetime_methods",
-      [
-        "Im5vX2ludmVzdG1lbnQi",
-        "str"
-      ]
     ]
   ],
   "parameter_definitions": [
@@ -2308,7 +2315,8 @@
         null
       ],
       null,
-      "[CO2 ton per MWh] Constant."
+      "[CO2 ton per MWh] Constant.",
+      null
     ],
     [
       "commodity",
@@ -2318,7 +2326,8 @@
         null
       ],
       null,
-      "[CUR/MWh or other unit] Price of the commodity. Constant, period or time."
+      "[CUR/MWh or other unit] Price of the commodity. Constant, period or time.",
+      null
     ],
     [
       "connection",
@@ -2328,7 +2337,19 @@
         "float"
       ],
       null,
-      "[e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time."
+      "[e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time.",
+      null
+    ],
+    [
+      "connection",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
+      null
     ],
     [
       "connection",
@@ -2338,7 +2359,8 @@
         null
       ],
       null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize."
+      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
+      null
     ],
     [
       "connection",
@@ -2348,7 +2370,8 @@
         null
       ],
       null,
-      "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+      "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      null
     ],
     [
       "connection",
@@ -2358,7 +2381,8 @@
         null
       ],
       null,
-      "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+      "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      null
     ],
     [
       "connection",
@@ -2368,37 +2392,8 @@
         null
       ],
       null,
-      "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences."
-    ],
-    [
-      "connection",
-      "efficiency",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, typically between 0-1] Efficiency of a connection. Constant or time."
-    ],
-    [
-      "connection",
-      "existing",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Existing capacity. Constant or Period"
-    ],
-    [
-      "connection",
-      "fixed_cost",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[CUR/kW] Annual fixed cost. Constant or period."
+      "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.",
+      null
     ],
     [
       "connection",
@@ -2408,7 +2403,41 @@
         null
       ],
       null,
-      "[e.g. 0.05 equals 5%] Interest rate for investments. Constant or period."
+      "[e.g. 0.05 equals 5%] Interest rate for investments. Constant or period.",
+      null
+    ],
+    [
+      "connection",
+      "efficiency",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, typically between 0-1] Efficiency of a connection. Constant or time.",
+      null
+    ],
+    [
+      "connection",
+      "existing",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Existing capacity. Constant or Period",
+      null
+    ],
+    [
+      "connection",
+      "fixed_cost",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[CUR/kW] Annual fixed cost. Constant or period.",
+      null
     ],
     [
       "connection",
@@ -2418,7 +2447,8 @@
         null
       ],
       null,
-      "[CUR/kW] Investment cost for new 'virtual' capacity. Constant or period."
+      "[CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.",
+      null
     ],
     [
       "connection",
@@ -2428,7 +2458,8 @@
         null
       ],
       null,
-      "[MW] Maximum investment. Period."
+      "[MW] Maximum investment. Period.",
+      null
     ],
     [
       "connection",
@@ -2438,7 +2469,8 @@
         null
       ],
       null,
-      "[MW] Maximum investment over all solves. Constant."
+      "[MW] Maximum investment over all solves. Constant.",
+      null
     ],
     [
       "connection",
@@ -2448,7 +2480,8 @@
         null
       ],
       "invest_methods",
-      "Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total."
+      "Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total.",
+      null
     ],
     [
       "connection",
@@ -2458,7 +2491,8 @@
         null
       ],
       null,
-      "[MW] Minimum investment. Period."
+      "[MW] Minimum investment. Period.",
+      null
     ],
     [
       "connection",
@@ -2468,7 +2502,8 @@
         null
       ],
       null,
-      "[MW] Minimum investment over all solves. Constant."
+      "[MW] Minimum investment over all solves. Constant.",
+      null
     ],
     [
       "connection",
@@ -2478,7 +2513,8 @@
         null
       ],
       "is_DC",
-      "A flag whether the connection is DC (the flow will not be counted as synchronous if there is a non_synchronous_limit). Default false."
+      "A flag whether the connection is DC (the flow will not be counted as synchronous if there is a non_synchronous_limit). Default false.",
+      null
     ],
     [
       "connection",
@@ -2488,7 +2524,8 @@
         null
       ],
       null,
-      "[years] Used to calculate annuity together with interest rate. Constant or period."
+      "[years] Used to calculate annuity together with interest rate. Constant or period.",
+      null
     ],
     [
       "connection",
@@ -2498,7 +2535,8 @@
         null
       ],
       "lifetime_methods",
-      "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built."
+      "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
+      null
     ],
     [
       "connection",
@@ -2508,7 +2546,8 @@
         null
       ],
       null,
-      "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time."
+      "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.",
+      null
     ],
     [
       "connection",
@@ -2518,7 +2557,8 @@
         null
       ],
       null,
-      "[MW] Maximum retired capacity. Period."
+      "[MW] Maximum retired capacity. Period.",
+      null
     ],
     [
       "connection",
@@ -2528,7 +2568,8 @@
         null
       ],
       null,
-      "[MW] Maximum retired capacity over all solves. Constant."
+      "[MW] Maximum retired capacity over all solves. Constant.",
+      null
     ],
     [
       "connection",
@@ -2538,7 +2579,8 @@
         null
       ],
       null,
-      "[MW] Maximum retired capacity. Period."
+      "[MW] Maximum retired capacity. Period.",
+      null
     ],
     [
       "connection",
@@ -2548,7 +2590,8 @@
         null
       ],
       null,
-      "[MW] Minimum retired capacity over all solves. Constant."
+      "[MW] Minimum retired capacity over all solves. Constant.",
+      null
     ],
     [
       "connection",
@@ -2558,7 +2601,8 @@
         null
       ],
       null,
-      "[CUR/kW] Salvage value for retiring capacity. Constant or period."
+      "[CUR/kW] Salvage value for retiring capacity. Constant or period.",
+      null
     ],
     [
       "connection",
@@ -2568,7 +2612,8 @@
         null
       ],
       null,
-      "[CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant."
+      "[CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant.",
+      null
     ],
     [
       "connection",
@@ -2578,7 +2623,8 @@
         null
       ],
       "startup_methods",
-      "Choice of startup method"
+      "Choice of startup method",
+      null
     ],
     [
       "connection",
@@ -2588,7 +2634,8 @@
         null
       ],
       "transfer_methods",
-      "Choice of transfer method"
+      "Choice of transfer method",
+      null
     ],
     [
       "connection",
@@ -2598,7 +2645,8 @@
         null
       ],
       null,
-      "[MW] Size of single connection - used for integer (lumped) investments."
+      "[MW] Size of single connection - used for integer (lumped) investments.",
+      null
     ],
     [
       "connection__node",
@@ -2608,7 +2656,8 @@
         null
       ],
       null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow from the connection to a node in user-defined constraints. [flow x coefficient] will be on the left side of the equation."
+      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow from the connection to a node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
+      null
     ],
     [
       "connection__profile",
@@ -2618,7 +2667,8 @@
         null
       ],
       "profile_methods",
-      "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n"
+      "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n",
+      null
     ],
     [
       "constraint",
@@ -2628,7 +2678,8 @@
         "float"
       ],
       null,
-      "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation."
+      "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.",
+      null
     ],
     [
       "constraint",
@@ -2638,7 +2689,8 @@
         null
       ],
       "senses",
-      "The sense of the constraint ('greater_than', 'less_than' or 'equal')."
+      "The sense of the constraint ('greater_than', 'less_than' or 'equal').",
+      null
     ],
     [
       "group",
@@ -2648,7 +2700,8 @@
         null
       ],
       null,
-      "[MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period."
+      "[MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2658,7 +2711,8 @@
         null
       ],
       null,
-      "[tCO2] Annualized maximum limit for emitted CO2 in each period."
+      "[tCO2] Annualized maximum limit for emitted CO2 in each period.",
+      null
     ],
     [
       "group",
@@ -2668,7 +2722,8 @@
         null
       ],
       null,
-      "[tCO2] Maximum limit for emitted CO2 in the whole solve."
+      "[tCO2] Maximum limit for emitted CO2 in the whole solve.",
+      null
     ],
     [
       "group",
@@ -2678,7 +2733,8 @@
         null
       ],
       "co2_methods",
-      "Choice of the CO2 method: no_method, price, period, total, price_period, price_total, period_total, price_period_total"
+      "Choice of the CO2 method: no_method, price, period, total, price_period, price_total, period_total, price_period_total",
+      null
     ],
     [
       "group",
@@ -2688,7 +2744,8 @@
         null
       ],
       null,
-      "[CUR/ton] CO2 price for a group of nodes. Constant, period or time."
+      "[CUR/ton] CO2 price for a group of nodes. Constant, period or time.",
+      null
     ],
     [
       "group",
@@ -2698,7 +2755,8 @@
         null
       ],
       "has_capacity_margin",
-      "A flag whether the group of nodes has a capacity margin constraint in the investment mode."
+      "A flag whether the group of nodes has a capacity margin constraint in the investment mode.",
+      null
     ],
     [
       "group",
@@ -2708,7 +2766,8 @@
         null
       ],
       "has_inertia",
-      "A flag whether the group of nodes has an inertia constraint active.\n"
+      "A flag whether the group of nodes has an inertia constraint active.\n",
+      null
     ],
     [
       "group",
@@ -2718,7 +2777,8 @@
         null
       ],
       "has_non_synchronous",
-      "A flag whether the group of nodes has the non-synchronous share constraint active."
+      "A flag whether the group of nodes has the non-synchronous share constraint active.",
+      null
     ],
     [
       "group",
@@ -2728,7 +2788,8 @@
         null
       ],
       "yes_no",
-      "Includes the stochastic branches to be used for the nodes/units/connections in this group"
+      "Includes the stochastic branches to be used for the nodes/units/connections in this group",
+      null
     ],
     [
       "group",
@@ -2738,7 +2799,8 @@
         null
       ],
       null,
-      "[MWs] Minimum for synchronous inertia in the group of nodes. Constant or period."
+      "[MWs] Minimum for synchronous inertia in the group of nodes. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2748,7 +2810,8 @@
         null
       ],
       null,
-      "[MW or MWh] Maximum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period."
+      "[MW or MWh] Maximum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period.",
+      null
     ],
     [
       "group",
@@ -2758,7 +2821,8 @@
         null
       ],
       null,
-      "[MW or MWh] Maximum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. Constant."
+      "[MW or MWh] Maximum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. Constant.",
+      null
     ],
     [
       "group",
@@ -2768,7 +2832,8 @@
         null
       ],
       "invest_methods",
-      "Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total.\r\n"
+      "Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total.\r\n",
+      null
     ],
     [
       "group",
@@ -2778,7 +2843,8 @@
         null
       ],
       null,
-      "[MW or MWh] Minimum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period."
+      "[MW or MWh] Minimum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period.",
+      null
     ],
     [
       "group",
@@ -2788,7 +2854,8 @@
         null
       ],
       null,
-      "[MW or MWh] Minimum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. Constant."
+      "[MW or MWh] Minimum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. Constant.",
+      null
     ],
     [
       "group",
@@ -2798,7 +2865,8 @@
         null
       ],
       null,
-      "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period."
+      "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2808,7 +2876,8 @@
         null
       ],
       null,
-      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period."
+      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2818,7 +2887,8 @@
         null
       ],
       null,
-      "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period."
+      "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2828,7 +2898,8 @@
         null
       ],
       null,
-      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period."
+      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2838,7 +2909,8 @@
         null
       ],
       null,
-      "[share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period."
+      "[share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2848,7 +2920,8 @@
         null
       ],
       "output_node_flows",
-      "Used with group_unit_node or group_connection_node to combine the flows when producing the output_node_flows of a node group."
+      "Used with group_unit_node or group_connection_node to combine the flows when producing the output_node_flows of a node group.",
+      null
     ],
     [
       "group",
@@ -2858,7 +2931,8 @@
         null
       ],
       "output_node_flows",
-      "Creates the timewise flow output for this node group (group_flow_t)"
+      "Creates the timewise flow output for this node group (group_flow_t)",
+      null
     ],
     [
       "group",
@@ -2868,7 +2942,8 @@
         null
       ],
       "output_results",
-      "A flag to output also aggregated results for the group members."
+      "A flag to output also aggregated results for the group members.",
+      null
     ],
     [
       "group",
@@ -2878,7 +2953,8 @@
         "float"
       ],
       null,
-      "[CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period."
+      "[CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2888,7 +2964,8 @@
         "float"
       ],
       null,
-      "[CUR/MWs] Penalty for violating the inertia constraint. Constant or period."
+      "[CUR/MWs] Penalty for violating the inertia constraint. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2898,7 +2975,8 @@
         "float"
       ],
       null,
-      "[CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period."
+      "[CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.",
+      null
     ],
     [
       "group",
@@ -2908,7 +2986,8 @@
         null
       ],
       "load_share_type",
-      "Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted"
+      "Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted",
+      null
     ],
     [
       "model",
@@ -2918,37 +2997,8 @@
         null
       ],
       null,
-      "Instruction set for performing model debugging and testing."
-    ],
-    [
-      "model",
-      "inflation_offset_investment",
-      [
-        "MQ==",
-        "float"
-      ],
-      null,
-      "[years] Offset from the period (often year) start to the first payment of the investment cost annuity."
-    ],
-    [
-      "model",
-      "inflation_offset_operations",
-      [
-        "MC41",
-        "float"
-      ],
-      null,
-      "[years] Offset from the period (often year) start to the payment of operational costs. "
-    ],
-    [
-      "model",
-      "inflation_rate",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[e.g. 0.05 for 5%] Model-wide discount rate."
+      "Instruction set for performing model debugging and testing.",
+      null
     ],
     [
       "model",
@@ -2958,7 +3008,41 @@
         null
       ],
       "optional_output",
-      "Excludes results on node, unit and connection level, but preserves group level results"
+      "Excludes results on node, unit and connection level, but preserves group level results",
+      null
+    ],
+    [
+      "model",
+      "inflation_offset_investment",
+      [
+        "MQ==",
+        "float"
+      ],
+      null,
+      "[years] Offset from the period (often year) start to the first payment of the investment cost annuity.",
+      null
+    ],
+    [
+      "model",
+      "inflation_offset_operations",
+      [
+        "MC41",
+        "float"
+      ],
+      null,
+      "[years] Offset from the period (often year) start to the payment of operational costs. ",
+      null
+    ],
+    [
+      "model",
+      "inflation_rate",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[e.g. 0.05 for 5%] Model-wide discount rate.",
+      null
     ],
     [
       "model",
@@ -2968,7 +3052,8 @@
         null
       ],
       "optional_output",
-      " The flows between the nodes for each timestep."
+      " The flows between the nodes for each timestep.",
+      null
     ],
     [
       "model",
@@ -2978,7 +3063,8 @@
         null
       ],
       "optional_output",
-      "Produces the connection flows separately for both directions."
+      "Produces the connection flows separately for both directions.",
+      null
     ],
     [
       "model",
@@ -2988,7 +3074,8 @@
         null
       ],
       "yes_no",
-      "Outputs the flows in the horizons. Used for testing the model."
+      "Outputs the flows in the horizons. Used for testing the model.",
+      null
     ],
     [
       "model",
@@ -2998,7 +3085,8 @@
         null
       ],
       "optional_output",
-      "Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model."
+      "Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model.",
+      null
     ],
     [
       "model",
@@ -3008,7 +3096,8 @@
         null
       ],
       "optional_output",
-      "Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node)."
+      "Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node).",
+      null
     ],
     [
       "model",
@@ -3018,7 +3107,8 @@
         null
       ],
       "optional_output",
-      "The flows from units to the nodes for each timestep."
+      "The flows from units to the nodes for each timestep.",
+      null
     ],
     [
       "model",
@@ -3028,7 +3118,8 @@
         null
       ],
       "optional_output",
-      "Produces the ramps of individual units for all timesteps."
+      "Produces the ramps of individual units for all timesteps.",
+      null
     ],
     [
       "model",
@@ -3038,7 +3129,8 @@
         null
       ],
       null,
-      "(Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset."
+      "(Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset.",
+      null
     ],
     [
       "model",
@@ -3048,17 +3140,19 @@
         null
       ],
       null,
-      "Sequence of solves in the model. Array."
+      "Sequence of solves in the model. Array.",
+      null
     ],
     [
       "model",
       "version",
       [
-        "MjU=",
+        "Mzg=",
         "float"
       ],
       null,
-      "Contains database version information."
+      "Contains database version information.",
+      null
     ],
     [
       "node",
@@ -3068,7 +3162,8 @@
         null
       ],
       null,
-      "[MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Inflow time series can be scaled to match annual flow. By default, there is no scaling of inflow. Constant or period."
+      "[MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Inflow time series can be scaled to match annual flow. By default, there is no scaling of inflow. Constant or period.",
+      null
     ],
     [
       "node",
@@ -3078,7 +3173,19 @@
         "float"
       ],
       null,
-      "[e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time."
+      "[e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.",
+      null
+    ],
+    [
+      "node",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
+      null
     ],
     [
       "node",
@@ -3088,7 +3195,8 @@
         null
       ],
       null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage capacity in user-defined constraints. [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize."
+      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage capacity in user-defined constraints. [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
+      null
     ],
     [
       "node",
@@ -3098,7 +3206,8 @@
         null
       ],
       null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined constraints. [state x coefficient] will be on the left side of the equation."
+      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined constraints. [state x coefficient] will be on the left side of the equation.",
+      null
     ],
     [
       "node",
@@ -3108,7 +3217,8 @@
         null
       ],
       null,
-      "[MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+      "[MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      null
     ],
     [
       "node",
@@ -3118,7 +3228,19 @@
         null
       ],
       null,
-      "[MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+      "[MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      null
+    ],
+    [
+      "node",
+      "discount_rate",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[e.g. 0.05 equals 5%] Interest rate for investments. Constant or period.",
+      null
     ],
     [
       "node",
@@ -3128,7 +3250,8 @@
         null
       ],
       null,
-      "[MWh] Existing storage capacity. Constant or Period"
+      "[MWh] Existing storage capacity. Constant or Period",
+      null
     ],
     [
       "node",
@@ -3138,27 +3261,8 @@
         null
       ],
       null,
-      "[CUR/kWh] Annual fixed cost for storage. Constant or period."
-    ],
-    [
-      "node",
-      "has_balance",
-      [
-        "bnVsbA==",
-        null
-      ],
-      "has_balance",
-      "A flag whether the node maintains a balance constraint."
-    ],
-    [
-      "node",
-      "has_storage",
-      [
-        "bnVsbA==",
-        null
-      ],
-      "has_storage",
-      "A flag whether the node has a state variable (storage)."
+      "[CUR/kWh] Annual fixed cost for storage. Constant or period.",
+      null
     ],
     [
       "node",
@@ -3168,7 +3272,8 @@
         null
       ],
       null,
-      "[MWh] Inflow into the node (negative is outflow). Constant or time."
+      "[MWh] Inflow into the node (negative is outflow). Constant or time.",
+      null
     ],
     [
       "node",
@@ -3178,17 +3283,8 @@
         null
       ],
       "inflow_methods",
-      "Choice how to treat inflow time series. Empty defaults to 'use_original', which does not scale the time series. 'no_inflow' ignores the inflow time series. 'scale_to_annual_flow' will scale the time series to match the 'annual_flow' so that the sum of inflow is multiplied by 8760/'hours_in_solve'. 'scale_in_proprotion' calculates a scaling factor by dividing 'annual_flow' with the sum of time series inflow (after it has been annualized using 'timeline_duration_in_years'). 'scale_to_annual_and_peak_flow' scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'."
-    ],
-    [
-      "node",
-      "discount_rate",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[e.g. 0.05 equals 5%] Interest rate for investments. Constant or period."
+      "Choice how to treat inflow time series. Empty defaults to 'use_original', which does not scale the time series. 'no_inflow' ignores the inflow time series. 'scale_to_annual_flow' will scale the time series to match the 'annual_flow' so that the sum of inflow is multiplied by 8760/'hours_in_solve'. 'scale_in_proprotion' calculates a scaling factor by dividing 'annual_flow' with the sum of time series inflow (after it has been annualized using 'timeline_duration_in_years'). 'scale_to_annual_and_peak_flow' scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'.",
+      null
     ],
     [
       "node",
@@ -3198,7 +3294,8 @@
         null
       ],
       null,
-      "[CUR/kWh] Investment cost for new storage capacity. Constant or period."
+      "[CUR/kWh] Investment cost for new storage capacity. Constant or period.",
+      null
     ],
     [
       "node",
@@ -3208,6 +3305,7 @@
         null
       ],
       null,
+      null,
       null
     ],
     [
@@ -3218,7 +3316,8 @@
         null
       ],
       null,
-      "[MWh] Maximum storage investment. Period."
+      "[MWh] Maximum storage investment. Period.",
+      null
     ],
     [
       "node",
@@ -3228,7 +3327,8 @@
         null
       ],
       null,
-      "[MWh] Maximum investment over all solves. Constant."
+      "[MWh] Maximum investment over all solves. Constant.",
+      null
     ],
     [
       "node",
@@ -3238,7 +3338,8 @@
         null
       ],
       "invest_methods",
-      "Choice of investment method: either not_allowed or then a combination of 1) investment or retirement and 2) investment limits per period, all periods (total) or no_limits."
+      "Choice of investment method: either not_allowed or then a combination of 1) investment or retirement and 2) investment limits per period, all periods (total) or no_limits.",
+      null
     ],
     [
       "node",
@@ -3248,7 +3349,8 @@
         null
       ],
       null,
-      "[MWh] Minimum storage investment. Period."
+      "[MWh] Minimum storage investment. Period.",
+      null
     ],
     [
       "node",
@@ -3258,7 +3360,8 @@
         null
       ],
       null,
-      "[MWh] Minimum investment over all solves. Constant."
+      "[MWh] Minimum investment over all solves. Constant.",
+      null
     ],
     [
       "node",
@@ -3268,7 +3371,8 @@
         null
       ],
       null,
-      "[years] Used to calculate annuity together with interest rate. Constant or period."
+      "[years] Used to calculate annuity together with interest rate. Constant or period.",
+      null
     ],
     [
       "node",
@@ -3278,17 +3382,19 @@
         null
       ],
       "lifetime_methods",
-      "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built."
+      "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
+      null
     ],
     [
       "node",
       "node_type",
       [
-        null,
-        null
+        "ImJhbGFuY2Ui",
+        "str"
       ],
       "node_type",
-      "Selection for the node to have period balance, instead of time step balance."
+      "Role of this node in the LP.  'commodity' = price-exposed source/sink with no balance constraint (e.g. fuel imports, no storage); 'balance' = energy balance maintained every timestep (default); 'storage' = balance plus a state variable (battery, reservoir); 'balance_within_period' = balance aggregated over the whole period (e.g. an annual gas budget).",
+      null
     ],
     [
       "node",
@@ -3298,7 +3404,8 @@
         null
       ],
       null,
-      "[MWh] Highest flow for scaling the inflow. Used only with inflow_method scale_to_annual_and_peak_flow. Constant or period."
+      "[MWh] Highest flow for scaling the inflow. Used only with inflow_method scale_to_annual_and_peak_flow. Constant or period.",
+      null
     ],
     [
       "node",
@@ -3308,7 +3415,8 @@
         "float"
       ],
       null,
-      "[CUR/MW] Penalty cost for increasing consumption in the node. Constant, Period or Time."
+      "[CUR/MW] Penalty cost for increasing consumption in the node. Constant, Period or Time.",
+      null
     ],
     [
       "node",
@@ -3318,7 +3426,8 @@
         "float"
       ],
       null,
-      "[CUR/MW] Penalty cost for decreasing consumption in the node. Constant, Period or Time."
+      "[CUR/MW] Penalty cost for decreasing consumption in the node. Constant, Period or Time.",
+      null
     ],
     [
       "node",
@@ -3328,7 +3437,8 @@
         null
       ],
       null,
-      "[MWh] Maximum retired storage capacity. Period."
+      "[MWh] Maximum retired storage capacity. Period.",
+      null
     ],
     [
       "node",
@@ -3338,7 +3448,8 @@
         null
       ],
       null,
-      "[MWh] Maximum retired storage capacity over all solves. Constant."
+      "[MWh] Maximum retired storage capacity over all solves. Constant.",
+      null
     ],
     [
       "node",
@@ -3348,7 +3459,8 @@
         null
       ],
       null,
-      "[MWh] Minimum retired storage capacity. Period."
+      "[MWh] Minimum retired storage capacity. Period.",
+      null
     ],
     [
       "node",
@@ -3358,7 +3470,8 @@
         null
       ],
       null,
-      "[MWh] Minimum retired storage capacity over all solves. Constant."
+      "[MWh] Minimum retired storage capacity over all solves. Constant.",
+      null
     ],
     [
       "node",
@@ -3368,7 +3481,8 @@
         null
       ],
       null,
-      "[CUR/kWh] Salvage value of the storage. Constant or period."
+      "[CUR/kWh] Salvage value of the storage. Constant or period.",
+      null
     ],
     [
       "node",
@@ -3378,7 +3492,8 @@
         null
       ],
       null,
-      "[e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time."
+      "[e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.",
+      null
     ],
     [
       "node",
@@ -3388,7 +3503,8 @@
         null
       ],
       "storage_binding_methods",
-      "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timesets' will bind the storage end state at the end of the timeset to the beginning of the timeset. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0."
+      "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timesets' will bind the storage end state at the end of the timeset to the beginning of the timeset. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0.",
+      null
     ],
     [
       "node",
@@ -3398,7 +3514,8 @@
         null
       ],
       "storage_nested_fix_method",
-      "Used in nested solve sequences. Set this storage as a long term storage, which end state is passed to the lower level solves as a target. *Fix_price* requires `storage_state_reference_price`"
+      "Used in nested solve sequences. Set this storage as a long term storage, which end state is passed to the lower level solves as a target. *Fix_price* requires `storage_state_reference_price`",
+      null
     ],
     [
       "node",
@@ -3408,7 +3525,8 @@
         null
       ],
       "storage_solve_horizon_methods",
-      "Choice how to treat storage state at the end of time horizon of each solve. 'free' lets the model choose the end state. 'use_reference_value' forces the end state to the specific value set in 'storage_state_reference_value'. 'use_reference_price' gives the storage state a price in the objective function based on the 'storage_state_reference_price'. "
+      "Choice how to treat storage state at the end of time horizon of each solve. 'free' lets the model choose the end state. 'use_reference_value' forces the end state to the specific value set in 'storage_state_reference_value'. 'use_reference_price' gives the storage state a price in the objective function based on the 'storage_state_reference_price'. ",
+      null
     ],
     [
       "node",
@@ -3418,7 +3536,8 @@
         null
       ],
       "storage_start_end_methods",
-      "Choice whether the start and end states of storage are fixed in the beginning and end of the whole model timeline (not between solves). Uses 'storage_state_start' and 'storage_state_end'. Options: 'fix_nothing', 'fix_start', 'fix_end', 'fix_start_end'. By default, storage start state is bound to 0 to avoid creation of free energy."
+      "Choice whether the start and end states of storage are fixed in the beginning and end of the whole model timeline (not between solves). Uses 'storage_state_start' and 'storage_state_end'. Options: 'fix_nothing', 'fix_start', 'fix_end', 'fix_start_end'. By default, storage start state is bound to 0 to avoid creation of free energy.",
+      null
     ],
     [
       "node",
@@ -3428,7 +3547,8 @@
         null
       ],
       null,
-      "[0-1] Relative state of storage at the end of the last model solve (overrides 'storage_state_end_reference'). Constant."
+      "[0-1] Relative state of storage at the end of the last model solve (overrides 'storage_state_end_reference'). Constant.",
+      null
     ],
     [
       "node",
@@ -3438,7 +3558,8 @@
         null
       ],
       null,
-      "[CUR/MWh] Price for the stored energy at the end of the solve horizon. Requires 'use_reference_price' in 'storage_solve_horizon_method'. Constant or period."
+      "[CUR/MWh] Price for the stored energy at the end of the solve horizon. Requires 'use_reference_price' in 'storage_solve_horizon_method'. Constant or period.",
+      null
     ],
     [
       "node",
@@ -3448,7 +3569,8 @@
         null
       ],
       null,
-      "[0-1] Relative state of storage at then end of each solve (can be overwritten in the next solve).  Requires 'use_reference_value' in 'storage_solve_horizon_method'. Constant."
+      "[0-1] Relative state of storage at then end of each solve (can be overwritten in the next solve).  Requires 'use_reference_value' in 'storage_solve_horizon_method'. Constant.",
+      null
     ],
     [
       "node",
@@ -3458,7 +3580,8 @@
         "float"
       ],
       null,
-      "[0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant."
+      "[0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant.",
+      null
     ],
     [
       "node",
@@ -3467,6 +3590,7 @@
         null,
         null
       ],
+      null,
       null,
       null
     ],
@@ -3478,7 +3602,8 @@
         null
       ],
       null,
-      "[MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity."
+      "[MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.",
+      null
     ],
     [
       "node__profile",
@@ -3488,7 +3613,8 @@
         null
       ],
       "profile_methods",
-      "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n"
+      "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n",
+      null
     ],
     [
       "profile",
@@ -3498,7 +3624,8 @@
         null
       ],
       null,
-      "[factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time."
+      "[factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time.",
+      null
     ],
     [
       "reserve__upDown__connection__node",
@@ -3508,7 +3635,8 @@
         null
       ],
       null,
-      "[factor] The reserve requirement is increased by the flow from the connection to the node multiplied by this ratio. Constant."
+      "[factor] The reserve requirement is increased by the flow from the connection to the node multiplied by this ratio. Constant.",
+      null
     ],
     [
       "reserve__upDown__connection__node",
@@ -3518,7 +3646,8 @@
         null
       ],
       "is_active",
-      "Can the connection provide this reserve to the selected node. Empty indicates not allowed. Use 'yes' to indicate true."
+      "Can the connection provide this reserve to the selected node. Empty indicates not allowed. Use 'yes' to indicate true.",
+      null
     ],
     [
       "reserve__upDown__connection__node",
@@ -3528,7 +3657,8 @@
         "float"
       ],
       null,
-      "[factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant."
+      "[factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.",
+      null
     ],
     [
       "reserve__upDown__connection__node",
@@ -3538,7 +3668,8 @@
         "float"
       ],
       null,
-      "[factor] Maximum ratio for the transfer of reserve to this node. Constant."
+      "[factor] Maximum ratio for the transfer of reserve to this node. Constant.",
+      null
     ],
     [
       "reserve__upDown__connection__node",
@@ -3548,7 +3679,8 @@
         "float"
       ],
       null,
-      "[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant."
+      "[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.",
+      null
     ],
     [
       "reserve__upDown__group",
@@ -3558,7 +3690,8 @@
         null
       ],
       null,
-      "[factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant."
+      "[factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.",
+      null
     ],
     [
       "reserve__upDown__group",
@@ -3568,7 +3701,8 @@
         "float"
       ],
       null,
-      "[CUR/MW] Penalty for violating a reserve constraint. Constant."
+      "[CUR/MW] Penalty for violating a reserve constraint. Constant.",
+      null
     ],
     [
       "reserve__upDown__group",
@@ -3578,7 +3712,8 @@
         null
       ],
       null,
-      "[MW] Amount of reserve to be reserved. Constant or time."
+      "[MW] Amount of reserve to be reserved. Constant or time.",
+      null
     ],
     [
       "reserve__upDown__group",
@@ -3588,7 +3723,8 @@
         null
       ],
       "reserve_methods",
-      "Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only, timeseries_and_dynamic, timeseries_and_large_failure, dynamic_and_large_failure, all"
+      "Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only, timeseries_and_dynamic, timeseries_and_large_failure, dynamic_and_large_failure, all",
+      null
     ],
     [
       "reserve__upDown__unit__node",
@@ -3598,7 +3734,8 @@
         null
       ],
       null,
-      "[factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant."
+      "[factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant.",
+      null
     ],
     [
       "reserve__upDown__unit__node",
@@ -3608,7 +3745,8 @@
         null
       ],
       "is_active",
-      "Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true."
+      "Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.",
+      null
     ],
     [
       "reserve__upDown__unit__node",
@@ -3618,7 +3756,8 @@
         "float"
       ],
       null,
-      "[factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant."
+      "[factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.",
+      null
     ],
     [
       "reserve__upDown__unit__node",
@@ -3628,7 +3767,8 @@
         null
       ],
       null,
-      "[factor] Maximum ratio for the transfer of reserve to this node. Constant."
+      "[factor] Maximum ratio for the transfer of reserve to this node. Constant.",
+      null
     ],
     [
       "reserve__upDown__unit__node",
@@ -3638,7 +3778,8 @@
         "float"
       ],
       null,
-      "[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant."
+      "[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.",
+      null
     ],
     [
       "solve",
@@ -3648,7 +3789,8 @@
         null
       ],
       null,
-      "Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences"
+      "Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences",
+      null
     ],
     [
       "solve",
@@ -3658,7 +3800,8 @@
         null
       ],
       null,
-      "Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set"
+      "Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set",
+      null
     ],
     [
       "solve",
@@ -3668,7 +3811,8 @@
         null
       ],
       "highs_method",
-      "HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work."
+      "HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.",
+      null
     ],
     [
       "solve",
@@ -3678,7 +3822,8 @@
         null
       ],
       "highs_parallel",
-      "HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel."
+      "HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.",
+      null
     ],
     [
       "solve",
@@ -3688,7 +3833,8 @@
         null
       ],
       "highs_presolve",
-      "HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large."
+      "HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.",
+      null
     ],
     [
       "solve",
@@ -3698,7 +3844,8 @@
         null
       ],
       null,
-      "Array of periods where investments are allowed."
+      "Array of periods where investments are allowed.",
+      null
     ],
     [
       "solve",
@@ -3708,7 +3855,8 @@
         null
       ],
       null,
-      "Map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name."
+      "Map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.",
+      null
     ],
     [
       "solve",
@@ -3718,7 +3866,8 @@
         null
       ],
       null,
-      "Array of the periods that will realize the investment decisions. If not used when the invest_periods exist. The realized_periods are used to realize invests as well"
+      "Array of the periods that will realize the investment decisions. If not used when the invest_periods exist. The realized_periods are used to realize invests as well",
+      null
     ],
     [
       "solve",
@@ -3728,7 +3877,8 @@
         null
       ],
       null,
-      "Array of periods that will be realized in the solve."
+      "Array of periods that will be realized in the solve.",
+      null
     ],
     [
       "solve",
@@ -3738,7 +3888,8 @@
         null
       ],
       null,
-      "Hours (Optional). Duration of rolling, if not stated, assumed to be the whole timeline of the solve"
+      "Hours (Optional). Duration of rolling, if not stated, assumed to be the whole timeline of the solve",
+      null
     ],
     [
       "solve",
@@ -3748,7 +3899,8 @@
         null
       ],
       null,
-      "Hours (Required if rolling_window solve). How long into the future the roll sees"
+      "Hours (Required if rolling_window solve). How long into the future the roll sees",
+      null
     ],
     [
       "solve",
@@ -3758,7 +3910,8 @@
         null
       ],
       null,
-      "Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Should be smaller than the horizon"
+      "Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Should be smaller than the horizon",
+      null
     ],
     [
       "solve",
@@ -3768,7 +3921,8 @@
         null
       ],
       "solve_mode",
-      "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence."
+      "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence.",
+      null
     ],
     [
       "solve",
@@ -3778,7 +3932,8 @@
         null
       ],
       "solver",
-      "Choice of solver. HIGHs used as default. GLPSOL is another open source option. Out of commercial solvers CPLEX has been tested."
+      "Choice of solver. HIGHs used as default. GLPSOL is another open source option. Out of commercial solvers CPLEX has been tested.",
+      null
     ],
     [
       "solve",
@@ -3788,7 +3943,8 @@
         null
       ],
       null,
-      "Array of text commands for passing command line arguments to a solver. Can be used to set additional solver parameters."
+      "Array of text commands for passing command line arguments to a solver. Can be used to set additional solver parameters.",
+      null
     ],
     [
       "solve",
@@ -3798,7 +3954,8 @@
         null
       ],
       null,
-      "Additional command to execute before calling the solver. Can be used to e.g. reserve a floating license for a commercial solver."
+      "Additional command to execute before calling the solver. Can be used to e.g. reserve a floating license for a commercial solver.",
+      null
     ],
     [
       "solve",
@@ -3808,7 +3965,8 @@
         null
       ],
       null,
-      "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time"
+      "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time",
+      null
     ],
     [
       "solve",
@@ -3818,7 +3976,8 @@
         null
       ],
       null,
-      "Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years."
+      "Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.",
+      null
     ],
     [
       "timeline",
@@ -3828,7 +3987,8 @@
         null
       ],
       null,
-      "Map of time steps in the timeline. Index: time step name, value: time step duration in hours."
+      "Map of time steps in the timeline. Index: time step name, value: time step duration in hours.",
+      null
     ],
     [
       "timeset",
@@ -3838,7 +3998,8 @@
         null
       ],
       null,
-      "Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps."
+      "Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.",
+      null
     ],
     [
       "timeset",
@@ -3848,7 +4009,8 @@
         null
       ],
       null,
-      "The name of the timeline that the timeset uses. (String)"
+      "The name of the timeline that the timeset uses. (String)",
+      null
     ],
     [
       "timeset",
@@ -3858,517 +4020,8 @@
         null
       ],
       null,
-      "Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps"
-    ],
-    [
-      "unit",
-      "availability",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time."
-    ],
-    [
-      "unit",
-      "constraint_invested_capacity_coefficient",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the unit capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize."
-    ],
-    [
-      "unit",
-      "conversion_method",
-      [
-        null,
-        null
-      ],
-      "conversion_methods",
-      "Choice of conversion method."
-    ],
-    [
-      "unit",
-      "cumulative_max_capacity",
-      [
-        null,
-        null
-      ],
-      null,
-      "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
-    ],
-    [
-      "unit",
-      "cumulative_min_capacity",
-      [
-        null,
-        null
-      ],
-      null,
-      "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
-    ],
-    [
-      "unit",
-      "delay",
-      [
-        null,
-        null
-      ],
-      null,
-      "[hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences."
-    ],
-    [
-      "unit",
-      "efficiency",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor] Efficiency of a unit. Constant or time."
-    ],
-    [
-      "unit",
-      "efficiency_at_min_load",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant."
-    ],
-    [
-      "unit",
-      "existing",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Existing capacity. Constant or Period"
-    ],
-    [
-      "unit",
-      "fixed_cost",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[CUR/kW] Annual fixed cost. Constant or period."
-    ],
-    [
-      "unit",
-      "discount_rate",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[e.g. 0.05 equals 5%] Interest rate for investments. Constant or period."
-    ],
-    [
-      "unit",
-      "invest_cost",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[CUR/kW] Investment cost of the unit. Constant or period."
-    ],
-    [
-      "unit",
-      "invest_max_period",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Maximum investment. Period."
-    ],
-    [
-      "unit",
-      "invest_max_total",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Maximum investment over all solves. Constant."
-    ],
-    [
-      "unit",
-      "invest_method",
-      [
-        null,
-        null
-      ],
-      "invest_methods",
-      "Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total."
-    ],
-    [
-      "unit",
-      "invest_min_period",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Minimum investment. Period."
-    ],
-    [
-      "unit",
-      "invest_min_total",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Minimum investment over all solves. Constant."
-    ],
-    [
-      "unit",
-      "lifetime",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[years] Used to calculate annuity together with interest rate. Constant or period."
-    ],
-    [
-      "unit",
-      "lifetime_method",
-      [
-        null,
-        null
-      ],
-      "lifetime_methods",
-      "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built."
-    ],
-    [
-      "unit",
-      "min_downtime",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[hours] When unit turns off, how many hours it must stay turned off. Constant."
-    ],
-    [
-      "unit",
-      "min_load",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time."
-    ],
-    [
-      "unit",
-      "min_uptime",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[hours] When unit turns on, how many hours it must stay turned on. Constant."
-    ],
-    [
-      "unit",
-      "minimum_time_method",
-      [
-        "bnVsbA==",
-        null
-      ],
-      "minimum_time_methods",
-      "Not functional yet. Choice between minimum up- and downtimes (<empty>, min_downtime, min_uptime, both)."
-    ],
-    [
-      "unit",
-      "retire_max_period",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Maximum retired capacity. Period."
-    ],
-    [
-      "unit",
-      "retire_max_total",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Maximum retired capacity over all solves. Constant."
-    ],
-    [
-      "unit",
-      "retire_min_period",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Minimum retired capacity. Period."
-    ],
-    [
-      "unit",
-      "retire_min_total",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Minimum retired capacity over all solves. Constant."
-    ],
-    [
-      "unit",
-      "salvage_value",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[CUR/kW] Salvage value of the unit. Constant or period."
-    ],
-    [
-      "unit",
-      "startup_cost",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant."
-    ],
-    [
-      "unit",
-      "startup_method",
-      [
-        null,
-        null
-      ],
-      "startup_methods",
-      "Choice of startup method. Linear startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. Binary startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups."
-    ],
-    [
-      "unit",
-      "virtual_unitsize",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Size of a single unit - used for integer investments (lumped investments), minimum loads and start-up costs. If not given, assumed from the existing unit capacity."
-    ],
-    [
-      "unit__inputNode",
-      "constraint_flow_coefficient",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation."
-    ],
-    [
-      "unit__inputNode",
-      "inertia_constant",
-      [
-        null,
-        null
-      ],
-      null,
-      "[MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant."
-    ],
-    [
-      "unit__inputNode",
-      "is_non_synchronous",
-      [
-        null,
-        null
-      ],
-      "is_non_synchronous",
-      "Chooses whether the unit is synchronously connected to this node."
-    ],
-    [
-      "unit__inputNode",
-      "other_operational_cost",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time."
-    ],
-    [
-      "unit__inputNode",
-      "ramp_cost",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/MW] Cost of ramping the unit. Constant."
-    ],
-    [
-      "unit__inputNode",
-      "ramp_method",
-      [
-        null,
-        null
-      ],
-      "ramp_methods",
-      "Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023)."
-    ],
-    [
-      "unit__inputNode",
-      "ramp_speed_down",
-      [
-        null,
-        null
-      ],
-      null,
-      "[per unit / minute] Maximum ramp down speed. Constant."
-    ],
-    [
-      "unit__inputNode",
-      "ramp_speed_up",
-      [
-        null,
-        null
-      ],
-      null,
-      "[per unit / minute] Maximum ramp up speed. Constant."
-    ],
-    [
-      "unit__node__profile",
-      "profile_method",
-      [
-        null,
-        null
-      ],
-      "profile_methods",
-      "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n"
-    ],
-    [
-      "unit__outputNode",
-      "constraint_flow_coefficient",
-      [
-        null,
-        null
-      ],
-      null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation."
-    ],
-    [
-      "unit__outputNode",
-      "inertia_constant",
-      [
-        null,
-        null
-      ],
-      null,
-      "[MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant."
-    ],
-    [
-      "unit__outputNode",
-      "is_non_synchronous",
-      [
-        null,
-        null
-      ],
-      "is_non_synchronous",
-      "Chooses whether the unit is synchronously connected to this node."
-    ],
-    [
-      "unit__outputNode",
-      "other_operational_cost",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time."
-    ],
-    [
-      "unit__outputNode",
-      "ramp_cost",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/MW] Cost of ramping the unit. Constant."
-    ],
-    [
-      "unit__outputNode",
-      "ramp_method",
-      [
-        null,
-        null
-      ],
-      "ramp_methods",
-      "Choice of ramp methods."
-    ],
-    [
-      "unit__outputNode",
-      "ramp_speed_down",
-      [
-        null,
-        null
-      ],
-      null,
-      "[per unit  / minute] Maximum ramp down speed. Constant."
-    ],
-    [
-      "unit__outputNode",
-      "ramp_speed_up",
-      [
-        null,
-        null
-      ],
-      null,
-      "[per unit  / minute] Maximum ramp up speed. Constant."
-    ],
-    [
-      "connection",
-      "constraint_cumulative_pre_built_capacity_coefficient",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
-    ],
-    [
-      "node",
-      "constraint_cumulative_pre_built_capacity_coefficient",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
-    ],
-    [
-      "unit",
-      "constraint_cumulative_pre_built_capacity_coefficient",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
+      "Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps",
+      null
     ],
     [
       "timeset",
@@ -4378,7 +4031,371 @@
         null
       ],
       null,
-      "Per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year. Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so uniform input reproduces weight = 1 per step. Must not be combined with representative_period_weights on the same timeset."
+      "Per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year. Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so uniform input reproduces weight = 1 per step. Must not be combined with representative_period_weights on the same timeset.",
+      null
+    ],
+    [
+      "unit",
+      "availability",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.",
+      null
+    ],
+    [
+      "unit",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
+      null
+    ],
+    [
+      "unit",
+      "constraint_invested_capacity_coefficient",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the unit capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
+      null
+    ],
+    [
+      "unit",
+      "conversion_method",
+      [
+        null,
+        null
+      ],
+      "conversion_methods",
+      "Choice of conversion method.",
+      null
+    ],
+    [
+      "unit",
+      "cumulative_max_capacity",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      null
+    ],
+    [
+      "unit",
+      "cumulative_min_capacity",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      null
+    ],
+    [
+      "unit",
+      "delay",
+      [
+        null,
+        null
+      ],
+      null,
+      "[hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.",
+      null
+    ],
+    [
+      "unit",
+      "discount_rate",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[e.g. 0.05 equals 5%] Interest rate for investments. Constant or period.",
+      null
+    ],
+    [
+      "unit",
+      "efficiency",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor] Efficiency of a unit. Constant or time.",
+      null
+    ],
+    [
+      "unit",
+      "efficiency_at_min_load",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant.",
+      null
+    ],
+    [
+      "unit",
+      "existing",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Existing capacity. Constant or Period",
+      null
+    ],
+    [
+      "unit",
+      "fixed_cost",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[CUR/kW] Annual fixed cost. Constant or period.",
+      null
+    ],
+    [
+      "unit",
+      "invest_cost",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[CUR/kW] Investment cost of the unit. Constant or period.",
+      null
+    ],
+    [
+      "unit",
+      "invest_max_period",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Maximum investment. Period.",
+      null
+    ],
+    [
+      "unit",
+      "invest_max_total",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Maximum investment over all solves. Constant.",
+      null
+    ],
+    [
+      "unit",
+      "invest_method",
+      [
+        null,
+        null
+      ],
+      "invest_methods",
+      "Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total.",
+      null
+    ],
+    [
+      "unit",
+      "invest_min_period",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Minimum investment. Period.",
+      null
+    ],
+    [
+      "unit",
+      "invest_min_total",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Minimum investment over all solves. Constant.",
+      null
+    ],
+    [
+      "unit",
+      "lifetime",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[years] Used to calculate annuity together with interest rate. Constant or period.",
+      null
+    ],
+    [
+      "unit",
+      "lifetime_method",
+      [
+        null,
+        null
+      ],
+      "lifetime_methods",
+      "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
+      null
+    ],
+    [
+      "unit",
+      "min_downtime",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[hours] When unit turns off, how many hours it must stay turned off. Constant.",
+      null
+    ],
+    [
+      "unit",
+      "min_load",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time.",
+      null
+    ],
+    [
+      "unit",
+      "min_uptime",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[hours] When unit turns on, how many hours it must stay turned on. Constant.",
+      null
+    ],
+    [
+      "unit",
+      "minimum_time_method",
+      [
+        "bnVsbA==",
+        null
+      ],
+      "minimum_time_methods",
+      "Not functional yet. Choice between minimum up- and downtimes (<empty>, min_downtime, min_uptime, both).",
+      null
+    ],
+    [
+      "unit",
+      "retire_max_period",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Maximum retired capacity. Period.",
+      null
+    ],
+    [
+      "unit",
+      "retire_max_total",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Maximum retired capacity over all solves. Constant.",
+      null
+    ],
+    [
+      "unit",
+      "retire_min_period",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Minimum retired capacity. Period.",
+      null
+    ],
+    [
+      "unit",
+      "retire_min_total",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Minimum retired capacity over all solves. Constant.",
+      null
+    ],
+    [
+      "unit",
+      "salvage_value",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[CUR/kW] Salvage value of the unit. Constant or period.",
+      null
+    ],
+    [
+      "unit",
+      "startup_cost",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant.",
+      null
+    ],
+    [
+      "unit",
+      "startup_method",
+      [
+        null,
+        null
+      ],
+      "startup_methods",
+      "Choice of startup method. Linear startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. Binary startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.",
+      null
+    ],
+    [
+      "unit",
+      "virtual_unitsize",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "[MW] Size of a single unit - used for integer investments (lumped investments), minimum loads and start-up costs. If not given, assumed from the existing unit capacity.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "constraint_flow_coefficient",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
+      null
     ],
     [
       "unit__inputNode",
@@ -4388,7 +4405,30 @@
         "float"
       ],
       null,
-      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations."
+      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "inertia_constant",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "is_non_synchronous",
+      [
+        null,
+        null
+      ],
+      "is_non_synchronous",
+      "Chooses whether the unit is synchronously connected to this node.",
+      null
     ],
     [
       "unit__inputNode",
@@ -4398,7 +4438,8 @@
         "float"
       ],
       null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap."
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap.",
+      null
     ],
     [
       "unit__inputNode",
@@ -4408,7 +4449,85 @@
         "float"
       ],
       null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online."
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "other_operational_cost",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "ramp_cost",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/MW] Cost of ramping the unit. Constant.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "ramp_method",
+      [
+        null,
+        null
+      ],
+      "ramp_methods",
+      "Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "ramp_speed_down",
+      [
+        null,
+        null
+      ],
+      null,
+      "[per unit / minute] Maximum ramp down speed. Constant.",
+      null
+    ],
+    [
+      "unit__inputNode",
+      "ramp_speed_up",
+      [
+        null,
+        null
+      ],
+      null,
+      "[per unit / minute] Maximum ramp up speed. Constant.",
+      null
+    ],
+    [
+      "unit__node__profile",
+      "profile_method",
+      [
+        null,
+        null
+      ],
+      "profile_methods",
+      "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "constraint_flow_coefficient",
+      [
+        null,
+        null
+      ],
+      null,
+      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
+      null
     ],
     [
       "unit__outputNode",
@@ -4418,7 +4537,30 @@
         "float"
       ],
       null,
-      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations."
+      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "inertia_constant",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "is_non_synchronous",
+      [
+        null,
+        null
+      ],
+      "is_non_synchronous",
+      "Chooses whether the unit is synchronously connected to this node.",
+      null
     ],
     [
       "unit__outputNode",
@@ -4428,7 +4570,8 @@
         "float"
       ],
       null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap."
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap.",
+      null
     ],
     [
       "unit__outputNode",
@@ -4438,7 +4581,63 @@
         "float"
       ],
       null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online."
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "other_operational_cost",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "ramp_cost",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/MW] Cost of ramping the unit. Constant.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "ramp_method",
+      [
+        null,
+        null
+      ],
+      "ramp_methods",
+      "Choice of ramp methods.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "ramp_speed_down",
+      [
+        null,
+        null
+      ],
+      null,
+      "[per unit  / minute] Maximum ramp down speed. Constant.",
+      null
+    ],
+    [
+      "unit__outputNode",
+      "ramp_speed_up",
+      [
+        null,
+        null
+      ],
+      null,
+      "[per unit  / minute] Maximum ramp up speed. Constant.",
+      null
     ]
   ],
   "parameter_types": [
@@ -4474,6 +4673,12 @@
     ],
     [
       "connection",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      "map",
+      1
+    ],
+    [
+      "connection",
       "constraint_invested_capacity_coefficient",
       "map",
       1
@@ -4516,6 +4721,18 @@
     ],
     [
       "connection",
+      "discount_rate",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "discount_rate",
+      "map",
+      1
+    ],
+    [
+      "connection",
       "efficiency",
       "float",
       0
@@ -4547,18 +4764,6 @@
     [
       "connection",
       "fixed_cost",
-      "map",
-      1
-    ],
-    [
-      "connection",
-      "discount_rate",
-      "float",
-      0
-    ],
-    [
-      "connection",
-      "discount_rate",
       "map",
       1
     ],
@@ -4960,6 +5165,12 @@
     ],
     [
       "model",
+      "exclude_entity_outputs",
+      "str",
+      0
+    ],
+    [
+      "model",
       "inflation_offset_investment",
       "float",
       0
@@ -4974,12 +5185,6 @@
       "model",
       "inflation_rate",
       "float",
-      0
-    ],
-    [
-      "model",
-      "exclude_entity_outputs",
-      "str",
       0
     ],
     [
@@ -5074,6 +5279,12 @@
     ],
     [
       "node",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      "map",
+      1
+    ],
+    [
+      "node",
       "constraint_invested_capacity_coefficient",
       "map",
       1
@@ -5110,6 +5321,18 @@
     ],
     [
       "node",
+      "discount_rate",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "discount_rate",
+      "map",
+      1
+    ],
+    [
+      "node",
       "existing",
       "float",
       0
@@ -5131,18 +5354,6 @@
       "fixed_cost",
       "map",
       1
-    ],
-    [
-      "node",
-      "has_balance",
-      "str",
-      0
-    ],
-    [
-      "node",
-      "has_storage",
-      "str",
-      0
     ],
     [
       "node",
@@ -5167,18 +5378,6 @@
       "inflow_method",
       "str",
       0
-    ],
-    [
-      "node",
-      "discount_rate",
-      "float",
-      0
-    ],
-    [
-      "node",
-      "discount_rate",
-      "map",
-      1
     ],
     [
       "node",
@@ -5679,6 +5878,12 @@
       1
     ],
     [
+      "timeset",
+      "timeset_weights",
+      "map",
+      1
+    ],
+    [
       "unit",
       "availability",
       "float",
@@ -5695,6 +5900,12 @@
       "availability",
       "map",
       3
+    ],
+    [
+      "unit",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      "map",
+      1
     ],
     [
       "unit",
@@ -5746,6 +5957,18 @@
     ],
     [
       "unit",
+      "discount_rate",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "discount_rate",
+      "map",
+      1
+    ],
+    [
+      "unit",
       "efficiency",
       "float",
       0
@@ -5789,18 +6012,6 @@
     [
       "unit",
       "fixed_cost",
-      "map",
-      1
-    ],
-    [
-      "unit",
-      "discount_rate",
-      "float",
-      0
-    ],
-    [
-      "unit",
-      "discount_rate",
       "map",
       1
     ],
@@ -5962,6 +6173,12 @@
     ],
     [
       "unit__inputNode",
+      "flow_coefficient",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
       "inertia_constant",
       "float",
       0
@@ -5970,6 +6187,18 @@
       "unit__inputNode",
       "is_non_synchronous",
       "str",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "max_capacity_coefficient",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "min_capacity_coefficient",
+      "float",
       0
     ],
     [
@@ -6028,6 +6257,12 @@
     ],
     [
       "unit__outputNode",
+      "flow_coefficient",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
       "inertia_constant",
       "float",
       0
@@ -6036,6 +6271,18 @@
       "unit__outputNode",
       "is_non_synchronous",
       "str",
+      0
+    ],
+    [
+      "unit__outputNode",
+      "max_capacity_coefficient",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
+      "min_capacity_coefficient",
+      "float",
       0
     ],
     [
@@ -6077,66 +6324,6 @@
     [
       "unit__outputNode",
       "ramp_speed_up",
-      "float",
-      0
-    ],
-    [
-      "connection",
-      "constraint_cumulative_pre_built_capacity_coefficient",
-      "map",
-      1
-    ],
-    [
-      "node",
-      "constraint_cumulative_pre_built_capacity_coefficient",
-      "map",
-      1
-    ],
-    [
-      "unit",
-      "constraint_cumulative_pre_built_capacity_coefficient",
-      "map",
-      1
-    ],
-    [
-      "timeset",
-      "timeset_weights",
-      "map",
-      1
-    ],
-    [
-      "unit__inputNode",
-      "flow_coefficient",
-      "float",
-      0
-    ],
-    [
-      "unit__inputNode",
-      "max_capacity_coefficient",
-      "float",
-      0
-    ],
-    [
-      "unit__inputNode",
-      "min_capacity_coefficient",
-      "float",
-      0
-    ],
-    [
-      "unit__outputNode",
-      "flow_coefficient",
-      "float",
-      0
-    ],
-    [
-      "unit__outputNode",
-      "max_capacity_coefficient",
-      "float",
-      0
-    ],
-    [
-      "unit__outputNode",
-      "min_capacity_coefficient",
       "float",
       0
     ]
@@ -6195,6 +6382,16 @@
     [
       "connection",
       "battery_inverter",
+      "discount_rate",
+      [
+        "MC4wNQ==",
+        "float"
+      ],
+      "battery_invest"
+    ],
+    [
+      "connection",
+      "battery_inverter",
       "efficiency",
       [
         "MC45NQ==",
@@ -6211,16 +6408,6 @@
         "float"
       ],
       "battery"
-    ],
-    [
-      "connection",
-      "battery_inverter",
-      "discount_rate",
-      [
-        "MC4wNQ==",
-        "float"
-      ],
-      "battery_invest"
     ],
     [
       "connection",
@@ -6431,6 +6618,26 @@
         "str"
       ],
       "water_pump"
+    ],
+    [
+      "constraint",
+      "wind_growth_cap",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "constraint",
+      "wind_growth_cap",
+      "sense",
+      [
+        "Imxlc3NfdGhhbiI=",
+        "str"
+      ],
+      "wind_growth_cap_pre_built"
     ],
     [
       "group",
@@ -6864,6 +7071,26 @@
     ],
     [
       "node",
+      "anti_energy_market",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "anti_energy_market",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "anti_energy_plant"
+    ],
+    [
+      "node",
       "battery",
       "constraint_invested_capacity_coefficient",
       [
@@ -6885,42 +7112,22 @@
     [
       "node",
       "battery",
-      "existing",
-      [
-        "NTA=",
-        "float"
-      ],
-      "battery"
-    ],
-    [
-      "node",
-      "battery",
-      "has_balance",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "battery"
-    ],
-    [
-      "node",
-      "battery",
-      "has_storage",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "battery"
-    ],
-    [
-      "node",
-      "battery",
       "discount_rate",
       [
         "MC4wNQ==",
         "float"
       ],
       "battery_invest"
+    ],
+    [
+      "node",
+      "battery",
+      "existing",
+      [
+        "NTA=",
+        "float"
+      ],
+      "battery"
     ],
     [
       "node",
@@ -6985,6 +7192,26 @@
     [
       "node",
       "battery",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "battery",
+      "node_type",
+      [
+        "InN0b3JhZ2Ui",
+        "str"
+      ],
+      "battery"
+    ],
+    [
+      "node",
+      "battery",
       "penalty_down",
       [
         "MzAwMA==",
@@ -7031,6 +7258,16 @@
         "str"
       ],
       "bind_battery_forward"
+    ],
+    [
+      "node",
+      "battery",
+      "storage_binding_method",
+      [
+        "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
+        "str"
+      ],
+      "bind_battery_intraperiod_blocks"
     ],
     [
       "node",
@@ -7124,31 +7361,41 @@
     ],
     [
       "node",
+      "coal_market",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "coal_market",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "coal"
+    ],
+    [
+      "node",
+      "coal_market",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "coal_chp"
+    ],
+    [
+      "node",
       "dr_storage",
       "existing",
       [
         "MzAw",
         "float"
-      ],
-      "dr_shift_demand"
-    ],
-    [
-      "node",
-      "dr_storage",
-      "has_balance",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "dr_shift_demand"
-    ],
-    [
-      "node",
-      "dr_storage",
-      "has_storage",
-      [
-        "InllcyI=",
-        "str"
       ],
       "dr_shift_demand"
     ],
@@ -7168,6 +7415,26 @@
       "inflow_method",
       [
         "InVzZV9vcmlnaW5hbCI=",
+        "str"
+      ],
+      "dr_shift_demand"
+    ],
+    [
+      "node",
+      "dr_storage",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "dr_storage",
+      "node_type",
+      [
+        "InN0b3JhZ2Ui",
         "str"
       ],
       "dr_shift_demand"
@@ -7215,20 +7482,30 @@
     [
       "node",
       "east",
-      "has_balance",
+      "inflow",
       [
-        "InllcyI=",
-        "str"
+        "LTMwMA==",
+        "float"
       ],
       "network"
     ],
     [
       "node",
       "east",
-      "inflow",
+      "node_type",
       [
-        "LTMwMA==",
-        "float"
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "east",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
       ],
       "network"
     ],
@@ -7265,26 +7542,6 @@
     [
       "node",
       "ev_battery",
-      "has_balance",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "ev"
-    ],
-    [
-      "node",
-      "ev_battery",
-      "has_storage",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "ev"
-    ],
-    [
-      "node",
-      "ev_battery",
       "inflow",
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIC0zMC40XSwgWyJ0MDAwMiIsIC0yNS4wXSwgWyJ0MDAwMyIsIC0xOS4xXSwgWyJ0MDAwNCIsIC0xMi45XSwgWyJ0MDAwNSIsIC02LjVdLCBbInQwMDA2IiwgMC4wXSwgWyJ0MDAwNyIsIC02LjVdLCBbInQwMDA4IiwgLTEyLjldLCBbInQwMDA5IiwgLTE5LjFdLCBbInQwMDEwIiwgLTI1LjBdLCBbInQwMDExIiwgLTMwLjRdLCBbInQwMDEyIiwgLTM1LjRdLCBbInQwMDEzIiwgLTM5LjddLCBbInQwMDE0IiwgLTQzLjNdLCBbInQwMDE1IiwgLTQ2LjJdLCBbInQwMDE2IiwgLTQ4LjNdLCBbInQwMDE3IiwgLTQ5LjZdLCBbInQwMDE4IiwgLTUwLjBdLCBbInQwMDE5IiwgLTQ5LjZdLCBbInQwMDIwIiwgLTQ4LjNdLCBbInQwMDIxIiwgLTQ2LjJdLCBbInQwMDIyIiwgLTQzLjNdLCBbInQwMDIzIiwgLTM5LjddLCBbInQwMDI0IiwgLTM1LjRdLCBbInQwMDI1IiwgLTMwLjRdLCBbInQwMDI2IiwgLTI1LjBdLCBbInQwMDI3IiwgLTE5LjFdLCBbInQwMDI4IiwgLTEyLjldLCBbInQwMDI5IiwgLTYuNV0sIFsidDAwMzAiLCAwLjBdLCBbInQwMDMxIiwgLTYuNV0sIFsidDAwMzIiLCAtMTIuOV0sIFsidDAwMzMiLCAtMTkuMV0sIFsidDAwMzQiLCAtMjUuMF0sIFsidDAwMzUiLCAtMzAuNF0sIFsidDAwMzYiLCAtMzUuNF0sIFsidDAwMzciLCAtMzkuN10sIFsidDAwMzgiLCAtNDMuM10sIFsidDAwMzkiLCAtNDYuMl0sIFsidDAwNDAiLCAtNDguM10sIFsidDAwNDEiLCAtNDkuNl0sIFsidDAwNDIiLCAtNTAuMF0sIFsidDAwNDMiLCAtNDkuNl0sIFsidDAwNDQiLCAtNDguM10sIFsidDAwNDUiLCAtNDYuMl0sIFsidDAwNDYiLCAtNDMuM10sIFsidDAwNDciLCAtMzkuN10sIFsidDAwNDgiLCAtMzUuNF0sIFsidDAwNDkiLCAtMzAuNF0sIFsidDAwNTAiLCAtMjUuMF0sIFsidDAwNTEiLCAtMTkuMV0sIFsidDAwNTIiLCAtMTIuOV0sIFsidDAwNTMiLCAtNi41XSwgWyJ0MDA1NCIsIDAuMF0sIFsidDAwNTUiLCAtNi41XSwgWyJ0MDA1NiIsIC0xMi45XSwgWyJ0MDA1NyIsIC0xOS4xXSwgWyJ0MDA1OCIsIC0yNS4wXSwgWyJ0MDA1OSIsIC0zMC40XSwgWyJ0MDA2MCIsIC0zNS40XSwgWyJ0MDA2MSIsIC0zOS43XSwgWyJ0MDA2MiIsIC00My4zXSwgWyJ0MDA2MyIsIC00Ni4yXSwgWyJ0MDA2NCIsIC00OC4zXSwgWyJ0MDA2NSIsIC00OS42XSwgWyJ0MDA2NiIsIC01MC4wXSwgWyJ0MDA2NyIsIC00OS42XSwgWyJ0MDA2OCIsIC00OC4zXSwgWyJ0MDA2OSIsIC00Ni4yXSwgWyJ0MDA3MCIsIC00My4zXSwgWyJ0MDA3MSIsIC0zOS43XSwgWyJ0MDA3MiIsIC0zNS40XV0sICJpbmRleF9uYW1lIjogInRpbWUiLCAidHlwZSI6ICJtYXAifQ==",
@@ -7298,6 +7555,26 @@
       "inflow_method",
       [
         "InNjYWxlX3RvX2FubnVhbF9mbG93Ig==",
+        "str"
+      ],
+      "ev"
+    ],
+    [
+      "node",
+      "ev_battery",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "ev_battery",
+      "node_type",
+      [
+        "InN0b3JhZ2Ui",
         "str"
       ],
       "ev"
@@ -7355,20 +7632,30 @@
     [
       "node",
       "heat",
-      "has_balance",
+      "inflow",
       [
-        "InllcyI=",
-        "str"
+        "LTMwMA==",
+        "float"
       ],
       "heat"
     ],
     [
       "node",
       "heat",
-      "inflow",
+      "node_type",
       [
-        "LTMwMA==",
-        "float"
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "heat",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
       ],
       "heat"
     ],
@@ -7395,20 +7682,30 @@
     [
       "node",
       "north",
-      "has_balance",
+      "inflow",
       [
-        "InllcyI=",
-        "str"
+        "LTIwMA==",
+        "float"
       ],
       "network"
     ],
     [
       "node",
       "north",
-      "inflow",
+      "node_type",
       [
-        "LTIwMA==",
-        "float"
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "north",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
       ],
       "network"
     ],
@@ -7445,19 +7742,19 @@
     [
       "node",
       "water_sink",
-      "has_balance",
+      "node_type",
       [
-        "InllcyI=",
+        "ImNvbW1vZGl0eSI=",
         "str"
       ],
-      "water_pump"
+      "Base"
     ],
     [
       "node",
       "water_sink",
-      "has_storage",
+      "node_type",
       [
-        "InllcyI=",
+        "InN0b3JhZ2Ui",
         "str"
       ],
       "water_pump"
@@ -7485,20 +7782,30 @@
     [
       "node",
       "water_source",
-      "has_balance",
+      "inflow",
       [
-        "InllcyI=",
-        "str"
+        "MTAw",
+        "float"
       ],
       "water_pump"
     ],
     [
       "node",
       "water_source",
-      "inflow",
+      "node_type",
       [
-        "MTAw",
-        "float"
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "water_source",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
       ],
       "water_pump"
     ],
@@ -7545,16 +7852,6 @@
     [
       "node",
       "west",
-      "has_balance",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "west"
-    ],
-    [
-      "node",
-      "west",
       "inflow",
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIC01ODkuMF0sIFsidDAwMDIiLCAtNTM3LjBdLCBbInQwMDAzIiwgLTUwNi4wXSwgWyJ0MDAwNCIsIC00ODIuMF0sIFsidDAwMDUiLCAtNDcyLjBdLCBbInQwMDA2IiwgLTQ1NC4wXSwgWyJ0MDAwNyIsIC00MjMuMF0sIFsidDAwMDgiLCAtNDM4LjBdLCBbInQwMDA5IiwgLTQ3NC4wXSwgWyJ0MDAxMCIsIC01MTguMF0sIFsidDAwMTEiLCAtNTM4LjBdLCBbInQwMDEyIiwgLTU1OC4wXSwgWyJ0MDAxMyIsIC01NzIuMF0sIFsidDAwMTQiLCAtNTY0LjBdLCBbInQwMDE1IiwgLTU1My4wXSwgWyJ0MDAxNiIsIC01NDEuMF0sIFsidDAwMTciLCAtNTM0LjBdLCBbInQwMDE4IiwgLTU2Ny4wXSwgWyJ0MDAxOSIsIC02ODkuMF0sIFsidDAwMjAiLCAtNjk2LjBdLCBbInQwMDIxIiwgLTY3MC4wXSwgWyJ0MDAyMiIsIC02MjcuMF0sIFsidDAwMjMiLCAtNTUwLjBdLCBbInQwMDI0IiwgLTQ1OC4wXSwgWyJ0MDAyNSIsIC00MzYuMF0sIFsidDAwMjYiLCAtNDQ2LjBdLCBbInQwMDI3IiwgLTQzNi4wXSwgWyJ0MDAyOCIsIC00NTIuMF0sIFsidDAwMjkiLCAtNDY5LjBdLCBbInQwMDMwIiwgLTUwNy4wXSwgWyJ0MDAzMSIsIC01NDkuMF0sIFsidDAwMzIiLCAtNTk0LjBdLCBbInQwMDMzIiwgLTY4Mi4wXSwgWyJ0MDAzNCIsIC03MzAuMF0sIFsidDAwMzUiLCAtNzc0LjBdLCBbInQwMDM2IiwgLTgwMi4wXSwgWyJ0MDAzNyIsIC04MDcuMF0sIFsidDAwMzgiLCAtNzkzLjBdLCBbInQwMDM5IiwgLTc4MC4wXSwgWyJ0MDA0MCIsIC03NjguMF0sIFsidDAwNDEiLCAtNzU1LjBdLCBbInQwMDQyIiwgLTc2Ny4wXSwgWyJ0MDA0MyIsIC04NzIuMF0sIFsidDAwNDQiLCAtODY1LjBdLCBbInQwMDQ1IiwgLTgwOC4wXSwgWyJ0MDA0NiIsIC03MzUuMF0sIFsidDAwNDciLCAtNjY5LjBdLCBbInQwMDQ4IiwgLTU5Ny4wXSwgWyJ0MDA0OSIsIC01MzMuMF0sIFsidDAwNTAiLCAtNTA3LjBdLCBbInQwMDUxIiwgLTQ4Ny4wXSwgWyJ0MDA1MiIsIC00OTIuMF0sIFsidDAwNTMiLCAtNTExLjBdLCBbInQwMDU0IiwgLTUzOS4wXSwgWyJ0MDA1NSIsIC01NDkuMF0sIFsidDAwNTYiLCAtNjEyLjBdLCBbInQwMDU3IiwgLTY2NS4wXSwgWyJ0MDA1OCIsIC03MTUuMF0sIFsidDAwNTkiLCAtNzYwLjBdLCBbInQwMDYwIiwgLTc4OS4wXSwgWyJ0MDA2MSIsIC03ODQuMF0sIFsidDAwNjIiLCAtNzY2LjBdLCBbInQwMDYzIiwgLTc0MC4wXSwgWyJ0MDA2NCIsIC03MjcuMF0sIFsidDAwNjUiLCAtNzE0LjBdLCBbInQwMDY2IiwgLTcyMy4wXSwgWyJ0MDA2NyIsIC04NDkuMF0sIFsidDAwNjgiLCAtODQ4LjBdLCBbInQwMDY5IiwgLTgxMi4wXSwgWyJ0MDA3MCIsIC03MjMuMF0sIFsidDAwNzEiLCAtNjQ3LjBdLCBbInQwMDcyIiwgLTYzNS4wXV0sICJpbmRleF9uYW1lIjogInRpbWUiLCAidHlwZSI6ICJtYXAifQ==",
@@ -7591,6 +7888,26 @@
         "str"
       ],
       "scale_to_peak_flow"
+    ],
+    [
+      "node",
+      "west",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "node",
+      "west",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
+      ],
+      "west"
     ],
     [
       "node",
@@ -8978,10 +9295,30 @@
       "2day",
       "timeset_duration",
       [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIDE2OC4wXV0sICJ0eXBlIjogIm1hcCJ9",
+        "map"
+      ],
+      "coal_min_updowntime"
+    ],
+    [
+      "timeset",
+      "2day",
+      "timeset_duration",
+      [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDEiLCA0OC4wXV19",
         "map"
       ],
       "init"
+    ],
+    [
+      "timeset",
+      "2day",
+      "timeset_weights",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIDAuNV0sIFsidDAwMDIiLCAwLjVdLCBbInQwMDAzIiwgMC41XSwgWyJ0MDAwNCIsIDAuNV0sIFsidDAwMDUiLCAwLjVdLCBbInQwMDA2IiwgMC41XSwgWyJ0MDAwNyIsIDAuNV0sIFsidDAwMDgiLCAwLjVdLCBbInQwMDA5IiwgMC41XSwgWyJ0MDAxMCIsIDAuNV0sIFsidDAwMTEiLCAwLjVdLCBbInQwMDEyIiwgMC41XSwgWyJ0MDAxMyIsIDEuMF0sIFsidDAwMTQiLCAxLjBdLCBbInQwMDE1IiwgMS4wXSwgWyJ0MDAxNiIsIDEuMF0sIFsidDAwMTciLCAxLjBdLCBbInQwMDE4IiwgMS4wXSwgWyJ0MDAxOSIsIDEuMF0sIFsidDAwMjAiLCAxLjBdLCBbInQwMDIxIiwgMS4wXSwgWyJ0MDAyMiIsIDEuMF0sIFsidDAwMjMiLCAxLjBdLCBbInQwMDI0IiwgMS4wXSwgWyJ0MDAyNSIsIDEuNV0sIFsidDAwMjYiLCAxLjVdLCBbInQwMDI3IiwgMS41XSwgWyJ0MDAyOCIsIDEuNV0sIFsidDAwMjkiLCAxLjVdLCBbInQwMDMwIiwgMS41XSwgWyJ0MDAzMSIsIDEuNV0sIFsidDAwMzIiLCAxLjVdLCBbInQwMDMzIiwgMS41XSwgWyJ0MDAzNCIsIDEuNV0sIFsidDAwMzUiLCAxLjVdLCBbInQwMDM2IiwgMS41XSwgWyJ0MDAzNyIsIDIuMF0sIFsidDAwMzgiLCAyLjBdLCBbInQwMDM5IiwgMi4wXSwgWyJ0MDA0MCIsIDIuMF0sIFsidDAwNDEiLCAyLjBdLCBbInQwMDQyIiwgMi4wXSwgWyJ0MDA0MyIsIDIuMF0sIFsidDAwNDQiLCAyLjBdLCBbInQwMDQ1IiwgMi4wXSwgWyJ0MDA0NiIsIDIuMF0sIFsidDAwNDciLCAyLjBdLCBbInQwMDQ4IiwgMi4wXV19",
+        "map"
+      ],
+      "weighted_2day"
     ],
     [
       "timeset",
@@ -9186,6 +9523,26 @@
     [
       "unit",
       "coal_plant",
+      "discount_rate",
+      [
+        "MC4wNQ==",
+        "float"
+      ],
+      "coal_invest"
+    ],
+    [
+      "unit",
+      "coal_plant",
+      "discount_rate",
+      [
+        "MC4wNQ==",
+        "float"
+      ],
+      "retire"
+    ],
+    [
+      "unit",
+      "coal_plant",
       "efficiency",
       [
         "MC40",
@@ -9279,26 +9636,6 @@
       "fixed_cost",
       [
         "MTAw",
-        "float"
-      ],
-      "retire"
-    ],
-    [
-      "unit",
-      "coal_plant",
-      "discount_rate",
-      [
-        "MC4wNQ==",
-        "float"
-      ],
-      "coal_invest"
-    ],
-    [
-      "unit",
-      "coal_plant",
-      "discount_rate",
-      [
-        "MC4wNQ==",
         "float"
       ],
       "retire"
@@ -9426,12 +9763,42 @@
     [
       "unit",
       "coal_plant",
+      "min_downtime",
+      [
+        "NQ==",
+        "float"
+      ],
+      "coal_min_updowntime"
+    ],
+    [
+      "unit",
+      "coal_plant",
       "min_load",
       [
         "MC41",
         "float"
       ],
       "coal_min_load"
+    ],
+    [
+      "unit",
+      "coal_plant",
+      "min_uptime",
+      [
+        "NQ==",
+        "float"
+      ],
+      "coal_min_updowntime"
+    ],
+    [
+      "unit",
+      "coal_plant",
+      "minimum_time_method",
+      [
+        "ImJvdGgi",
+        "str"
+      ],
+      "coal_min_updowntime"
     ],
     [
       "unit",
@@ -9676,12 +10043,42 @@
     [
       "unit",
       "wind_plant",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ3aW5kX2dyb3d0aF9jYXAiLCAtMC4xXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "unit",
+      "wind_plant",
+      "constraint_invested_capacity_coefficient",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ3aW5kX2dyb3d0aF9jYXAiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "unit",
+      "wind_plant",
       "conversion_method",
       [
         "Im5vbmUi",
         "str"
       ],
       "wind"
+    ],
+    [
+      "unit",
+      "wind_plant",
+      "discount_rate",
+      [
+        "MC4wNA==",
+        "float"
+      ],
+      "wind_invest"
     ],
     [
       "unit",
@@ -9702,16 +10099,6 @@
         "float"
       ],
       "wind"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "discount_rate",
-      [
-        "MC4wNA==",
-        "float"
-      ],
-      "wind_invest"
     ],
     [
       "unit",
@@ -9766,6 +10153,16 @@
     [
       "unit",
       "wind_plant",
+      "lifetime",
+      [
+        "MTAuMA==",
+        "float"
+      ],
+      "wind_no_investment_10yr"
+    ],
+    [
+      "unit",
+      "wind_plant",
       "lifetime_method",
       [
         "InJlaW52ZXN0X2Nob2ljZSI=",
@@ -9782,6 +10179,16 @@
         "str"
       ],
       "lifetime_renew"
+    ],
+    [
+      "unit",
+      "wind_plant",
+      "lifetime_method",
+      [
+        "Im5vX2ludmVzdG1lbnQi",
+        "str"
+      ],
+      "wind_no_investment_10yr"
     ],
     [
       "unit__inputNode",
@@ -9802,19 +10209,6 @@
         "water_pump",
         "water_source"
       ],
-      "flow_coefficient",
-      [
-        "MQ==",
-        "float"
-      ],
-      "water_pump"
-    ],
-    [
-      "unit__inputNode",
-      [
-        "water_pump",
-        "water_source"
-      ],
       "constraint_flow_coefficient",
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sid2F0ZXJfcHVtcF9maXgiLCAtMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
@@ -9826,11 +10220,11 @@
       "unit__inputNode",
       [
         "water_pump",
-        "west"
+        "water_source"
       ],
       "flow_coefficient",
       [
-        "MA==",
+        "MQ==",
         "float"
       ],
       "water_pump"
@@ -9845,6 +10239,19 @@
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sid2F0ZXJfcHVtcF9maXgiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
         "map"
+      ],
+      "water_pump"
+    ],
+    [
+      "unit__inputNode",
+      [
+        "water_pump",
+        "west"
+      ],
+      "flow_coefficient",
+      [
+        "MA==",
+        "float"
       ],
       "water_pump"
     ],
@@ -9906,6 +10313,32 @@
       "unit__outputNode",
       [
         "coal_chp",
+        "heat"
+      ],
+      "flow_coefficient",
+      [
+        "MC4y",
+        "float"
+      ],
+      "coal_chp_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "heat"
+      ],
+      "max_capacity_coefficient",
+      [
+        "MS4w",
+        "float"
+      ],
+      "coal_chp_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
         "west"
       ],
       "constraint_flow_coefficient",
@@ -9921,12 +10354,38 @@
         "coal_chp",
         "west"
       ],
+      "flow_coefficient",
+      [
+        "Mi4w",
+        "float"
+      ],
+      "coal_chp_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "west"
+      ],
       "inertia_constant",
       [
         "NC4w",
         "float"
       ],
       "inertia"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "west"
+      ],
+      "max_capacity_coefficient",
+      [
+        "MC44",
+        "float"
+      ],
+      "coal_chp_extraction"
     ],
     [
       "unit__outputNode",
@@ -9992,178 +10451,6 @@
         "float"
       ],
       "fusion"
-    ],
-    [
-      "timeset",
-      "2day",
-      "timeset_duration",
-      [
-        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIDE2OC4wXV0sICJ0eXBlIjogIm1hcCJ9",
-        "map"
-      ],
-      "coal_min_updowntime"
-    ],
-    [
-      "unit",
-      "coal_plant",
-      "min_downtime",
-      [
-        "NQ==",
-        "float"
-      ],
-      "coal_min_updowntime"
-    ],
-    [
-      "unit",
-      "coal_plant",
-      "min_uptime",
-      [
-        "NQ==",
-        "float"
-      ],
-      "coal_min_updowntime"
-    ],
-    [
-      "unit",
-      "coal_plant",
-      "minimum_time_method",
-      [
-        "ImJvdGgi",
-        "str"
-      ],
-      "coal_min_updowntime"
-    ],
-    [
-      "node",
-      "battery",
-      "storage_binding_method",
-      [
-        "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
-        "str"
-      ],
-      "bind_battery_intraperiod_blocks"
-    ],
-    [
-      "constraint",
-      "wind_growth_cap",
-      "sense",
-      [
-        "Imxlc3NfdGhhbiI=",
-        "str"
-      ],
-      "wind_growth_cap_pre_built"
-    ],
-    [
-      "constraint",
-      "wind_growth_cap",
-      "constant",
-      [
-        "MC4w",
-        "float"
-      ],
-      "wind_growth_cap_pre_built"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "constraint_invested_capacity_coefficient",
-      [
-        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ3aW5kX2dyb3d0aF9jYXAiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
-        "map"
-      ],
-      "wind_growth_cap_pre_built"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "constraint_cumulative_pre_built_capacity_coefficient",
-      [
-        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ3aW5kX2dyb3d0aF9jYXAiLCAtMC4xXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
-        "map"
-      ],
-      "wind_growth_cap_pre_built"
-    ],
-    [
-      "timeset",
-      "2day",
-      "timeset_weights",
-      [
-        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIDAuNV0sIFsidDAwMDIiLCAwLjVdLCBbInQwMDAzIiwgMC41XSwgWyJ0MDAwNCIsIDAuNV0sIFsidDAwMDUiLCAwLjVdLCBbInQwMDA2IiwgMC41XSwgWyJ0MDAwNyIsIDAuNV0sIFsidDAwMDgiLCAwLjVdLCBbInQwMDA5IiwgMC41XSwgWyJ0MDAxMCIsIDAuNV0sIFsidDAwMTEiLCAwLjVdLCBbInQwMDEyIiwgMC41XSwgWyJ0MDAxMyIsIDEuMF0sIFsidDAwMTQiLCAxLjBdLCBbInQwMDE1IiwgMS4wXSwgWyJ0MDAxNiIsIDEuMF0sIFsidDAwMTciLCAxLjBdLCBbInQwMDE4IiwgMS4wXSwgWyJ0MDAxOSIsIDEuMF0sIFsidDAwMjAiLCAxLjBdLCBbInQwMDIxIiwgMS4wXSwgWyJ0MDAyMiIsIDEuMF0sIFsidDAwMjMiLCAxLjBdLCBbInQwMDI0IiwgMS4wXSwgWyJ0MDAyNSIsIDEuNV0sIFsidDAwMjYiLCAxLjVdLCBbInQwMDI3IiwgMS41XSwgWyJ0MDAyOCIsIDEuNV0sIFsidDAwMjkiLCAxLjVdLCBbInQwMDMwIiwgMS41XSwgWyJ0MDAzMSIsIDEuNV0sIFsidDAwMzIiLCAxLjVdLCBbInQwMDMzIiwgMS41XSwgWyJ0MDAzNCIsIDEuNV0sIFsidDAwMzUiLCAxLjVdLCBbInQwMDM2IiwgMS41XSwgWyJ0MDAzNyIsIDIuMF0sIFsidDAwMzgiLCAyLjBdLCBbInQwMDM5IiwgMi4wXSwgWyJ0MDA0MCIsIDIuMF0sIFsidDAwNDEiLCAyLjBdLCBbInQwMDQyIiwgMi4wXSwgWyJ0MDA0MyIsIDIuMF0sIFsidDAwNDQiLCAyLjBdLCBbInQwMDQ1IiwgMi4wXSwgWyJ0MDA0NiIsIDIuMF0sIFsidDAwNDciLCAyLjBdLCBbInQwMDQ4IiwgMi4wXV19",
-        "map"
-      ],
-      "weighted_2day"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "lifetime_method",
-      [
-        "Im5vX2ludmVzdG1lbnQi",
-        "str"
-      ],
-      "wind_no_investment_10yr"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "lifetime",
-      [
-        "MTAuMA==",
-        "float"
-      ],
-      "wind_no_investment_10yr"
-    ],
-    [
-      "unit__outputNode",
-      [
-        "coal_chp",
-        "west"
-      ],
-      "flow_coefficient",
-      [
-        "Mi4w",
-        "float"
-      ],
-      "coal_chp_extraction"
-    ],
-    [
-      "unit__outputNode",
-      [
-        "coal_chp",
-        "west"
-      ],
-      "max_capacity_coefficient",
-      [
-        "MC44",
-        "float"
-      ],
-      "coal_chp_extraction"
-    ],
-    [
-      "unit__outputNode",
-      [
-        "coal_chp",
-        "heat"
-      ],
-      "flow_coefficient",
-      [
-        "MC4y",
-        "float"
-      ],
-      "coal_chp_extraction"
-    ],
-    [
-      "unit__outputNode",
-      [
-        "coal_chp",
-        "heat"
-      ],
-      "max_capacity_coefficient",
-      [
-        "MS4w",
-        "float"
-      ],
-      "coal_chp_extraction"
     ]
   ],
   "alternatives": [
@@ -10182,6 +10469,10 @@
     [
       "5weeks_only_invest",
       ""
+    ],
+    [
+      "Base",
+      "Base alternative"
     ],
     [
       "aggregate_outputs",
@@ -10208,6 +10499,10 @@
       ""
     ],
     [
+      "bind_battery_intraperiod_blocks",
+      ""
+    ],
+    [
       "capacity_margin",
       ""
     ],
@@ -10228,6 +10523,10 @@
       ""
     ],
     [
+      "coal_chp_extraction",
+      ""
+    ],
+    [
       "coal_invest",
       ""
     ],
@@ -10237,6 +10536,10 @@
     ],
     [
       "coal_min_load_MIP",
+      ""
+    ],
+    [
+      "coal_min_updowntime",
       ""
     ],
     [
@@ -10364,6 +10667,10 @@
       ""
     ],
     [
+      "weighted_2day",
+      ""
+    ],
+    [
       "west",
       ""
     ],
@@ -10372,35 +10679,24 @@
       ""
     ],
     [
-      "wind_invest",
-      ""
-    ],
-    [
-      "coal_min_updowntime",
-      ""
-    ],
-    [
-      "bind_battery_intraperiod_blocks",
-      ""
-    ],
-    [
       "wind_growth_cap_pre_built",
       ""
     ],
     [
-      "weighted_2day",
+      "wind_invest",
       ""
     ],
     [
       "wind_no_investment_10yr",
       ""
-    ],
-    [
-      "coal_chp_extraction",
-      ""
     ]
   ],
   "scenarios": [
+    [
+      "5weeks_battery_intraperiod_blocks",
+      false,
+      ""
+    ],
     [
       "5weeks_invest_fullYear_dispatch_coal_wind",
       false,
@@ -10422,6 +10718,11 @@
       ""
     ],
     [
+      "base_weighted",
+      false,
+      ""
+    ],
+    [
       "capacity_margin",
       false,
       ""
@@ -10433,6 +10734,11 @@
     ],
     [
       "coal_chp",
+      false,
+      ""
+    ],
+    [
+      "coal_chp_extraction",
       false,
       ""
     ],
@@ -10483,6 +10789,16 @@
     ],
     [
       "coal_wind_inertia",
+      false,
+      ""
+    ],
+    [
+      "coal_wind_min_uptime",
+      false,
+      ""
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
       false,
       ""
     ],
@@ -10553,6 +10869,16 @@
     ],
     [
       "multi_year_one_solve_co2_limit",
+      false,
+      ""
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      false,
+      ""
+    ],
+    [
+      "multi_year_wind_no_investment",
       false,
       ""
     ],
@@ -10665,44 +10991,39 @@
       "y2020_2029_2x5y",
       false,
       ""
-    ],
-    [
-      "coal_wind_min_uptime",
-      false,
-      ""
-    ],
-    [
-      "coal_wind_min_uptime_MIP",
-      false,
-      ""
-    ],
-    [
-      "5weeks_battery_intraperiod_blocks",
-      false,
-      ""
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      false,
-      ""
-    ],
-    [
-      "base_weighted",
-      false,
-      ""
-    ],
-    [
-      "multi_year_wind_no_investment",
-      false,
-      ""
-    ],
-    [
-      "coal_chp_extraction",
-      false,
-      ""
     ]
   ],
   "scenario_alternatives": [
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "init",
+      "west"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "west",
+      "wind"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "wind",
+      "battery"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "battery",
+      "5weeks"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "5weeks",
+      "bind_battery_intraperiod_blocks"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "bind_battery_intraperiod_blocks",
+      null
+    ],
     [
       "5weeks_invest_fullYear_dispatch_coal_wind",
       "init",
@@ -10894,6 +11215,21 @@
       null
     ],
     [
+      "base_weighted",
+      "init",
+      "west"
+    ],
+    [
+      "base_weighted",
+      "west",
+      "weighted_2day"
+    ],
+    [
+      "base_weighted",
+      "weighted_2day",
+      null
+    ],
+    [
       "capacity_margin",
       "init",
       "west"
@@ -10941,6 +11277,31 @@
     [
       "coal_chp",
       "heat",
+      null
+    ],
+    [
+      "coal_chp_extraction",
+      "init",
+      "west"
+    ],
+    [
+      "coal_chp_extraction",
+      "west",
+      "coal_chp"
+    ],
+    [
+      "coal_chp_extraction",
+      "coal_chp",
+      "heat"
+    ],
+    [
+      "coal_chp_extraction",
+      "heat",
+      "coal_chp_extraction"
+    ],
+    [
+      "coal_chp_extraction",
+      "coal_chp_extraction",
       null
     ],
     [
@@ -11196,6 +11557,71 @@
     [
       "coal_wind_inertia",
       "inertia",
+      null
+    ],
+    [
+      "coal_wind_min_uptime",
+      "init",
+      "west"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "west",
+      "coal"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "coal",
+      "coal_min_load"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "coal_min_load",
+      "wind"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "wind",
+      "coal_min_updowntime"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "coal_min_updowntime",
+      null
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "init",
+      "west"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "west",
+      "coal"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "coal",
+      "coal_min_load"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "coal_min_load",
+      "coal_min_load_MIP"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "coal_min_load_MIP",
+      "wind"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "wind",
+      "coal_min_updowntime"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "coal_min_updowntime",
       null
     ],
     [
@@ -11851,6 +12277,126 @@
     [
       "multi_year_one_solve_co2_limit",
       "co2_limit",
+      null
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "init",
+      "west"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "west",
+      "coal"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "coal",
+      "coal_invest"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "coal_invest",
+      "wind"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "wind",
+      "wind_invest"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "wind_invest",
+      "battery"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "battery",
+      "battery_invest"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "battery_invest",
+      "5weeks"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "5weeks",
+      "invest_solveSequence_5weeks"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "invest_solveSequence_5weeks",
+      "invest_allYears_5weeks"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "invest_allYears_5weeks",
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "wind_growth_cap_pre_built",
+      null
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "init",
+      "west"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "west",
+      "coal"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "coal",
+      "coal_invest"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "coal_invest",
+      "wind"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "wind",
+      "wind_invest"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "wind_invest",
+      "battery"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "battery",
+      "battery_invest"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "battery_invest",
+      "5weeks"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "5weeks",
+      "invest_solveSequence_5weeks"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "invest_solveSequence_5weeks",
+      "invest_allYears_5weeks"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "invest_allYears_5weeks",
+      "wind_no_investment_10yr"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "wind_no_investment_10yr",
       null
     ],
     [
@@ -12851,261 +13397,6 @@
     [
       "y2020_2029_2x5y",
       "2x5y",
-      null
-    ],
-    [
-      "coal_wind_min_uptime",
-      "init",
-      "west"
-    ],
-    [
-      "coal_wind_min_uptime",
-      "west",
-      "coal"
-    ],
-    [
-      "coal_wind_min_uptime",
-      "coal",
-      "coal_min_load"
-    ],
-    [
-      "coal_wind_min_uptime",
-      "coal_min_load",
-      "wind"
-    ],
-    [
-      "coal_wind_min_uptime",
-      "wind",
-      "coal_min_updowntime"
-    ],
-    [
-      "coal_wind_min_uptime",
-      "coal_min_updowntime",
-      null
-    ],
-    [
-      "coal_wind_min_uptime_MIP",
-      "init",
-      "west"
-    ],
-    [
-      "coal_wind_min_uptime_MIP",
-      "west",
-      "coal"
-    ],
-    [
-      "coal_wind_min_uptime_MIP",
-      "coal",
-      "coal_min_load"
-    ],
-    [
-      "coal_wind_min_uptime_MIP",
-      "coal_min_load",
-      "coal_min_load_MIP"
-    ],
-    [
-      "coal_wind_min_uptime_MIP",
-      "coal_min_load_MIP",
-      "wind"
-    ],
-    [
-      "coal_wind_min_uptime_MIP",
-      "wind",
-      "coal_min_updowntime"
-    ],
-    [
-      "coal_wind_min_uptime_MIP",
-      "coal_min_updowntime",
-      null
-    ],
-    [
-      "5weeks_battery_intraperiod_blocks",
-      "init",
-      "west"
-    ],
-    [
-      "5weeks_battery_intraperiod_blocks",
-      "west",
-      "wind"
-    ],
-    [
-      "5weeks_battery_intraperiod_blocks",
-      "wind",
-      "battery"
-    ],
-    [
-      "5weeks_battery_intraperiod_blocks",
-      "battery",
-      "5weeks"
-    ],
-    [
-      "5weeks_battery_intraperiod_blocks",
-      "5weeks",
-      "bind_battery_intraperiod_blocks"
-    ],
-    [
-      "5weeks_battery_intraperiod_blocks",
-      "bind_battery_intraperiod_blocks",
-      null
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "init",
-      "west"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "west",
-      "coal"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "coal",
-      "coal_invest"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "coal_invest",
-      "wind"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "wind",
-      "wind_invest"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "wind_invest",
-      "battery"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "battery",
-      "battery_invest"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "battery_invest",
-      "5weeks"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "5weeks",
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "invest_solveSequence_5weeks",
-      "invest_allYears_5weeks"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "invest_allYears_5weeks",
-      "wind_growth_cap_pre_built"
-    ],
-    [
-      "multi_year_wind_growth_cap",
-      "wind_growth_cap_pre_built",
-      null
-    ],
-    [
-      "base_weighted",
-      "init",
-      "west"
-    ],
-    [
-      "base_weighted",
-      "west",
-      "weighted_2day"
-    ],
-    [
-      "base_weighted",
-      "weighted_2day",
-      null
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "init",
-      "west"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "west",
-      "coal"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "coal",
-      "coal_invest"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "coal_invest",
-      "wind"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "wind",
-      "wind_invest"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "wind_invest",
-      "battery"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "battery",
-      "battery_invest"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "battery_invest",
-      "5weeks"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "5weeks",
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "invest_solveSequence_5weeks",
-      "invest_allYears_5weeks"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "invest_allYears_5weeks",
-      "wind_no_investment_10yr"
-    ],
-    [
-      "multi_year_wind_no_investment",
-      "wind_no_investment_10yr",
-      null
-    ],
-    [
-      "coal_chp_extraction",
-      "init",
-      "west"
-    ],
-    [
-      "coal_chp_extraction",
-      "west",
-      "coal_chp"
-    ],
-    [
-      "coal_chp_extraction",
-      "coal_chp",
-      "heat"
-    ],
-    [
-      "coal_chp_extraction",
-      "heat",
-      "coal_chp_extraction"
-    ],
-    [
-      "coal_chp_extraction",
-      "coal_chp_extraction",
       null
     ]
   ]

@@ -436,6 +436,181 @@ def migrate_database(database_path, up_to: int | None = None):
                         "on the sink side of the balance")
                 except SpineDBAPIError:
                     pass
+            elif next_version == 38:
+                # Consolidate has_balance / has_storage / node_type (which
+                # previously carried the single value 'balance_within_period')
+                # into one node_type parameter with four allowed values:
+                # 'commodity', 'balance', 'storage', 'balance_within_period'.
+                # Hard cut — the two yes/no flags are dropped.  See
+                # rivendell/PLAN_node_type_consolidation.md.
+
+                # 1. Extend the node_type value list with the three new entries.
+                #    'balance_within_period' was already added in v22.
+                add_value_list_manual(db, [
+                    ["node_type", "commodity"],
+                    ["node_type", "balance"],
+                    ["node_type", "storage"],
+                ])
+
+                # 2. Re-declare node_type with default='balance' and an updated
+                #    description.  'balance' is the most common user intent;
+                #    nodes that previously relied on the 'no balance' default
+                #    will get 'commodity' written explicitly in step 3 so their
+                #    semantics are preserved.
+                default_val, default_type = to_database("balance")
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="node", name="node_type",
+                    default_value=default_val, default_type=default_type,
+                    parameter_value_list_name="node_type",
+                    description=(
+                        "Role of this node in the LP.  "
+                        "'commodity' = price-exposed source/sink with no "
+                        "balance constraint (e.g. fuel imports, no storage); "
+                        "'balance' = energy balance maintained every timestep "
+                        "(default); 'storage' = balance plus a state variable "
+                        "(battery, reservoir); 'balance_within_period' = "
+                        "balance aggregated over the whole period (e.g. an "
+                        "annual gas budget)."
+                    ),
+                )
+
+                # 3. Derive node_type from the old flags for every (node, alt)
+                #    pair that has any relevant data, and explicitly write
+                #    'commodity' for node entities that had no flag anywhere
+                #    so their prior 'no balance' semantics are preserved.
+                def _is_yes(pv):
+                    val = pv.get("parsed_value")
+                    return val is not None and str(val).lower() == "yes"
+
+                has_balance_by_key = {
+                    (pv["entity_byname"], pv["alternative_name"]): _is_yes(pv)
+                    for pv in db.find_parameter_values(
+                        entity_class_name="node",
+                        parameter_definition_name="has_balance",
+                    )
+                }
+                has_storage_by_key = {
+                    (pv["entity_byname"], pv["alternative_name"]): _is_yes(pv)
+                    for pv in db.find_parameter_values(
+                        entity_class_name="node",
+                        parameter_definition_name="has_storage",
+                    )
+                }
+                existing_node_type_keys = {
+                    (pv["entity_byname"], pv["alternative_name"])
+                    for pv in db.find_parameter_values(
+                        entity_class_name="node",
+                        parameter_definition_name="node_type",
+                    )
+                }
+
+                all_keys_with_flags = (
+                    set(has_balance_by_key.keys())
+                    | set(has_storage_by_key.keys())
+                    | existing_node_type_keys
+                )
+
+                for key in all_keys_with_flags:
+                    if key in existing_node_type_keys:
+                        # Explicit node_type already present — the only
+                        # pre-v38 value was 'balance_within_period' and it
+                        # wins over any has_balance / has_storage flag on
+                        # the same (node, alt) pair.
+                        continue
+                    hb = has_balance_by_key.get(key, False)
+                    hs = has_storage_by_key.get(key, False)
+                    if hs and not hb:
+                        raise SpineDBAPIError(
+                            f"Node '{key[0][0]}' (alternative '{key[1]}') has "
+                            f"has_storage=yes but has_balance is not 'yes'.  "
+                            f"This combination was rejected at solve time "
+                            f"prior to v38 and cannot be migrated "
+                            f"automatically.  Set has_balance=yes (or remove "
+                            f"has_storage) before running the migration."
+                        )
+                    if hb and hs:
+                        new_type = "storage"
+                    elif hb:
+                        new_type = "balance"
+                    else:
+                        new_type = "commodity"
+                    value, vtype = to_database(new_type)
+                    db.add_update_item(
+                        "parameter_value",
+                        entity_class_name="node",
+                        entity_byname=key[0],
+                        parameter_definition_name="node_type",
+                        alternative_name=key[1],
+                        value=value, type=vtype,
+                    )
+
+                # Preserve the pre-v38 'no balance' default for nodes that
+                # don't have an explicit node_type in a given alternative.
+                # The new schema default is 'balance', so without this step
+                # those nodes would silently gain a balance constraint.
+                # Strategy: for every (node, alternative) pair where the
+                # node's entity_alternative makes it active AND no
+                # node_type value yet exists for that pair, write
+                # node_type='commodity'.  Pairs where has_balance=yes or
+                # has_storage=yes were set (and therefore got balance /
+                # storage written above) are excluded via the running
+                # ``written_keys`` set.
+                written_keys = set(all_keys_with_flags)  # everything migrated above
+                written_keys |= existing_node_type_keys  # pre-existing bwp entries
+                commodity_val, commodity_type = to_database("commodity")
+                # Collect (node, alt) activations from entity_alternative rows.
+                node_active_by_alt: dict[tuple, set[str]] = {}
+                for ea in db.find_entity_alternatives(entity_class_name="node"):
+                    if not ea.get("active", True):
+                        continue
+                    node_active_by_alt.setdefault(
+                        ea["entity_byname"], set()
+                    ).add(ea["alternative_name"])
+                # Also cover Base for every node, as the catch-all default.
+                # (Spine scenarios don't all include Base, but many do, and
+                # even when they don't, the entity_alternative loop above
+                # covers the alts they DO include.)
+                all_node_entities = [
+                    ent["entity_byname"]
+                    for ent in db.find_entities(entity_class_name="node")
+                ]
+                for byname in all_node_entities:
+                    alts = node_active_by_alt.get(byname, set()) | {"Base"}
+                    for alt in alts:
+                        if (byname, alt) in written_keys:
+                            continue
+                        db.add_update_item(
+                            "parameter_value",
+                            entity_class_name="node",
+                            entity_byname=byname,
+                            parameter_definition_name="node_type",
+                            alternative_name=alt,
+                            value=commodity_val, type=commodity_type,
+                        )
+                        written_keys.add((byname, alt))
+
+                # 4. Remove the old has_balance / has_storage parameter
+                #    definitions and their single-entry value lists.
+                remove_parameters_manual(db, [
+                    ["node", "has_balance"],
+                    ["node", "has_storage"],
+                ])
+                for vl_name in ("has_balance", "has_storage"):
+                    vl = db.item(
+                        db.mapped_table("parameter_value_list"), name=vl_name,
+                    )
+                    if vl:
+                        db.remove_items("parameter_value_list", vl["id"])
+
+                try:
+                    db.commit_session(
+                        "v38: consolidated has_balance, has_storage and "
+                        "node_type ('balance_within_period') into a single "
+                        "node_type parameter with four values"
+                    )
+                except SpineDBAPIError:
+                    pass
             else:
                 print("Version invalid")
             next_version += 1

@@ -323,10 +323,6 @@
       "yes"
     ],
     [
-      "has_balance",
-      "yes"
-    ],
-    [
       "has_capacity_margin",
       "yes"
     ],
@@ -340,10 +336,6 @@
     ],
     [
       "has_non_synchronous",
-      "yes"
-    ],
-    [
-      "has_storage",
       "yes"
     ],
     [
@@ -513,6 +505,18 @@
     [
       "node_type",
       "balance_within_period"
+    ],
+    [
+      "node_type",
+      "commodity"
+    ],
+    [
+      "node_type",
+      "balance"
+    ],
+    [
+      "node_type",
+      "storage"
     ],
     [
       "optional_output",
@@ -1443,7 +1447,7 @@
     [
       "model",
       "version",
-      37.0,
+      38.0,
       null,
       "Contains database version information.",
       null
@@ -1526,22 +1530,6 @@
       null,
       null,
       "[CUR/kWh] Annual fixed cost for storage. Constant or period.",
-      null
-    ],
-    [
-      "node",
-      "has_balance",
-      null,
-      "has_balance",
-      "A flag whether the node maintains a balance constraint.",
-      null
-    ],
-    [
-      "node",
-      "has_storage",
-      null,
-      "has_storage",
-      "A flag whether the node has a state variable (storage).",
       null
     ],
     [
@@ -1635,9 +1623,9 @@
     [
       "node",
       "node_type",
-      null,
+      "balance",
       "node_type",
-      "Selection for the node to have period balance, instead of time step balance.",
+      "Role of this node in the LP.  'commodity' = price-exposed source/sink with no balance constraint (e.g. fuel imports, no storage); 'balance' = energy balance maintained every timestep (default); 'storage' = balance plus a state variable (battery, reservoir); 'balance_within_period' = balance aggregated over the whole period (e.g. an annual gas budget).",
       null
     ],
     [
@@ -3285,18 +3273,6 @@
       "fixed_cost",
       "map",
       1
-    ],
-    [
-      "node",
-      "has_balance",
-      "str",
-      0
-    ],
-    [
-      "node",
-      "has_storage",
-      "str",
-      0
     ],
     [
       "node",

@@ -184,10 +184,12 @@ set group__co2_method 'the investment method applied to a group' dimen 2 within 
 set group_co2_price := setof {(g, m) in group__co2_method : m in co2_price_method} (g);
 set group_co2_max_period := setof {(g, m) in group__co2_method : m in co2_max_period_method} (g);
 set group_co2_max_total := setof {(g, m) in group__co2_method : m in co2_max_total_method} (g);
-set nodeBalance 'nodes that maintain a node balance' within node;
-set nodeState 'nodes that have a state' within node;
-set node_type 'node type';
-set node__node_type 'node type of a node' dimen 2 within {node, node_type};
+set node_type 'enum universe of node_type values';
+param p_node_type {n in node} symbolic in node_type, default 'balance';
+set nodeCommodity      := {n in node : p_node_type[n] = 'commodity'};
+set nodeBalance        := {n in node : p_node_type[n] = 'balance' || p_node_type[n] = 'storage'};
+set nodeState          := {n in node : p_node_type[n] = 'storage'};
+set nodeBalancePeriod  := {n in node : p_node_type[n] = 'balance_within_period'};
 set inflow_method 'method for scaling the inflow';
 set inflow_method_default within inflow_method;
 set node__inflow_method_read 'method for scaling the inflow applied to a node' within {node, inflow_method};
@@ -479,9 +481,7 @@ table data IN 'CSV' 'input/debug.csv': debug <- [debug];
 table data IN 'CSV' 'input/entity.csv': entity <- [entity];
 table data IN 'CSV' 'input/group.csv' : group <- [group];
 table data IN 'CSV' 'input/node.csv' : node <- [node];
-table data IN 'CSV' 'input/nodeBalance.csv' : nodeBalance <- [nodeBalance];
-table data IN 'CSV' 'input/nodeState.csv' : nodeState <- [nodeState];
-table data IN 'CSV' 'input/node__node_type.csv' : node__node_type <- [node, node_type];
+table data IN 'CSV' 'input/p_node_type.csv' : [node], p_node_type;
 table data IN 'CSV' 'input/groupInertia.csv' : groupInertia <- [groupInertia];
 table data IN 'CSV' 'input/groupNonSync.csv' : groupNonSync <- [groupNonSync];
 table data IN 'CSV' 'input/groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
@@ -705,8 +705,6 @@ table data IN 'CSV' 'solve_data/co2.csv' : [param_co2], model_co2~model_wide;
 table data IN 'CSV' 'solve_data/period_capacity.csv' : period_capacity <- [period];
 
 #check
-set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node_type};
-
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
@@ -2018,9 +2016,6 @@ if p_model["solveFirst"] == 1 && 'read' in phase then {
 
   printf 'Checking: Are discount factors set in models with investments and multiple periods\n';
   check {d in period_in_use : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum{(e, d) in ed_divest} 1)} : p_discount_years[d] != 0;
-
-  printf 'Checking: Does a node with has_storage also have has_balance set to yes\n';
-  check {n in nodeState} : n in nodeBalance;
 
   printf 'Checking: The nodes with scaling methods should have the inflow parameter set\n';
   check {n in node, d in period_in_use: (n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method ||
@@ -4634,21 +4629,10 @@ if p_model['solveFirst'] then {
       printf "%s\n", m >> "input/set_method_nvar.csv";
   }
 
-  # Node-related sets
-  printf "node\n" > "input/set_nodeState.csv";
-  for {n in nodeState} {
-      printf "%s\n", n >> "input/set_nodeState.csv";
-  }
-
-  printf "node\n" > "input/set_nodeBalance.csv";
-  for {n in nodeBalance} {
-      printf "%s\n", n >> "input/set_nodeBalance.csv";
-  }
-
-  printf "node\n" > "input/set_nodeBalancePeriod.csv";
-  for {n in nodeBalancePeriod} {
-      printf "%s\n", n >> "input/set_nodeBalancePeriod.csv";
-  }
+  # Node-related sets — the three membership files
+  # (set_nodeState, set_nodeBalance, set_nodeBalancePeriod) are no longer
+  # written from the mod.  read_sets.py derives all three from
+  # input/p_node_type.csv directly.
 
   printf "node\n" > "input/set_nodeSelfDischarge.csv";
   for {n in nodeSelfDischarge} {

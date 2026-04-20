@@ -105,9 +105,9 @@ class TestParseMetadata:
         # Entity existence column (recognised from "Entity Alternative" alias)
         assert meta.entity_existence_col is not None
 
-        # Parameter columns should include has_balance, inflow, etc.
+        # Parameter columns should include node_type, inflow, etc.
         param_names = set(meta.param_cols.values())
-        assert "has_balance" in param_names
+        assert "node_type" in param_names
         assert "inflow" in param_names
         assert "existing" in param_names
         # entity existence should be in params (mapped from Entity Alternative)

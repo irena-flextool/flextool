@@ -181,11 +181,9 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/p_node_constraint_state_coefficient.csv",
     },
     {
-        "cl_pars": [("node", "has_balance")],
-        "header": "nodeBalance",
-        "filename": "input/nodeBalance.csv",
-        "filter_in_value": "yes",
-        "no_value": True,
+        "cl_pars": [("node", "node_type")],
+        "header": "node,p_node_type",
+        "filename": "input/p_node_type.csv",
     },
     {
         "cl_pars": [("node", "inflow_method")],
@@ -193,21 +191,9 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/node__inflow_method.csv",
     },
     {
-        "cl_pars": [("node", "node_type")],
-        "header": "node,node_type",
-        "filename": "input/node__node_type.csv",
-    },
-    {
         "cl_pars": [("node__profile", "profile_method")],
         "header": "node,profile,profile_method",
         "filename": "input/node__profile__profile_method.csv",
-    },
-    {
-        "cl_pars": [("node", "has_storage")],
-        "header": "nodeState",
-        "filename": "input/nodeState.csv",
-        "filter_in_value": "yes",
-        "no_value": True,
     },
     {
         "cl_pars": [("node", "storage_binding_method")],
@@ -1429,8 +1415,8 @@ def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Lo
 
             # Get storage nodes
             storage_nodes: set[str] = set()
-            for pv in db.find_parameter_values(entity_class_name="node", parameter_definition_name="has_storage"):
-                if pv["parsed_value"] == "yes":
+            for pv in db.find_parameter_values(entity_class_name="node", parameter_definition_name="node_type"):
+                if pv["parsed_value"] == "storage":
                     storage_nodes.add(pv["entity_byname"][0])
 
             # Check each capacity margin group

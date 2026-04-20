@@ -371,7 +371,7 @@ def _write_balance_nodes(
     for gn in data.grid_nodes:
         _add_entity(db, "node", gn.node, alt_name, counters,
                      entities_added, entity_alts_added)
-        _add_param(db, "node", (gn.node,), "has_balance", "yes",
+        _add_param(db, "node", (gn.node,), "node_type", "balance",
                    alt_name, counters)
 
         if lolp > 0:
@@ -426,7 +426,7 @@ def _write_storage_units(
     """Write storage nodes with charger/discharger units (Section 3).
 
     For pure storage units (no fuel, no cf_profile, no inflow), creates:
-    - A storage node with has_balance + has_storage
+    - A storage node with node_type='storage'
     - A charger unit: output_node → storage_node
     - A discharger unit: storage_node → output_node
     - Investment constraint linking charger and discharger capacities
@@ -457,9 +457,7 @@ def _write_storage_units(
         # ── Storage node ──────────────────────────────────────────
         _add_entity(db, "node", storage_node, alt_name, counters,
                      entities_added, entity_alts_added)
-        _add_param(db, "node", (storage_node,), "has_balance", "yes",
-                   alt_name, counters)
-        _add_param(db, "node", (storage_node,), "has_storage", "yes",
+        _add_param(db, "node", (storage_node,), "node_type", "storage",
                    alt_name, counters)
         _add_param_if_set(db, "node", (storage_node,), "existing",
                           unit.storage_mwh, alt_name, counters, skip_zero=False)
@@ -1019,8 +1017,8 @@ def _write_inflow_units(
     """Create dedicated inflow nodes for hydro/inflow units (Section 6).
 
     For each unit with an inflow profile, creates a dedicated input node:
-    - Hydro_RES (has storage): node with has_balance + has_storage + existing
-    - Hydro_ROR (no storage): node with has_balance only (use-it-or-lose-it)
+    - Hydro_RES (has storage): node with node_type='storage' + existing
+    - Hydro_ROR (no storage): node with node_type='balance' (use-it-or-lose-it)
 
     The inflow time series is set on this node and the unit draws from it
     via a unit__inputNode relationship.
@@ -1053,21 +1051,17 @@ def _write_inflow_units(
             ts_data = {k: v * unit.inflow_multiplier for k, v in ts_data.items()}
         inflow_map = _make_time_map(ts_data)
 
-        # Create the inflow node
+        # Create the inflow node.  Always 'storage' — even with 0 capacity this
+        # just creates an unused state variable but allows sensitivities to add
+        # storage capacity later without needing to also change node_type.
         _add_entity(db, "node", inflow_node, alt_name, counters,
                      entities_added, entity_alts_added)
-        _add_param(db, "node", (inflow_node,), "has_balance", "yes",
+        _add_param(db, "node", (inflow_node,), "node_type", "storage",
                    alt_name, counters)
         if lolp > 0:
             _add_param(db, "node", (inflow_node,), "penalty_up", lolp,
                        alt_name, counters)
         _add_param(db, "node", (inflow_node,), "penalty_down", 0.0,
-                   alt_name, counters)
-
-        # Always set has_storage on inflow nodes — even with 0 capacity this
-        # just creates an unused state variable but allows sensitivities to add
-        # storage capacity later without needing to also set has_storage.
-        _add_param(db, "node", (inflow_node,), "has_storage", "yes",
                    alt_name, counters)
         _add_param_if_set(db, "node", (inflow_node,), "existing",
                           unit.storage_mwh, alt_name, counters, skip_zero=False)
@@ -1128,14 +1122,12 @@ def _write_inflow_units(
             except SpineDBAPIError:
                 pass
 
-        _add_param(db, "node", (node_name,), "has_balance", "yes",
+        _add_param(db, "node", (node_name,), "node_type", "storage",
                    alt_name, counters)
         if lolp > 0:
             _add_param(db, "node", (node_name,), "penalty_up", lolp,
                        alt_name, counters)
         _add_param(db, "node", (node_name,), "penalty_down", 0.0,
-                   alt_name, counters)
-        _add_param(db, "node", (node_name,), "has_storage", "yes",
                    alt_name, counters)
         _add_param(db, "node", (node_name,), "storage_binding_method",
                    "bind_within_solve", alt_name, counters)
@@ -2531,18 +2523,14 @@ def _apply_units_override(
                        alt_name, counters)
             _add_param(db, "node", (storage_target,), "invest_method", "invest_total",
                        alt_name, counters)
-            _add_param(db, "node", (storage_target,), "has_balance", "yes",
-                       alt_name, counters)
-            _add_param(db, "node", (storage_target,), "has_storage", "yes",
+            _add_param(db, "node", (storage_target,), "node_type", "storage",
                        alt_name, counters)
             if forced_invest is not None:
                 forced_invest.setdefault(unit_name, set()).add("mwh")
     elif "max invest (mwh)" in param_lower:
         storage_target = storage_node if is_storage else _get_unit_node_name(base_unit)
         if _entity_exists(existing_entities, "node", (storage_target,)):
-            _add_param(db, "node", (storage_target,), "has_balance", "yes",
-                       alt_name, counters)
-            _add_param(db, "node", (storage_target,), "has_storage", "yes",
+            _add_param(db, "node", (storage_target,), "node_type", "storage",
                        alt_name, counters)
             _add_param(db, "node", (storage_target,), "invest_max_total", value,
                        alt_name, counters)
@@ -2556,12 +2544,12 @@ def _apply_units_override(
             _add_param(db, "node", (storage_target,), "existing", value,
                        alt_name, counters)
             if float(value) > 0:
-                _add_param(db, "node", (storage_target,), "has_balance", "yes",
-                           alt_name, counters)
-                _add_param(db, "node", (storage_target,), "has_storage", "yes",
+                _add_param(db, "node", (storage_target,), "node_type", "storage",
                            alt_name, counters)
             else:
-                _add_param(db, "node", (storage_target,), "has_storage", None,
+                # Existing capacity == 0 — downgrade from storage to a
+                # plain balance node (drops the state variable).
+                _add_param(db, "node", (storage_target,), "node_type", "balance",
                            alt_name, counters)
     elif "inv.cost/kw" in param_lower or "inv cost" in param_lower:
         target = discharger if is_storage else unit_name
