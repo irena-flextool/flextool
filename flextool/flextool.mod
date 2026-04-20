@@ -1830,8 +1830,73 @@ param p_entity_max_units {e in entity, d in period} :=
     / p_entity_unitsize[e]
 ;
 
-set process_source_coeff_zero := {(p, source) in process_source: not p_process_source_flow_coefficient[p, source]};
-set process_sink_coeff_zero := {(p, sink) in process_sink: not p_process_sink_flow_coefficient[p, sink]};
+# Cumulative upper bound on v_invest summed over lifetime-alive tranches at
+# dispatch period d (excluding pre-existing capacity).  Sums each alive
+# tranche's own per-period cap so the bound on a dispatch variable
+# reflects capacity from tranches invested at earlier periods that are
+# still within their lifetime.  For cumulative_limits the ceiling minus
+# existing; for invest_no_limit a Big-M; for invest_total / invest_period_total
+# the looser of per-period sum and horizon total (mirrors the max()
+# convention in p_entity_max_capacity).
+param p_entity_invest_cumulative_max {e in entityInvest, d in period_in_use} :=
+  + if (e, d) in ed_invest_cumulative
+    then max(0, ed_cumulative_max_capacity[e, d] - p_entity_all_existing[e, d])
+    else if sum{(e, m) in entity__invest_method : m = 'invest_no_limit'} 1
+    then 1000000
+    else
+      + (if (e, d) in ed_invest_period && e not in e_invest_total
+         then sum{(e, d_invest, d) in edd_invest
+                  : (e, d_invest) in ed_invest_period
+                 && (e, d_invest) not in ed_invest_forbidden_no_investment}
+                 ed_invest_max_period[e, d_invest]
+         else 0)
+      + (if e in e_invest_total && (e, d) not in ed_invest_period
+         then e_invest_max_total[e]
+         else 0)
+      + (if (e, d) in ed_invest_period && e in e_invest_total
+         then max(
+                sum{(e, d_invest, d) in edd_invest
+                    : (e, d_invest) in ed_invest_period
+                   && (e, d_invest) not in ed_invest_forbidden_no_investment}
+                  ed_invest_max_period[e, d_invest],
+                e_invest_max_total[e])
+         else 0)
+;
+
+# Symmetric building block for divestments: cumulative upper bound on
+# v_divest summed by dispatch period d.  Currently not consumed by the
+# dispatch UBs below (those take the max-alive case = zero optional
+# divest); kept for parity and for future tightening via forced-divest
+# floors.
+param p_entity_divest_cumulative_max {e in entityDivest, d in period_in_use} :=
+  + (if e not in e_divest_total
+     then sum{(e, d_divest) in ed_divest_period : p_years_d[d_divest] <= p_years_d[d]}
+              ed_divest_max_period[e, d_divest]
+     else 0)
+  + (if e in e_divest_total && sum{(e, d2) in ed_divest_period} 1 = 0
+     then e_divest_max_total[e]
+     else 0)
+  + (if e in e_divest_total && sum{(e, d2) in ed_divest_period} 1 > 0
+     then max(
+            sum{(e, d_divest) in ed_divest_period : p_years_d[d_divest] <= p_years_d[d]}
+              ed_divest_max_period[e, d_divest],
+            e_divest_max_total[e])
+     else 0)
+;
+
+# Upper bound on alive capacity at dispatch period d (existing + cumulative
+# invest ceiling).  Drives dispatch variable UBs: v_flow (via p_flow_max /
+# p_flow_min), v_ramp, v_reserve, v_state, v_state_rp_start, v_online_*,
+# v_startup_*, v_shutdown_*.  v_invest / v_divest keep their own per-
+# invest-period scalar UB on p_entity_max_units — that is the correct
+# per-tranche cap for those decision variables.
+param p_entity_dispatch_capacity_max {e in entity, d in period_in_use} :=
+  + p_entity_all_existing[e, d]
+  + (if e in entityInvest then p_entity_invest_cumulative_max[e, d] else 0)
+;
+
+set process_source_coeff_zero := {(p, source) in process_source: not p_process_source_max_capacity_coefficient[p, source]};
+set process_sink_coeff_zero := {(p, sink) in process_sink: not p_process_sink_max_capacity_coefficient[p, sink]};
 set process_source_sink_coeff_zero := {(p, source, sink) in process_source_sink: (p,source) in process_source_coeff_zero || (p,sink) in process_sink_coeff_zero};
 
 param p_flow_max{(p, source, sink, d, t) in peedt} :=
@@ -1845,17 +1910,17 @@ param p_flow_max{(p, source, sink, d, t) in peedt} :=
         + ( if (p, 'min_load_efficiency') in process__ct_method
           then pdtProcess_slope[p, d, t] + pdtProcess_section[p, d, t]
           else pdtProcess_slope[p, d, t]
-          ) * p_entity_max_units[p, d]
+          ) * (p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
           / p_process_source_max_capacity_coefficient[p, source]
       else
-        + p_entity_max_units[p, d]
+        + (p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
       )
       * (if (p, sink) in process_sink then p_process_sink_max_capacity_coefficient[p, sink] else 1)
 ;
 
 param p_flow_min{(p, source, sink, d, t) in peedt} :=
   if (p, source, sink) in process__source__sinkIsNode_2way1var
-  then -p_entity_max_units[p, d]
+  then -(p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
   else 0
 ;
 
@@ -1886,19 +1951,19 @@ var v_flow {(p, source, sink, d, t) in peedt} >= p_flow_min[p, source, sink, d, 
 param p_angle_lower{n in node_dc_power_flow} := if n in node_reference_angle then 0 else -3.14159265;
 param p_angle_upper{n in node_dc_power_flow} := if n in node_reference_angle then 0 else 3.14159265;
 var v_angle {n in node_dc_power_flow, (d, t) in dt} >= p_angle_lower[n], <= p_angle_upper[n];
-var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} >=-p_entity_max_units[p, d], <= p_entity_max_units[p, d];
-var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0, <= p_entity_max_units[p, d];
-var v_state {n in nodeState, (d, t) in dt} >= 0, <= p_entity_max_units[n, d];
+var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} >= -p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p], <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_state {n in nodeState, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[n, d] / p_entity_unitsize[n];
 # Inter-period storage state for representative period method (Paper: σ^{inter}_{s,d})
 var v_state_inter {n in nodeState_rp, b in rp_base_period} >= 0;
 # Starting state of each representative period (Paper: σ^{intra,0}_{s,r})
-var v_state_rp_start {n in nodeState_rp, (d, t) in rp_block_first} >= 0, <= p_entity_max_units[n, d];
-var v_online_linear {p in process_online_linear,(d, t) in dt} >=0, <= p_entity_max_units[p, d];
-var v_startup_linear {p in process_online_linear, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
-var v_shutdown_linear {p in process_online_linear, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
-var v_online_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d], integer;
-var v_startup_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
-var v_shutdown_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
+var v_state_rp_start {n in nodeState_rp, (d, t) in rp_block_first} >= 0, <= p_entity_dispatch_capacity_max[n, d] / p_entity_unitsize[n];
+var v_online_linear {p in process_online_linear,(d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_startup_linear {p in process_online_linear, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_shutdown_linear {p in process_online_linear, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_online_integer {p in process_online_integer, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p], integer;
+var v_startup_integer {p in process_online_integer, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_shutdown_integer {p in process_online_integer, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
 var v_invest {(e, d) in ed_invest} >= 0, <= p_entity_max_units[e, d];
 var v_divest {(e, d) in ed_divest} >= 0, <= p_entity_max_units[e, d];
 var vq_state_up {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} >= 0;
