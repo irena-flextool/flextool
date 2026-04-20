@@ -535,6 +535,18 @@
       "yes"
     ],
     [
+      "price_method",
+      "price"
+    ],
+    [
+      "price_method",
+      "price_ladder_annual"
+    ],
+    [
+      "price_method",
+      "price_ladder_cumulative"
+    ],
+    [
       "profile_methods",
       "upper_limit"
     ],
@@ -794,6 +806,30 @@
       null,
       null,
       "[CUR/MWh or other unit] Price of the commodity. Constant, period or time.",
+      null
+    ],
+    [
+      "commodity",
+      "price_ladder",
+      null,
+      null,
+      "Stepped supply curve as an indexed map {tier -> {price: ..., quantity: ...}}.  Tier index is a 1-based integer.  quantity=inf marks an unbounded tier.  Only consulted when price_method is 'price_ladder_annual' or 'price_ladder_cumulative'.",
+      null
+    ],
+    [
+      "commodity",
+      "price_method",
+      "price",
+      "price_method",
+      "How the commodity's price enters the LP.  'price' = scalar or time-series price x flow (current behaviour); 'price_ladder_annual' = stepped supply curve with a per-year quantity cap per tier; 'price_ladder_cumulative' = stepped supply curve with a total-model quantity cap per tier (handoff-carried across rolling solves).",
+      null
+    ],
+    [
+      "commodity",
+      "unitsize",
+      1.0,
+      null,
+      "Numeric scaling for the v_trade variable column (analogous to virtual_unitsize on process/node entities).  The variable is in user-MWh divided by this value.  Pick so the largest tier sits at O(10) in the scaled LP.",
       null
     ],
     [
@@ -1455,7 +1491,7 @@
     [
       "model",
       "version",
-      39.0,
+      40.0,
       null,
       "Contains database version information.",
       null
@@ -2543,6 +2579,18 @@
       "price",
       "map",
       1
+    ],
+    [
+      "commodity",
+      "price_ladder",
+      "map",
+      2
+    ],
+    [
+      "commodity",
+      "unitsize",
+      "float",
+      0
     ],
     [
       "connection",

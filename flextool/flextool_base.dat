@@ -184,6 +184,7 @@ set co2_method := no_method, price, period, total, price_period, price_total, pe
 set co2_price_method := price, price_period, price_total, price_period_total;
 set co2_max_period_method := period, price_period, period_total, price_period_total;
 set co2_max_total_method := total, price_total, period_total, price_period_total;
+set price_method := price, price_ladder_annual, price_ladder_cumulative;
 set modelParam := solveFirst, solveLast;
 set groupParam := has_capacity_margin, capacity_margin, has_inertia, inertia_limit, 
                   invest_max_total, invest_min_total, invest_max_period, invest_min_period,

@@ -170,6 +170,7 @@ set co2_method 'methods available for co2 price and limits';
 set co2_price_method within co2_method;
 set co2_max_period_method within co2_method;
 set co2_max_total_method within co2_method;
+set price_method 'methods available for commodity price/ladder';
 set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
 set entityDivest := setof {(e, m) in entity__invest_method : m not in divest_method_not_allowed} (e);
 set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
@@ -283,6 +284,8 @@ set node_capacity_constraint_prebuilt dimen 2 within {node, constraint};
 set node_state_constraint dimen 2 within {node, constraint};
 set constraint__sense dimen 2 within {constraint, sense};
 set commodity_node dimen 2 within {commodity, node};
+set tier dimen 1;
+set commodity__tier dimen 2 within {commodity, tier};
 
 set dt dimen 2 within period_time;
 param dt_jump {(d, t) in dt};
@@ -356,6 +359,10 @@ param p_nested_model {modelParam};
 param p_commodity {c in commodity, commodityParam} default 0;
 param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} default 0;
 param pt_commodity {c in commodity, commodityTimeParam, time} default 0;
+param p_commodity_price_method {c in commodity} symbolic in price_method, default 'price';
+param p_commodity_unitsize {c in commodity} default 1.0;
+param p_commodity_ladder_price {(c, i) in commodity__tier} default 0;
+param p_commodity_ladder_quantity {(c, i) in commodity__tier} default +Infinity;
 
 param p_node {node, nodeParam} default 0;
 param pd_node {node, nodePeriodParam, periodAll} default 0;
@@ -567,6 +574,9 @@ table data IN 'CSV' 'input/process_delay_single.csv' : process_delay_single__del
 # Parameters for model data.
 table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
 table data IN 'CSV' 'input/pd_commodity.csv' : [commodity, commodityParam, period], pd_commodity;
+table data IN 'CSV' 'input/p_commodity_price_method.csv' : [commodity], p_commodity_price_method;
+table data IN 'CSV' 'input/p_commodity_unitsize.csv' : [commodity], p_commodity_unitsize;
+table data IN 'CSV' 'input/commodity_ladder.csv' : commodity__tier <- [commodity, tier], p_commodity_ladder_price~price, p_commodity_ladder_quantity~quantity;
 table data IN 'CSV' 'input/p_group__process.csv' : [group, process, groupParam], p_group__process;
 table data IN 'CSV' 'input/p_group.csv' : [group, groupParam], p_group;
 table data IN 'CSV' 'input/pd_group.csv' : [group, groupParam, period], pd_group;

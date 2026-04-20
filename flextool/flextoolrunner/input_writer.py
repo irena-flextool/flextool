@@ -68,6 +68,16 @@ _PARAMETER_SPECS: list[dict] = [
         "filter_in_type": ["float", "str"],
         "param_print": True,
     },
+    {
+        "cl_pars": [("commodity", "price_method")],
+        "header": "commodity,p_commodity_price_method",
+        "filename": "input/p_commodity_price_method.csv",
+    },
+    {
+        "cl_pars": [("commodity", "unitsize")],
+        "header": "commodity,p_commodity_unitsize",
+        "filename": "input/p_commodity_unitsize.csv",
+    },
     # --- constraint ---
     {
         "cl_pars": [("constraint", "sense")],
@@ -1371,6 +1381,79 @@ def _write_process_method(
             writer.writerow([p])
 
 
+def _write_commodity_ladder(db, wf: Path, logger: logging.Logger) -> None:
+    """Serialize commodity.price_ladder (2d_map tier -> {price, quantity})
+    into a tidy ``input/commodity_ladder.csv`` with one row per tier.
+
+    The nested Spine map shape produced by the GUI is
+    ``Map(tier -> Map("price"/"quantity" -> float))``.  Without a custom
+    writer, write_parameter would emit four columns (commodity, tier,
+    facet, value) which the mod-side reader can't easily consume.  Here
+    we collapse the two facets into two columns so the GMPL reader gets
+    ``commodity,tier,price,quantity``.
+    """
+    filepath = wf / "input" / "commodity_ladder.csv"
+    rows: list[tuple[str, int, str, str]] = []
+
+    for pv in db.find_parameter_values(
+        entity_class_name="commodity", parameter_definition_name="price_ladder"
+    ):
+        if pv["type"] is None:
+            continue
+        if pv["type"] != "map":
+            logger.warning(
+                "commodity.price_ladder on '%s' is of type %s (expected nested map); skipping.",
+                pv["entity_byname"][0], pv["type"],
+            )
+            continue
+        commodity = pv["entity_byname"][0]
+        value = pv["parsed_value"]
+        # Expected shape: outer indexes are tiers (1-based int); each inner
+        # value is a Map with keys 'price' and 'quantity'.
+        try:
+            flat = api.convert_map_to_table(value)
+        except Exception as exc:
+            logger.warning(
+                "Could not flatten price_ladder for commodity '%s': %s", commodity, exc,
+            )
+            continue
+        per_tier: dict[str, dict[str, str]] = {}
+        for entry in flat:
+            # ``convert_map_to_table`` returns a list of [outer_idx, inner_idx, ..., value].
+            if len(entry) < 3:
+                continue
+            tier_str = str(entry[0])
+            facet = str(entry[1])
+            val = entry[-1]
+            per_tier.setdefault(tier_str, {})[facet] = str(val)
+
+        def _tier_sort_key(t: str) -> tuple[int, str]:
+            try:
+                return (0, f"{int(t):020d}")
+            except ValueError:
+                return (1, t)
+
+        for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
+            facets = per_tier[tier_str]
+            price = facets.get("price", "0")
+            quantity = facets.get("quantity", "inf")
+            try:
+                tier_int = int(tier_str)
+            except ValueError:
+                logger.warning(
+                    "commodity.price_ladder tier index on '%s' is not an integer ('%s'); skipping tier.",
+                    commodity, tier_str,
+                )
+                continue
+            rows.append((commodity, tier_int, price, quantity))
+
+    with open(filepath, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["commodity", "tier", "price", "quantity"])
+        for row in rows:
+            writer.writerow(row)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -1403,6 +1486,7 @@ def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Lo
 
         ct_method_overrides = _write_dc_power_flow_data(db, wf, logger)
         _write_process_method(db, wf, logger, ct_method_overrides=ct_method_overrides)
+        _write_commodity_ladder(db, wf, logger)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}

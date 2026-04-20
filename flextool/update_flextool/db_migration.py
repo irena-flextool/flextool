@@ -642,6 +642,68 @@ def migrate_database(database_path, up_to: int | None = None):
                     )
                 except SpineDBAPIError:
                     pass
+            elif next_version == 40:
+                # Commodity price ladder — foundation commit.  Adds the three
+                # new commodity-entity parameters and the price_method value
+                # list.  No LP behaviour yet — v_trade / ladder constraints /
+                # objective terms land in a later commit.
+                add_value_list_manual(db, [
+                    ["price_method", "price"],
+                    ["price_method", "price_ladder_annual"],
+                    ["price_method", "price_ladder_cumulative"],
+                ])
+                default_val, default_type = to_database("price")
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="commodity",
+                    name="price_method",
+                    default_value=default_val, default_type=default_type,
+                    parameter_value_list_name="price_method",
+                    description=(
+                        "How the commodity's price enters the LP.  "
+                        "'price' = scalar or time-series price x flow "
+                        "(current behaviour); 'price_ladder_annual' = "
+                        "stepped supply curve with a per-year quantity cap "
+                        "per tier; 'price_ladder_cumulative' = stepped "
+                        "supply curve with a total-model quantity cap per "
+                        "tier (handoff-carried across rolling solves)."
+                    ),
+                )
+                default_val, default_type = to_database(1.0)
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="commodity",
+                    name="unitsize",
+                    default_value=default_val, default_type=default_type,
+                    parameter_type_list=("float",),
+                    description=(
+                        "Numeric scaling for the v_trade variable column "
+                        "(analogous to virtual_unitsize on process/node "
+                        "entities).  The variable is in user-MWh divided "
+                        "by this value.  Pick so the largest tier sits at "
+                        "O(10) in the scaled LP."
+                    ),
+                )
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="commodity",
+                    name="price_ladder",
+                    parameter_type_list=("map", "2d_map"),
+                    description=(
+                        "Stepped supply curve as an indexed map {tier -> "
+                        "{price: ..., quantity: ...}}.  Tier index is a "
+                        "1-based integer.  quantity=inf marks an unbounded "
+                        "tier.  Only consulted when price_method is "
+                        "'price_ladder_annual' or 'price_ladder_cumulative'."
+                    ),
+                )
+                try:
+                    db.commit_session(
+                        "v40: added commodity.price_method, commodity.unitsize "
+                        "and commodity.price_ladder (no LP behaviour yet)"
+                    )
+                except SpineDBAPIError:
+                    pass
             else:
                 print("Version invalid")
             next_version += 1
