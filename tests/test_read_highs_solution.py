@@ -436,6 +436,7 @@ def test_integration_parquet_matches_csv_on_base_scenario(
         scenario_name=scenario,
         root_dir=workdir,
         bin_dir=test_bin_dir,
+        use_old_raw_csv=True,  # phase-3 CSVs needed alongside parquet for the diff
     )
     runner.write_input(test_db_url, scenario)
     assert runner.run_model() == 0, "Model solve failed"

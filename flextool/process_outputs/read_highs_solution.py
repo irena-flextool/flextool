@@ -318,6 +318,53 @@ def _name_regex(var_name: str) -> re.Pattern[str]:
     return re.compile(rf"^{re.escape(var_name)}\[(.+)\]$")
 
 
+def _load_canonical_dt_order(
+    work_folder: Path | str | None,
+    solve_name: str,
+) -> list[tuple[str, str]] | None:
+    """Return ``[(period, time), …]`` in the canonical glpsol iteration order.
+
+    Source: ``solve_data/p_step_duration.csv`` — written by the phase-1
+    printf ``for {s in solve_current, (d, t) in dt_realize_dispatch}``.
+    Every dt-indexed phase-1 printf in ``flextool.mod`` uses the same
+    set iteration, so this sequence is the row order ALL parameter
+    CSVs of dt arity have.
+
+    Filtered to ``solve_name``.  Returns ``None`` if the file is absent.
+    """
+    if work_folder is None:
+        return None
+    path = Path(work_folder) / "solve_data" / "p_step_duration.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path, usecols=["solve", "period", "time"], dtype=str)
+    df = df[df["solve"] == str(solve_name)]
+    return list(zip(df["period"].to_list(), df["time"].to_list()))
+
+
+def _load_canonical_d_order(
+    work_folder: Path | str | None,
+    solve_name: str,
+) -> list[str] | None:
+    """Return ``[period, …]`` in the canonical glpsol iteration order.
+
+    Source: ``solve_data/p_years_from_start_d.csv`` — written by the
+    phase-1 printf ``for {s in solve_current, d in
+    d_realize_dispatch_or_invest}``.  Period-indexed parameter CSVs
+    use the same iteration.
+
+    Filtered to ``solve_name``.  Returns ``None`` if the file is absent.
+    """
+    if work_folder is None:
+        return None
+    path = Path(work_folder) / "solve_data" / "p_years_from_start_d.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path, usecols=["solve", "period"], dtype=str)
+    df = df[df["solve"] == str(solve_name)]
+    return list(df["period"].to_list())
+
+
 def _row_index_names(*, has_period: bool, has_time: bool) -> list[str]:
     if not has_period:
         return ["solve"]
@@ -450,20 +497,44 @@ def extract_variable(
     expected_arity = (
         leading_ignore + len(col_names) + trailing + trailing_ignore
     )
-    realized_dt = _load_realized_set(realized_dispatch_csv) if has_time else None
-    realized_p = (
-        _load_realized_periods(realized_periods_csv)
-        if (has_period and not has_time) else None
-    )
-
     row_index_names = _row_index_names(has_period=has_period, has_time=has_time)
 
-    # Flat accumulators → one DataFrame + one pivot at the end.  Cheaper
-    # than building nested dicts for the typical tens-of-thousands-of-vars
-    # solve.
-    row_keys: list[tuple[str, ...]] = []
-    col_keys: list[tuple[str, ...]] = []
-    vals: list[float] = []
+    # Canonical row order: read directly from a phase-1 printf CSV that
+    # iterates the same set the per-solve parameter CSVs do.  Building
+    # the wide frame against this order from the get-go means no
+    # post-hoc sort/reindex — both readers produce the exact same row
+    # sequence because both ultimately come from the same phase-1
+    # ``for {s, (d, t) in dt_realize_dispatch}`` iteration.
+    work_folder = (
+        Path(realized_dispatch_csv).parent.parent
+        if realized_dispatch_csv is not None
+        else (
+            Path(realized_periods_csv).parent.parent
+            if realized_periods_csv is not None
+            else None
+        )
+    )
+    if has_period and has_time:
+        canonical_rows: list[tuple[str, ...]] | None = (
+            _load_canonical_dt_order(work_folder, solve_name)
+        )
+        # Fallback for callers that only provide ``realized_dispatch_csv``
+        # (e.g. unit tests with a synthetic CSV outside ``solve_data/``).
+        if canonical_rows is None and realized_dispatch_csv is not None:
+            canonical_rows = _load_realized_list(realized_dispatch_csv)
+    elif has_period:
+        canonical_d = _load_canonical_d_order(work_folder, solve_name)
+        if canonical_d is None and realized_periods_csv is not None:
+            canonical_d = _load_realized_periods_list(realized_periods_csv)
+        canonical_rows = [(d,) for d in canonical_d] if canonical_d is not None else None
+    else:
+        canonical_rows = [()]  # one row: just (solve,)
+
+    # Single pass over HiGHS: dict ``(d[, t], *col_vals) → value`` plus
+    # first-appearance unique col_vals tracking.
+    values_by_key: dict[tuple[str, ...], float] = {}
+    seen_cols_set: set[tuple[str, ...]] = set()
+    seen_cols: list[tuple[str, ...]] = []
 
     for item_name, val in zip(names, values):
         if not item_name.startswith(prefix):
@@ -479,90 +550,84 @@ def extract_variable(
                 name, len(parts), expected_arity, item_name,
             )
             continue
-        # Slice positions: [leading_ignore : leading_ignore+ncol] → cols;
-        # [ncol+leading : ncol+leading+trailing] → period/time;
-        # [-trailing_ignore:] → dropped (must not affect indexing when 0).
         col_start = leading_ignore
         col_end = col_start + len(col_names)
         col_vals = tuple(parts[col_start:col_end])
         if has_period and has_time:
-            period, time = parts[col_end], parts[col_end + 1]
-            if realized_dt is not None and (period, time) not in realized_dt:
-                continue
-            row_keys.append((solve_name, period, time))
+            row_key: tuple[str, ...] = (parts[col_end], parts[col_end + 1])
         elif has_period:
-            period = parts[col_end]
-            if realized_p is not None and period not in realized_p:
-                continue
-            row_keys.append((solve_name, period))
+            row_key = (parts[col_end],)
         else:
-            row_keys.append((solve_name,))
-        col_keys.append(col_vals)
-        vals.append(float(val) * value_scale)
+            row_key = ()
+        if col_vals not in seen_cols_set:
+            seen_cols.append(col_vals)
+            seen_cols_set.add(col_vals)
+        values_by_key[row_key + col_vals] = float(val) * value_scale
 
-    # No variable values matched.  Phase-3 CSV writers would still iterate
-    # ``for {s in solve_current, (d, t) in dt_realize_dispatch}`` — i.e.
-    # produce N_rows × 0-columns rather than (0, 0).  Downstream pandas
-    # code (``DataFrame.mul(axis=1, level=0)``) breaks when one operand
-    # has an empty MultiIndex row while the other has populated rows, so
-    # fabricate the same ``(solve, period[, time])`` row index here using
-    # the realized-dispatch data the caller already pointed us at.
-    if not vals:
-        # For synthesis we need the realized set in glpsol iteration order
-        # (= CSV file order), so re-load as a list.  The set above was only
-        # for the O(1) membership check in the loop and can't give order.
-        realized_dt_list = (
-            _load_realized_list(realized_dispatch_csv) if has_time else None
-        )
-        realized_p_list = (
-            _load_realized_periods_list(realized_periods_csv)
-            if (has_period and not has_time) else None
-        )
+    # No variable values matched — produce the same N_rows × 0-cols
+    # frame phase-3 CSV writers would have produced (with the canonical
+    # row index), so downstream ``DataFrame.mul(axis=1, level=0)``
+    # against a populated parameter frame doesn't get an empty operand.
+    if not seen_cols:
         return empty_variable_frame(
             solve_name, col_names,
             has_period=has_period, has_time=has_time,
-            realized_dt=realized_dt_list, realized_p=realized_p_list,
+            realized_dt=canonical_rows if (has_period and has_time) else None,
+            realized_p=(
+                [r[0] for r in canonical_rows]
+                if (has_period and not has_time and canonical_rows is not None)
+                else None
+            ),
         )
 
-    long_data: dict[str, list] = {
-        rn: [k[i] for k in row_keys] for i, rn in enumerate(row_index_names)
-    }
-    for i, cn in enumerate(col_names):
-        long_data[cn] = [k[i] for k in col_keys]
-    long_data["value"] = vals
+    # Build the wide matrix by canonical row × first-appearance col
+    # position lookup.  Single dict iteration; the lookup itself is
+    # O(1) per entry.
+    if canonical_rows is None:
+        # Defensive: no canonical source available — fall back to
+        # first-appearance row order from the HiGHS scan.
+        seen_rows_set: set[tuple[str, ...]] = set()
+        canonical_rows = []
+        for k in values_by_key:
+            row_key = k[: -len(col_names)] if col_names else k
+            if row_key not in seen_rows_set:
+                canonical_rows.append(row_key)
+                seen_rows_set.add(row_key)
 
-    long = pd.DataFrame(long_data)
-    # ``sort=False`` keeps the first-appearance row order from the HiGHS
-    # MPS variable-name iteration — but glpsol's iteration over
-    # ``node_state__dt`` etc. can differ from its iteration over
-    # ``dt_realize_dispatch`` used by phase-1 printfs (notably for
-    # representative-period scenarios and storage-reference timesteps).
-    # Reindex to the canonical ``(solve, period[, time])`` order the
-    # phase-1 CSVs use so cross-reader ``mul(axis=1, level=0)`` aligns.
-    wide = long.pivot_table(
-        index=row_index_names,
-        columns=list(col_names),
-        values="value",
-        fill_value=0.0,
-        sort=False,
-    )
-    if has_period and has_time and realized_dt is not None:
-        realized_list = _load_realized_list(realized_dispatch_csv)
-        if realized_list is not None:
-            canonical = pd.MultiIndex.from_tuples(
-                [(solve_name, d, t) for (d, t) in realized_list],
-                names=row_index_names,
-            )
-            wide = wide.reindex(canonical, fill_value=0.0)
-    elif has_period and not has_time and realized_p is not None:
-        realized_p_list = _load_realized_periods_list(realized_periods_csv)
-        if realized_p_list is not None:
-            canonical = pd.MultiIndex.from_tuples(
-                [(solve_name, d) for d in realized_p_list],
-                names=row_index_names,
-            )
-            wide = wide.reindex(canonical, fill_value=0.0)
-    return wide
+    import numpy as np
+    row_pos = {r: i for i, r in enumerate(canonical_rows)}
+    col_pos = {c: j for j, c in enumerate(seen_cols)}
+    matrix = np.zeros((len(canonical_rows), len(seen_cols)), dtype=float)
+    for key, val in values_by_key.items():
+        if col_names:
+            row_key = key[: -len(col_names)]
+            col_key = key[-len(col_names):]
+        else:
+            row_key = key
+            col_key = ()
+        i = row_pos.get(row_key)
+        if i is None:
+            continue  # row not in canonical (e.g. storage-reference timestep)
+        matrix[i, col_pos[col_key]] = val
+    # Normalise IEEE negative zeros to positive zero — HiGHS occasionally
+    # returns ``-0.0`` for variables pinned at the lower bound, and pandas
+    # ``assert_frame_equal`` distinguishes ``-0.0`` from ``0.0``.
+    matrix += 0.0
+
+    if len(col_names) >= 2:
+        col_idx: pd.Index = pd.MultiIndex.from_tuples(
+            seen_cols, names=list(col_names),
+        )
+    else:
+        col_idx = pd.Index([c[0] for c in seen_cols], name=col_names[0])
+
+    if not has_period:
+        row_idx: pd.Index = pd.Index([solve_name], name=row_index_names[0])
+    else:
+        row_idx = pd.MultiIndex.from_tuples(
+            [(solve_name, *r) for r in canonical_rows], names=row_index_names,
+        )
+    return pd.DataFrame(matrix, index=row_idx, columns=col_idx)
 
 
 def write_variable_parquet(

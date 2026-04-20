@@ -230,9 +230,10 @@ class SolverRunner:
                 )
 
         # Phase 4 (HiGHS-only): extract outputs directly from the live
-        # ``Highs`` instance.  Skipped when the legacy ``--use-old-raw-csv``
-        # pathway is active (phase 3 already wrote equivalent CSVs).
-        if highs_instance is not None and not self.state.use_old_raw_csv:
+        # ``Highs`` instance.  Always runs when HiGHS is the solver —
+        # parquets are the new pathway and ``--use-old-raw-csv`` only
+        # affects whether phase 3 ALSO writes its legacy CSVs.
+        if highs_instance is not None:
             from flextool.process_outputs.read_highs_solution import (
                 _actual_solve_name, write_all_variables,
             )
