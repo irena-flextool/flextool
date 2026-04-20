@@ -611,6 +611,37 @@ def migrate_database(database_path, up_to: int | None = None):
                     )
                 except SpineDBAPIError:
                     pass
+            elif next_version == 39:
+                # Replace the hard-coded 1e6 upper bound on "unconstrained"
+                # variables (invest_no_limit + zero-coefficient flow bounds)
+                # with a model-level parameter.  Default 1,000,000 matches
+                # the previous behaviour.  Needed by the commodity price
+                # ladder feature to bound infinite-capacity tiers without
+                # baking another literal into the mod.
+                default_val, default_type = to_database(1000000.0)
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="model",
+                    name="max_flow_for_unconstrained_variables",
+                    default_value=default_val, default_type=default_type,
+                    parameter_type_list=("float",),
+                    description=(
+                        "[MW] Upper bound assigned to LP variables that "
+                        "have no other cap (invest_no_limit capacity; "
+                        "flows through edges whose max_capacity_coefficient "
+                        "is zero; infinite-capacity commodity tiers).  "
+                        "Keep large enough not to constrain the physical "
+                        "solution but small enough to avoid numerical "
+                        "issues (default 1,000,000)."
+                    ),
+                )
+                try:
+                    db.commit_session(
+                        "v39: added model.max_flow_for_unconstrained_variables "
+                        "(replaces hard-coded 1e6 in flextool.mod)"
+                    )
+                except SpineDBAPIError:
+                    pass
             else:
                 print("Version invalid")
             next_version += 1

@@ -795,6 +795,11 @@ _PARAMETER_SPECS: list[dict] = [
         "header": "model,p_inflation_offset_investment",
         "filename": "input/p_inflation_offset_investment.csv",
     },
+    {
+        "cl_pars": [("model", "max_flow_for_unconstrained_variables")],
+        "header": "model,p_max_flow_for_unconstrained_variables",
+        "filename": "input/p_max_flow_for_unconstrained_variables.csv",
+    },
     # --- pdt_group (time maps) ---
     {
         "cl_pars": [("group", "co2_max_period"),

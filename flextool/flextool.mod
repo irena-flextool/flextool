@@ -410,6 +410,7 @@ param p_discount_years{d in period} default 0;
 param p_inflation_rate{model} default 0;
 param p_inflation_offset_investment{model} default 0;    # Inflation offset for investment annuity (assumes investments at the start of the year unless other value is given)
 param p_inflation_offset_operations{model} default 0.5;  # Inflation offset for operational costs (assumes costs on average at the middle of the year unless other value is given)
+param p_max_flow_for_unconstrained_variables{model} default 1000000;  # MW cap on variables with no other upper bound (invest_no_limit, zero-coefficient flows, infinite tiers)
 
 param p_entity_divested {e in entity : e in entityDivest};
 set ed_history_realized_read dimen 2 within {e in entity, d in period_with_history};
@@ -601,6 +602,7 @@ table data IN 'CSV' 'input/p_inflation_rate.csv' : model <- [model];
 table data IN 'CSV' 'input/p_inflation_rate.csv' : [model], p_inflation_rate;
 table data IN 'CSV' 'input/p_inflation_offset_operations.csv' : [model], p_inflation_offset_operations;
 table data IN 'CSV' 'input/p_inflation_offset_investment.csv' : [model], p_inflation_offset_investment;
+table data IN 'CSV' 'input/p_max_flow_for_unconstrained_variables.csv' : [model], p_max_flow_for_unconstrained_variables;
 table data IN 'CSV' 'input/default_values.csv' : class_paramName_default <-[class, paramName];
 table data IN 'CSV' 'input/default_values.csv' : [class,paramName], default_value;
 
@@ -1303,6 +1305,7 @@ param group_capacity_for_scaling{g in group, d in period_in_use} := 1;
 param p_inflation := (if sum{m in model} 1 then max{m in model} p_inflation_rate[m] else 0);
 param p_infl_offset_investment := (if sum{m in model} 1 then max{m in model} p_inflation_offset_investment[m] else 0);
 param p_infl_offset_operations := (if sum{m in model} 1 then max{m in model} p_inflation_offset_operations[m] else 0.5);
+param p_unconstrained_flow_cap := (if sum{m in model} 1 then max{m in model} p_max_flow_for_unconstrained_variables[m] else 1000000);
 # Inflation offsets are fractions of the represented window p_years_represented[d, y]:
 #   0   = beginning of the window
 #   0.5 = midway through the window
@@ -1833,7 +1836,7 @@ param p_entity_max_capacity {e in entity, d in period_in_use} :=
       + if (e, d) in ed_invest_period && e not in e_invest_total then ed_invest_max_period[e, d] else 0
       + if e in e_invest_total && (e, d) not in ed_invest_period then e_invest_max_total[e] else 0
       + if (e, d) in ed_invest_period && e in e_invest_total then max(ed_invest_max_period[e, d], e_invest_max_total[e]) else 0
-      + if (e, 'invest_no_limit') in entity__invest_method then 1000000 else 0    # This may not be enough in all cases, but a very large number could cause numerical issues.
+      + if (e, 'invest_no_limit') in entity__invest_method then p_unconstrained_flow_cap else 0    # Configured via model.max_flow_for_unconstrained_variables (default 1e6).
 ;
 
 param p_entity_max_units {e in entity, d in period} :=
@@ -1853,7 +1856,7 @@ param p_entity_invest_cumulative_max {e in entityInvest, d in period_in_use} :=
   + if (e, d) in ed_invest_cumulative
     then max(0, ed_cumulative_max_capacity[e, d] - p_entity_all_existing[e, d])
     else if sum{(e, m) in entity__invest_method : m = 'invest_no_limit'} 1
-    then 1000000
+    then p_unconstrained_flow_cap
     else
       + (if (e, d) in ed_invest_period && e not in e_invest_total
          then sum{(e, d_invest, d) in edd_invest
@@ -1913,7 +1916,7 @@ set process_source_sink_coeff_zero := {(p, source, sink) in process_source_sink:
 param p_flow_max{(p, source, sink, d, t) in peedt} :=
   if (p, source, sink) in process_source_sink_coeff_zero
   then
-    + 1000000   # This may not be enough in all cases, but a very large number could cause numerical issues.
+    + p_unconstrained_flow_cap   # Configured via model.max_flow_for_unconstrained_variables (default 1e6).
   else
     + (
       if exists{(p, m) in process__method_indirect} 1 && (p, source) in process_source

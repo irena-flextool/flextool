@@ -1374,6 +1374,14 @@
     ],
     [
       "model",
+      "max_flow_for_unconstrained_variables",
+      1000000.0,
+      null,
+      "[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose max_capacity_coefficient is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000).",
+      null
+    ],
+    [
+      "model",
       "output_connection__node__node_flow_t",
       "yes",
       "optional_output",
@@ -1447,7 +1455,7 @@
     [
       "model",
       "version",
-      38.0,
+      39.0,
       null,
       "Contains database version information.",
       null
@@ -3109,6 +3117,12 @@
     [
       "model",
       "inflation_rate",
+      "float",
+      0
+    ],
+    [
+      "model",
+      "max_flow_for_unconstrained_variables",
       "float",
       0
     ],
