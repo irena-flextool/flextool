@@ -1032,6 +1032,7 @@ plots:
         max_subplots_per_file: 8
         subplots_per_row: 2
         ylabel: MWh (annualized)
+        color_category: node_flows
       sum_periods:
         plot_name: 'Node total'
         variant: a
@@ -1040,6 +1041,7 @@ plots:
         max_subplots_per_file: 8
         subplots_per_row: 2
         ylabel: MWh (horizon total)
+        color_category: node_flows
     node_dt_ep:
       default:
         variant: h
@@ -1048,6 +1050,7 @@ plots:
         max_subplots_per_file: 6
         legend: all
         ylabel: MWh/h
+        color_category: node_flows
       chunks:
         plot_name: 'Node weekly avg'
         variant: w
@@ -1057,6 +1060,7 @@ plots:
         max_subplots_per_file: 6
         legend: all
         ylabel: MWh/h
+        color_category: node_flows
   'Node prices':
     group: 7
     order: 1

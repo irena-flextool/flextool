@@ -57,7 +57,29 @@ category:
     upward reserve slack penalty:          '#c1272d'   # dark red
     downward reserve slack penalty:        '#ff9896'   # salmon
     capacity margin penalty:               '#7b0828'   # deep wine red
-  node_flows: {}   # populated in Chunk F
+  # Node balance components produced by
+  # flextool/process_outputs/out_node.py::node_summary().  The plot shows
+  # stacked contributions to a node's energy balance: supply-side labels
+  # sit above the zero line (From units, From connections, Inflow, Loss
+  # of load), draw-side labels below it (To units, To connections, Self
+  # discharge, Excess load).  Colors are chosen so:
+  #   - supply / generation / imports → greens and teals
+  #   - load / exports / storage charge → blues
+  #   - storage self-discharge losses → neutral gray
+  #   - slacks (infeasibility) → reds, matching the cost-slack hues so
+  #     users learn a single "slack = red" vocabulary across plots
+  node_flows:
+    # Supply side (positive contributions to the node)
+    From units:         '#2ca02c'   # green — generation delivered to node
+    From connections:   '#17a2b8'   # teal — imports from neighbouring nodes
+    Inflow:             '#7dd87a'   # light green — exogenous inflow (wind, hydro)
+    # Draw side (negative contributions to the node)
+    To units:           '#1f77b4'   # strong blue — consumption / storage charge
+    To connections:     '#5b8fbf'   # steel blue — exports to neighbouring nodes
+    Self discharge:     '#808080'   # gray — storage self-discharge loss
+    # Slacks (infeasibility; red family matches costs-category slacks)
+    Loss of load:       '#d62728'   # strong red — upward slack (unmet demand)
+    Excess load:        '#ff7f7f'   # light red — downward slack (spill / dump)
 
 entity_class:
   group: {}        # populated in Chunk G (flowGroup-entity recommended names)

@@ -412,3 +412,121 @@ class TestCostCategoryIntegration:
         # commodity_cost after sort inside _compute_bar_plan).
         assert plan.shared_color_map["co2"] == tab10[0]
         assert plan.shared_color_map["commodity_cost"] == tab10[1]
+
+
+# ---------------------------------------------------------------------------
+# Chunk F: node-flow color-template integration (through the plan pipeline)
+# ---------------------------------------------------------------------------
+
+
+class TestNodeFlowsCategoryIntegration:
+    """End-to-end: a bar plan computed with ``color_category='node_flows'``
+    pulls colors from ``templates/default_colors.yaml`` for the eight
+    node-balance categories emitted by
+    :func:`flextool.process_outputs.out_node.node_summary` and falls back
+    to the palette for labels not in the template.
+
+    This locks in the wiring for Chunk F the same way
+    :class:`TestCostCategoryIntegration` locks in Chunk E.
+    """
+
+    def setup_method(self) -> None:
+        ct._clear_cache()
+
+    def test_shipped_template_has_all_node_flow_labels(self):
+        """The eight category strings that ``out_node.node_summary``
+        writes must all resolve.  If any of these drift (rename in
+        out_node.py, typo in the YAML), this is the canary."""
+        tpl = ct.load_color_template()
+        # Exact labels from out_node.node_summary:
+        #   flextool/process_outputs/out_node.py:8
+        expected_labels = [
+            "From units",
+            "From connections",
+            "Loss of load",
+            "To units",
+            "To connections",
+            "Self discharge",
+            "Excess load",
+            "Inflow",
+        ]
+        for lbl in expected_labels:
+            assert ct.resolve_label_color(lbl, tpl, category="node_flows") is not None, (
+                f"Shipped template is missing node-flow label {lbl!r}"
+            )
+
+    def test_bar_plan_uses_template_colors_for_node_flow_labels(self):
+        """A bar plan with ``color_category='node_flows'`` and
+        ``legend='shared'`` should pull template colors for the node-flow
+        category labels that exist in the shipped YAML and fall back to
+        tab10 for any label that doesn't."""
+        import numpy as np
+        import pandas as pd
+
+        from flextool.plot_outputs.color_template import resolve_label_color
+        from flextool.plot_outputs.plan import compute_live_plan
+
+        tpl = ct.load_color_template()
+
+        # Simulate the ``node_d_ep`` single-node shape after entity has
+        # been expanded out: periods on the row, a single ``category``
+        # column level holding the node-flow vocabulary.
+        node_flow_labels = [
+            "From units",         # templated (green)
+            "Loss of load",       # templated (red slack)
+            "Inflow",             # templated (light green)
+            "not_a_real_flow",    # NOT templated → falls back to tab10
+        ]
+        periods = ["p1", "p2", "p3"]
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame(
+            rng.random((len(periods), len(node_flow_labels))) * 100,
+            index=pd.Index(periods, name="period"),
+            columns=pd.MultiIndex.from_arrays([node_flow_labels], names=["category"]),
+        )
+
+        cfg = PlotConfig(
+            plot_name="Node flow bars",
+            # Bar chart: row=period (b), col=category (s=stack) — matches
+            # the real ``node_d_ep`` rules ``[d_ep, b_es]`` collapsed to a
+            # single entity.
+            map_dimensions_for_plots=["d_p", "b_s"],
+            legend="shared",
+            color_category="node_flows",
+        )
+        plan = compute_live_plan(df, cfg, plot_name="Node flow bars")
+        assert plan is not None, "compute_live_plan returned None"
+        assert plan.shared_color_map is not None, (
+            "shared_color_map not populated; check legend='shared' path"
+        )
+
+        for lbl in ("From units", "Loss of load", "Inflow"):
+            expected = resolve_label_color(lbl, tpl, category="node_flows")
+            assert expected is not None
+            got = plan.shared_color_map[lbl]
+            assert tuple(got) == pytest.approx(expected), (
+                f"Node-flow label {lbl!r} got {got} but template says {expected}"
+            )
+
+        tab10 = plt.colormaps["tab10"].colors
+        assert plan.shared_color_map["not_a_real_flow"] == tab10[0], (
+            "Untemplated label did not fall back to tab10[0]"
+        )
+
+    def test_node_flows_and_costs_slacks_use_same_red(self):
+        """Cross-category consistency check: the strong-red slack hue used
+        for the ``costs`` category (``upward slack penalty``) is re-used
+        for the ``node_flows`` category (``Loss of load``), so users learn
+        'red = slack / infeasibility' once across the whole viewer."""
+        tpl = ct.load_color_template()
+        costs_red = ct.resolve_label_color(
+            "upward slack penalty", tpl, category="costs",
+        )
+        flows_red = ct.resolve_label_color(
+            "Loss of load", tpl, category="node_flows",
+        )
+        assert costs_red is not None
+        assert flows_red is not None
+        assert costs_red == pytest.approx(flows_red), (
+            "Slack hues drifted between costs and node_flows categories"
+        )

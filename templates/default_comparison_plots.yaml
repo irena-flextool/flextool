@@ -929,6 +929,7 @@ plots:
         base_length: 6
         axis_bounds: shared
         xlabel: MWh (annualized)
+        color_category: node_flows
       sum_periods:
         plot_name: 'Node total'
         variant: a
@@ -939,6 +940,7 @@ plots:
         base_length: 6
         axis_bounds: shared
         xlabel: MWh (horizon total)
+        color_category: node_flows
     node_dt_ep:
       default:
         variant: h
