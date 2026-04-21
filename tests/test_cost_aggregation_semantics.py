@@ -19,7 +19,7 @@ Running
 
    pytest tests/test_cost_aggregation_semantics.py -v
 
-Do NOT run the full ``tests/`` suite from here — another agent is working
+Do NOT run the full ``tests/`` suite from here -- another agent is working
 on scenario golden files concurrently.
 
 Variables covered
@@ -419,20 +419,259 @@ def test_divest_salvage_matches_mod() -> None:
     assert False, "Needs user decision"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "TODO(user): calc_costs.cost_process_other_operational_cost_dt "
-        "at lines 86-88 only multiplies the flow term.  The mod objective "
-        "(~line 2352-2372) adds a section-based contribution "
-        "(online * section * unitsize) when min_load_efficiency is the "
-        "process method.  If a scenario uses min_load_efficiency and has "
-        "nonzero section, Python will underestimate other_operational_cost. "
-        "Decide: fix calc_costs or document as known limitation?"
-    ),
-    strict=False,
-)
-def test_min_load_efficiency_section_term() -> None:
-    assert False, "Needs user decision"
+# ===========================================================================
+# Target: ``coal_min_load_wind`` with a varCost added on the source
+# (coal_plant, coal_market).  The mod objective for pssdt_varCost_eff_unit_source
+# adds both a flow-slope term AND a section term when the process uses
+# ``min_load_efficiency`` (flextool.mod ~line 2352-2367):
+#
+#     + sum {(p,source,sink,d,t) in pssdt_varCost_eff_unit_source}
+#         ( - pdtProcess_source[p, source, 'other_operational_cost', d, t]
+#             * ( v_flow * unitsize * slope * (sink_coef / source_coef)
+#                 + online * section * unitsize   (if min_load_efficiency)
+#               )
+#             * step_duration * rp_cost_weight * inflation / period_share
+#             * branch_weight
+#         )
+#
+# The Python aggregation in calc_costs.py line 113-115 intersects
+# ``r.flow_dt`` with ``par.process_source_sink_varCost``.  The source-side
+# entry of ``r.flow_dt`` already contains ``slope*v_flow*unitsize +
+# section*online*unitsize`` (set up in calc_capacity_flows.py line 49-59),
+# so multiplying by varCost recovers BOTH terms.  Multiply by
+# ``step_duration * rp_cost_weight`` to match the objective.
+#
+# This test is the regression guard for that algebra: we add a non-zero
+# ``other_operational_cost`` on (coal_plant, coal_market) inside the
+# existing ``coal_min_load`` alternative of the test fixture DB, run the
+# ``coal_min_load_wind`` scenario, and verify the ``other operational``
+# bucket in ``costs__dt.csv`` matches the exact hand-derived formula.
+# ===========================================================================
+
+class TestMinLoadEfficiencySectionTerm:
+    """When a min_load_efficiency process has an ``other_operational_cost``
+    on its source (fuel) edge, the Python ``other operational`` bucket must
+    include BOTH the slope (variable, proportional to output) AND the
+    section (no-load, proportional to online hours) terms to match the LP
+    objective.
+
+    The hand-derivation (per (d, t), for coal_plant):
+
+        bucket_dt = (flow_source_dt * varCost) * step * rp_weight
+                  = ( slope * v_flow * unitsize
+                    + section * online * unitsize ) * varCost * step * rp_weight
+
+    where ``slope`` and ``section`` are piecewise-linear conversion curve
+    parameters (``pdtProcess_slope``, ``pdtProcess_section``), derived in
+    flextool.mod lines 1548-1560 from ``efficiency``, ``min_load``, and
+    ``efficiency_at_min_load``.
+    """
+
+    VAR_COST = 5.0   # CUR/MWh on the coal_plant <- coal_market input edge
+
+    @pytest.fixture(scope="class")
+    def patched_db_url(
+        self, test_db_url: str, tmp_path_factory: pytest.TempPathFactory
+    ) -> str:
+        """Clone the session DB and add ``other_operational_cost`` on
+        ``unit__inputNode (coal_plant, coal_market)`` in the existing
+        ``coal_min_load`` alternative.  All downstream scenarios that
+        inherit that alternative (including ``coal_min_load_wind``) pick
+        up the new value without having to modify the JSON fixture.
+        """
+        import shutil
+        from spinedb_api import DatabaseMapping, import_data
+
+        src_path = Path(test_db_url.replace("sqlite:///", ""))
+        dst_dir = tmp_path_factory.mktemp("min_load_section_db")
+        dst_path = dst_dir / "tests_patched.sqlite"
+        shutil.copy(src_path, dst_path)
+        url = f"sqlite:///{dst_path.resolve()}"
+
+        with DatabaseMapping(url) as db:
+            count, errors = import_data(
+                db,
+                parameter_values=[
+                    (
+                        "unit__inputNode",
+                        ("coal_plant", "coal_market"),
+                        "other_operational_cost",
+                        self.VAR_COST,
+                        "coal_min_load",
+                    ),
+                ],
+            )
+            assert not errors, f"Import errors: {errors}"
+            db.commit_session("Add other_operational_cost on coal_plant source")
+        return url
+
+    @pytest.fixture(scope="class")
+    def csv_dir(
+        self,
+        patched_db_url: str,
+        test_bin_dir: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> Path:
+        workdir = tmp_path_factory.mktemp("min_load_section_run")
+        return _run_scenario(
+            "coal_min_load_wind", patched_db_url, test_bin_dir, workdir,
+        )
+
+    def test_other_operational_matches_hand_derived(self, csv_dir: Path) -> None:
+        """Hand-derive the expected ``other operational`` bucket from the
+        output flow and online CSVs, and compare with the Python pipeline's
+        published value in ``costs__dt.csv``.
+        """
+        # Actual Python-published value of the "other operational" bucket.
+        costs_dt = pd.read_csv(csv_dir / "costs__dt.csv", index_col=[0, 1, 2])
+        actual = costs_dt["other operational"]
+
+        # Inputs needed for the hand calc:
+        #   - v_flow (MW output at sink, via unit__outputNode__dt.csv)
+        #   - v_online (unit_online__dt.csv)
+        #   - slope, section (pdtProcess_slope, pdtProcess_section)
+        #   - unitsize, step_duration, rp_cost_weight
+        # All live under the solver/work dir -- work folder is csv_dir's
+        # parent-parent (``output_csv/<scenario>`` inside workdir).
+        workdir = csv_dir.parent.parent
+        solve_data = workdir / "solve_data"
+        input_dir = workdir / "input"
+
+        # v_flow output at west (1-unit-scaled -- we multiply by unitsize below).
+        # unit__outputNode__dt.csv has a 2-row header: [unit, node].
+        flow_out = pd.read_csv(
+            csv_dir / "unit__outputNode__dt.csv",
+            header=[0, 1],
+            index_col=[0, 1, 2],
+        )
+        flow_out.index.names = ["solve", "period", "time"]
+        # Series indexed by (solve, period, time) giving MW output of coal_plant.
+        flow_coal = flow_out[("coal_plant", "west")].astype(float)
+
+        # v_online for coal_plant (0..1 linear variable in coal_min_load_wind).
+        online = pd.read_csv(
+            csv_dir / "unit_online__dt.csv", index_col=[0, 1, 2],
+        )
+        online.index.names = ["solve", "period", "time"]
+        online_coal = online["coal_plant"].astype(float)
+
+        # pdtProcess_slope and pdtProcess_section (per (d, t)).
+        slope = pd.read_csv(
+            solve_data / "pdtProcess_slope.csv", index_col=[0, 1, 2],
+        )["coal_plant"].astype(float)
+        slope.index.names = ["solve", "period", "time"]
+        section = pd.read_csv(
+            solve_data / "pdtProcess_section.csv", index_col=[0, 1, 2],
+        )["coal_plant"].astype(float)
+        section.index.names = ["solve", "period", "time"]
+
+        # Entity unitsize (virtual_unitsize). coal_plant has virtual_unitsize
+        # = 250 in the coal_unit_size alternative -- but coal_min_load_wind
+        # does NOT include that alternative, so unitsize defaults to 1.0.
+        # Read it from the written input CSV to avoid hard-coding.
+        unitsize_df = pd.read_csv(
+            input_dir / "p_entity_unitsize.csv", index_col=0,
+        )
+        unitsize_coal = float(unitsize_df.loc["value", "coal_plant"])
+
+        # Per-step scaling factor used by compute_costs.
+        step_duration = pd.read_csv(
+            solve_data / "p_step_duration.csv", index_col=[0, 1, 2],
+        )["value"].astype(float)
+        step_duration.index.names = ["solve", "period", "time"]
+        rp_cost_weight = pd.read_csv(
+            solve_data / "p_rp_cost_weight.csv", index_col=[0, 1, 2],
+        )["value"].astype(float)
+        rp_cost_weight.index.names = ["solve", "period", "time"]
+
+        # Align everything on the actual cost index.
+        idx = actual.index
+
+        # Source-side fuel flow at each timestep:
+        #   slope * v_flow_output + section * online * unitsize
+        # v_flow_output at west is already in physical MW (= v_flow*unitsize),
+        # so dividing by unitsize recovers per-unit v_flow for the mod's
+        # ``v_flow * unitsize * slope`` term.  Since sink_coef = source_coef
+        # = 1 here, the mod's ``sink_coef/source_coef`` multiplier is 1.
+        flow_source = (
+            slope.reindex(idx).mul(flow_coal.reindex(idx), fill_value=0.0)
+            + section.reindex(idx).mul(online_coal.reindex(idx), fill_value=0.0)
+              * unitsize_coal
+        )
+
+        # Hand-derived bucket:
+        expected = (
+            flow_source
+            * self.VAR_COST
+            * step_duration.reindex(idx)
+            * rp_cost_weight.reindex(idx)
+        )
+
+        # The bucket should be non-trivially non-zero somewhere (sanity).
+        assert expected.abs().sum() > 0.0, (
+            "Hand-derived expected bucket is identically zero -- "
+            "the scenario is not exercising the min_load_efficiency path."
+        )
+
+        # Assert elementwise match.  rtol 1e-4 = same precision as goldens.
+        pd.testing.assert_series_equal(
+            actual.rename("expected"),
+            expected.rename("expected"),
+            check_names=False,
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
+    def test_section_term_actually_contributes(self, csv_dir: Path) -> None:
+        """Positive control: without the section term, the hand-derived
+        bucket would be ``slope*v_flow * varCost * step * rpw`` only.
+        Verify that the section contribution (section*online*unitsize *
+        varCost * step * rpw) is numerically non-negligible -- so the
+        main assertion above actually exercises the section path and is
+        not vacuously satisfied by section = 0.
+        """
+        workdir = csv_dir.parent.parent
+        solve_data = workdir / "solve_data"
+        input_dir = workdir / "input"
+
+        online = pd.read_csv(
+            csv_dir / "unit_online__dt.csv", index_col=[0, 1, 2],
+        )["coal_plant"].astype(float)
+        online.index.names = ["solve", "period", "time"]
+        section = pd.read_csv(
+            solve_data / "pdtProcess_section.csv", index_col=[0, 1, 2],
+        )["coal_plant"].astype(float)
+        section.index.names = ["solve", "period", "time"]
+        step_duration = pd.read_csv(
+            solve_data / "p_step_duration.csv", index_col=[0, 1, 2],
+        )["value"].astype(float)
+        step_duration.index.names = ["solve", "period", "time"]
+        rp_cost_weight = pd.read_csv(
+            solve_data / "p_rp_cost_weight.csv", index_col=[0, 1, 2],
+        )["value"].astype(float)
+        rp_cost_weight.index.names = ["solve", "period", "time"]
+
+        unitsize_coal = float(
+            pd.read_csv(input_dir / "p_entity_unitsize.csv", index_col=0)
+            .loc["value", "coal_plant"]
+        )
+
+        idx = online.index
+        section_contrib = (
+            section.reindex(idx)
+            * online.reindex(idx)
+            * unitsize_coal
+            * self.VAR_COST
+            * step_duration.reindex(idx)
+            * rp_cost_weight.reindex(idx)
+        )
+        # Sanity: section term must be a meaningful share of the bucket --
+        # otherwise the main assertion doesn't actually exercise the code
+        # path.  Empirically ~9200 CUR for coal_min_load_wind + VAR_COST=5.
+        assert section_contrib.abs().sum() > 100.0, (
+            f"Section contribution is negligible ({section_contrib.abs().sum()}); "
+            "scenario does not reliably exercise the section path."
+        )
 
 
 @pytest.mark.xfail(

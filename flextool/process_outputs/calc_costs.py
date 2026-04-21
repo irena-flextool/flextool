@@ -107,9 +107,23 @@ def compute_costs(par, s, v, r) -> None:
     # --- Operational costs ---
     # Mod objective (~line 2347-2376): flow × unitsize × varCost ×
     # step_duration × rp_cost_weight × inflation / period_share ×
-    # pdt_branch_weight.  TODO(user): the min_load_efficiency branches
-    # also contribute (online × section × unitsize × varCost); not yet
-    # included here, see test_cost_aggregation_semantics.py.
+    # pdt_branch_weight.
+    #
+    # The mod splits the ``other_operational_cost`` contribution into
+    # three sums keyed by ``pssdt_varCost_noEff``,
+    # ``pssdt_varCost_eff_unit_source``/``_sink``, and
+    # ``_eff_connection``.  For ``min_load_efficiency`` processes the
+    # source-side sum also contains a ``section × online × unitsize``
+    # term (flextool.mod line 2358-2364).  In Python this term is
+    # folded into ``r.flow_dt`` on the source-side (p, source, p)
+    # tuple by ``calc_capacity_flows.compute_capacity_and_flows``
+    # (line 58-59): ``flow_val.add(online × section × unitsize)`` when
+    # the process uses ``min_load_efficiency``.  Multiplying that
+    # pre-aggregated source-side flow by the per-(p, source, sink)
+    # varCost here therefore reproduces both the slope and the section
+    # contributions in a single matmul, matching the objective.  See
+    # ``test_cost_aggregation_semantics.TestMinLoadEfficiencySectionTerm``
+    # for the regression guard.
     relevant_flows = r.flow_dt.loc[:, r.flow_dt.columns.intersection(par.process_source_sink_varCost.columns)]
     cost_flows = relevant_flows.mul(step_x_rp, axis=0).mul(par.process_source_sink_varCost, axis=1)
     r.cost_process_other_operational_cost_dt = cost_flows.T.groupby(level=0).sum().T.reindex(columns=s.process, fill_value=0.0)
