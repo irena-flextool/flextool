@@ -29,6 +29,7 @@ from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_singl
 from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
 from flextool.plot_outputs.plot_bars import build_bar_figures
 from flextool.plot_outputs.plot_lines import build_line_figures, build_stack_figures
+from flextool.plot_outputs.color_template import load_color_template
 
 logger = logging.getLogger(__name__)
 logging.getLogger('matplotlib.category').disabled = True
@@ -544,6 +545,12 @@ def prepare_plot_data(
     result_name = plot_name or cfg.plot_name or 'plot'
     axis_bounds = _normalize_axis_bounds(cfg.axis_bounds)
 
+    # Load color template once so build_*_figures can apply template colors
+    # consistently (matching what plan.py's _compute_*_plan path does).
+    color_tmpl = load_color_template()
+    color_category = cfg.color_category if cfg is not None else None
+    color_entity_class = cfg.color_entity_class if cfg is not None else None
+
     dim_result = _apply_dimension_rules(df, cfg, plot_rows, period_weights=period_weights)
     if dim_result is None:
         return [], 0
@@ -641,6 +648,9 @@ def prepare_plot_data(
                 max_items_per_subplot_column=cfg.max_items_per_subplot_column,
                 skip_data_with_only_zeroes=cfg.skip_data_with_only_zeroes,
                 only_file_index=only_file_index,
+                color_template=color_tmpl,
+                category=color_category,
+                entity_class=color_entity_class,
             )
             total_file_count += count
             figures.extend(figs)
@@ -660,6 +670,9 @@ def prepare_plot_data(
                     max_items_per_plot=max_items,
                     max_subplots_per_file=cfg.max_subplots_per_file,
                     only_file_index=only_file_index,
+                    color_template=color_tmpl,
+                    category=color_category,
+                    entity_class=color_entity_class,
                 )
             else:
                 figs, count = build_line_figures(
@@ -676,6 +689,9 @@ def prepare_plot_data(
                     max_subplots_per_file=cfg.max_subplots_per_file,
                     subplots_by_magnitudes=cfg.subplots_by_magnitudes,
                     only_file_index=only_file_index,
+                    color_template=color_tmpl,
+                    category=color_category,
+                    entity_class=color_entity_class,
                 )
             total_file_count += count
             figures.extend(figs)
@@ -736,6 +752,9 @@ def prepare_plot_data(
                         axis_bounds=axis_bounds,
                         axis_tick_format=cfg.axis_tick_format,
                         always_include_zero_in_axis=cfg.always_include_zero_in_axis,
+                        color_template=color_tmpl,
+                        category=color_category,
+                        entity_class=color_entity_class,
                     )
                 else:
                     chunk_figs, _count = build_line_figures(
@@ -747,6 +766,9 @@ def prepare_plot_data(
                         axis_bounds=axis_bounds,
                         axis_tick_format=cfg.axis_tick_format,
                         always_include_zero_in_axis=cfg.always_include_zero_in_axis,
+                        color_template=color_tmpl,
+                        category=color_category,
+                        entity_class=color_entity_class,
                     )
                 figures.extend(chunk_figs)
 

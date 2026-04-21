@@ -401,3 +401,189 @@ class TestPlotPlan:
         assert plan.total_file_count == 2
         assert len(plan.file_batches[0]) == 2
         assert len(plan.file_batches[1]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Color-template kwargs forwarding through the batch render path
+# ---------------------------------------------------------------------------
+
+
+class TestColorTemplateForwardedToBuildFigures:
+    """The batch render path in orchestrator.prepare_plot_data must forward
+    ``color_template``/``category``/``entity_class`` into the underlying
+    build_*_figures functions so batch-rendered PNGs pick up template colors
+    just like the plan-based path.
+    """
+
+    def _spy(self, monkeypatch):
+        """Install a spy on build_shared_color_map in plot_lines + plot_bars.
+
+        Returns a list that will receive the kwargs each call used.
+        """
+        from flextool.plot_outputs import plot_lines, plot_bars
+        from flextool.plot_outputs.legend_helpers import build_shared_color_map as real
+
+        calls: list[dict] = []
+
+        def _spy_fn(labels, *, color_template=None, category=None,
+                    entity_class=None):
+            calls.append({
+                "labels": list(labels),
+                "color_template": color_template,
+                "category": category,
+                "entity_class": entity_class,
+            })
+            return real(
+                labels,
+                color_template=color_template,
+                category=category,
+                entity_class=entity_class,
+            )
+
+        monkeypatch.setattr(plot_lines, "build_shared_color_map", _spy_fn)
+        monkeypatch.setattr(plot_bars, "build_shared_color_map", _spy_fn)
+        return calls
+
+    def test_line_chart_forwards_kwargs(self, monkeypatch):
+        """build_line_figures receives color_template + category kwargs."""
+        calls = self._spy(monkeypatch)
+        df = _make_time_df(n_cols=4)
+        cfg = PlotConfig(
+            plot_name="Test line colors",
+            map_dimensions_for_plots=["t_e", "t_l"],
+            legend="shared",
+            color_category="costs",
+        )
+        figures, total = prepare_plot_data(df, cfg, plot_name="Test line colors")
+        assert total >= 1
+        assert len(calls) >= 1, "build_shared_color_map should have been called"
+        last = calls[-1]
+        assert last["category"] == "costs"
+        assert last["entity_class"] is None
+        # color_template is the loaded dict — may be {} if template file
+        # isn't present, but it MUST have been passed through (not None
+        # where the caller did not pass it).  With the default repo layout
+        # templates/default_colors.yaml *may* exist; either way the value
+        # should be a dict (not None) because orchestrator forwards the
+        # load_color_template() result.
+        assert isinstance(last["color_template"], dict)
+
+    def test_stack_chart_forwards_kwargs(self, monkeypatch):
+        """build_stack_figures receives entity_class kwarg."""
+        calls = self._spy(monkeypatch)
+        df = _make_time_df(n_cols=4)
+        cfg = PlotConfig(
+            plot_name="Test stack colors",
+            map_dimensions_for_plots=["t_e", "t_s"],
+            legend="shared",
+            color_entity_class="group",
+        )
+        figures, total = prepare_plot_data(df, cfg, plot_name="Test stack colors")
+        assert total >= 1
+        assert len(calls) >= 1
+        last = calls[-1]
+        assert last["entity_class"] == "group"
+        assert last["category"] is None
+        assert isinstance(last["color_template"], dict)
+
+    def test_bar_chart_forwards_kwargs(self, monkeypatch):
+        """build_bar_figures receives color_template + category kwargs.
+
+        Uses a stacked bar config so the shared color map codepath
+        triggers (bar build uses shared colors only when stack_levels or
+        grouped_bar_levels are present).
+        """
+        calls = self._spy(monkeypatch)
+        # 2-level column index so we have a stack dimension
+        rng = np.random.default_rng(42)
+        n_rows = 5
+        tuples = [(f"scen_{s}", f"entity_{e}") for s in range(2) for e in range(3)]
+        columns = pd.MultiIndex.from_tuples(tuples, names=["scenario", "entity"])
+        index = pd.Index([f"p{i}" for i in range(n_rows)], name="period")
+        df = pd.DataFrame(rng.random((n_rows, len(tuples))) * 100,
+                          index=index, columns=columns)
+        cfg = PlotConfig(
+            plot_name="Test bar colors",
+            map_dimensions_for_plots=["d_se", "s_bs"],  # bar + stack
+            legend="shared",
+            color_category="costs",
+        )
+        figures, total = prepare_plot_data(df, cfg, plot_name="Test bar colors")
+        assert total >= 1
+        assert len(calls) >= 1
+        last = calls[-1]
+        assert last["category"] == "costs"
+        assert isinstance(last["color_template"], dict)
+
+    def test_no_color_config_still_forwards_none_category(self, monkeypatch):
+        """With neither color_category nor color_entity_class set, the
+        build_*_figures call still receives None for both (default behaviour
+        preserved — palette-only coloring)."""
+        calls = self._spy(monkeypatch)
+        df = _make_time_df(n_cols=4)
+        cfg = PlotConfig(
+            plot_name="Test default colors",
+            map_dimensions_for_plots=["t_e", "t_l"],
+            legend="shared",
+        )
+        figures, total = prepare_plot_data(df, cfg, plot_name="Test default colors")
+        assert total >= 1
+        assert len(calls) >= 1
+        last = calls[-1]
+        assert last["category"] is None
+        assert last["entity_class"] is None
+
+    def test_template_colors_applied_to_figure(self, monkeypatch, tmp_path):
+        """End-to-end: with a custom template file pointing at a known
+        color, the resulting figure's legend patches should include that
+        exact color."""
+        # Build a tiny color template yaml pointing ``Solar`` at a known
+        # distinctive color.
+        import yaml
+        from flextool.plot_outputs import color_template as ct
+        tmpl_path = tmp_path / "colors.yaml"
+        tmpl_path.write_text(
+            yaml.safe_dump(
+                {"category": {"costs": {"node_0": "#123456"}}}
+            ),
+            encoding="utf-8",
+        )
+        ct._clear_cache()
+        # Patch load_color_template (used by orchestrator) to read our temp
+        # template instead of the default.
+        from flextool.plot_outputs import orchestrator as orch
+        monkeypatch.setattr(
+            orch, "load_color_template",
+            lambda path=None: ct.load_color_template(tmpl_path),
+        )
+
+        df = _make_time_df(n_cols=4)
+        cfg = PlotConfig(
+            plot_name="Test template applied",
+            map_dimensions_for_plots=["t_e", "t_l"],
+            legend="shared",
+            color_category="costs",
+        )
+        figures, total = prepare_plot_data(
+            df, cfg, plot_name="Test template applied"
+        )
+        assert total >= 1
+        # Collect all line colors across subplots of the first figure.
+        _, fig = figures[0]
+        found = False
+        target_rgb = (0x12 / 255.0, 0x34 / 255.0, 0x56 / 255.0)
+        for ax in fig.get_axes():
+            for line in ax.get_lines():
+                c = line.get_color()
+                # Matplotlib may return a string or tuple.
+                import matplotlib.colors as mcolors
+                rgb = mcolors.to_rgb(c)
+                if all(abs(a - b) < 1e-6 for a, b in zip(rgb, target_rgb)):
+                    found = True
+                    break
+            if found:
+                break
+        assert found, (
+            "Expected at least one line colored with the template color #123456 "
+            "for label 'node_0' under category 'costs'."
+        )

@@ -928,6 +928,10 @@ def build_bar_figures(
     only_first_file: bool = False,
     skip_data_with_only_zeroes: bool = False,
     only_file_index: int | None = None,
+    *,
+    color_template: dict | None = None,
+    category: str | None = None,
+    entity_class: str | None = None,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build bar-chart Figures and return them without saving or closing.
 
@@ -1058,7 +1062,12 @@ def build_bar_figures(
                 if label not in all_labels:
                     all_labels.append(label)
         all_labels.sort()
-        shared_color_map = build_shared_color_map(all_labels)
+        shared_color_map = build_shared_color_map(
+            all_labels,
+            color_template=color_template,
+            category=category,
+            entity_class=entity_class,
+        )
 
     # Compute layout
     layout = _compute_bar_layout(

@@ -471,6 +471,10 @@ def build_line_figures(
     only_first_file: bool = False,
     subplots_by_magnitudes: bool = False,
     only_file_index: int | None = None,
+    *,
+    color_template: dict | None = None,
+    category: str | None = None,
+    entity_class: str | None = None,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build line-plot Figures and return them without saving or closing.
 
@@ -514,7 +518,12 @@ def build_line_figures(
                 if label not in all_labels:
                     all_labels.append(label)
         all_labels.sort()
-        shared_color_map = build_shared_color_map(all_labels)
+        shared_color_map = build_shared_color_map(
+            all_labels,
+            color_template=color_template,
+            category=category,
+            entity_class=entity_class,
+        )
 
     # Compute layout once across ALL effective_plots
     layout = _compute_line_layout(
@@ -789,6 +798,10 @@ def build_stack_figures(
     max_subplots_per_file: int = 6,
     only_first_file: bool = False,
     only_file_index: int | None = None,
+    *,
+    color_template: dict | None = None,
+    category: str | None = None,
+    entity_class: str | None = None,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build stacked-area Figures and return them without saving or closing.
 
@@ -830,7 +843,12 @@ def build_stack_figures(
                 if label not in all_labels:
                     all_labels.append(label)
         all_labels.sort()
-        shared_color_map = build_shared_color_map(all_labels)
+        shared_color_map = build_shared_color_map(
+            all_labels,
+            color_template=color_template,
+            category=category,
+            entity_class=entity_class,
+        )
 
     # Compute layout once across ALL effective_plots
     layout = _compute_line_layout(
