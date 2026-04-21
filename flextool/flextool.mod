@@ -4515,8 +4515,12 @@ if p_model["solveFirst"] == 1 then {
 }
 for {s in solve_current, d in d_realized_period} {
     printf "\n%s,%s", s, d >> "solve_data/ed_lifetime_fixed_cost.csv";
-    for {e in entity : (e, d) in ed_invest} {
-        printf ",%.8g", ed_lifetime_fixed_cost[e, d] >> "solve_data/ed_lifetime_fixed_cost.csv";
+    # Header has all entities (see line above); write 0 for entities not in
+    # ed_invest so the column alignment matches the header.
+    for {e in entity} {
+        printf ",%.8g",
+            (if (e, d) in ed_invest then ed_lifetime_fixed_cost[e, d] else 0)
+            >> "solve_data/ed_lifetime_fixed_cost.csv";
     }
 }
 
@@ -4526,8 +4530,12 @@ if p_model["solveFirst"] == 1 then {
 }
 for {s in solve_current, d in d_realized_period} {
     printf "\n%s,%s", s, d >> "solve_data/ed_lifetime_fixed_cost_divest.csv";
-    for {e in entity : (e, d) in ed_divest} {
-        printf ",%.8g", ed_lifetime_fixed_cost_divest[e, d] >> "solve_data/ed_lifetime_fixed_cost_divest.csv";
+    # Header has all entities; write 0 for entities not in ed_divest so the
+    # column alignment matches the header.
+    for {e in entity} {
+        printf ",%.8g",
+            (if (e, d) in ed_divest then ed_lifetime_fixed_cost_divest[e, d] else 0)
+            >> "solve_data/ed_lifetime_fixed_cost_divest.csv";
     }
 }
 
