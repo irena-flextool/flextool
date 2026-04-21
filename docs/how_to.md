@@ -1203,6 +1203,8 @@ Model changes (results will be affected):
   - `transfer_method`: *exact*, change to *reqular*
   - `startup_method`: *binary*, change to *linear*
 
+- **Use `virtual_unitsize` for unit-commitment fleets with multiple identical plants.**  When `startup_method = binary`, the solver commits plants in whole units — if each plant is e.g. 1000 MW, every on/off decision moves 1000 MW of dispatch at once.  The LP relaxation is tight but branching has to grind through a lot of equivalent combinations, and solve times can be 10-20× slower than the cluster-integer variant.  Setting `virtual_unitsize` to a smaller value (e.g. 50-200 MW) represents the fleet as more but smaller commitment decisions, which gives the solver finer-grained moves and much shorter solve times (the clustered unit-commitment approach — Palmintier & Webster 2012).  The aggregate capacity is unchanged; dispatch results for aggregate fleet output are typically within a few percent of the whole-unit result, at a fraction of the solve time.  Worth trying whenever a UC model with identical plants is slow.
+
 Model changes (potentially large changes to the results --> need to understand how the particular analysis will be affected):
 
 - Use representative periods for investment decisions. See: [How to create a multi-year model](#how-to-create-a-multi-year-model)
