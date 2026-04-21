@@ -129,6 +129,58 @@ def _parse_color_value(value) -> tuple[float, float, float] | None:
     return None
 
 
+# Categories whose labels are composite ``(type, item)`` tuples rendered
+# into legend strings in one of two shapes:
+#   * ``"<type> | <item>"``   — bar plans (via _format_legend_labels)
+#   * ``"('<type>', '<item>')"`` — time-series stacks (str(tuple))
+# For these categories we split the label, then try
+#   1. ``<type>_<item>``   (e.g. ``slack_upward``)
+#   2. ``<type>`` alone    (e.g. ``unit``)
+# before falling through.  Plain (non-composite) labels still fall through
+# to the exact-key lookup below.
+_COMPOSITE_CATEGORIES: frozenset[str] = frozenset({"nodegroup_flows"})
+
+
+def _split_composite_label(label: str) -> tuple[str, str] | None:
+    """Split a composite legend label into ``(type, item)`` if possible.
+
+    Recognizes the two formats emitted by the plot pipeline for two-level
+    column stacks:
+
+    * ``"<type> | <item>"`` — produced by ``_format_legend_labels`` in the
+      bar-plan path.
+    * ``"('<type>', '<item>')"`` — produced by ``str(item)`` in the
+      time-series stack path when ``item`` is a 2-tuple.
+
+    Returns ``None`` for labels that don't match either shape (callers
+    should treat the label as non-composite and try a plain key lookup).
+    """
+    if not isinstance(label, str):
+        return None
+
+    # " | " separator (bar plans).
+    if " | " in label:
+        parts = label.split(" | ", 1)
+        if len(parts) == 2 and parts[0] and parts[1]:
+            return parts[0], parts[1]
+
+    # Python tuple repr (time-series stacks).  Use ast.literal_eval for
+    # safety — the string came from str(tuple(...)) of hashable scalars so
+    # it should parse cleanly; anything else falls through.
+    s = label.strip()
+    if s.startswith("(") and s.endswith(")"):
+        try:
+            import ast
+            parsed = ast.literal_eval(s)
+        except (ValueError, SyntaxError):
+            return None
+        if isinstance(parsed, tuple) and len(parsed) == 2:
+            a, b = parsed
+            if isinstance(a, str) and isinstance(b, str) and a and b:
+                return a, b
+    return None
+
+
 def resolve_label_color(
     label: str,
     template: dict,
@@ -141,7 +193,10 @@ def resolve_label_color(
     * If *entity_class* is given, check ``template['entity_class'][entity_class]``
       with a case-insensitive key match.
     * Else if *category* is given, check ``template['category'][category]``
-      with an exact key match.
+      with an exact key match.  For composite-label categories (see
+      ``_COMPOSITE_CATEGORIES``) the label is first split on ``" | "`` or
+      parsed as a 2-tuple repr and looked up as ``<type>_<item>`` then
+      ``<type>`` before falling back to the exact-key lookup.
     * Otherwise return ``None`` and let the caller fall back to the palette.
 
     Returns a normalized ``(r, g, b)`` float tuple in ``0..1`` or
@@ -169,7 +224,23 @@ def resolve_label_color(
         if isinstance(section, dict):
             cat_map = section.get(category)
             if isinstance(cat_map, dict):
-                raw = cat_map.get(label)
+                # Composite categories: split the label and try the
+                # type-qualified key first, then the type alone.  This
+                # lets the YAML express "all unit flows are green" while
+                # also letting specific sub-types (slack_upward vs
+                # slack_downward) pin their own color.
+                if category in _COMPOSITE_CATEGORIES:
+                    parts = _split_composite_label(label)
+                    if parts is not None:
+                        type_key, item_key = parts
+                        raw = cat_map.get(f"{type_key}_{item_key}")
+                        if raw is None:
+                            raw = cat_map.get(type_key)
+                # Fall back to exact-key lookup on the original label
+                # (covers non-composite labels and any YAML entries that
+                # happen to match the joined form verbatim).
+                if raw is None:
+                    raw = cat_map.get(label)
 
     if raw is None:
         return None

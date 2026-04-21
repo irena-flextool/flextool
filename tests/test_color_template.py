@@ -674,3 +674,302 @@ class TestFlowGroupEntityClassIntegration:
         assert ct.resolve_label_color(
             "commodity_cost", tpl, entity_class="group",
         ) is None
+
+
+# ---------------------------------------------------------------------------
+# nodeGroup_flows composite-label color lookup
+# ---------------------------------------------------------------------------
+
+
+class TestNodeGroupFlowsComposite:
+    """The nodeGroup_flows_* plots stack on two column levels (``type``,
+    ``item``) which the legend renders as either ``"<type> | <item>"``
+    (bar plans) or Python tuple repr ``"('<type>', '<item>')"``
+    (time-series stacks).  The ``category.nodegroup_flows`` section of
+    the template resolves both forms by splitting on the separator, then
+    trying the fully-qualified ``<type>_<item>`` key (e.g.
+    ``slack_upward``) and falling back to the ``<type>`` key alone.
+    """
+
+    def setup_method(self) -> None:
+        ct._clear_cache()
+
+    def test_shipped_template_has_nodegroup_flow_types(self):
+        """The ``type`` vocabulary produced by
+        ``flextool/process_outputs/out_group.py::nodeGroup_flows`` must
+        all resolve as plain keys (non-composite) so a type-only lookup
+        succeeds for user-chosen item names."""
+        tpl = ct.load_color_template()
+        expected_types = [
+            "from_unitGroup",
+            "from_unit",
+            "from_connectionGroup",
+            "from_connection",
+            "to_unitGroup",
+            "to_unit",
+            "to_connectionGroup",
+            "to_connection",
+            "inflow",
+            "internal_losses",
+            "slack",
+        ]
+        for t in expected_types:
+            assert ct.resolve_label_color(
+                t, tpl, category="nodegroup_flows",
+            ) is not None, (
+                f"Shipped template missing nodegroup_flows type {t!r}"
+            )
+
+    def test_composite_pipe_label_resolves_type_qualified(self):
+        """``"slack | upward"`` should hit ``slack_upward`` (more specific
+        than the generic ``slack`` fallback)."""
+        tpl = ct.load_color_template()
+        c = ct.resolve_label_color(
+            "slack | upward", tpl, category="nodegroup_flows",
+        )
+        expected = ct.resolve_label_color(
+            "slack_upward", tpl, category="nodegroup_flows",
+        )
+        assert c is not None
+        assert expected is not None
+        assert c == pytest.approx(expected)
+
+        c_down = ct.resolve_label_color(
+            "slack | downward", tpl, category="nodegroup_flows",
+        )
+        expected_down = ct.resolve_label_color(
+            "slack_downward", tpl, category="nodegroup_flows",
+        )
+        assert c_down is not None
+        assert c_down == pytest.approx(expected_down)
+        # And the two slack colors are different (upward vs downward).
+        assert c != pytest.approx(c_down)
+
+    def test_composite_tuple_repr_label_resolves(self):
+        """Time-series stacks format the label as ``str(tuple)``; the
+        resolver must recognize this shape."""
+        tpl = ct.load_color_template()
+        c = ct.resolve_label_color(
+            "('slack', 'upward')", tpl, category="nodegroup_flows",
+        )
+        expected = ct.resolve_label_color(
+            "slack_upward", tpl, category="nodegroup_flows",
+        )
+        assert c is not None
+        assert c == pytest.approx(expected)
+
+    def test_composite_falls_back_to_type_only(self):
+        """When ``<type>_<item>`` isn't in the YAML, the lookup falls
+        back to the ``<type>`` key alone.  Item names are user-chosen
+        (unit/connection process names, node names), so this is the
+        common case."""
+        tpl = ct.load_color_template()
+        # ``from_unit`` exists; ``from_unit_coal_plant_DE`` does not.
+        c = ct.resolve_label_color(
+            "from_unit | coal_plant_DE", tpl, category="nodegroup_flows",
+        )
+        type_only = ct.resolve_label_color(
+            "from_unit", tpl, category="nodegroup_flows",
+        )
+        assert c is not None
+        assert type_only is not None
+        assert c == pytest.approx(type_only)
+
+    def test_composite_unknown_type_returns_none(self):
+        """A composite label whose type isn't in the template falls
+        through — caller uses the palette."""
+        tpl = ct.load_color_template()
+        c = ct.resolve_label_color(
+            "totally_unknown | foo", tpl, category="nodegroup_flows",
+        )
+        assert c is None
+
+    def test_non_composite_label_still_resolves(self):
+        """Plain (non-composite) labels still work via the exact-key
+        lookup — covers the case where a project has a single-level
+        column index on this category for some reason."""
+        tpl = ct.load_color_template()
+        c = ct.resolve_label_color(
+            "inflow", tpl, category="nodegroup_flows",
+        )
+        assert c is not None
+
+    def test_composite_logic_off_for_other_categories(self):
+        """Composite splitting is gated to the ``nodegroup_flows``
+        category.  For ``costs`` / ``node_flows`` a label containing
+        `` | `` must still be matched literally (or return None), not
+        split into type/item — protecting existing categories from
+        accidental aliasing."""
+        tpl = {
+            "category": {
+                "costs": {
+                    # A literal key that happens to contain " | ".
+                    "fuel | coal": "#101010",
+                    "fuel": "#202020",
+                }
+            }
+        }
+        # Exact match on the literal key wins.
+        c = ct.resolve_label_color(
+            "fuel | coal", tpl, category="costs",
+        )
+        assert c == pytest.approx((0x10 / 255, 0x10 / 255, 0x10 / 255))
+        # And a label whose left half matches "fuel" but without an
+        # exact key must NOT silently fall back to "fuel" under costs.
+        c2 = ct.resolve_label_color(
+            "fuel | unknown", tpl, category="costs",
+        )
+        assert c2 is None
+
+    def test_cross_category_slack_consistency(self):
+        """The upward-slack red is identical across ``costs.upward slack
+        penalty``, ``node_flows.Loss of load``, and
+        ``nodegroup_flows.slack_upward`` so users learn a single 'red =
+        infeasibility' vocabulary.  Same check for the downward slack."""
+        tpl = ct.load_color_template()
+        costs_red = ct.resolve_label_color(
+            "upward slack penalty", tpl, category="costs",
+        )
+        flows_red = ct.resolve_label_color(
+            "Loss of load", tpl, category="node_flows",
+        )
+        group_red = ct.resolve_label_color(
+            "slack_upward", tpl, category="nodegroup_flows",
+        )
+        group_red_composite = ct.resolve_label_color(
+            "slack | upward", tpl, category="nodegroup_flows",
+        )
+        assert costs_red is not None
+        assert flows_red is not None
+        assert group_red is not None
+        assert group_red_composite is not None
+        assert costs_red == pytest.approx(flows_red)
+        assert costs_red == pytest.approx(group_red)
+        assert costs_red == pytest.approx(group_red_composite), (
+            "Composite-label lookup drifted from direct-key lookup"
+        )
+
+        # Downward slack: same check against costs.downward slack
+        # penalty + node_flows.Excess load.
+        costs_pink = ct.resolve_label_color(
+            "downward slack penalty", tpl, category="costs",
+        )
+        flows_pink = ct.resolve_label_color(
+            "Excess load", tpl, category="node_flows",
+        )
+        group_pink_composite = ct.resolve_label_color(
+            "slack | downward", tpl, category="nodegroup_flows",
+        )
+        assert costs_pink == pytest.approx(flows_pink)
+        assert costs_pink == pytest.approx(group_pink_composite)
+
+
+class TestNodeGroupFlowsPlanIntegration:
+    """End-to-end: a bar plan computed with
+    ``color_category='nodegroup_flows'`` and a 2-level column MultiIndex
+    (``type``, ``item``) pulls template colors for known composite
+    labels and falls back to the palette for unknown ones.
+
+    Mirrors :class:`TestCostCategoryIntegration` /
+    :class:`TestNodeFlowsCategoryIntegration` for the nodeGroup_flows_*
+    plots.
+    """
+
+    def setup_method(self) -> None:
+        ct._clear_cache()
+
+    def test_bar_plan_uses_template_colors_for_composite_labels(self):
+        import numpy as np
+        import pandas as pd
+
+        from flextool.plot_outputs.color_template import resolve_label_color
+        from flextool.plot_outputs.plan import compute_live_plan
+
+        tpl = ct.load_color_template()
+
+        # Simulate the ``nodeGroup_flows_d_gpe`` shape (single-group
+        # slice): periods on the row; columns have ``type`` and ``item``
+        # levels that stack on the bar.  Mirrors the frame that
+        # out_group.nodeGroup_flows emits.
+        type_item_pairs = [
+            ("slack", "upward"),        # → slack_upward (templated red)
+            ("slack", "downward"),      # → slack_downward (templated light red)
+            ("from_unit", "coal_DE"),   # → type-only fallback (green)
+            ("from_unit", "gas_DE"),    # → same type-only color as above
+            ("inflow", "nodeA"),        # → type-only fallback (light green)
+            ("mystery", "thing"),       # → no match, palette fallback
+        ]
+        periods = ["p1", "p2", "p3"]
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame(
+            rng.random((len(periods), len(type_item_pairs))) * 100,
+            index=pd.Index(periods, name="period"),
+            columns=pd.MultiIndex.from_tuples(
+                type_item_pairs, names=["type", "item"],
+            ),
+        )
+
+        cfg = PlotConfig(
+            plot_name="NodeGroup flows",
+            # Two stack levels: type (s) + item (s).  Bar rows are
+            # periods (b).  Matches ``[d_pe, b_ss]`` — a simplified
+            # version of the real ``[d_gpe, b_uss]`` collapsed down to a
+            # single subplot (group dimension merged out).
+            map_dimensions_for_plots=["d_pe", "b_ss"],
+            legend="shared",
+            color_category="nodegroup_flows",
+        )
+        plan = compute_live_plan(df, cfg, plot_name="NodeGroup flows")
+        assert plan is not None, "compute_live_plan returned None"
+        assert plan.shared_color_map is not None, (
+            "shared_color_map not populated under legend='shared'"
+        )
+
+        # Labels arrive in the "<type> | <item>" form for bar plans.
+        slack_up_key = "slack | upward"
+        slack_down_key = "slack | downward"
+        from_unit_coal_key = "from_unit | coal_DE"
+        from_unit_gas_key = "from_unit | gas_DE"
+        inflow_key = "inflow | nodeA"
+        mystery_key = "mystery | thing"
+
+        # Known type-qualified (slack_upward / slack_downward).
+        expected_slack_up = resolve_label_color(
+            "slack_upward", tpl, category="nodegroup_flows",
+        )
+        expected_slack_down = resolve_label_color(
+            "slack_downward", tpl, category="nodegroup_flows",
+        )
+        assert tuple(plan.shared_color_map[slack_up_key]) == pytest.approx(
+            expected_slack_up,
+        )
+        assert tuple(plan.shared_color_map[slack_down_key]) == pytest.approx(
+            expected_slack_down,
+        )
+
+        # Type-only fallback: both coal_DE and gas_DE share the
+        # ``from_unit`` color, even though their items differ.
+        expected_from_unit = resolve_label_color(
+            "from_unit", tpl, category="nodegroup_flows",
+        )
+        assert tuple(plan.shared_color_map[from_unit_coal_key]) == pytest.approx(
+            expected_from_unit,
+        )
+        assert tuple(plan.shared_color_map[from_unit_gas_key]) == pytest.approx(
+            expected_from_unit,
+        )
+
+        # ``inflow`` — type-only, item is a user-chosen node name.
+        expected_inflow = resolve_label_color(
+            "inflow", tpl, category="nodegroup_flows",
+        )
+        assert tuple(plan.shared_color_map[inflow_key]) == pytest.approx(
+            expected_inflow,
+        )
+
+        # Unknown type — falls back to tab10[0] (first palette slot
+        # consumed, since it's the only non-templated label).
+        tab10 = plt.colormaps["tab10"].colors
+        assert plan.shared_color_map[mystery_key] == tab10[0], (
+            "Unknown-type composite label did not fall back to tab10[0]"
+        )

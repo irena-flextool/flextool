@@ -821,6 +821,7 @@ plots:
         max_subplots_per_file: 4
         map_dimensions_for_plots: [d_gpe, b_uss]
         ylabel: MWh (annualized)
+        color_category: nodegroup_flows
       sum_periods:
         plot_name: 'NodeGroup dispatch total'
         variant: a
@@ -831,6 +832,7 @@ plots:
         max_subplots_per_file: 4
         map_dimensions_for_plots: [d_gpe, y_uss]
         ylabel: MWh (horizon total)
+        color_category: nodegroup_flows
     nodeGroup_flows_dt_gpe:
       default:
         variant: h
@@ -840,6 +842,7 @@ plots:
         legend: all
         map_dimensions_for_plots: [dt_gpe, tt_uss]
         ylabel: MWh/h
+        color_category: nodegroup_flows
       chunks:
         plot_name: 'NodeGroup dispatch weekly avg'
         variant: w
@@ -850,6 +853,7 @@ plots:
         map_dimensions_for_plots: [dt_gpe, ui_uss]
         time_average_duration: 168
         ylabel: MWh/h
+        color_category: nodegroup_flows
   'NodeGroup indicators':
     group: 6
     order: 1

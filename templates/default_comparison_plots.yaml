@@ -741,6 +741,7 @@ plots:
         map_dimensions_for_plots: [d_sgpe, b_euss]
         legend: all
         ylabel: MWh (annualized)
+        color_category: nodegroup_flows
       sum_periods:
         plot_name: 'NodeGroup dispatch total'
         variant: a
@@ -753,6 +754,7 @@ plots:
         map_dimensions_for_plots: [d_sgpe, y_buss]
         legend: all
         ylabel: MWh (horizon total)
+        color_category: nodegroup_flows
     nodeGroup_flows_dt_gpe:
       default:
         variant: h
@@ -763,6 +765,7 @@ plots:
         base_length: 10
         legend: all
         ylabel: MWh
+        color_category: nodegroup_flows
       chunks:
         variant: w
         map_dimensions_for_plots: [dt_sgpe, ti_fuss]
@@ -773,6 +776,7 @@ plots:
         base_length: 10
         legend: all
         ylabel: MWh
+        color_category: nodegroup_flows
   'NodeGroup indicators':
     group: 6
     order: 1
