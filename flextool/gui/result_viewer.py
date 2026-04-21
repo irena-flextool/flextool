@@ -2053,6 +2053,13 @@ class ResultViewer(tk.Toplevel):
         In single mode the override is filtered to the set of currently
         checked executed scenarios: as the user toggles checkboxes the
         next render naturally picks up a new union.
+
+        If :meth:`_get_axis_active_scenarios` returns ``None`` (a signal
+        from non-single modes, or an exception caught inside that
+        helper) we skip the override entirely rather than forwarding
+        ``None`` to :func:`apply_manifest_to_plan` — the latter treats
+        ``None`` as "union over every scenario in the manifest", which
+        would silently defeat the checked-subset filter.
         """
         if plan is None:
             return
@@ -2060,6 +2067,12 @@ class ResultViewer(tk.Toplevel):
         if manifest is None:
             return
         active = self._get_axis_active_scenarios()
+        if active is None:
+            # Non-single mode (or active-set lookup failed): the caller
+            # shouldn't be using the shared-manifest override at all.
+            # See the docstring above for why we can't pass ``None`` on
+            # through.
+            return
         try:
             from flextool.plot_outputs.shared_manifest import (
                 apply_manifest_to_plan,

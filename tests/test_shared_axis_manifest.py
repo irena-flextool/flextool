@@ -774,3 +774,320 @@ class TestApplyManifestToPlan:
         assert changed is True
         assert len(plan.subplot_y_ranges) == 2
         assert plan.subplot_y_ranges[1] == (-5.0, 5.0)
+
+    # ------------------------------------------------------------------
+    # Subset-filter regression: re-applying with a narrower active set
+    # should shrink the union, not leave the previous wide union in place.
+    # This catches the class of bug "uncheck a scenario but y-axis doesn't
+    # shrink" — i.e. that the filter doesn't silently degrade to
+    # ``active_scenarios=None`` (union over all) when a caller passes a
+    # real subset.
+    # ------------------------------------------------------------------
+
+    def test_successive_applies_narrow_as_active_set_shrinks(self):
+        """Plan is mutated in place by each call.  The second call with a
+        narrower *active_scenarios* must recompute the union from scratch
+        (not build on the prior wide result) so the y-range contracts."""
+        plan = _make_time_plan([("A", (0.0, 10.0))])
+        manifest = self._manifest(A={
+            "s1": [-5.0, 5.0],
+            "s2": [0.0, 10.0],
+            "s3": [-100.0, 100.0],
+        })
+
+        # All three scenarios active — wide union.
+        apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg",
+            active_scenarios={"s1", "s2", "s3"},
+        )
+        assert plan.subplot_y_ranges == [(-100.0, 100.0)]
+
+        # Drop s3 — union must shrink to s1+s2 (not stay at s3's wide range).
+        apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg",
+            active_scenarios={"s1", "s2"},
+        )
+        assert plan.subplot_y_ranges == [(-5.0, 10.0)], (
+            "Expected y-range to shrink when s3 is removed from the active "
+            "set; got a stale union which indicates the filter wasn't "
+            "applied on re-render."
+        )
+
+        # Drop s2 too — s1 alone.
+        apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg",
+            active_scenarios={"s1"},
+        )
+        assert plan.subplot_y_ranges == [(-5.0, 5.0)]
+
+    def test_subset_strictly_narrower_than_full_union(self):
+        """Given a manifest with 3 scenarios where one has an obviously
+        wider bound than the others, filtering to the two narrower
+        scenarios must yield a result strictly inside the full union.
+
+        This is the core user-visible contract: checking only a subset
+        must not leak the unchecked scenarios' bounds into the y-axis.
+        """
+        plan = _make_time_plan([("A", (0.0, 0.0))])
+        manifest = self._manifest(A={
+            "narrow_a": [-5.0, 5.0],
+            "narrow_b": [0.0, 10.0],
+            "wide": [-1000.0, 1000.0],
+        })
+
+        # Full union includes the wide scenario.
+        apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg", active_scenarios=None,
+        )
+        full_union = plan.subplot_y_ranges[0]
+        assert full_union == (-1000.0, 1000.0)
+
+        # Reset and apply the narrower subset.
+        plan.subplot_y_ranges = [(0.0, 0.0)]
+        apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg",
+            active_scenarios={"narrow_a", "narrow_b"},
+        )
+        subset_union = plan.subplot_y_ranges[0]
+
+        # The subset union must be strictly inside the full union.
+        assert subset_union[0] > full_union[0]
+        assert subset_union[1] < full_union[1]
+        assert subset_union == (-5.0, 10.0)
+
+
+# ---------------------------------------------------------------------------
+# Viewer wiring regression: make sure the path
+#   ``_get_axis_active_scenarios`` → ``_apply_axis_manifest`` →
+#   ``apply_manifest_to_plan``
+# actually filters by the checked-scenarios set.  Earlier bugs in this
+# area have been silent: the filter looked correct in isolation, but the
+# viewer wired ``active_scenarios`` up in a way that effectively always
+# passed ``None`` (union over all scenarios).  These tests exercise the
+# ResultViewer methods directly (no Tk window) to guard against that
+# class of regression.
+# ---------------------------------------------------------------------------
+
+class TestViewerActiveScenarioWiring:
+    """Verify that the viewer passes the checked subset through to
+    ``apply_manifest_to_plan``.  We avoid opening a real Tk toplevel by
+    binding the relevant bound methods onto a SimpleNamespace that mimics
+    ``ResultViewer`` just enough for ``_apply_axis_manifest`` to run.
+    """
+
+    def _make_viewer_shim(
+        self,
+        project_path: Path,
+        mode: str,
+        checked_subdirs: list[str],
+    ):
+        """Return a minimal object that exposes the viewer's
+        ``_get_axis_active_scenarios`` / ``_apply_axis_manifest`` /
+        ``_get_axis_manifest`` / ``_scan_scenarios`` methods.
+
+        The real methods are grabbed off the class and bound to a
+        SimpleNamespace that carries just the attributes they read.
+        """
+        from types import SimpleNamespace
+        from flextool.gui.result_viewer import ResultViewer
+        from flextool.gui.data_models import ProjectSettings
+
+        settings = ProjectSettings()
+        settings.checked_executed_scenarios = [
+            f"0|{name}" for name in checked_subdirs
+        ]
+        # bare_output_owners empty → resolve_source_number falls back to
+        # the legacy parse, which gives ``(0, <subdir>)`` for subdirs
+        # without a numeric suffix.
+
+        # tkinter.StringVar-alike: just needs a .get() method.
+        mode_var = SimpleNamespace(get=lambda: mode)
+
+        shim = SimpleNamespace(
+            _project_path=Path(project_path),
+            _settings=settings,
+            _mode=mode_var,
+            _axis_manifest=None,
+            _axis_manifest_mtime=0.0,
+        )
+        # Bind the unbound methods from the class onto our shim so
+        # ``self`` resolves to ``shim``.
+        shim._scan_scenarios = ResultViewer._scan_scenarios.__get__(shim)
+        shim._get_axis_manifest = (
+            ResultViewer._get_axis_manifest.__get__(shim)
+        )
+        shim._get_axis_active_scenarios = (
+            ResultViewer._get_axis_active_scenarios.__get__(shim)
+        )
+        shim._apply_axis_manifest = (
+            ResultViewer._apply_axis_manifest.__get__(shim)
+        )
+        return shim
+
+    def test_single_mode_filters_to_checked_subset(self, tmp_path: Path):
+        """The full wiring: with a subset checked in single mode, the
+        viewer must narrow the plan's y-range to the union over that
+        subset (not the union over all scenarios in the manifest)."""
+        # Create scenario output folders and a manifest with three
+        # scenarios; one has a wide range that must drop out of the union
+        # when unchecked.
+        for name in ("s1", "s2", "s3"):
+            (tmp_path / "output_parquet" / name).mkdir(parents=True)
+
+        acc = ManifestAccumulator(tmp_path)
+        acc.add_plan(
+            "rk", "cfg", _make_time_plan([("A", (-5.0, 5.0))]), "s1",
+        )
+        acc.add_plan(
+            "rk", "cfg", _make_time_plan([("A", (0.0, 10.0))]), "s2",
+        )
+        acc.add_plan(
+            "rk", "cfg", _make_time_plan([("A", (-1000.0, 1000.0))]), "s3",
+        )
+        acc.write()
+
+        # User has checked only s1 and s2.
+        shim = self._make_viewer_shim(
+            tmp_path, mode="single", checked_subdirs=["s1", "s2"],
+        )
+
+        # Sanity: _scan_scenarios + _get_axis_active_scenarios.
+        assert sorted(shim._scan_scenarios()) == ["s1", "s2"]
+        assert shim._get_axis_active_scenarios() == {"s1", "s2"}
+
+        # Apply manifest through the viewer path.
+        plan = _make_time_plan([("A", (0.0, 0.0))])
+        shim._apply_axis_manifest(plan, "rk", "cfg")
+
+        # Must be the narrower union of s1+s2 only — NOT the full union
+        # which would include s3's wide [-1000, 1000] range.
+        assert plan.subplot_y_ranges == [(-5.0, 10.0)], (
+            "Viewer wiring didn't filter by the checked-subset; got "
+            f"{plan.subplot_y_ranges} instead of (-5.0, 10.0).  This is "
+            "the user-reported bug: unchecking a scenario didn't shrink "
+            "the y-axis."
+        )
+
+    def test_checked_subset_excludes_wider_scenario(self, tmp_path: Path):
+        """Regression: checking only scenarios with narrow ranges must
+        not pick up a third scenario's wider range from the manifest."""
+        for name in ("narrow_a", "narrow_b", "wide"):
+            (tmp_path / "output_parquet" / name).mkdir(parents=True)
+
+        acc = ManifestAccumulator(tmp_path)
+        acc.add_plan(
+            "rk", "cfg",
+            _make_time_plan([("A", (-5.0, 5.0))]), "narrow_a",
+        )
+        acc.add_plan(
+            "rk", "cfg",
+            _make_time_plan([("A", (0.0, 10.0))]), "narrow_b",
+        )
+        acc.add_plan(
+            "rk", "cfg",
+            _make_time_plan([("A", (-1000.0, 1000.0))]), "wide",
+        )
+        acc.write()
+
+        shim = self._make_viewer_shim(
+            tmp_path, mode="single",
+            checked_subdirs=["narrow_a", "narrow_b"],
+        )
+
+        plan = _make_time_plan([("A", (0.0, 0.0))])
+        shim._apply_axis_manifest(plan, "rk", "cfg")
+
+        lo, hi = plan.subplot_y_ranges[0]
+        assert lo > -1000.0 and hi < 1000.0, (
+            f"Unchecked 'wide' scenario still leaked into y-axis: "
+            f"got ({lo}, {hi}), expected strictly inside (-1000, 1000)."
+        )
+        assert (lo, hi) == (-5.0, 10.0)
+
+    def test_unchecking_shrinks_axis_on_successive_apply(self, tmp_path: Path):
+        """Mirror the user's live workflow: initial render with all
+        checked, then uncheck one, then call ``_apply_axis_manifest``
+        again on the same plan.  The cached plan object gets its
+        subplot_y_ranges mutated each time — the second call must
+        recompute the union, not preserve the first call's wide one.
+        """
+        for name in ("s1", "s2", "s3"):
+            (tmp_path / "output_parquet" / name).mkdir(parents=True)
+
+        acc = ManifestAccumulator(tmp_path)
+        acc.add_plan("rk", "cfg", _make_time_plan([("A", (-5.0, 5.0))]), "s1")
+        acc.add_plan("rk", "cfg", _make_time_plan([("A", (0.0, 10.0))]), "s2")
+        acc.add_plan(
+            "rk", "cfg", _make_time_plan([("A", (-100.0, 100.0))]), "s3",
+        )
+        acc.write()
+
+        shim = self._make_viewer_shim(
+            tmp_path, mode="single",
+            checked_subdirs=["s1", "s2", "s3"],
+        )
+        plan = _make_time_plan([("A", (0.0, 0.0))])
+
+        # First render: all three checked.
+        shim._apply_axis_manifest(plan, "rk", "cfg")
+        assert plan.subplot_y_ranges == [(-100.0, 100.0)]
+
+        # User unchecks s3 — simulate by updating the settings list.
+        shim._settings.checked_executed_scenarios = ["0|s1", "0|s2"]
+        # Note: the axis-manifest mtime cache must not prevent the shim
+        # from picking up the narrower active set; the active set is
+        # derived from settings on every call.
+
+        # Next render: must shrink.
+        shim._apply_axis_manifest(plan, "rk", "cfg")
+        assert plan.subplot_y_ranges == [(-5.0, 10.0)], (
+            "Unchecking s3 between renders didn't shrink the y-axis — "
+            "the filter treats the new active set as if nothing changed."
+        )
+
+    def test_comparison_mode_returns_none_for_active(self, tmp_path: Path):
+        """In comparison mode the viewer returns ``None`` from
+        ``_get_axis_active_scenarios`` — we don't want it to silently
+        start returning a bare set derived from ``_scan_scenarios`` and
+        accidentally filter the comparison-mode plan (whose ranges are
+        already the combined df's ranges)."""
+        (tmp_path / "output_parquet" / "s1").mkdir(parents=True)
+        shim = self._make_viewer_shim(
+            tmp_path, mode="comparison", checked_subdirs=["s1"],
+        )
+        assert shim._get_axis_active_scenarios() is None
+
+    def test_apply_axis_manifest_skips_when_active_is_none(
+        self, tmp_path: Path,
+    ):
+        """When ``_get_axis_active_scenarios`` returns ``None`` (comparison
+        mode or an internal error), ``_apply_axis_manifest`` must NOT
+        forward ``None`` to :func:`apply_manifest_to_plan` — that would
+        union over every scenario in the manifest and defeat the
+        checked-subset filter for any accidental cross-mode call.
+
+        The defensive path is an explicit early return; we verify by
+        preparing a manifest that *would* widen the plan if the filter
+        were bypassed, and asserting the plan is left untouched.
+        """
+        for name in ("s1", "s2"):
+            (tmp_path / "output_parquet" / name).mkdir(parents=True)
+
+        acc = ManifestAccumulator(tmp_path)
+        acc.add_plan("rk", "cfg", _make_time_plan([("A", (-999.0, 999.0))]), "s1")
+        acc.add_plan("rk", "cfg", _make_time_plan([("A", (0.0, 1.0))]), "s2")
+        acc.write()
+
+        # Comparison mode → active is None → should skip.
+        shim = self._make_viewer_shim(
+            tmp_path, mode="comparison", checked_subdirs=["s1", "s2"],
+        )
+        plan = _make_time_plan([("A", (0.0, 0.0))])
+        shim._apply_axis_manifest(plan, "rk", "cfg")
+
+        # Plan untouched — not unioned over everyone.
+        assert plan.subplot_y_ranges == [(0.0, 0.0)], (
+            "_apply_axis_manifest unexpectedly forwarded None to "
+            "apply_manifest_to_plan, which unioned over every manifest "
+            "scenario and widened the plan."
+        )
