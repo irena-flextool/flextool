@@ -19,6 +19,8 @@ from flextool.plot_outputs.plan import PlotPlan
 from flextool.plot_outputs.shared_manifest import (
     ManifestAccumulator,
     _UNTITLED_KEY,
+    apply_manifest_to_plan,
+    load_axis_bounds_manifest,
 )
 
 
@@ -388,3 +390,175 @@ class TestIntegrationWithComputeAllPlotPlans:
 
         # _shared must NOT be created anywhere.
         assert not (tmp_path / "output_parquet" / "_shared").exists()
+
+
+# ---------------------------------------------------------------------------
+# Reader API tests (Chunk C)
+# ---------------------------------------------------------------------------
+
+class TestLoadAxisBoundsManifest:
+    def test_missing_file_returns_none(self, tmp_path: Path):
+        assert load_axis_bounds_manifest(tmp_path) is None
+
+    def test_valid_file_parses(self, tmp_path: Path):
+        shared = tmp_path / "output_parquet" / "_shared"
+        shared.mkdir(parents=True)
+        payload = {"rk": {"cfg": {"A": [0.0, 10.0]}}}
+        (shared / "axis_bounds.json").write_text(json.dumps(payload))
+
+        data = load_axis_bounds_manifest(tmp_path)
+        assert data == payload
+
+    def test_malformed_json_returns_none(self, tmp_path: Path, caplog):
+        shared = tmp_path / "output_parquet" / "_shared"
+        shared.mkdir(parents=True)
+        (shared / "axis_bounds.json").write_text("not json { ")
+        with caplog.at_level(
+            "WARNING", logger="flextool.plot_outputs.shared_manifest",
+        ):
+            data = load_axis_bounds_manifest(tmp_path)
+        assert data is None
+
+    def test_non_object_top_level_returns_none(self, tmp_path: Path):
+        shared = tmp_path / "output_parquet" / "_shared"
+        shared.mkdir(parents=True)
+        (shared / "axis_bounds.json").write_text(json.dumps([1, 2, 3]))
+        assert load_axis_bounds_manifest(tmp_path) is None
+
+    def test_accepts_str_path(self, tmp_path: Path):
+        # Signature declares Path but str should work via Path(...) coercion.
+        shared = tmp_path / "output_parquet" / "_shared"
+        shared.mkdir(parents=True)
+        (shared / "axis_bounds.json").write_text("{}")
+        assert load_axis_bounds_manifest(str(tmp_path)) == {}
+
+
+class TestApplyManifestToPlan:
+    def test_replaces_matching_subplot_ranges(self):
+        plan = _make_time_plan([
+            ("A", (0.0, 1.0)),
+            ("B", (-1.0, 1.0)),
+        ])
+        manifest = {
+            "rk": {"cfg": {"A": [-5.0, 10.0], "B": [-2.0, 2.0]}},
+        }
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is True
+        assert plan.subplot_y_ranges == [(-5.0, 10.0), (-2.0, 2.0)]
+
+    def test_missing_manifest_is_noop(self):
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        original = list(plan.subplot_y_ranges)
+        assert apply_manifest_to_plan(plan, None, "rk", "cfg") is False
+        assert plan.subplot_y_ranges == original
+
+    def test_missing_result_key_is_noop(self):
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        original = list(plan.subplot_y_ranges)
+        manifest = {"other_rk": {"cfg": {"A": [-5.0, 5.0]}}}
+        assert apply_manifest_to_plan(plan, manifest, "rk", "cfg") is False
+        assert plan.subplot_y_ranges == original
+
+    def test_missing_sub_config_is_noop(self):
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        original = list(plan.subplot_y_ranges)
+        manifest = {"rk": {"other_cfg": {"A": [-5.0, 5.0]}}}
+        assert apply_manifest_to_plan(plan, manifest, "rk", "cfg") is False
+        assert plan.subplot_y_ranges == original
+
+    def test_subset_override_keeps_untouched_subplots(self):
+        plan = _make_time_plan([
+            ("A", (0.0, 1.0)),
+            ("B", (-1.0, 1.0)),
+            ("C", (10.0, 20.0)),
+        ])
+        # Only B is in the manifest — A and C keep their original ranges.
+        manifest = {"rk": {"cfg": {"B": [-100.0, 100.0]}}}
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is True
+        assert plan.subplot_y_ranges == [
+            (0.0, 1.0),
+            (-100.0, 100.0),
+            (10.0, 20.0),
+        ]
+
+    def test_extra_manifest_entries_are_ignored(self):
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        # Z is not in the plan — should not affect anything.
+        manifest = {"rk": {"cfg": {"A": [-1.0, 2.0], "Z": [0.0, 999.0]}}}
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is True
+        assert plan.subplot_y_ranges == [(-1.0, 2.0)]
+
+    def test_none_title_uses_sentinel(self):
+        plan = _make_time_plan([(None, (0.0, 1.0))])
+        manifest = {"rk": {"cfg": {_UNTITLED_KEY: [-3.0, 4.0]}}}
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is True
+        assert plan.subplot_y_ranges == [(-3.0, 4.0)]
+
+    def test_bar_plan_is_skipped(self):
+        plan = _make_bar_plan()
+        original = list(plan.subplot_y_ranges)
+        manifest = {"rk": {"cfg": {"only": [-100.0, 100.0]}}}
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is False
+        assert plan.subplot_y_ranges == original
+
+    def test_no_change_when_ranges_match_returns_false(self):
+        plan = _make_time_plan([("A", (0.0, 10.0))])
+        manifest = {"rk": {"cfg": {"A": [0.0, 10.0]}}}
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is False
+        assert plan.subplot_y_ranges == [(0.0, 10.0)]
+
+    def test_malformed_bounds_are_skipped(self):
+        plan = _make_time_plan([
+            ("A", (0.0, 1.0)),
+            ("B", (-1.0, 1.0)),
+        ])
+        manifest = {
+            "rk": {
+                "cfg": {
+                    "A": [0.0, 1.0, 2.0],  # wrong length
+                    "B": ["x", "y"],        # non-numeric
+                },
+            },
+        }
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is False
+        assert plan.subplot_y_ranges == [(0.0, 1.0), (-1.0, 1.0)]
+
+    def test_empty_effective_plot_specs_is_noop(self):
+        df = pd.DataFrame({"x": [1.0]}, index=pd.Index(["a"], name="t"))
+        plan = PlotPlan(
+            chart_type="lines",
+            plot_name="plan",
+            total_file_count=1,
+            processed_df=df,
+            effective_plot_specs=[],
+            file_batches=[],
+            layout_type="line",
+            layout_params={
+                "value_label_width": 0.0, "legend_width": 0.0,
+                "base_width": 6.0, "subplot_height": 4.0,
+            },
+            subplot_y_ranges=[],
+        )
+        manifest = {"rk": {"cfg": {"A": [0.0, 1.0]}}}
+        assert apply_manifest_to_plan(plan, manifest, "rk", "cfg") is False
+
+    def test_pads_short_subplot_y_ranges(self):
+        """Defensive: if subplot_y_ranges is shorter than
+        effective_plot_specs (legacy plan file), the override should still
+        work without IndexError."""
+        plan = _make_time_plan([
+            ("A", (0.0, 1.0)),
+            ("B", (-1.0, 1.0)),
+        ])
+        plan.subplot_y_ranges = [(0.0, 1.0)]  # deliberately short
+        manifest = {"rk": {"cfg": {"B": [-5.0, 5.0]}}}
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is True
+        assert len(plan.subplot_y_ranges) == 2
+        assert plan.subplot_y_ranges[1] == (-5.0, 5.0)

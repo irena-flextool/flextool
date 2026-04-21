@@ -214,22 +214,8 @@ class ManifestAccumulator:
         accumulator starts fresh, so a corrupt previous write can't
         permanently break the next batch run.
         """
-        if not self._manifest_path.is_file():
-            return
-        try:
-            with open(self._manifest_path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "Ignoring unreadable shared manifest %s: %s",
-                self._manifest_path, exc,
-            )
-            return
-        if not isinstance(loaded, dict):
-            logger.warning(
-                "Shared manifest %s is not a JSON object — ignoring",
-                self._manifest_path,
-            )
+        loaded = load_axis_bounds_manifest(self.project_path)
+        if loaded is None:
             return
         # Shape-validate as we copy in so downstream code can trust the structure.
         for rk, rk_val in loaded.items():
@@ -253,3 +239,110 @@ class ManifestAccumulator:
                     rk_entry[str(sc)] = sc_entry
             if rk_entry:
                 self._data[str(rk)] = rk_entry
+
+
+# ---------------------------------------------------------------------------
+# Reader API (used by the result viewer — Chunk C)
+# ---------------------------------------------------------------------------
+
+def load_axis_bounds_manifest(project_path: Path) -> dict | None:
+    """Load the shared axis-bounds manifest for *project_path*.
+
+    Returns the parsed JSON object (a nested ``dict``) or ``None`` when the
+    manifest does not exist, cannot be read, or is malformed.  The function
+    never raises — a corrupt or missing manifest simply means "no
+    cross-scenario axis data available", and the viewer falls back to the
+    per-plan y-ranges.
+
+    The expected manifest path is
+    ``<project_path>/output_parquet/_shared/axis_bounds.json``.
+    """
+    manifest_path = (
+        Path(project_path) / "output_parquet" / "_shared" / "axis_bounds.json"
+    )
+    if not manifest_path.is_file():
+        return None
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Ignoring unreadable shared manifest %s: %s",
+            manifest_path, exc,
+        )
+        return None
+    if not isinstance(loaded, dict):
+        logger.warning(
+            "Shared manifest %s is not a JSON object — ignoring",
+            manifest_path,
+        )
+        return None
+    return loaded
+
+
+def apply_manifest_to_plan(
+    plan: "PlotPlan",
+    manifest: dict | None,
+    result_key: str,
+    sub_config: str,
+) -> bool:
+    """Override ``plan.subplot_y_ranges`` with values from *manifest*.
+
+    Mutates *plan* in-place.  Returns ``True`` when at least one subplot
+    range was replaced, ``False`` when nothing changed (missing manifest,
+    bar plan, no matching entry, etc.).
+
+    The override is per-subplot: for each ``(title, _)`` in
+    ``plan.effective_plot_specs``, if the manifest has a range keyed by
+    that title (with ``None`` mapped to ``_UNTITLED_KEY`` exactly as the
+    writer does), the corresponding entry in ``plan.subplot_y_ranges`` is
+    replaced.  Subplots without a manifest entry keep their per-scenario
+    range, which is the desired fallback behaviour.
+
+    Bar-chart plans are skipped (matching the writer).  Extra entries in
+    the manifest that don't correspond to any subplot in *plan* are
+    ignored.
+    """
+    if manifest is None or plan is None:
+        return False
+    if plan.chart_type == "bar":
+        return False
+    if not plan.effective_plot_specs:
+        return False
+    sub_entry = manifest.get(result_key)
+    if not isinstance(sub_entry, dict):
+        return False
+    title_map = sub_entry.get(sub_config)
+    if not isinstance(title_map, dict):
+        return False
+
+    # Pad subplot_y_ranges if shorter than effective_plot_specs so we can
+    # overwrite any index.  (In practice they are parallel lists, but the
+    # plan file format is JSON — defend against asymmetric loads.)
+    ranges: list[tuple[float, float]] = [
+        tuple(r) for r in plan.subplot_y_ranges
+    ]
+    while len(ranges) < len(plan.effective_plot_specs):
+        ranges.append((0.0, 0.0))
+
+    changed = False
+    for i, (title, _selector) in enumerate(plan.effective_plot_specs):
+        key = _UNTITLED_KEY if title is None else str(title)
+        bounds = title_map.get(key)
+        if bounds is None:
+            continue
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+            continue
+        try:
+            lo = float(bounds[0])
+            hi = float(bounds[1])
+        except (TypeError, ValueError):
+            continue
+        new_range = (lo, hi)
+        if ranges[i] != new_range:
+            ranges[i] = new_range
+            changed = True
+
+    if changed:
+        plan.subplot_y_ranges = ranges
+    return changed

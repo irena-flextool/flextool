@@ -98,6 +98,13 @@ class ResultViewer(tk.Toplevel):
         self._live_plan: 'PlotPlan | None' = None
         self._live_plan_key: tuple[str, str, str] = ("", "", "")
 
+        # Cross-scenario axis-bounds manifest (Chunk C).  Loaded lazily on
+        # first use and reloaded when the project is refreshed via
+        # ``_on_update``.  ``None`` means no manifest was found on disk;
+        # callers fall back to the per-plan ranges in that case.
+        self._axis_manifest: dict | None = None
+        self._axis_manifest_loaded: bool = False
+
         # Guard against recursive replots from time range updates
         self._updating_time_range = False
 
@@ -1794,6 +1801,10 @@ class ResultViewer(tk.Toplevel):
         self._plot_canvas._cache.clear()
         self._parquet_cache_key = ("", "")
         self._parquet_cache_df = None
+        # Force the shared axis-bounds manifest to reload on the next
+        # render — a batch run may have just rewritten it.
+        self._axis_manifest = None
+        self._axis_manifest_loaded = False
 
         self._populate_scenarios()
         if self._mode.get() == "comparison":
@@ -1950,6 +1961,58 @@ class ResultViewer(tk.Toplevel):
             logger.error("Failed to create PlotConfig for '%s': %s", result_key, exc)
             return None
 
+    def _get_axis_manifest(self) -> dict | None:
+        """Return the cross-scenario axis-bounds manifest (lazy + cached).
+
+        Returns ``None`` when no manifest is available; never raises.  The
+        manifest is re-read on the first call after ``_on_update`` clears
+        ``_axis_manifest_loaded``.
+        """
+        if not self._axis_manifest_loaded:
+            try:
+                from flextool.plot_outputs.shared_manifest import (
+                    load_axis_bounds_manifest,
+                )
+                self._axis_manifest = load_axis_bounds_manifest(
+                    self._project_path
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to load shared axis manifest", exc_info=True,
+                )
+                self._axis_manifest = None
+            self._axis_manifest_loaded = True
+        return self._axis_manifest
+
+    def _apply_axis_manifest(
+        self, plan, result_key: str, sub_config: str,
+    ) -> None:
+        """Override a plan's subplot_y_ranges from the shared manifest.
+
+        No-op when the manifest is missing or has no matching entry.
+        Safe to call on every render — the override is a cheap dict
+        lookup.  Uses Option A from the Chunk C design: mutates the plan
+        before handing it to ``build_figure_from_plan`` so the call site
+        doesn't need a new parameter.
+        """
+        if plan is None:
+            return
+        manifest = self._get_axis_manifest()
+        if manifest is None:
+            return
+        try:
+            from flextool.plot_outputs.shared_manifest import (
+                apply_manifest_to_plan,
+            )
+            apply_manifest_to_plan(plan, manifest, result_key, sub_config)
+        except Exception:  # noqa: BLE001
+            # Never let manifest application break the viewer — the
+            # fallback is the plan's own per-scenario y-ranges.
+            logger.warning(
+                "Failed to apply axis manifest for %s/%s",
+                result_key, sub_config, exc_info=True,
+            )
+
     def _load_parquet(self, scenario: str, result_key: str) -> pd.DataFrame | None:
         """Load a parquet file for the given scenario and result_key.
 
@@ -2043,6 +2106,13 @@ class ResultViewer(tk.Toplevel):
                 self._live_plan_key = plan_key
 
             if plan is not None:
+                # Apply cross-scenario axis override every render (cheap
+                # dict lookup).  This handles the case where the manifest
+                # finished loading AFTER the plan was cached as well as
+                # the normal freshly-loaded plan.
+                self._apply_axis_manifest(
+                    plan, variant.result_key, variant.sub_config,
+                )
                 # Use the plan's processed_df length for the slider range
                 # (aggregated/weekly plots have a shorter processed_df)
                 self._update_time_range(len(plan.processed_df))
