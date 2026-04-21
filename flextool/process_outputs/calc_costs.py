@@ -10,21 +10,32 @@ def _agg_period_or_empty(df: pd.DataFrame, realized_periods, period_level: str =
 
 
 def compute_costs(par, s, v, r) -> None:
-    """Compute all cost quantities (depends on r.costPenalty_* from compute_slacks)."""
+    """Compute all cost quantities (depends on r.costPenalty_* from compute_slacks).
+
+    Per-timestep cost terms must carry the same step-level scaling set as
+    the LP objective in flextool.mod: ``step_duration * p_rp_cost_weight``.
+    Period-level scaling (``p_inflation_factor_operations_yearly /
+    complete_period_share_of_year``) is applied when aggregating *_dt →
+    *_d below.
+    """
     # --- Commodity costs ---
     flow_from_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=1).isin(s.commodity_node.get_level_values(level=1))]]
     flow_to_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=2).isin(s.commodity_node.get_level_values(level=1))]]
+
+    # Per-step scaling factor: step_duration × rp_cost_weight.  Used by all
+    # per-(d, t) cost terms below to match the objective in flextool.mod.
+    step_x_rp = par.step_duration.mul(par.rp_cost_weight, axis=0)
 
     commodity_price = par.commodity_price[s.commodity_node.get_level_values('commodity').unique()]
     commodity_price.columns = commodity_price.columns.join(s.commodity_node)
     flow_from_commodity_node.columns.names = ['process', 'node', 'sink']
     flow_from_commodity_node.columns = flow_from_commodity_node.columns.join(commodity_price.columns)
     flow_from_commodity = flow_from_commodity_node.T.groupby('commodity').sum().T
-    r.cost_commodity_dt = flow_from_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
+    r.cost_commodity_dt = flow_from_commodity.mul(commodity_price).mul(step_x_rp, axis=0)
     flow_to_commodity_node.columns.names = ['process', 'source', 'node']
     flow_to_commodity_node.columns = flow_to_commodity_node.columns.join(commodity_price.columns)
     flow_to_commodity = flow_to_commodity_node.T.groupby('commodity').sum().T
-    r.sales_commodity_dt = flow_to_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
+    r.sales_commodity_dt = flow_to_commodity.mul(commodity_price).mul(step_x_rp, axis=0)
 
     r.cost_commodity_d = r.cost_commodity_dt.groupby('period').sum()
     r.sales_commodity_d = r.sales_commodity_dt.groupby('period').sum()
@@ -53,6 +64,10 @@ def compute_costs(par, s, v, r) -> None:
     flow_outof_node_grouped = flow_outof_node.T.groupby(level=[0, 1, 3]).sum().T
 
     net_flow = flow_outof_node_grouped.sub(flow_into_node_grouped, fill_value=0)
+    # Emissions are physical MWh, so only step_duration applies here (no
+    # rp_cost_weight).  rp_cost_weight is added downstream on the monetary
+    # group_cost_co2_dt to match the objective's CO2-price term
+    # (flextool.mod ~line 2312-2336).
     net_flow_with_duration = net_flow.mul(par.step_duration, axis=0)
     r.process_emissions_co2_dt = net_flow_with_duration.mul(par.commodity_co2_content, axis=1, level='commodity')
 
@@ -77,17 +92,32 @@ def compute_costs(par, s, v, r) -> None:
         r.group_process_emissions_co2_dt[col] = r.process_emissions_co2_dt[col[:4]]
     r.group_co2_dt = r.group_process_emissions_co2_dt.T.groupby('group').sum().T
     r.group_co2_d = r.group_co2_dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
-    r.group_cost_co2_dt = r.group_co2_dt.mul(par.group_co2_price)
-    r.group_cost_co2_d = r.group_co2_d.mul(par.group_co2_price)
+    # Monetary CO2 cost = emissions × price.  Emissions already carry
+    # step_duration; add rp_cost_weight to match the objective's CO2-price
+    # term (flextool.mod ~line 2312-2336 where it has
+    # step_duration × rp_cost_weight).  Per-period cost_co2 is then
+    # aggregated from the rp-weighted cost_dt directly (instead of
+    # multiplying the annualized physical emissions by price, which would
+    # drop the per-step rp weighting).
+    r.group_cost_co2_dt = r.group_co2_dt.mul(par.group_co2_price).mul(par.rp_cost_weight, axis=0)
+    r.group_cost_co2_d = r.group_cost_co2_dt.groupby('period').sum()
     r.cost_co2_dt = r.group_cost_co2_dt.sum(axis=1)
-    r.cost_co2_d = r.group_cost_co2_d.groupby('period').sum()
+    r.cost_co2_d = r.group_cost_co2_d.sum(axis=1)
 
     # --- Operational costs ---
+    # Mod objective (~line 2347-2376): flow × unitsize × varCost ×
+    # step_duration × rp_cost_weight × inflation / period_share ×
+    # pdt_branch_weight.  TODO(user): the min_load_efficiency branches
+    # also contribute (online × section × unitsize × varCost); not yet
+    # included here, see test_cost_aggregation_semantics.py.
     relevant_flows = r.flow_dt.loc[:, r.flow_dt.columns.intersection(par.process_source_sink_varCost.columns)]
-    cost_flows = relevant_flows.mul(par.step_duration, axis=0).mul(par.process_source_sink_varCost, axis=1)
+    cost_flows = relevant_flows.mul(step_x_rp, axis=0).mul(par.process_source_sink_varCost, axis=1)
     r.cost_process_other_operational_cost_dt = cost_flows.T.groupby(level=0).sum().T.reindex(columns=s.process, fill_value=0.0)
 
     # --- Startup costs ---
+    # Mod objective (~line 2337-2346): v_startup × startup_cost × unitsize
+    # × rp_cost_weight × inflation / period_share × pdt_branch_weight.
+    # No step_duration: startup is a per-event (not per-hour) cost.
     r.process_startup_dt = v.startup_linear.add(v.startup_integer, fill_value=0)
     r.cost_startup_dt = pd.DataFrame(0.0, index=r.process_startup_dt.index, columns=s.process_online, dtype=float)
     valid_processes = s.process_online.intersection(r.process_startup_dt.columns).intersection(par.process_startup_cost.columns)
@@ -96,7 +126,7 @@ def compute_costs(par, s, v, r) -> None:
         periods = cost.index.get_level_values('period')
         period_costs = par.process_startup_cost.loc[periods, valid_processes]
         period_costs.index = cost.index
-        r.cost_startup_dt[valid_processes] = cost.mul(period_costs)
+        r.cost_startup_dt[valid_processes] = cost.mul(period_costs).mul(par.rp_cost_weight, axis=0)
 
     # --- Investment costs ---
     r.cost_entity_invest_d = v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted)
