@@ -220,6 +220,10 @@ class ExecutedScenarioManager:
         When the deleted folder is the bare-named one owned by the given
         source, the ownership record is released so another source can
         claim the bare name later.
+
+        Also strips the deleted scenario from the shared axis-bounds
+        manifest (``output_parquet/_shared/axis_bounds.json``) so it
+        doesn't continue to influence y-axis ranges in the viewer.
         """
         for source_number, name in scenario_ids:
             subdir = resolve_subdir_for_read(self._bare_owners, source_number, name)
@@ -249,6 +253,20 @@ class ExecutedScenarioManager:
             if csv_dir.is_dir():
                 shutil.rmtree(csv_dir, ignore_errors=True)
                 logger.info("Deleted %s", csv_dir)
+
+            # Strip scenario from the shared axis-bounds manifest.  The
+            # manifest uses the on-disk folder name (``subdir``) as the
+            # scenario key, matching how ``ManifestAccumulator`` stores it.
+            try:
+                from flextool.plot_outputs.shared_manifest import (
+                    remove_scenario_from_manifest,
+                )
+                remove_scenario_from_manifest(self.project_path, subdir)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to strip %s from shared axis manifest: %s",
+                    subdir, exc,
+                )
 
             if was_bare_owner:
                 release_bare_owner(self._bare_owners, source_number, name)

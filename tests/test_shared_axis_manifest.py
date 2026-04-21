@@ -1,9 +1,21 @@
-"""Tests for the cross-scenario axis-bounds manifest writer.
+"""Tests for the cross-scenario axis-bounds manifest.
 
-Chunk B of the plot-plan refactor writes a side-car
-``output_parquet/_shared/axis_bounds.json`` that holds the union of
-subplot y-ranges across every scenario in a batch run.  Chunk C teaches
-the viewer to consume it; this test suite exercises only the writer.
+Option B schema:
+
+    {
+      "<result_key>": {
+        "<sub_config>": {
+          "<subplot_title>": {
+            "<scenario_name>": [min, max],
+            ...
+          }
+        }
+      }
+    }
+
+The writer stores per-scenario slices; the reader unions over a
+caller-supplied set of active scenarios (or over all scenarios when the
+set is ``None``).
 """
 
 from __future__ import annotations
@@ -21,6 +33,7 @@ from flextool.plot_outputs.shared_manifest import (
     _UNTITLED_KEY,
     apply_manifest_to_plan,
     load_axis_bounds_manifest,
+    remove_scenario_from_manifest,
 )
 
 
@@ -93,7 +106,7 @@ def _make_bar_plan() -> PlotPlan:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests
+# Unit tests — accumulator
 # ---------------------------------------------------------------------------
 
 class TestManifestAccumulator:
@@ -101,28 +114,25 @@ class TestManifestAccumulator:
         acc = ManifestAccumulator(tmp_path)
         assert acc.manifest_path == tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
 
-    def test_add_single_plan_stores_ranges_by_title(self, tmp_path: Path):
+    def test_add_single_plan_stores_ranges_by_scenario(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
         plan = _make_time_plan([
             ("node_A", (0.0, 10.0)),
             ("node_B", (-5.0, 3.0)),
         ])
-        acc.add_plan("node_balance", "default", plan)
+        acc.add_plan("node_balance", "default", plan, "scen1")
 
         assert acc.data == {
             "node_balance": {
                 "default": {
-                    "node_A": [0.0, 10.0],
-                    "node_B": [-5.0, 3.0],
+                    "node_A": {"scen1": [0.0, 10.0]},
+                    "node_B": {"scen1": [-5.0, 3.0]},
                 },
             },
         }
 
-    def test_overlapping_titles_union_min_max_across_scenarios(
-        self, tmp_path: Path,
-    ):
+    def test_two_scenarios_stored_side_by_side(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
-        # Scenario 1: A overlaps with scenario 2's A; B only in 1; C only in 2.
         plan1 = _make_time_plan([
             ("A", (0.0, 5.0)),
             ("B", (-1.0, 1.0)),
@@ -131,24 +141,59 @@ class TestManifestAccumulator:
             ("A", (-3.0, 4.0)),
             ("C", (2.0, 8.0)),
         ])
-        acc.add_plan("rk", "default", plan1)
-        acc.add_plan("rk", "default", plan2)
+        acc.add_plan("rk", "default", plan1, "s1")
+        acc.add_plan("rk", "default", plan2, "s2")
 
+        # Each scenario keeps its own entry; no union at write time.
         assert acc.data["rk"]["default"] == {
-            "A": [-3.0, 5.0],   # union: min(0, -3), max(5, 4)
-            "B": [-1.0, 1.0],   # only scenario 1
-            "C": [2.0, 8.0],    # only scenario 2
+            "A": {"s1": [0.0, 5.0], "s2": [-3.0, 4.0]},
+            "B": {"s1": [-1.0, 1.0]},
+            "C": {"s2": [2.0, 8.0]},
         }
+
+    def test_replaying_same_scenario_replaces_its_slice(self, tmp_path: Path):
+        """Second add_plan call with the same scenario name should
+        replace that scenario's entries (not union)."""
+        acc = ManifestAccumulator(tmp_path)
+
+        # Seed disk with old values for two scenarios.
+        acc.add_plan(
+            "rk", "default",
+            _make_time_plan([("A", (0.0, 5.0)), ("B", (-2.0, 2.0))]),
+            "s1",
+        )
+        acc.add_plan(
+            "rk", "default",
+            _make_time_plan([("A", (10.0, 20.0))]),
+            "s2",
+        )
+        acc.write()
+
+        # New accumulator: simulate a fresh batch re-running scenario s1
+        # with different bounds and dropping subplot B entirely.
+        acc2 = ManifestAccumulator(tmp_path)
+        acc2.add_plan(
+            "rk", "default",
+            _make_time_plan([("A", (100.0, 200.0))]),
+            "s1",
+        )
+        # s1 now holds only the new A entry — old B slice is gone.
+        # s2 is untouched.
+        assert acc2.data["rk"]["default"]["A"] == {
+            "s1": [100.0, 200.0],
+            "s2": [10.0, 20.0],
+        }
+        assert "B" not in acc2.data["rk"]["default"]
 
     def test_none_title_uses_sentinel_key(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
         plan = _make_time_plan([(None, (-2.0, 7.0))])
-        acc.add_plan("rk", "default", plan)
-        assert acc.data["rk"]["default"] == {_UNTITLED_KEY: [-2.0, 7.0]}
+        acc.add_plan("rk", "default", plan, "s1")
+        assert acc.data["rk"]["default"] == {_UNTITLED_KEY: {"s1": [-2.0, 7.0]}}
 
     def test_bar_plans_are_skipped(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
-        acc.add_plan("rk", "default", _make_bar_plan())
+        acc.add_plan("rk", "default", _make_bar_plan(), "s1")
         assert acc.data == {}
 
     def test_empty_subplot_y_ranges_are_skipped(self, tmp_path: Path):
@@ -168,13 +213,12 @@ class TestManifestAccumulator:
             },
             subplot_y_ranges=[],  # empty
         )
-        acc.add_plan("rk", "default", plan)
+        acc.add_plan("rk", "default", plan, "s1")
         assert acc.data == {}
 
     def test_specs_and_ranges_length_mismatch_skips(self, tmp_path: Path, caplog):
         acc = ManifestAccumulator(tmp_path)
         df = pd.DataFrame({"x": [1.0]}, index=pd.Index(["a"], name="t"))
-        # Force a mismatch
         plan = PlotPlan(
             chart_type="lines",
             plot_name="plan",
@@ -187,70 +231,79 @@ class TestManifestAccumulator:
                 "value_label_width": 0.0, "legend_width": 0.0,
                 "base_width": 6.0, "subplot_height": 4.0,
             },
-            subplot_y_ranges=[(0.0, 1.0)],  # length 1 vs specs length 2
+            subplot_y_ranges=[(0.0, 1.0)],
         )
         with caplog.at_level("WARNING", logger="flextool.plot_outputs.shared_manifest"):
-            acc.add_plan("rk", "default", plan)
+            acc.add_plan("rk", "default", plan, "s1")
         assert acc.data == {}
 
     def test_different_sub_configs_are_isolated(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
         plan1 = _make_time_plan([("A", (0.0, 1.0))])
         plan2 = _make_time_plan([("A", (0.0, 100.0))])
-        acc.add_plan("rk", "hourly", plan1)
-        acc.add_plan("rk", "period", plan2)
-        assert acc.data["rk"]["hourly"]["A"] == [0.0, 1.0]
-        assert acc.data["rk"]["period"]["A"] == [0.0, 100.0]
+        acc.add_plan("rk", "hourly", plan1, "s1")
+        acc.add_plan("rk", "period", plan2, "s1")
+        assert acc.data["rk"]["hourly"]["A"] == {"s1": [0.0, 1.0]}
+        assert acc.data["rk"]["period"]["A"] == {"s1": [0.0, 100.0]}
 
     def test_different_result_keys_are_isolated(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
-        acc.add_plan("node_balance", "d", _make_time_plan([("A", (0.0, 1.0))]))
-        acc.add_plan("node_inflow", "d", _make_time_plan([("A", (-5.0, 0.0))]))
-        assert acc.data["node_balance"]["d"]["A"] == [0.0, 1.0]
-        assert acc.data["node_inflow"]["d"]["A"] == [-5.0, 0.0]
+        acc.add_plan(
+            "node_balance", "d",
+            _make_time_plan([("A", (0.0, 1.0))]),
+            "s1",
+        )
+        acc.add_plan(
+            "node_inflow", "d",
+            _make_time_plan([("A", (-5.0, 0.0))]),
+            "s1",
+        )
+        assert acc.data["node_balance"]["d"]["A"] == {"s1": [0.0, 1.0]}
+        assert acc.data["node_inflow"]["d"]["A"] == {"s1": [-5.0, 0.0]}
+
+    def test_empty_scenario_name_is_skipped(self, tmp_path: Path, caplog):
+        acc = ManifestAccumulator(tmp_path)
+        with caplog.at_level("WARNING", logger="flextool.plot_outputs.shared_manifest"):
+            acc.add_plan(
+                "rk", "d",
+                _make_time_plan([("A", (0.0, 1.0))]),
+                "",
+            )
+        assert acc.data == {}
 
 
 class TestWrite:
     def test_write_creates_shared_directory_and_json(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
-        acc.add_plan("rk", "cfg", _make_time_plan([("A", (0.0, 10.0))]))
+        acc.add_plan("rk", "cfg", _make_time_plan([("A", (0.0, 10.0))]), "s1")
         acc.write()
 
         manifest_path = tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
         assert manifest_path.is_file()
 
         data = json.loads(manifest_path.read_text())
-        assert data == {"rk": {"cfg": {"A": [0.0, 10.0]}}}
+        assert data == {"rk": {"cfg": {"A": {"s1": [0.0, 10.0]}}}}
 
     def test_write_is_atomic(self, tmp_path: Path, monkeypatch):
-        """Temp file should never be left behind after a successful write
-        and should not be the one the reader observes.
-
-        We smoke-test by intercepting ``os.replace`` and checking the temp
-        file exists up until the rename call.
-        """
+        """Temp file should never be left behind after a successful write."""
         import os as _os
 
         acc = ManifestAccumulator(tmp_path)
-        acc.add_plan("rk", "cfg", _make_time_plan([("A", (0.0, 10.0))]))
+        acc.add_plan("rk", "cfg", _make_time_plan([("A", (0.0, 10.0))]), "s1")
 
         seen_tmp_paths: list[str] = []
         real_replace = _os.replace
 
         def spy_replace(src, dst):
             seen_tmp_paths.append(str(src))
-            # At the moment of rename, the temp file still exists.
             assert Path(src).is_file()
-            # The destination must not be a temp file
             assert "axis_bounds.json" in str(dst)
             real_replace(src, dst)
 
-        # Path.replace calls os.replace under the hood
         monkeypatch.setattr(_os, "replace", spy_replace)
         acc.write()
 
         assert len(seen_tmp_paths) == 1
-        # No temp file should linger.
         shared = tmp_path / "output_parquet" / "_shared"
         leftover = list(shared.glob("axis_bounds_*.tmp"))
         assert leftover == []
@@ -259,27 +312,25 @@ class TestWrite:
         acc = ManifestAccumulator(tmp_path)
         acc.write()
         shared = tmp_path / "output_parquet" / "_shared"
-        # Directory may or may not exist; file must not.
         assert not (shared / "axis_bounds.json").exists()
 
-    def test_round_trip_with_multiple_scenarios(self, tmp_path: Path):
-        """First scenario writes; second scenario instantiates a new
-        accumulator (simulating a fresh batch) which seeds from disk and
-        unions the new values."""
-        # Scenario 1
+    def test_round_trip_preserves_other_scenarios(self, tmp_path: Path):
+        """Scenario 1 writes; a fresh batch re-running scenario 2 keeps
+        scenario 1's slice intact."""
         acc1 = ManifestAccumulator(tmp_path)
-        acc1.add_plan("rk", "d", _make_time_plan([
-            ("A", (0.0, 5.0)),
-            ("B", (-1.0, 1.0)),
-        ]))
+        acc1.add_plan(
+            "rk", "d",
+            _make_time_plan([("A", (0.0, 5.0)), ("B", (-1.0, 1.0))]),
+            "s1",
+        )
         acc1.write()
 
-        # Scenario 2: new accumulator picks up existing manifest
         acc2 = ManifestAccumulator(tmp_path)
-        acc2.add_plan("rk", "d", _make_time_plan([
-            ("A", (-3.0, 4.0)),  # unions with (0, 5) → (-3, 5)
-            ("C", (2.0, 8.0)),
-        ]))
+        acc2.add_plan(
+            "rk", "d",
+            _make_time_plan([("A", (-3.0, 4.0)), ("C", (2.0, 8.0))]),
+            "s2",
+        )
         acc2.write()
 
         manifest_path = tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
@@ -287,9 +338,9 @@ class TestWrite:
         assert data == {
             "rk": {
                 "d": {
-                    "A": [-3.0, 5.0],
-                    "B": [-1.0, 1.0],
-                    "C": [2.0, 8.0],
+                    "A": {"s1": [0.0, 5.0], "s2": [-3.0, 4.0]},
+                    "B": {"s1": [-1.0, 1.0]},
+                    "C": {"s2": [2.0, 8.0]},
                 },
             },
         }
@@ -314,10 +365,11 @@ class TestSeedingFromDisk:
         payload = {
             "rk": {
                 "cfg": {
-                    "good": [0.0, 1.0],
-                    "bad_length": [0.0, 1.0, 2.0],
-                    "non_numeric": ["x", "y"],
-                    "not_a_list": 42,
+                    "good": {"s1": [0.0, 1.0]},
+                    "bad_scenario_bounds": {"s2": [0.0, 1.0, 2.0]},
+                    "non_numeric_scenario_bounds": {"s3": ["x", "y"]},
+                    "not_a_dict": 42,
+                    "scenario_int_key": {5: [0.0, 1.0]},  # non-string scenario
                 },
                 "also_bad": "not a dict",
             },
@@ -326,7 +378,113 @@ class TestSeedingFromDisk:
         (shared / "axis_bounds.json").write_text(json.dumps(payload))
 
         acc = ManifestAccumulator(tmp_path)
-        assert acc.data == {"rk": {"cfg": {"good": [0.0, 1.0]}}}
+        # Only the well-formed entry survives.  JSON coerces int keys to
+        # strings, so "scenario_int_key" actually survives — but the
+        # inner scenario name becomes "5" (JSON has no integer keys).
+        assert acc.data == {
+            "rk": {
+                "cfg": {
+                    "good": {"s1": [0.0, 1.0]},
+                    "scenario_int_key": {"5": [0.0, 1.0]},
+                },
+            },
+        }
+
+    def test_legacy_flat_entries_are_dropped_with_warning(
+        self, tmp_path: Path, caplog,
+    ):
+        """Old-format manifest (value is a 2-tuple/list instead of a dict)
+        should be treated as missing — the next write rewrites it in the
+        new schema."""
+        shared = tmp_path / "output_parquet" / "_shared"
+        shared.mkdir(parents=True)
+        payload = {
+            "rk": {
+                "cfg": {
+                    "A": [0.0, 10.0],            # legacy
+                    "B": {"s1": [-1.0, 1.0]},    # new
+                },
+            },
+        }
+        (shared / "axis_bounds.json").write_text(json.dumps(payload))
+
+        with caplog.at_level(
+            "WARNING", logger="flextool.plot_outputs.shared_manifest",
+        ):
+            acc = ManifestAccumulator(tmp_path)
+        # Legacy A is silently dropped; new B survives.
+        assert acc.data == {"rk": {"cfg": {"B": {"s1": [-1.0, 1.0]}}}}
+
+
+# ---------------------------------------------------------------------------
+# remove_scenario_from_manifest
+# ---------------------------------------------------------------------------
+
+class TestRemoveScenarioFromManifest:
+    def test_missing_file_returns_false(self, tmp_path: Path):
+        assert remove_scenario_from_manifest(tmp_path, "s1") is False
+
+    def test_missing_scenario_name_returns_false(self, tmp_path: Path):
+        assert remove_scenario_from_manifest(tmp_path, "") is False
+
+    def test_removes_scenario_across_subplots_and_keys(self, tmp_path: Path):
+        """Removing a scenario should strip all its entries while
+        leaving other scenarios' slices intact."""
+        acc = ManifestAccumulator(tmp_path)
+        acc.add_plan(
+            "rk", "d",
+            _make_time_plan([("A", (0.0, 5.0)), ("B", (-1.0, 1.0))]),
+            "s1",
+        )
+        acc.add_plan(
+            "rk", "d",
+            _make_time_plan([("A", (-3.0, 4.0)), ("C", (2.0, 8.0))]),
+            "s2",
+        )
+        acc.add_plan(
+            "other", "d",
+            _make_time_plan([("X", (0.0, 1.0))]),
+            "s1",
+        )
+        acc.write()
+
+        # Removing s1 should leave s2's entries (A=[−3,4], C=[2,8]) and
+        # drop "other/d/X" (was only s1) and B (only s1).
+        changed = remove_scenario_from_manifest(tmp_path, "s1")
+        assert changed is True
+
+        data = load_axis_bounds_manifest(tmp_path)
+        assert data == {
+            "rk": {
+                "d": {
+                    "A": {"s2": [-3.0, 4.0]},
+                    "C": {"s2": [2.0, 8.0]},
+                },
+            },
+        }
+
+    def test_noop_when_scenario_absent(self, tmp_path: Path):
+        acc = ManifestAccumulator(tmp_path)
+        acc.add_plan(
+            "rk", "d", _make_time_plan([("A", (0.0, 1.0))]), "s1",
+        )
+        acc.write()
+        assert remove_scenario_from_manifest(tmp_path, "unknown") is False
+
+    def test_removes_file_when_empty_after_strip(self, tmp_path: Path):
+        """If removing the only scenario leaves an empty dict, the
+        manifest file itself should be deleted."""
+        acc = ManifestAccumulator(tmp_path)
+        acc.add_plan(
+            "rk", "d", _make_time_plan([("A", (0.0, 1.0))]), "s1",
+        )
+        acc.write()
+
+        manifest_path = tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
+        assert manifest_path.is_file()
+
+        assert remove_scenario_from_manifest(tmp_path, "s1") is True
+        assert not manifest_path.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -334,18 +492,15 @@ class TestSeedingFromDisk:
 # ---------------------------------------------------------------------------
 
 class TestIntegrationWithComputeAllPlotPlans:
-    """Checks that ``compute_all_plot_plans`` wires the accumulator when its
-    output_dir sits inside ``output_parquet/``.  Uses a minimal in-memory
-    results dict so we don't need a full project on disk."""
+    """Checks that ``compute_all_plot_plans`` wires the accumulator and
+    uses the output-dir folder name as the scenario key."""
 
     def test_accumulator_used_for_per_scenario_output_dir(self, tmp_path: Path):
         from flextool.plot_outputs.orchestrator import compute_all_plot_plans
 
-        # Simulate <project>/output_parquet/<scenario>/
         scenario_dir = tmp_path / "output_parquet" / "scen_a"
         scenario_dir.mkdir(parents=True)
 
-        # Minimal time-series DataFrame with (node, time) column/row indexing.
         columns = pd.MultiIndex.from_product(
             [["nodeA", "nodeB"]], names=["node"],
         )
@@ -370,15 +525,18 @@ class TestIntegrationWithComputeAllPlotPlans:
         )
 
         manifest_path = tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
-        # Manifest should exist and hold node_balance__dt bounds.
         if manifest_path.exists():
             data = json.loads(manifest_path.read_text())
+            # The scenario key should be the folder name.
             assert "node_balance__dt" in data
+            sub_map = data["node_balance__dt"]
+            for subplot_map in sub_map.values():
+                for scen_map in subplot_map.values():
+                    assert "scen_a" in scen_map
 
     def test_no_manifest_written_for_non_output_parquet_dir(self, tmp_path: Path):
         from flextool.plot_outputs.orchestrator import compute_all_plot_plans
 
-        # Comparison-style dir: not under output_parquet/
         comp_dir = tmp_path / "output_parquet_comparison"
         comp_dir.mkdir(parents=True)
 
@@ -388,12 +546,11 @@ class TestIntegrationWithComputeAllPlotPlans:
         )
         compute_all_plot_plans({"rk": df}, {}, comp_dir)
 
-        # _shared must NOT be created anywhere.
         assert not (tmp_path / "output_parquet" / "_shared").exists()
 
 
 # ---------------------------------------------------------------------------
-# Reader API tests (Chunk C)
+# Reader API tests
 # ---------------------------------------------------------------------------
 
 class TestLoadAxisBoundsManifest:
@@ -403,7 +560,7 @@ class TestLoadAxisBoundsManifest:
     def test_valid_file_parses(self, tmp_path: Path):
         shared = tmp_path / "output_parquet" / "_shared"
         shared.mkdir(parents=True)
-        payload = {"rk": {"cfg": {"A": [0.0, 10.0]}}}
+        payload = {"rk": {"cfg": {"A": {"s1": [0.0, 10.0]}}}}
         (shared / "axis_bounds.json").write_text(json.dumps(payload))
 
         data = load_axis_bounds_manifest(tmp_path)
@@ -426,7 +583,6 @@ class TestLoadAxisBoundsManifest:
         assert load_axis_bounds_manifest(tmp_path) is None
 
     def test_accepts_str_path(self, tmp_path: Path):
-        # Signature declares Path but str should work via Path(...) coercion.
         shared = tmp_path / "output_parquet" / "_shared"
         shared.mkdir(parents=True)
         (shared / "axis_bounds.json").write_text("{}")
@@ -434,17 +590,65 @@ class TestLoadAxisBoundsManifest:
 
 
 class TestApplyManifestToPlan:
-    def test_replaces_matching_subplot_ranges(self):
+    def _manifest(self, **per_subplot: dict[str, list[float]]) -> dict:
+        return {"rk": {"cfg": dict(per_subplot)}}
+
+    def test_active_none_unions_over_all_scenarios(self):
         plan = _make_time_plan([
             ("A", (0.0, 1.0)),
             ("B", (-1.0, 1.0)),
         ])
-        manifest = {
-            "rk": {"cfg": {"A": [-5.0, 10.0], "B": [-2.0, 2.0]}},
-        }
-        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        manifest = self._manifest(
+            A={"s1": [-5.0, 5.0], "s2": [0.0, 10.0]},
+            B={"s1": [-2.0, 2.0]},
+        )
+        changed = apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg", active_scenarios=None,
+        )
         assert changed is True
+        # A unions s1+s2: min(-5,0)=-5, max(5,10)=10.  B: s1 only.
         assert plan.subplot_y_ranges == [(-5.0, 10.0), (-2.0, 2.0)]
+
+    def test_active_subset_filters_to_those_scenarios(self):
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        manifest = self._manifest(
+            A={"s1": [-5.0, 5.0], "s2": [0.0, 10.0], "s3": [-100.0, 100.0]},
+        )
+        changed = apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg", active_scenarios={"s1", "s2"},
+        )
+        assert changed is True
+        # Only s1 and s2 contribute: min(-5,0)=-5, max(5,10)=10.  s3 is excluded.
+        assert plan.subplot_y_ranges == [(-5.0, 10.0)]
+
+    def test_active_single_scenario(self):
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        manifest = self._manifest(
+            A={"a": [-5.0, 5.0], "b": [-100.0, 100.0]},
+        )
+        changed = apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg", active_scenarios={"a"},
+        )
+        assert changed is True
+        assert plan.subplot_y_ranges == [(-5.0, 5.0)]
+
+    def test_empty_active_set_is_noop(self):
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        manifest = self._manifest(A={"s1": [-5.0, 5.0]})
+        changed = apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg", active_scenarios=set(),
+        )
+        assert changed is False
+        assert plan.subplot_y_ranges == [(0.0, 1.0)]
+
+    def test_active_scenarios_all_missing_from_manifest_leaves_plan_unchanged(self):
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        manifest = self._manifest(A={"s1": [-5.0, 5.0]})
+        changed = apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg", active_scenarios={"unknown"},
+        )
+        assert changed is False
+        assert plan.subplot_y_ranges == [(0.0, 1.0)]
 
     def test_missing_manifest_is_noop(self):
         plan = _make_time_plan([("A", (0.0, 1.0))])
@@ -455,14 +659,14 @@ class TestApplyManifestToPlan:
     def test_missing_result_key_is_noop(self):
         plan = _make_time_plan([("A", (0.0, 1.0))])
         original = list(plan.subplot_y_ranges)
-        manifest = {"other_rk": {"cfg": {"A": [-5.0, 5.0]}}}
+        manifest = {"other_rk": {"cfg": {"A": {"s1": [-5.0, 5.0]}}}}
         assert apply_manifest_to_plan(plan, manifest, "rk", "cfg") is False
         assert plan.subplot_y_ranges == original
 
     def test_missing_sub_config_is_noop(self):
         plan = _make_time_plan([("A", (0.0, 1.0))])
         original = list(plan.subplot_y_ranges)
-        manifest = {"rk": {"other_cfg": {"A": [-5.0, 5.0]}}}
+        manifest = {"rk": {"other_cfg": {"A": {"s1": [-5.0, 5.0]}}}}
         assert apply_manifest_to_plan(plan, manifest, "rk", "cfg") is False
         assert plan.subplot_y_ranges == original
 
@@ -473,7 +677,7 @@ class TestApplyManifestToPlan:
             ("C", (10.0, 20.0)),
         ])
         # Only B is in the manifest — A and C keep their original ranges.
-        manifest = {"rk": {"cfg": {"B": [-100.0, 100.0]}}}
+        manifest = self._manifest(B={"s1": [-100.0, 100.0]})
         changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
         assert changed is True
         assert plan.subplot_y_ranges == [
@@ -484,15 +688,17 @@ class TestApplyManifestToPlan:
 
     def test_extra_manifest_entries_are_ignored(self):
         plan = _make_time_plan([("A", (0.0, 1.0))])
-        # Z is not in the plan — should not affect anything.
-        manifest = {"rk": {"cfg": {"A": [-1.0, 2.0], "Z": [0.0, 999.0]}}}
+        manifest = self._manifest(
+            A={"s1": [-1.0, 2.0]},
+            Z={"s1": [0.0, 999.0]},
+        )
         changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
         assert changed is True
         assert plan.subplot_y_ranges == [(-1.0, 2.0)]
 
     def test_none_title_uses_sentinel(self):
         plan = _make_time_plan([(None, (0.0, 1.0))])
-        manifest = {"rk": {"cfg": {_UNTITLED_KEY: [-3.0, 4.0]}}}
+        manifest = {"rk": {"cfg": {_UNTITLED_KEY: {"s1": [-3.0, 4.0]}}}}
         changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
         assert changed is True
         assert plan.subplot_y_ranges == [(-3.0, 4.0)]
@@ -500,14 +706,14 @@ class TestApplyManifestToPlan:
     def test_bar_plan_is_skipped(self):
         plan = _make_bar_plan()
         original = list(plan.subplot_y_ranges)
-        manifest = {"rk": {"cfg": {"only": [-100.0, 100.0]}}}
+        manifest = self._manifest(only={"s1": [-100.0, 100.0]})
         changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
         assert changed is False
         assert plan.subplot_y_ranges == original
 
     def test_no_change_when_ranges_match_returns_false(self):
         plan = _make_time_plan([("A", (0.0, 10.0))])
-        manifest = {"rk": {"cfg": {"A": [0.0, 10.0]}}}
+        manifest = self._manifest(A={"s1": [0.0, 10.0]})
         changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
         assert changed is False
         assert plan.subplot_y_ranges == [(0.0, 10.0)]
@@ -517,17 +723,23 @@ class TestApplyManifestToPlan:
             ("A", (0.0, 1.0)),
             ("B", (-1.0, 1.0)),
         ])
-        manifest = {
-            "rk": {
-                "cfg": {
-                    "A": [0.0, 1.0, 2.0],  # wrong length
-                    "B": ["x", "y"],        # non-numeric
-                },
-            },
-        }
+        manifest = self._manifest(
+            A={"s1": [0.0, 1.0, 2.0]},   # wrong length
+            B={"s1": ["x", "y"]},         # non-numeric
+        )
         changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
         assert changed is False
         assert plan.subplot_y_ranges == [(0.0, 1.0), (-1.0, 1.0)]
+
+    def test_legacy_flat_schema_entry_is_skipped(self):
+        """If the manifest on disk is still in the legacy flat schema
+        (value is a 2-element list rather than a per-scenario dict), the
+        reader should treat it as missing and not crash."""
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        manifest = {"rk": {"cfg": {"A": [-5.0, 5.0]}}}
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is False
+        assert plan.subplot_y_ranges == [(0.0, 1.0)]
 
     def test_empty_effective_plot_specs_is_noop(self):
         df = pd.DataFrame({"x": [1.0]}, index=pd.Index(["a"], name="t"))
@@ -545,7 +757,7 @@ class TestApplyManifestToPlan:
             },
             subplot_y_ranges=[],
         )
-        manifest = {"rk": {"cfg": {"A": [0.0, 1.0]}}}
+        manifest = {"rk": {"cfg": {"A": {"s1": [0.0, 1.0]}}}}
         assert apply_manifest_to_plan(plan, manifest, "rk", "cfg") is False
 
     def test_pads_short_subplot_y_ranges(self):
@@ -557,7 +769,7 @@ class TestApplyManifestToPlan:
             ("B", (-1.0, 1.0)),
         ])
         plan.subplot_y_ranges = [(0.0, 1.0)]  # deliberately short
-        manifest = {"rk": {"cfg": {"B": [-5.0, 5.0]}}}
+        manifest = self._manifest(B={"s1": [-5.0, 5.0]})
         changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
         assert changed is True
         assert len(plan.subplot_y_ranges) == 2

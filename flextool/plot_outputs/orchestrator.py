@@ -936,10 +936,17 @@ def compute_all_plot_plans(
     # manifest.  Only per-scenario output_dirs (parent named ``output_parquet``)
     # get a ManifestAccumulator — comparison dirs have their own axis logic and
     # don't participate in the cross-scenario stability concern.
+    #
+    # The scenario name is the on-disk folder name (``output_dir.name``),
+    # which matches the keys the GUI's ExecutedScenarioManager uses
+    # (the bare scenario name when this source owns it, or
+    # ``<scenario>_<source_number>`` when another source does).
     manifest_accumulator = None
+    manifest_scenario_name: str | None = None
     if output_dir.parent.name == "output_parquet":
         # project_path is two levels up: <project>/output_parquet/<scenario>
         project_path = output_dir.parent.parent
+        manifest_scenario_name = output_dir.name
         try:
             manifest_accumulator = ManifestAccumulator(project_path)
         except Exception as exc:
@@ -947,6 +954,7 @@ def compute_all_plot_plans(
                 "Failed to initialise shared axis-bounds accumulator: %s", exc,
             )
             manifest_accumulator = None
+            manifest_scenario_name = None
 
     available: list[list[str]] = []
 
@@ -964,6 +972,7 @@ def compute_all_plot_plans(
                 plot_rows, break_times, active_settings,
                 period_weights=period_weights,
                 manifest_accumulator=manifest_accumulator,
+                manifest_scenario_name=manifest_scenario_name,
             )
             available.extend([k, s] for k, s in pairs)
         except Exception as exc:

@@ -98,12 +98,13 @@ class ResultViewer(tk.Toplevel):
         self._live_plan: 'PlotPlan | None' = None
         self._live_plan_key: tuple[str, str, str] = ("", "", "")
 
-        # Cross-scenario axis-bounds manifest (Chunk C).  Loaded lazily on
-        # first use and reloaded when the project is refreshed via
-        # ``_on_update``.  ``None`` means no manifest was found on disk;
+        # Cross-scenario axis-bounds manifest.  Loaded lazily on first
+        # use and reloaded whenever the on-disk file's mtime advances
+        # (so batch runs in the background pick up naturally on the next
+        # render).  ``None`` means no manifest was found on disk;
         # callers fall back to the per-plan ranges in that case.
         self._axis_manifest: dict | None = None
-        self._axis_manifest_loaded: bool = False
+        self._axis_manifest_mtime: float = 0.0
 
         # Guard against recursive replots from time range updates
         self._updating_time_range = False
@@ -1802,9 +1803,11 @@ class ResultViewer(tk.Toplevel):
         self._parquet_cache_key = ("", "")
         self._parquet_cache_df = None
         # Force the shared axis-bounds manifest to reload on the next
-        # render — a batch run may have just rewritten it.
+        # render — a batch run may have just rewritten it.  Setting the
+        # cached mtime to 0.0 guarantees the file's stat wins the
+        # comparison inside ``_get_axis_manifest``.
         self._axis_manifest = None
-        self._axis_manifest_loaded = False
+        self._axis_manifest_mtime = 0.0
 
         self._populate_scenarios()
         if self._mode.get() == "comparison":
@@ -1962,27 +1965,79 @@ class ResultViewer(tk.Toplevel):
             return None
 
     def _get_axis_manifest(self) -> dict | None:
-        """Return the cross-scenario axis-bounds manifest (lazy + cached).
+        """Return the cross-scenario axis-bounds manifest (mtime-cached).
 
-        Returns ``None`` when no manifest is available; never raises.  The
-        manifest is re-read on the first call after ``_on_update`` clears
-        ``_axis_manifest_loaded``.
+        Returns ``None`` when no manifest is available; never raises.
+        The on-disk manifest is ``stat``ed on every call: if its mtime is
+        newer than the cached copy, the file is re-read.  This lets the
+        viewer pick up manifest rewrites from post-run hooks without any
+        explicit invalidation.
         """
-        if not self._axis_manifest_loaded:
-            try:
-                from flextool.plot_outputs.shared_manifest import (
-                    load_axis_bounds_manifest,
-                )
-                self._axis_manifest = load_axis_bounds_manifest(
-                    self._project_path
-                )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Failed to load shared axis manifest", exc_info=True,
-                )
+        manifest_path = (
+            self._project_path
+            / "output_parquet"
+            / "_shared"
+            / "axis_bounds.json"
+        )
+        try:
+            mtime = manifest_path.stat().st_mtime if manifest_path.is_file() else 0.0
+        except OSError:
+            mtime = 0.0
+
+        if mtime == 0.0:
+            # File missing — drop any previous cached view.
+            if self._axis_manifest is not None:
                 self._axis_manifest = None
-            self._axis_manifest_loaded = True
+            self._axis_manifest_mtime = 0.0
+            return None
+
+        if mtime <= self._axis_manifest_mtime and self._axis_manifest is not None:
+            return self._axis_manifest
+
+        try:
+            from flextool.plot_outputs.shared_manifest import (
+                load_axis_bounds_manifest,
+            )
+            self._axis_manifest = load_axis_bounds_manifest(
+                self._project_path
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to load shared axis manifest", exc_info=True,
+            )
+            self._axis_manifest = None
+        self._axis_manifest_mtime = mtime
         return self._axis_manifest
+
+    def _get_axis_active_scenarios(self) -> set[str] | None:
+        """Return the scenarios that should contribute to the shared y-axis.
+
+        - In *single* mode the active set is the list of currently-checked
+          executed scenarios (from :meth:`_scan_scenarios`).  That list
+          reflects the user's own statement of which scenarios are
+          relevant for comparison, so it's the natural filter for the
+          shared axis — and it updates the moment a checkbox is toggled,
+          without needing any file rewrite.
+        - In *comparison* mode the per-plan ranges already reflect the
+          cross-scenario combined data, so we return ``None`` to signal
+          "don't apply the shared-manifest override".  (The caller uses
+          ``None`` as a special value meaning "skip"; we rely on the fact
+          that ``_apply_axis_manifest`` is only invoked from the single /
+          live-plan path today, but we return ``None`` defensively.)
+        - In *network* / *dispatch* modes the override is not applicable;
+          the caller skips it entirely so the return value is irrelevant.
+        """
+        if self._mode.get() != "single":
+            return None
+        try:
+            scenarios = self._scan_scenarios()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to collect active scenarios for axis manifest",
+                exc_info=True,
+            )
+            return None
+        return set(scenarios)
 
     def _apply_axis_manifest(
         self, plan, result_key: str, sub_config: str,
@@ -1991,20 +2046,28 @@ class ResultViewer(tk.Toplevel):
 
         No-op when the manifest is missing or has no matching entry.
         Safe to call on every render — the override is a cheap dict
-        lookup.  Uses Option A from the Chunk C design: mutates the plan
-        before handing it to ``build_figure_from_plan`` so the call site
-        doesn't need a new parameter.
+        lookup.  Mutates the plan in place before handing it to
+        ``build_figure_from_plan`` so the call site doesn't need a new
+        parameter.
+
+        In single mode the override is filtered to the set of currently
+        checked executed scenarios: as the user toggles checkboxes the
+        next render naturally picks up a new union.
         """
         if plan is None:
             return
         manifest = self._get_axis_manifest()
         if manifest is None:
             return
+        active = self._get_axis_active_scenarios()
         try:
             from flextool.plot_outputs.shared_manifest import (
                 apply_manifest_to_plan,
             )
-            apply_manifest_to_plan(plan, manifest, result_key, sub_config)
+            apply_manifest_to_plan(
+                plan, manifest, result_key, sub_config,
+                active_scenarios=active,
+            )
         except Exception:  # noqa: BLE001
             # Never let manifest application break the viewer — the
             # fallback is the plan's own per-scenario y-ranges.
