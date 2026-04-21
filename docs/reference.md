@@ -183,9 +183,7 @@ There are three methods associated with storage start and end values: `storage_b
   > has several valid interpretations and is typically computed as
   > post-analysis rather than as part of the reported cost breakdown.
   > If needed, compute the credit from last-timestep `v_state` values
-  > and the `storage_state_reference_price` parameter yourself.  See
-  > `specs/issues.md` "Storage valuation (end-of-horizon)" for
-  > details.
+  > and the `storage_state_reference_price` parameter yourself.
 
 -Method hierarchy:
 

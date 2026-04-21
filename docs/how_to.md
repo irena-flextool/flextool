@@ -214,9 +214,7 @@ Storage states can be tied to a value. For this three methods are introduced:
 > part of the optimization cost breakdown.  If you need the credit
 > as a reported line item, compute it yourself in post-processing
 > from the `v_state` last-timestep values and the
-> `storage_state_reference_price`.  See
-> [`specs/issues.md`](../specs/issues.md) "Storage valuation
-> (end-of-horizon)" for the full discussion.
+> `storage_state_reference_price`.
 
 Having multiple storage methods can create infeasible problems. This is why some of the combinations shouldn't (and cannot) be used at the same time. If multiple methods are used, some of them might be ignored by the method hierarchy. More information can be found from [Model Parameters: Using nodes as storages](https://irena-flextool.github.io/flextool/reference). 
 
