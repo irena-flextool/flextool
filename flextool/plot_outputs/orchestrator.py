@@ -410,15 +410,50 @@ def _resolve_shared_axis_bounds(
     subplot_levels: list[int],
     always_include_zero: bool,
 ):
-    """Resolve 'shared' axis_bounds to actual min/max tuple list."""
+    """Resolve 'shared' axis_bounds to actual min/max tuple list.
+
+    For stacked charts the visible bar/area height at each x is the
+    sum over stack_levels only. Other remaining column levels
+    (expand_axis, grouped_bars, file_levels, scenario in comparison
+    mode) correspond to distinct bars/series, not stack components, so
+    they must be grouped by — not summed across — when computing the
+    stacked max. Collapsing them with sum(axis=1) would inflate the
+    bound by their cardinality.
+    """
     if axis_bounds != 'shared':
         return axis_bounds
     numeric_df = df.select_dtypes(include='number')
     if numeric_df.empty:
         return None
+
+    def _stack_extremes(frame: pd.DataFrame) -> tuple[float, float]:
+        """Max of stacked positives and min of stacked negatives."""
+        if isinstance(frame.columns, pd.MultiIndex):
+            stack_names = [frame.columns.names[i] for i in stack_in_frame]
+            non_stack = [n for n in frame.columns.names if n not in stack_names]
+            if non_stack:
+                pos = frame.clip(lower=0).T.groupby(level=non_stack).sum().T
+                neg = frame.clip(upper=0).T.groupby(level=non_stack).sum().T
+            else:
+                pos = frame.clip(lower=0).sum(axis=1).to_frame()
+                neg = frame.clip(upper=0).sum(axis=1).to_frame()
+        else:
+            pos = frame.clip(lower=0)
+            neg = frame.clip(upper=0)
+        return float(pos.max().max()), float(neg.min().min())
+
     if stack_levels and subplot_levels:
         global_max = float('-inf')
         global_min = float('inf')
+        # Translate stack_levels (positions in numeric_df.columns) to the
+        # corresponding positions in sub_df.columns after xs removed the
+        # subplot level. Positions above the subplot shift down by one.
+        sub_pos = subplot_levels[0]
+        stack_in_frame = [
+            (i - 1) if i > sub_pos else i
+            for i in stack_levels
+            if i != sub_pos
+        ]
         for sub_val in (
             numeric_df.columns.get_level_values(subplot_levels[0]).unique()
             if len(subplot_levels) == 1
@@ -433,15 +468,12 @@ def _resolve_shared_axis_bounds(
                 sub_df = numeric_df
             if isinstance(sub_df, pd.Series):
                 sub_df = sub_df.to_frame()
-            pos_sum = sub_df.clip(lower=0).sum(axis=1)
-            neg_sum = sub_df.clip(upper=0).sum(axis=1)
-            global_max = max(global_max, float(pos_sum.max()))
-            global_min = min(global_min, float(neg_sum.min()))
+            pos_max, neg_min = _stack_extremes(sub_df)
+            global_max = max(global_max, pos_max)
+            global_min = min(global_min, neg_min)
     elif stack_levels:
-        pos_sum = numeric_df.clip(lower=0).sum(axis=1)
-        neg_sum = numeric_df.clip(upper=0).sum(axis=1)
-        global_max = float(pos_sum.max())
-        global_min = float(neg_sum.min())
+        stack_in_frame = list(stack_levels)
+        global_max, global_min = _stack_extremes(numeric_df)
     else:
         global_min = float(numeric_df.min().min())
         global_max = float(numeric_df.max().max())

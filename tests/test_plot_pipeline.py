@@ -708,3 +708,82 @@ class TestColorTemplateForwardedToBuildFigures:
             "Expected at least one line colored with the template color #123456 "
             "for label 'node_0' under category 'costs'."
         )
+
+
+class TestResolveSharedAxisBounds:
+    """Regression: comparison-mode shared bounds must sum only over stack_levels.
+
+    Previously the resolver did sum(axis=1) over all non-subplot column levels,
+    which for plots with expand_axis (e.g. node_d_ep) inflated the bound by
+    the cardinality of those levels. The visible stacked bar is the sum over
+    stack_levels only; other levels are distinct bars/series.
+    """
+
+    def _build_df(self, n_nodes=3, n_cats=3, n_periods=2, n_scen=4, seed=0):
+        import numpy as np
+        rng = np.random.default_rng(seed)
+        nodes = [f'N{i}' for i in range(n_nodes)]
+        cats = [f'C{i}' for i in range(n_cats)]
+        periods = [f'P{i}' for i in range(n_periods)]
+        cols = pd.MultiIndex.from_product(
+            [nodes, cats, periods], names=['node', 'category', 'period']
+        )
+        return pd.DataFrame(
+            rng.uniform(10, 100, size=(n_scen, len(cols))), columns=cols
+        )
+
+    def test_sums_only_over_stack_level(self):
+        from flextool.plot_outputs.orchestrator import _resolve_shared_axis_bounds
+        df = self._build_df()
+        expected_max = float(
+            df.T.groupby(level=['node', 'period']).sum().T.max().max()
+        )
+        bounds = _resolve_shared_axis_bounds(
+            df, 'shared', stack_levels=[1], subplot_levels=[2],
+            always_include_zero=True,
+        )
+        assert bounds is not None
+        assert abs(bounds[0][1] - expected_max) < 1e-6, (
+            f"Shared max {bounds[0][1]:.4f} should equal per-bar stack max "
+            f"{expected_max:.4f}, not be inflated by extra column levels."
+        )
+
+    def test_buggy_over_sum_would_inflate_by_expand_cardinality(self):
+        """Sanity check: the old bug inflated by ~n_nodes; fix removes it."""
+        from flextool.plot_outputs.orchestrator import _resolve_shared_axis_bounds
+        df = self._build_df(n_nodes=5)
+        bounds = _resolve_shared_axis_bounds(
+            df, 'shared', stack_levels=[1], subplot_levels=[2],
+            always_include_zero=True,
+        )
+        old_buggy_max = float('-inf')
+        for p in df.columns.get_level_values('period').unique():
+            sub = df.xs(p, level='period', axis=1)
+            old_buggy_max = max(
+                old_buggy_max, float(sub.clip(lower=0).sum(axis=1).max())
+            )
+        assert bounds[0][1] < old_buggy_max * 0.5, (
+            "Fixed bound must be substantially narrower than the old "
+            "sum-everything behavior."
+        )
+
+    def test_no_subplot_level_still_correct(self):
+        from flextool.plot_outputs.orchestrator import _resolve_shared_axis_bounds
+        df = self._build_df()
+        expected_max = float(
+            df.T.groupby(level=['node', 'period']).sum().T.max().max()
+        )
+        bounds = _resolve_shared_axis_bounds(
+            df, 'shared', stack_levels=[1], subplot_levels=[],
+            always_include_zero=True,
+        )
+        assert abs(bounds[0][1] - expected_max) < 1e-6
+
+    def test_passthrough_for_non_shared_bounds(self):
+        from flextool.plot_outputs.orchestrator import _resolve_shared_axis_bounds
+        df = self._build_df()
+        explicit = [(-10.0, 50.0)]
+        assert _resolve_shared_axis_bounds(
+            df, explicit, stack_levels=[1], subplot_levels=[2],
+            always_include_zero=True,
+        ) is explicit
