@@ -659,6 +659,7 @@ def migrate_database(database_path, up_to: int | None = None):
                     name="price_method",
                     default_value=default_val, default_type=default_type,
                     parameter_value_list_name="price_method",
+                    parameter_type_list=("str",),
                     description=(
                         "How the commodity's price enters the LP.  "
                         "'price' = scalar or time-series price x flow "
@@ -688,7 +689,7 @@ def migrate_database(database_path, up_to: int | None = None):
                     "parameter_definition",
                     entity_class_name="commodity",
                     name="price_ladder_cumulative",
-                    parameter_type_list=("map",),
+                    parameter_type_list=("1d_map",),
                     description=(
                         "Stepped supply curve for "
                         "price_method='price_ladder_cumulative'.  "
@@ -702,7 +703,7 @@ def migrate_database(database_path, up_to: int | None = None):
                     "parameter_definition",
                     entity_class_name="commodity",
                     name="price_ladder_annual",
-                    parameter_type_list=("map", "2d_map"),
+                    parameter_type_list=("1d_map", "2d_map"),
                     description=(
                         "Stepped supply curve for "
                         "price_method='price_ladder_annual'.  Two forms "

@@ -2592,7 +2592,25 @@
       "commodity",
       "price_ladder_annual",
       "map",
+      1
+    ],
+    [
+      "commodity",
+      "price_ladder_annual",
+      "map",
       2
+    ],
+    [
+      "commodity",
+      "price_ladder_cumulative",
+      "map",
+      1
+    ],
+    [
+      "commodity",
+      "price_method",
+      "str",
+      0
     ],
     [
       "commodity",
