@@ -447,9 +447,19 @@ def _build_bar_figure(
             group_frame = df_sub.columns.to_frame()[expand_axis_level_names].drop_duplicates()
             groups = [tuple(row) for row in group_frame.values]
 
-        # Reverse groups order
+        # Reverse ordering for horizontal bars only.
+        #
+        # In matplotlib horizontal bars, y=0 sits at the bottom of the axes,
+        # so emitting bars in reversed data order places the first data item
+        # at the top of the plot (natural top-to-bottom reading order). For
+        # vertical bars, x=0 sits at the left, so we want the natural data
+        # order (first period on the left → left-to-right reading order).
+        reverse_order = bar_orientation == 'horizontal'
+
+        # Reverse groups order (horizontal only — see comment above)
         if expand_axis_levels:
-            groups = groups[::-1]
+            if reverse_order:
+                groups = groups[::-1]
         else:
             group_labels = []
 
@@ -458,14 +468,16 @@ def _build_bar_figure(
             subplot_bar_labels = df_sub.index.map(lambda x: ' | '.join(map(str, x))).to_list()
         else:
             subplot_bar_labels = df_sub.index.astype(str).tolist()
-        # Reverse to match the reversed groups order
-        subplot_bar_labels = subplot_bar_labels[::-1]
+        # Reverse to match the reversed groups order (horizontal only)
+        if reverse_order:
+            subplot_bar_labels = subplot_bar_labels[::-1]
 
         # Build list of all bars (for y-axis positioning).
         # Zero pruning already done on df_sub above (if skip_data_with_only_zeroes).
+        index_order = df_sub.index[::-1] if reverse_order else df_sub.index
         all_bars = []
         if not expand_axis_levels:
-            for idx_val in df_sub.index[::-1]:
+            for idx_val in index_order:
                 all_bars.append([None, idx_val])
         else:
             groups_with_bars: list[tuple] = []  # (group, [row_items])
@@ -487,10 +499,10 @@ def _build_bar_figure(
                 # Per-group row filtering
                 if skip_data_with_only_zeroes:
                     has_data = (df_group.abs() > 1e-6).any(axis=1)
-                    row_items = [v for v in df_sub.index[::-1]
+                    row_items = [v for v in index_order
                                  if v in has_data.index and has_data.loc[v]]
                 else:
-                    row_items = [v for v in df_sub.index[::-1]
+                    row_items = [v for v in index_order
                                  if v in df_group.index]
                 if row_items:
                     groups_with_bars.append((group, row_items))

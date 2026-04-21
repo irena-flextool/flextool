@@ -289,6 +289,127 @@ class TestPlotDictOfDataframes:
 
 
 # ---------------------------------------------------------------------------
+# Tests for period ordering on bar axis (horizontal vs vertical)
+# ---------------------------------------------------------------------------
+
+class TestPeriodOrdering:
+    """Verify that p-variant bar plots render periods in reading order.
+
+    Horizontal bars: first period at the top (highest y-position).
+    Vertical bars: first period at the left (lowest x-position).
+    """
+
+    @staticmethod
+    def _period_df(periods: list[str]) -> pd.DataFrame:
+        return pd.DataFrame(
+            {"value": list(range(1, len(periods) + 1))},
+            index=pd.Index(periods, name="period"),
+        )
+
+    def test_horizontal_periods_top_to_bottom(self):
+        from flextool.plot_outputs.plot_bars import build_bar_figures
+
+        periods = ["y2019", "y2020", "y2030", "y2040", "y2050"]
+        df = self._period_df(periods)
+        figs, _ = build_bar_figures(
+            df, "test", "",
+            stack_levels=[], expand_axis_levels=[],
+            bar_orientation="horizontal", base_bar_length=4,
+        )
+        ax = figs[0][1].axes[0]
+        pairs = sorted(
+            zip([t.get_text() for t in ax.get_yticklabels()], ax.get_yticks()),
+            key=lambda x: -x[1],
+        )
+        ordered_labels = [lbl for lbl, _ in pairs]
+        assert ordered_labels == periods
+
+    def test_vertical_periods_left_to_right(self):
+        from flextool.plot_outputs.plot_bars import build_bar_figures
+
+        periods = ["y2019", "y2020", "y2030", "y2040", "y2050"]
+        df = self._period_df(periods)
+        figs, _ = build_bar_figures(
+            df, "test", "",
+            stack_levels=[], expand_axis_levels=[],
+            bar_orientation="vertical", base_bar_length=4,
+        )
+        ax = figs[0][1].axes[0]
+        pairs = sorted(
+            zip([t.get_text() for t in ax.get_xticklabels()], ax.get_xticks()),
+            key=lambda x: x[1],
+        )
+        ordered_labels = [lbl for lbl, _ in pairs]
+        assert ordered_labels == periods
+
+    def test_vertical_expand_axis_groups_left_to_right(self):
+        """Groups should be placed left-to-right; periods within each group
+        should also be left-to-right."""
+        from flextool.plot_outputs.plot_bars import build_bar_figures
+
+        periods = ["y2019", "y2020", "y2030"]
+        cols = pd.MultiIndex.from_product(
+            [["scA", "scB"], ["e1", "e2"]], names=["scen", "item"],
+        )
+        df = pd.DataFrame(
+            np.arange(12).reshape(3, 4) + 1.0,
+            index=pd.Index(periods, name="period"),
+            columns=cols,
+        )
+        figs, _ = build_bar_figures(
+            df, "test", "",
+            stack_levels=[1], expand_axis_levels=[0],
+            bar_orientation="vertical", base_bar_length=4,
+        )
+        ax = figs[0][1].axes[0]
+        # Tick labels in ascending x order
+        pairs = sorted(
+            zip([t.get_text() for t in ax.get_xticklabels()], ax.get_xticks()),
+            key=lambda x: x[1],
+        )
+        ordered_labels = [lbl for lbl, _ in pairs]
+        # Two groups × three periods in natural order
+        assert ordered_labels == periods + periods
+        # Group annotations: scA should be at smaller x than scB
+        group_x = {}
+        for child in ax.get_children():
+            if hasattr(child, "get_text") and child.get_text() in ("scA", "scB"):
+                group_x[child.get_text()] = child.xy[0]
+        assert group_x["scA"] < group_x["scB"]
+
+    def test_horizontal_expand_axis_groups_top_to_bottom(self):
+        from flextool.plot_outputs.plot_bars import build_bar_figures
+
+        periods = ["y2019", "y2020", "y2030"]
+        cols = pd.MultiIndex.from_product(
+            [["scA", "scB"], ["e1", "e2"]], names=["scen", "item"],
+        )
+        df = pd.DataFrame(
+            np.arange(12).reshape(3, 4) + 1.0,
+            index=pd.Index(periods, name="period"),
+            columns=cols,
+        )
+        figs, _ = build_bar_figures(
+            df, "test", "",
+            stack_levels=[1], expand_axis_levels=[0],
+            bar_orientation="horizontal", base_bar_length=4,
+        )
+        ax = figs[0][1].axes[0]
+        pairs = sorted(
+            zip([t.get_text() for t in ax.get_yticklabels()], ax.get_yticks()),
+            key=lambda x: -x[1],
+        )
+        ordered_labels = [lbl for lbl, _ in pairs]
+        assert ordered_labels == periods + periods
+        group_y = {}
+        for child in ax.get_children():
+            if hasattr(child, "get_text") and child.get_text() in ("scA", "scB"):
+                group_y[child.get_text()] = child.xy[1]
+        # In horizontal bars, first group should be on top → higher y
+        assert group_y["scA"] > group_y["scB"]
+
+
+# ---------------------------------------------------------------------------
 # Tests for PlotPlan save/load roundtrip
 # ---------------------------------------------------------------------------
 
