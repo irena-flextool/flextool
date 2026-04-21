@@ -270,8 +270,9 @@ def nodeGroup_flows(par, s, v, r, debug):
     and inflow are already MWh/step, but the v_flow-derived columns
     (unit/connection flows, internal losses) are MW.  We multiply the
     latter by step_duration at assignment so every column is MWh/step at
-    the timestep level — then the period-level groupby-sum is correct
-    MWh for any step_duration.
+    the timestep level.  The period-level output (nodeGroup_flows_d_gpe)
+    is then divided by complete_period_share_of_year so it reports
+    annualized MWh, matching node_d_ep and nodeGroup_flows_d_g.
     """
 
     results = []
@@ -417,8 +418,9 @@ def nodeGroup_flows(par, s, v, r, debug):
     # Return timestep results
     results.append((result_multi_dt, 'nodeGroup_flows_dt_gpe'))
 
-    # Aggregate to period level
+    # Aggregate to period level and annualize to match node_d_ep convention
     result_multi_d = result_multi_dt.groupby(level='period').sum()
+    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
 
     # Return period results
     results.append((result_multi_d, 'nodeGroup_flows_d_gpe'))
