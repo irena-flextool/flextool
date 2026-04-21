@@ -1381,45 +1381,217 @@ def _write_process_method(
             writer.writerow([p])
 
 
-def _write_commodity_ladder(db, wf: Path, logger: logging.Logger) -> None:
-    """Serialize commodity.price_ladder (2d_map tier -> {price, quantity})
-    into a tidy ``input/commodity_ladder.csv`` with one row per tier.
+def _tier_sort_key(t: str) -> tuple[int, str]:
+    """Stable sort by integer tier when possible, else by string."""
+    try:
+        return (0, f"{int(t):020d}")
+    except ValueError:
+        return (1, t)
 
-    The nested Spine map shape produced by the GUI is
-    ``Map(tier -> Map("price"/"quantity" -> float))``.  Without a custom
-    writer, write_parameter would emit four columns (commodity, tier,
-    facet, value) which the mod-side reader can't easily consume.  Here
-    we collapse the two facets into two columns so the GMPL reader gets
-    ``commodity,tier,price,quantity``.
+
+def _quantity_sentinel(quantity: str) -> str:
+    """GMPL's CSV reader rejects 'inf'/'Infinity'.  Convert user-facing
+    infinite quantities into the 1e30 sentinel the mod interprets as the
+    unbounded tail tier (see ladder_tier_cap_infinite_cum / _ann)."""
+    try:
+        q_float = float(quantity)
+    except ValueError:
+        q_float = float("inf")
+    if q_float == float("inf") or q_float >= 1e30:
+        return "1e30"
+    return quantity
+
+
+def _get_commodity_price_methods(db) -> dict[str, str]:
+    """Return ``{commodity: price_method}`` for every commodity whose
+    ``price_method`` is set.  Commodities without the param default to
+    ``'price'`` in the mod (and do not appear here).
     """
-    filepath = wf / "input" / "commodity_ladder.csv"
+    out: dict[str, str] = {}
+    for pv in db.find_parameter_values(
+        entity_class_name="commodity",
+        parameter_definition_name="price_method",
+    ):
+        if pv["type"] is None:
+            continue
+        out[pv["entity_byname"][0]] = str(pv["parsed_value"])
+    return out
+
+
+def _collect_periods(db, wf: Path) -> list[str]:
+    """Return the model's period list (for 1d-map → per-period expansion
+    of ``price_ladder_annual``).
+
+    Reads the periods from ``input/periods_available.csv`` which
+    ``write_parameter`` already emitted for the ``model.periods_available``
+    parameter.  Falls back to scanning ``model.periods_available`` values
+    from the DB if the CSV is empty (e.g. when periods come exclusively
+    from ``period_timeset``).  Periods from ``period_timeset`` are not
+    available at writer-run time, so when the CSV is empty and no
+    ``periods_available`` is set we return an empty list — the annual
+    writer then emits no rows for 1d ladders (and the preflight already
+    caught the "price_ladder_annual set but empty" case).
+    """
+    periods: list[str] = []
+    seen: set[str] = set()
+    csv_path = wf / "input" / "periods_available.csv"
+    if csv_path.exists():
+        with open(csv_path) as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            for row in reader:
+                if not row:
+                    continue
+                # File layout: "model,period_from_model"; take column 1.
+                p = row[-1].strip()
+                if p and p not in seen:
+                    periods.append(p)
+                    seen.add(p)
+    if periods:
+        return periods
+    # Fallback 1: pull periods_available direct from the DB as a map /
+    # array.  Values are period names.
+    for pv in db.find_parameter_values(
+        entity_class_name="model",
+        parameter_definition_name="periods_available",
+    ):
+        if pv["type"] is None:
+            continue
+        val = pv["parsed_value"]
+        try:
+            flat = api.convert_map_to_table(val)
+        except Exception:
+            flat = []
+        for entry in flat:
+            for c in (str(x) for x in entry):
+                if c and c not in seen:
+                    periods.append(c)
+                    seen.add(c)
+    if periods:
+        return periods
+    # Fallback 2: scan solve.period_timeset map indexes.  For typical
+    # test setups this is where periods live.
+    for pv in db.find_parameter_values(
+        entity_class_name="solve",
+        parameter_definition_name="period_timeset",
+    ):
+        if pv["type"] is None:
+            continue
+        val = pv["parsed_value"]
+        try:
+            flat = api.convert_map_to_table(val)
+        except Exception:
+            flat = []
+        for entry in flat:
+            # Row layout: [period, timeset] for a simple Map.
+            if len(entry) >= 1:
+                p = str(entry[0])
+                if p and p not in seen:
+                    periods.append(p)
+                    seen.add(p)
+    return periods
+
+
+def _validate_ladder_methods(db, logger: logging.Logger) -> None:
+    """Raise FlexToolConfigError if any commodity declares a ladder
+    ``price_method`` but does not have the corresponding ladder parameter
+    set.  Runs before the ladder writers so errors name the offending
+    commodity and expected parameter.
+    """
+    methods = _get_commodity_price_methods(db)
+    ladder_methods = {"price_ladder_annual", "price_ladder_cumulative"}
+    commodities_needing_ladder = {
+        c: m for c, m in methods.items() if m in ladder_methods
+    }
+    if not commodities_needing_ladder:
+        return
+
+    # Collect commodities that HAVE each ladder param (non-None, non-empty).
+    have_cumulative: set[str] = set()
+    have_annual: set[str] = set()
+    for pv in db.find_parameter_values(
+        entity_class_name="commodity",
+        parameter_definition_name="price_ladder_cumulative",
+    ):
+        if pv["type"] is None:
+            continue
+        have_cumulative.add(pv["entity_byname"][0])
+    for pv in db.find_parameter_values(
+        entity_class_name="commodity",
+        parameter_definition_name="price_ladder_annual",
+    ):
+        if pv["type"] is None:
+            continue
+        have_annual.add(pv["entity_byname"][0])
+
+    for commodity, method in commodities_needing_ladder.items():
+        expected_param = method  # parameter name matches method name
+        if method == "price_ladder_cumulative" and commodity not in have_cumulative:
+            raise FlexToolConfigError(
+                f"commodity '{commodity}' has "
+                f"price_method='price_ladder_cumulative' but no "
+                f"'{expected_param}' value is set.  Add a "
+                f"Map(tier -> {{price, quantity}}) on that parameter."
+            )
+        if method == "price_ladder_annual" and commodity not in have_annual:
+            raise FlexToolConfigError(
+                f"commodity '{commodity}' has "
+                f"price_method='price_ladder_annual' but no "
+                f"'{expected_param}' value is set.  Add either a 1d "
+                f"Map(tier -> {{price, quantity}}) or a 2d "
+                f"Map(tier -> Map(period -> {{price, quantity}}))."
+            )
+
+
+def _iter_flat_ladder_rows(
+    value,
+    commodity: str,
+    logger: logging.Logger,
+) -> list[list]:
+    """Flatten a Spine map ladder value.  Returns the raw list-of-lists
+    from ``convert_map_to_table`` or an empty list on failure.
+    """
+    try:
+        return api.convert_map_to_table(value)
+    except Exception as exc:
+        logger.warning(
+            "Could not flatten ladder for commodity '%s': %s",
+            commodity, exc,
+        )
+        return []
+
+
+def _write_commodity_ladder_cumulative(
+    db, wf: Path, logger: logging.Logger,
+) -> None:
+    """Emit ``input/commodity_ladder_cumulative.csv`` with columns
+    ``commodity, tier, price, quantity`` — one row per (commodity, tier).
+
+    Only the ``commodity.price_ladder_cumulative`` parameter is consulted
+    (always a 1d map: ``Map(tier -> {price, quantity})``).  The ``price_method``
+    filter happens mod-side via the ``commodity_with_ladder_cumulative`` set.
+    """
+    filepath = wf / "input" / "commodity_ladder_cumulative.csv"
     rows: list[tuple[str, int, str, str]] = []
 
     for pv in db.find_parameter_values(
-        entity_class_name="commodity", parameter_definition_name="price_ladder"
+        entity_class_name="commodity",
+        parameter_definition_name="price_ladder_cumulative",
     ):
         if pv["type"] is None:
             continue
         if pv["type"] != "map":
             logger.warning(
-                "commodity.price_ladder on '%s' is of type %s (expected nested map); skipping.",
+                "commodity.price_ladder_cumulative on '%s' has type %s "
+                "(expected nested 1d map); skipping.",
                 pv["entity_byname"][0], pv["type"],
             )
             continue
         commodity = pv["entity_byname"][0]
-        value = pv["parsed_value"]
-        # Expected shape: outer indexes are tiers (1-based int); each inner
-        # value is a Map with keys 'price' and 'quantity'.
-        try:
-            flat = api.convert_map_to_table(value)
-        except Exception as exc:
-            logger.warning(
-                "Could not flatten price_ladder for commodity '%s': %s", commodity, exc,
-            )
-            continue
+        flat = _iter_flat_ladder_rows(pv["parsed_value"], commodity, logger)
         per_tier: dict[str, dict[str, str]] = {}
         for entry in flat:
-            # ``convert_map_to_table`` returns a list of [outer_idx, inner_idx, ..., value].
+            # Expected layout: [tier_idx, facet, value] (length 3).
             if len(entry) < 3:
                 continue
             tier_str = str(entry[0])
@@ -1427,31 +1599,16 @@ def _write_commodity_ladder(db, wf: Path, logger: logging.Logger) -> None:
             val = entry[-1]
             per_tier.setdefault(tier_str, {})[facet] = str(val)
 
-        def _tier_sort_key(t: str) -> tuple[int, str]:
-            try:
-                return (0, f"{int(t):020d}")
-            except ValueError:
-                return (1, t)
-
         for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
             facets = per_tier[tier_str]
             price = facets.get("price", "0")
-            quantity = facets.get("quantity", "inf")
-            # GMPL's CSV reader rejects 'inf'/'Infinity' literals.  Emit a
-            # large numeric sentinel that the mod treats as the infinite
-            # tier (see ladder_tier_cap_infinite in flextool.mod which
-            # pattern-matches on quantity >= INFINITE_TIER_THRESHOLD).
-            try:
-                q_float = float(quantity)
-            except ValueError:
-                q_float = float("inf")
-            if q_float == float("inf") or q_float >= 1e30:
-                quantity = "1e30"
+            quantity = _quantity_sentinel(facets.get("quantity", "inf"))
             try:
                 tier_int = int(tier_str)
             except ValueError:
                 logger.warning(
-                    "commodity.price_ladder tier index on '%s' is not an integer ('%s'); skipping tier.",
+                    "commodity.price_ladder_cumulative tier on '%s' is not "
+                    "an integer ('%s'); skipping tier.",
                     commodity, tier_str,
                 )
                 continue
@@ -1460,6 +1617,134 @@ def _write_commodity_ladder(db, wf: Path, logger: logging.Logger) -> None:
     with open(filepath, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["commodity", "tier", "price", "quantity"])
+        for row in rows:
+            writer.writerow(row)
+
+
+def _write_commodity_ladder_annual(
+    db, wf: Path, logger: logging.Logger,
+) -> None:
+    """Emit ``input/commodity_ladder_annual.csv`` with columns
+    ``commodity, tier, period, price, quantity`` — one row per
+    (commodity, tier, period).
+
+    Reads ``commodity.price_ladder_annual``.  Auto-detects the map depth:
+
+    * 1d form: ``Map(tier -> {price, quantity})`` — the same (price,
+      quantity) is expanded across every model period.
+    * 2d form: ``Map(tier -> Map(period -> {price, quantity}))`` —
+      per-period rows are kept as-is.
+    """
+    filepath = wf / "input" / "commodity_ladder_annual.csv"
+    rows: list[tuple[str, int, str, str, str]] = []
+    periods_cache: list[str] | None = None
+
+    for pv in db.find_parameter_values(
+        entity_class_name="commodity",
+        parameter_definition_name="price_ladder_annual",
+    ):
+        if pv["type"] is None:
+            continue
+        if pv["type"] != "map":
+            logger.warning(
+                "commodity.price_ladder_annual on '%s' has type %s "
+                "(expected nested map); skipping.",
+                pv["entity_byname"][0], pv["type"],
+            )
+            continue
+        commodity = pv["entity_byname"][0]
+        flat = _iter_flat_ladder_rows(pv["parsed_value"], commodity, logger)
+        if not flat:
+            continue
+
+        # Depth detection via the flat table row length:
+        #   1d: [tier, facet, value]                 → len 3
+        #   2d: [tier, period, facet, value]         → len 4
+        max_len = max((len(row) for row in flat), default=0)
+        if max_len == 3:
+            # 1d → expand across all model periods.
+            per_tier: dict[str, dict[str, str]] = {}
+            for entry in flat:
+                if len(entry) < 3:
+                    continue
+                tier_str = str(entry[0])
+                facet = str(entry[1])
+                val = entry[-1]
+                per_tier.setdefault(tier_str, {})[facet] = str(val)
+            if periods_cache is None:
+                periods_cache = _collect_periods(db, wf)
+            if not periods_cache:
+                logger.warning(
+                    "commodity.price_ladder_annual on '%s' is 1d but no "
+                    "model periods were available for expansion; "
+                    "skipping.", commodity,
+                )
+                continue
+            for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
+                facets = per_tier[tier_str]
+                price = facets.get("price", "0")
+                quantity = _quantity_sentinel(facets.get("quantity", "inf"))
+                try:
+                    tier_int = int(tier_str)
+                except ValueError:
+                    logger.warning(
+                        "commodity.price_ladder_annual tier on '%s' is not "
+                        "an integer ('%s'); skipping tier.",
+                        commodity, tier_str,
+                    )
+                    continue
+                for period in periods_cache:
+                    rows.append(
+                        (commodity, tier_int, period, price, quantity)
+                    )
+        elif max_len >= 4:
+            # 2d → per-period.  Row layout [tier, period, facet, value].
+            per_tier_period: dict[tuple[str, str], dict[str, str]] = {}
+            for entry in flat:
+                if len(entry) < 4:
+                    continue
+                tier_str = str(entry[0])
+                period = str(entry[1])
+                facet = str(entry[2])
+                val = entry[-1]
+                per_tier_period.setdefault(
+                    (tier_str, period), {}
+                )[facet] = str(val)
+
+            def _sort_key(k: tuple[str, str]) -> tuple:
+                return (_tier_sort_key(k[0]), k[1])
+
+            for (tier_str, period) in sorted(
+                per_tier_period.keys(), key=_sort_key,
+            ):
+                facets = per_tier_period[(tier_str, period)]
+                price = facets.get("price", "0")
+                quantity = _quantity_sentinel(facets.get("quantity", "inf"))
+                try:
+                    tier_int = int(tier_str)
+                except ValueError:
+                    logger.warning(
+                        "commodity.price_ladder_annual tier on '%s' is not "
+                        "an integer ('%s'); skipping tier.",
+                        commodity, tier_str,
+                    )
+                    continue
+                rows.append(
+                    (commodity, tier_int, period, price, quantity)
+                )
+        else:
+            logger.warning(
+                "commodity.price_ladder_annual on '%s' has unexpected "
+                "flattened shape (max row length %d); skipping.",
+                commodity, max_len,
+            )
+            continue
+
+    with open(filepath, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            ["commodity", "tier", "period", "price", "quantity"]
+        )
         for row in rows:
             writer.writerow(row)
 
@@ -1496,7 +1781,9 @@ def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Lo
 
         ct_method_overrides = _write_dc_power_flow_data(db, wf, logger)
         _write_process_method(db, wf, logger, ct_method_overrides=ct_method_overrides)
-        _write_commodity_ladder(db, wf, logger)
+        _validate_ladder_methods(db, logger)
+        _write_commodity_ladder_cumulative(db, wf, logger)
+        _write_commodity_ladder_annual(db, wf, logger)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}

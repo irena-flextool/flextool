@@ -122,7 +122,7 @@ def _add_cumulative_ladder_scenarios(
             parameter_values=[
                 ("commodity", "coal", "price_method",
                     "price_ladder_cumulative", "ladder_cum_on"),
-                ("commodity", "coal", "price_ladder",
+                ("commodity", "coal", "price_ladder_cumulative",
                     price_ladder, "ladder_cum_on"),
                 ("solve", "y2020_2day_dispatch", "solve_mode",
                     "rolling_window", "two_period_rolling"),
@@ -201,7 +201,10 @@ def _add_within_period_rolling_scenarios(
             parameter_values=[
                 ("commodity", "coal", "price_method",
                     ladder_method, alternative_name),
-                ("commodity", "coal", "price_ladder",
+                # Param name mirrors the method: price_ladder_cumulative
+                # or price_ladder_annual (1d form, writer expands across
+                # model periods on the annual side).
+                ("commodity", "coal", ladder_method,
                     price_ladder, alternative_name),
                 # Within-period rolling: half-period jump on a 2-day
                 # (48h) timeset → 2 rolls of 24h each per period.

@@ -84,11 +84,35 @@ def _write_standard_params(
         for c, m in price_methods.items():
             w.writerow([c, m])
 
-    with open(work / "input" / "commodity_ladder.csv", "w", newline="") as f:
+    # Split ladder rows across the two per-method CSVs based on each
+    # commodity's price_method.  Unknown commodities (rare in tests)
+    # default to the cumulative CSV.
+    cum_rows: list[tuple[str, int, float, float]] = []
+    ann_rows: list[tuple[str, int, str, float, float]] = []
+    for c, tier, price, q in ladder_rows:
+        method = price_methods.get(c, "price_ladder_cumulative")
+        if method == "price_ladder_annual":
+            # 1d writer expands across all periods; for unit-test CSVs
+            # seed a single period 'p2020' matching the horizon fixtures.
+            ann_rows.append((c, tier, "p2020", price, q))
+        else:
+            cum_rows.append((c, tier, price, q))
+
+    with open(
+        work / "input" / "commodity_ladder_cumulative.csv", "w", newline="",
+    ) as f:
         w = csv.writer(f)
         w.writerow(["commodity", "tier", "price", "quantity"])
-        for c, tier, price, q in ladder_rows:
+        for c, tier, price, q in cum_rows:
             w.writerow([c, tier, price, q])
+
+    with open(
+        work / "input" / "commodity_ladder_annual.csv", "w", newline="",
+    ) as f:
+        w = csv.writer(f)
+        w.writerow(["commodity", "tier", "period", "price", "quantity"])
+        for c, tier, period, price, q in ann_rows:
+            w.writerow([c, tier, period, price, q])
 
     with open(work / "input" / "p_commodity_unitsize.csv", "w", newline="") as f:
         w = csv.writer(f)

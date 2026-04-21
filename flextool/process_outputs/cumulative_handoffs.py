@@ -143,31 +143,57 @@ def _load_finite_ladder_tiers(
     """Return ``{(commodity, tier): quantity}`` for every ladder tier of
     any ``price_ladder_*`` commodity with a finite cap.
 
-    Infinite tiers (quantity >= 1e29 sentinel) are dropped — they never
-    bind and their accumulator row would contribute nothing.
+    Reads both ``input/commodity_ladder_cumulative.csv`` and
+    ``input/commodity_ladder_annual.csv``.  Infinite tiers (quantity >=
+    1e29 sentinel) are dropped — they never bind and their accumulator
+    row would contribute nothing.  For the annual CSV the quantity can
+    vary per period; we treat a tier as "finite" if ANY period has a
+    finite quantity (the accumulator writer emits per-period rows, and
+    the annual constraint also evaluates per period).
     """
     ladder_commodities = _load_ladder_commodities(work_folder)
     if not ladder_commodities:
         return {}
-    path = work_folder / "input" / "commodity_ladder.csv"
-    if not path.exists():
-        return {}
-    df = pd.read_csv(path)
-    if df.empty:
-        return {}
     out: dict[tuple[str, int], float] = {}
-    for _, row in df.iterrows():
-        c = str(row["commodity"])
-        if c not in ladder_commodities:
-            continue
-        try:
-            tier = int(row["tier"])
-            q = float(row["quantity"])
-        except (ValueError, TypeError):
-            continue
-        if q != q or q >= _INFINITE_TIER_THRESHOLD:  # NaN guard + sentinel
-            continue
-        out[(c, tier)] = q
+
+    cum_path = work_folder / "input" / "commodity_ladder_cumulative.csv"
+    if cum_path.exists():
+        df = pd.read_csv(cum_path)
+        if not df.empty:
+            for _, row in df.iterrows():
+                c = str(row["commodity"])
+                if c not in ladder_commodities:
+                    continue
+                try:
+                    tier = int(row["tier"])
+                    q = float(row["quantity"])
+                except (ValueError, TypeError):
+                    continue
+                if q != q or q >= _INFINITE_TIER_THRESHOLD:
+                    continue
+                out[(c, tier)] = q
+
+    ann_path = work_folder / "input" / "commodity_ladder_annual.csv"
+    if ann_path.exists():
+        df = pd.read_csv(ann_path)
+        if not df.empty:
+            # Per-period rows; keep the minimum finite quantity seen
+            # across periods (structural: any finite period makes the
+            # accumulator relevant for that tier).
+            for _, row in df.iterrows():
+                c = str(row["commodity"])
+                if c not in ladder_commodities:
+                    continue
+                try:
+                    tier = int(row["tier"])
+                    q = float(row["quantity"])
+                except (ValueError, TypeError):
+                    continue
+                if q != q or q >= _INFINITE_TIER_THRESHOLD:
+                    continue
+                key = (c, tier)
+                prev = out.get(key)
+                out[key] = q if prev is None else min(prev, q)
     return out
 
 

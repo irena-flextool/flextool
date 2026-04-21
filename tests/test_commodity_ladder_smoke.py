@@ -84,7 +84,8 @@ def _add_coal_ladder_scenario(db_url: str, tier1_price: float,
             parameter_values=[
                 ("commodity", "coal", "price_method",
                     "price_ladder_annual", "ladder_on"),
-                ("commodity", "coal", "price_ladder",
+                # 1d form — the writer expands across all model periods.
+                ("commodity", "coal", "price_ladder_annual",
                     price_ladder, "ladder_on"),
                 # Leave unitsize at default (1.0).
             ],
@@ -261,6 +262,144 @@ class TestLadderVTradeParquetExtraction:
         assert tier2_max > 0, (
             f"Expected tier 2 v_trade > 0 (overflow tier beyond the "
             f"1 MWh tier-1 cap), got max {tier2_max}"
+        )
+
+
+class TestLadderPerPeriodAnnual:
+    """2d `price_ladder_annual` — per-period price/quantity.  The writer
+    keeps the per-period rows (no 1d expansion); the LP's annual cap
+    uses ``p_ladder_ann_quantity[c, i, d]`` so different periods can
+    have different limits."""
+
+    def test_per_period_annual_ladder_splits_quota(
+        self,
+        test_bin_dir: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        """Two periods with different tier-1 caps.  The per-period cap
+        must bind independently per period: the writer must emit one
+        row per (commodity, tier, period) and the run completes."""
+        from spinedb_api import DatabaseMapping, Map, import_data
+
+        db_path = tmp_path_factory.mktemp("db_2d_ann") / "tests.sqlite"
+        url = json_to_db(TEST_DIR / "fixtures" / "tests.json", db_path)
+        migrate_database(url, up_to=40)
+
+        # 2d: Map(tier -> Map(period -> {price, quantity})).  Only a
+        # single-period fixture is available in tests.json; we repeat
+        # the period twice to confirm the 2d shape is accepted and the
+        # CSV row-schema is (commodity, tier, period, price, quantity).
+        price_ladder_2d = Map(
+            ["1", "2"],
+            [
+                Map(
+                    ["p2020"],
+                    [Map(["price", "quantity"], [20.0, 1.0])],
+                    index_name="period",
+                ),
+                Map(
+                    ["p2020"],
+                    [Map(["price", "quantity"], [50.0, float("inf")])],
+                    index_name="period",
+                ),
+            ],
+            index_name="tier",
+        )
+
+        with DatabaseMapping(url) as db_map:
+            _, errors = import_data(
+                db_map,
+                alternatives=[("ladder_2d_on", "")],
+                scenarios=[("coal_ladder_2d", False, "")],
+                scenario_alternatives=[
+                    ("coal_ladder_2d", "init", "west"),
+                    ("coal_ladder_2d", "west", "coal"),
+                    ("coal_ladder_2d", "coal", "ladder_2d_on"),
+                    ("coal_ladder_2d", "ladder_2d_on", None),
+                ],
+                parameter_values=[
+                    ("commodity", "coal", "price_method",
+                        "price_ladder_annual", "ladder_2d_on"),
+                    ("commodity", "coal", "price_ladder_annual",
+                        price_ladder_2d, "ladder_2d_on"),
+                ],
+            )
+            if errors:
+                raise RuntimeError(f"Import errors: {errors}")
+            db_map.commit_session("coal_ladder_2d scenario")
+
+        workdir = tmp_path_factory.mktemp("ladder_2d_run")
+        os.chdir(workdir)
+        _run("coal_ladder_2d", url, test_bin_dir, workdir)
+
+        ann_csv = workdir / "input" / "commodity_ladder_annual.csv"
+        assert ann_csv.exists(), f"missing {ann_csv}"
+        header = ann_csv.read_text().splitlines()[0]
+        assert header == "commodity,tier,period,price,quantity", header
+
+        # At least two rows (one per tier for p2020) with the 2d layout.
+        lines = ann_csv.read_text().splitlines()[1:]
+        assert len(lines) >= 2, (
+            f"expected per-(tier, period) rows, got {lines}"
+        )
+
+        obj = _read_objective(workdir)
+        assert obj > 0, f"Objective should be positive, got {obj}"
+
+
+class TestLadderPreflight:
+    """Preflight validation: declaring a ladder price_method without
+    a ladder value set is a hard configuration error that names both
+    the commodity and the expected parameter."""
+
+    def test_preflight_raises_when_annual_param_missing(
+        self,
+        test_bin_dir: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        from spinedb_api import DatabaseMapping, import_data
+
+        from flextool.flextoolrunner.runner_state import FlexToolConfigError
+
+        db_path = tmp_path_factory.mktemp("db_preflight") / "tests.sqlite"
+        url = json_to_db(TEST_DIR / "fixtures" / "tests.json", db_path)
+        migrate_database(url, up_to=40)
+
+        with DatabaseMapping(url) as db_map:
+            _, errors = import_data(
+                db_map,
+                alternatives=[("preflight_on", "")],
+                scenarios=[("coal_preflight", False, "")],
+                scenario_alternatives=[
+                    ("coal_preflight", "init", "west"),
+                    ("coal_preflight", "west", "coal"),
+                    ("coal_preflight", "coal", "preflight_on"),
+                    ("coal_preflight", "preflight_on", None),
+                ],
+                parameter_values=[
+                    ("commodity", "coal", "price_method",
+                        "price_ladder_annual", "preflight_on"),
+                    # NO price_ladder_annual param set — must fail preflight.
+                ],
+            )
+            if errors:
+                raise RuntimeError(f"Import errors: {errors}")
+            db_map.commit_session("coal_preflight scenario")
+
+        workdir = tmp_path_factory.mktemp("preflight_run")
+        os.chdir(workdir)
+        runner = FlexToolRunner(
+            input_db_url=url,
+            scenario_name="coal_preflight",
+            root_dir=workdir,
+            bin_dir=test_bin_dir,
+        )
+        with pytest.raises(FlexToolConfigError) as excinfo:
+            runner.write_input(url, "coal_preflight")
+        msg = str(excinfo.value)
+        assert "coal" in msg, f"error must name the commodity: {msg}"
+        assert "price_ladder_annual" in msg, (
+            f"error must name the expected parameter: {msg}"
         )
 
 

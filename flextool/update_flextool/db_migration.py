@@ -687,20 +687,37 @@ def migrate_database(database_path, up_to: int | None = None):
                 db.add_update_item(
                     "parameter_definition",
                     entity_class_name="commodity",
-                    name="price_ladder",
+                    name="price_ladder_cumulative",
+                    parameter_type_list=("map",),
+                    description=(
+                        "Stepped supply curve for "
+                        "price_method='price_ladder_cumulative'.  "
+                        "Structure: Map(tier -> {price, quantity}).  "
+                        "1-based integer tier index.  quantity=inf marks an "
+                        "unbounded tail tier.  Period-agnostic — the cap is "
+                        "a single total across the full model horizon."
+                    ),
+                )
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="commodity",
+                    name="price_ladder_annual",
                     parameter_type_list=("map", "2d_map"),
                     description=(
-                        "Stepped supply curve as an indexed map {tier -> "
-                        "{price: ..., quantity: ...}}.  Tier index is a "
-                        "1-based integer.  quantity=inf marks an unbounded "
-                        "tier.  Only consulted when price_method is "
-                        "'price_ladder_annual' or 'price_ladder_cumulative'."
+                        "Stepped supply curve for "
+                        "price_method='price_ladder_annual'.  Two forms "
+                        "accepted: 1d Map(tier -> {price, quantity}) applies "
+                        "the same limit every period; 2d "
+                        "Map(tier -> Map(period -> {price, quantity})) "
+                        "varies per period.  1-based integer tier.  "
+                        "quantity=inf marks an unbounded tail tier."
                     ),
                 )
                 try:
                     db.commit_session(
-                        "v40: added commodity.price_method, commodity.unitsize "
-                        "and commodity.price_ladder (no LP behaviour yet)"
+                        "v40: added commodity.price_method, commodity.unitsize, "
+                        "commodity.price_ladder_cumulative and "
+                        "commodity.price_ladder_annual (no LP behaviour yet)"
                     )
                 except SpineDBAPIError:
                     pass

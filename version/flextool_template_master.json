@@ -810,10 +810,18 @@
     ],
     [
       "commodity",
-      "price_ladder",
+      "price_ladder_annual",
       null,
       null,
-      "Stepped supply curve as an indexed map {tier -> {price: ..., quantity: ...}}.  Tier index is a 1-based integer.  quantity=inf marks an unbounded tier.  Only consulted when price_method is 'price_ladder_annual' or 'price_ladder_cumulative'.",
+      "Stepped supply curve for price_method='price_ladder_annual'.  Two forms accepted: 1d Map(tier -> {price, quantity}) applies the same limit every period; 2d Map(tier -> Map(period -> {price, quantity})) varies per period.  1-based integer tier.  quantity=inf marks an unbounded tail tier.",
+      null
+    ],
+    [
+      "commodity",
+      "price_ladder_cumulative",
+      null,
+      null,
+      "Stepped supply curve for price_method='price_ladder_cumulative'.  Structure: Map(tier -> {price, quantity}).  1-based integer tier index.  quantity=inf marks an unbounded tail tier.  Period-agnostic — the cap is a single total across the full model horizon.",
       null
     ],
     [
@@ -2582,7 +2590,7 @@
     ],
     [
       "commodity",
-      "price_ladder",
+      "price_ladder_annual",
       "map",
       2
     ],

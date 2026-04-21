@@ -284,10 +284,24 @@ set node_capacity_constraint_prebuilt dimen 2 within {node, constraint};
 set node_state_constraint dimen 2 within {node, constraint};
 set constraint__sense dimen 2 within {constraint, sense};
 set commodity_node dimen 2 within {commodity, node};
-# Tier indices used by the commodity price ladder.  The set is populated
-# by the CSV reader at line ~591 (commodity_ladder.csv); downstream
-# `tier` values are drawn from whatever tiers appear there.
-set commodity__tier dimen 2;
+# Tier indices used by the commodity price ladder.  The sets are split
+# per price_method so the two parameter shapes can be read independently
+# from their own CSVs:
+#   commodity__tier_cum → tiers for price_ladder_cumulative (one price/
+#                         quantity per tier, period-agnostic)
+#   commodity__tier_ann → tiers for price_ladder_annual (price/quantity
+#                         per tier, per period)
+# `tier` is their union — the old single-ladder users of the tier set
+# (e.g. `v_trade {(c,n,d,i) in cndi_ladder}`) still index across both.
+set commodity__tier_cum dimen 2;
+# commodity__tier__period_ann carries the raw (c, tier, period) triples
+# read from commodity_ladder_annual.csv.  The annual tier membership set
+# is derived from it — GMPL dedupes projections via `setof`, so the CSV
+# reader can safely emit multiple rows per (c, tier) without triggering
+# a "duplicate tuple" error.
+set commodity__tier__period_ann dimen 3;
+set commodity__tier_ann := setof {(c, i, d) in commodity__tier__period_ann} (c, i);
+set commodity__tier := commodity__tier_cum union commodity__tier_ann;
 set tier := setof {(c, i) in commodity__tier} (i);
 
 set dt dimen 2 within period_time;
@@ -364,13 +378,20 @@ param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} defaul
 param pt_commodity {c in commodity, commodityTimeParam, time} default 0;
 param p_commodity_price_method {c in commodity} symbolic in price_method, default 'price';
 param p_commodity_unitsize {c in commodity} default 1.0;
-param p_commodity_ladder_price {(c, i) in commodity__tier} default 0;
-# Ladder quantity default is a very large sentinel that the mod treats as
-# "infinite" (see ladder_tier_cap_infinite below and the 1e30 sentinel
-# emitted by flextoolrunner/input_writer._write_commodity_ladder).  GMPL's
-# CSV reader rejects literal 'inf' / 'Infinity', so the Python side writes
-# 1e30 for user-provided +Infinity values and this default matches.
-param p_commodity_ladder_quantity {(c, i) in commodity__tier} default 1e30;
+# Ladder prices and quantities are split per ladder method.  Defaults are
+# a very large sentinel treated as "infinite" (see
+# ladder_tier_cap_infinite_cum / _ann below and the 1e30 sentinel
+# emitted by flextoolrunner/input_writer).
+# GMPL's CSV reader rejects literal 'inf' / 'Infinity', so the Python side
+# writes 1e30 for user-provided +Infinity values and these defaults match.
+param p_ladder_cum_price    {(c, i) in commodity__tier_cum} default 0;
+param p_ladder_cum_quantity {(c, i) in commodity__tier_cum} default 1e30;
+# Annual ladder parameters carry a period dimension — they are read
+# over (commodity, tier, period) triples from commodity_ladder_annual.csv;
+# the writer expands 1d-map inputs across all model periods, so the CSV
+# always has a period column.
+param p_ladder_ann_price    {(c, i) in commodity__tier_ann, d in periodAll} default 0;
+param p_ladder_ann_quantity {(c, i) in commodity__tier_ann, d in periodAll} default 1e30;
 
 # Per-period rolling accumulators for price_ladder_{annual,cumulative} tiers.
 # Rewritten at the end of each rolling solve by the Python cumulative-handoff
@@ -618,7 +639,12 @@ table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_com
 table data IN 'CSV' 'input/pd_commodity.csv' : [commodity, commodityParam, period], pd_commodity;
 table data IN 'CSV' 'input/p_commodity_price_method.csv' : [commodity], p_commodity_price_method;
 table data IN 'CSV' 'input/p_commodity_unitsize.csv' : [commodity], p_commodity_unitsize;
-table data IN 'CSV' 'input/commodity_ladder.csv' : commodity__tier <- [commodity, tier], p_commodity_ladder_price~price, p_commodity_ladder_quantity~quantity;
+table data IN 'CSV' 'input/commodity_ladder_cumulative.csv' : commodity__tier_cum <- [commodity, tier], p_ladder_cum_price~price, p_ladder_cum_quantity~quantity;
+# Annual ladder: the CSV has one row per (commodity, tier, period); read
+# it into the raw triples set and the per-period params together.  The
+# derived commodity__tier_ann set projects out the period dimension via
+# `setof` (see above), avoiding duplicate-tuple errors.
+table data IN 'CSV' 'input/commodity_ladder_annual.csv' : commodity__tier__period_ann <- [commodity, tier, period], p_ladder_ann_price~price, p_ladder_ann_quantity~quantity;
 table data IN 'CSV' 'input/p_group__process.csv' : [group, process, groupParam], p_group__process;
 table data IN 'CSV' 'input/p_group.csv' : [group, groupParam], p_group;
 table data IN 'CSV' 'input/pd_group.csv' : [group, groupParam, period], pd_group;
@@ -1773,19 +1799,19 @@ set group_commodity_node_period_co2_total :=
 		};
 
 # Commodity-ladder index sets.  cnd_ladder lists (commodity, node, period)
-# triples that need period-level v_trade variables; cndi_ladder adds the
-# tier index; ci_ladder_cumulative is the list of (c, i) subject to the
-# horizon-wide cumulative cap.
+# triples that need period-level v_trade variables; cndi_ladder_* adds the
+# tier index, split per ladder method so each reads from its own tier set.
+# cndi_ladder is the union used for v_trade declaration and the
+# per-(c, n, d) balance row.
 set cnd_ladder dimen 3 := {(c, n) in commodity_node, d in period_in_use : c in commodity_with_ladder};
-# cndi_ladder lists (c, n, d, i) quadruples.  The (c2, i) in commodity__tier
-# predicate with c2 == c enforces that i is drawn from the tiers defined
-# for that particular commodity.  Avoid `setof` / reusing `c` in the inner
-# tuple — GMPL rebinds the name and can yield "no value for tier" errors
-# in dependent expressions.
-set cndi_ladder dimen 4
+set cndi_ladder_cum dimen 4
     := {(c, n) in commodity_node, d in period_in_use, i in tier
-        : c in commodity_with_ladder && (c, i) in commodity__tier};
-set ci_ladder_cumulative := {(c, i) in commodity__tier : c in commodity_with_ladder_cumulative};
+        : c in commodity_with_ladder_cumulative && (c, i) in commodity__tier_cum};
+set cndi_ladder_ann dimen 4
+    := {(c, n) in commodity_node, d in period_in_use, i in tier
+        : c in commodity_with_ladder_annual && (c, i) in commodity__tier_ann};
+set cndi_ladder dimen 4 := cndi_ladder_cum union cndi_ladder_ann;
+set ci_ladder_cumulative := {(c, i) in commodity__tier_cum : c in commodity_with_ladder_cumulative};
 
 set process__commodity__node := {p in process, (c, n) in commodity_node : (p, n) in process_source || (p, n) in process_sink};
 
@@ -2273,8 +2299,14 @@ minimize total_cost:
   # ladder uses price_method='price_ladder_annual' with the same price as
   # pdtCommodity['price'] and unitsize=1, the objective contribution is
   # bit-identical to the legacy term.
-  + sum {(c, n, d, i) in cndi_ladder}
-      ( + p_commodity_ladder_price[c, i]
+  + sum {(c, n, d, i) in cndi_ladder_cum}
+      ( + p_ladder_cum_price[c, i]
+          * v_trade[c, n, d, i]
+          * p_commodity_unitsize[c]
+          * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
+      )
+  + sum {(c, n, d, i) in cndi_ladder_ann}
+      ( + p_ladder_ann_price[c, i, d]
           * v_trade[c, n, d, i]
           * p_commodity_unitsize[c]
           * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
@@ -3637,23 +3669,24 @@ s.t. commodity_ladder_balance {(c, n, d) in cnd_ladder} :
 ;
 
 # Rolling-aware ANNUAL tier cap for price_ladder_annual commodities.
-# p_commodity_ladder_quantity is user-provided per-year MWh.  Across a
-# rolling run that partitions one period into several rolls, each roll
-# is allowed its share f_d_k[d] of the annual cap, minus whatever prior
-# rolls already realized into d (p_ladder_cum_realized_mwh[c, i, d]).
+# p_ladder_ann_quantity[c, i, d] is user-provided per-year MWh for
+# period d.  Across a rolling run that partitions one period into several
+# rolls, each roll is allowed its share f_d_k[d] of the annual cap,
+# minus whatever prior rolls already realized into d
+# (p_ladder_cum_realized_mwh[c, i, d]).
 #
 # On a single solve covering all of period d the accumulators are zero
-# and f_d_k[d] = 1.0, reducing the RHS to p_commodity_ladder_quantity —
-# the pre-refactor form bit-for-bit.  When a prior roll overspent within
+# and f_d_k[d] = 1.0, reducing the RHS to p_ladder_ann_quantity — the
+# pre-refactor form bit-for-bit.  When a prior roll overspent within
 # d (cum_realized > f_d_k * cap), the RHS would go negative and LHS >= 0
 # is infeasible; the overspent-override below handles that case.
 s.t. ladder_tier_cap_annual_roll
-    {c in commodity_with_ladder_annual, d in period_in_use, (c, i) in commodity__tier
-     : p_commodity_ladder_quantity[c, i] < 1e29
-       && f_d_k[d] * p_commodity_ladder_quantity[c, i] >= p_ladder_cum_realized_mwh[c, i, d]} :
+    {c in commodity_with_ladder_annual, d in period_in_use, (c, i) in commodity__tier_ann
+     : p_ladder_ann_quantity[c, i, d] < 1e29
+       && f_d_k[d] * p_ladder_ann_quantity[c, i, d] >= p_ladder_cum_realized_mwh[c, i, d]} :
   + sum {(c, n) in commodity_node} v_trade[c, n, d, i] * p_commodity_unitsize[c]
   <=
-  + p_commodity_ladder_quantity[c, i] * f_d_k[d]
+  + p_ladder_ann_quantity[c, i, d] * f_d_k[d]
   - p_ladder_cum_realized_mwh[c, i, d]
 ;
 
@@ -3663,9 +3696,9 @@ s.t. ladder_tier_cap_annual_roll
 # LP feasible.  The filter predicate on the main constraint already
 # ensures these two constraints' activation regions are disjoint.
 s.t. ladder_tier_cap_annual_overspent
-    {c in commodity_with_ladder_annual, (c, n) in commodity_node, d in period_in_use, (c, i) in commodity__tier
-     : p_commodity_ladder_quantity[c, i] < 1e29
-       && f_d_k[d] * p_commodity_ladder_quantity[c, i] < p_ladder_cum_realized_mwh[c, i, d]} :
+    {c in commodity_with_ladder_annual, (c, n) in commodity_node, d in period_in_use, (c, i) in commodity__tier_ann
+     : p_ladder_ann_quantity[c, i, d] < 1e29
+       && f_d_k[d] * p_ladder_ann_quantity[c, i, d] < p_ladder_cum_realized_mwh[c, i, d]} :
   + v_trade[c, n, d, i]
   <=
   + 0
@@ -3684,13 +3717,13 @@ s.t. ladder_tier_cap_annual_overspent
 # period_share derivation in a non-binding regime.
 s.t. ladder_tier_cap_cumulative_roll
     {(c, i) in ci_ladder_cumulative
-     : p_commodity_ladder_quantity[c, i] < 1e29
-       && (sum {d in period_in_use} f_d_k[d]) * p_commodity_ladder_quantity[c, i]
+     : p_ladder_cum_quantity[c, i] < 1e29
+       && (sum {d in period_in_use} f_d_k[d]) * p_ladder_cum_quantity[c, i]
           >= sum {d in periodAll} p_ladder_cum_realized_mwh[c, i, d]} :
   + sum {(c, n) in commodity_node, d in period_in_use}
       v_trade[c, n, d, i] * p_commodity_unitsize[c]
   <=
-  + p_commodity_ladder_quantity[c, i] * (sum {d in period_in_use} f_d_k[d])
+  + p_ladder_cum_quantity[c, i] * (sum {d in period_in_use} f_d_k[d])
   - sum {d in periodAll} p_ladder_cum_realized_mwh[c, i, d]
 ;
 
@@ -3700,27 +3733,33 @@ s.t. ladder_tier_cap_cumulative_roll
 # the cumulative ladder.  The filter predicates keep the main cap and
 # this override on disjoint activation regions.
 s.t. ladder_tier_cap_cumulative_overspent
-    {c in commodity_with_ladder_cumulative, (c, n) in commodity_node, d in period_in_use, (c, i) in commodity__tier
-     : p_commodity_ladder_quantity[c, i] < 1e29
-       && (sum {d2 in period_in_use} f_d_k[d2]) * p_commodity_ladder_quantity[c, i]
+    {c in commodity_with_ladder_cumulative, (c, n) in commodity_node, d in period_in_use, (c, i) in commodity__tier_cum
+     : p_ladder_cum_quantity[c, i] < 1e29
+       && (sum {d2 in period_in_use} f_d_k[d2]) * p_ladder_cum_quantity[c, i]
           < sum {d2 in periodAll} p_ladder_cum_realized_mwh[c, i, d2]} :
   + v_trade[c, n, d, i]
   <=
   + 0
 ;
 
-# Infinite-tier bound.  When a tier has p_commodity_ladder_quantity = +Infinity
-# the variable is otherwise unbounded; cap it with the global
-# p_max_flow_for_unconstrained_variables (MW) times the realized-timeline
-# hours (complete_period_share_of_year[d] * 8760).  That matches the MWh
-# ceiling v_trade * unitsize would naturally hit if all connected processes
-# ran at max_flow through the full timeline.
+# Infinite-tier bound.  When a tier has its quantity parameter set to
+# +Infinity (1e30 sentinel) the variable is otherwise unbounded; cap it
+# with the global p_max_flow_for_unconstrained_variables (MW) times the
+# realized-timeline hours (complete_period_share_of_year[d] * 8760).
+# Split per ladder method so each reads its own quantity parameter.
 # TODO decision #1: a tighter bound based on sum of connected
 # process p_flow_max × p_entity_unitsize would be preferable but requires
 # a commodity__node→process connectivity set that is not precomputed;
 # postponed to a follow-up commit.
-s.t. ladder_tier_cap_infinite {(c, n, d, i) in cndi_ladder
-    : p_commodity_ladder_quantity[c, i] >= 1e29} :
+s.t. ladder_tier_cap_infinite_cum {(c, n, d, i) in cndi_ladder_cum
+    : p_ladder_cum_quantity[c, i] >= 1e29} :
+  + v_trade[c, n, d, i] * p_commodity_unitsize[c]
+  <=
+  + p_unconstrained_flow_cap * 8760 * complete_period_share_of_year[d]
+;
+
+s.t. ladder_tier_cap_infinite_ann {(c, n, d, i) in cndi_ladder_ann
+    : p_ladder_ann_quantity[c, i, d] >= 1e29} :
   + v_trade[c, n, d, i] * p_commodity_unitsize[c]
   <=
   + p_unconstrained_flow_cap * 8760 * complete_period_share_of_year[d]
