@@ -110,11 +110,10 @@ class ResultViewer(tk.Toplevel):
         # Availability manifest for three-level variant display
         self._current_availability: set[tuple[str, str]] = set()
 
-        # Comparison checkbox state
-        self._comp_check_vars: dict[str, tk.BooleanVar] = {}
+        # Comparison tree state — the on-disk set the last regen was
+        # built for may differ from the viewer's current ticks until a
+        # regen is triggered.
         self._comp_needs_regen: bool = False
-        # When armed (via Ctrl-A), next Space toggles all checkboxes as a group
-        self._comp_select_all_armed: bool = False
 
         # Dispatch mode state
         self._dispatch_mappings: DispatchMappings | None = None
@@ -273,7 +272,12 @@ class ResultViewer(tk.Toplevel):
 
         self._scenario_listbox.bind("<<ListboxSelect>>", self._on_scenario_selected)
 
-        # ── Comparison checkbox frame (hidden by default) ────────────
+        # ── Comparison scenarios tree (hidden by default) ────────────
+        # A ttk.Treeview with a check column + name column replaces the
+        # former list of ttk.Checkbuttons so the user gets the familiar
+        # multi-select pattern: click / Shift+Click / Ctrl+Click select
+        # rows, Space smart-toggles check on the whole selection,
+        # Ctrl-A selects every row.
         comp_outer = ttk.Frame(scen_frame)
         comp_outer.grid(row=0, column=0, columnspan=2, sticky="nsew")
         comp_outer.columnconfigure(0, weight=1)
@@ -281,35 +285,29 @@ class ResultViewer(tk.Toplevel):
         comp_outer.grid_remove()  # hidden initially
         self._comp_outer_frame = comp_outer
 
-        comp_canvas = tk.Canvas(comp_outer, highlightthickness=0)
-        comp_canvas.grid(row=0, column=0, sticky="nsew")
+        self._comp_tree = ttk.Treeview(
+            comp_outer,
+            columns=("check", "name"),
+            show="headings",
+            selectmode="extended",
+        )
+        self._comp_tree.heading("check", text="")
+        self._comp_tree.heading("name", text="Scenario")
+        _cw = self._char_width
+        self._comp_tree.column("check", width=_cw * 3, minwidth=_cw * 3, stretch=False)
+        self._comp_tree.column("name", width=_cw * 20, minwidth=_cw * 12, stretch=True)
+        self._comp_tree.grid(row=0, column=0, sticky="nsew")
+
         comp_scroll = ttk.Scrollbar(
-            comp_outer, orient="vertical", command=comp_canvas.yview,
+            comp_outer, orient="vertical", command=self._comp_tree.yview,
         )
         comp_scroll.grid(row=0, column=1, sticky="ns")
-        comp_canvas.configure(yscrollcommand=comp_scroll.set)
+        self._comp_tree.configure(yscrollcommand=comp_scroll.set)
 
-        self._comp_check_frame = ttk.Frame(comp_canvas)
-        self._comp_check_frame_id = comp_canvas.create_window(
-            (0, 0), window=self._comp_check_frame, anchor="nw",
-        )
-        self._comp_canvas = comp_canvas
-
-        def _on_comp_frame_configure(_event: tk.Event) -> None:
-            comp_canvas.configure(scrollregion=comp_canvas.bbox("all"))
-
-        def _on_comp_canvas_configure(event: tk.Event) -> None:
-            comp_canvas.itemconfig(self._comp_check_frame_id, width=event.width)
-
-        self._comp_check_frame.bind("<Configure>", _on_comp_frame_configure)
-        comp_canvas.bind("<Configure>", _on_comp_canvas_configure)
-
-        self._comp_armed_label = ttk.Label(
-            comp_outer,
-            text="All selected — Space toggles all, Esc cancels",
-            anchor="w",
-            padding=(4, 2),
-        )
+        self._comp_tree.bind("<Button-1>", self._on_comp_tree_click)
+        self._comp_tree.bind("<space>", self._on_comp_tree_space)
+        self._comp_tree.bind("<Control-a>", self._on_comp_tree_ctrl_a)
+        self._comp_tree.bind("<Control-A>", self._on_comp_tree_ctrl_a)
 
         # ── Plot tree + variant canvas ───────────────────────────────
         plots_label = ttk.Label(left, text=" Plots [P] ", font=_lf_font)
@@ -1558,8 +1556,24 @@ class ResultViewer(tk.Toplevel):
             elif mode == "dispatch":
                 self._scenario_listbox.configure(selectmode="browse")
                 self._hide_variant_panel()
+                # Make sure a scenario is selected so the dispatch tree
+                # and the first figure can actually render. Coming back
+                # from comparison mode, the listbox may retain no
+                # selection (grid_remove doesn't clear it, but _scan
+                # changes may have emptied it).
+                if (
+                    not self._scenario_listbox.curselection()
+                    and self._scenario_listbox.size() > 0
+                ):
+                    self._scenario_listbox.selection_set(0)
+                    self._scenario_listbox.see(0)
                 # Populate tree with nodeGroups instead of plot entries
                 self._populate_dispatch_tree()
+                # _populate_dispatch_tree's selection_set fires
+                # <<TreeviewSelect>> but the event arrives after the
+                # tree has also processed a clear (empty → first-item)
+                # transition, which can swallow it. Render explicitly.
+                self._render_first_dispatch_figure()
             elif mode == "network":
                 self._scenario_listbox.configure(selectmode="browse")
                 # Clear plot tree
@@ -1596,14 +1610,12 @@ class ResultViewer(tk.Toplevel):
         except (tk.TclError, AttributeError):
             return None
         if self._mode.get() == "comparison":
-            children = [
-                w for w in self._comp_check_frame.winfo_children()
-                if isinstance(w, ttk.Checkbutton)
-            ]
-            if children:
-                children[0].focus_set()
-            else:
-                self._comp_canvas.focus_set()
+            self._comp_tree.focus_set()
+            children = self._comp_tree.get_children()
+            if children and not self._comp_tree.selection():
+                # Select first row for keyboard UX if nothing selected.
+                self._comp_tree.selection_set(children[0])
+                self._comp_tree.focus(children[0])
         else:
             self._scenario_listbox.focus_set()
         return "break"
@@ -1807,8 +1819,11 @@ class ResultViewer(tk.Toplevel):
             checked = self._scan_scenarios()
             if not checked:
                 return
-            for name, var in self._comp_check_vars.items():
-                var.set(name in checked)
+            # Reflect the fallback selection in the tree so the user sees
+            # what will be regenerated.
+            for name in self._comp_tree.get_children():
+                self._set_comp_check(name, name in checked)
+            self._save_comparison_check_state()
 
         needs_regen = self._settings.scenarios_changed
 
@@ -1850,13 +1865,13 @@ class ResultViewer(tk.Toplevel):
         return "break"
 
     def _focus_scenario_listbox(self, _event: tk.Event | None = None) -> str:
-        """Move focus back to the scenario listbox (or checkbox frame in comparison mode)."""
+        """Move focus back to the scenario listbox (or comparison tree in comparison mode)."""
         if self._mode.get() == "comparison":
-            children = self._comp_check_frame.winfo_children()
-            if children:
-                children[0].focus_set()
-            else:
-                self._comp_canvas.focus_set()
+            self._comp_tree.focus_set()
+            children = self._comp_tree.get_children()
+            if children and not self._comp_tree.selection():
+                self._comp_tree.selection_set(children[0])
+                self._comp_tree.focus(children[0])
         else:
             self._scenario_listbox.focus_set()
         return "break"
@@ -2246,17 +2261,37 @@ class ResultViewer(tk.Toplevel):
         break_times = self._load_comparison_break_times()
         plot_name = config.plot_name or variant.full_name
 
-        # Try live plan (cached) or disk plan for instant rendering
+        # Try live plan (cached) or disk plan for instant rendering.
+        # A pre-built plan on disk reflects the *regen* scenario set; if
+        # the user has since unchecked some of those scenarios we can't
+        # reuse it, or the figure will still show the full set. Compute
+        # a live plan from the already-filtered df in that case.
         try:
             from flextool.plot_outputs.plan import (
                 load_plot_plan, build_figure_from_plan, compute_live_plan,
             )
-            plan_key = ("_comparison", variant.result_key, variant.sub_config)
+            plan_key = (
+                "_comparison", variant.result_key, variant.sub_config,
+                tuple(sorted(checked)),
+            )
             if self._live_plan_key == plan_key and self._live_plan is not None:
                 plan = self._live_plan
             else:
                 plan_dir = comp_dir / "plot_plans"
                 plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
+                if plan is not None and checked:
+                    # Validate that the disk plan was built for exactly
+                    # the checked set; otherwise discard and rebuild.
+                    plan_scenarios: set[str] = set()
+                    if (
+                        isinstance(plan.processed_df.columns, pd.MultiIndex)
+                        and 'scenario' in plan.processed_df.columns.names
+                    ):
+                        plan_scenarios = set(
+                            plan.processed_df.columns.get_level_values('scenario').unique()
+                        )
+                    if plan_scenarios != checked:
+                        plan = None
                 if plan is None:
                     plan = compute_live_plan(df, config, plot_name, break_times)
                 self._live_plan = plan
@@ -2323,146 +2358,168 @@ class ResultViewer(tk.Toplevel):
             self._break_times_cache["_comparison"] = None
             return None
 
+    # ------------------------------------------------------------------
+    # Comparison scenarios tree (viewer-mode check state)
+    # ------------------------------------------------------------------
+
+    # Unicode check glyphs — matches the main window's input/executed trees.
+    _COMP_CHECK_ON = "\u25a3"   # ▣
+    _COMP_CHECK_OFF = "\u25a1"  # □
+
     def _get_comparison_scenarios(self) -> list[str]:
         """Return list of checked scenario names for comparison."""
-        return [name for name, var in self._comp_check_vars.items() if var.get()]
+        result: list[str] = []
+        for iid in self._comp_tree.get_children():
+            values = self._comp_tree.item(iid, "values")
+            if values and values[0] == self._COMP_CHECK_ON:
+                result.append(values[1])
+        return result
 
     def _populate_comparison_checkboxes(self) -> None:
-        """Build checkboxes for all available scenarios."""
-        # Clear existing
-        for widget in self._comp_check_frame.winfo_children():
-            widget.destroy()
-        self._comp_check_vars.clear()
+        """Populate the comparison scenarios tree with current check state.
 
-        # Get all scenarios
+        Restores check state in this order:
+
+        1. ``settings.comp_viewer_scenarios`` — the user's last-known ticks
+           inside the viewer (saved on every click / space toggle).
+        2. Otherwise fall back to ``_metadata.json`` (the last-run
+           comparison's scenarios) so a freshly-opened project still
+           reflects what was actually generated.
+        """
+        # Clear existing rows
+        for iid in self._comp_tree.get_children():
+            self._comp_tree.delete(iid)
+
         scenarios = self._scan_scenarios()
+        if not scenarios:
+            return
 
-        # Load currently combined scenarios from _metadata.json
-        import json
-        meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
-        combined_scenarios: set[str] = set()
-        if meta_path.exists():
-            try:
-                with open(meta_path) as f:
-                    combined_scenarios = set(json.load(f).get("scenarios", []))
-            except (json.JSONDecodeError, OSError):
-                pass
+        checked_from_settings = [
+            s for s in self._settings.comp_viewer_scenarios if s in scenarios
+        ]
+        if checked_from_settings:
+            checked_set: set[str] = set(checked_from_settings)
+        else:
+            import json
+            meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
+            checked_set = set()
+            if meta_path.exists():
+                try:
+                    with open(meta_path) as f:
+                        checked_set = set(json.load(f).get("scenarios", []))
+                except (json.JSONDecodeError, OSError):
+                    pass
 
         for name in scenarios:
-            var = tk.BooleanVar(value=(name in combined_scenarios))
-            self._comp_check_vars[name] = var
-            cb = ttk.Checkbutton(
-                self._comp_check_frame, text=name, variable=var,
-                command=self._on_comp_checkbox_changed,
+            glyph = self._COMP_CHECK_ON if name in checked_set else self._COMP_CHECK_OFF
+            self._comp_tree.insert(
+                "", "end", iid=name, values=(glyph, name),
             )
-            cb.pack(fill="x", anchor="w", padx=2, pady=1)
-            cb.bind("<Control-a>", self._on_comp_ctrl_a)
-            cb.bind("<Control-A>", self._on_comp_ctrl_a)
-            cb.bind("<space>", self._on_comp_space)
-            cb.bind("<Key-Up>", self._on_comp_nav_up)
-            cb.bind("<Key-Down>", self._on_comp_nav_down)
-            cb.bind("<Escape>", self._on_comp_escape)
-            cb.bind("<Button-1>", self._on_comp_click_disarm, add="+")
 
-        # Disarm if layout changes leave no checkboxes selected
-        self._disarm_comp_select_all()
+    def _save_comparison_check_state(self) -> None:
+        """Persist the current viewer-comparison check state to settings.
 
-    def _on_comp_checkbox_changed(self) -> None:
-        """Handle comparison checkbox change — filter and replot immediately."""
+        The settings object is shared with the main window (passed into
+        the viewer's constructor), but the main window only persists on
+        its own lifecycle events — we save here so the state survives a
+        viewer crash or mode switch.
+        """
+        self._settings.comp_viewer_scenarios = self._get_comparison_scenarios()
+        try:
+            from flextool.gui.settings_io import save_project_settings
+            save_project_settings(self._project_path, self._settings)
+        except Exception:
+            logger.warning("Could not persist comp_viewer_scenarios", exc_info=True)
+
+    def _set_comp_check(self, name: str, checked: bool) -> None:
+        """Flip the check glyph on one row."""
+        if not self._comp_tree.exists(name):
+            return
+        glyph = self._COMP_CHECK_ON if checked else self._COMP_CHECK_OFF
+        self._comp_tree.set(name, "check", glyph)
+
+    def _on_comp_tree_click(self, event: tk.Event) -> str | None:
+        """Click on the check column toggles just that row.
+
+        Clicks elsewhere fall through to the Treeview's default selection
+        behaviour (single / Shift / Ctrl).
+        """
+        region = self._comp_tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return None
+        column = self._comp_tree.identify_column(event.x)
+        if column != "#1":  # not the check column
+            return None
+        iid = self._comp_tree.identify_row(event.y)
+        if not iid:
+            return None
+        values = self._comp_tree.item(iid, "values")
+        if not values:
+            return None
+        new_checked = values[0] != self._COMP_CHECK_ON
+        self._set_comp_check(iid, new_checked)
+        self._save_comparison_check_state()
+        self._on_comp_check_state_changed()
+        return "break"
+
+    def _on_comp_tree_space(self, _event: tk.Event) -> str:
+        """Space smart-toggles check state across the selected rows.
+
+        If any selected row is unchecked → check all of them.
+        If every selected row is already checked → uncheck all of them.
+        When nothing is selected, operate on every row (so Space after a
+        fresh focus still behaves usefully).
+        """
+        iids = list(self._comp_tree.selection())
+        if not iids:
+            iids = list(self._comp_tree.get_children())
+        if not iids:
+            return "break"
+        any_unchecked = any(
+            self._comp_tree.item(i, "values")[0] != self._COMP_CHECK_ON
+            for i in iids
+        )
+        new_checked = any_unchecked  # check all if any unchecked, else uncheck
+        for i in iids:
+            self._set_comp_check(i, new_checked)
+        self._save_comparison_check_state()
+        self._on_comp_check_state_changed()
+        return "break"
+
+    def _on_comp_tree_ctrl_a(self, _event: tk.Event) -> str:
+        """Ctrl-A selects every row (does not alter check state)."""
+        children = self._comp_tree.get_children()
+        if children:
+            self._comp_tree.selection_set(children)
+            self._comp_tree.focus(children[0])
+        return "break"
+
+    def _on_comp_check_state_changed(self) -> None:
+        """Handle a user-driven comparison check-state change.
+
+        Replaces the old Checkbutton ``command`` callback. Decides whether
+        a regeneration is needed or only a filter/replot.
+        """
         import json
 
-        # Check if we need scenarios not in the combined parquet
         checked = set(self._get_comparison_scenarios())
         meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
+        combined: set[str] = set()
         if meta_path.exists():
             try:
                 with open(meta_path) as f:
                     combined = set(json.load(f).get("scenarios", []))
             except (json.JSONDecodeError, OSError):
-                combined = set()
-        else:
-            combined = set()
+                pass
 
         if checked - combined:
-            # New scenarios not in combined — need regeneration
+            # New scenarios not yet combined — regen.
             self._comp_needs_regen = True
             self._regenerate_comparison(list(checked))
         else:
-            # Subset of combined — just filter and replot
             self._comp_needs_regen = False
             self._clear_figure_cache()
             self._trigger_replot()
-
-    # ------------------------------------------------------------------
-    # Comparison checkbox keyboard helpers
-    # ------------------------------------------------------------------
-
-    def _comp_checkbuttons(self) -> list[ttk.Checkbutton]:
-        return [
-            w for w in self._comp_check_frame.winfo_children()
-            if isinstance(w, ttk.Checkbutton)
-        ]
-
-    def _arm_comp_select_all(self) -> None:
-        self._comp_select_all_armed = True
-        self._comp_armed_label.grid(row=1, column=0, columnspan=2, sticky="ew")
-
-    def _disarm_comp_select_all(self) -> None:
-        self._comp_select_all_armed = False
-        self._comp_armed_label.grid_remove()
-
-    def _on_comp_ctrl_a(self, _event: tk.Event) -> str:
-        """Ctrl-A on a comparison checkbox: arm smart-toggle-all."""
-        self._arm_comp_select_all()
-        return "break"
-
-    def _on_comp_space(self, _event: tk.Event) -> str | None:
-        """Space on a comparison checkbox.
-
-        When armed (after Ctrl-A): smart-toggle all (check all if any
-        unchecked, else uncheck all) and disarm. Otherwise fall through
-        to the default Checkbutton toggle.
-        """
-        if not self._comp_select_all_armed:
-            return None
-        vars_list = list(self._comp_check_vars.values())
-        new_state = any(not v.get() for v in vars_list)
-        for v in vars_list:
-            v.set(new_state)
-        self._disarm_comp_select_all()
-        self._on_comp_checkbox_changed()
-        return "break"
-
-    def _on_comp_nav_up(self, event: tk.Event) -> str:
-        self._disarm_comp_select_all()
-        cbs = self._comp_checkbuttons()
-        try:
-            idx = cbs.index(event.widget)
-        except ValueError:
-            return "break"
-        if idx > 0:
-            cbs[idx - 1].focus_set()
-        return "break"
-
-    def _on_comp_nav_down(self, event: tk.Event) -> str:
-        self._disarm_comp_select_all()
-        cbs = self._comp_checkbuttons()
-        try:
-            idx = cbs.index(event.widget)
-        except ValueError:
-            return "break"
-        if idx < len(cbs) - 1:
-            cbs[idx + 1].focus_set()
-        return "break"
-
-    def _on_comp_escape(self, _event: tk.Event) -> str | None:
-        if self._comp_select_all_armed:
-            self._disarm_comp_select_all()
-            return "break"
-        return None
-
-    def _on_comp_click_disarm(self, _event: tk.Event) -> None:
-        self._disarm_comp_select_all()
 
     def _check_comparison_freshness(self) -> None:
         """Check if comparison parquets match the checkbox selection, regenerate if not."""
@@ -2616,6 +2673,28 @@ class ResultViewer(tk.Toplevel):
         except (json.JSONDecodeError, OSError):
             self._dispatch_metadata_cache = None
             return None
+
+    def _render_first_dispatch_figure(self) -> None:
+        """Render the first dispatch nodeGroup for the selected scenario.
+
+        Called after ``_populate_dispatch_tree`` to guarantee a figure
+        appears on mode entry, since the virtual ``<<TreeviewSelect>>``
+        event from programmatic selection isn't always delivered before
+        the layout settles.
+        """
+        scenarios = self._get_selected_scenarios()
+        if not scenarios:
+            self._plot_canvas.show_message("Select a scenario to view dispatch")
+            return
+        selection = self._plot_tree.selection()
+        if not selection or not selection[0].startswith("dispatch_"):
+            # No node groups in the tree — nothing to render
+            self._plot_canvas.show_message(
+                "No dispatch node groups available for this scenario"
+            )
+            return
+        node_group = selection[0][len("dispatch_"):]
+        self._display_dispatch(scenarios[0], node_group)
 
     def _display_dispatch(self, scenario: str, node_group: str) -> None:
         """Render and display a dispatch plot for a nodeGroup."""

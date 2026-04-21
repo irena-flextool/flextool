@@ -150,21 +150,15 @@ class MainWindow(tk.Tk):
         # Make LabelFrame titles the same font size as everything else
         style.configure("TLabelframe.Label", font=tkfont.nametofont("TkDefaultFont"))
 
-        # Keep the blue highlight on selected rows even when the tree has
-        # lost keyboard focus. Without the explicit "!focus" entry sv-ttk's
-        # theme dims the selection as soon as focus moves to a button or
-        # another widget, which makes the three trees look unselected even
-        # though their selection state is still live.
+        # Make selected rows clearly blue in the focused tree. sv_ttk's
+        # dark theme will dim this to a grey when the tree loses focus;
+        # that's acceptable standard behaviour and is the safer default
+        # than any "!focus" override which sv_ttk can shadow into an
+        # invisible dark tone.
         style.map(
             "Treeview",
-            background=[
-                ("selected", "!focus", "#3874c8"),
-                ("selected", "#3874c8"),
-            ],
-            foreground=[
-                ("selected", "!focus", "#ffffff"),
-                ("selected", "#ffffff"),
-            ],
+            background=[("selected", "#3874c8")],
+            foreground=[("selected", "#ffffff")],
         )
 
         # ── Custom button styles for visual highlighting ──────────
@@ -677,6 +671,12 @@ class MainWindow(tk.Tk):
 
         # ── Window close handler ─────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # When the application is re-activated (Alt-Tab back, un-minimize,
+        # etc.) the ttk selection draws dim until a widget is repainted.
+        # Nudge each tree's selection to force it to re-render with the
+        # focused (blue) colors immediately.
+        self.bind("<FocusIn>", self._on_main_focus_in)
 
         # ── Window sizing: compute from actual widget layout ─────────
         self.update_idletasks()
@@ -2794,6 +2794,29 @@ class MainWindow(tk.Tk):
         for tree in (self.input_sources_tree, self.available_tree, self.executed_tree):
             if tree is not focused and tree.selection():
                 tree.selection_remove(*tree.selection())
+
+    def _on_main_focus_in(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Re-draw tree selections when the root window regains focus.
+
+        ttk draws a Treeview's selection with dim colors while the root
+        window is deactivated (Alt-Tab away, minimize). When the window
+        re-activates, the rows don't automatically repaint until a widget
+        is touched — opening the result viewer happens to do so, which is
+        why the user reported blue coming back only when opening it.
+        Nudging every tree's selection here forces an immediate repaint
+        in the focused-style blue.
+        """
+        # Only respond to the root window's FocusIn, not bubbled events
+        # from child widgets (which would cause redundant repaints).
+        if event.widget is not self:
+            return
+        for tree in (self.input_sources_tree, self.available_tree, self.executed_tree):
+            sel = tree.selection()
+            if sel:
+                # selection_set with the existing selection is a no-op
+                # semantically but forces ttk to invalidate the row
+                # display, which is the repaint we want.
+                tree.selection_set(sel)
 
     def _focus_tree(self, tree: ttk.Treeview) -> None:
         """Give keyboard focus to a treeview, ensuring arrow keys work."""

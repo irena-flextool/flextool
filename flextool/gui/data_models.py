@@ -61,6 +61,11 @@ class ProjectSettings:
     comp_plots_scenarios: list[str] = field(default_factory=list)
     comp_excel_scenarios: list[str] = field(default_factory=list)
 
+    # Scenarios ticked in the result-viewer comparison mode. Distinct from
+    # comp_plots_scenarios (which tracks the last run) because the viewer's
+    # ticks may evolve independently until a regen/plot is triggered.
+    comp_viewer_scenarios: list[str] = field(default_factory=list)
+
     # Persisted checkbox states
     checked_input_sources: list[str] = field(default_factory=list)    # source names
     checked_available_scenarios: list[str] = field(default_factory=list)  # "source_number|name" keys
