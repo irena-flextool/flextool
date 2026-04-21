@@ -49,6 +49,43 @@ def _json_safe(obj: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+#  Time-axis label extraction (shared by planner + loader)
+# ---------------------------------------------------------------------------
+
+def _extract_time_labels(
+    df: pd.DataFrame,
+) -> tuple[list[str], list[str] | None, int]:
+    """Extract x-axis time values and optional period labels from a DataFrame.
+
+    - ``time_values``: last MultiIndex level as strings, or the whole index
+      when the DataFrame has a plain Index.
+    - ``period_labels``: values of a level named (case-insensitive) ``period``
+      or ``solve_period`` when the index is a MultiIndex; otherwise ``None``.
+    - ``max_period_label_len``: longest period label length, or 0 when there
+      are no period labels.
+
+    Mirrors the extraction pattern used in ``_compute_time_plan`` so both the
+    planner and the plan loader agree on how these fields are derived.
+    """
+    period_labels: list[str] | None = None
+    if isinstance(df.index, pd.MultiIndex):
+        time_values = df.index.get_level_values(-1).astype(str).tolist()
+        for lvl_i, name in enumerate(df.index.names[:-1]):
+            if name and str(name).lower() in ('period', 'solve_period'):
+                period_labels = (
+                    df.index.get_level_values(lvl_i).astype(str).tolist()
+                )
+                break
+    else:
+        time_values = df.index.astype(str).tolist()
+    max_len = (
+        max((len(lbl) for lbl in period_labels), default=0)
+        if period_labels else 0
+    )
+    return time_values, period_labels, max_len
+
+
+# ---------------------------------------------------------------------------
 #  PlotPlan dataclass
 # ---------------------------------------------------------------------------
 
@@ -156,9 +193,11 @@ def save_plot_plan(
         'layout_params': _json_safe(plan.layout_params),
         'sub_levels': plan.sub_levels,
         'item_level_names': plan.item_level_names,
-        'time_index_values': plan.time_index_values,
-        'period_labels': plan.period_labels,
-        'max_period_label_len': plan.max_period_label_len,
+        # time_index_values / period_labels / max_period_label_len are
+        # intentionally NOT serialized — ``load_plot_plan`` reconstructs
+        # them from ``processed_df.index`` via ``_extract_time_labels``.
+        # Old JSON files that still carry these keys are accepted on load
+        # so rolling out this change doesn't force a plan regen.
         'subplots_per_row': plan.subplots_per_row,
         'legend_position': plan.legend_position,
         'xlabel': plan.xlabel,
@@ -226,8 +265,29 @@ def load_plot_plan(
             (s[0], s[1]) for s in raw_specs
         ]
 
+        chart_type = meta['chart_type']
+        # Time-axis fields: prefer values carried in old-format JSON (so
+        # rolling out the "don't serialize them" change doesn't force a
+        # plan regen). For new-format JSON, reconstruct from
+        # ``processed_df.index`` — but only for time-based charts. Bar
+        # charts never populate these (matching ``_compute_bar_plan``
+        # semantics), so we leave them at their None/0 defaults.
+        has_legacy_time_fields = (
+            'time_index_values' in meta
+            or 'period_labels' in meta
+            or 'max_period_label_len' in meta
+        )
+        if has_legacy_time_fields or chart_type == 'bar':
+            time_index_values = meta.get('time_index_values')
+            period_labels = meta.get('period_labels')
+            max_period_label_len = meta.get('max_period_label_len', 0)
+        else:
+            time_index_values, period_labels, max_period_label_len = (
+                _extract_time_labels(df)
+            )
+
         plan = PlotPlan(
-            chart_type=meta['chart_type'],
+            chart_type=chart_type,
             plot_name=meta['plot_name'],
             total_file_count=meta['total_file_count'],
             processed_df=df,
@@ -239,9 +299,9 @@ def load_plot_plan(
             layout_params=meta.get('layout_params', {}),
             sub_levels=meta.get('sub_levels', []),
             item_level_names=meta.get('item_level_names', []),
-            time_index_values=meta.get('time_index_values'),
-            period_labels=meta.get('period_labels'),
-            max_period_label_len=meta.get('max_period_label_len', 0),
+            time_index_values=time_index_values,
+            period_labels=period_labels,
+            max_period_label_len=max_period_label_len,
             subplot_y_ranges=[tuple(r) for r in meta.get('subplot_y_ranges', [])],
             subplots_per_row=meta.get('subplots_per_row', 2),
             legend_position=meta.get('legend_position', 'right'),
@@ -592,16 +652,9 @@ def _compute_time_plan(
     # Get x-axis index, and the period label per x-position when the
     # DataFrame has a ``period`` / ``solve_period`` MultiIndex level.
     # The secondary period tick row on the x-axis depends on this being
-    # populated here and carried through the plan.
-    period_labels: list[str] | None = None
-    if isinstance(df_fm.index, pd.MultiIndex):
-        time_index = df_fm.index.get_level_values(-1).astype(str)
-        for lvl_i, name in enumerate(df_fm.index.names[:-1]):
-            if name and str(name).lower() in ('period', 'solve_period'):
-                period_labels = df_fm.index.get_level_values(lvl_i).astype(str).tolist()
-                break
-    else:
-        time_index = df_fm.index.astype(str)
+    # populated here and carried through the plan. Shared helper keeps
+    # this in sync with the loader's reconstruction path.
+    time_values, period_labels, max_period_label_len = _extract_time_labels(df_fm)
 
     # Determine max items
     default_max_items = 10
@@ -737,12 +790,9 @@ def _compute_time_plan(
         layout_params=layout_params,
         sub_levels=fm_subplot_levels,
         item_level_names=item_level_names,
-        time_index_values=time_index.tolist(),
+        time_index_values=time_values,
         period_labels=period_labels,
-        max_period_label_len=(
-            max((len(lbl) for lbl in period_labels), default=0)
-            if period_labels else 0
-        ),
+        max_period_label_len=max_period_label_len,
         subplots_per_row=cfg.subplots_per_row,
         legend_position=cfg.legend,
         xlabel=cfg.xlabel,
