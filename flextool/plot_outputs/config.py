@@ -28,6 +28,7 @@ PLOT_FIELD_NAMES = {
     'axis_tick_format', 'always_include_zero_in_axis', 'skip_data_with_only_zeroes',
     'multiply_by', 'full_timeline', 'subplots_by_magnitudes',
     'variant',  # used by plot_config_reader to override variant letter derivation
+    'color_category', 'color_entity_class',  # color-template hints (chunk D)
 }
 
 
@@ -58,6 +59,10 @@ class PlotConfig:
     multiply_by: float | None = None
     full_timeline: bool = False
     subplots_by_magnitudes: bool = False
+    # Hints for the color-template resolver (see flextool.plot_outputs.color_template).
+    # Default None means "no hint" — fall back to the tab10/tab20 palette as today.
+    color_category: str | None = None
+    color_entity_class: str | None = None
 
 
 def _is_single_config(d: dict) -> bool:

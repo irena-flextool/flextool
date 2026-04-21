@@ -1,0 +1,29 @@
+# Global color template for FlexTool plots.
+#
+# Keys are labels as they appear in plot legends.  Each section is applied
+# only to plots whose entry in templates/default_plots.yaml declares a
+# matching hint:
+#
+#   color_category: <name>       → looked up in the `category` section
+#                                   (exact match on the label string — these
+#                                   are usually parameter / result names).
+#   color_entity_class: <name>   → looked up in the `entity_class` section
+#                                   (case-insensitive match on the label,
+#                                   since entity names can be mixed-case in
+#                                   data but canonical in the template).
+#
+# Values may be either a ``#RRGGBB`` hex string or an ``[r, g, b]`` list.
+# RGB components are accepted as floats in ``0..1`` or ints in ``0..255``.
+#
+# Labels that don't have an entry here fall back to the tab10/tab20
+# matplotlib palette, which is the original behaviour.
+#
+# Sections start empty; real values are filled in subsequent refactor
+# chunks (E = costs, F = node_flows, G = flowGroup entities).
+
+category:
+  costs: {}        # populated in Chunk E
+  node_flows: {}   # populated in Chunk F
+
+entity_class:
+  group: {}        # populated in Chunk G (flowGroup-entity recommended names)

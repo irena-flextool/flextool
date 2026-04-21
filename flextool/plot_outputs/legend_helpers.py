@@ -84,15 +84,58 @@ def _should_show_legend(
     return False
 
 
-def build_shared_color_map(labels: list[str]) -> dict[str, tuple]:
-    """Assign consistent colors from tab10/tab20 to a list of labels.
+def build_shared_color_map(
+    labels: list[str],
+    *,
+    color_template: dict | None = None,
+    category: str | None = None,
+    entity_class: str | None = None,
+) -> dict[str, tuple]:
+    """Assign consistent colors to a list of labels.
 
-    Returns a dict mapping each label string to an (R, G, B) color tuple.
-    The mapping is stable across files when the same *labels* list is passed.
+    Template-matched labels (via ``color_template`` + ``category`` /
+    ``entity_class``) get their explicit color and do **not** consume a
+    palette slot.  Remaining labels get tab10/tab20 colors assigned in
+    input order, so e.g. the first un-templated label always gets
+    ``tab10[0]`` regardless of how many template matches preceded it.
+
+    With no template (the default), this is byte-identical to the
+    previous palette-only behaviour: the palette is picked based on the
+    total label count — tab10 when ≤10, tab20 otherwise — and labels are
+    assigned in input order, cycling if the palette is exhausted.
     """
+    from flextool.plot_outputs.color_template import resolve_label_color
+
     n = len(labels)
-    if n <= 10:
+
+    # First pass: resolve template colors for each label.  None means
+    # "fall back to palette".
+    template_colors: list[tuple | None] = [None] * n
+    palette_needed = n
+    if color_template and (category or entity_class):
+        for i, label in enumerate(labels):
+            c = resolve_label_color(
+                label, color_template, category=category, entity_class=entity_class,
+            )
+            if c is not None:
+                template_colors[i] = c
+                palette_needed -= 1
+
+    # Pick the palette based on how many palette slots we actually need.
+    # For the zero-template case, palette_needed == n, so the behaviour
+    # matches the pre-refactor code exactly.
+    if palette_needed <= 10:
         cmap_colors = plt.colormaps['tab10'].colors
     else:
         cmap_colors = plt.colormaps['tab20'].colors
-    return {label: cmap_colors[i % len(cmap_colors)] for i, label in enumerate(labels)}
+
+    result: dict[str, tuple] = {}
+    palette_idx = 0
+    for i, label in enumerate(labels):
+        tc = template_colors[i]
+        if tc is not None:
+            result[label] = tc
+            continue
+        result[label] = cmap_colors[palette_idx % len(cmap_colors)]
+        palette_idx += 1
+    return result

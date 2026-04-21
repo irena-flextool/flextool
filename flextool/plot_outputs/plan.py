@@ -636,6 +636,7 @@ def _compute_time_plan(
         _get_column_items,
     )
     from flextool.plot_outputs.legend_helpers import build_shared_color_map
+    from flextool.plot_outputs.color_template import load_color_template
     from flextool.plot_outputs.subplot_helpers import _extract_subplot_data
 
     # Determine chart sub-type
@@ -715,7 +716,12 @@ def _compute_time_plan(
                 if label not in all_labels:
                     all_labels.append(label)
         all_labels.sort()
-        shared_color_map = build_shared_color_map(all_labels)
+        shared_color_map = build_shared_color_map(
+            all_labels,
+            color_template=load_color_template(),
+            category=cfg.color_category,
+            entity_class=cfg.color_entity_class,
+        )
 
     # Compute layout
     layout = _compute_line_layout(
@@ -823,6 +829,7 @@ def _compute_bar_plan(
         _get_unique_levels, _extract_subplot_data, _sort_subs,
     )
     from flextool.plot_outputs.legend_helpers import build_shared_color_map, _format_legend_labels
+    from flextool.plot_outputs.color_template import load_color_template
 
     sub_levels = fm_subplot_levels or []
     stack_levels = fm_stack_levels or []
@@ -941,7 +948,12 @@ def _compute_bar_plan(
                 if label not in all_labels:
                     all_labels.append(label)
         all_labels.sort()
-        shared_color_map = build_shared_color_map(all_labels)
+        shared_color_map = build_shared_color_map(
+            all_labels,
+            color_template=load_color_template(),
+            category=cfg.color_category,
+            entity_class=cfg.color_entity_class,
+        )
 
     # Compute layout
     layout = _compute_bar_layout(
