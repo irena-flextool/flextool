@@ -1426,6 +1426,7 @@ rename:
   nodeGroup_inertia_largest_flow_dt_g: [group_inertia_largest_flow__dt, true]
   nodeGroup_gdt_p: [group_node__dt, true]
   nodeGroup_gd_p: [group_node__d, true]
+  flowGroup_gd_p: [group_flow__d, true]
   nodeGroup_VRE_share_d_g: [group_node_VRE_share__dt, true]
   nodeGroup_VRE_share_dt_g: [group_node_VRE_share, true]
   CO2_d_g: [group_CO2__d, true]

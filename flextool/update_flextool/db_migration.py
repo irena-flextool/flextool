@@ -811,6 +811,237 @@ def migrate_database(database_path, up_to: int | None = None):
                     )
                 except SpineDBAPIError:
                     pass
+            elif next_version == 42:
+                # Rename + split of the three group-level output-control
+                # parameters:
+                #   output_node_flows     -> output_nodeGroup_dispatch
+                #   output_aggregate_flows -> flow_aggregator
+                #   output_results        -> output_nodeGroup_indicators
+                #                            + output_flowGroup_indicators
+                #                            (split based on group memberships:
+                #                             group__node -> indicators_node,
+                #                             group__unit__node or
+                #                             group__connection__node ->
+                #                             indicators_flow, both -> both).
+                # The new parameters use the yes_no value list and default to
+                # unset (equivalent to "no").
+                add_value_list_manual(db, [
+                    ["yes_no", "yes"], ["yes_no", "no"]
+                ])
+
+                # 1. Add the four new parameter definitions.  Descriptions
+                #    are minimal here; Agent 3 will enrich them.
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="group",
+                    name="output_nodeGroup_dispatch",
+                    parameter_value_list_name="yes_no",
+                    parameter_type_list=("str",),
+                    description=(
+                        "Creates the timewise flow output for this node "
+                        "group (node-group dispatch table). Renamed from "
+                        "output_node_flows."
+                    ),
+                )
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="group",
+                    name="flow_aggregator",
+                    parameter_value_list_name="yes_no",
+                    parameter_type_list=("str",),
+                    description=(
+                        "Used with group_unit_node or group_connection_node "
+                        "to combine the flows when producing the dispatch "
+                        "output of a node group. Renamed from "
+                        "output_aggregate_flows."
+                    ),
+                )
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="group",
+                    name="output_nodeGroup_indicators",
+                    parameter_value_list_name="yes_no",
+                    parameter_type_list=("str",),
+                    description=(
+                        "Flag to output node-group indicator results for "
+                        "groups whose members are nodes (group__node)."
+                    ),
+                )
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="group",
+                    name="output_flowGroup_indicators",
+                    parameter_value_list_name="yes_no",
+                    parameter_type_list=("str",),
+                    description=(
+                        "Flag to output flow-group indicator results for "
+                        "groups whose members are flows "
+                        "(group__unit__node or group__connection__node)."
+                    ),
+                )
+
+                # 2. Copy values from old parameters to their direct renames.
+                #    output_node_flows     -> output_nodeGroup_dispatch
+                #    output_aggregate_flows -> flow_aggregator
+                rename_map = {
+                    "output_node_flows": "output_nodeGroup_dispatch",
+                    "output_aggregate_flows": "flow_aggregator",
+                }
+                for old_name, new_name in rename_map.items():
+                    existing_new_keys = {
+                        (pv["entity_byname"], pv["alternative_name"])
+                        for pv in db.find_parameter_values(
+                            entity_class_name="group",
+                            parameter_definition_name=new_name,
+                        )
+                    }
+                    for pv in list(db.find_parameter_values(
+                            entity_class_name="group",
+                            parameter_definition_name=old_name)):
+                        key = (pv["entity_byname"], pv["alternative_name"])
+                        if key in existing_new_keys:
+                            continue
+                        db.add_update_item(
+                            "parameter_value",
+                            entity_class_name="group",
+                            entity_byname=pv["entity_byname"],
+                            parameter_definition_name=new_name,
+                            alternative_name=pv["alternative_name"],
+                            value=pv["value"], type=pv["type"],
+                        )
+                        existing_new_keys.add(key)
+
+                # 3. Split output_results into the two new indicator
+                #    parameters based on the group's memberships.
+                #    - group__node members -> output_nodeGroup_indicators
+                #    - group__unit__node or group__connection__node members
+                #      -> output_flowGroup_indicators
+                #    - both kinds present -> both parameters written
+                #    - neither -> drop silently
+                groups_with_node_members: set[tuple] = set()
+                for ent in db.find_entities(entity_class_name="group__node"):
+                    # entity_byname is (group, node)
+                    byname = ent["entity_byname"]
+                    if byname:
+                        groups_with_node_members.add((byname[0],))
+                groups_with_flow_members: set[tuple] = set()
+                for cls in ("group__unit__node", "group__connection__node"):
+                    for ent in db.find_entities(entity_class_name=cls):
+                        byname = ent["entity_byname"]
+                        if byname:
+                            groups_with_flow_members.add((byname[0],))
+
+                existing_node_ind_keys = {
+                    (pv["entity_byname"], pv["alternative_name"])
+                    for pv in db.find_parameter_values(
+                        entity_class_name="group",
+                        parameter_definition_name="output_nodeGroup_indicators",
+                    )
+                }
+                existing_flow_ind_keys = {
+                    (pv["entity_byname"], pv["alternative_name"])
+                    for pv in db.find_parameter_values(
+                        entity_class_name="group",
+                        parameter_definition_name="output_flowGroup_indicators",
+                    )
+                }
+                for pv in list(db.find_parameter_values(
+                        entity_class_name="group",
+                        parameter_definition_name="output_results")):
+                    byname = pv["entity_byname"]
+                    alt = pv["alternative_name"]
+                    has_nodes = byname in groups_with_node_members
+                    has_flows = byname in groups_with_flow_members
+                    if has_nodes and (byname, alt) not in existing_node_ind_keys:
+                        db.add_update_item(
+                            "parameter_value",
+                            entity_class_name="group",
+                            entity_byname=byname,
+                            parameter_definition_name="output_nodeGroup_indicators",
+                            alternative_name=alt,
+                            value=pv["value"], type=pv["type"],
+                        )
+                        existing_node_ind_keys.add((byname, alt))
+                    if has_flows and (byname, alt) not in existing_flow_ind_keys:
+                        db.add_update_item(
+                            "parameter_value",
+                            entity_class_name="group",
+                            entity_byname=byname,
+                            parameter_definition_name="output_flowGroup_indicators",
+                            alternative_name=alt,
+                            value=pv["value"], type=pv["type"],
+                        )
+                        existing_flow_ind_keys.add((byname, alt))
+                    # neither => drop silently (no-op)
+
+                # 4. Remove old parameter definitions (cascades values).
+                remove_parameters_manual(db, [
+                    ["group", "output_node_flows"],
+                    ["group", "output_aggregate_flows"],
+                    ["group", "output_results"],
+                ])
+
+                # 5. Remove old value lists now that nothing references them.
+                for vl_name in ("output_node_flows", "output_results"):
+                    vl = db.item(
+                        db.mapped_table("parameter_value_list"), name=vl_name,
+                    )
+                    if vl:
+                        try:
+                            db.remove_items("parameter_value_list", vl["id"])
+                        except SpineDBAPIError:
+                            pass
+
+                try:
+                    db.commit_session(
+                        "v42: renamed output_node_flows -> "
+                        "output_nodeGroup_dispatch, output_aggregate_flows "
+                        "-> flow_aggregator; split output_results into "
+                        "output_nodeGroup_indicators + "
+                        "output_flowGroup_indicators based on group "
+                        "memberships"
+                    )
+                except SpineDBAPIError:
+                    pass
+            elif next_version == 43:
+                # Parameter-group metadata foothold.  Create an "Outputs"
+                # parameter_group and tag the four group-level output
+                # parameters with it.  Spine's parameter_definition table
+                # carries an optional parameter_group_name slot (the 6th
+                # slot in the export 6-tuple) that FlexTool has never
+                # populated.  This migration is a deliberately narrow
+                # foothold: future parameter additions should categorise
+                # themselves using the same mechanism (see
+                # docs/reference.md, "Parameter groups (metadata)").
+                db.add_update_item(
+                    "parameter_group",
+                    name="Outputs",
+                    color="a6cee3",  # light blue, 6-hex-digit, no '#'
+                    priority=10,
+                )
+                for param_name in (
+                    "output_nodeGroup_dispatch",
+                    "output_nodeGroup_indicators",
+                    "output_flowGroup_indicators",
+                    "flow_aggregator",
+                ):
+                    db.add_update_item(
+                        "parameter_definition",
+                        entity_class_name="group",
+                        name=param_name,
+                        parameter_group_name="Outputs",
+                    )
+                try:
+                    db.commit_session(
+                        "v43: added 'Outputs' parameter_group and tagged "
+                        "the four group-level output parameters "
+                        "(output_nodeGroup_dispatch, "
+                        "output_nodeGroup_indicators, "
+                        "output_flowGroup_indicators, flow_aggregator) "
+                        "with it"
+                    )
+                except SpineDBAPIError:
+                    pass
             else:
                 print("Version invalid")
             next_version += 1
@@ -1051,9 +1282,10 @@ def get_parameter_type_list_v23():
              ["group", "min_cumulative_flow", ("float","1d_map")],
              ["group", "min_instant_flow", ("float","1d_map")],
              ["group", "non_synchronous_limit", ("float","1d_map")],
-             ["group", "output_aggregate_flows",  ("str",)],
-             ["group", "output_node_flows", ("str",)],
-             ["group", "output_results", ("str",)],
+             ["group", "flow_aggregator",  ("str",)],
+             ["group", "output_nodeGroup_dispatch", ("str",)],
+             ["group", "output_nodeGroup_indicators", ("str",)],
+             ["group", "output_flowGroup_indicators", ("str",)],
              ["group", "penalty_capacity_margin", ("float","1d_map")],
              ["group", "penalty_inertia", ("float","1d_map")],
              ["group", "penalty_non_synchronous", ("float","1d_map")],

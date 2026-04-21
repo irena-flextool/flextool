@@ -382,11 +382,19 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 
 ### Controlling outputs
 
-Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.
+Four group-level flags drive the extra outputs computed from a `group`. Each has a specific intent and requires a matching membership class on the group; setting the flag without the right members yields an empty result (the runner will log a warning).
 
-- `output_results` - A flag to output aggregated results for the group members.
-- `output_node_flows` - A flag to create a timewise result of the flows in and out of the group of nodes
-- `output_aggregate_flows` - A flag that to sum the process (group_unit_node / group_process_node) flows of this group in the result table created by `output_node_flows` to different group of nodes (group_node)
+| You want … | Set this flag on the group | Group must contain |
+|---|---|---|
+| Summary metrics (loss of load, VRE share, curtailment, excess load, annualised inflow) for a collection of nodes | `output_nodeGroup_indicators: yes` | `group__node` rows |
+| Summary metrics (`cumulative_flow` MWh, `average_flow` MW — more may be added) for a collection of flows | `output_flowGroup_indicators: yes` | `group__unit__node` or `group__connection__node` rows |
+| A per-timestep in/out decomposition (`group_flow_t`) of a node collection, one column per contributing process/connection | `output_nodeGroup_dispatch: yes` | `group__node` rows |
+| A marker that the flow members of this group should be collapsed into a single aggregated column inside any `output_nodeGroup_dispatch` output that references them (no output on its own) | `flow_aggregator: yes` | `group__unit__node` or `group__connection__node` rows |
+
+- `output_nodeGroup_indicators` — emits aggregate indicator metrics (loss-of-load share, VRE share, curtailment share, excess-load share and annualised inflow) over the node members. Acts as a *summary* of the node group. Requires `group__node` members.
+- `output_flowGroup_indicators` — emits aggregate indicator metrics for a collection of flows. The initial metric set is `cumulative_flow` (MWh over the realised horizon) and `average_flow` (MW, derived from the cumulative flow and the period hours). Acts as a *summary* of a flow group. Requires `group__unit__node` or `group__connection__node` members.
+- `output_nodeGroup_dispatch` — emits the per-timestep in/out *decomposition* of the node group, with one column per contributing process or connection (units feeding the group, connections crossing its boundary, storage, slacks). Requires `group__node` members. If any of those contributing flows belong to another group that has `flow_aggregator: yes`, their columns are replaced by a single aggregated column in this dispatch table.
+- `flow_aggregator` — a re-bucketing *marker* used by `output_nodeGroup_dispatch`. It produces no output file on its own; it only affects how a separate node-group dispatch table is rendered. Requires `group__unit__node` or `group__connection__node` members.
 
 Some of the outputs are optional. They can be removed to speed up the post-processing of results. The user can enable/disable them by changing parameters of the the `model` entity:
 
@@ -446,6 +454,34 @@ For `reserve__upDown__connection__node` entities:
 - `increase_reserve_ratio` - [factor] The reserve is increased by generation from this unit multiplied this ratio. Constant.
 - `large_failure_ratio` - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio). Constant.
 - `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
+
+## Parameter groups (metadata)
+
+Spine's `parameter_definition` table carries an optional `parameter_group_name` field — a lightweight category label that the Spine DB editor uses to group related parameters visually. FlexTool historically left this field blank. As of schema v43 we have begun populating it.
+
+The initial pass (v43) populates a single group, **`Outputs`**, and tags the four group-level output-control parameters with it:
+
+- `output_nodeGroup_dispatch`
+- `output_nodeGroup_indicators`
+- `output_flowGroup_indicators`
+- `flow_aggregator`
+
+The `Outputs` group has no semantic meaning to the solver — it is purely metadata consumed by the Spine DB editor and anything else that walks `parameter_group_name`.
+
+### Convention for new parameters
+
+When a new parameter definition is added, please give it a `parameter_group_name`. The suggested top-level categories (only `Outputs` is populated today; add others as you introduce parameters that naturally fit them):
+
+| Category | Intended scope |
+|---|---|
+| `Outputs` | Output flags and selectors — what the model should write out. |
+| `Investment` | Invest/retire methods, cost parameters, cumulative capacity bounds. |
+| `Dispatch` | Operational parameters: efficiencies, profiles, ramps, minimum loads. |
+| `Reserves` | Reserve methods, reliabilities, reserve ratios. |
+| `Storage` | Storage state, binding, discharge and round-trip parameters. |
+| `Costs` | CO2/fuel prices, penalty costs, salvage and fixed costs. |
+
+Adding a new category is a one-line change in a migration (an `add_update_item("parameter_group", name=..., color=..., priority=...)` call — the color must be a 6-digit hex string without a leading `#`). Tagging a definition is another one-liner (`add_update_item("parameter_definition", ..., parameter_group_name=<group>)`). The regeneration of `flextool_template_master.json` via `python -m flextool.update_flextool.sync_master_json_template` picks the new metadata up automatically — the field is exported as the 6th slot of the parameter-definition tuple.
 
 ## Additional entities for further functionality
 

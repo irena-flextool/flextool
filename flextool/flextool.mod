@@ -237,15 +237,12 @@ set group_entity := group_process union group_node;
 set groupInertia 'node groups with an inertia constraint' within group;
 set groupNonSync 'node groups with a non-synchronous constraint' within group;
 set groupCapacityMargin 'node groups with a capacity margin' within group;
-set groupOutput 'groups that will output aggregated results' within group;
-set groupOutput_process 'output groups with process members' :=
-    {g in groupOutput : sum{(g, p, n) in group_process_node} 1};
-set groupOutput_node 'output groups with node members' :=
-    {g in groupOutput : sum{(g, n) in group_node} 1 };
-set groupOutputNodeFlows 'groups that will output flow results' within group;
-set groupOutputNodeFlows_node 'output flow groups with node members' :=
-    {g in groupOutputNodeFlows : sum{(g, n) in group_node} 1 };
-set groupOutputAggregateFlows 'groups that aggregate flows' within group;
+set nodeGroupIndicators 'groups that output node-group indicators' within group;
+set flowGroupIndicators 'groups that output flow-group indicators' within group;
+set nodeGroupDispatch 'groups that will output the node-group dispatch table' within group;
+set nodeGroupDispatch_node 'dispatch groups with node members' :=
+    {g in nodeGroupDispatch : sum{(g, n) in group_node} 1 };
+set flowAggregator 'groups that aggregate flows into a node-group dispatch' within group;
 
 set group__loss_share_type dimen 2;
 set group_loss_share 'group that share the loss of load (upward penalty)' := setof {(g, loss_share_type) in group__loss_share_type} (g);
@@ -556,9 +553,10 @@ table data IN 'CSV' 'input/p_node_type.csv' : [node], p_node_type;
 table data IN 'CSV' 'input/groupInertia.csv' : groupInertia <- [groupInertia];
 table data IN 'CSV' 'input/groupNonSync.csv' : groupNonSync <- [groupNonSync];
 table data IN 'CSV' 'input/groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
-table data IN 'CSV' 'input/groupOutput.csv' : groupOutput <- [groupOutput];
-table data IN 'CSV' 'input/groupOutputNodeFlows.csv' : groupOutputNodeFlows <- [groupOutputNodeFlows];
-table data IN 'CSV' 'input/groupOutputAggregateFlows.csv' : groupOutputAggregateFlows <- [groupOutputAggregateFlows];
+table data IN 'CSV' 'input/nodeGroupIndicators.csv' : nodeGroupIndicators <- [nodeGroupIndicators];
+table data IN 'CSV' 'input/flowGroupIndicators.csv' : flowGroupIndicators <- [flowGroupIndicators];
+table data IN 'CSV' 'input/nodeGroupDispatch.csv' : nodeGroupDispatch <- [nodeGroupDispatch];
+table data IN 'CSV' 'input/flowAggregator.csv' : flowAggregator <- [flowAggregator];
 table data IN 'CSV' 'input/process.csv': process <- [process];
 table data IN 'CSV' 'input/profile.csv': profile <- [profile];
 table data IN 'CSV' 'input/optional_outputs.csv': optional_outputs <- [output, value];
@@ -1839,74 +1837,74 @@ set process__group_inside_group_nonSync :=
   };
   #|| sum{(p,m) in process_method: m in method_2way_1var} 1
 
-set group_output__process_fully_inside :=
-  {g in groupOutputNodeFlows, p in process
+set nodeGroupDispatch__process_fully_inside :=
+  {g in nodeGroupDispatch, p in process
      : sum {(p, source) in process_source : (g, source) in group_node} 1   # source node is in the group
        && sum {(p, sink) in process_sink : (g, sink) in group_node} 1      # sink node is in the group
 	   && not sum {(p, source, sink) in process_source_sink : source == sink} 1  # but source and sink can't be the same (rule out e.g. battery storage)
   };
-set group_output__process__unit__to_node_Not_in_aggregate :=
-    {g in groupOutputNodeFlows, (p, source, sink) in process_source_sink_alwaysProcess
+set nodeGroupDispatch__process__unit__to_node_Not_in_aggregate :=
+    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
 	                             : p in process_unit
 								 && (g, sink) in group_node
-								 && (g, p) not in group_output__process_fully_inside
-								 && not sum{(ga, p, sink) in group_process_node : ga in groupOutputAggregateFlows} 1};
-set group_output__process__node__to_unit_Not_in_aggregate :=
-    {g in groupOutputNodeFlows, (p, source, sink) in process_source_sink_alwaysProcess
+								 && (g, p) not in nodeGroupDispatch__process_fully_inside
+								 && not sum{(ga, p, sink) in group_process_node : ga in flowAggregator} 1};
+set nodeGroupDispatch__process__node__to_unit_Not_in_aggregate :=
+    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
 	                             : p in process_unit
 								 && (g, source) in group_node
-								 && (g, p) not in group_output__process_fully_inside
-								 && not sum{(ga, p, source) in group_process_node : ga in groupOutputAggregateFlows} 1};
-set group_output__group_aggregate__process__unit__to_node :=
-    {g in groupOutputNodeFlows, ga in groupOutputAggregateFlows, (p, source, sink) in process_source_sink_alwaysProcess
+								 && (g, p) not in nodeGroupDispatch__process_fully_inside
+								 && not sum{(ga, p, source) in group_process_node : ga in flowAggregator} 1};
+set nodeGroupDispatch__group_aggregate__process__unit__to_node :=
+    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
 	                             : p in process_unit
 								 && (g, sink) in group_node
 								 && (ga, p, sink) in group_process_node
-								 && (g, p) not in group_output__process_fully_inside};
-set group_output__group_aggregate__process__node__to_unit :=
-    {g in groupOutputNodeFlows, ga in groupOutputAggregateFlows, (p, source, sink) in process_source_sink_alwaysProcess
+								 && (g, p) not in nodeGroupDispatch__process_fully_inside};
+set nodeGroupDispatch__group_aggregate__process__node__to_unit :=
+    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
 	                             : p in process_unit
 								 && (g, source) in group_node
 								 && (ga, p, source) in group_process_node
-								 && (g, p) not in group_output__process_fully_inside};
-set group_output__process__node__to_connection_Not_in_aggregate :=
-    {g in groupOutputNodeFlows, (p, source, sink) in process_source_sink_alwaysProcess
+								 && (g, p) not in nodeGroupDispatch__process_fully_inside};
+set nodeGroupDispatch__process__node__to_connection_Not_in_aggregate :=
+    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
 	                             : p in process_connection
 								 && (g, source) in group_node
-								 && (g, p) not in group_output__process_fully_inside
-								 && not sum{(ga, p, source) in group_process_node : ga in groupOutputAggregateFlows} 1};
-set group_output__process__connection__to_node_Not_in_aggregate :=
-    {g in groupOutputNodeFlows, (p, source, sink) in process_source_sink_alwaysProcess
+								 && (g, p) not in nodeGroupDispatch__process_fully_inside
+								 && not sum{(ga, p, source) in group_process_node : ga in flowAggregator} 1};
+set nodeGroupDispatch__process__connection__to_node_Not_in_aggregate :=
+    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
 	                             : p in process_connection
 								 && (g, sink) in group_node
-								 && (g, p) not in group_output__process_fully_inside
-								 && not sum{(ga, p, sink) in group_process_node : ga in groupOutputAggregateFlows} 1};
-set group_output__connection_Not_in_aggregate :=
+								 && (g, p) not in nodeGroupDispatch__process_fully_inside
+								 && not sum{(ga, p, sink) in group_process_node : ga in flowAggregator} 1};
+set nodeGroupDispatch__connection_Not_in_aggregate :=
     setof {(g, p, source, sink) in
-	          group_output__process__connection__to_node_Not_in_aggregate
-	          union group_output__process__node__to_connection_Not_in_aggregate} (g, p);
-set group_output__group_aggregate__process__connection__to_node :=
-    {g in groupOutputNodeFlows, ga in groupOutputAggregateFlows, (p, source, sink) in process_source_sink_alwaysProcess
+	          nodeGroupDispatch__process__connection__to_node_Not_in_aggregate
+	          union nodeGroupDispatch__process__node__to_connection_Not_in_aggregate} (g, p);
+set nodeGroupDispatch__group_aggregate__process__connection__to_node :=
+    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
 	                             : p in process_connection
 								 && (g, sink) in group_node
 								 && (ga, p, sink) in group_process_node
-								 && not (g, p) in group_output__process_fully_inside};
-set group_output__group_aggregate__process__node__to_connection :=
-    {g in groupOutputNodeFlows, ga in groupOutputAggregateFlows, (p, source, sink) in process_source_sink_alwaysProcess
+								 && not (g, p) in nodeGroupDispatch__process_fully_inside};
+set nodeGroupDispatch__group_aggregate__process__node__to_connection :=
+    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
 	                             : p in process_connection
 								 && (g, source) in group_node
 								 && (ga, p, source) in group_process_node
-								 && not (g, p) in group_output__process_fully_inside};
-set group_output__group_aggregate_Connection :=
+								 && not (g, p) in nodeGroupDispatch__process_fully_inside};
+set nodeGroupDispatch__group_aggregate_Connection :=
     setof {(g, ga, p, source, sink) in
-	          group_output__group_aggregate__process__connection__to_node
-	          union group_output__group_aggregate__process__node__to_connection} (g, ga);
+	          nodeGroupDispatch__group_aggregate__process__connection__to_node
+	          union nodeGroupDispatch__group_aggregate__process__node__to_connection} (g, ga);
 
-set group_output__group_aggregate_Unit_to_group :=
-    setof {(g, ga, p, source, sink) in group_output__group_aggregate__process__unit__to_node} (g, ga);
+set nodeGroupDispatch__group_aggregate_Unit_to_group :=
+    setof {(g, ga, p, source, sink) in nodeGroupDispatch__group_aggregate__process__unit__to_node} (g, ga);
 
-set group_output__group_aggregate_Group_to_unit :=
-    setof {(g, ga, p, source, sink) in group_output__group_aggregate__process__node__to_unit} (g, ga);
+set nodeGroupDispatch__group_aggregate_Group_to_unit :=
+    setof {(g, ga, p, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_unit} (g, ga);
 
 param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__inflow_method} :=
   +(if pdtNodeInflow[n,d,t] >= 0 then pdtNodeInflow[n,d,t] else 0);
@@ -5058,84 +5056,79 @@ if p_model['solveFirst'] then {
       printf "%s\n", g >> "input/set_groupCapacityMargin.csv";
   }
 
-  printf "group\n" > "input/set_groupOutputNodeFlows.csv";
-  for {g in groupOutputNodeFlows} {
-      printf "%s\n", g >> "input/set_groupOutputNodeFlows.csv";
+  printf "group\n" > "input/set_nodeGroupDispatch.csv";
+  for {g in nodeGroupDispatch} {
+      printf "%s\n", g >> "input/set_nodeGroupDispatch.csv";
   }
 
-  printf "group\n" > "input/set_groupOutput_node.csv";
-  for {g in groupOutput_node} {
-      printf "%s\n", g >> "input/set_groupOutput_node.csv";
+  printf "group\n" > "input/set_nodeGroupIndicators.csv";
+  for {g in nodeGroupIndicators} {
+      printf "%s\n", g >> "input/set_nodeGroupIndicators.csv";
   }
 
-  printf "group\n" > "input/set_groupOutput_process.csv";
-  for {g in groupOutput_process} {
-      printf "%s\n", g >> "input/set_groupOutput_process.csv";
+  printf "group\n" > "input/set_flowGroupIndicators.csv";
+  for {g in flowGroupIndicators} {
+      printf "%s\n", g >> "input/set_flowGroupIndicators.csv";
   }
 
-  printf "group\n" > "input/set_groupOutput.csv";
-  for {g in groupOutput} {
-      printf "%s\n", g >> "input/set_groupOutput.csv";
+  printf "group,connection\n" > "input/set_nodeGroupDispatch__connection_Not_in_aggregate.csv";
+  for {(g, c) in nodeGroupDispatch__connection_Not_in_aggregate} {
+      printf "%s,%s\n", g, c >> "input/set_nodeGroupDispatch__connection_Not_in_aggregate.csv";
   }
 
-  printf "group,connection\n" > "input/set_group_output__connection_Not_in_aggregate.csv";
-  for {(g, c) in group_output__connection_Not_in_aggregate} {
-      printf "%s,%s\n", g, c >> "input/set_group_output__connection_Not_in_aggregate.csv";
+  printf "group,process,connection,node\n" > "input/set_nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
+  for {(g, c, c2, n) in nodeGroupDispatch__process__connection__to_node_Not_in_aggregate} {
+      printf "%s,%s,%s,%s\n", g, c, c2, n >> "input/set_nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
   }
 
-  printf "group,process,connection,node\n" > "input/set_group_output__process__connection__to_node_Not_in_aggregate.csv";
-  for {(g, c, c2, n) in group_output__process__connection__to_node_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, c2, n >> "input/set_group_output__process__connection__to_node_Not_in_aggregate.csv";
+  printf "group,process,node,connection\n" > "input/set_nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
+  for {(g, c, n, c2) in nodeGroupDispatch__process__node__to_connection_Not_in_aggregate} {
+      printf "%s,%s,%s,%s\n", g, c, n, c2 >> "input/set_nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
   }
 
-  printf "group,process,node,connection\n" > "input/set_group_output__process__node__to_connection_Not_in_aggregate.csv";
-  for {(g, c, n, c2) in group_output__process__node__to_connection_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, n, c2 >> "input/set_group_output__process__node__to_connection_Not_in_aggregate.csv";
+  printf "group,process,unit,node\n" > "input/set_nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
+  for {(g, p, p2, n) in nodeGroupDispatch__process__unit__to_node_Not_in_aggregate} {
+      printf "%s,%s,%s,%s\n", g, p, p2, n >> "input/set_nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
   }
 
-  printf "group,process,unit,node\n" > "input/set_group_output__process__unit__to_node_Not_in_aggregate.csv";
-  for {(g, p, p2, n) in group_output__process__unit__to_node_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, p, p2, n >> "input/set_group_output__process__unit__to_node_Not_in_aggregate.csv";
+  printf "group,process,node,unit\n" > "input/set_nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
+  for {(g, p, n, p2) in nodeGroupDispatch__process__node__to_unit_Not_in_aggregate} {
+      printf "%s,%s,%s,%s\n", g, p, n, p2 >> "input/set_nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
   }
 
-  printf "group,process,node,unit\n" > "input/set_group_output__process__node__to_unit_Not_in_aggregate.csv";
-  for {(g, p, n, p2) in group_output__process__node__to_unit_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, p, n, p2 >> "input/set_group_output__process__node__to_unit_Not_in_aggregate.csv";
+  printf "group,group_aggregate\n" > "input/set_nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
+  for {(g, ga) in nodeGroupDispatch__group_aggregate_Unit_to_group} {
+      printf "%s,%s\n", g, ga >> "input/set_nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
   }
 
-  printf "group,group_aggregate\n" > "input/set_group_output__group_aggregate_Unit_to_group.csv";
-  for {(g, ga) in group_output__group_aggregate_Unit_to_group} {
-      printf "%s,%s\n", g, ga >> "input/set_group_output__group_aggregate_Unit_to_group.csv";
+  printf "group,group_aggregate,unit,source,sink\n" > "input/set_nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
+  for {(g, ga, u, source, sink) in nodeGroupDispatch__group_aggregate__process__unit__to_node} {
+      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "input/set_nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
   }
 
-  printf "group,group_aggregate,unit,source,sink\n" > "input/set_group_output__group_aggregate__process__unit__to_node.csv";
-  for {(g, ga, u, source, sink) in group_output__group_aggregate__process__unit__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "input/set_group_output__group_aggregate__process__unit__to_node.csv";
+  printf "group,group_aggregate\n" > "input/set_nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
+  for {(g, ga) in nodeGroupDispatch__group_aggregate_Group_to_unit} {
+      printf "%s,%s\n", g, ga >> "input/set_nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
   }
 
-  printf "group,group_aggregate\n" > "input/set_group_output__group_aggregate_Group_to_unit.csv";
-  for {(g, ga) in group_output__group_aggregate_Group_to_unit} {
-      printf "%s,%s\n", g, ga >> "input/set_group_output__group_aggregate_Group_to_unit.csv";
+  printf "group,group_aggregate,unit,source,sink\n" > "input/set_nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
+  for {(g, ga, u, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_unit} {
+      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "input/set_nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
   }
 
-  printf "group,group_aggregate,unit,source,sink\n" > "input/set_group_output__group_aggregate__process__node__to_unit.csv";
-  for {(g, ga, u, source, sink) in group_output__group_aggregate__process__node__to_unit} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "input/set_group_output__group_aggregate__process__node__to_unit.csv";
+  printf "group,group_aggregate\n" > "input/set_nodeGroupDispatch__group_aggregate_Connection.csv";
+  for {(g, ga) in nodeGroupDispatch__group_aggregate_Connection} {
+      printf "%s,%s\n", g, ga >> "input/set_nodeGroupDispatch__group_aggregate_Connection.csv";
   }
 
-  printf "group,group_aggregate\n" > "input/set_group_output__group_aggregate_Connection.csv";
-  for {(g, ga) in group_output__group_aggregate_Connection} {
-      printf "%s,%s\n", g, ga >> "input/set_group_output__group_aggregate_Connection.csv";
+  printf "group,group_aggregate,connection,source,sink\n" > "input/set_nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
+  for {(g, ga, c, source, sink) in nodeGroupDispatch__group_aggregate__process__connection__to_node} {
+      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "input/set_nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
   }
 
-  printf "group,group_aggregate,connection,source,sink\n" > "input/set_group_output__group_aggregate__process__connection__to_node.csv";
-  for {(g, ga, c, source, sink) in group_output__group_aggregate__process__connection__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "input/set_group_output__group_aggregate__process__connection__to_node.csv";
-  }
-
-  printf "group,group_aggregate,connection,source,sink\n" > "input/set_group_output__group_aggregate__process__node__to_connection.csv";
-  for {(g, ga, c, source, sink) in group_output__group_aggregate__process__node__to_connection} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "input/set_group_output__group_aggregate__process__node__to_connection.csv";
+  printf "group,group_aggregate,connection,source,sink\n" > "input/set_nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
+  for {(g, ga, c, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_connection} {
+      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "input/set_nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
   }
 
   printf "group,process\n" > "input/set_group_process.csv";
@@ -5143,9 +5136,9 @@ if p_model['solveFirst'] then {
       printf "%s,%s\n", g, p >> "input/set_group_process.csv";
   }
 
-  printf "group,process\n" > "input/set_group_output__process_fully_inside.csv";
-  for {(g, p) in group_output__process_fully_inside} {
-      printf "%s,%s\n", g, p >> "input/set_group_output__process_fully_inside.csv";
+  printf "group,process\n" > "input/set_nodeGroupDispatch__process_fully_inside.csv";
+  for {(g, p) in nodeGroupDispatch__process_fully_inside} {
+      printf "%s,%s\n", g, p >> "input/set_nodeGroupDispatch__process_fully_inside.csv";
   }
 
   printf "group,node\n" > "input/set_group_node.csv";

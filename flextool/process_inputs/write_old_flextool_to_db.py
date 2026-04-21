@@ -1234,9 +1234,9 @@ def _write_groups(
     for grid_name, nodes in grids.items():
         _add_entity(db, "group", grid_name, alt_name, counters,
                      entities_added, entity_alts_added)
-        _add_param(db, "group", (grid_name,), "output_results", "yes",
+        _add_param(db, "group", (grid_name,), "output_nodeGroup_indicators", "yes",
                    alt_name, counters)
-        _add_param(db, "group", (grid_name,), "output_node_flows", "yes",
+        _add_param(db, "group", (grid_name,), "output_nodeGroup_dispatch", "yes",
                    alt_name, counters)
         for node_name in nodes:
             _add_relationship(db, "group__node", (grid_name, node_name),
@@ -1320,7 +1320,7 @@ def _write_groups(
         _add_param_if_set(db, "group", (ug.name,), "invest_min_total",
                           ug.min_invest_mw, alt_name, counters)
 
-        _add_param(db, "group", (ug.name,), "output_aggregate_flows", "yes",
+        _add_param(db, "group", (ug.name,), "flow_aggregator", "yes",
                    alt_name, counters)
 
         # Link units to this group

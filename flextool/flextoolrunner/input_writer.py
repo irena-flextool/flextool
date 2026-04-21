@@ -145,16 +145,16 @@ _PARAMETER_SPECS: list[dict] = [
         "no_value": True,
     },
     {
-        "cl_pars": [("group", "output_node_flows")],
-        "header": "groupOutputNodeFlows",
-        "filename": "input/groupOutputNodeFlows.csv",
+        "cl_pars": [("group", "output_nodeGroup_dispatch")],
+        "header": "nodeGroupDispatch",
+        "filename": "input/nodeGroupDispatch.csv",
         "filter_in_value": "yes",
         "no_value": True,
     },
     {
-        "cl_pars": [("group", "output_aggregate_flows")],
-        "header": "groupOutputAggregateFlows",
-        "filename": "input/groupOutputAggregateFlows.csv",
+        "cl_pars": [("group", "flow_aggregator")],
+        "header": "flowAggregator",
+        "filename": "input/flowAggregator.csv",
         "filter_in_value": "yes",
         "no_value": True,
     },
@@ -862,9 +862,16 @@ _PARAMETER_SPECS: list[dict] = [
         "no_entity": True,
     },
     {
-        "cl_pars": [("group", "output_results")],
-        "header": "groupOutput",
-        "filename": "input/groupOutput.csv",
+        "cl_pars": [("group", "output_nodeGroup_indicators")],
+        "header": "nodeGroupIndicators",
+        "filename": "input/nodeGroupIndicators.csv",
+        "filter_in_value": "yes",
+        "no_value": True,
+    },
+    {
+        "cl_pars": [("group", "output_flowGroup_indicators")],
+        "header": "flowGroupIndicators",
+        "filename": "input/flowGroupIndicators.csv",
         "filter_in_value": "yes",
         "no_value": True,
     },
@@ -1820,6 +1827,69 @@ def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Lo
                         "be excluded from the capacity margin constraint.",
                         group_name, ', '.join(storage_in_group),
                     )
+
+        _validate_group_output_memberships(db, logger)
+
+
+def _validate_group_output_memberships(db, logger: logging.Logger) -> None:
+    """Warn when a group-level output flag is ``yes`` but the group lacks
+    the membership class required for that output to produce any data.
+
+    Four silent-no-op cases are detected:
+
+    * ``output_nodeGroup_dispatch: yes`` with no ``group__node`` row
+    * ``output_nodeGroup_indicators: yes`` with no ``group__node`` row
+    * ``output_flowGroup_indicators: yes`` with no ``group__unit__node``
+      **or** ``group__connection__node`` row
+    * ``flow_aggregator: yes`` with no ``group__unit__node`` **or**
+      ``group__connection__node`` row
+
+    Only warnings are emitted — a user may deliberately stage a partial
+    configuration.
+    """
+    # Collect groups that are members of the relevant entity classes.
+    groups_with_node_members: set[str] = set()
+    for ent in db.find_entities(entity_class_name="group__node"):
+        byname = ent["entity_byname"]
+        if byname:
+            groups_with_node_members.add(byname[0])
+
+    groups_with_flow_members: set[str] = set()
+    for cls in ("group__unit__node", "group__connection__node"):
+        for ent in db.find_entities(entity_class_name=cls):
+            byname = ent["entity_byname"]
+            if byname:
+                groups_with_flow_members.add(byname[0])
+
+    # (parameter_name, required_membership_description, membership_set)
+    checks: list[tuple[str, str, set[str]]] = [
+        ("output_nodeGroup_dispatch", "group__node", groups_with_node_members),
+        ("output_nodeGroup_indicators", "group__node", groups_with_node_members),
+        (
+            "output_flowGroup_indicators",
+            "group__unit__node or group__connection__node",
+            groups_with_flow_members,
+        ),
+        (
+            "flow_aggregator",
+            "group__unit__node or group__connection__node",
+            groups_with_flow_members,
+        ),
+    ]
+    for param_name, required_members, membership_set in checks:
+        for pv in db.find_parameter_values(
+            entity_class_name="group", parameter_definition_name=param_name
+        ):
+            if pv["type"] is None:
+                continue
+            if pv["parsed_value"] != "yes":
+                continue
+            group_name = pv["entity_byname"][0]
+            if group_name not in membership_set:
+                logger.warning(
+                    "Group '%s' has %s: yes but no %s members — output will be empty.",
+                    group_name, param_name, required_members,
+                )
 
 
 def write_entity(

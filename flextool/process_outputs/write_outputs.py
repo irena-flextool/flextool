@@ -42,6 +42,7 @@ from flextool.process_outputs.out_group import (
     nodeGroup_indicators, nodeGroup_VRE_share,
     nodeGroup_total_inflow, nodeGroup_flows,
 )
+from flextool.process_outputs.out_flowgroup import flowGroup_indicators
 from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
 import logging
 from spinedb_api import DatabaseMapping, from_database, Array
@@ -258,6 +259,7 @@ ALL_OUTPUTS = [
     node_capacity,
     nodeGroup_indicators,
     nodeGroup_VRE_share,
+    flowGroup_indicators,
     CO2,
     co2_duals,
     nodeGroup_flows,

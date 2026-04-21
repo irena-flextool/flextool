@@ -35,26 +35,26 @@ def load_dispatch_mappings(parquet_dir: Path) -> dict[str, pd.DataFrame | None]:
     # File mapping: key -> (filename, required)
     # node_inflow is excluded — it's already in combined_dfs as 'node_inflow__dt'
     file_mapping = {
-        'dispatch_groups': ('outputNodeGroup_does_specified_flows.parquet', True),
+        'dispatch_groups': ('nodeGroupIndicators.parquet', True),
         'group_node': ('group_node.parquet', True),
         'group_process_node': ('group_process_node.parquet', False),
         # ProcessGroup aggregation files
-        'processGroup_Unit_to_group': ('outputNodeGroup__processGroup_Unit_to_group.parquet', False),
-        'processGroup_Group_to_unit': ('outputNodeGroup__processGroup_Group_to_unit.parquet', False),
-        'processGroup_Connection': ('outputNodeGroup__processGroup_Connection.parquet', False),
+        'processGroup_Unit_to_group': ('nodeGroupDispatch__processGroup_Unit_to_group.parquet', False),
+        'processGroup_Group_to_unit': ('nodeGroupDispatch__processGroup_Group_to_unit.parquet', False),
+        'processGroup_Connection': ('nodeGroupDispatch__processGroup_Connection.parquet', False),
         # ProcessGroup member files
-        'processGroup_unit_to_node_members': ('outputNodeGroup__processGroup__process__unit__to_node.parquet', False),
-        'processGroup_node_to_unit_members': ('outputNodeGroup__processGroup__process__node__to_unit.parquet', False),
-        'processGroup_connection_to_node_members': ('outputNodeGroup__processGroup__process__connection__to_node.parquet', False),
-        'processGroup_node_to_connection_members': ('outputNodeGroup__processGroup__process__node__to_connection.parquet', False),
+        'processGroup_unit_to_node_members': ('nodeGroupDispatch__processGroup__process__unit__to_node.parquet', False),
+        'processGroup_node_to_unit_members': ('nodeGroupDispatch__processGroup__process__node__to_unit.parquet', False),
+        'processGroup_connection_to_node_members': ('nodeGroupDispatch__processGroup__process__connection__to_node.parquet', False),
+        'processGroup_node_to_connection_members': ('nodeGroupDispatch__processGroup__process__node__to_connection.parquet', False),
         # Not_in_aggregate files
-        'not_in_aggregate_unit_to_node': ('outputNodeGroup__process__unit__to_node_Not_in_aggregate.parquet', False),
-        'not_in_aggregate_node_to_unit': ('outputNodeGroup__process__node__to_unit_Not_in_aggregate.parquet', False),
-        'not_in_aggregate_connection_to_node': ('outputNodeGroup__process__connection__to_node_Not_in_aggregate.parquet', False),
-        'not_in_aggregate_node_to_connection': ('outputNodeGroup__process__node__to_connection_Not_in_aggregate.parquet', False),
-        'not_in_aggregate_connection': ('outputNodeGroup__connection_Not_in_aggregate.parquet', False),
+        'not_in_aggregate_unit_to_node': ('nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.parquet', False),
+        'not_in_aggregate_node_to_unit': ('nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.parquet', False),
+        'not_in_aggregate_connection_to_node': ('nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.parquet', False),
+        'not_in_aggregate_node_to_connection': ('nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.parquet', False),
+        'not_in_aggregate_connection': ('nodeGroupDispatch__connection_Not_in_aggregate.parquet', False),
         # Process fully inside (for internal losses)
-        'process_fully_inside': ('outputNodeGroup__process_fully_inside.parquet', False),
+        'process_fully_inside': ('nodeGroupDispatch__process_fully_inside.parquet', False),
     }
 
     for key, (filename, required) in file_mapping.items():

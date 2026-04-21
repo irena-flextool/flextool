@@ -527,14 +527,6 @@
       "no"
     ],
     [
-      "output_node_flows",
-      "yes"
-    ],
-    [
-      "output_results",
-      "yes"
-    ],
-    [
       "price_method",
       "price"
     ],
@@ -789,6 +781,13 @@
     [
       "yes_no",
       "no"
+    ]
+  ],
+  "parameter_groups": [
+    [
+      "Outputs",
+      "a6cee3",
+      10
     ]
   ],
   "parameter_definitions": [
@@ -1186,6 +1185,14 @@
     ],
     [
       "group",
+      "flow_aggregator",
+      null,
+      "yes_no",
+      "Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from output_aggregate_flows.",
+      "Outputs"
+    ],
+    [
+      "group",
       "has_capacity_margin",
       null,
       "has_capacity_margin",
@@ -1306,27 +1313,27 @@
     ],
     [
       "group",
-      "output_aggregate_flows",
+      "output_flowGroup_indicators",
       null,
-      "output_node_flows",
-      "Used with group_unit_node or group_connection_node to combine the flows when producing the output_node_flows of a node group.",
-      null
+      "yes_no",
+      "Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).",
+      "Outputs"
     ],
     [
       "group",
-      "output_node_flows",
+      "output_nodeGroup_dispatch",
       null,
-      "output_node_flows",
-      "Creates the timewise flow output for this node group (group_flow_t)",
-      null
+      "yes_no",
+      "Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.",
+      "Outputs"
     ],
     [
       "group",
-      "output_results",
+      "output_nodeGroup_indicators",
       null,
-      "output_results",
-      "A flag to output also aggregated results for the group members.",
-      null
+      "yes_no",
+      "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
+      "Outputs"
     ],
     [
       "group",
@@ -1499,7 +1506,7 @@
     [
       "model",
       "version",
-      41.0,
+      43.0,
       null,
       "Contains database version information.",
       null
@@ -2960,6 +2967,12 @@
     ],
     [
       "group",
+      "flow_aggregator",
+      "str",
+      0
+    ],
+    [
+      "group",
       "has_capacity_margin",
       "str",
       0
@@ -3086,19 +3099,19 @@
     ],
     [
       "group",
-      "output_aggregate_flows",
+      "output_flowGroup_indicators",
       "str",
       0
     ],
     [
       "group",
-      "output_node_flows",
+      "output_nodeGroup_dispatch",
       "str",
       0
     ],
     [
       "group",
-      "output_results",
+      "output_nodeGroup_indicators",
       "str",
       0
     ],

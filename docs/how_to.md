@@ -136,7 +136,7 @@ Typically the model does not want to produce extra energy as it usually has cost
 
 The *no_losses_no_variable_cost* can be used when the connection has no losses and no variable costs accociated with the flow. It is computationally the most efficient method, as it uses only one variable for the flow (the variable becomes negative for the other direction, but this can work only when there are no losses or variable costs). It also prevents simultanoues flow to both directions.
 
-The results of connections can be seen from the node_balance table. However, these are the results from all the connections connected to the node. If you want to have the results from an individual connection or specified connections, you can create a group of connection_nodes (`group_connection_node`) with a parameter `output_results` set to *yes*. This will produce sum_flow` results from the connection to the node. 
+The results of connections can be seen from the node_balance table. However, these are the results from all the connections connected to the node. If you want summary metrics for an individual connection or a collection of them, create a `group`, add the relevant `group__connection__node` members, and set `output_flowGroup_indicators: yes` on the group. This produces a flow-group summary (currently `cumulative_flow` MWh and `average_flow` MW) for the group.
 
 The example database shows a connection between a two node system where the other node has a wind power plant and the other node has a coal power plant. 
 
@@ -711,12 +711,14 @@ Here the (wind_plant|nodeA) relation has the `is_non_synchronous` parameter and 
 
 A connection with `transfer_method`: *no_losses_no_variables* between a node included in a group with a non-synchronous limit and a node outside of the group is not allowed. The flow in this kind of a connection is presented with a single variable, which would not function correctly with the non-synchronous limit constraints (there is a non-linearity at zero that requires two variables). 
 
-If you want to see the individual flows in the results you can create separate `groups` for the flows and add `group_unit_node` entities to it. To produce the flow results, the groups need the parameter.
+If you want summary metrics per flow in the results, create a separate `group` for each flow (or collection of flows) and add `group__unit__node` entities to it. The group needs the parameter:
 
-- `output_results`: yes 
+- `output_flowGroup_indicators`: yes 
 
-Here we have *coal_flow* `group` with `group_unit_node` relation coal_flow|coal_plant|nodeA
-and *wind_flow* `group` with `group_unit_node` relation wind_flow|wind_plant|nodeA.
+This emits a flow-group summary table (currently `cumulative_flow` MWh and `average_flow` MW, with more metrics to come) for the members. It is summary output — for per-timestep decomposition of a node's flows, use `output_nodeGroup_dispatch` on a `group__node` group instead (see "How to create aggregate outputs").
+
+Here we have *coal_flow* `group` with `group__unit__node` relation coal_flow|coal_plant|nodeA
+and *wind_flow* `group` with `group__unit__node` relation wind_flow|wind_plant|nodeA.
 
 ![non-sync](./non_sync.PNG)
 
@@ -733,11 +735,11 @@ The curtailment could take place for several reasons:
 - extra flow constraints have been set
 - other unit specific constraint affecting how VRE units or other units are forced to behave (ramp, start-up ...)
 
-To see the curtailment results you need to add a `group` of nodes (`group_node` not `group_unit_node` !) with one or more members. The group then needs the parameter:
+To see the curtailment results you need a `group` with `group__node` members (not `group__unit__node`!). The group then needs the parameter:
 
-- `output_results`: yes
+- `output_nodeGroup_indicators`: yes
 
-This produces the `group`: *indicator* result to the Results database and *group_summary* table to the excel.
+This produces the node-group summary indicator metrics — loss-of-load share, VRE share, curtailment share, excess-load share and annualised inflow — written to the Results database as `group: indicator` and to Excel as the *group_summary* table. `output_nodeGroup_indicators` is the "summary" output for node groups; pair it with `output_nodeGroup_dispatch` if you also want the per-timestep decomposition of the same nodes.
 
 These changes were done to the previous non-sync example database. 
 
@@ -1105,38 +1107,46 @@ With these parameters, the command line call is:
 
 ## How to create aggregate outputs
 
-It is often desirable to output results that focus on particular aspects of the model. For example, it can be useful to output all flows going in and out of all electricity nodes without the corresponding flows for other energy carriers (e.g. fuels used to produce the electricity). And if the model is large, some of those flows could be aggregated (summed). 
+It is often desirable to output results that focus on particular aspects of the model. For example, you may want all flows going in and out of all electricity nodes, *without* the corresponding flows for other energy carriers (e.g. fuels used to produce the electricity). And if the model is large, some of those flows are easier to read when aggregated into a single column.
 
-The first aspect, choosing a group of nodes for which to output results for, is achieved by:
+FlexTool splits these two concerns into two different `group` flags:
 
-- creating or re-using a `group` (e.g. *electricity*)
-- set the group's parameter **output_node_flows** to *yes*
-- assigning all the relevant nodes to the group (using `group__node`, e.g. *electricity__west*)
+| Intent | Flag | Role | Members |
+|---|---|---|---|
+| Pick a set of nodes and get a per-timestep *decomposition* of every flow crossing them (one column per contributing process/connection) | `output_nodeGroup_dispatch: yes` | the *decomposition* — produces `group_flow_t` | `group__node` |
+| Re-bucket a set of flows so they appear as a single aggregated column inside somebody else's dispatch output | `flow_aggregator: yes` | a *marker* — no output on its own | `group__unit__node` or `group__connection__node` |
 
-The second aspect, aggregating flows into one, is achieved by:
+Together they work like this: `output_nodeGroup_dispatch` builds the dispatch table for its node group; while doing so it inspects every flow touching those nodes, and if any of those flows are in another group that has `flow_aggregator: yes`, their columns are collapsed into a single column named after the aggregator group. `flow_aggregator` groups never produce any output of their own — they only reshape a dispatch table that somebody else is producing.
 
-- creating or re-using a `group` (e.g. *all_VRE*)
-- set the group's parameter **output_aggregate_flows** to *yes*
-- assigning all flows that should be part of the group (using `group__unit__node` or `group__connection__node`, e.g. *all_VRE__wind1__west*)
+Concretely, to build a focused dispatch view for a collection of nodes:
 
-All flows that are part of a group that has **output_aggregate_flows** set to *yes* will then be output only as part of the aggregate in the `group` **flow_t**. In all other outputs, they will remain independent.
+- create or re-use a `group` (e.g. *electricity*)
+- set the group's parameter **output_nodeGroup_dispatch** to *yes*
+- add the relevant nodes via `group__node` (e.g. *electricity__west*)
 
-"How to database" (**aggregate_output.sqlite**) aggregates results for the *nodeA* and *nodeB*. Both of the nodes have a wind power plant and nodeA has a coal power plant. The demand is divided to the electricity, heat and irrigiation needs. This means that, 
-besides an internal demand (**inflow**), both nodes output to the heat node while *node*A also outputs to the irrigation node. Additionally the nodes are connected to each other and the *node_country_y1*. The *nodeA* is connected to the *node_country_x1* and *nodeB* is connected to the *node_country_x2*. 
+Then, to collapse a collection of flows inside that dispatch view:
 
-For the sake of the example, we are only interested in the *nodeA* and *nodeB*. Therefore, `group` *focus_nodes* is created and the nodes are added to it with `group__node` entities. To simplify the results, the flows from the two wind plants are aggregated as one. Same applies to the heat pumps. This is done by creating the `group`s *wind_aggregated* and *heat_aggregated*. The flows are added to the group with the `group_unit_node` entity. 
+- create or re-use a *separate* `group` (e.g. *all_VRE*)
+- set the group's parameter **flow_aggregator** to *yes*
+- add the flows via `group__unit__node` or `group__connection__node` (e.g. *all_VRE__wind1__west*)
 
-Note that here the `node` has to be either *nodeA* or *nodeB*, not the heat node! E.g. the nodes from the *wind_aggregated* `group_unit_node` are tied to the nodes from the *focus_nodes* `group_node` only when they share same nodes (e.g. *wind_aggregated__wind_plant_1__nodeA* and *focus_nodes__nodeA* have *nodeA* in common). The `group_unit_node` can include other flows but only the ones that are have a node that is inside the *focus_nodes* group are included in the result table under the *focus_nodes* group.
+(Contrast with `output_flowGroup_indicators`, which produces a per-period *summary* — `cumulative_flow`, `average_flow` — for a flow group and does not interact with the dispatch table.)
 
-Connections are simplified by creating groups *connections_country_x* and *connections_country_y* and adding the relevant connections with `group_connection_node` entity. Again the `node` has to be either *nodeA* or *nodeB* to be included in the results.
+"How to database" (**aggregate_output.sqlite**) aggregates results for the *nodeA* and *nodeB*. Both of the nodes have a wind power plant and nodeA has a coal power plant. The demand is divided to the electricity, heat and irrigation needs. This means that, besides an internal demand (**inflow**), both nodes output to the heat node while *nodeA* also outputs to the irrigation node. Additionally the nodes are connected to each other and the *node_country_y1*. The *nodeA* is connected to the *node_country_x1* and *nodeB* is connected to the *node_country_x2*. 
+
+For the sake of the example, we are only interested in the *nodeA* and *nodeB*. Therefore, `group` *focus_nodes* is created and the nodes are added to it with `group__node` entities. To simplify the results, the flows from the two wind plants are aggregated as one. Same applies to the heat pumps. This is done by creating the `group`s *wind_aggregated* and *heat_aggregated*. The flows are added to each group with `group__unit__node`. 
+
+Note that here the `node` has to be either *nodeA* or *nodeB*, not the heat node. The aggregator group only collapses columns whose node is inside the dispatch group's node set — e.g. *wind_aggregated__wind_plant_1__nodeA* is collapsed because *nodeA* is in *focus_nodes*. A `group__unit__node` row whose node is outside the dispatch group's nodes is simply ignored for that dispatch table.
+
+Connections are simplified by creating groups *connections_country_x* and *connections_country_y* and adding the relevant connections with `group__connection__node`. Again the `node` must be *nodeA* or *nodeB* to be collapsed in the dispatch output.
 
 ![Output aggregate flows graph](./output_flows_graph.PNG)
 
-The *focus_nodes* group needs the parameter `output_node_flows`: *yes* and the unit and connection groups need the parameter `output_aggregate_flows`: *yes*. 
+The *focus_nodes* group needs `output_nodeGroup_dispatch: yes` and the unit and connection groups need `flow_aggregator: yes`. 
 
 ![Output aggregate flows](./output_flows_input.PNG)
 
-The resulting table has the flows to the *focus_nodes* group from units and connections. Additionally, the internal losses of the group are calculated. These are the flows between the nodes of the group and the storage losses. Here the losses come from the connection between nodeA and nodeB. Additionally the possible slacks to balance the nodes are included.
+The resulting table has the flows to the *focus_nodes* group from units and connections. Additionally, the internal losses of the group are calculated. These are the flows between the nodes of the group and the storage losses. Here the losses come from the connection between *nodeA* and *nodeB*. Possible slacks to balance the nodes are included too.
 
 ![Output aggregate flows result](./output_flows_result.png)
 

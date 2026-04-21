@@ -2589,7 +2589,7 @@ class ResultViewer(tk.Toplevel):
             return
 
         # Load dispatch groups (groups flagged for dispatch output)
-        dispatch_groups_path = parquet_dir / "outputNodeGroup_does_specified_flows.parquet"
+        dispatch_groups_path = parquet_dir / "nodeGroupIndicators.parquet"
         if not dispatch_groups_path.exists():
             return
 

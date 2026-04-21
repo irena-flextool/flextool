@@ -1914,20 +1914,6 @@
       ]
     ],
     [
-      "output_node_flows",
-      [
-        "InllcyI=",
-        "str"
-      ]
-    ],
-    [
-      "output_results",
-      [
-        "InllcyI=",
-        "str"
-      ]
-    ],
-    [
       "profile_methods",
       [
         "InVwcGVyX2xpbWl0Ig==",
@@ -2914,35 +2900,46 @@
     ],
     [
       "group",
-      "output_aggregate_flows",
+      "flow_aggregator",
       [
         "bnVsbA==",
         null
       ],
-      "output_node_flows",
-      "Used with group_unit_node or group_connection_node to combine the flows when producing the output_node_flows of a node group.",
+      "yes_no",
+      "Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from output_aggregate_flows.",
       null
     ],
     [
       "group",
-      "output_node_flows",
+      "output_nodeGroup_dispatch",
       [
         "bnVsbA==",
         null
       ],
-      "output_node_flows",
-      "Creates the timewise flow output for this node group (group_flow_t)",
+      "yes_no",
+      "Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.",
       null
     ],
     [
       "group",
-      "output_results",
+      "output_nodeGroup_indicators",
       [
         "bnVsbA==",
         null
       ],
-      "output_results",
-      "A flag to output also aggregated results for the group members.",
+      "yes_no",
+      "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
+      null
+    ],
+    [
+      "group",
+      "output_flowGroup_indicators",
+      [
+        "bnVsbA==",
+        null
+      ],
+      "yes_no",
+      "Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).",
       null
     ],
     [
@@ -5099,19 +5096,25 @@
     ],
     [
       "group",
-      "output_aggregate_flows",
+      "flow_aggregator",
       "str",
       0
     ],
     [
       "group",
-      "output_node_flows",
+      "output_nodeGroup_dispatch",
       "str",
       0
     ],
     [
       "group",
-      "output_results",
+      "output_nodeGroup_indicators",
+      "str",
+      0
+    ],
+    [
+      "group",
+      "output_flowGroup_indicators",
       "str",
       0
     ],
@@ -6642,7 +6645,7 @@
     [
       "group",
       "anti_energy_group",
-      "output_aggregate_flows",
+      "flow_aggregator",
       [
         "InllcyI=",
         "str"
@@ -6652,22 +6655,12 @@
     [
       "group",
       "anti_energy_group",
-      "output_node_flows",
+      "output_nodeGroup_dispatch",
       [
         "InllcyI=",
         "str"
       ],
       "aggregate_outputs"
-    ],
-    [
-      "group",
-      "anti_energy_group",
-      "output_results",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "anti_energy_plant"
     ],
     [
       "group",
@@ -6742,7 +6735,7 @@
     [
       "group",
       "coal_electricity",
-      "output_aggregate_flows",
+      "flow_aggregator",
       [
         "InllcyI=",
         "str"
@@ -6752,7 +6745,7 @@
     [
       "group",
       "connections_with_east",
-      "output_aggregate_flows",
+      "flow_aggregator",
       [
         "InllcyI=",
         "str"
@@ -6762,7 +6755,7 @@
     [
       "group",
       "connections_with_east",
-      "output_results",
+      "output_flowGroup_indicators",
       [
         "InllcyI=",
         "str"
@@ -6772,7 +6765,7 @@
     [
       "group",
       "east_group",
-      "output_aggregate_flows",
+      "flow_aggregator",
       [
         "InllcyI=",
         "str"
@@ -6782,7 +6775,7 @@
     [
       "group",
       "east_group",
-      "output_node_flows",
+      "output_nodeGroup_dispatch",
       [
         "InllcyI=",
         "str"
@@ -6792,7 +6785,7 @@
     [
       "group",
       "east_group",
-      "output_results",
+      "output_nodeGroup_indicators",
       [
         "InllcyI=",
         "str"
@@ -6822,7 +6815,7 @@
     [
       "group",
       "electricity",
-      "output_aggregate_flows",
+      "flow_aggregator",
       [
         "InllcyI=",
         "str"
@@ -6832,7 +6825,7 @@
     [
       "group",
       "electricity",
-      "output_node_flows",
+      "output_nodeGroup_dispatch",
       [
         "InllcyI=",
         "str"
@@ -6842,7 +6835,7 @@
     [
       "group",
       "electricity",
-      "output_results",
+      "output_nodeGroup_indicators",
       [
         "InllcyI=",
         "str"
@@ -6862,7 +6855,7 @@
     [
       "group",
       "to_west_node",
-      "output_aggregate_flows",
+      "flow_aggregator",
       [
         "InllcyI=",
         "str"
@@ -6872,7 +6865,7 @@
     [
       "group",
       "to_west_node",
-      "output_node_flows",
+      "output_nodeGroup_dispatch",
       [
         "InllcyI=",
         "str"
@@ -6882,7 +6875,7 @@
     [
       "group",
       "to_west_node",
-      "output_results",
+      "output_flowGroup_indicators",
       [
         "InllcyI=",
         "str"
@@ -6892,7 +6885,7 @@
     [
       "group",
       "west_north",
-      "output_node_flows",
+      "output_nodeGroup_dispatch",
       [
         "InllcyI=",
         "str"

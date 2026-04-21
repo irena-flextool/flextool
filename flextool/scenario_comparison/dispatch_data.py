@@ -202,7 +202,7 @@ def prepare_dispatch_data(
     colors: dict | None = None,
     config_order: list[str] | None = None,
 ) -> tuple[pd.DataFrame | None, pd.Series | None]:
-    """Prepare dispatch data for a specific outputNodeGroup.
+    """Prepare dispatch data for a specific nodeGroupDispatch.
 
     Columns are validated for sign consistency:
     - Positive special columns: LossOfLoad, Discharge, Import
