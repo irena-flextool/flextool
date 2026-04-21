@@ -581,6 +581,7 @@ plots:
         subplots_per_row: 2
         map_dimensions_for_plots: [d_p, b_s]
         skip_data_with_only_zeroes: true
+        color_category: costs
       sum_periods:
         plot_name: 'Costs total'
         variant: a
@@ -589,6 +590,7 @@ plots:
         map_dimensions_for_plots: [d_p, y_s]
         skip_data_with_only_zeroes: true
         ylabel: Currency (horizon total)
+        color_category: costs
     costs_dt_p:
       default:
         plot_name: 'Costs stack'
@@ -597,6 +599,7 @@ plots:
         skip_data_with_only_zeroes: true
         map_dimensions_for_plots: [dt_p, tt_s]
         ylabel: Currency/h
+        color_category: costs
       chunks:
         plot_name: 'Costs time chunks'
         variant: w
@@ -605,6 +608,7 @@ plots:
         time_average_duration: 168
         subplots_per_row: 2
         max_subplots_per_file: 6
+        color_category: costs
   'Costs line-plot':
     group: 3
     order: 1
@@ -616,6 +620,7 @@ plots:
         subplots_per_row: 3
         max_subplots_per_file: 12
         ylabel: Currency
+        color_category: costs
       chunks:
         variant: w
         map_dimensions_for_plots: [dt_p, ti_l]
@@ -626,6 +631,7 @@ plots:
         axis_bounds: shared
         ylabel: Currency
         time_average_duration: 168
+        color_category: costs
   'Costs discounted':
     group: 3
     order: 2
@@ -637,6 +643,7 @@ plots:
         map_dimensions_for_plots: [d_p, b_s]
         ylabel: Currency
         skip_data_with_only_zeroes: true
+        color_category: costs
       sum_periods:
         plot_name: 'Costs discounted total'
         variant: a
@@ -645,6 +652,7 @@ plots:
         map_dimensions_for_plots: [d_p, m_s]
         ylabel: Currency
         skip_data_with_only_zeroes: true
+        color_category: costs
 
   # Capacities for units, nodes and connections
   'Capacity nodes':

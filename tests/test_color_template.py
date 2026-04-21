@@ -286,3 +286,129 @@ class TestBuildSharedColorMap:
         result = build_shared_color_map(labels)
         tab10 = plt.colormaps["tab10"].colors
         assert result == {"a": tab10[0], "b": tab10[1]}
+
+
+# ---------------------------------------------------------------------------
+# Chunk E: cost color-template integration (through the plan pipeline)
+# ---------------------------------------------------------------------------
+
+
+class TestCostCategoryIntegration:
+    """End-to-end: a bar plan computed with ``color_category='costs'`` pulls
+    colors from ``templates/default_colors.yaml`` for known cost labels and
+    falls back to the palette for unknown labels.
+
+    This locks in the wiring between :class:`PlotConfig`,
+    :func:`_compute_bar_plan`, and the real shipped YAML.  It's the
+    canonical regression test for Chunk E.
+    """
+
+    def setup_method(self) -> None:
+        ct._clear_cache()
+
+    def test_shipped_template_has_expected_cost_labels(self):
+        """Sanity check on the YAML: the labels we plan to tag must all
+        resolve.  Keeps the YAML honest if someone renames a cost key."""
+        tpl = ct.load_color_template()
+        # A representative sample spanning semantic groups (fuel, invest,
+        # slack, CO2).  If any of these disappear, the YAML drifted.
+        expected_labels = [
+            "unit investment & retirement",
+            "commodity_cost",
+            "co2",
+            "upward slack penalty",
+            "other operational",
+            "starts",
+            "fixed cost pre-existing",
+        ]
+        for lbl in expected_labels:
+            assert ct.resolve_label_color(lbl, tpl, category="costs") is not None, (
+                f"Shipped template is missing cost label {lbl!r}"
+            )
+
+    def test_bar_plan_uses_template_colors_for_cost_labels(self):
+        """A bar plan with ``color_category='costs'`` and ``legend='shared'``
+        should pull template colors for cost labels that exist in the
+        shipped YAML and fall back to tab10 for any label that doesn't."""
+        import numpy as np
+        import pandas as pd
+
+        from flextool.plot_outputs.color_template import resolve_label_color
+        from flextool.plot_outputs.plan import compute_live_plan
+
+        tpl = ct.load_color_template()
+
+        # Simulate the ``annualized_costs_d_p`` shape: periods on the row,
+        # a single ``parameter`` column level holding cost labels.
+        cost_labels = [
+            "commodity_cost",      # templated
+            "co2",                 # templated
+            "upward slack penalty",  # templated
+            "not_a_real_cost",     # NOT templated → falls back to tab10
+        ]
+        periods = ["p1", "p2", "p3"]
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame(
+            rng.random((len(periods), len(cost_labels))) * 100,
+            index=pd.Index(periods, name="period"),
+            columns=pd.MultiIndex.from_arrays([cost_labels], names=["parameter"]),
+        )
+
+        cfg = PlotConfig(
+            plot_name="Cost bars",
+            # Bar chart: row=period (b), col=parameter (s=stack).
+            map_dimensions_for_plots=["d_p", "b_s"],
+            # Shared legend triggers shared_color_map construction.
+            legend="shared",
+            color_category="costs",
+        )
+        plan = compute_live_plan(df, cfg, plot_name="Cost bars")
+        assert plan is not None, "compute_live_plan returned None"
+        assert plan.shared_color_map is not None, (
+            "shared_color_map not populated; check legend='shared' path"
+        )
+
+        # Templated labels match the YAML; untemplated ones come from tab10.
+        for lbl in ("commodity_cost", "co2", "upward slack penalty"):
+            expected = resolve_label_color(lbl, tpl, category="costs")
+            assert expected is not None
+            got = plan.shared_color_map[lbl]
+            assert tuple(got) == pytest.approx(expected), (
+                f"Cost label {lbl!r} got {got} but template says {expected}"
+            )
+
+        tab10 = plt.colormaps["tab10"].colors
+        assert plan.shared_color_map["not_a_real_cost"] == tab10[0], (
+            "Untemplated label did not fall back to tab10[0]"
+        )
+
+    def test_bar_plan_without_category_uses_palette_only(self):
+        """Without ``color_category``, cost labels still get palette colors
+        (not template colors) — opt-in only, no silent coupling."""
+        import numpy as np
+        import pandas as pd
+
+        from flextool.plot_outputs.plan import compute_live_plan
+
+        df = pd.DataFrame(
+            np.arange(6, dtype=float).reshape(3, 2),
+            index=pd.Index(["p1", "p2", "p3"], name="period"),
+            columns=pd.MultiIndex.from_arrays(
+                [["commodity_cost", "co2"]], names=["parameter"]
+            ),
+        )
+        cfg = PlotConfig(
+            plot_name="Cost bars (no hint)",
+            map_dimensions_for_plots=["d_p", "b_s"],
+            legend="shared",
+            # color_category intentionally unset
+        )
+        plan = compute_live_plan(df, cfg, plot_name="Cost bars (no hint)")
+        assert plan is not None
+        assert plan.shared_color_map is not None
+
+        tab10 = plt.colormaps["tab10"].colors
+        # Both labels fall back to the palette (alphabetical: co2 then
+        # commodity_cost after sort inside _compute_bar_plan).
+        assert plan.shared_color_map["co2"] == tab10[0]
+        assert plan.shared_color_map["commodity_cost"] == tab10[1]

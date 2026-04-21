@@ -19,10 +19,44 @@
 # matplotlib palette, which is the original behaviour.
 #
 # Sections start empty; real values are filled in subsequent refactor
-# chunks (E = costs, F = node_flows, G = flowGroup entities).
+# chunks (F = node_flows, G = flowGroup entities).
 
 category:
-  costs: {}        # populated in Chunk E
+  # Cost components produced by flextool/process_outputs/out_costs.py.
+  # Semantic grouping:
+  #   - Investment / capex   → saturated blues
+  #   - Fixed O&M            → teals / light blues
+  #   - Fuel / commodities   → warm browns / oranges / greens (sales)
+  #   - Emissions (CO2)      → dark gray / near-black
+  #   - Variable O&M         → purples
+  #   - Startup              → amber / yellow
+  #   - Slack / penalties    → reds / magentas (visually alarming)
+  costs:
+    # Investment / capex (saturated blues)
+    unit investment & retirement:          '#1f4ea8'   # strong blue
+    connection investment & retirement:    '#3b6fc4'   # medium blue
+    storage investment & retirement:       '#6691d8'   # lighter blue
+    # Fixed O&M (teal family — "keep the lights on, recurring")
+    fixed cost pre-existing:               '#0f8a7a'   # teal
+    fixed cost invested:                   '#3bb0a0'   # brighter teal
+    fixed cost reduction of divestments:   '#8ed2c9'   # pale teal
+    # Commodity / fuel (warm browns / oranges for input, green for sales)
+    commodity_cost:                        '#a0522d'   # sienna (fuel "energy input")
+    commodity_sales:                       '#2ca02c'   # green (revenue / negative cost)
+    # Emissions (gray/near-black — instantly reads as "emissions")
+    co2:                                   '#4d4d4d'   # dark gray
+    # Variable O&M (purple)
+    other operational:                     '#8856a7'   # purple
+    # Startup (amber/yellow — "ignition")
+    starts:                                '#e6a41a'   # amber
+    # Slack / penalties (red / magenta family — alarming)
+    upward slack penalty:                  '#d62728'   # strong red
+    downward slack penalty:                '#ff7f7f'   # light red
+    inertia slack penalty:                 '#b5179e'   # magenta
+    non-synchronous slack penalty:         '#e147b7'   # pink-magenta
+    upward reserve slack penalty:          '#c1272d'   # dark red
+    downward reserve slack penalty:        '#ff9896'   # salmon
+    capacity margin penalty:               '#7b0828'   # deep wine red
   node_flows: {}   # populated in Chunk F
 
 entity_class:

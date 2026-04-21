@@ -484,6 +484,7 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 1
         xlabel: Millions of Currency
+        color_category: costs
       sum_periods:
         plot_name: 'Costs total'
         variant: a
@@ -493,6 +494,7 @@ plots:
         max_subplots_per_file: 1
         legend: shared
         xlabel: Millions of Currency (horizon total)
+        color_category: costs
     costs_dt_p:
       default:
         plot_name: 'Costs stack'
@@ -503,6 +505,7 @@ plots:
         subplots_per_row: 3
         axis_bounds: shared
         ylabel: Currency
+        color_category: costs
       chunks:
         plot_name: 'Costs weekly chunks'
         variant: w
@@ -513,6 +516,7 @@ plots:
         subplots_per_row: 3
         time_average_duration: 168
         ylabel: Currency
+        color_category: costs
   'Costs compare':
     group: 3
     order: 1
@@ -549,6 +553,7 @@ plots:
         base_length: 8
         map_dimensions_for_plots: [d_sp, b_es]
         ylabel: Millions of Currency
+        color_category: costs
     costs_discounted_p_:
       default:
         variant: a
@@ -559,6 +564,7 @@ plots:
         base_length: 10
         always_include_zero_in_axis: false
         xlabel: Millions of Currency
+        color_category: costs
 
   # Capacities for units, nodes and connections
   'Capacity nodes':
