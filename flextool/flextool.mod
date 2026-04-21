@@ -2411,6 +2411,17 @@ minimize total_cost:
       + v_divest[e, d]
           * p_entity_unitsize[e]
           * ed_lifetime_fixed_cost_divest[e, d]
+  # Salvage / retirement value of divested capacity.  Variable in v_divest,
+  # so the solver must see it when choosing whether to divest.  The sign of
+  # ed_entity_annual_divest_discounted follows salvage_value: positive
+  # salvage (scrap value) reduces the objective; negative salvage
+  # (decommissioning cost) increases it.  Currently investment/divest is
+  # not branched, so no pdt_branch_weight factor — see also the comment on
+  # the invest term above.
+  - sum {(e, d) in ed_divest}
+      + v_divest[e, d]
+          * p_entity_unitsize[e]
+          * ed_entity_annual_divest_discounted[e, d]
   + sum {g in groupCapacityMargin, d in period_invest}
     + vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
 	  * pdGroup[g, 'penalty_capacity_margin', d] * 1000

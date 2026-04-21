@@ -173,6 +173,20 @@ There are three methods associated with storage start and end values: `storage_b
 - `storage_binding_method` states how the storage should behave over discontinuities in the model timeline. Model timeline can have jumps for three different reasons: timesets, periods, and solves. If `storage_binding_method` is *bind_within_timeset*, then the storage has to match the state of the storage between the beginning and the end of each timeset. In effect, **storage_state_at_start_of_timeset** equals **storage_state_at_end_of_timeset** plus **charging** minus **discharging** minus **self_discharge_loss** at the last timestep. Similarly, *bind_within_period* will force the start and end between periods, but it will treat the jumps between timesets as continuous from the storage perspective (the storage will continue from where it was at the end of the previous timeset). *bind_within_solve* does effectively the same when there are multiple periods within one solve. *bind_within_model* (NOT IMPLEMENTED 19.3.2023) will extend the continuity to multiple solves and force the end state of the storage at the end of the last solve to match the beginning state of the storage at the start of the first solve. Finally, *bind_forward_only* will force continuity in the storage state over the whole model without forcing the end state to match the beginning state.
 - `storage_solve_horizon_method` is meant for models that roll forward between solves and have an overlapping temporal window between those solves (e.g. a model with 36 hour horizon rolls forward 24 hours at each solve - those 12 last hours will be overwritten by the next solve). In these cases, the end state of the storage will be replaced by the next solve, but it can be valuable to have some guidance for the end level of storage, since it will affect storage behaviour. There are three methods: *free* is the default and will simply let the model choose where the storage state ends (usually the storage will be emptied, since it would have no monetary value). *use_reference_value* will use the value set by `storage_state_reference_value` to force the end state in each solve to match the reference value. *use_reference_price* will give monetary value for the storage content at the end of the solve horizon set by the `storage_state_reference_price` parameter - the model is free to choose how much it stores at the end of horizon based on this monetary value.
 
+  > **Note: reference-price credit is in the solver objective but
+  > not in the calculated cost totals.**  When `use_reference_price`
+  > is active, the storage-state credit `−Σ storage_state_reference_price
+  > × v_state_end × unitsize × weight_factors` influences the solver's
+  > optimization but is **omitted** from the
+  > `costs_discounted_d_p` / `costs_discounted_p_` parquet files and
+  > the `summary_solve.csv` totals.  End-of-horizon storage valuation
+  > has several valid interpretations and is typically computed as
+  > post-analysis rather than as part of the reported cost breakdown.
+  > If needed, compute the credit from last-timestep `v_state` values
+  > and the `storage_state_reference_price` parameter yourself.  See
+  > `specs/issues.md` "Storage valuation (end-of-horizon)" for
+  > details.
+
 -Method hierarchy:
 
   1. `storage_start_end_method`

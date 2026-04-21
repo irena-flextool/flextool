@@ -200,6 +200,24 @@ Storage states can be tied to a value. For this three methods are introduced:
 - `storage_solve_horizon_method`: Fixes the state of the storage at the end of the solve horizon or sets a price for the stored energy at the end of the solve horizon
     - `storage_state_reference_value` and `storage_state_reference_price` set these values
   
+> **Note on end-of-horizon valuation.**  When
+> `storage_solve_horizon_method = use_reference_price` is set, the
+> `storage_state_reference_price` is applied *in the solver
+> objective* (the model sees a credit for leaving energy in the
+> storage at the end of the horizon).  However, this credit is
+> **not** included in the calculated cost totals reported in
+> `costs_discounted_*` and `summary_solve.csv` — end-of-horizon
+> storage valuation has several valid interpretations (reference
+> price × end state, difference between initial and final state
+> priced at an average commodity price, opportunity cost, or simply
+> book value) and is typically done as post-analysis rather than as
+> part of the optimization cost breakdown.  If you need the credit
+> as a reported line item, compute it yourself in post-processing
+> from the `v_state` last-timestep values and the
+> `storage_state_reference_price`.  See
+> [`specs/issues.md`](../specs/issues.md) "Storage valuation
+> (end-of-horizon)" for the full discussion.
+
 Having multiple storage methods can create infeasible problems. This is why some of the combinations shouldn't (and cannot) be used at the same time. If multiple methods are used, some of them might be ignored by the method hierarchy. More information can be found from [Model Parameters: Using nodes as storages](https://irena-flextool.github.io/flextool/reference). 
 
 Battery also needs charging and discharging capabilities. These could be presented either with a `connection` or by having a charging `unit` and a discharging `unit`. In here, we are using a `connection` called *battery_inverter*. Please note that the `efficiency` parameter of the `connection` applies to both directions, so the round-trip `efficiency` will be `efficiency` squared.

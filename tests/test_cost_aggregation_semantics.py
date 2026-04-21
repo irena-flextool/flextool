@@ -401,22 +401,61 @@ class TestCoalWindInertiaControl:
 # TODO items documented as xfail markers (user-decisions).
 # ===========================================================================
 
-@pytest.mark.xfail(
-    reason=(
-        "TODO(user): calc_costs.cost_entity_divest_d uses "
-        "entity_annual_divest_discounted (salvage annuity) which has no "
-        "counterpart in the mod objective. The objective uses "
-        "ed_lifetime_fixed_cost_divest only. Decide: is the salvage "
-        "annuity an intentional Python-only accounting item (then this "
-        "test should be removed), or is it a bug (then cost_entity_divest_d "
-        "should be changed)? See calc_costs.py:103."
-    ),
-    strict=False,
-)
-def test_divest_salvage_matches_mod() -> None:
-    # Placeholder — no scenario in the fixture exercises divestment with
-    # salvage value large enough to distinguish the two formulas.
-    assert False, "Needs user decision"
+class TestDivestSalvageIncludedInObjective:
+    """Salvage annuity (``ed_entity_annual_divest_discounted`` × v_divest
+    × unitsize) is now included in the mod objective as a variable term
+    alongside the lifetime-fixed-cost-savings term (flextool.mod
+    line 2410-2425).  In ``coal_retire`` the fixture divests 0.5
+    coal_plant units, so the salvage contribution is numerically
+    non-zero.
+
+    Solver objective ≈ Python total - pre-existing fixed cost constant.
+    Any other residual means the salvage term is mis-accounted.
+    """
+
+    @pytest.fixture(scope="class")
+    def csv_dir(
+        self, test_db_url: str, test_bin_dir: Path, tmp_path_factory: pytest.TempPathFactory
+    ) -> Path:
+        workdir = tmp_path_factory.mktemp("divest_coal_retire")
+        return _run_scenario("coal_retire", test_db_url, test_bin_dir, workdir)
+
+    def test_salvage_bucket_numerically_nonzero(self, csv_dir: Path) -> None:
+        """Positive control.  ``retirement`` bucket must be non-zero so
+        the solver-vs-python assertion distinguishes the salvage algebra
+        from the trivial no-divest case."""
+        s = _read_summary_solve(csv_dir)
+        assert abs(s["retirement"]) > 1e-6, (
+            "retirement bucket is zero — fixture did not exercise salvage, "
+            "test below is vacuous"
+        )
+
+    def test_solver_matches_python_minus_preexisting(self, csv_dir: Path) -> None:
+        """Solver objective excludes the pre-existing-fixed constant;
+        Python's full sum (operational + penalty + invest + divest +
+        fixed_invested + fixed_divested) must equal the solver
+        objective.  The pre-existing bucket — which HiGHS drops in
+        presolve — is excluded from the comparison.
+        """
+        s = _read_summary_solve(csv_dir)
+        python_sum = (
+            s["operational"]
+            + s["penalty"]
+            + s["investment"]
+            + s["retirement"]
+            + s["fixed_invested"]
+            + s["fixed_divested"]
+        )
+        residual = python_sum - s["objective"]
+        assert abs(residual) < max(1.0, 1e-4 * abs(s["objective"])), (
+            f"Residual {residual:+.6f} M CUR — salvage term may be "
+            f"mis-accounted.  python_sum={python_sum} "
+            f"objective={s['objective']} "
+            f"(components: oper={s['operational']} "
+            f"penalty={s['penalty']} invest={s['investment']} "
+            f"retire={s['retirement']} fix_inv={s['fixed_invested']} "
+            f"fix_div={s['fixed_divested']})"
+        )
 
 
 # ===========================================================================
@@ -674,20 +713,36 @@ class TestMinLoadEfficiencySectionTerm:
         )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "TODO(user): calc_costs.cost_entity_fixed_pre_existing (line 104) "
-        "uses par.entity_pre_existing.  The mod objective (line 2396) uses "
-        "p_entity_all_existing.  For single-solve dispatch-only runs they "
-        "are equal.  In multi-solve investment runs "
-        "(p_model['solveFirst'] = False on later solves), they differ "
-        "because p_entity_all_existing includes earlier-period v_invest "
-        "carried forward.  Decide: fix or accept?"
-    ),
-    strict=False,
-)
-def test_pre_existing_vs_all_existing() -> None:
-    assert False, "Needs user decision"
+def test_pre_existing_fixed_uses_all_existing() -> None:
+    """Regression guard for the commit that switched
+    ``calc_costs.cost_entity_fixed_pre_existing`` from
+    ``par.entity_pre_existing`` to ``par.entity_all_existing``.
+
+    The mod objective at flextool.mod:2395-2398 uses
+    ``p_entity_all_existing × ed_fixed_cost × inflation ×
+    pd_branch_weight``.  For single-solve runs
+    ``p_entity_all_existing == p_entity_pre_existing`` (mod:1933), so
+    the behavior is numerically identical on existing fixtures.  For
+    rolling / nested solves with ``solveFirst == 0``,
+    ``p_entity_all_existing`` additionally includes capacity invested in
+    earlier solve rolls — without this fix, Python would under-count
+    the fixed cost on those carried-forward assets.
+
+    The existing golden tests (``base``, ``base_weighted``, etc.)
+    implicitly verify the single-solve equivalence.  A numeric test of
+    the multi-solve divergence would require a fixture that rolls
+    through multiple solves with realized investment between rolls; no
+    such fixture exists in the suite today.
+    """
+    import inspect
+    import flextool.process_outputs.calc_costs as cc
+    src = inspect.getsource(cc.compute_costs)
+    assert "entity_all_existing * par.entity_fixed_cost" in src or \
+           "entity_all_existing*par.entity_fixed_cost" in src, (
+        "calc_costs.cost_entity_fixed_pre_existing must use "
+        "par.entity_all_existing — mod objective line 2396 uses "
+        "p_entity_all_existing, not p_entity_pre_existing."
+    )
 
 
 @pytest.mark.xfail(

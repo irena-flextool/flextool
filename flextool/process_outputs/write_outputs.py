@@ -155,9 +155,13 @@ def write_summary_csv(par, s, v, r, csv_dir):
         investment_costs = r.costInvest_d.sum(axis=0) / 1000000
         f.write(f'"Investment costs for realized periods (M CUR)",{investment_costs:.12g}\n')
 
-        # Retirement costs (negative salvage value) for realized periods (M CUR)
+        # Retirement costs / salvage revenue for realized periods (M CUR).
+        # Sign follows the user's salvage_value input: positive salvage
+        # (scrap revenue) shows as a negative cost; negative salvage
+        # (decommissioning cost) shows as a positive cost.  Included in
+        # the solver objective since v_divest is a decision variable.
         retirement_costs = r.costDivest_d.sum(axis=0) / 1000000
-        f.write(f'"Retirement costs (negative salvage value) for realized periods (M CUR)",{retirement_costs:.12g}\n')
+        f.write(f'"Retirement costs / salvage revenue for realized periods (M CUR)",{retirement_costs:.12g}\n')
 
         # Fixed costs for existing entities (M CUR)
         fixed_costs_pre_existing = r.costFixedPreExisting_d.sum(axis=0) / 1000000
