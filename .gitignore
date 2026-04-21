@@ -19,6 +19,7 @@ __pycache__
 site/
 example_input.xlsx 
 *.xls*
+*.ods
 site/
 input/
 output/
@@ -32,3 +33,4 @@ specs/
 test/expected/
 projects/
 tests/unitTests.txt
+rivendell/
