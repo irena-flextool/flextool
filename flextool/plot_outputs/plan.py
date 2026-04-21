@@ -1103,6 +1103,7 @@ def compute_plot_plans_for_result(
     break_times: set[str] | None = None,
     active_settings: list[str] | None = None,
     period_weights=None,
+    manifest_accumulator=None,
 ) -> list[tuple[str, str]]:
     """Compute and save PlotPlans for all configs of a result_key.
 
@@ -1111,6 +1112,12 @@ def compute_plot_plans_for_result(
     The *active_settings* parameter is accepted for backward compatibility
     but ignored — all configs in the YAML entry are processed so that the
     viewer can build a complete availability manifest.
+
+    When *manifest_accumulator* is provided (a
+    :class:`~flextool.plot_outputs.shared_manifest.ManifestAccumulator`),
+    each generated plan is also folded into a cross-scenario axis-bounds
+    manifest.  The caller is responsible for invoking
+    ``accumulator.write()`` once the batch is done.
     """
     from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
     from flextool.plot_outputs.orchestrator import (
@@ -1271,6 +1278,14 @@ def compute_plot_plans_for_result(
                 save_sub = f"{sub_config}__{member_str}"
 
             save_plot_plan(plan, output_dir, result_key, save_sub)
+            if manifest_accumulator is not None:
+                try:
+                    manifest_accumulator.add_plan(result_key, save_sub, plan)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to accumulate axis bounds for %s/%s: %s",
+                        result_key, save_sub, exc,
+                    )
             # Record file-member-specific availability if different from base
             if save_sub != sub_config:
                 succeeded.append((result_key, save_sub))

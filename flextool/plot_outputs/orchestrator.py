@@ -880,11 +880,20 @@ def compute_all_plot_plans(
     can load pre-computed plans instead of re-running dimension rules.
     Also writes an ``_availability.json`` manifest listing all
     (result_key, sub_config) pairs that produced valid plans.
+
+    For per-scenario runs (``output_dir`` sits inside
+    ``<project>/output_parquet/<scenario>/``) the function also folds the
+    resulting subplot y-ranges into a cross-scenario axis-bounds manifest
+    at ``<project>/output_parquet/_shared/axis_bounds.json`` so the viewer
+    can keep the y-axis stable when switching scenarios.  Comparison /
+    cross-scenario output dirs (which don't live under ``output_parquet/``)
+    don't need the shared manifest and skip this step.
     """
     import json
     import tempfile
     from pathlib import Path
     from flextool.plot_outputs.plan import compute_plot_plans_for_result
+    from flextool.plot_outputs.shared_manifest import ManifestAccumulator
 
     # Flatten new-format entries (entry-name grouping) to flat result_key mapping
     plot_settings = flatten_new_format(plot_settings)
@@ -901,6 +910,22 @@ def compute_all_plot_plans(
         shutil.rmtree(plan_dir)
     plan_dir.mkdir(parents=True, exist_ok=True)
 
+    # Decide whether this batch should contribute to the shared axis-bounds
+    # manifest.  Only per-scenario output_dirs (parent named ``output_parquet``)
+    # get a ManifestAccumulator — comparison dirs have their own axis logic and
+    # don't participate in the cross-scenario stability concern.
+    manifest_accumulator = None
+    if output_dir.parent.name == "output_parquet":
+        # project_path is two levels up: <project>/output_parquet/<scenario>
+        project_path = output_dir.parent.parent
+        try:
+            manifest_accumulator = ManifestAccumulator(project_path)
+        except Exception as exc:
+            logger.warning(
+                "Failed to initialise shared axis-bounds accumulator: %s", exc,
+            )
+            manifest_accumulator = None
+
     available: list[list[str]] = []
 
     for key, df in results_dict.items():
@@ -916,6 +941,7 @@ def compute_all_plot_plans(
                 df, key, plot_settings, plan_dir,
                 plot_rows, break_times, active_settings,
                 period_weights=period_weights,
+                manifest_accumulator=manifest_accumulator,
             )
             available.extend([k, s] for k, s in pairs)
         except Exception as exc:
@@ -937,3 +963,8 @@ def compute_all_plot_plans(
             raise
     except Exception as exc:
         logger.warning("Failed to write availability manifest: %s", exc)
+
+    # Write the cross-scenario axis-bounds manifest (only populated for
+    # per-scenario runs — see manifest_accumulator setup above).
+    if manifest_accumulator is not None:
+        manifest_accumulator.write()
