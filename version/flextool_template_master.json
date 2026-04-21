@@ -1499,7 +1499,7 @@
     [
       "model",
       "version",
-      40.0,
+      41.0,
       null,
       "Contains database version information.",
       null
@@ -1814,14 +1814,6 @@
       0.0,
       null,
       "[0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant.",
-      null
-    ],
-    [
-      "node",
-      "storate_state_end",
-      null,
-      null,
-      null,
       null
     ],
     [
@@ -3610,12 +3602,6 @@
     ],
     [
       "node",
-      "storate_state_end",
-      "float",
-      0
-    ],
-    [
-      "node",
       "virtual_unitsize",
       "float",
       0
@@ -3701,7 +3687,7 @@
     [
       "reserve__upDown__unit__node",
       "increase_reserve_ratio",
-      "str",
+      "float",
       0
     ],
     [

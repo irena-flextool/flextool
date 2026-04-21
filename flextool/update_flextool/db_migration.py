@@ -714,11 +714,100 @@ def migrate_database(database_path, up_to: int | None = None):
                         "quantity=inf marks an unbounded tail tier."
                     ),
                 )
+                # Correct a stale parameter_type_list on
+                # reserve__upDown__unit__node.increase_reserve_ratio: v23's
+                # inline type list had ("str",), but the parameter is a
+                # ratio and the sibling reserve__upDown__connection__node
+                # already carries ("float",).  Patch it here in v40 (rather
+                # than editing the historical v23 data) so DBs coming
+                # through v23 -> v40 converge on the correct type.
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="reserve__upDown__unit__node",
+                    name="increase_reserve_ratio",
+                    parameter_type_list=("float",),
+                )
                 try:
                     db.commit_session(
                         "v40: added commodity.price_method, commodity.unitsize, "
                         "commodity.price_ladder_cumulative and "
-                        "commodity.price_ladder_annual (no LP behaviour yet)"
+                        "commodity.price_ladder_annual (no LP behaviour yet); "
+                        "corrected reserve__upDown__unit__node."
+                        "increase_reserve_ratio parameter_type_list str -> float"
+                    )
+                except SpineDBAPIError:
+                    pass
+            elif next_version == 41:
+                # Fix the "storate_state_end" typo on node.  The correct
+                # parameter "storage_state_end" already exists (added in
+                # v22/v23) but a typo'd sibling has lived alongside it
+                # since v23.  Some user DBs may have accumulated values on
+                # the typo'd name via imported templates.  Migrate those
+                # values to the correct name non-destructively, then drop
+                # the typo'd definition.
+                typo_name = "storate_state_end"
+                good_name = "storage_state_end"
+
+                # 1. Ensure the correct parameter exists.  In practice it
+                #    will already have been added by v22/v23, but defend
+                #    against edge cases where it was removed or never
+                #    materialised.
+                existing_good = list(db.find_parameter_definitions(
+                    entity_class_name="node", name=good_name,
+                ))
+                if not existing_good:
+                    default_val, default_type = to_database(0.0)
+                    db.add_update_item(
+                        "parameter_definition",
+                        entity_class_name="node", name=good_name,
+                        default_value=default_val, default_type=default_type,
+                        parameter_type_list=("float",),
+                        description=(
+                            "[0-1] Relative state of storage at the end of "
+                            "the last model solve (overrides "
+                            "'storage_state_end_reference'). Constant."
+                        ),
+                    )
+
+                # 2. Copy any parameter values on the typo'd name over to
+                #    the good name if the target (node, alternative) slot
+                #    is not already populated.
+                good_value_keys = {
+                    (pv["entity_byname"], pv["alternative_name"])
+                    for pv in db.find_parameter_values(
+                        entity_class_name="node",
+                        parameter_definition_name=good_name,
+                    )
+                }
+                for pv in list(db.find_parameter_values(
+                        entity_class_name="node",
+                        parameter_definition_name=typo_name)):
+                    key = (pv["entity_byname"], pv["alternative_name"])
+                    if key in good_value_keys:
+                        continue  # non-destructive: keep existing good value
+                    db.add_update_item(
+                        "parameter_value",
+                        entity_class_name="node",
+                        entity_byname=pv["entity_byname"],
+                        parameter_definition_name=good_name,
+                        alternative_name=pv["alternative_name"],
+                        value=pv["value"], type=pv["type"],
+                    )
+                    good_value_keys.add(key)
+
+                # 3. Delete the typo'd parameter definition (cascades to
+                #    its parameter_value rows).
+                typo_defs = list(db.find_parameter_definitions(
+                    entity_class_name="node", name=typo_name,
+                ))
+                if typo_defs:
+                    db.remove_items(
+                        "parameter_definition", typo_defs[0]["id"]
+                    )
+
+                try:
+                    db.commit_session(
+                        "v41: fix storate_state_end typo -> storage_state_end"
                     )
                 except SpineDBAPIError:
                     pass
