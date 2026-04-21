@@ -530,3 +530,147 @@ class TestNodeFlowsCategoryIntegration:
         assert costs_red == pytest.approx(flows_red), (
             "Slack hues drifted between costs and node_flows categories"
         )
+
+
+# ---------------------------------------------------------------------------
+# Chunk G: flowGroup entity-class color-template integration
+# ---------------------------------------------------------------------------
+
+
+class TestFlowGroupEntityClassIntegration:
+    """End-to-end: a bar plan computed with ``color_entity_class='group'``
+    pulls colors from ``templates/default_colors.yaml`` for well-known
+    flowGroup technology / fuel names (solar, wind, coal, …) and falls
+    back to the palette for project-specific names not in the template.
+
+    flowGroup labels are **user-chosen entity names** — a given project's
+    group might be called "solar" or "Solar" or "solar_park_DE".  The
+    template uses case-insensitive matching so the first two hit the same
+    color; the third falls through to tab10.
+
+    This is the flowGroup counterpart to
+    :class:`TestCostCategoryIntegration` /
+    :class:`TestNodeFlowsCategoryIntegration`.
+    """
+
+    def setup_method(self) -> None:
+        ct._clear_cache()
+
+    def test_shipped_template_has_recommended_flowgroup_labels(self):
+        """Sanity check on the YAML: the conventional flowGroup names that
+        the template ships with must all resolve.  Canary if someone
+        trims / renames entries in ``default_colors.yaml``."""
+        tpl = ct.load_color_template()
+        # A representative sample across the semantic groups (renewables,
+        # conventional, storage, other).
+        expected_labels = [
+            "solar", "wind", "hydro", "biomass",
+            "coal", "gas", "nuclear",
+            "battery", "h2_storage",
+            "chp", "import",
+        ]
+        for lbl in expected_labels:
+            assert ct.resolve_label_color(
+                lbl, tpl, entity_class="group",
+            ) is not None, (
+                f"Shipped template is missing flowGroup label {lbl!r}"
+            )
+
+    def test_flowgroup_labels_are_case_insensitive(self):
+        """User-chosen entity names come in at whatever case the project
+        picked; the template must match regardless."""
+        tpl = ct.load_color_template()
+        for canonical, variants in [
+            ("solar", ["Solar", "SOLAR", "sOlAr"]),
+            ("wind", ["Wind", "WIND"]),
+            ("h2_storage", ["H2_Storage", "H2_STORAGE"]),
+        ]:
+            base = ct.resolve_label_color(canonical, tpl, entity_class="group")
+            assert base is not None
+            for v in variants:
+                got = ct.resolve_label_color(v, tpl, entity_class="group")
+                assert got == pytest.approx(base), (
+                    f"{v!r} did not resolve to same color as {canonical!r}"
+                )
+
+    def test_bar_plan_uses_template_colors_for_flowgroup_entities(self):
+        """A bar plan with ``color_entity_class='group'`` and
+        ``legend='shared'`` should pull template colors for well-known
+        flowGroup names (case-insensitively) and fall back to tab10 for
+        project-specific names the template doesn't know about."""
+        import numpy as np
+        import pandas as pd
+
+        from flextool.plot_outputs.color_template import resolve_label_color
+        from flextool.plot_outputs.plan import compute_live_plan
+
+        tpl = ct.load_color_template()
+
+        # Simulate a flowGroup-indicator frame reshaped so the legend
+        # axis carries group names.  Matches the dimension shape
+        # ``[d_g, b_s]`` used by group-indicator bar plots that stack
+        # by group.
+        group_labels = [
+            "solar",               # templated (gold)
+            "Wind",                # templated (mixed case — still hits)
+            "coal_lignite_mix",    # NOT templated → palette fallback
+        ]
+        periods = ["p1", "p2", "p3"]
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame(
+            rng.random((len(periods), len(group_labels))) * 100,
+            index=pd.Index(periods, name="period"),
+            columns=pd.MultiIndex.from_arrays([group_labels], names=["group"]),
+        )
+
+        cfg = PlotConfig(
+            plot_name="FlowGroup bars",
+            map_dimensions_for_plots=["d_g", "b_s"],
+            legend="shared",
+            color_entity_class="group",
+        )
+        plan = compute_live_plan(df, cfg, plot_name="FlowGroup bars")
+        assert plan is not None, "compute_live_plan returned None"
+        assert plan.shared_color_map is not None, (
+            "shared_color_map not populated; check legend='shared' path"
+        )
+
+        # Templated labels match the YAML (case-insensitive).
+        for lbl in ("solar", "Wind"):
+            expected = resolve_label_color(lbl, tpl, entity_class="group")
+            assert expected is not None
+            got = plan.shared_color_map[lbl]
+            assert tuple(got) == pytest.approx(expected), (
+                f"FlowGroup label {lbl!r} got {got} but template says {expected}"
+            )
+
+        # Project-specific name falls back to tab10[0] (first palette slot
+        # since no other untemplated labels precede it).
+        tab10 = plt.colormaps["tab10"].colors
+        assert plan.shared_color_map["coal_lignite_mix"] == tab10[0], (
+            "Untemplated flowGroup label did not fall back to tab10[0]"
+        )
+
+    def test_category_and_entity_class_paths_independent(self):
+        """Opt-in only: passing ``color_entity_class='group'`` should not
+        accidentally pick up colors from the ``category`` section, and
+        vice versa.  Locks down the precedence documented in
+        :func:`resolve_label_color`."""
+        tpl = ct.load_color_template()
+        # "solar" is an entity_class.group key; it should resolve under
+        # entity_class='group' but NOT under category='costs'.
+        assert ct.resolve_label_color(
+            "solar", tpl, entity_class="group",
+        ) is not None
+        assert ct.resolve_label_color(
+            "solar", tpl, category="costs",
+        ) is None
+
+        # "commodity_cost" is a category.costs key; it should resolve
+        # under category='costs' but NOT under entity_class='group'.
+        assert ct.resolve_label_color(
+            "commodity_cost", tpl, category="costs",
+        ) is not None
+        assert ct.resolve_label_color(
+            "commodity_cost", tpl, entity_class="group",
+        ) is None

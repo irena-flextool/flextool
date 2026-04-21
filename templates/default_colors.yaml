@@ -82,4 +82,43 @@ category:
     Excess load:        '#ff7f7f'   # light red — downward slack (spill / dump)
 
 entity_class:
-  group: {}        # populated in Chunk G (flowGroup-entity recommended names)
+  # Recommended colors for user-named flowGroup entities.  A flowGroup is a
+  # ``group`` entity whose membership is ``group__unit__node`` or
+  # ``group__connection__node`` (i.e. it aggregates flows, not nodes) and
+  # that carries ``output_flowGroup_indicators = yes``.  The labels below
+  # are a *convention*: if different projects happen to name a flow group
+  # "solar" or "Wind", they get the same color across dashboards.
+  #
+  # Lookup is case-insensitive (see color_template.resolve_label_color), so
+  # "Solar", "solar", and "SOLAR" all resolve to the same entry.  Labels
+  # that aren't listed fall back to the tab10/tab20 palette, so this list
+  # is purely additive — there's no penalty for a project using a name
+  # that isn't here.
+  #
+  # Palette rationale: semantic colors users already associate with the
+  # technology / fuel (yellow for solar, sky blue for wind, black for
+  # coal, …), paired across related pairs (coal/lignite both dark, two
+  # blues for hydro vs pumped hydro) so stacked plots read naturally.
+  group:
+    # Renewables — bright, warm-to-cool gradient
+    solar:          '#F4B400'   # gold / sun
+    wind:           '#4FC3F7'   # sky blue
+    hydro:          '#1565C0'   # deep blue (flowing water)
+    biomass:        '#33691E'   # forest green
+    geothermal:     '#8D6E63'   # burnt-orange brown (earth heat)
+    ocean:          '#006064'   # teal (deep sea — tidal / wave)
+    # Conventional — dark, muted (carbon-heavy "reads as dirty")
+    coal:           '#212121'   # near-black
+    lignite:        '#4E342E'   # dark brown (lower-grade coal)
+    gas:            '#FB8C00'   # orange-red (flame)
+    oil:            '#6A1B9A'   # dark purple (heavy fuel)
+    nuclear:        '#7B1FA2'   # purple (convention in energy atlases)
+    # Storage — greens / teals (shifts energy in time, not a generator)
+    battery:        '#43A047'   # bright green (electrochemistry)
+    pumped_hydro:   '#00838F'   # teal (water-based storage)
+    h2_storage:     '#BA68C8'   # light purple (hydrogen)
+    # Other flows
+    chp:            '#E64A19'   # orange-red (combined heat & power)
+    import:         '#90CAF9'   # light blue (external supply)
+    export:         '#EF9A9A'   # light red (outbound)
+    demand_response: '#FFB300'  # amber (flexible load)
