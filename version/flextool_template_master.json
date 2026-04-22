@@ -786,77 +786,77 @@
   "parameter_groups": [
     [
       "basics",
-      "b3cde3",
+      "6fa8c7",
       10
     ],
     [
       "constraint",
-      "bc80bd",
+      "a36784",
       70
     ],
     [
       "emission",
-      "ccebc5",
+      "8cbb8a",
       45
     ],
     [
       "flow_limit",
-      "fccde5",
+      "d9bf96",
       55
     ],
     [
       "investment",
-      "fdbf6f",
+      "7fb095",
       20
     ],
     [
       "model",
-      "d9d9d9",
+      "a3a3a3",
       80
     ],
     [
       "network",
-      "80b1d3",
+      "d9a8a0",
       50
     ],
     [
       "output",
-      "a6cee3",
+      "9ac2d1",
       95
     ],
     [
       "reserve",
-      "fb9a99",
+      "7aaeb0",
       40
     ],
     [
       "retirement",
-      "ffb870",
+      "a3b08c",
       25
     ],
     [
       "solve_advanced",
-      "9f94c6",
+      "b56f6f",
       87
     ],
     [
       "solve_basics",
-      "bebada",
+      "8c94b0",
       85
     ],
     [
       "storage",
-      "cab2d6",
+      "a598c7",
       30
     ],
     [
       "tech_advanced",
-      "b2df8a",
+      "d9925c",
       35
     ],
     [
       "timeline",
-      "ffed6f",
+      "c2b870",
       90
     ]
   ],
@@ -1576,7 +1576,7 @@
     [
       "model",
       "version",
-      44.0,
+      45.0,
       null,
       "Contains database version information.",
       "model"

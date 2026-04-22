@@ -1044,6 +1044,8 @@ def migrate_database(database_path, up_to: int | None = None):
                     pass
             elif next_version == 44:
                 _migrate_v44_parameter_groups(db)
+            elif next_version == 45:
+                _migrate_v45_parameter_group_colors(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -1763,6 +1765,73 @@ def _migrate_v44_parameter_groups(db) -> None:
             "constraint, model, solve_basics, solve_advanced, timeline); "
             "assigned every parameter_definition to its group per "
             "rivendell/PROPOSAL_parameter_groups.md"
+        )
+    except SpineDBAPIError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# v45: recolour parameter_groups for light/dark-theme compatibility.
+# ---------------------------------------------------------------------------
+#
+# The v44 palette used ColorBrewer pastels (luminance ~0.7-0.85) which wash
+# out on a light IDE background and read as low-contrast on a dark one.
+# v45 replaces them with mid-tone colours (relative luminance ~0.25-0.55)
+# in three emotional registers:
+#   * Calm cool tones for the 10 groups users normally reach for.
+#   * Mild warm (soft salmon / gold) for specialised overlays that engage
+#     optional physics or silently conflict with dispatch — network,
+#     flow_limit.
+#   * Stronger warm (amber / brick / rose) for groups where misuse can
+#     break a solve — tech_advanced, solve_advanced, constraint.
+#
+# Names + priorities are unchanged; only the colour field is updated.
+_V45_GROUP_COLORS: tuple[tuple[str, str], ...] = (
+    # calm tier
+    ("basics",         "6fa8c7"),  # sky blue — foundational
+    ("investment",     "7fb095"),  # sage green
+    ("retirement",     "a3b08c"),  # muted olive
+    ("storage",        "a598c7"),  # lavender
+    ("reserve",        "7aaeb0"),  # teal
+    ("emission",       "8cbb8a"),  # leaf green
+    ("model",          "a3a3a3"),  # neutral gray
+    ("solve_basics",   "8c94b0"),  # slate
+    ("timeline",       "c2b870"),  # muted gold
+    ("output",         "9ac2d1"),  # cyan
+    # mild warn tier
+    ("network",        "d9a8a0"),  # soft salmon
+    ("flow_limit",     "d9bf96"),  # soft amber
+    # strong warn tier
+    ("tech_advanced",  "d9925c"),  # amber-orange
+    ("solve_advanced", "b56f6f"),  # brick red
+    ("constraint",     "a36784"),  # dusky rose
+)
+
+
+def _migrate_v45_parameter_group_colors(db) -> None:
+    """Update the colour on every parameter_group to the v45 palette.
+
+    Does not touch names or priorities — both are stable from v44.  Does
+    not touch parameter_definition group assignments — those already point
+    by id and follow the renames/updates transparently.
+    """
+    for name, color in _V45_GROUP_COLORS:
+        item = db.item(db.mapped_table("parameter_group"), name=name)
+        if item is None:
+            # Shouldn't happen if v44 ran, but don't crash if a group is
+            # missing — just skip.
+            continue
+        db.update_item(
+            "parameter_group",
+            id=item["id"],
+            color=color,
+        )
+    try:
+        db.commit_session(
+            "v45: updated parameter_group colours to a mid-tone palette "
+            "(readable on both light and dark IDE themes); calm cool tones "
+            "for the common groups, warm tones for advanced / risk-prone "
+            "groups"
         )
     except SpineDBAPIError:
         pass
