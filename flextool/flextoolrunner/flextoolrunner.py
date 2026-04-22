@@ -28,7 +28,7 @@ class FlexToolRunner:
     See ``flextool.flextoolrunner.__init__`` docstring for a full module navigation guide.
     """
 
-    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False):
+    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False, highs_threads=None):
         try:
             logger = logging.getLogger(__name__)
             # Resolve work_folder: default to cwd for backward compatibility
@@ -84,6 +84,8 @@ class FlexToolRunner:
                 paths=paths, solve=solve, timeline=timeline, logger=logger,
                 use_old_raw_csv=use_old_raw_csv,
             )
+            # HiGHS thread count (CLI override; solver_runner defaults to 4 when None).
+            self.state.highs_threads = highs_threads
         except FlexToolError:
             sys.exit(-1)
 

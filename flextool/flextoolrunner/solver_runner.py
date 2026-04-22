@@ -356,7 +356,12 @@ class SolverRunner:
         # Apply per-solve overrides from database
         h.setOptionValue('presolve', self.state.solve.highs.presolve.get(current_solve, 'on'))
         h.setOptionValue('solver', self.state.solve.highs.method.get(current_solve, 'choose'))
-        h.setOptionValue('parallel', self.state.solve.highs.parallel.get(current_solve, 'off'))
+        # Parallel MIP / concurrent LP on by default now that HiGHS 1.14 has
+        # fixed the older multi-thread bugs.  DB override still wins.
+        h.setOptionValue('parallel', self.state.solve.highs.parallel.get(current_solve, 'on'))
+        # Thread count: honor CLI / runner override; fall back to 4.
+        highs_threads = getattr(self.state, 'highs_threads', None) or 4
+        h.setOptionValue('threads', int(highs_threads))
 
         # Read and solve
         status = h.readModel(mps_file)

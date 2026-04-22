@@ -12,18 +12,31 @@ from flextool.update_flextool.initialize_database import initialize_database
 
 
 def _reinstall_if_needed():
-    """Re-install the flextool package when it is not an editable install.
+    """Re-install the flextool package when it is not an editable install,
+    and upgrade pinned dependencies that may have moved forward.
 
     Editable installs (``pip install -e .``) pick up source changes
     immediately, so no reinstall is necessary.  Non-editable installs
     need ``pip install .`` after ``git pull`` to update the installed code.
+
+    In both cases we also upgrade ``highspy`` to satisfy any newly-raised
+    lower bound in pyproject.toml — pip otherwise keeps the already-
+    installed version if it happens to satisfy the earlier (looser) pin.
     """
     import sys
     result = subprocess.run(
         [sys.executable, "-m", "pip", "show", "flextool"],
         capture_output=True, text=True,
     )
-    if "Editable project location" in result.stdout:
+    is_editable = "Editable project location" in result.stdout
+
+    # Always bring highspy up to the floor declared in pyproject.toml.
+    # Users on an older version get the newer solver automatically.
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "highspy>=1.14"],
+    )
+
+    if is_editable:
         return
     print("Reinstalling flextool package to pick up code changes...")
     completed = subprocess.run(

@@ -12,6 +12,6 @@ python-calamine
 xlsxwriter
 pyyaml
 sv-ttk
-highspy
+highspy>=1.14
 matplotlib
 spinetoolbox
