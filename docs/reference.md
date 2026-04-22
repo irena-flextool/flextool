@@ -471,31 +471,48 @@ For `reserve__upDown__connection__node` entities:
 
 ## Parameter groups (metadata)
 
-Spine's `parameter_definition` table carries an optional `parameter_group_name` field — a lightweight category label that the Spine DB editor uses to group related parameters visually. FlexTool historically left this field blank. As of schema v43 we have begun populating it.
+Spine's `parameter_definition` table carries an optional `parameter_group_name` field — a lightweight category label that the Spine DB editor uses to group related parameters visually. FlexTool historically left this field blank. Schema v43 introduced the mechanism with a narrow `Outputs` foothold, and schema v44 populates it fully: every parameter_definition row in the master template is now tagged with one of 15 groups.
 
-The initial pass (v43) populates a single group, **`Outputs`**, and tags the four group-level output-control parameters with it:
+The scheme has no semantic meaning to the solver — it is purely metadata consumed by the Spine DB editor and anything else that walks `parameter_group_name`. Names are lowercase snake_case (FlexTool convention). Priorities are sparse by design so future groups can slot in without renumbering.
 
-- `output_nodeGroup_dispatch`
-- `output_nodeGroup_indicators`
-- `output_flowGroup_indicators`
-- `flow_aggregator`
+The groups are organised in three informal tiers — **asset physics** (what the thing is and how it runs), **decision overlays** (investment, retirement, storage state, advanced dynamics, reserves, emissions, network, flow caps, user-defined constraints), and **model plumbing** (model-wide settings, solve configuration, timeline definitions, output toggles).
 
-The `Outputs` group has no semantic meaning to the solver — it is purely metadata consumed by the Spine DB editor and anything else that walks `parameter_group_name`.
+| Group | Priority | Colour | Purpose |
+|---|---|---|---|
+| `basics` | 10 | `b3cde3` | What the thing is and how it runs at steady state — default home for any parameter not clearly in a decision overlay. |
+| `investment` | 20 | `fdbf6f` | Capacity expansion: invest costs, methods, cumulative bounds, lifetime, discount rate, annualised fixed costs, capacity margin. |
+| `retirement` | 25 | `ffb870` | Retirement/divestment bounds and salvage value. |
+| `storage` | 30 | `cab2d6` | Storage state variable, cross-solve and horizon-edge behaviour, reference price/value. |
+| `tech_advanced` | 35 | `b2df8a` | Unit commitment (startup, min times), ramp rates, time delays — advanced operational dynamics. |
+| `reserve` | 40 | `fb9a99` | Spinning / standing / N-1 reserve provision parameters. |
+| `emission` | 45 | `ccebc5` | CO2 accounting: fuel content, group caps, prices. |
+| `network` | 50 | `80b1d3` | DC power flow, inertia, non-synchronous share — network-aware modelling. |
+| `flow_limit` | 55 | `fccde5` | Group-level aggregated flow caps / floors and loss-of-load share control. |
+| `constraint` | 70 | `bc80bd` | User-authored linear constraints plus the coefficient parameters on other entities that couple into them. |
+| `model` | 80 | `d9d9d9` | Whole-model scope, horizons, numeric framing (version, periods, inflation). |
+| `solve_basics` | 85 | `bebada` | Per-solve knobs a typical user touches (solver, mode, periods, years). |
+| `solve_advanced` | 87 | `9f94c6` | Per-solve internals: solver options, rolling/nested/stochastic structures, cross-solve storage handoff. |
+| `timeline` | 90 | `ffed6f` | Time-structure definitions consumed by solves (timestep duration, timeset metadata). |
+| `output` | 95 | `a6cee3` | Toggles that shape what the run writes to outputs. |
 
 ### Convention for new parameters
 
-When a new parameter definition is added, please give it a `parameter_group_name`. The suggested top-level categories (only `Outputs` is populated today; add others as you introduce parameters that naturally fit them):
+When you add a new parameter definition, also assign it a `parameter_group_name`. Use the table above to pick the group — err on the side of matching *why the user sets the parameter*, not where it is mathematically consumed (e.g. `constraint_state_coefficient` on `node` belongs to `constraint`, because the user writes it to participate in a user-defined constraint, not to configure storage).
 
-| Category | Intended scope |
-|---|---|
-| `Outputs` | Output flags and selectors — what the model should write out. |
-| `Investment` | Invest/retire methods, cost parameters, cumulative capacity bounds. |
-| `Dispatch` | Operational parameters: efficiencies, profiles, ramps, minimum loads. |
-| `Reserves` | Reserve methods, reliabilities, reserve ratios. |
-| `Storage` | Storage state, binding, discharge and round-trip parameters. |
-| `Costs` | CO2/fuel prices, penalty costs, salvage and fixed costs. |
+Both the group definition and the tag are set inside the same db_migration step:
 
-Adding a new category is a one-line change in a migration (an `add_update_item("parameter_group", name=..., color=..., priority=...)` call — the color must be a 6-digit hex string without a leading `#`). Tagging a definition is another one-liner (`add_update_item("parameter_definition", ..., parameter_group_name=<group>)`). The regeneration of `flextool_template_master.json` via `python -m flextool.update_flextool.sync_master_json_template` picks the new metadata up automatically — the field is exported as the 6th slot of the parameter-definition tuple.
+```python
+db.add_update_item("parameter_group", name="my_group",
+                   color="a6cee3", priority=60)
+db.add_update_item("parameter_definition",
+                   entity_class_name="unit",
+                   name="my_param",
+                   parameter_group_name="my_group")
+```
+
+The colour is a 6-digit hex string with no leading `#`. Priority controls display order in the Spine DB editor — pick a value that fits the tiered scheme above (asset physics 10–15, decision overlays 20–55, constraints 70, plumbing 80–95).
+
+After editing the migration, run `python -m flextool.update_flextool.sync_master_json_template` to regenerate `flextool_template_master.json` — the group assignment is exported as the 6th slot of the parameter-definition tuple. The coverage pytest (`tests/test_parameter_groups_coverage.py`) fails loudly if any parameter is left ungrouped.
 
 ## Additional entities for further functionality
 

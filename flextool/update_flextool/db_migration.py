@@ -1042,6 +1042,8 @@ def migrate_database(database_path, up_to: int | None = None):
                     )
                 except SpineDBAPIError:
                     pass
+            elif next_version == 44:
+                _migrate_v44_parameter_groups(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -1440,8 +1442,332 @@ def get_parameter_type_list_v23():
              ]
     
     return types
-    
-    
+
+
+# ---------------------------------------------------------------------------
+# v44: full parameter_group metadata across every parameter_definition.
+# ---------------------------------------------------------------------------
+
+# Group definitions: (name, color_6hex, priority).  See
+# rivendell/PROPOSAL_parameter_groups.md for the rationale behind the
+# tiered priority scheme (asset physics → decision overlays → model plumbing).
+_V44_PARAMETER_GROUPS: tuple[tuple[str, str, int], ...] = (
+    ("basics",         "b3cde3", 10),
+    ("investment",     "fdbf6f", 20),
+    ("retirement",     "ffb870", 25),
+    ("storage",        "cab2d6", 30),
+    ("tech_advanced",  "b2df8a", 35),
+    ("reserve",        "fb9a99", 40),
+    ("emission",       "ccebc5", 45),
+    ("network",        "80b1d3", 50),
+    ("flow_limit",     "fccde5", 55),
+    ("constraint",     "bc80bd", 70),
+    ("model",          "d9d9d9", 80),
+    ("solve_basics",   "bebada", 85),
+    ("solve_advanced", "9f94c6", 87),
+    ("timeline",       "ffed6f", 90),
+    # "output" is kept with its existing colour (was the v43 "Outputs"
+    # foothold); only its casing + priority change.
+    ("output",         "a6cee3", 95),
+)
+
+
+def _v44_build_parameter_group_map() -> dict[tuple[str, str], str]:
+    """Return a {(entity_class, parameter_name): group_name} dict.
+
+    This is the data-driven membership table — one entry per
+    parameter_definition row in the v43 master template.  See the
+    proposal document for the rationale behind each assignment.
+    """
+    m: dict[tuple[str, str], str] = {}
+
+    # --- basics ---------------------------------------------------------
+    basics_map: dict[str, tuple[str, ...]] = {
+        "commodity": (
+            "price", "unitsize", "price_method",
+            "price_ladder_annual", "price_ladder_cumulative",
+        ),
+        "connection": (
+            "availability", "efficiency", "existing", "virtual_unitsize",
+            "other_operational_cost", "transfer_method",
+        ),
+        "connection__profile": ("profile_method",),
+        "node": (
+            "availability", "existing", "virtual_unitsize", "annual_flow",
+            "peak_inflow", "inflow", "inflow_method", "node_type",
+            "penalty_up", "penalty_down",
+        ),
+        "node__profile": ("profile_method",),
+        "profile": ("profile",),
+        "unit": (
+            "availability", "efficiency", "efficiency_at_min_load",
+            "existing", "virtual_unitsize", "conversion_method", "min_load",
+        ),
+        "unit__inputNode": (
+            "flow_coefficient", "max_capacity_coefficient",
+            "min_capacity_coefficient", "other_operational_cost",
+        ),
+        "unit__outputNode": (
+            "flow_coefficient", "max_capacity_coefficient",
+            "min_capacity_coefficient", "other_operational_cost",
+        ),
+        "unit__node__profile": ("profile_method",),
+    }
+    for ec, params in basics_map.items():
+        for p in params:
+            m[(ec, p)] = "basics"
+
+    # --- investment ----------------------------------------------------
+    invest_shared = (
+        "invest_cost", "invest_method", "invest_max_period",
+        "invest_max_total", "invest_min_period", "invest_min_total",
+        "cumulative_max_capacity", "cumulative_min_capacity",
+        "lifetime", "lifetime_method", "discount_rate", "fixed_cost",
+    )
+    for ec in ("connection", "node", "unit"):
+        for p in invest_shared:
+            m[(ec, p)] = "investment"
+    m[("node", "invest_forced")] = "investment"
+    for p in (
+        "invest_method", "invest_max_period", "invest_max_total",
+        "invest_min_period", "invest_min_total",
+        "cumulative_max_capacity", "cumulative_min_capacity",
+        "capacity_margin", "has_capacity_margin",
+        "penalty_capacity_margin",
+    ):
+        m[("group", p)] = "investment"
+
+    # --- retirement ----------------------------------------------------
+    for ec in ("connection", "node", "unit"):
+        for p in (
+            "retire_max_period", "retire_max_total",
+            "retire_min_period", "retire_min_total", "salvage_value",
+        ):
+            m[(ec, p)] = "retirement"
+
+    # --- storage -------------------------------------------------------
+    for p in (
+        "self_discharge_loss", "storage_binding_method",
+        "storage_nested_fix_method", "storage_solve_horizon_method",
+        "storage_start_end_method", "storage_state_start",
+        "storage_state_end", "storage_state_reference_price",
+        "storage_state_reference_value",
+    ):
+        m[("node", p)] = "storage"
+
+    # --- tech_advanced -------------------------------------------------
+    for ec in ("connection", "unit"):
+        for p in ("startup_cost", "startup_method"):
+            m[(ec, p)] = "tech_advanced"
+    for p in ("min_uptime", "min_downtime", "minimum_time_method"):
+        m[("unit", p)] = "tech_advanced"
+    for ec in ("connection", "unit"):
+        m[(ec, "delay")] = "tech_advanced"
+    for ec in ("unit__inputNode", "unit__outputNode"):
+        for p in (
+            "ramp_cost", "ramp_method",
+            "ramp_speed_up", "ramp_speed_down",
+        ):
+            m[(ec, p)] = "tech_advanced"
+
+    # --- reserve -------------------------------------------------------
+    for p in (
+        "reservation", "reserve_method",
+        "penalty_reserve", "increase_reserve_ratio",
+    ):
+        m[("reserve__upDown__group", p)] = "reserve"
+    for ec in (
+        "reserve__upDown__connection__node",
+        "reserve__upDown__unit__node",
+    ):
+        for p in (
+            "increase_reserve_ratio", "large_failure_ratio",
+            "max_share", "reliability",
+        ):
+            m[(ec, p)] = "reserve"
+
+    # --- emission ------------------------------------------------------
+    m[("commodity", "co2_content")] = "emission"
+    for p in ("co2_method", "co2_max_period", "co2_max_total", "co2_price"):
+        m[("group", p)] = "emission"
+
+    # --- network -------------------------------------------------------
+    for p in ("is_DC", "reactance"):
+        m[("connection", p)] = "network"
+    for p in (
+        "base_MVA", "reference_node",
+        "candidate_precapacity_to_avoid_big_m", "transfer_method",
+        "has_inertia", "inertia_limit", "penalty_inertia",
+        "has_non_synchronous", "non_synchronous_limit",
+        "penalty_non_synchronous",
+    ):
+        m[("group", p)] = "network"
+    for ec in ("unit__inputNode", "unit__outputNode"):
+        for p in ("is_non_synchronous", "inertia_constant"):
+            m[(ec, p)] = "network"
+
+    # --- flow_limit ----------------------------------------------------
+    for p in (
+        "max_cumulative_flow", "min_cumulative_flow",
+        "max_instant_flow", "min_instant_flow", "share_loss_of_load",
+    ):
+        m[("group", p)] = "flow_limit"
+
+    # --- constraint ----------------------------------------------------
+    for p in ("constant", "sense"):
+        m[("constraint", p)] = "constraint"
+    for ec in ("connection__node", "unit__inputNode", "unit__outputNode"):
+        m[(ec, "constraint_flow_coefficient")] = "constraint"
+    for ec in ("connection", "node", "unit"):
+        for p in (
+            "constraint_invested_capacity_coefficient",
+            "constraint_cumulative_pre_built_capacity_coefficient",
+        ):
+            m[(ec, p)] = "constraint"
+    m[("node", "constraint_state_coefficient")] = "constraint"
+
+    # --- model ---------------------------------------------------------
+    for p in (
+        "version", "solves", "periods_available", "inflation_rate",
+        "inflation_offset_operations", "inflation_offset_investment",
+        "max_flow_for_unconstrained_variables",
+    ):
+        m[("model", p)] = "model"
+    m[("group", "include_stochastics")] = "model"
+
+    # --- solve_basics --------------------------------------------------
+    for p in (
+        "solver", "solve_mode", "period_timeset", "realized_periods",
+        "invest_periods", "years_represented",
+    ):
+        m[("solve", p)] = "solve_basics"
+
+    # --- solve_advanced -----------------------------------------------
+    # timeline_hole_multiplier belongs here "if present" (proposal).  The
+    # migration below handles that conditionally, so we don't pre-declare
+    # it in this map.
+    for p in (
+        "solver_arguments", "solver_precommand", "highs_presolve",
+        "highs_method", "highs_parallel", "rolling_duration",
+        "rolling_solve_horizon", "rolling_solve_jump",
+        "realized_invest_periods", "fix_storage_periods",
+        "stochastic_branches", "contains_solves",
+    ):
+        m[("solve", p)] = "solve_advanced"
+
+    # --- timeline ------------------------------------------------------
+    m[("timeline", "timestep_duration")] = "timeline"
+    for p in (
+        "timeline", "timeset_duration", "new_stepduration",
+        "timeset_weights",
+    ):
+        m[("timeset", p)] = "timeline"
+
+    # --- output --------------------------------------------------------
+    for p in (
+        "output_nodeGroup_dispatch", "output_nodeGroup_indicators",
+        "output_flowGroup_indicators", "flow_aggregator",
+    ):
+        m[("group", p)] = "output"
+    for p in (
+        "debug", "exclude_entity_outputs", "output_horizon",
+        "output_node_balance_t", "output_ramp_envelope",
+        "output_unit__node_flow_t", "output_unit__node_ramp_t",
+        "output_connection_flow_separate",
+        "output_connection__node__node_flow_t",
+    ):
+        m[("model", p)] = "output"
+
+    return m
+
+
+def _migrate_v44_parameter_groups(db) -> None:
+    """Apply full parameter_group metadata.
+
+    Behaviour:
+      1. Rename the existing ``"Outputs"`` parameter_group to ``"output"``
+         (casing fix), keeping its colour ``a6cee3`` and bumping its
+         priority to 95.  Rename cascades to every parameter_definition
+         that references it (Spine tracks the link by id, not by name).
+      2. Add the other 14 parameter_groups from
+         :data:`_V44_PARAMETER_GROUPS`.
+      3. Assign every parameter_definition to its group from the
+         data-driven membership map built by
+         :func:`_v44_build_parameter_group_map`.
+      4. If ``solve.timeline_hole_multiplier`` exists in this database,
+         assign it to ``solve_advanced`` (proposal says "if present").
+         Otherwise skip silently.
+    """
+    # Step 1: rename the existing Outputs group (or create it if it is
+    # somehow missing) and update its priority.  Doing an id-keyed update
+    # preserves the link to the four output-parameter_definitions that
+    # v43 already tagged.
+    outputs_group = db.item(
+        db.mapped_table("parameter_group"), name="Outputs",
+    )
+    if outputs_group is not None:
+        db.update_item(
+            "parameter_group",
+            id=outputs_group["id"],
+            name="output",
+            color="a6cee3",
+            priority=95,
+        )
+    else:
+        db.add_update_item(
+            "parameter_group",
+            name="output",
+            color="a6cee3",
+            priority=95,
+        )
+
+    # Step 2: add the remaining 14 groups.  add_update_item is idempotent
+    # on name, so re-running is safe.
+    for name, color, priority in _V44_PARAMETER_GROUPS:
+        if name == "output":
+            continue  # handled in step 1
+        db.add_update_item(
+            "parameter_group",
+            name=name,
+            color=color,
+            priority=priority,
+        )
+
+    # Step 3: assign every parameter_definition to its group.
+    group_map = _v44_build_parameter_group_map()
+    for (entity_class_name, param_name), group_name in group_map.items():
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name=entity_class_name,
+            name=param_name,
+            parameter_group_name=group_name,
+        )
+
+    # Step 4: conditionally tag timeline_hole_multiplier if present.
+    thm = list(db.find_parameter_definitions(
+        entity_class_name="solve", name="timeline_hole_multiplier",
+    ))
+    if thm:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="timeline_hole_multiplier",
+            parameter_group_name="solve_advanced",
+        )
+
+    try:
+        db.commit_session(
+            "v44: renamed 'Outputs' parameter_group to 'output'; added 14 "
+            "new parameter_groups (basics, investment, retirement, storage, "
+            "tech_advanced, reserve, emission, network, flow_limit, "
+            "constraint, model, solve_basics, solve_advanced, timeline); "
+            "assigned every parameter_definition to its group per "
+            "rivendell/PROPOSAL_parameter_groups.md"
+        )
+    except SpineDBAPIError:
+        pass
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('filename',help= "The filepath of the database to be migrated")
