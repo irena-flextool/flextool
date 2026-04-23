@@ -1267,7 +1267,7 @@
       "none",
       "decomposition_methods",
       "Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'lagrangian_region' (group is solved as an independent region with shared-commodity coupling).",
-      null
+      "solve_advanced"
     ],
     [
       "group",

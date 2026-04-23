@@ -2232,6 +2232,16 @@ def _migrate_v51_group_block_resolution(db) -> None:
             "independent region with shared-commodity coupling)."
         ),
     )
+    # Attach decomposition_method to the solve_advanced parameter_group
+    # — the flag is experimental and nests under the same heading as
+    # ``solve.use_row_scaling`` and similar opt-in features.
+    if db.item(db.mapped_table("parameter_group"), name="solve_advanced") is not None:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="group",
+            name="decomposition_method",
+            parameter_group_name="solve_advanced",
+        )
 
     try:
         db.commit_session(
