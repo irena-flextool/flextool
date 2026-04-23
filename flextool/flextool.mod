@@ -2567,6 +2567,32 @@ param total_obj_cost := gmtime();
 printf 'Timer - Objective: %ss\n', total_obj_cost - setup;
 printf ',%s', total_obj_cost - setup >> solve_progress;
 
+# ---------------------------------------------------------------------------
+# Generalized node balance equations (Agent 1.3 — M-matrix / overlap-set
+# aggregation, per Gao & Morales-España 2025).
+#
+# Each node n lives on its own temporal-resolution block b_n = node__block[n].
+# Each process p has a per-side block b_f = process__side__block[p, side]
+# which may differ from b_n when an indirect-conversion process straddles a
+# fine-resolution node and a coarse-resolution node (e.g. hourly elec + daily
+# H2).  The generalized balance at node n, period d, node-timestep t_n
+# aggregates every contributing flow v_flow[...,d,t_f] via the overlap
+# fraction M_{b_n,t_n;b_f,t_f} = p_overlap[d, b_n, t_n, b_f, t_f] and weights
+# it by the flow-side stepduration block_step_duration[b_f, d, t_f].  In the
+# degenerate single-block case (every node and every process-side mapped to
+# "default"), overlap carries identity rows (1.0 on the diagonal, 0
+# elsewhere) and block_step_duration['default', d, t] == step_duration[d, t]
+# (same float value in the CSV), so each block-aware sum collapses to its
+# pre-v51 form and the LP is bit-identical to Agent 1.2's baseline.
+#
+# For non-state terms the time index on the LHS (t_n) is the node's own
+# block's time; process-flow variables are keyed at (d, t_f) on the process-
+# side block.  For nodeState the storage transition keeps its existing
+# dtttdt chaining for now — Agent 1.4 generalizes predecessor logic per
+# block.  Agent 5c row-scaling (inv_node_cap[n, d]) is preserved on every
+# RHS term.
+# ---------------------------------------------------------------------------
+
 # Energy balance in each node
 # Agent 5c: every term on LHS and RHS is multiplied by inv_node_cap[n, d]
 # (row scaler).  For slack terms the pre-multiplier
@@ -2593,9 +2619,16 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
           - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )) * inv_node_cap[n, d])
   =
-  # n is sink
-  + sum {(p, source, n) in process_source_sink} (
-      + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t] * inv_node_cap[n, d]
+  # n is sink — block-aware aggregation.  For each incoming flow, sum over
+  # the flow-side's timesteps t_f that overlap the node's timestep t at
+  # node-block b_n (degenerate: single identity row at t_f = t, fraction 1.0).
+  + sum {(p, source, n) in process_source_sink, (n, b_n) in node__block,
+         (p, 'sink', b_f) in process__side__block,
+         (d, b_c, tc, b_fn, t_f) in overlap
+         : b_c = b_n and tc = t and b_fn = b_f} (
+      + p_overlap[d, b_n, t, b_f, t_f]
+        * v_flow[p, source, n, d, t_f] * p_entity_unitsize[p]
+        * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
 	)
 # It would be nice to have single variable delay, but not yet implemented (it would need post-processing and fixing the term below)
 #  + sum {(p, source, n) in process_source_sink_delayed} (
@@ -2604,22 +2637,33 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
 #  	          * p_process_delay_weight[p, td]
 #        )
 #    )
-  # n is source
-  - sum {(p, n, sink) in process_source_sink_eff } (
-      + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-	      * pdtProcess_slope[p, d, t]
-		  * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
-      + (if (p, 'min_load_efficiency') in process__ct_method then
-			  + ( + (if p in process_online_linear then v_online_linear[p, d, t])
-			      + (if p in process_online_integer then v_online_integer[p, d, t])
-				)
-			    * pdtProcess_section[p, d, t]
-				* p_entity_unitsize[p]
-		)
-    ) * step_duration[d, t] * inv_node_cap[n, d]
-  - sum {(p, n, sink) in process_source_sink_noEff}
-    ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-    ) * step_duration[d, t] * inv_node_cap[n, d]
+  # n is source (with efficiency conversion) — block-aware.
+  - sum {(p, n, sink) in process_source_sink_eff, (n, b_n) in node__block,
+         (p, 'source', b_f) in process__side__block,
+         (d, b_c, tc, b_fn, t_f) in overlap
+         : b_c = b_n and tc = t and b_fn = b_f} (
+      ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
+            * pdtProcess_slope[p, d, t_f]
+            * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
+        + (if (p, 'min_load_efficiency') in process__ct_method then
+                + ( + (if p in process_online_linear then v_online_linear[p, d, t_f])
+                    + (if p in process_online_integer then v_online_integer[p, d, t_f])
+                  )
+                  * pdtProcess_section[p, d, t_f]
+                  * p_entity_unitsize[p]
+          )
+      ) * p_overlap[d, b_n, t, b_f, t_f]
+        * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
+    )
+  # n is source (no efficiency) — block-aware.
+  - sum {(p, n, sink) in process_source_sink_noEff, (n, b_n) in node__block,
+         (p, 'source', b_f) in process__side__block,
+         (d, b_c, tc, b_fn, t_f) in overlap
+         : b_c = b_n and tc = t and b_fn = b_f}
+    ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
+        * p_overlap[d, b_n, t, b_f, t_f]
+        * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
+    )
   + (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t] * inv_node_cap[n, d])
   - (if n in nodeSelfDischarge then
       + v_state[n, d, t]
@@ -2632,29 +2676,50 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
 
 # Energy balance within period in each node
 # Agent 5c: every term scaled by inv_node_cap[n, d] (see nodeBalance_eq note).
+# Block-aware (Agent 1.3): the period-level balance sums every flow
+# contribution through overlap × block_step_duration[b_f, d, t_f] so that a
+# process on a finer/coarser block than the node still contributes the
+# correct energy volume to the period total.  In the degenerate case this
+# reduces to summing v_flow * step_duration over every (d, t) in dt.
 s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in period_in_use : n not in nodeState} :
   0
   =
-  # n is sink
-  + sum {(p, source, n) in process_source_sink, (d, t) in dt} (
-      + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t] * inv_node_cap[n, d]
+  # n is sink — aggregate across every coarse-row × fine-row overlap in d.
+  + sum {(p, source, n) in process_source_sink, (n, b_n) in node__block,
+         (p, 'sink', b_f) in process__side__block,
+         (d, b_c, tc, b_fn, t_f) in overlap
+         : b_c = b_n and b_fn = b_f} (
+      + p_overlap[d, b_n, tc, b_f, t_f]
+        * v_flow[p, source, n, d, t_f] * p_entity_unitsize[p]
+        * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
 	)
-  # n is source
-  - sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } (
-      + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-	      * pdtProcess_slope[p, d, t]
-		  * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
-      + (if (p, 'min_load_efficiency') in process__ct_method then
-			  + ( + (if p in process_online_linear then v_online_linear[p, d, t])
-			      + (if p in process_online_integer then v_online_integer[p, d, t])
-				)
-			    * pdtProcess_section[p, d, t]
-				* p_entity_unitsize[p]
-		)
-    ) * step_duration[d, t] * inv_node_cap[n, d]
-  - sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt}
-    ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-    ) * step_duration[d, t] * inv_node_cap[n, d]
+  # n is source (with efficiency conversion).
+  - sum {(p, n, sink) in process_source_sink_eff, (n, b_n) in node__block,
+         (p, 'source', b_f) in process__side__block,
+         (d, b_c, tc, b_fn, t_f) in overlap
+         : b_c = b_n and b_fn = b_f} (
+      ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
+            * pdtProcess_slope[p, d, t_f]
+            * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
+        + (if (p, 'min_load_efficiency') in process__ct_method then
+                + ( + (if p in process_online_linear then v_online_linear[p, d, t_f])
+                    + (if p in process_online_integer then v_online_integer[p, d, t_f])
+                  )
+                  * pdtProcess_section[p, d, t_f]
+                  * p_entity_unitsize[p]
+          )
+      ) * p_overlap[d, b_n, tc, b_f, t_f]
+        * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
+    )
+  # n is source (no efficiency).
+  - sum {(p, n, sink) in process_source_sink_noEff, (n, b_n) in node__block,
+         (p, 'source', b_f) in process__side__block,
+         (d, b_c, tc, b_fn, t_f) in overlap
+         : b_c = b_n and b_fn = b_f}
+    ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
+        * p_overlap[d, b_n, tc, b_f, t_f]
+        * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
+    )
   + (if (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt} pdtNodeInflow[n, d, t] * inv_node_cap[n, d])
   + sum {(d, t) in dt} vq_state_up[n, d, t] * step_duration[d, t]
   - sum {(d, t) in dt} vq_state_down[n, d, t] * step_duration[d, t]
@@ -2674,32 +2739,63 @@ s.t. stateConstantWithinBlock_eq {n in nodeStateBlock,
 # equals the net flow summed over the block's timesteps. Cyclic within period
 # via period_block_succ.
 # Agent 5c: every term scaled by inv_node_cap[n, d] (see nodeBalance_eq note).
+# Block-aware (Agent 1.3): flows are aggregated through the M-matrix /
+# overlap-set so that a process at a different temporal-resolution block than
+# the node still contributes the correct energy volume to the intraperiod
+# block's balance.  In the degenerate case this reduces to the pre-v51 sum
+# over `period_block_time` at `step_duration[d, t]`.  The intraperiod-block
+# grouping (period_block_time / period_block_succ) here refers to the
+# `bind_intraperiod_blocks` state-transition grouping — this is **orthogonal**
+# to the temporal-resolution block (node__block / process__side__block)
+# plumbing used by the flow aggregation below.  To disambiguate we keep
+# `b_first` (intraperiod-block label) distinct from `b_n` (temporal-
+# resolution block of node n) and `b_f` (temporal-resolution block of the
+# process-side flow variable).
 s.t. nodeBalanceBlock_eq {c in solve_current, n in nodeStateBlock,
     (d, b_first) in period_block
     : (n, 'fix_start_end') not in node__storage_start_end_method} :
   sum {(d, b_first, b_next) in period_block_succ}
     (v_state[n, d, b_next] - v_state[n, d, b_first]) * p_entity_unitsize[n] / p_hole_multiplier[c] * inv_node_cap[n, d]
   =
-  # n is sink: flows into n
-  + sum {(p, source, n) in process_source_sink, (d, b_first, t) in period_block_time} (
-      v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t] * inv_node_cap[n, d]
+  # n is sink: flows into n — aggregate each flow contributor via the
+  # overlap set, keyed at the node-block timesteps that fall within this
+  # intraperiod block b_first.
+  + sum {(p, source, n) in process_source_sink, (n, b_n) in node__block,
+         (p, 'sink', b_f) in process__side__block,
+         (d, b_first, t) in period_block_time,
+         (d, b_c, tc, b_fn, t_f) in overlap
+         : b_c = b_n and tc = t and b_fn = b_f} (
+      + p_overlap[d, b_n, t, b_f, t_f]
+        * v_flow[p, source, n, d, t_f] * p_entity_unitsize[p]
+        * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
     )
   # n is source: flows out via efficiency
-  - sum {(p, n, sink) in process_source_sink_eff, (d, b_first, t) in period_block_time} (
-      ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-            * pdtProcess_slope[p, d, t]
+  - sum {(p, n, sink) in process_source_sink_eff, (n, b_n) in node__block,
+         (p, 'source', b_f) in process__side__block,
+         (d, b_first, t) in period_block_time,
+         (d, b_c, tc, b_fn, t_f) in overlap
+         : b_c = b_n and tc = t and b_fn = b_f} (
+      ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
+            * pdtProcess_slope[p, d, t_f]
             * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
         + (if (p, 'min_load_efficiency') in process__ct_method then
-            ( + (if p in process_online_linear then v_online_linear[p, d, t])
-              + (if p in process_online_integer then v_online_integer[p, d, t])
+            ( + (if p in process_online_linear then v_online_linear[p, d, t_f])
+              + (if p in process_online_integer then v_online_integer[p, d, t_f])
             )
-            * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
+            * pdtProcess_section[p, d, t_f] * p_entity_unitsize[p]
           )
-      ) * step_duration[d, t] * inv_node_cap[n, d]
+      ) * p_overlap[d, b_n, t, b_f, t_f]
+        * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
     )
   # n is source: flows out, no efficiency conversion
-  - sum {(p, n, sink) in process_source_sink_noEff, (d, b_first, t) in period_block_time} (
-      v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] * inv_node_cap[n, d]
+  - sum {(p, n, sink) in process_source_sink_noEff, (n, b_n) in node__block,
+         (p, 'source', b_f) in process__side__block,
+         (d, b_first, t) in period_block_time,
+         (d, b_c, tc, b_fn, t_f) in overlap
+         : b_c = b_n and tc = t and b_fn = b_f} (
+      + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
+        * p_overlap[d, b_n, t, b_f, t_f]
+        * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
     )
   # Inflow (pdtNodeInflow is already in energy units per step, not power)
   + (if (n, 'no_inflow') not in node__inflow_method then
