@@ -229,6 +229,31 @@ set period_block_succ 'cyclic block successor within a period (period, block_fir
 set period_block := setof {(d, b, t) in period_block_time} (d, b);
 set nodeStateBlock := {n in nodeState : (n, 'bind_intraperiod_blocks') in node__storage_binding_method};
 
+# Temporal-resolution block abstraction (Agents 1.1/1.2): per-entity resolution
+# classes.  A node's balance equation is emitted at the node's block; a
+# process's flow variables are emitted at their adjacent node's block (one
+# per side, derived in Python by flextoolrunner/blocks.py).  In the degenerate
+# case (no group has new_stepduration set) everything maps to block "default".
+# Declarations are inert in this agent — Agents 1.3+ consume them.
+set node__block 'per-node block assignment' dimen 2;
+set process_side 'source/sink side label' := {'source', 'sink'};
+set process__side__block 'per-process per-side block assignment' dimen 3;
+# block__period__step companion set carries the keys of block_step_duration
+# so the parameter can be iterated without relying on a default-0 sentinel.
+set block__period__step 'active (block, period, step) triples' dimen 3;
+# Overlap fraction M_{b_coarse, t_coarse; b_fine, t_fine} from Gao/
+# Morales-España 2025.  Used by Agent 1.3's generalized balance equation to
+# aggregate flows across resolutions.  In the degenerate (single-block) case
+# every (d, t, b, t, b) row carries fraction 1.0 — identity.
+set overlap 'overlap tuples (period, block_coarse, step_coarse, block_fine, step_fine)' dimen 5;
+# Block set derived from the union of blocks referenced in the four CSVs.
+set block 'temporal-resolution classes for nodes and processes'
+    := setof {(n, b) in node__block} (b)
+       union setof {(p, s, b) in process__side__block} (b)
+       union setof {(b, d, t) in block__period__step} (b)
+       union setof {(d, bc, tc, bf, tf) in overlap} (bc)
+       union setof {(d, bc, tc, bf, tf) in overlap} (bf);
+
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
@@ -464,6 +489,16 @@ param p_process_constraint_prebuilt_capacity_coefficient {process, constraint};
 param p_node_constraint_prebuilt_capacity_coefficient {node, constraint};
 param p_node_constraint_state_coefficient {node, constraint};
 param step_duration{(d, t) in dt};
+
+# Block-aware step durations (Agent 1.2): step_duration per (block, period,
+# step).  Indexed on the companion set block__period__step populated alongside
+# the parameter from solve_data/block_step_duration.csv — matching the dt/
+# step_duration read idiom.
+param block_step_duration {(b, d, t) in block__period__step};
+# Overlap fraction per (period, block_coarse, step_coarse, block_fine,
+# step_fine).  Read from solve_data/overlap_set.csv; rows not present default
+# to 0.  In the degenerate single-block solve the identity rows carry 1.0.
+param p_overlap {overlap} default 0;
 param p_hole_multiplier {solve_current} default 1;
 # Agent 5 (LP-scaling): per-solve opt-in for automatic row scaling.
 # When the solve's p_use_row_scaling is 1, node_capacity_for_scaling
@@ -771,6 +806,17 @@ table data IN 'CSV' 'solve_data/rp_block_start_last.csv' : [rep_start], p_rp_las
 table data IN 'CSV' 'solve_data/rp_cost_weight.csv' : [period, time], p_rp_cost_weight~weight;
 table data IN 'CSV' 'solve_data/period_block_time.csv' : period_block_time <- [period, block_first, step];
 table data IN 'CSV' 'solve_data/period_block_succ.csv' : period_block_succ <- [period, block_first, block_first_next];
+# Temporal-resolution block CSVs (Agent 1.1 writes; Agent 1.2 reads inert).
+# Consumed by generalized balance / flow / storage constraints in Agents 1.3+.
+table data IN 'CSV' 'solve_data/entity_block.csv' :
+    node__block <- [entity, block];
+table data IN 'CSV' 'solve_data/process_side_block.csv' :
+    process__side__block <- [process, side, block];
+table data IN 'CSV' 'solve_data/block_step_duration.csv' :
+    block__period__step <- [block, period, step], block_step_duration ~ step_duration;
+table data IN 'CSV' 'solve_data/overlap_set.csv' :
+    overlap <- [period, block_coarse, step_coarse, block_fine, step_fine],
+    p_overlap ~ fraction;
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
