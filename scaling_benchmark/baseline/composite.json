@@ -1,24 +1,24 @@
 {
   "bound_range": [
     1.0,
-    1000.0
+    1.0
   ],
-  "cols_initial": 3264,
+  "cols_initial": 2208,
   "cols_postpresolve": null,
   "cost_range": [
-    9e-06,
-    2.0
+    0.009,
+    90.0
   ],
-  "git_commit": "b1063dae014935f5363c62a774739ffef503d9ad",
+  "git_commit": "69831fdf7d1f111c5031e097743c5413d9a881d8",
   "matrix_range": [
     0.003,
     20000.0
   ],
   "matrix_range_from_mps": [
-    9.125e-06,
+    0.00333333,
     25000.0
   ],
-  "nnz_initial": 6720,
+  "nnz_initial": 5664,
   "nnz_postpresolve": null,
   "objective": 547500000.0,
   "rhs_range": [
@@ -38,7 +38,7 @@
     "vq_state_up": 15600.0,
     "vq_state_up_group": 0.0
   },
-  "solve_wall_time_s": 0.045,
-  "timestamp": "2026-04-22T16:41:21",
-  "total_wall_time_s": 4.497
+  "solve_wall_time_s": 0.0386,
+  "timestamp": "2026-04-23T13:22:31",
+  "total_wall_time_s": 4.946
 }
