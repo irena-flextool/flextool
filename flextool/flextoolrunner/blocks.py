@@ -135,12 +135,22 @@ class BlockAssignments:
         process_name → source-side block_name.
     process_block_out : dict[str, str]
         process_name → sink-side block_name.
+    process_block : dict[str, str]
+        process_name → process's unified block (Agent 1.6).  Equals the
+        process's explicit resolution-group block if set, else the
+        finer of ``process_block_in`` / ``process_block_out``.  Used by
+        the GMPL side to index UC / startup / shutdown variables and
+        their constraints so that unit commitment lives at the
+        process's own temporal resolution.  In the degenerate case
+        (all entities on ``DEFAULT_BLOCK``) this equals
+        ``DEFAULT_BLOCK`` for every process.
     block_step_duration : dict[str, float]
         block_name → hours per step.  ``DEFAULT_BLOCK`` always present.
     """
     node_block: dict[str, str] = field(default_factory=dict)
     process_block_in: dict[str, str] = field(default_factory=dict)
     process_block_out: dict[str, str] = field(default_factory=dict)
+    process_block: dict[str, str] = field(default_factory=dict)
     block_step_duration: dict[str, float] = field(default_factory=dict)
 
 
@@ -407,6 +417,7 @@ def derive_blocks(
 
     process_block_in: dict[str, str] = {}
     process_block_out: dict[str, str] = {}
+    process_block: dict[str, str] = {}
 
     def _finer(a: str, b: str) -> str:
         """Pick the block with the shorter step duration.
@@ -428,6 +439,7 @@ def derive_blocks(
         if explicit_block is not None:
             process_block_in[p] = explicit_block
             process_block_out[p] = explicit_block
+            process_block[p] = explicit_block
             continue
 
         src = first_source.get(p)
@@ -441,15 +453,24 @@ def derive_blocks(
             finer = _finer(src_block, snk_block)
             process_block_in[p] = finer
             process_block_out[p] = finer
+            # Agent 1.6: process's unified block for UC / ramp / profile.
+            # Direct methods already collapsed both sides to the finer
+            # one, so the process block matches.
+            process_block[p] = finer
         else:
             # Indirect (nvar) — flows already split by side.
             process_block_in[p] = src_block
             process_block_out[p] = snk_block
+            # Agent 1.6: process's unified block for UC / ramp / profile.
+            # No explicit process-level resolution-group override, so
+            # fall back to the finer of the two sides.
+            process_block[p] = _finer(src_block, snk_block)
 
     return BlockAssignments(
         node_block=node_block,
         process_block_in=process_block_in,
         process_block_out=process_block_out,
+        process_block=process_block,
         block_step_duration=block_step_duration,
     )
 
@@ -524,6 +545,7 @@ def _build_block_timelines(
             block not in block_assignments.node_block.values()
             and block not in block_assignments.process_block_in.values()
             and block not in block_assignments.process_block_out.values()
+            and block not in block_assignments.process_block.values()
         ):
             continue
         block_rows: dict[str, list[tuple[str, float]]] = {}
@@ -970,6 +992,15 @@ def write_block_data(
             writer.writerow([process, "source", block])
         for process, block in block_assignments.process_block_out.items():
             writer.writerow([process, "sink", block])
+
+    # process_block.csv (Agent 1.6) ------------------------------------
+    # Per-process unified block for UC / ramp / profile constraints.
+    # In the degenerate case every process maps to ``DEFAULT_BLOCK``.
+    with open(solve_data_dir / "process_block.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["process", "block"])
+        for process, block in block_assignments.process_block.items():
+            writer.writerow([process, block])
 
     # block_step_duration.csv ------------------------------------------
     with open(solve_data_dir / "block_step_duration.csv", "w", newline="") as f:
