@@ -1149,6 +1149,20 @@ def migrate_database(database_path, up_to: int | None = None):
                     )
                 except SpineDBAPIError:
                     pass
+            elif next_version == 50:
+                # Move new_stepduration from entity_class `timeset` to
+                # entity_class `solve`.
+                #
+                # Pre-v50 semantics: new_stepduration was declared per
+                # timeset, but FlexTool rejected any config where two
+                # timesets used by the same solve carried different
+                # new_stepduration values (see the "More than one
+                # timeline in the solve or the same timeline with
+                # different step durations in different timesets"
+                # check in timeline_config.py).  So the parameter was
+                # effectively solve-scoped already — this migration
+                # makes the scope explicit.
+                _migrate_v50_new_stepduration_to_solve(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -1935,6 +1949,191 @@ def _migrate_v45_parameter_group_colors(db) -> None:
             "(readable on both light and dark IDE themes); calm cool tones "
             "for the common groups, warm tones for advanced / risk-prone "
             "groups"
+        )
+    except SpineDBAPIError:
+        pass
+
+
+class FlexToolMigrationError(RuntimeError):
+    """Raised when a database migration hits an unresolvable data
+    inconsistency and cannot continue safely."""
+
+
+def _migrate_v50_new_stepduration_to_solve(db) -> None:
+    """Move ``new_stepduration`` from ``timeset`` to ``solve``.
+
+    Rationale
+    ---------
+    Pre-v50 the parameter lived on ``timeset``, but FlexTool already
+    rejected any configuration in which two timesets used by the same
+    solve carried different ``new_stepduration`` values (see
+    ``timeline_config.create_averaged_timeseries`` — "More than one
+    timeline in the solve or the same timeline with different step
+    durations in different timesets").  The parameter was therefore
+    solve-scoped in practice; this migration makes that explicit.
+
+    Steps
+    -----
+    1. Capture the description + default from the existing
+       ``timeset.new_stepduration`` parameter_definition so the new one
+       carries identical metadata.
+    2. Add ``solve.new_stepduration`` with the captured metadata, under
+       the ``timeline`` parameter_group if it exists.
+    3. For every existing ``timeset.new_stepduration`` parameter_value,
+       find the solves that use that timeset via their
+       ``solve.period_timeset`` map and copy the value onto each such
+       solve under the same alternative.  If two timesets used by the
+       same solve carry different values under the same alternative,
+       raise :class:`FlexToolMigrationError` — the pre-v50 runtime
+       would have errored on that config too.
+    4. Remove ``timeset.new_stepduration`` (cascades to its values).
+    """
+
+    parameter_definitions = db.mapped_table("parameter_definition")
+
+    # --- Step 1: capture existing definition metadata ---------------
+    timeset_def = db.item(
+        parameter_definitions,
+        entity_class_name="timeset",
+        name="new_stepduration",
+    )
+    if timeset_def is None:
+        # Nothing to migrate — schema was already missing the old
+        # definition (hand-edited DB).  Create the solve-level
+        # definition with sensible defaults and return.
+        default_val, default_type = to_database(None)
+        description = (
+            "Hours. Creates a new `timeline` from the old for this "
+            "`solve` with this timestep duration. The new timeline "
+            "will sum or average the other timeseries data like "
+            "`profile` and `inflow` for the new timesteps."
+        )
+    else:
+        default_val = timeset_def["default_value"]
+        default_type = timeset_def["default_type"]
+        description = (
+            timeset_def.get("description")
+            or "Hours. Creates a new `timeline` from the old for this "
+            "`solve` with this timestep duration. The new timeline "
+            "will sum or average the other timeseries data like "
+            "`profile` and `inflow` for the new timesteps."
+        )
+        # Refresh the wording to point at "solve" now that we're moving.
+        description = description.replace("for this `timeset`", "for this `solve`")
+
+    # --- Step 2: create solve.new_stepduration definition -----------
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="new_stepduration",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=description,
+    )
+    # Attach the timeline parameter_group when it exists (v44+).
+    if db.item(db.mapped_table("parameter_group"), name="timeline") is not None:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="new_stepduration",
+            parameter_group_name="timeline",
+        )
+
+    # --- Step 3: propagate values from timesets to their solves -----
+
+    # Build timeset -> list[(solve, alternative)] from every
+    # solve.period_timeset map.  A period_timeset map has index =
+    # period and value = timeset_name; we only care about the set of
+    # timesets each solve refers to per alternative.
+    solves_by_timeset_alt: dict[tuple[str, str], set[str]] = {}
+    for pv in db.find_parameter_values(
+        entity_class_name="solve", parameter_definition_name="period_timeset",
+    ):
+        solve_name = pv["entity_byname"][0]
+        alt = pv["alternative_name"]
+        parsed = from_database(pv["value"], pv["type"])
+        # parsed is a spinedb_api.Map: indexes=periods, values=timesets.
+        try:
+            timesets_in_map = list(parsed.values)
+        except AttributeError:
+            # Unexpected scalar — skip (no timeset reference).
+            continue
+        for ts in timesets_in_map:
+            ts_name = str(ts)
+            solves_by_timeset_alt.setdefault((ts_name, alt), set()).add(solve_name)
+
+    # Also index period_timeset values by solve so we can propagate
+    # across alternatives when a timeset value's alternative doesn't
+    # match any period_timeset alternative on the same solve.
+    timesets_of_solve_any_alt: dict[str, set[str]] = {}
+    for (ts_name, alt), solves in solves_by_timeset_alt.items():
+        for solve_name in solves:
+            timesets_of_solve_any_alt.setdefault(solve_name, set()).add(ts_name)
+
+    # Walk every existing timeset.new_stepduration value and derive
+    # the corresponding solve.new_stepduration values.
+    # Track assignments so we can detect conflicts.
+    written: dict[tuple[str, str], tuple[bytes, str]] = {}
+
+    for pv in list(db.find_parameter_values(
+        entity_class_name="timeset",
+        parameter_definition_name="new_stepduration",
+    )):
+        timeset_name = pv["entity_byname"][0]
+        ts_alt = pv["alternative_name"]
+        value = pv["value"]
+        vtype = pv["type"]
+
+        # Which solves reference this timeset?  Match by alternative
+        # first; fall back to "any alternative" when the timeset value
+        # is defined in an alt where the solve didn't also define its
+        # period_timeset.  (Common when both live under the scenario's
+        # timeline alternative only.)
+        candidate_solves = solves_by_timeset_alt.get((timeset_name, ts_alt), set())
+        if not candidate_solves:
+            candidate_solves = {
+                s for s, ts_set in timesets_of_solve_any_alt.items()
+                if timeset_name in ts_set
+            }
+
+        for solve_name in candidate_solves:
+            key = (solve_name, ts_alt)
+            if key in written:
+                prev_value, prev_type = written[key]
+                if (prev_value, prev_type) != (value, vtype):
+                    raise FlexToolMigrationError(
+                        f"solve '{solve_name}' (alternative '{ts_alt}') "
+                        f"has timesets with conflicting "
+                        f"new_stepduration values.  The pre-v50 runtime "
+                        f"rejected this configuration at solve time; "
+                        f"the v50 migration cannot reconcile it "
+                        f"automatically.  Set a single consistent value "
+                        f"on all timesets used by this solve before "
+                        f"re-running the migration."
+                    )
+                continue
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name="solve",
+                entity_byname=(solve_name,),
+                parameter_definition_name="new_stepduration",
+                alternative_name=ts_alt,
+                value=value,
+                type=vtype,
+            )
+            written[key] = (value, vtype)
+
+    # --- Step 4: drop timeset.new_stepduration ---------------------
+    if timeset_def is not None:
+        db.remove_parameter_definition(id=timeset_def["id"])
+
+    try:
+        db.commit_session(
+            "v50: move new_stepduration from timeset to solve; "
+            "propagate values via solve.period_timeset; drop "
+            "timeset.new_stepduration (parameter was already "
+            "effectively solve-scoped, see timeline_config.py)."
         )
     except SpineDBAPIError:
         pass

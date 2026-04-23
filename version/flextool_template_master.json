@@ -1576,7 +1576,7 @@
     [
       "model",
       "version",
-      49.0,
+      50.0,
       null,
       "Contains database version information.",
       "model"
@@ -2063,6 +2063,14 @@
     ],
     [
       "solve",
+      "new_stepduration",
+      null,
+      null,
+      "Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.",
+      "timeline"
+    ],
+    [
+      "solve",
       "period_timeset",
       null,
       null,
@@ -2171,14 +2179,6 @@
       null,
       null,
       "Map of time steps in the timeline. Index: time step name, value: time step duration in hours.",
-      "timeline"
-    ],
-    [
-      "timeset",
-      "new_stepduration",
-      null,
-      null,
-      "Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.",
       "timeline"
     ],
     [
@@ -3855,6 +3855,12 @@
     ],
     [
       "solve",
+      "new_stepduration",
+      "float",
+      0
+    ],
+    [
+      "solve",
       "period_timeset",
       "map",
       1
@@ -3948,12 +3954,6 @@
       "timestep_duration",
       "map",
       1
-    ],
-    [
-      "timeset",
-      "new_stepduration",
-      "float",
-      0
     ],
     [
       "timeset",
