@@ -1504,23 +1504,31 @@ param p_inflation_factor_operations_yearly{d in period_in_use} :=
 		else 1;
 
 # Check for division by zero
-printf 'Checking: node lifetime parameter > 0, if the node is using investments';
-check {e in entityInvest, d in period_invest : e in node} pdNode[e, 'lifetime', d] > 0;
-printf 'Checking: process (unit and connection) lifetime parameter > 0, if the process is using investments';
-check {e in entityInvest, d in period_invest : e in process} pdProcess[e, 'lifetime', d] > 0;
+printf 'Checking: node lifetime > 0, if the node is investing or divesting';
+check {e in (entityInvest union entityDivest), d in period_invest : e in node} pdNode[e, 'lifetime', d] > 0;
+printf 'Checking: process lifetime > 0, if the process is investing or divesting';
+check {e in (entityInvest union entityDivest), d in period_invest : e in process} pdProcess[e, 'lifetime', d] > 0;
+
+# discount_rate defaults to 0.05 and lifetime to 20 when no value is recorded
+# on the entity.  The DB parameter definition's default_value is advisory
+# only (no mechanism to cascade it into p_node / p_process), so the defaults
+# are applied inline below to avoid 0 / 0 in the annuity factor
+# r / (1 - 1/(1+r)^n).  The lifetime fallback is a belt-and-braces backup
+# to the check above; the check is authoritative for investing/divesting
+# entities.
 
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
           ( + ( pdNode[e, 'invest_cost', d] * 1000
-		        * ( pdNode[e, 'discount_rate', d]
-			        / (1 - (1 / (1 + pdNode[e, 'discount_rate', d])^pdNode[e, 'lifetime', d] ) )
+		        * ( (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05)
+			        / (1 - (1 / (1 + (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05))^(if pdNode[e, 'lifetime', d] > 0 then pdNode[e, 'lifetime', d] else 20) ) )
 				  )
 		       )
 		  )
         + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m not in invest_method_not_allowed}
 		  (
-            + (pdProcess[e, 'invest_cost', d] * 1000 * ( pdProcess[e, 'discount_rate', d]
-			  / (1 - (1 / (1 + pdProcess[e, 'discount_rate', d])^pdProcess[e, 'lifetime', d] ) ) ))
+            + (pdProcess[e, 'invest_cost', d] * 1000 * ( (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05)
+			  / (1 - (1 / (1 + (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05))^(if pdProcess[e, 'lifetime', d] > 0 then pdProcess[e, 'lifetime', d] else 20) ) ) ))
 		  )
 ;
 
@@ -1545,13 +1553,13 @@ param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
 
 param ed_entity_annual_divest{e in entityDivest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in divest_method_not_allowed}
-          ( + (pdNode[e, 'salvage_value', d] * 1000 * ( pdNode[e, 'discount_rate', d]
-			  / (1 - (1 / (1 + pdNode[e, 'discount_rate', d])^pdNode[e, 'lifetime', d] ) ) ))
+          ( + (pdNode[e, 'salvage_value', d] * 1000 * ( (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05)
+			  / (1 - (1 / (1 + (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05))^(if pdNode[e, 'lifetime', d] > 0 then pdNode[e, 'lifetime', d] else 20) ) ) ))
 		  )
         + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m not in divest_method_not_allowed}
 		  (
-            + (pdProcess[e, 'salvage_value', d] * 1000 * ( pdProcess[e, 'discount_rate', d]
-			  / (1 - (1 / (1 + pdProcess[e, 'discount_rate', d])^pdProcess[e, 'lifetime', d] ) ) ))
+            + (pdProcess[e, 'salvage_value', d] * 1000 * ( (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05)
+			  / (1 - (1 / (1 + (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05))^(if pdProcess[e, 'lifetime', d] > 0 then pdProcess[e, 'lifetime', d] else 20) ) ) ))
 		  )
 ;
 param ed_entity_annual_divest_discounted{e in entityDivest, d in period_invest} :=

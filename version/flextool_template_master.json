@@ -775,10 +775,6 @@
       "dc_power_flow_with_angles"
     ],
     [
-      "transfer_methods_group",
-      "unidirectional"
-    ],
-    [
       "yes_no",
       "yes"
     ],
@@ -964,7 +960,7 @@
     [
       "connection",
       "discount_rate",
-      null,
+      0.05,
       null,
       "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
       "investment"
@@ -1180,7 +1176,7 @@
     [
       "constraint",
       "sense",
-      null,
+      "equal",
       "senses",
       "The sense of the constraint ('greater_than', 'less_than' or 'equal').",
       "constraint"
@@ -1454,7 +1450,7 @@
       "transfer_method",
       "use_connection_transfer_methods",
       "transfer_methods_group",
-      "Override transfer_method for all connections within this nodeGroup. Options: use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, variable_cost_only, unidirectional, dc_power_flow_with_angles. Setting 'unidirectional' gates every member connection to one-way flow (source → sink only). Setting 'dc_power_flow_with_angles' uses B-theta DC power flow (requires reactance on connections).",
+      "Override transfer_method for all connections within this nodeGroup. Options: use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, variable_cost_only, dc_power_flow_with_angles. When set to dc_power_flow_with_angles, connections between member nodes use B-theta DC power flow (requires reactance parameter on connections).",
       "network"
     ],
     [
@@ -1580,7 +1576,7 @@
     [
       "model",
       "version",
-      47.0,
+      49.0,
       null,
       "Contains database version information.",
       "model"
@@ -1644,7 +1640,7 @@
     [
       "node",
       "discount_rate",
-      null,
+      0.05,
       null,
       "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
       "investment"
@@ -1676,7 +1672,7 @@
     [
       "node",
       "inflow_method",
-      null,
+      "use_original",
       "inflow_methods",
       "Choice how to treat inflow time series. Empty defaults to 'use_original', which does not scale the time series. 'no_inflow' ignores the inflow time series. 'scale_to_annual_flow' will scale the time series to match the 'annual_flow' so that the sum of inflow is multiplied by 8760/'hours_in_solve'. 'scale_in_proprotion' calculates a scaling factor by dividing 'annual_flow' with the sum of time series inflow (after it has been annualized using 'timeline_duration_in_years'). 'scale_to_annual_and_peak_flow' scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'.",
       "basics"
@@ -1980,7 +1976,7 @@
     [
       "reserve__upDown__group",
       "reserve_method",
-      null,
+      "no_reserve",
       "reserve_methods",
       "Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only, timeseries_and_dynamic, timeseries_and_large_failure, dynamic_and_large_failure, all",
       "reserve"
@@ -2158,7 +2154,7 @@
       "use_row_scaling",
       "no",
       "yes_no",
-      "Enable automatic row scaling (experimental): derive node_capacity_for_scaling / group_capacity_for_scaling from connected-unit unitsizes (rounded to nearest power of 10) so HiGHS sees matrix coefficients on a narrower range.  Default 'no' preserves pre-scaling behaviour exactly.  See flextool/SLACK_CONVENTION.md.",
+      "Enable automatic row scaling (experimental): derive node_capacity_for_scaling / group_capacity_for_scaling from connected-unit unitsizes (rounded to nearest power of 10) so HiGHS sees matrix coefficients on a narrower range. Default 'no' preserves pre-scaling behaviour exactly. See flextool/SLACK_CONVENTION.md.",
       "solve_advanced"
     ],
     [
@@ -2268,7 +2264,7 @@
     [
       "unit",
       "discount_rate",
-      null,
+      0.05,
       null,
       "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
       "investment"

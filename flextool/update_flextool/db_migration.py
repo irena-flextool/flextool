@@ -1094,6 +1094,61 @@ def migrate_database(database_path, up_to: int | None = None):
                     )
                 except SpineDBAPIError:
                     pass
+            elif next_version == 48:
+                # Restore the 0.05 default on entity-level discount_rate.
+                # Migration v28 renamed interest_rate → discount_rate but
+                # did not preserve the default, so DBs without an explicit
+                # discount_rate value fell through to 0 and produced a
+                # 0 / 0 divide inside the annuity factor
+                # r / (1 − 1/(1+r)^n) in flextool.mod.
+                default_val, default_type = to_database(0.05)
+                for cls in ("connection", "node", "unit"):
+                    db.add_update_item(
+                        "parameter_definition",
+                        entity_class_name=cls,
+                        name="discount_rate",
+                        default_value=default_val,
+                        default_type=default_type,
+                    )
+                try:
+                    db.commit_session(
+                        "v48: set default_value=0.05 on "
+                        "connection/node/unit discount_rate "
+                        "(fixes 0/0 in annuity factor when unset)"
+                    )
+                except SpineDBAPIError:
+                    pass
+            elif next_version == 49:
+                # Enum defaults that were never set on their parameter
+                # definitions.  Each is a method/sense whose absence puts
+                # the entity into a silently-wrong state: a constraint
+                # with no sense is never enforced, a node with no
+                # inflow_method defaults back to use_original inside the
+                # model anyway, and a reserve without reserve_method has
+                # all its method-based branches turned off.  All values
+                # are already in the corresponding parameter_value_list.
+                for (cls, param, value) in (
+                    ("node", "inflow_method", "use_original"),
+                    ("constraint", "sense", "equal"),
+                    ("reserve__upDown__group", "reserve_method", "no_reserve"),
+                ):
+                    dv, dt = to_database(value)
+                    db.add_update_item(
+                        "parameter_definition",
+                        entity_class_name=cls,
+                        name=param,
+                        default_value=dv,
+                        default_type=dt,
+                    )
+                try:
+                    db.commit_session(
+                        "v49: restore advisory enum defaults — "
+                        "node.inflow_method=use_original; "
+                        "constraint.sense=equal; "
+                        "reserve__upDown__group.reserve_method=no_reserve"
+                    )
+                except SpineDBAPIError:
+                    pass
             else:
                 print("Version invalid")
             next_version += 1

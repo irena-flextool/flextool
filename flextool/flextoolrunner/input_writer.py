@@ -1506,6 +1506,35 @@ def _collect_periods(db, wf: Path) -> list[str]:
     return periods
 
 
+def _validate_timeline_timestep_duration(db) -> None:
+    """Raise FlexToolConfigError if any timeline entity is missing its
+    ``timestep_duration`` map.  Without it, ``step_duration`` silently
+    falls to 0 throughout the model and every time-weighted quantity
+    (balances, costs, ramps) collapses to zero.  There is no sensible
+    default, so the value must be present on every timeline.
+    """
+    timelines = [ent["entity_byname"][0]
+                 for ent in db.find_entities(entity_class_name="timeline")]
+    if not timelines:
+        return
+    have_duration: set[str] = set()
+    for pv in db.find_parameter_values(
+        entity_class_name="timeline",
+        parameter_definition_name="timestep_duration",
+    ):
+        if pv["type"] is None:
+            continue
+        have_duration.add(pv["entity_byname"][0])
+    missing = [t for t in timelines if t not in have_duration]
+    if missing:
+        raise FlexToolConfigError(
+            "timeline 'timestep_duration' is not set for: "
+            + ", ".join(sorted(missing))
+            + ".  Every timeline needs a Map(timestep -> duration_in_hours); "
+              "without it all time-weighted quantities collapse to zero."
+        )
+
+
 def _validate_ladder_methods(db, logger: logging.Logger) -> None:
     """Raise FlexToolConfigError if any commodity declares a ladder
     ``price_method`` but does not have the corresponding ladder parameter
@@ -1793,6 +1822,8 @@ def write_input(
         for spec in _ENTITY_SPECS:
             write_entity(db, spec.classes, spec.header, str(wf / spec.filename),
                          entity_dimens=spec.entity_dimens)
+
+        _validate_timeline_timestep_duration(db)
 
         for spec in _PARAMETER_SPECS:
             prefixed_spec = dict(spec)
