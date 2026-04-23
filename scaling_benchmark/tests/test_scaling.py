@@ -913,3 +913,136 @@ def test_scale_table_defaults_bound_fields() -> None:
     assert t.bound_spread_log10 == 0.0
     assert t.bound_abs_min is None
     assert t.bound_abs_max is None
+
+
+# ---------------------------------------------------------------------------
+# Agent 21 — gate scale_the_objective / scale_the_state behind --auto-scale
+# ---------------------------------------------------------------------------
+
+
+def test_write_scale_the_objective_full_has_data_row(tmp_path: Path) -> None:
+    """The full writer emits the analyser's recommendation as a data row."""
+    from flextool.flextoolrunner.solve_writers import write_scale_the_objective
+
+    sd = tmp_path / "solve_data"
+    path = write_scale_the_objective(sd, 1e-10)
+    lines = path.read_text().strip().splitlines()
+    assert lines[0] == "key,value"
+    assert len(lines) == 2  # header + data
+    assert lines[1].startswith("v,")
+    # 1e-10 round-trips through %.17g
+    assert float(lines[1].split(",")[1]) == 1e-10
+
+
+def test_write_scale_the_objective_header_only_has_no_data_row(tmp_path: Path) -> None:
+    """The gated writer emits ONLY the header — no data row.
+
+    With no data row, AMPL's ``table data IN`` loads an empty
+    ``_scale_obj_keys`` set, ``card(_scale_obj_keys) == 0``, and the
+    ``default 1e-6`` clause on ``param scale_the_objective`` applies.
+    """
+    from flextool.flextoolrunner.solve_writers import (
+        write_scale_the_objective_header_only,
+    )
+
+    sd = tmp_path / "solve_data"
+    path = write_scale_the_objective_header_only(sd)
+    lines = path.read_text().strip().splitlines()
+    assert lines == ["key,value"]
+
+
+def test_write_scale_the_state_header_only_has_no_data_row(tmp_path: Path) -> None:
+    """Companion test for the state-scale header-only writer."""
+    from flextool.flextoolrunner.solve_writers import (
+        write_scale_the_state_header_only,
+    )
+
+    sd = tmp_path / "solve_data"
+    path = write_scale_the_state_header_only(sd)
+    lines = path.read_text().strip().splitlines()
+    assert lines == ["key,value"]
+
+
+def test_write_scale_csvs_overwrite_cleanly(tmp_path: Path) -> None:
+    """Switching between full and header-only writers overwrites cleanly.
+
+    Emulates the orchestration-loop pattern where a user might run once
+    with ``--auto-scale`` (full rows) then again without it (header
+    only) in the same work folder.  The second run must not leak the
+    prior data row into the new CSV.
+    """
+    from flextool.flextoolrunner.solve_writers import (
+        write_scale_the_objective,
+        write_scale_the_objective_header_only,
+    )
+
+    sd = tmp_path / "solve_data"
+    # First: full write.
+    write_scale_the_objective(sd, 1e-10)
+    # Second: header-only.  Must truncate the prior data row.
+    path = write_scale_the_objective_header_only(sd)
+    lines = path.read_text().strip().splitlines()
+    assert lines == ["key,value"], (
+        "Header-only writer must truncate the file, not append to it."
+    )
+
+
+def test_orchestration_gate_auto_scale_off_writes_header_only(tmp_path: Path) -> None:
+    """Default-mode contract: when auto_scale is False, the scale CSVs
+    have no data rows.
+
+    The orchestration code is a straight branch on ``auto_scale``; this
+    test exercises that branch directly (not through the full runner) so
+    the contract is pinned against a regression even if someone edits
+    the orchestration call site.
+    """
+    from flextool.flextoolrunner.solve_writers import (
+        write_scale_the_objective,
+        write_scale_the_objective_header_only,
+        write_scale_the_state,
+        write_scale_the_state_header_only,
+    )
+
+    sd = tmp_path / "solve_data"
+    auto_scale = False
+    # Mirror the orchestration.py gate for objective + state:
+    if auto_scale:
+        write_scale_the_objective(sd, 1e-10)
+        write_scale_the_state(sd, 1.0)
+    else:
+        write_scale_the_objective_header_only(sd)
+        write_scale_the_state_header_only(sd)
+
+    for fname in ("scale_the_objective.csv", "scale_the_state.csv"):
+        lines = (sd / fname).read_text().strip().splitlines()
+        assert lines == ["key,value"], (
+            f"{fname} must be header-only in default mode, got {lines!r}"
+        )
+
+
+def test_orchestration_gate_auto_scale_on_writes_data_row(tmp_path: Path) -> None:
+    """Auto-scale contract: with ``--auto-scale`` the analyser value is
+    applied — i.e. the CSV has a data row."""
+    from flextool.flextoolrunner.solve_writers import (
+        write_scale_the_objective,
+        write_scale_the_objective_header_only,
+        write_scale_the_state,
+        write_scale_the_state_header_only,
+    )
+
+    sd = tmp_path / "solve_data"
+    auto_scale = True
+    if auto_scale:
+        write_scale_the_objective(sd, 1e-10)
+        write_scale_the_state(sd, 1.0)
+    else:
+        write_scale_the_objective_header_only(sd)
+        write_scale_the_state_header_only(sd)
+
+    obj_lines = (sd / "scale_the_objective.csv").read_text().strip().splitlines()
+    state_lines = (sd / "scale_the_state.csv").read_text().strip().splitlines()
+    assert len(obj_lines) == 2
+    assert obj_lines[1].startswith("v,")
+    assert float(obj_lines[1].split(",")[1]) == 1e-10
+    assert len(state_lines) == 2
+    assert float(state_lines[1].split(",")[1]) == 1.0

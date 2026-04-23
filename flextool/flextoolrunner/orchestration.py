@@ -295,21 +295,40 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             state.solve.use_row_scaling,
             str(wf / 'solve_data/p_use_row_scaling.csv'),
         )
-        # Agent 12 (LP-scaling): centralise scale_the_objective and
-        # scale_the_state in Python.  The values come from the Agent-8
-        # ScaleTable (scale_the_objective is the analyser's
-        # power-of-10 recommendation; scale_the_state is currently
-        # fixed at 1.0).  Writing these unconditionally every solve is
-        # the single source of truth — the .mod's ``default`` clauses
-        # are only consulted when the CSVs are missing entirely.
-        solve_writers.write_scale_the_objective(
-            wf / 'solve_data',
-            scale_table.scale_the_objective,
-        )
-        solve_writers.write_scale_the_state(
-            wf / 'solve_data',
-            scale_table.scale_the_state,
-        )
+        # Agent 12 / Agent 21 (LP-scaling): the Agent-8 ScaleTable carries
+        # a power-of-10 recommendation for scale_the_objective and a fixed
+        # 1.0 for scale_the_state.  Agent 12 originally applied these
+        # unconditionally per solve, but that caused rivendell S06 (and
+        # similar wide-matrix models) to stall in HiGHS when the recommended
+        # 1e-10 objective scale compressed the Cost range by ~4 decades
+        # against a Matrix range already at ``[1, 8e+5]``.  Agent 21 gates
+        # the application behind the ``--auto-scale`` flag:
+        #
+        #   * auto_scale=True  → emit the analyser's value (Agent 12 behaviour).
+        #   * auto_scale=False → emit a header-only CSV so the .mod's
+        #     ``default 1e-6`` / ``default 1`` clauses apply (pre-Agent-12
+        #     behaviour restored for the default path).
+        #
+        # The analyser still runs and emits ``scaling_analysis.json`` above,
+        # so the recommendation is visible in diagnostics even when it is
+        # not applied.  User explicit overrides in the DB (if added in the
+        # future) would go through the same gate.
+        if auto_scale:
+            solve_writers.write_scale_the_objective(
+                wf / 'solve_data',
+                scale_table.scale_the_objective,
+            )
+            solve_writers.write_scale_the_state(
+                wf / 'solve_data',
+                scale_table.scale_the_state,
+            )
+        else:
+            solve_writers.write_scale_the_objective_header_only(
+                wf / 'solve_data',
+            )
+            solve_writers.write_scale_the_state_header_only(
+                wf / 'solve_data',
+            )
         solve_writers.write_first_steps(active_time_lists[solve], str(wf / 'solve_data/first_timesteps.csv'))
         solve_writers.write_last_steps(active_time_lists[solve], str(wf / 'solve_data/last_timesteps.csv'))
         solve_writers.write_last_realized_step(active_time_lists[solve], complete_solve[solve], state.solve.realized_periods.get(complete_solve[solve], []), str(wf / 'solve_data/last_realized_timestep.csv'))

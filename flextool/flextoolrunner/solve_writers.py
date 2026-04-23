@@ -637,7 +637,7 @@ def write_p_use_row_scaling(
 
 
 def write_scale_the_objective(solve_data_dir: Path | str, value: float) -> Path:
-    """Emit ``solve_data/scale_the_objective.csv`` (Agent 12).
+    """Emit ``solve_data/scale_the_objective.csv`` (Agent 12, Agent 21).
 
     Writes the global objective scalar coming from the Agent-8 scaling
     analyser (:class:`flextool.flextoolrunner.scaling.ScaleTable`) into
@@ -655,6 +655,13 @@ def write_scale_the_objective(solve_data_dir: Path | str, value: float) -> Path:
     requires a keyed read — the value is pulled with
     ``sum{k in _scale_obj_keys} _scale_obj_from_csv[k]`` on a
     single-row file.
+
+    Agent 21: this writer emits the analyser's recommendation only when
+    the caller has opted into auto-scale mode.  The gating lives in the
+    orchestrator (:mod:`flextool.flextoolrunner.orchestration`); callers
+    of this function unconditionally emit the value.  See
+    :func:`write_scale_the_objective_header_only` for the default-mode
+    fallback.
     """
     sd = Path(solve_data_dir)
     sd.mkdir(parents=True, exist_ok=True)
@@ -667,12 +674,13 @@ def write_scale_the_objective(solve_data_dir: Path | str, value: float) -> Path:
 
 
 def write_scale_the_state(solve_data_dir: Path | str, value: float) -> Path:
-    """Emit ``solve_data/scale_the_state.csv`` (Agent 12).
+    """Emit ``solve_data/scale_the_state.csv`` (Agent 12, Agent 21).
 
     Companion to :func:`write_scale_the_objective`.  ``scale_the_state``
     is currently fixed at ``1.0`` — the field is reserved for future
     analyser tuning.  Layout / read convention identical to the
-    objective CSV.
+    objective CSV.  See :func:`write_scale_the_state_header_only` for
+    the default-mode fallback.
     """
     sd = Path(solve_data_dir)
     sd.mkdir(parents=True, exist_ok=True)
@@ -681,6 +689,53 @@ def write_scale_the_state(solve_data_dir: Path | str, value: float) -> Path:
         writer = csv.writer(fh)
         writer.writerow(["key", "value"])
         writer.writerow(["v", f"{float(value):.17g}"])
+    return path
+
+
+def write_scale_the_objective_header_only(solve_data_dir: Path | str) -> Path:
+    """Emit header-only ``solve_data/scale_the_objective.csv`` (Agent 21).
+
+    Default-mode counterpart to :func:`write_scale_the_objective`.  The
+    CSV exists (``table data IN`` in ``flextool.mod`` won't fail on a
+    missing file) but has no data rows, so ``_scale_obj_keys`` stays
+    empty and the ``default 1e-6`` clause on the ``param
+    scale_the_objective`` declaration takes over.  This restores the
+    pre-Agent-12 behaviour for users who do not pass ``--auto-scale``
+    — the analyser's per-solve power-of-10 recommendation is still
+    serialised to ``scaling_analysis.json`` for diagnostics, but it
+    does NOT get applied to the solve.
+
+    Rationale (Agent 21): Agent 12's unconditional auto-apply tightens
+    the HiGHS Cost range by up to ~4 decades on some models (rivendell
+    S06 is the canonical failure case — scale picks 1e-10, Cost range
+    drops from ``[6e-01, 1e+04]`` to ``[6e-05, 1e+00]``, HiGHS stalls
+    on a tiny residual after reaching Pr=0,Du=0).  The analyser's
+    power-of-10 rounding is too aggressive for models whose Matrix
+    range is already wide — the user must opt in explicitly.
+    """
+    sd = Path(solve_data_dir)
+    sd.mkdir(parents=True, exist_ok=True)
+    path = sd / "scale_the_objective.csv"
+    with open(path, 'w', newline='') as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["key", "value"])
+    return path
+
+
+def write_scale_the_state_header_only(solve_data_dir: Path | str) -> Path:
+    """Emit header-only ``solve_data/scale_the_state.csv`` (Agent 21).
+
+    Default-mode counterpart to :func:`write_scale_the_state`.  Same
+    rationale as :func:`write_scale_the_objective_header_only`: the CSV
+    exists but has no data rows, so the ``default 1`` clause on
+    ``param scale_the_state`` applies.
+    """
+    sd = Path(solve_data_dir)
+    sd.mkdir(parents=True, exist_ok=True)
+    path = sd / "scale_the_state.csv"
+    with open(path, 'w', newline='') as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["key", "value"])
     return path
 
 
