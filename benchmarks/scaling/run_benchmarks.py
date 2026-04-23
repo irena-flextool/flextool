@@ -4,23 +4,23 @@
 Runs one or all of the four benchmark scenarios, captures a fixed set of
 numerical measurements (objective, matrix/coefficient ranges, nnz, solve
 wall-time, slack totals), and writes them as JSON baselines in
-``scaling_benchmark/baseline/<scenario>.json``.
+``benchmarks/scaling/baseline/<scenario>.json``.
 
 Typical usage::
 
     # Generate scenario DBs (once, or whenever generator scripts change)
-    python scaling_benchmark/run_benchmarks.py --generate
+    python benchmarks/scaling/run_benchmarks.py --generate
 
     # Run all scenarios and (re)write baselines
-    python scaling_benchmark/run_benchmarks.py --write-baseline
+    python benchmarks/scaling/run_benchmarks.py --write-baseline
 
     # Compare a current run against an existing baseline
-    python scaling_benchmark/run_benchmarks.py --compare scaling_benchmark/baseline/composite.json
+    python benchmarks/scaling/run_benchmarks.py --compare benchmarks/scaling/baseline/composite.json
 
     # Run just one scenario
-    python scaling_benchmark/run_benchmarks.py --scenario composite --write-baseline
+    python benchmarks/scaling/run_benchmarks.py --scenario composite --write-baseline
 
-Scenarios live under ``scaling_benchmark/scenarios/<name>/``; each has a
+Scenarios live under ``benchmarks/scaling/scenarios/<name>/``; each has a
 ``generate.py`` that writes ``input.sqlite`` next to itself and declares a
 module-level ``SCENARIO_NAME`` naming the scenario inside that DB that the
 harness should execute.
@@ -39,7 +39,7 @@ import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BENCH_ROOT = Path(__file__).resolve().parent
 SCENARIOS_DIR = BENCH_ROOT / "scenarios"
 BASELINE_DIR = BENCH_ROOT / "baseline"
@@ -511,7 +511,7 @@ def main() -> int:
     ap.add_argument(
         "--write-baseline",
         action="store_true",
-        help="After running, write baseline JSON(s) to scaling_benchmark/baseline/",
+        help="After running, write baseline JSON(s) to benchmarks/scaling/baseline/",
     )
     ap.add_argument(
         "--compare",

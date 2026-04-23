@@ -25,10 +25,10 @@ Timeline is the examples.sqlite 2-day timeset (48h); expanding to 720h is
 out of scope for this generator (would require rebuilding profiles).
 
 Usage:
-    python scaling_benchmark/scenarios/composite/generate.py
+    python benchmarks/scaling/scenarios/composite/generate.py
 
 Output:
-    scaling_benchmark/scenarios/composite/input.sqlite
+    benchmarks/scaling/scenarios/composite/input.sqlite
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from pathlib import Path
 
 from spinedb_api import DatabaseMapping
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 SRC_DB = REPO_ROOT / "templates" / "examples.sqlite"
 OUT_DIR = Path(__file__).resolve().parent
 OUT_DB = OUT_DIR / "input.sqlite"

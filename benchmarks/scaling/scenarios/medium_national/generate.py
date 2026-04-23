@@ -11,10 +11,10 @@ dispatch scenario for this network; the 48h case still produces a ~2500-row
 MIP which is the right scale for a "medium" benchmark.
 
 Usage:
-    python scaling_benchmark/scenarios/medium_national/generate.py
+    python benchmarks/scaling/scenarios/medium_national/generate.py
 
 Output:
-    scaling_benchmark/scenarios/medium_national/input.sqlite
+    benchmarks/scaling/scenarios/medium_national/input.sqlite
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import shutil
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 SRC_DB = REPO_ROOT / "templates" / "examples.sqlite"
 OUT_DIR = Path(__file__).resolve().parent
 OUT_DB = OUT_DIR / "input.sqlite"

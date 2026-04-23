@@ -99,5 +99,5 @@ scaler defaults to 1 so the factor is a no-op.
    `unscale_by="node_cap"` or `"group_cap"` if the slack appears in a
    row-scaled constraint.
 6. **Baseline comparison** — run the four benchmark scenarios via
-   `scaling_benchmark/run_benchmarks.py --compare ...`; confirm zero
+   `benchmarks/scaling/run_benchmarks.py --compare ...`; confirm zero
    material delta on objective, slack totals, matrix range.

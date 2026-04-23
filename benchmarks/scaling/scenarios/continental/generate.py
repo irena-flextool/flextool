@@ -11,10 +11,10 @@ Requires ``rivendell/rivendell.sqlite`` to exist. If missing, run
 Rivendell ODS/XLSX input file and ``rivendell/rivendell.json``).
 
 Usage:
-    python scaling_benchmark/scenarios/continental/generate.py
+    python benchmarks/scaling/scenarios/continental/generate.py
 
 Output:
-    scaling_benchmark/scenarios/continental/input.sqlite
+    benchmarks/scaling/scenarios/continental/input.sqlite
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from pathlib import Path
 
 from spinedb_api import DatabaseMapping
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 SRC_DB = REPO_ROOT / "rivendell" / "rivendell.sqlite"
 OUT_DIR = Path(__file__).resolve().parent
 OUT_DB = OUT_DIR / "input.sqlite"

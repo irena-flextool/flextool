@@ -12,7 +12,7 @@ validation matrix (4 scenarios x 3 modes) and
 
 ## The four scenarios
 
-Each lives under `scaling_benchmark/scenarios/<name>/` and has a `generate.py`
+Each lives under `benchmarks/scaling/scenarios/<name>/` and has a `generate.py`
 that writes `input.sqlite` next to itself, and declares a module-level
 `SCENARIO_NAME` naming the scenario inside that DB that the harness should
 execute.
@@ -50,24 +50,24 @@ execute.
 source ~/venv-spi/bin/activate
 
 # Generate input.sqlite files (once, or after changing a generator)
-python scaling_benchmark/run_benchmarks.py --generate
+python benchmarks/scaling/run_benchmarks.py --generate
 
 # Run all scenarios and (re)write baselines
-python scaling_benchmark/run_benchmarks.py --write-baseline
+python benchmarks/scaling/run_benchmarks.py --write-baseline
 
 # Run one scenario
-python scaling_benchmark/run_benchmarks.py --scenario composite --write-baseline
+python benchmarks/scaling/run_benchmarks.py --scenario composite --write-baseline
 
 # Compare a fresh run to an existing baseline (exit 2 if material delta)
-python scaling_benchmark/run_benchmarks.py --scenario composite \
-    --compare scaling_benchmark/baseline/composite.json
+python benchmarks/scaling/run_benchmarks.py --scenario composite \
+    --compare benchmarks/scaling/baseline/composite.json
 ```
 
 Flags:
 
 - `--generate` regenerates `input.sqlite` files via the four
   `scenarios/*/generate.py`. Safe to run; they're deterministic.
-- `--write-baseline` writes `scaling_benchmark/baseline/<scenario>.json`
+- `--write-baseline` writes `benchmarks/scaling/baseline/<scenario>.json`
   with `objective`, `matrix_range`, `cost_range`, `bound_range`,
   `rhs_range`, `rows/cols/nnz` (initial and post-presolve when HiGHS
   reports them), `matrix_range_from_mps` (independent scan of the emitted
@@ -77,7 +77,7 @@ Flags:
 - `--compare <baseline.json>` prints per-field deltas and exits 2 if any
   numerical field differs materially (wall time is reported but not
   flagged since it jitters).
-- `--keep-work` keeps `scaling_benchmark/work/<name>/` (parquet,
+- `--keep-work` keeps `benchmarks/scaling/work/<name>/` (parquet,
   `HiGHS.log`, `flextool.mps`) for debugging.
 
 ## What the harness captures
@@ -96,8 +96,8 @@ Flags:
 
 ## Generated artefacts
 
-- `scaling_benchmark/scenarios/<name>/input.sqlite` — per-scenario DB
+- `benchmarks/scaling/scenarios/<name>/input.sqlite` — per-scenario DB
   (not committed; `.gitignore`d).
-- `scaling_benchmark/baseline/<name>.json` — committed baselines.
-- `scaling_benchmark/work/<name>/` — ephemeral per-scenario work folder
+- `benchmarks/scaling/baseline/<name>.json` — committed baselines.
+- `benchmarks/scaling/work/<name>/` — ephemeral per-scenario work folder
   (HiGHS.log + MPS kept, output parquets dropped unless `--keep-work`).

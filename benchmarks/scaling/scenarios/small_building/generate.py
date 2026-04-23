@@ -6,10 +6,10 @@ single period, no investment. Taken from the existing ``wind_battery`` scenario
 in ``templates/examples.sqlite`` (2-day 48h timeline, single 2020 period).
 
 Usage:
-    python scaling_benchmark/scenarios/small_building/generate.py
+    python benchmarks/scaling/scenarios/small_building/generate.py
 
 Output:
-    scaling_benchmark/scenarios/small_building/input.sqlite
+    benchmarks/scaling/scenarios/small_building/input.sqlite
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import shutil
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 SRC_DB = REPO_ROOT / "templates" / "examples.sqlite"
 OUT_DIR = Path(__file__).resolve().parent
 OUT_DB = OUT_DIR / "input.sqlite"

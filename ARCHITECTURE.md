@@ -642,8 +642,8 @@ of spread.
 
 - **User-facing guide**: `flextool/SCALING_USER_GUIDE.md`.
 - **Slack implementation reference**: `flextool/SLACK_CONVENTION.md`.
-- **Benchmark harness + validation**: `scaling_benchmark/README.md`
-  and `scaling_benchmark/VALIDATION_REPORT.md`.
+- **Benchmark harness + validation**: `benchmarks/scaling/README.md`
+  and `benchmarks/scaling/VALIDATION_REPORT.md`.
 - **Design memo**:
   `~/.claude/projects/-home-jkiviluo-sources-flextool/memory/project_lp_scaling_2026-04.md`.
 

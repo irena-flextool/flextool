@@ -1,7 +1,7 @@
 # Baseline changelog
 
 Records every time the four scenario baselines under
-`scaling_benchmark/baseline/*.json` are overwritten with a fresh run.
+`benchmarks/scaling/baseline/*.json` are overwritten with a fresh run.
 
 ## 2026-04-22 — Agent 18c validation (variable-bound scaling)
 
@@ -84,10 +84,10 @@ The refreshed baselines capture state at commit `a99c1788` (Agent 10b
 HEAD at the moment of baseline capture), with row scaling **off** by
 default. To capture baselines under row scaling on, re-run with
 `FLEXTOOL_FORCE_ROW_SCALING=1` before `--write-baseline`. See
-`scaling_benchmark/VALIDATION_REPORT.md` for the full matrix.
+`benchmarks/scaling/VALIDATION_REPORT.md` for the full matrix.
 
-After refresh, `python scaling_benchmark/run_benchmarks.py --scenario
-<s> --compare scaling_benchmark/baseline/<s>.json` exits 0 for all four
+After refresh, `python benchmarks/scaling/run_benchmarks.py --scenario
+<s> --compare benchmarks/scaling/baseline/<s>.json` exits 0 for all four
 scenarios.
 
 ## 2026-04-22 — Initial (Agent 1)
