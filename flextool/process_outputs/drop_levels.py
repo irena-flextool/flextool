@@ -97,7 +97,7 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.period_first_of_solve = s.period_first_of_solve.droplevel('solve')
     s.period_in_use = s.period_in_use.droplevel('solve').unique()
     s.d_realize_dispatch_or_invest = s.d_realize_dispatch_or_invest.droplevel('solve').unique()
-    s.d_realize_invest = s.d_realize_invest.droplevel('solve')
+    s.d_realize_invest = s.d_realize_invest.droplevel('solve').unique()
     s.d_realized_period = s.d_realized_period.droplevel('solve').unique()
     s.dt_realize_dispatch = s.dt_realize_dispatch.droplevel('solve').unique()
     s.dt = s.dt.droplevel('solve').unique()
@@ -110,10 +110,10 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.dtttdt = s.dtttdt.droplevel('solve')
     dtttdt_pt = s.dtttdt.droplevel(['t_previous', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve'])
     s.dtttdt = s.dtttdt[dtttdt_pt.isin(s.dt_realize_dispatch) & ~dtttdt_pt.duplicated(keep='last')]
-    s.ed_invest = s.ed_invest.droplevel('solve').join(s.d_realize_invest, how='inner')
-    s.edd_invest = s.edd_invest.droplevel('solve')
+    s.ed_invest = s.ed_invest.droplevel('solve').unique().join(s.d_realize_invest, how='inner')
+    s.edd_invest = s.edd_invest.droplevel('solve').unique()
     s.edd_invest.names = ['entity', 'period_invest', 'period']
     s.edd_invest = s.edd_invest.join(s.d_realize_invest, how='inner')
-    s.ed_divest = s.ed_divest.droplevel('solve').join(s.d_realize_invest, how='inner')
+    s.ed_divest = s.ed_divest.droplevel('solve').unique().join(s.d_realize_invest, how='inner')
 
     return par, s, v
