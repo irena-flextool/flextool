@@ -125,7 +125,7 @@ The connection needs parameters:
 Optional parameters:
 
 - `is_DC`: *yes*, flag if the connection is counted as non-synchronous for the possible non-synchronous limit. If `is_DC` (direct current) is yes, then the connection is non-synchronous. More at: How-to create a non-synchronous limit
-- `transfer_method`: Four options: *regular* (default), *exact*, *variable_cost_only*, *no_losses_no_variable_cost*. 
+- `transfer_method`: Five options: *regular* (default), *exact*, *variable_cost_only*, *no_losses_no_variable_cost*, *unidirectional*.
 
 In most cases *regular* should be used. The downside of it is that it allows the flows to both directions at the same time, but the model does this only in specific circumstances when its beneficial to leak energy through the connection losses. For example, if connection capacity is 500 and efficiency 0.8, both nodes can send 500, but recive only 400 reducing the incoming energy by 100 in both nodes without any cost.
 Typically the model does not want to produce extra energy as it usually has costs, but it can happen if there is a cost to curtailing energy generation from a free source or if a unit is forced to generate at some level ('e.g. using `profile_method`: 'equal'). If `non-synchronous` constraint is used with a node using this connection, use *exact* instead as *regular* connections can circumvent this limit.
@@ -135,6 +135,10 @@ Typically the model does not want to produce extra energy as it usually has cost
 *Variable_cost_only* can be used when there are no losses associated with the flow. It allows costs related to the flow, but if losses are to be included, it should not be used.
 
 The *no_losses_no_variable_cost* can be used when the connection has no losses and no variable costs accociated with the flow. It is computationally the most efficient method, as it uses only one variable for the flow (the variable becomes negative for the other direction, but this can work only when there are no losses or variable costs). It also prevents simultanoues flow to both directions.
+
+The *unidirectional* method restricts the flow to one direction only (from the first node to the second node in `connection__node__node`). It uses a single non-negative variable and supports `efficiency` and `other_operational_cost` in the usual way. Useful for one-way transmission such as controllable HVDC links or commodity pipelines.
+
+A `group` can also carry a `transfer_method` that overrides the per-connection choice for every connection between its member nodes. Set it to any of the connection options above, or to `dc_power_flow_with_angles` to activate B-theta DC power flow on the subnet (which additionally needs `reactance` on each connection). See the Groups section of the reference for details.
 
 The results of connections can be seen from the node_balance table. However, these are the results from all the connections connected to the node. If you want summary metrics for an individual connection or a collection of them, create a `group`, add the relevant `group__connection__node` members, and set `output_flowGroup_indicators: yes` on the group. This produces a flow-group summary (currently `cumulative_flow` MWh and `average_flow` MW) for the group.
 

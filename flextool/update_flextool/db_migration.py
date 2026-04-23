@@ -1048,6 +1048,52 @@ def migrate_database(database_path, up_to: int | None = None):
                 _migrate_v45_parameter_group_colors(db)
             elif next_version == 46:
                 _migrate_v46_use_row_scaling(db)
+            elif next_version == 47:
+                # Register "unidirectional" as a first-class connection
+                # transfer_method.  It maps to method_1way_1var_off — a
+                # single non-negative flow variable, no reverse-direction
+                # variable.  This covers the common "one-way transmission"
+                # use case that previously forced users to work around
+                # with a unit instead of a connection.
+                #
+                # Two touch points in the schema:
+                #
+                # 1. transfer_methods_group value list.  The group-level
+                #    override must accept "unidirectional" so users can
+                #    promote a subnet to unidirectional via the group
+                #    override as well.
+                # 2. Description refresh on group.transfer_method so the
+                #    dropdown tooltip advertises the new option.
+                #
+                # connection.transfer_method itself carries only
+                # parameter_type_list=("str",) today — no value list
+                # constraint — so "unidirectional" is already accepted at
+                # the connection level without a further schema edit.
+                add_value_list_manual(db, [
+                    ["transfer_methods_group", "unidirectional"],
+                ])
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="group",
+                    name="transfer_method",
+                    description=(
+                        "Override transfer_method for all connections within "
+                        "this nodeGroup. Options: use_connection_transfer_methods "
+                        "(default, no override), no_losses_no_variable_cost, "
+                        "regular, exact, variable_cost_only, unidirectional, "
+                        "dc_power_flow_with_angles. Setting 'unidirectional' "
+                        "gates every member connection to one-way flow (source "
+                        "→ sink only). Setting 'dc_power_flow_with_angles' "
+                        "uses B-theta DC power flow (requires reactance on "
+                        "connections)."
+                    ),
+                )
+                try:
+                    db.commit_session(
+                        "Added 'unidirectional' to transfer_methods_group"
+                    )
+                except SpineDBAPIError:
+                    pass
             else:
                 print("Version invalid")
             next_version += 1

@@ -935,6 +935,12 @@ METHODS_MAPPING: dict[tuple[str, str, str], str] = {
     ("none", "linear", "fork_yes"): "method_1way_nvar_LP",
     ("none", "binary", "fork_no"): "method_1way_1var_MIP",
     ("none", "binary", "fork_yes"): "method_1way_nvar_MIP",
+    ("unidirectional", "no_startup", "fork_no"): "method_1way_1var_off",
+    ("unidirectional", "no_startup", "fork_yes"): "method_1way_nvar_off",
+    ("unidirectional", "linear", "fork_no"): "method_1way_1var_LP",
+    ("unidirectional", "linear", "fork_yes"): "method_1way_nvar_LP",
+    ("unidirectional", "binary", "fork_no"): "method_1way_1var_MIP",
+    ("unidirectional", "binary", "fork_yes"): "method_1way_nvar_MIP",
 }
 
 
