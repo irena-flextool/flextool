@@ -2991,11 +2991,34 @@ printf 'Timer - Reserves: %ss\n', reserves - balance;
 printf ',%s', reserves - balance >> solve_progress;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
-s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
-  + sum {source in entity : (p, source) in process_source_undelayed}
-    ( + v_flow[p, source, p, d, t] * p_entity_unitsize[p]
+# Block-aware (Agent 1.5): the equation is emitted at the sink-side block
+# b_out's timeline.  Source-side flows (at source-side block b_in) are
+# aggregated through the overlap set ``b_c = b_out, b_fn = b_in``.  The
+# sink-side and section/v_online terms live at the anchor block b_out.
+# In the degenerate case (b_in = b_out = 'default') the identity overlap
+# rows collapse the source-side sum to a single term at t_out = t,
+# reducing the equation bit-identically to the pre-v51 power-balance
+# form.  This is a power-balance equation (no block_step_duration
+# scaling) — at each anchor step the source-side power × coefficient
+# equals sink-side power × slope × coefficient (+ section × v_online).
+# V1 limitation (inherited from Agent 1.3): both sides on the same
+# non-default block has no self-identity overlap row; b_in coarser than
+# b_out without a default side would also miss overlap rows.  The common
+# V1 configurations (both default, or one side default) are covered.
+s.t. conversion_indirect {(p, m) in process__method_indirect,
+    (p, 'source', b_in) in process__side__block,
+    (p, 'sink', b_out) in process__side__block,
+    (b_out, d, t) in block__period__step} :
+  + sum {source in entity, (d, b_c, tc, b_fn, t_f) in overlap
+         : (p, source) in process_source_undelayed
+           and b_c = b_out and tc = t and b_fn = b_in}
+    ( + p_overlap[d, b_out, t, b_in, t_f]
+        * v_flow[p, source, p, d, t_f] * p_entity_unitsize[p]
   	      * p_process_source_flow_coefficient[p, source]
 	)
+  # Delayed-source contribution: kept at the anchor timeline t.  Block-
+  # aware support for delays is out of scope for V1; in the degenerate
+  # case (b_in = b_out = 'default') this reproduces the pre-v51 form.
   + sum {source in entity : (p, source) in process_source_delayed}
       + sum {(d, t_, t, td) in dtt__delay_duration : (p, td) in process_delayed__duration}
         ( + v_flow[p, source, p, d, t_] * p_entity_unitsize[p]
