@@ -355,11 +355,14 @@ def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) 
     (tmp_path / "solve_data" / "p_inflation_factor_operations_yearly.csv").write_text(
         "solve,period,value\ns1,p2020,1.0\ns1,p2025,2.0\n"
     )
+    # Agent 1.4: nodeBalance_eq gained a ``bn`` block subscript between
+    # ``node`` and ``period``; the extractor handles this via
+    # ``mid_ignore=1``.  In degenerate mode the block tag is 'default'.
     h = _fake_highs(
         variable_names=[], col_values=[],
         row_names=[
-            "nodeBalance_eq[s1,nA,p2020,t0001,tp,tpwt,dp,tpws]",
-            "nodeBalance_eq[s1,nA,p2025,t0001,tp,tpwt,dp,tpws]",
+            "nodeBalance_eq[s1,nA,default,p2020,t0001,tp,tpwt,dp,tpws]",
+            "nodeBalance_eq[s1,nA,default,p2025,t0001,tp,tpwt,dp,tpws]",
         ],
         row_duals=[3e-6, -4e-6],  # scaled duals
     )

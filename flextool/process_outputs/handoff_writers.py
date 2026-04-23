@@ -595,18 +595,21 @@ def write_fix_storage_price(
             _logger.debug("skipped %s (empty; preserving prior content)", out_path)
         return out_path
 
-    # nodeBalance_eq has 8 indices.  Use the generic extractor with
-    # 6 col_names so the trailing two become the (period, time) row index;
-    # then we filter rows to fix_steps and entity-name match to
-    # target_nodes (col_names[1] == 'node').
+    # nodeBalance_eq has 9 indices (Agent 1.4 added ``bn`` between
+    # ``node`` and ``period``).  Use the generic extractor with 7
+    # col_names so the trailing two stay the (period, time) row index;
+    # then filter rows to fix_steps and entity-name match to
+    # target_nodes (col_names[1] == 'node').  In degenerate mode bn is
+    # always 'default'.
     df = extract_variable(
         h, "nodeBalance_eq",
-        col_names=("c", "node", "t_prev", "t_prev_within_timeset",
-                   "d_prev", "t_prev_within_solve"),
+        col_names=("c", "node", "bn"),
         solve_name=solve_name,
         has_time=True,
         source="row_dual",
         value_scale=1.0,  # we apply the full transform manually below
+        trailing_col_names=("t_prev", "t_prev_within_timeset",
+                            "d_prev", "t_prev_within_solve"),
     )
 
     if df.empty:

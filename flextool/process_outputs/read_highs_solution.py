@@ -140,6 +140,12 @@ class VariableSpec(NamedTuple):
     # trailing_ignore=4``.
     leading_ignore: int = 0
     trailing_ignore: int = 0
+    # Agent 1.4: number of subscripts to drop between ``col_names`` and
+    # the row key (period[, time]).  Used when a constraint gained an
+    # inert subscript like ``bn`` (block tag, always 'default' in
+    # degenerate mode) that sits between the column dimension and the
+    # period row index.
+    mid_ignore: int = 0
     # Column fields that appear AFTER the period (and time) in the
     # bracket list but before any ``trailing_ignore`` tail.  Needed for
     # variables whose declared subscript order puts a column index after
@@ -551,6 +557,7 @@ def extract_variable(
     realized_periods_csv: Path | str | None = None,
     leading_ignore: int = 0,
     trailing_ignore: int = 0,
+    mid_ignore: int = 0,
     trailing_col_names: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Extract one quantity from a solved HiGHS instance as a wide DataFrame.
@@ -607,8 +614,8 @@ def extract_variable(
     trailing = (2 if has_time else 1) if has_period else 0
     n_trailing_cols = len(trailing_col_names)
     expected_arity = (
-        leading_ignore + len(col_names) + trailing + n_trailing_cols
-        + trailing_ignore
+        leading_ignore + len(col_names) + mid_ignore + trailing
+        + n_trailing_cols + trailing_ignore
     )
     row_index_names = _row_index_names(has_period=has_period, has_time=has_time)
     # Full column-name tuple — leading cols (before period) + trailing
@@ -670,16 +677,19 @@ def extract_variable(
         col_start = leading_ignore
         col_end = col_start + len(col_names)
         leading_col_vals = tuple(parts[col_start:col_end])
+        # Agent 1.4: skip mid_ignore items after col_names, before
+        # period.  Used for nodeBalance_eq's new ``bn`` subscript.
+        row_start = col_end + mid_ignore
         if has_period and has_time:
-            row_key: tuple[str, ...] = (parts[col_end], parts[col_end + 1])
+            row_key: tuple[str, ...] = (parts[row_start], parts[row_start + 1])
             row_len = 2
         elif has_period:
-            row_key = (parts[col_end],)
+            row_key = (parts[row_start],)
             row_len = 1
         else:
             row_key = ()
             row_len = 0
-        trailing_start = col_end + row_len
+        trailing_start = row_start + row_len
         trailing_col_vals = tuple(
             parts[trailing_start:trailing_start + n_trailing_cols]
         )
@@ -814,6 +824,7 @@ def write_variable_parquet(
                 realized_periods_csv=realized_periods_csv,
                 leading_ignore=spec.leading_ignore,
                 trailing_ignore=spec.trailing_ignore,
+                mid_ignore=spec.mid_ignore,
                 trailing_col_names=spec.trailing_col_names,
             )
             df = src_df if df is None else df.add(src_df, fill_value=0.0)
@@ -830,6 +841,7 @@ def write_variable_parquet(
             realized_periods_csv=realized_periods_csv,
             leading_ignore=spec.leading_ignore,
             trailing_ignore=spec.trailing_ignore,
+            mid_ignore=spec.mid_ignore,
             trailing_col_names=spec.trailing_col_names,
         )
     # Agent 9 — row-scaling un-scaling applied at the output boundary.
@@ -1145,6 +1157,11 @@ def write_v_dual_node_balance(
         value_scale=-inv_scale,
         realized_dispatch_csv=realized_dispatch_csv,
         leading_ignore=1,   # ``c`` (solve) — already captured in row index
+        # Agent 1.4: nodeBalance_eq gained a ``bn`` (block) subscript
+        # between ``node`` and ``period``.  ``mid_ignore=1`` drops it so
+        # the (period, time) key still lines up.  In degenerate mode bn
+        # is always 'default' so the dropped value is a constant.
+        mid_ignore=1,
         trailing_ignore=4,  # tp, tpwt, dp, tpws — bookkeeping only
     )
 

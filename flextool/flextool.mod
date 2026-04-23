@@ -246,6 +246,18 @@ set block__period__step 'active (block, period, step) triples' dimen 3;
 # aggregate flows across resolutions.  In the degenerate (single-block) case
 # every (d, t, b, t, b) row carries fraction 1.0 — identity.
 set overlap 'overlap tuples (period, block_coarse, step_coarse, block_fine, step_fine)' dimen 5;
+# Per-block predecessor relations (Agent 1.4). Analogous to dtttdt but
+# keyed at the block level — (block, period, step, step_previous,
+# step_previous_within_timeset, period_previous, step_previous_within_solve).
+# In the degenerate case the 'default' rows are the same tuples as dtttdt,
+# so storage state-transition terms using block_dtttdt on the node's block
+# collapse to the pre-v51 form bit-identically.
+set block_dtttdt 'per-block predecessor relations' dimen 7;
+# Per-block first / last step of each period (Agent 1.4). In the
+# degenerate case ('default' block) these match period__time_first /
+# period__time_last exactly.
+set block__period__time_first 'per-block period first step' dimen 3;
+set block__period__time_last 'per-block period last step' dimen 3;
 # Block set derived from the union of blocks referenced in the four CSVs.
 set block 'temporal-resolution classes for nodes and processes'
     := setof {(n, b) in node__block} (b)
@@ -817,6 +829,17 @@ table data IN 'CSV' 'solve_data/block_step_duration.csv' :
 table data IN 'CSV' 'solve_data/overlap_set.csv' :
     overlap <- [period, block_coarse, step_coarse, block_fine, step_fine],
     p_overlap ~ fraction;
+# Per-block predecessor + boundary tables (Agent 1.4).  Consumers:
+# nodeBalance_eq state-transition terms (block_dtttdt), and the seven
+# storage constraints indexed at the node's block's first / last step.
+table data IN 'CSV' 'solve_data/block_step_previous.csv' :
+    block_dtttdt <- [block, period, step, step_previous,
+        step_previous_within_timeset, period_previous,
+        step_previous_within_solve];
+table data IN 'CSV' 'solve_data/block_period_time_first.csv' :
+    block__period__time_first <- [block, period, step];
+table data IN 'CSV' 'solve_data/block_period_time_last.csv' :
+    block__period__time_last <- [block, period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
@@ -2587,10 +2610,14 @@ printf ',%s', total_obj_cost - setup >> solve_progress;
 #
 # For non-state terms the time index on the LHS (t_n) is the node's own
 # block's time; process-flow variables are keyed at (d, t_f) on the process-
-# side block.  For nodeState the storage transition keeps its existing
-# dtttdt chaining for now — Agent 1.4 generalizes predecessor logic per
-# block.  Agent 5c row-scaling (inv_node_cap[n, d]) is preserved on every
-# RHS term.
+# side block.  Agent 1.4 generalises state-transition predecessor logic to
+# use block_dtttdt (tagged by the node's block b_n) instead of the
+# fine-timeline dtttdt: in the degenerate case ('default'-only) the tagged
+# rows equal dtttdt exactly so the LP stays bit-identical; for a node sitting
+# on a coarser block (daily storage on an hourly electricity network) the
+# state transitions, self-discharge and inflow terms all evaluate at the
+# coarser grid.  Agent 5c row-scaling (inv_node_cap[n, d]) is preserved on
+# every RHS term.
 # ---------------------------------------------------------------------------
 
 # Energy balance in each node
@@ -2601,8 +2628,10 @@ printf ',%s', total_obj_cost - setup >> solve_progress;
 # other term this introduces a `/ node_cap` factor that compresses the
 # matrix coefficient range in Mode B.  In Mode A both scalers are 1 so
 # inv_node_cap = 1 and this is a structural no-op.
-s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : n not in nodeStateBlock} :
-  + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] / p_hole_multiplier[c] * inv_node_cap[n, d] )
+s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (n, bn) in node__block,
+    (bn, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt
+    : n not in nodeStateBlock} :
+  + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((bn, d, t) in block__period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] / p_hole_multiplier[c] * inv_node_cap[n, d] )
   + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n]  / p_hole_multiplier[c] * inv_node_cap[n, d] )
   + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n]  / p_hole_multiplier[c] * inv_node_cap[n, d] )
   + (if n in nodeState && (n, 'bind_within_timeset') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n] * inv_node_cap[n, d] )
@@ -2610,8 +2639,8 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   + (if n in nodeState_rp && not ((d, t) in rp_block_first) then (v_state[n, d, t] - v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n] * inv_node_cap[n, d] )
   # bind_using_blended_weights: at first timestep of RP — state change from free starting variable
   + (if n in nodeState_rp && (d, t) in rp_block_first then (v_state[n, d, t] - v_state_rp_start[n, d, t]) * p_entity_unitsize[n] * inv_node_cap[n, d] )
-  + (if n in nodeState && (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n]) * inv_node_cap[n, d])
-  + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && (d, t) in period__time_first && d in period_first_of_solve && p_nested_model['solveFirst']
+  + (if n in nodeState && (bn, d, t) in block__period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n]) * inv_node_cap[n, d])
+  + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && (bn, d, t) in block__period__time_first && d in period_first_of_solve && p_nested_model['solveFirst']
     && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
     then (+ v_state[n,d,t] * p_entity_unitsize[n] - p_node[n,'storage_state_start'] *
           (+ p_entity_all_existing[n, d]
@@ -2664,14 +2693,28 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
         * p_overlap[d, b_n, t, b_f, t_f]
         * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
     )
-  + (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t] * inv_node_cap[n, d])
+  # Inflow — aggregated from the default ('fine') block to the node's
+  # block bn via the overlap set.  pdtNodeInflow is in energy units per
+  # step (not power) so the sum collects fine-block energy contributions
+  # without a step_duration factor.  In the degenerate case (bn =
+  # 'default') overlap carries a single identity row (t_f = t, fraction
+  # 1.0) so the sum reduces to the original single term.
+  + (if (n, 'no_inflow') not in node__inflow_method then
+      sum {(d, b_c, tc, b_f, t_f) in overlap
+           : b_c = bn and tc = t and b_f = 'default'}
+        p_overlap[d, bn, t, 'default', t_f]
+          * pdtNodeInflow[n, d, t_f] * inv_node_cap[n, d])
+  # Self-discharge at the node's block — block_step_duration[bn, d, t]
+  # replaces step_duration[d, t] so a coarser node experiences a single
+  # coarse-step decay per row.  In the degenerate case the two values are
+  # identical.
   - (if n in nodeSelfDischarge then
       + v_state[n, d, t]
-	    * (-1 + (1 + pdtNode[n, 'self_discharge_loss', d, t]) ** step_duration[d, t])
+	    * (-1 + (1 + pdtNode[n, 'self_discharge_loss', d, t]) ** block_step_duration[bn, d, t])
 		  * p_entity_unitsize[n] * inv_node_cap[n, d]
     )
-  + vq_state_up[n, d, t] * step_duration[d, t]
-  - vq_state_down[n, d, t] * step_duration[d, t]
+  + vq_state_up[n, d, t] * block_step_duration[bn, d, t]
+  - vq_state_down[n, d, t] * block_step_duration[bn, d, t]
 ;
 
 # Energy balance within period in each node
@@ -3070,7 +3113,14 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
 #  explicit v_state[TS01] − start × cap term; it is excluded from both
 #  constraints below via the filters.)
 
-s.t. storage_state_start_binding_cyclic_period {n in nodeState, (d, t) in period__time_last
+# Agent 1.4: the seven storage constraints below now index v_state at the
+# node's own block (b_n).  In the degenerate case (b_n = 'default') the
+# tagged block__period__time_first / block__period__time_last sets match
+# period__time_first / period__time_last exactly, so the LP is
+# bit-identical to pre-v51.  For a coarser-block storage node the pin
+# lands on the node's block boundary instead of the fine-grid one.
+s.t. storage_state_start_binding_cyclic_period {n in nodeState, (n, b_n) in node__block,
+     (b_n, d, t) in block__period__time_last
      : p_nested_model['solveFirst']
 	 && ((n, 'bind_within_period') in node__storage_binding_method
 	     || (n, 'bind_within_solve') in node__storage_binding_method)
@@ -3085,7 +3135,8 @@ s.t. storage_state_start_binding_cyclic_period {n in nodeState, (d, t) in period
 	  )
 ;
 
-s.t. storage_state_start_binding {n in nodeState, (d, t) in period__time_first
+s.t. storage_state_start_binding {n in nodeState, (n, b_n) in node__block,
+     (b_n, d, t) in block__period__time_first
      : p_nested_model['solveFirst']
 	 && (n, 'bind_forward_only') not in node__storage_binding_method
 	 && (n, 'bind_within_period') not in node__storage_binding_method
@@ -3101,7 +3152,8 @@ s.t. storage_state_start_binding {n in nodeState, (d, t) in period__time_first
 	  )
 ;
 
-s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
+s.t. storage_state_end {n in nodeState, (n, b_n) in node__block,
+     (b_n, d, t) in block__period__time_last
      : p_nested_model['solveLast']
 	 && d in period_last
 	 && ((n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
@@ -3118,7 +3170,9 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 ;
 
 #Storage state fix quantity for timesteps
-s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last && sum{(n,d2,t2) in ndt_fix_storage_quantity: (d, t, t2) in dtt_timeline_matching} 1}:
+s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (n, b_n) in node__block,
+      (b_n, d, t) in block__period__time_last, (d2,d) in period__branch:
+      d in period_last && sum{(n,d2,t2) in ndt_fix_storage_quantity: (d, t, t2) in dtt_timeline_matching} 1}:
   + v_state[n,d,t]* p_entity_unitsize[n]
   =
   + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_quantity[n,d2,t2]
@@ -3126,7 +3180,8 @@ s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (d,t) in p
 
 #Storage usage fix for timesteps
 
-s.t. storage_usage_fix{n in n_fix_storage_usage, (d,t) in period__time_last, (d2,d) in period__branch:
+s.t. storage_usage_fix{n in n_fix_storage_usage, (n, b_n) in node__block,
+      (b_n, d, t) in block__period__time_last, (d2,d) in period__branch:
       d in period_last && sum{(n,d2,t2) in ndt_fix_storage_usage: (d, t, t2) in dtt_timeline_matching} 1}:
   # n is sink
   - sum {(p, source, n) in process_source_sink, (d,t3) in dt} (
@@ -3152,7 +3207,8 @@ s.t. storage_usage_fix{n in n_fix_storage_usage, (d,t) in period__time_last, (d2
   + sum{(n,d2,t2) in ndt_fix_storage_usage: exists{(d, t3, t2) in dtt_timeline_matching} 1} p_fix_storage_usage[n,d2,t2]
 ;
 
-s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
+s.t. storage_state_solve_horizon_reference_value {n in nodeState, (n, b_n) in node__block,
+     (b_n, d, t) in block__period__time_last
      : d in period_last
 	 && ((n, 'use_reference_value') in node__storage_solve_horizon_method
    && (n, 'fix_end') not in node__storage_start_end_method
@@ -3300,7 +3356,8 @@ s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} 
 ;
 
 
-s.t. maxState {n in nodeState, (d, t) in dt} :
+s.t. maxState {n in nodeState, (n, b_n) in node__block,
+    (b_n, d, t) in block__period__step} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   <=
   + (
@@ -5839,9 +5896,18 @@ for {s in solve_current, (d, t, t_previous, t_previous_within_timeset, d_previou
         # constraint is node_cap * original_dual; dividing by node_cap
         # recovers the user-facing nodal price (EUR / MWh).  Mode A:
         # node_cap = 1, no effect.
+        # Agent 1.4: nodeBalance_eq gained a leading `bn` subscript (the
+        # node's temporal-resolution block).  In the degenerate case
+        # every node is in 'default' so the dual lookup resolves to the
+        # single block row.  For rows at (d, t) outside the node's
+        # block's timeline the constraint is not emitted — sum over
+        # block_dtttdt filtered by (n, bn) picks only the row that
+        # actually exists.
         printf ",%.6g",
           (if n not in nodeStateBlock then
-             -nodeBalance_eq[s, n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual
+             -sum {(n, bn) in node__block
+                   : (bn, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt}
+                nodeBalance_eq[s, n, bn, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual
            else
              -sum {(d, b, t) in period_block_time} nodeBalanceBlock_eq[s, n, d, b].dual)
           / p_inflation_factor_operations_yearly[d]
@@ -6162,7 +6228,15 @@ for {c in solve_current, (n,'fix_price') in node__storage_nested_fix_method, (d,
   {
     # Agent 9b: / node_capacity_for_scaling to un-scale the row scaling
     # on nodeBalance_eq (Agent 5c).  Mode A: node_cap = 1, no effect.
-    printf '%s,%s,%s,%.8g\n', d, t, n,  -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_inflation_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective / node_capacity_for_scaling[n, d] >> fn_fix_price_nodeState__dt;
+    # Agent 1.4: sum over the node's block rows of block_dtttdt so the
+    # dual lookup works for both degenerate 'default' and non-default
+    # nodes — exactly one row matches at each (n, d, t) in the default
+    # case, bit-identical to the old single-dual lookup.
+    printf '%s,%s,%s,%.8g\n', d, t, n,
+      -sum {(n, bn) in node__block
+            : (bn, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt}
+         nodeBalance_eq[c, n, bn, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual
+      / p_inflation_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective / node_capacity_for_scaling[n, d] >> fn_fix_price_nodeState__dt;
   }
 
 printf 'Write node state usage for fixed timesteps ..\n';
