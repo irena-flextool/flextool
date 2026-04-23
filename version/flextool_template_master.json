@@ -319,6 +319,14 @@
       "none"
     ],
     [
+      "decomposition_methods",
+      "none"
+    ],
+    [
+      "decomposition_methods",
+      "lagrangian_region"
+    ],
+    [
       "has_DC",
       "yes"
     ],
@@ -1255,6 +1263,14 @@
     ],
     [
       "group",
+      "decomposition_method",
+      "none",
+      "decomposition_methods",
+      "Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'lagrangian_region' (group is solved as an independent region with shared-commodity coupling).",
+      null
+    ],
+    [
+      "group",
       "flow_aggregator",
       null,
       "yes_no",
@@ -1372,6 +1388,14 @@
       null,
       "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.",
       "flow_limit"
+    ],
+    [
+      "group",
+      "new_stepduration",
+      null,
+      null,
+      "Hours. Members of this group operate at this step duration. Overrides the solve-level new_stepduration for these entities. Used for multi-resolution models where some nodes (e.g. fuel markets) need coarser dispatch resolution than others (e.g. power systems).",
+      "timeline"
     ],
     [
       "group",
@@ -1576,7 +1600,7 @@
     [
       "model",
       "version",
-      50.0,
+      51.0,
       null,
       "Contains database version information.",
       "model"
@@ -3045,6 +3069,12 @@
     ],
     [
       "group",
+      "decomposition_method",
+      "str",
+      0
+    ],
+    [
+      "group",
       "flow_aggregator",
       "str",
       0
@@ -3162,6 +3192,12 @@
       "min_instant_flow",
       "map",
       1
+    ],
+    [
+      "group",
+      "new_stepduration",
+      "float",
+      0
     ],
     [
       "group",

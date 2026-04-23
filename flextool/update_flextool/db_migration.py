@@ -1163,6 +1163,23 @@ def migrate_database(database_path, up_to: int | None = None):
                 # effectively solve-scoped already — this migration
                 # makes the scope explicit.
                 _migrate_v50_new_stepduration_to_solve(db)
+            elif next_version == 51:
+                # Group-level temporal resolution + decomposition schema
+                # (Agent 1.1).  Adds two new parameters on entity_class
+                # `group`:
+                #
+                # * ``new_stepduration`` — float, default None.  When set,
+                #   members of this group (nodes / units / connections)
+                #   operate at this stepduration, overriding the
+                #   solve-level new_stepduration for those entities.
+                #   Enables e.g. hourly electricity nodes alongside daily
+                #   H2 nodes in the same solve.
+                # * ``decomposition_method`` — enum string, default
+                #   "none".  Reserved for Agent 3.2 (Lagrangian region
+                #   decomposition); only the schema lands here.
+                #
+                # Also adds the ``decomposition_methods`` value list.
+                _migrate_v51_group_block_resolution(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -2134,6 +2151,93 @@ def _migrate_v50_new_stepduration_to_solve(db) -> None:
             "propagate values via solve.period_timeset; drop "
             "timeset.new_stepduration (parameter was already "
             "effectively solve-scoped, see timeline_config.py)."
+        )
+    except SpineDBAPIError:
+        pass
+
+
+def _migrate_v51_group_block_resolution(db) -> None:
+    """Add group-level ``new_stepduration`` and ``decomposition_method``.
+
+    Rationale
+    ---------
+    FlexTool's ``group`` abstraction already carries a variety of
+    cross-entity concerns (CO2 caps, reserves, inertia, transfer method
+    overrides).  Agent 1.1 introduces two new group-level parameters
+    that are the entry point for the flex-temporal / decomposition
+    refactor:
+
+    * ``new_stepduration`` — hours; when set, members of the group
+      (nodes / units / connections) dispatch at this stepduration,
+      overriding the solve-level ``new_stepduration`` (v50) for those
+      entities.  This makes mixed-resolution models possible (e.g.
+      hourly power + daily hydrogen in the same solve).
+    * ``decomposition_method`` — enum string on the
+      ``decomposition_methods`` value list (``none``,
+      ``lagrangian_region``).  Default ``none`` preserves existing
+      behaviour; ``lagrangian_region`` is reserved for Agent 3.2 and
+      has no LP behaviour attached yet.
+
+    Only schema + defaults land in this migration — block derivation
+    and overlap-set generation are Python-side work (Agent 1.1); the
+    GMPL set/parameter declarations are Agent 1.2.
+    """
+
+    # --- Value list for decomposition_method ----------------------------
+    add_value_list_manual(db, [
+        ["decomposition_methods", "none"],
+        ["decomposition_methods", "lagrangian_region"],
+    ])
+
+    # --- group.new_stepduration -----------------------------------------
+    default_val, default_type = to_database(None)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="new_stepduration",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=(
+            "Hours. Members of this group operate at this step "
+            "duration. Overrides the solve-level new_stepduration "
+            "for these entities. Used for multi-resolution models "
+            "where some nodes (e.g. fuel markets) need coarser "
+            "dispatch resolution than others (e.g. power systems)."
+        ),
+    )
+    # Attach the timeline parameter_group when it exists (v44+).
+    if db.item(db.mapped_table("parameter_group"), name="timeline") is not None:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="group",
+            name="new_stepduration",
+            parameter_group_name="timeline",
+        )
+
+    # --- group.decomposition_method -------------------------------------
+    default_val, default_type = to_database("none")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="decomposition_method",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="decomposition_methods",
+        parameter_type_list=("str",),
+        description=(
+            "Decomposition strategy to apply to this group. "
+            "Currently supported: 'none' (no decomposition — "
+            "default), 'lagrangian_region' (group is solved as an "
+            "independent region with shared-commodity coupling)."
+        ),
+    )
+
+    try:
+        db.commit_session(
+            "v51: added group.new_stepduration and "
+            "group.decomposition_method (Agent 1.1 flex-temporal + "
+            "decomposition foundation); no LP behaviour yet."
         )
     except SpineDBAPIError:
         pass
