@@ -10,6 +10,7 @@ import shutil
 import time
 from collections import defaultdict
 
+from flextool.flextoolrunner.blocks import write_block_data_for_solve
 from flextool.flextoolrunner.minimum_time import write_minimum_time_data
 from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigError, FlexToolSolveError, SolveResult
 from flextool.flextoolrunner.solver_runner import SolverRunner
@@ -358,6 +359,29 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             state.logger.info("Aggregating timeline and parameters for the new step size")
             state.timeline.create_averaged_timeseries(complete_solve[solve], state.solve, state.logger, work_folder=wf)
         previous_complete_solve = complete_solve[solve]
+
+        # Agent 1.1 (flex-temporal + decomposition): derive per-entity
+        # temporal blocks and the cross-resolution overlap set, then
+        # emit ``solve_data/{entity_block,process_side_block,
+        # block_step_duration,overlap_set}.csv``.  In Agent 1.1 these
+        # CSVs are inert (no GMPL consumer yet — Agent 1.2 adds
+        # declarations); the degenerate "default"-block case emits
+        # identity overlap rows that match pre-v51 behaviour.
+        try:
+            write_block_data_for_solve(
+                solve=complete_solve[solve],
+                solve_config=state.solve,
+                timeline_config=state.timeline,
+                work_folder=wf,
+                active_time_list=active_time_lists[solve],
+            )
+        except FlexToolConfigError:
+            raise
+        except Exception as exc:  # pragma: no cover — defensive only
+            state.logger.warning(
+                f"blocks: emission failed (non-fatal — not consumed yet): {exc}"
+            )
+
         if solve in state.solve.first_of_complete_solve:
             first_of_nested_level = True
         else:
