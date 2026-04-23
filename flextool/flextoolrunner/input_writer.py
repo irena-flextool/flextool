@@ -14,6 +14,7 @@ import spinedb_api as api
 from spinedb_api import DatabaseMapping
 
 from flextool.flextoolrunner.runner_state import FlexToolConfigError
+from flextool.flextoolrunner.precision import format_scalar_for_csv
 
 
 # ---------------------------------------------------------------------------
@@ -1760,7 +1761,13 @@ def _write_commodity_ladder_annual(
 # Entry point
 # ---------------------------------------------------------------------------
 
-def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Logger, work_folder: Path | None = None) -> None:
+def write_input(
+    input_db_url: str,
+    scenario_name: str | None,
+    logger: logging.Logger,
+    work_folder: Path | None = None,
+    precision_digits: int = 0,
+) -> None:
     wf = work_folder if work_folder is not None else Path.cwd()
     if scenario_name:
         scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
@@ -1775,7 +1782,7 @@ def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Lo
         for spec in _DEFAULT_VALUES_SPECS:
             prefixed_spec = dict(spec)
             prefixed_spec["filename"] = str(wf / spec["filename"])
-            write_default_values(db, **prefixed_spec)
+            write_default_values(db, precision_digits=precision_digits, **prefixed_spec)
 
         for spec in _ENTITY_SPECS:
             write_entity(db, spec.classes, spec.header, str(wf / spec.filename),
@@ -1784,7 +1791,7 @@ def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Lo
         for spec in _PARAMETER_SPECS:
             prefixed_spec = dict(spec)
             prefixed_spec["filename"] = str(wf / spec["filename"])
-            write_parameter(db, **prefixed_spec)
+            write_parameter(db, precision_digits=precision_digits, **prefixed_spec)
 
         ct_method_overrides = _write_dc_power_flow_data(db, wf, logger)
         _write_process_method(db, wf, logger, ct_method_overrides=ct_method_overrides)
@@ -1932,7 +1939,44 @@ def write_parameter(
     dimens: list[int] | None = None,
     param_loc: int | None = None,
     no_entity: bool | None = None,
+    precision_digits: int = 0,
 ) -> None:
+    # Parameters whose value is a structural identifier (method name,
+    # entity reference, tier index, boolean flag) rather than a numerical
+    # coefficient.  Rounding these would corrupt the model — skip.
+    # Conservative policy: skip the param if *any* of its cl_pars
+    # definitions is in the structural set.  The per-value `filter_in_type`
+    # filters (``"str"``, ``"bool"``) already guard most of these, but
+    # being explicit keeps the intent documented.
+    _STRUCTURAL_PARAM_NAMES: frozenset[str] = frozenset({
+        # method names
+        "ct_method", "transfer_method", "conversion_method",
+        "startup_method", "fork_method", "inflow_method",
+        "invest_method", "lifetime_method", "ramp_method",
+        "minimum_time_method", "storage_binding_method",
+        "storage_nested_fix_method", "storage_solve_horizon_method",
+        "storage_start_end_method", "profile_method", "reserve_method",
+        "co2_method", "loss_share_type", "price_method",
+        "solver", "solve_mode", "highs_method", "highs_parallel",
+        "highs_presolve", "solver_precommand", "solver_arguments",
+        # structural flags / references
+        "is_DC", "sense", "node_type", "has_capacity_margin",
+        "has_inertia", "has_non_synchronous", "include_stochastics",
+        "output_nodeGroup_dispatch", "output_nodeGroup_indicators",
+        "output_flowGroup_indicators", "flow_aggregator",
+        "output_connection__node__node_flow_t",
+        "output_connection_flow_separate", "output_horizon",
+        "output_ramp_envelope", "output_unit__node_flow_t",
+        "output_unit__node_ramp_t", "exclude_entity_outputs",
+        # set membership / name references
+        "solves", "contains_solves", "model",
+        "realized_periods", "realized_invest_periods",
+        "fix_storage_periods", "invest_periods", "periods_available",
+        "debug", "version",
+    })
+    effective_precision = 0 if any(
+        par in _STRUCTURAL_PARAM_NAMES for _, par in cl_pars
+    ) else precision_digits
     # interpret map dimensionality and map into map for later comparisons
     type_filter_map_dim = []
     if filter_in_type:
@@ -1999,7 +2043,11 @@ def write_parameter(
                 if api.parameter_value.from_database_to_dimension_count(param["value"], param["type"]) <= 1:
                     result = [str(ind) for ind in value.indexes]
                     # Doing a zip, since there can be multiple rows in the map
-                    result = list(zip(result, [str(v) for v in value.values]))
+                    result = list(zip(
+                        result,
+                        [format_scalar_for_csv(v, effective_precision)
+                         for v in value.values],
+                    ))
                     for res in result:
                         if no_value:
                             realfile.write(first_cols + ',' + res[0] + '\n')
@@ -2011,11 +2059,20 @@ def write_parameter(
                         if no_value:
                             realfile.write(first_cols + ',' + ','.join(index[:-1]) + '\n')
                         else:
-                            index[-1] = str(index[-1])
+                            # Only the trailing column holds the numeric
+                            # value; preceding columns are indexes
+                            # (period, time, branch, …) — leave those raw.
+                            index[-1] = format_scalar_for_csv(
+                                index[-1], effective_precision,
+                            )
                             realfile.write(first_cols + ',' + ','.join(index) + '\n')
             elif param["type"] == "array" or param["type"] == "time_series":
                 for row in param["parsed_value"].values:
-                    realfile.write(','.join(entity_byname) + ',' + row + '\n')
+                    realfile.write(
+                        ','.join(entity_byname) + ','
+                        + format_scalar_for_csv(row, effective_precision)
+                        + '\n'
+                    )
             elif param["type"] == "str" or param["type"] == "float" or param["type"] == "bool":
                 # Filter based on values: only if the value is found, then data is written
                 if filter_in_value and param["parsed_value"] != filter_in_value:
@@ -2023,7 +2080,13 @@ def write_parameter(
                 if no_value:
                     realfile.write(first_cols + '\n')
                 else:
-                    realfile.write(first_cols + ',' + str(param["parsed_value"]) + '\n')
+                    realfile.write(
+                        first_cols + ','
+                        + format_scalar_for_csv(
+                            param["parsed_value"], effective_precision,
+                        )
+                        + '\n'
+                    )
             else:
                 if not filter_in_type:
                     filter_in_type = ["bool", "str", "float", "array", "time_series", "map"]
@@ -2044,6 +2107,7 @@ def write_default_values(
     filename: str,
     filter_in_type: list[str] | None = None,
     only_value: bool = False,
+    precision_digits: int = 0,
 ) -> None:
     param_defs = []
     definitions = db.find_parameter_definitions()#entity_class_name=cl_par[0], name=cl_par[1])
@@ -2059,11 +2123,17 @@ def write_default_values(
                 continue
 
             if param["default_type"] == "str" or param["default_type"] == "float" or param["default_type"] == "bool":
+                raw_default = api.from_database(
+                    param["default_value"], param["default_type"],
+                )
+                formatted = format_scalar_for_csv(raw_default, precision_digits)
                 if only_value:
-                    realfile.write(str(api.from_database(param["default_value"], param["default_type"])) + '\n')
+                    realfile.write(formatted + '\n')
                 else:
-                    realfile.write(param["entity_class_name"] + "," + param["name"] + ","
-                               + str(api.from_database(param["default_value"], param["default_type"])) + '\n')
+                    realfile.write(
+                        param["entity_class_name"] + ","
+                        + param["name"] + "," + formatted + '\n'
+                    )
             else:
                 message = ("Default_value found in a parameter definition not of supported default type"
                            "\nParameter: " + param["parameter_definition_name"])

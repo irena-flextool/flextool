@@ -2,7 +2,7 @@ solve,period,time,coal_plant,wind_plant
 ,,,west,west
 y2020_fullYear_dispatch,p2020,t0001,141.8372,447.1628
 y2020_fullYear_dispatch,p2020,t0002,125,412
-y2020_fullYear_dispatch,p2020,t0003,-5.9999999e-06,506.00001
+y2020_fullYear_dispatch,p2020,t0003,0,506
 y2020_fullYear_dispatch,p2020,t0004,0,482
 y2020_fullYear_dispatch,p2020,t0005,-5.6843419e-14,472
 y2020_fullYear_dispatch,p2020,t0006,0,454
@@ -12,12 +12,12 @@ y2020_fullYear_dispatch,p2020,t0009,-5.6843419e-14,474
 y2020_fullYear_dispatch,p2020,t0010,0,518
 y2020_fullYear_dispatch,p2020,t0011,0,538
 y2020_fullYear_dispatch,p2020,t0012,0,558
-y2020_fullYear_dispatch,p2020,t0013,-1.1368684e-13,572
+y2020_fullYear_dispatch,p2020,t0013,0,572
 y2020_fullYear_dispatch,p2020,t0014,0,564
 y2020_fullYear_dispatch,p2020,t0015,0,553
 y2020_fullYear_dispatch,p2020,t0016,0,541
 y2020_fullYear_dispatch,p2020,t0017,0,534
-y2020_fullYear_dispatch,p2020,t0018,-1.1368684e-13,567
+y2020_fullYear_dispatch,p2020,t0018,0,567
 y2020_fullYear_dispatch,p2020,t0019,0,689
 y2020_fullYear_dispatch,p2020,t0020,125,571
 y2020_fullYear_dispatch,p2020,t0021,163.99999,506.00001

@@ -1,0 +1,5 @@
+*.sqlite
+work/
+work_validation/
+output/
+__pycache__/

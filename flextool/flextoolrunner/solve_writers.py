@@ -597,6 +597,93 @@ def write_hole_multiplier(
             writer.writerow([solve, hole_multipliers[solve]])
 
 
+def write_p_use_row_scaling(
+    solve: str,
+    use_row_scaling: dict[str, str],
+    filename: str,
+) -> None:
+    """Write the Agent-5 row-scaling opt-in flag as an integer 0/1.
+
+    Args:
+        solve: current solve name.
+        use_row_scaling: solve → "yes"/"no" from the DB (missing → off).
+        filename: destination CSV path (usually
+            ``solve_data/p_use_row_scaling.csv``).
+
+    File layout (read by ``flextool.mod`` with
+    ``table data IN 'CSV' ... : [solve], p_use_row_scaling``)::
+
+        solve,p_use_row_scaling
+        <solve>,0|1
+
+    Default is 0 (off) unless the user explicitly sets the parameter to
+    ``"yes"`` on the solve entity.  Writes the row unconditionally so
+    AMPL always finds the current solve's value — the default path
+    through the model is value = 0, identical to pre-Agent-5.
+    """
+    value_str = use_row_scaling.get(solve, "no") if isinstance(use_row_scaling, dict) else "no"
+    flag = 1 if str(value_str).strip().lower() == "yes" else 0
+    # Agent 9 test hook: FLEXTOOL_FORCE_ROW_SCALING=1 forces flag=1 for all
+    # solves, bypassing both DB user-setting and ScaleAnalyzer.  Used by
+    # the Agent 9 benchmark harness to validate Mode B un-scaling; no
+    # effect in production unless the env var is set.
+    import os as _os
+    if _os.environ.get("FLEXTOOL_FORCE_ROW_SCALING", "").strip().lower() in ("1", "yes", "true", "on"):
+        flag = 1
+    with open(filename, 'w', newline='') as outfile:
+        writer = csv.writer(outfile)
+        writer.writerow(["solve", "p_use_row_scaling"])
+        writer.writerow([solve, flag])
+
+
+def write_scale_the_objective(solve_data_dir: Path | str, value: float) -> Path:
+    """Emit ``solve_data/scale_the_objective.csv`` (Agent 12).
+
+    Writes the global objective scalar coming from the Agent-8 scaling
+    analyser (:class:`flextool.flextoolrunner.scaling.ScaleTable`) into
+    a single-row CSV that ``flextool.mod`` reads via ``table data IN``
+    into ``scale_the_objective``.  The .mod declares the param with a
+    ``default 1e-6`` fallback equivalent to the old
+    ``flextool_base.dat`` hardcoding.
+
+    Layout::
+
+        key,value
+        v,<scale_the_objective>
+
+    The ``key`` column is present only because GMPL ``table data IN``
+    requires a keyed read — the value is pulled with
+    ``sum{k in _scale_obj_keys} _scale_obj_from_csv[k]`` on a
+    single-row file.
+    """
+    sd = Path(solve_data_dir)
+    sd.mkdir(parents=True, exist_ok=True)
+    path = sd / "scale_the_objective.csv"
+    with open(path, 'w', newline='') as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["key", "value"])
+        writer.writerow(["v", f"{float(value):.17g}"])
+    return path
+
+
+def write_scale_the_state(solve_data_dir: Path | str, value: float) -> Path:
+    """Emit ``solve_data/scale_the_state.csv`` (Agent 12).
+
+    Companion to :func:`write_scale_the_objective`.  ``scale_the_state``
+    is currently fixed at ``1.0`` — the field is reserved for future
+    analyser tuning.  Layout / read convention identical to the
+    objective CSV.
+    """
+    sd = Path(solve_data_dir)
+    sd.mkdir(parents=True, exist_ok=True)
+    path = sd / "scale_the_state.csv"
+    with open(path, 'w', newline='') as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["key", "value"])
+        writer.writerow(["v", f"{float(value):.17g}"])
+    return path
+
+
 def write_delayed_durations(
     active_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,

@@ -14,6 +14,13 @@ from flextool.flextoolrunner.minimum_time import write_minimum_time_data
 from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigError, FlexToolSolveError, SolveResult
 from flextool.flextoolrunner.solver_runner import SolverRunner
 from flextool.flextoolrunner.recursive_solves import RecursiveSolveBuilder, ParentSolveInfo
+from flextool.flextoolrunner.scaling import (
+    analyze_solve,
+    maybe_auto_apply_row_scaling,
+    write_scaling_analysis_json,
+)
+from flextool.flextoolrunner.scaling_report import write_scaling_report
+from flextool.flextoolrunner.slack_bounds import write_p_state_slack_k_rel
 from flextool.flextoolrunner.stochastic import StochasticSolver
 from flextool.flextoolrunner.timeline_config import get_active_time, make_period_block, separate_period_and_timeseries_data
 from flextool.flextoolrunner import solve_writers
@@ -254,6 +261,56 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         solve_writers.write_period_years(period__branch_lists[solve], years_rep, str(wf / 'solve_data/p_discount_years.csv'))
         solve_writers.write_current_solve(solve, str(wf / 'solve_data/solve_current.csv'))
         solve_writers.write_hole_multiplier(solve, state.solve.hole_multipliers, str(wf / 'solve_data/solve_hole_multiplier.csv'))
+        # Agent 8 (LP-scaling): analyse the solve's input CSVs, cache the
+        # result per solve name, emit solve_data/scaling_analysis.json for
+        # Agent 10's user-facing report, and (optionally) auto-apply the
+        # row-scaling recommendation when --auto-scale is active and the
+        # user has not explicitly set solve.use_row_scaling.
+        # The analyser is intentionally cheap (stdlib only, one CSV pass).
+        scale_table = analyze_solve(
+            solve_name=solve,
+            input_dir=wf / 'input',
+            logger=state.logger,
+        )
+        write_scaling_analysis_json(
+            table=scale_table,
+            solve_data_dir=wf / 'solve_data',
+        )
+        auto_scale = getattr(state, 'auto_scale', False)
+        applied = maybe_auto_apply_row_scaling(
+            solve_name=solve,
+            table=scale_table,
+            user_setting=state.solve.use_row_scaling.get(solve),
+            auto_scale=auto_scale,
+            logger=state.logger,
+        )
+        if applied is not None:
+            state.solve.use_row_scaling[solve] = applied
+
+        # Agent 5 (LP-scaling): per-solve opt-in for automatic row scaling.
+        # Writes 0/1 to solve_data/p_use_row_scaling.csv; default 0 means the
+        # .mod keeps node_capacity_for_scaling / group_capacity_for_scaling
+        # at 1 everywhere (pre-Agent-5 behaviour).
+        solve_writers.write_p_use_row_scaling(
+            solve,
+            state.solve.use_row_scaling,
+            str(wf / 'solve_data/p_use_row_scaling.csv'),
+        )
+        # Agent 12 (LP-scaling): centralise scale_the_objective and
+        # scale_the_state in Python.  The values come from the Agent-8
+        # ScaleTable (scale_the_objective is the analyser's
+        # power-of-10 recommendation; scale_the_state is currently
+        # fixed at 1.0).  Writing these unconditionally every solve is
+        # the single source of truth — the .mod's ``default`` clauses
+        # are only consulted when the CSVs are missing entirely.
+        solve_writers.write_scale_the_objective(
+            wf / 'solve_data',
+            scale_table.scale_the_objective,
+        )
+        solve_writers.write_scale_the_state(
+            wf / 'solve_data',
+            scale_table.scale_the_state,
+        )
         solve_writers.write_first_steps(active_time_lists[solve], str(wf / 'solve_data/first_timesteps.csv'))
         solve_writers.write_last_steps(active_time_lists[solve], str(wf / 'solve_data/last_timesteps.csv'))
         solve_writers.write_last_realized_step(active_time_lists[solve], complete_solve[solve], state.solve.realized_periods.get(complete_solve[solve], []), str(wf / 'solve_data/last_realized_timestep.csv'))
@@ -369,12 +426,29 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                 work_folder=wf,
             )
 
+        # Compute per-node-per-period primary-slack cap K_rel.  Must
+        # happen after steps_in_use.csv is in place (done above via
+        # write_active_timelines); reads any node_capacity_for_scaling.csv
+        # left over from a previous solve and falls back to 1 when
+        # absent (first solve of a model).  See
+        # flextool/flextoolrunner/slack_bounds.py and
+        # flextool/SLACK_CONVENTION.md.
+        write_p_state_slack_k_rel(solve, work_folder=wf)
+
         state.logger.info("Starting model creation")
 
         with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',,' + solve + ',' + str(round(time.perf_counter() - timer_in_solve,4)))
 
+        # Agent 18c (LP-scaling): expose the current solve's cache key to
+        # the solver runner so bound-scaling diagnostics land in the
+        # same ScaleTable this iteration's scaling_report renders from.
+        # ``solve`` here is the per-roll name (the cache key used by
+        # ``analyze_solve`` a few hundred lines up); ``complete_solve[solve]``
+        # is the parent-solve name that gets passed to ``solver.run``.
+        state.current_scale_solve_name = solve
         exit_status = solver.run(complete_solve[solve])
+        state.current_scale_solve_name = None
         if exit_status == 0:
             state.logger.info('Success!')
             state.logger.info("-------------------------------------------------------------------------------------------")
@@ -382,6 +456,37 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             message = f'Error: {exit_status}'
             state.logger.error(message)
             raise FlexToolSolveError(message)
+
+        # Agent 10 (LP-scaling): user-facing diagnostic report.  Always
+        # generated; cheap; reads the ScaleTable cached by Agent 8, the
+        # input CSVs produced earlier this iteration, the HiGHS.log
+        # written during ``solver.run`` above, and the slack parquets
+        # emitted by the HiGHS → parquet handoff (which runs inside
+        # ``solver.run`` for the HiGHS path).  Writes
+        # ``solve_data/scaling_report.txt`` and echoes a 3-10 line
+        # summary to stdout.  The report's main job is to flag
+        # composite-scale mismatches that no linear scaling can fix
+        # (e.g. a tiny building unit connected to a continental grid);
+        # Agent 11 will validate the full pipeline.
+        try:
+            write_scaling_report(
+                scale_table=scale_table,
+                input_dir=wf / 'input',
+                solve_data_dir=wf / 'solve_data',
+                solve_name=solve,
+                highs_log_path=wf / 'HiGHS.log',
+                output_raw_dir=wf / 'output_raw',
+                applied_row_scaling=state.solve.use_row_scaling.get(solve),
+                override_source=(
+                    'auto-scale' if applied is not None else 'db'
+                ) if state.solve.use_row_scaling.get(solve) is not None else None,
+                stdout_summary=True,
+                logger=state.logger,
+            )
+        except Exception as exc:  # diagnostic only — never fail the solve
+            state.logger.warning(
+                f"scaling_report generation failed (non-fatal): {exc}"
+            )
 
         #if multiple storage solve levels, save the storage fix of this level:
         if complete_solve[solve] in state.solve.fix_storage_periods:

@@ -1,7 +1,7 @@
 solve,period,time,commodity_cost,commodity_sales,co2,other operational,starts,upward slack penalty,downward slack penalty,inertia slack penalty,non-synchronous slack penalty,upward reserve slack penalty,downward reserve slack penalty
 y2020_fullYear_dispatch,p2020,t0001,8894.5727,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0002,8333.3325,0,0,0,0,0,0,0,0,0,0
-y2020_fullYear_dispatch,p2020,t0003,-0.0002,0,0,0,0,0,0,0,0,0,0
+y2020_fullYear_dispatch,p2020,t0003,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0004,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0005,-0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0006,0.0,0,0,0,0,0,0,0,0,0,0
@@ -11,12 +11,12 @@ y2020_fullYear_dispatch,p2020,t0009,-0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0010,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0011,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0012,0.0,0,0,0,0,0,0,0,0,0,0
-y2020_fullYear_dispatch,p2020,t0013,-0.0,0,0,0,0,0,0,0,0,0,0
+y2020_fullYear_dispatch,p2020,t0013,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0014,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0015,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0016,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0017,0.0,0,0,0,0,0,0,0,0,0,0
-y2020_fullYear_dispatch,p2020,t0018,-0.0,0,0,0,0,0,0,0,0,0,0
+y2020_fullYear_dispatch,p2020,t0018,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0019,0.0,0,0,0,0,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0020,8333.3325,0,0,0,25000,0,0,0,0,0,0
 y2020_fullYear_dispatch,p2020,t0021,9633.3326,0,0,0,0,0,0,0,0,0,0

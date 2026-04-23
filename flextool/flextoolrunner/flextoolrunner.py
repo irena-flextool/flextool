@@ -28,7 +28,7 @@ class FlexToolRunner:
     See ``flextool.flextoolrunner.__init__`` docstring for a full module navigation guide.
     """
 
-    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False, highs_threads=None):
+    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False, highs_threads=None, auto_scale=False, relax_feasibility=None, use_ipm=False):
         try:
             logger = logging.getLogger(__name__)
             # Resolve work_folder: default to cwd for backward compatibility
@@ -86,6 +86,18 @@ class FlexToolRunner:
             )
             # HiGHS thread count (CLI override; solver_runner defaults to 4 when None).
             self.state.highs_threads = highs_threads
+            # Agent 8 (LP-scaling) — opt-in flag that lets the Python
+            # ScaleAnalyzer overwrite the DB's ``use_row_scaling`` setting
+            # whenever the user has not explicitly chosen "yes" / "no".
+            # Analysis itself runs unconditionally (writes JSON); this
+            # flag only gates auto-application.
+            self.state.auto_scale = auto_scale
+            # Agent 18d (LP-scaling): user-facing solver knobs — plumbed
+            # onto RunnerState so SolverRunner._run_highs can read them.
+            # Both default to off; the CLI fills them in from
+            # ``--relax-feasibility`` / ``--ipm`` (or env vars).
+            self.state.relax_feasibility = relax_feasibility
+            self.state.use_ipm = use_ipm
         except FlexToolError:
             sys.exit(-1)
 
@@ -97,8 +109,14 @@ class FlexToolRunner:
         except FlexToolError:
             sys.exit(-1)
 
-    def write_input(self, input_db_url, scenario_name=None) -> None:
-        input_writer.write_input(input_db_url, scenario_name, self.state.logger, work_folder=self.state.paths.work_folder)
+    def write_input(self, input_db_url, scenario_name=None, precision_digits: int = 0) -> None:
+        input_writer.write_input(
+            input_db_url,
+            scenario_name,
+            self.state.logger,
+            work_folder=self.state.paths.work_folder,
+            precision_digits=precision_digits,
+        )
 
 
 def main():

@@ -77,6 +77,13 @@ class SolveConfig:
         unit → delay value.
     real_solves : list[str]
         Ordered list of solve names as executed (populated during solve loop).
+    use_row_scaling : dict[str, str]
+        solve → "yes"/"no" opt-in for automatic row scaling (Agent 5);
+        orchestration converts "yes" to 1 and writes
+        ``solve_data/p_use_row_scaling.csv`` so the AMPL model activates
+        the unitsize-based ``node_capacity_for_scaling`` /
+        ``group_capacity_for_scaling`` formulas.  Absent / "no" keeps
+        both scalers at 1 (pre-Agent-5 behaviour).
     first_of_complete_solve : list[str]
         Populated during solve loop.
     last_of_solve : list[str]
@@ -98,6 +105,7 @@ class SolveConfig:
         periods_available: dict,
         delay_durations: dict,
         logger: logging.Logger,
+        use_row_scaling: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db)
         self.model = model
@@ -113,6 +121,8 @@ class SolveConfig:
         self.periods_available = periods_available
         self.delay_durations = delay_durations
         self.logger = logger
+        # solve-name → "yes"/"no" string from the DB (default off everywhere)
+        self.use_row_scaling: dict = use_row_scaling if use_row_scaling is not None else {}
 
         # Computed fields — populated by load_from_db after construction
         self.roll_counter: dict[str, int] = {}
@@ -187,6 +197,14 @@ class SolveConfig:
         periods_available: dict = params_to_dict(
             db=db, cl="model", par="periods_available", mode=DictMode.DICT
         )
+        # Agent 5 (LP-scaling): per-solve opt-in for automatic row scaling.
+        # Default is absent / "no" → AMPL sees 0 → node/group_capacity_for_scaling
+        # stays at 1 and behaviour is identical to pre-Agent-5.  When "yes",
+        # orchestration writes a 1 into solve_data/p_use_row_scaling.csv and
+        # the .mod computes row scalers from unitsizes.
+        use_row_scaling: dict = params_to_dict(
+            db=db, cl="solve", par="use_row_scaling", mode=DictMode.DICT
+        )
 
         # S02: Simplified rolling_times assembly (replaced the convoluted enumerate loop)
         rolling_duration: dict = params_to_dict(
@@ -236,6 +254,7 @@ class SolveConfig:
             periods_available=periods_available,
             delay_durations=delay_durations,
             logger=logger,
+            use_row_scaling=use_row_scaling,
         )
 
         # Computed fields (loading order must be preserved exactly)

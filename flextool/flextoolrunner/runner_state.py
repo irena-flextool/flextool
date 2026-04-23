@@ -77,3 +77,23 @@ class RunnerState:
     # during the PoC migration; glpsol phase 3 will itself be made optional
     # once variable coverage is complete.
     use_old_raw_csv: bool = False
+    # Agent 8 (LP-scaling): opt-in flag — when True the Python
+    # ScaleAnalyzer's recommendations are auto-applied (currently only
+    # to ``solve.use_row_scaling`` when the user hasn't set it).
+    # Always-False in the default path preserves pre-Agent-8 behaviour.
+    auto_scale: bool = False
+    # Agent 18c (LP-scaling): the orchestration loop sets this to the
+    # ``ScaleTable`` for the currently-active solve just before calling
+    # ``solver.run``.  ``_run_highs`` uses it to update bound-scaling
+    # diagnostics in the right cache entry even when the roll name
+    # differs from the parent (complete) solve name passed to the
+    # solver.  ``None`` outside an active solve iteration.
+    current_scale_solve_name: str | None = None
+    # Agent 18d (LP-scaling): user-facing solver-option knobs.
+    # ``relax_feasibility`` is the explicit tolerance (e.g. ``1e-5``)
+    # applied to HiGHS' primal + dual feasibility tolerance when the
+    # user passed ``--relax-feasibility``; ``None`` means "keep HiGHS
+    # defaults".  ``use_ipm`` switches HiGHS to interior-point when
+    # True.  Both are set by the CLI layer; neither has DB precedence.
+    relax_feasibility: float | None = None
+    use_ipm: bool = False

@@ -1,0 +1,44 @@
+{
+  "bound_range": [
+    1.0,
+    1000.0
+  ],
+  "cols_initial": 528,
+  "cols_postpresolve": null,
+  "cost_range": [
+    0.0001,
+    0.5
+  ],
+  "git_commit": "b1063dae014935f5363c62a774739ffef503d9ad",
+  "matrix_range": [
+    1.0,
+    1000.0
+  ],
+  "matrix_range_from_mps": [
+    0.000146,
+    1000.0
+  ],
+  "nnz_initial": 960,
+  "nnz_postpresolve": null,
+  "objective": 322587000.0000001,
+  "rhs_range": [
+    10.0,
+    1000.0
+  ],
+  "rows_initial": 432,
+  "rows_postpresolve": null,
+  "scenario": "small_building",
+  "scenario_name_in_db": "wind_battery",
+  "slack_totals": {
+    "vq_capacity_margin": 0.0,
+    "vq_inertia": 0.0,
+    "vq_non_synchronous": 0.0,
+    "vq_reserve": 0.0,
+    "vq_state_down": 0.0,
+    "vq_state_up": 1964.0,
+    "vq_state_up_group": 0.0
+  },
+  "solve_wall_time_s": 0.0044,
+  "timestamp": "2026-04-22T16:41:07",
+  "total_wall_time_s": 3.757
+}

@@ -1,0 +1,44 @@
+{
+  "bound_range": [
+    0.05,
+    1000.0
+  ],
+  "cols_initial": 748,
+  "cols_postpresolve": 154,
+  "cost_range": [
+    4.0,
+    6000.0
+  ],
+  "git_commit": "b1063dae014935f5363c62a774739ffef503d9ad",
+  "matrix_range": [
+    1.0,
+    600000.0
+  ],
+  "matrix_range_from_mps": [
+    1.0,
+    646050.0
+  ],
+  "nnz_initial": 2180,
+  "nnz_postpresolve": 488,
+  "objective": 508265973.0875814,
+  "rhs_range": [
+    8.0,
+    10000000.0
+  ],
+  "rows_initial": 999,
+  "rows_postpresolve": 168,
+  "scenario": "continental",
+  "scenario_name_in_db": "continental_benchmark",
+  "slack_totals": {
+    "vq_capacity_margin": 0.0,
+    "vq_inertia": 0.0,
+    "vq_non_synchronous": 0.0,
+    "vq_reserve": 0.0,
+    "vq_state_down": 0.0,
+    "vq_state_up": 0.0,
+    "vq_state_up_group": 0.0
+  },
+  "solve_wall_time_s": 0.0103,
+  "timestamp": "2026-04-22T16:41:16",
+  "total_wall_time_s": 4.573
+}

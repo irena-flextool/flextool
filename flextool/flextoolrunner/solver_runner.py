@@ -14,11 +14,95 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
-from typing import IO
+from typing import IO, Optional
 
 import highspy
 
 from flextool.flextoolrunner.runner_state import RunnerState, FlexToolSolveError
+from flextool.flextoolrunner.scaling import (
+    apply_bound_scale_decision,
+    update_bound_scale_in_cache,
+)
+
+
+# ---------------------------------------------------------------------------
+# Agent 18d: user-facing solver-option knobs
+# ---------------------------------------------------------------------------
+#
+# These two knobs are orthogonal to the LP-scaling infrastructure (Agents
+# 5/8/12/18b/18c): they don't change the LP itself, they change how
+# HiGHS solves it.  Both are aimed at rivendell-shaped wide-bound
+# structurally-degenerate models where dual simplex stalls just below
+# the default feasibility tolerance.
+#
+# ``--relax-feasibility[=TOL]``: loosens HiGHS' primal + dual
+# feasibility tolerances from ``1e-7`` to ``1e-5`` (or a user value),
+# so a solve that reaches ``Pr=0, Du=0`` within the new tolerance is
+# accepted without the Markowitz-bump retry loop.
+#
+# ``--ipm``: switches HiGHS from simplex to interior-point, which has
+# no basis and therefore cannot stall on Markowitz pivoting.
+
+RELAX_FEASIBILITY_ENV_VAR = "FLEXTOOL_RELAX_FEASIBILITY"
+"""Environment-variable fallback for ``--relax-feasibility``.  Set to
+an empty value or ``1`` / ``yes`` / ``on`` / ``true`` to request the
+default relaxed tolerance (``1e-5``); set to a floating-point number to
+request an explicit tolerance."""
+
+IPM_ENV_VAR = "FLEXTOOL_IPM"
+"""Environment-variable fallback for ``--ipm``.  Truthy values
+(``1`` / ``yes`` / ``on`` / ``true``) switch HiGHS to the interior-point
+solver; unset / falsy leaves HiGHS' default simplex method in place."""
+
+DEFAULT_RELAX_FEASIBILITY = 1e-5
+"""Default tolerance used when ``--relax-feasibility`` is passed
+without a value.  Two orders of magnitude looser than HiGHS'
+``1e-7`` default — loose enough to absorb the rivendell S19
+``5.67e-7`` residual without being irresponsibly loose."""
+
+
+def resolve_relax_feasibility(cli_value) -> Optional[float]:
+    """Resolve ``--relax-feasibility`` into an explicit tolerance.
+
+    Accepts the CLI value (which may be ``None`` for absent, the string
+    ``"default"`` for flag-with-no-value, or a float/numeric string for
+    an explicit tolerance) and falls back to the
+    :data:`RELAX_FEASIBILITY_ENV_VAR` env var when the CLI is silent.
+
+    Returns ``None`` when the user did not request relaxation
+    (HiGHS keeps its defaults), otherwise a positive float tolerance.
+    Invalid values (non-numeric, <=0) return ``None``.
+    """
+    if cli_value is None:
+        raw = os.environ.get(RELAX_FEASIBILITY_ENV_VAR, "").strip()
+        if not raw:
+            return None
+        lowered = raw.lower()
+        if lowered in ("1", "true", "yes", "on"):
+            return DEFAULT_RELAX_FEASIBILITY
+        try:
+            tol = float(raw)
+        except ValueError:
+            return None
+        return tol if tol > 0 else None
+    # CLI path.  argparse sets ``cli_value`` to the sentinel string
+    # "default" when the flag is passed without ``=TOL``; otherwise it
+    # is already a float.
+    if cli_value == "default":
+        return DEFAULT_RELAX_FEASIBILITY
+    try:
+        tol = float(cli_value)
+    except (TypeError, ValueError):
+        return None
+    return tol if tol > 0 else None
+
+
+def resolve_ipm(cli_flag: bool) -> bool:
+    """True iff ``--ipm`` is set OR :data:`IPM_ENV_VAR` is truthy."""
+    if cli_flag:
+        return True
+    raw = os.environ.get(IPM_ENV_VAR, "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
 
 
 class SolverRunner:
@@ -331,9 +415,21 @@ class SolverRunner:
         # Solution file writing options are tracked but not passed to HiGHS,
         # because the highspy API does not honor them — writeSolution() is
         # called explicitly after a successful solve instead.
+        #
+        # Agent 15 (LP-scaling): we also record which option keys the opt
+        # file set so the subsequent DB/default overrides can skip
+        # ``parallel`` / ``threads`` when the opt file already specified
+        # them.  This unifies the highspy in-memory path with the external
+        # HiGHS binary path (both now honor the opt file for determinism
+        # knobs).  Production ``bin/highs.opt`` sets neither key, so the
+        # production defaults (parallel=on, threads=4) are unchanged; the
+        # test harness ``tests/highs.opt`` sets ``threads=1`` and now
+        # actually gets it, eliminating alternate-optimum non-determinism
+        # across full-suite runs.
         _PATH_OPTIONS = {'solution_file', 'log_file'}
         _SOLUTION_WRITE_OPTIONS = {'write_solution_to_file', 'solution_file', 'write_solution_style'}
         solution_style = 2  # default: glpsol-compatible style
+        keys_from_opt: set[str] = set()
         if os.path.exists(highs_option_file):
             with open(highs_option_file, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -349,19 +445,57 @@ class SolverRunner:
                     if key in _PATH_OPTIONS:
                         value = str(wf / value)
                     h.setOptionValue(key, self._parse_highs_option(value))
+                    keys_from_opt.add(key)
 
         # Ensure log goes to work folder
         h.setOptionValue('log_file', str(wf / 'HiGHS.log'))
 
-        # Apply per-solve overrides from database
+        # Apply per-solve overrides from database.  DB values always win
+        # over the opt file; defaults apply only when neither DB nor opt
+        # file has spoken.
         h.setOptionValue('presolve', self.state.solve.highs.presolve.get(current_solve, 'on'))
         h.setOptionValue('solver', self.state.solve.highs.method.get(current_solve, 'choose'))
+
+        # Agent 18d (LP-scaling): user-facing solver-option knobs — IPM
+        # switch + feasibility-tolerance relaxation.  Both are orthogonal
+        # to Agents 5/8/12/18b/18c scaling infrastructure and aimed at
+        # rivendell-shaped wide-bound models whose default-tolerance
+        # simplex solve stalls on sub-tolerance residuals.  CLI/env-var
+        # precedence matches Agent 9's ``FLEXTOOL_FORCE_ROW_SCALING``
+        # pattern: an explicit value wins over any DB/opt-file default.
+        relax_feasibility = getattr(self.state, 'relax_feasibility', None)
+        if relax_feasibility is not None:
+            h.setOptionValue('primal_feasibility_tolerance', float(relax_feasibility))
+            h.setOptionValue('dual_feasibility_tolerance', float(relax_feasibility))
+        use_ipm = getattr(self.state, 'use_ipm', False)
+        if use_ipm:
+            h.setOptionValue('solver', 'ipm')
+        if relax_feasibility is not None or use_ipm:
+            solver_opt = 'ipm' if use_ipm else self.state.solve.highs.method.get(current_solve, 'choose')
+            tol_str = (
+                f"{float(relax_feasibility):g}" if relax_feasibility is not None
+                else "default"
+            )
+            self.logger.info(
+                "Solver options: primal_feasibility_tolerance=%s, "
+                "dual_feasibility_tolerance=%s, solver=%s",
+                tol_str, tol_str, solver_opt,
+            )
         # Parallel MIP / concurrent LP on by default now that HiGHS 1.14 has
-        # fixed the older multi-thread bugs.  DB override still wins.
-        h.setOptionValue('parallel', self.state.solve.highs.parallel.get(current_solve, 'on'))
-        # Thread count: honor CLI / runner override; fall back to 4.
-        highs_threads = getattr(self.state, 'highs_threads', None) or 4
-        h.setOptionValue('threads', int(highs_threads))
+        # fixed the older multi-thread bugs.  Precedence: DB > opt file > default.
+        if current_solve in self.state.solve.highs.parallel:
+            h.setOptionValue('parallel', self.state.solve.highs.parallel[current_solve])
+        elif 'parallel' not in keys_from_opt:
+            h.setOptionValue('parallel', 'on')
+        # Thread count precedence: CLI/runner override > opt file > default (4).
+        # ``state.highs_threads`` is only non-None when a caller (e.g. the CLI
+        # ``--highs-threads`` flag) explicitly set it; the default-init path
+        # leaves it unset so the opt file can win in test context.
+        highs_threads = getattr(self.state, 'highs_threads', None)
+        if highs_threads is not None:
+            h.setOptionValue('threads', int(highs_threads))
+        elif 'threads' not in keys_from_opt:
+            h.setOptionValue('threads', 4)
 
         # Read and solve
         status = h.readModel(mps_file)
@@ -369,6 +503,51 @@ class SolverRunner:
             message = f'HiGHS failed to read model: {mps_file}'
             self.logger.error(message)
             raise FlexToolSolveError(message)
+
+        # Agent 18c (LP-scaling): variable-bound scaling via HiGHS's
+        # built-in ``user_bound_scale`` option.  Row scaling (Agent 5 /
+        # 18b) cannot compress the variable-bound spread — on models
+        # like rivendell the bound range stays at ~9 decades despite
+        # row scaling, and HiGHS itself hints "Consider setting the
+        # user_bound_scale option to -8".  This block queries the
+        # loaded LP's column bounds, decides an integer ``N``, and
+        # calls ``h.setOptionValue('user_bound_scale', N)`` before
+        # ``h.run()``.  HiGHS multiplies bounds by ``2^N`` internally
+        # and un-scales on output — solution-invariant.
+        #
+        # Precedence mirrors Agent 18b's row-scaling decision: explicit
+        # user setting in ``highs.opt`` wins; env-var force override is
+        # next (test hook); analyser auto-decision only fires when
+        # ``--auto-scale`` is active.
+        try:
+            lp = h.getLp()
+            col_lower = list(lp.col_lower_)
+            col_upper = list(lp.col_upper_)
+        except Exception as exc:  # defensive — never fail the solve
+            self.logger.warning(
+                f"[scaling] could not query LP bounds for bound scaling: {exc}"
+            )
+            col_lower, col_upper = [], []
+        auto_scale = getattr(self.state, 'auto_scale', False)
+        # The analyser caches its ScaleTable under the roll name (``solve``
+        # in orchestration's loop), which can differ from ``current_solve``
+        # (= ``complete_solve[solve]``) in rolling / nested scenarios.
+        # Fall back to ``current_solve`` when the orchestration hook has
+        # not been set (e.g. direct ``SolverRunner.run`` call in tests).
+        scale_key = getattr(self.state, 'current_scale_solve_name', None) or current_solve
+        n_bound, bound_min, bound_max, bound_spread, source = apply_bound_scale_decision(
+            solve_name=scale_key,
+            col_lower=col_lower,
+            col_upper=col_upper,
+            auto_scale=auto_scale,
+            user_opt_set=('user_bound_scale' in keys_from_opt),
+            logger=self.logger,
+        )
+        if n_bound != 0:
+            h.setOptionValue('user_bound_scale', int(n_bound))
+        update_bound_scale_in_cache(
+            scale_key, n_bound, bound_min, bound_max, bound_spread,
+        )
 
         status = h.run()
         model_status = h.getModelStatus()

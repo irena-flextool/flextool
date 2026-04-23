@@ -112,6 +112,30 @@ def test_bin_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return bin_dir
 
 
+@pytest.fixture(autouse=True)
+def _reset_flextool_module_caches() -> None:
+    """Clear FlexTool module-level caches before every test.
+
+    Agent 15 (LP-scaling): ``flextool.flextoolrunner.scaling`` keeps a
+    module-level ``_scale_cache`` keyed by solve name.  Scenario tests
+    frequently share solve names (e.g. multiple scenarios with
+    ``y2020_5week``) but feed the analyser different input CSVs.  Left
+    to its own devices the cache hands the second scenario the first
+    scenario's ``scale_the_objective`` and ``use_row_scaling``
+    recommendation, which then writes a wrong-by-10x objective scalar
+    into ``solve_data/scale_the_objective.csv`` and cascades into an
+    MPS with the wrong penalty coefficients.  Clearing per-test makes
+    the full-suite ordering irrelevant.
+
+    Cheap: the cache is a plain dict, and scenarios that don't share
+    solve names were never caching-sensitive anyway.
+    """
+    from flextool.flextoolrunner import scaling as _scaling
+    _scaling.clear_cache()
+    yield
+    _scaling.clear_cache()
+
+
 @pytest.fixture
 def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Per-test isolated working directory.

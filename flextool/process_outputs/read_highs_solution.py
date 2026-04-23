@@ -147,14 +147,85 @@ class VariableSpec(NamedTuple):
     # column but sits to the right of ``d`` (period).  Parsed-out values
     # are concatenated onto ``col_names`` to form the full column tuple.
     trailing_col_names: tuple[str, ...] = ()
+    # Multi-source fan-out: when the output quantity is the sum of two or
+    # more HiGHS variables (e.g. a two-tier slack split into
+    # ``vq_foo_primary`` + ``vq_foo_escape``), list the source variable
+    # names here.  ``name`` then becomes a pure logical identifier used
+    # for the parquet file name; the extractor reads each source
+    # separately, aligns on the row+column MultiIndex, and adds them.
+    # ``None`` (default) preserves the legacy single-source behaviour.
+    # All sources must share the same index shape — ``col_names``,
+    # ``has_time``, ``has_period``, ``trailing_col_names``,
+    # ``leading_ignore``, ``trailing_ignore`` apply uniformly to every
+    # source in the tuple.
+    derived_from: tuple[str, ...] | None = None
+    # Agent 9 — row-scaling un-scaling.  When non-None, the extracted
+    # frame is multiplied element-wise by the corresponding row scaler
+    # read from ``solve_data/{node,group}_capacity_for_scaling.csv``
+    # before parquet emission.  Column names in ``col_names`` supply
+    # the entity axis of the scaler; scalers are per-(entity, period).
+    # Recognised values:
+    #   * "node_cap"  — multiply cell[(d, t), n] by node_cap[n, d].
+    #                   Used for vq_state_up / vq_state_down.  Also
+    #                   divides by node_cap when the quantity is a dual
+    #                   of a row-scaled balance constraint (see
+    #                   ``unscale_dual=True`` below for that case).
+    #   * "group_cap" — multiply by group_cap[g, d]; used for
+    #                   vq_non_synchronous, vq_state_up_group,
+    #                   vq_capacity_margin (no t axis).
+    # Mode A (flag off): node_cap / group_cap CSVs default to 1 so this
+    # is a no-op.  Mode B: recovers absolute CSV magnitudes matching the
+    # pre-row-scaling (Agent 1) baselines.
+    unscale_by: str | None = None
 
 
 # Registry — add a new line here to add a new variable to the pipeline.
 #
-# ``scale_the_objective`` (flextool_base.dat) is 1e-6, so every dual needs
-# multiplication by 1e6 to undo the objective scaling — matches what the
-# GLPSOL CSV writer does via ``/ scale_the_objective``.
+# ``scale_the_objective`` was a hardcoded ``1e-6`` in ``flextool_base.dat``
+# (legacy); Agent 12 centralised it in Python — the value is written per
+# solve to ``solve_data/scale_the_objective.csv`` from the Agent-8
+# ScaleTable.  Every dual of an objective-scaled constraint needs
+# multiplication by ``1/scale_the_objective`` to undo the scaling.
+#
+# ``_INV_SCALE_THE_OBJECTIVE`` is retained as the **default** multiplier
+# (matches the legacy 1e-6 scalar) — used as the sentinel value wired
+# into ``VariableSpec.value_scale`` for dual specs.  At write time,
+# :func:`_resolve_inv_scale_the_objective` reads the current solve's
+# ``solve_data/scale_the_objective.csv`` and replaces this default with
+# the live reciprocal so per-solve scalar changes propagate correctly.
 _INV_SCALE_THE_OBJECTIVE = 1e6
+
+_DEFAULT_SCALE_THE_OBJECTIVE = 1e-6
+
+
+def _resolve_inv_scale_the_objective(work_folder: Path | str | None) -> float:
+    """Return ``1 / scale_the_objective`` for the current solve.
+
+    Reads ``<work_folder>/solve_data/scale_the_objective.csv`` (Agent 12;
+    emitted by :func:`flextool.flextoolrunner.solve_writers.write_scale_the_objective`).
+    Falls back to ``1 / 1e-6`` when the file is missing / empty /
+    unreadable — mirrors the ``default 1e-6`` clause on
+    ``param scale_the_objective`` in ``flextool.mod``.
+    """
+    if work_folder is None:
+        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
+    path = Path(work_folder) / "solve_data" / "scale_the_objective.csv"
+    if not path.exists():
+        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
+    if df.empty or "value" not in df.columns:
+        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
+    try:
+        val = float(df["value"].iloc[0])
+    except (ValueError, TypeError):
+        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
+    if not (val > 0):
+        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
+    return 1.0 / val
+
 
 # Helper — every investment-constraint-dual entry uses the same scale to
 # undo ``scale_the_objective`` and writes its parquet under ``v_dual_<…>``.
@@ -184,20 +255,82 @@ VARIABLE_SPECS: list[VariableSpec] = [
     VariableSpec("v_angle",            ("node",)),
 
     # -- Time-indexed slack / penalty variables -----------------------------
-    VariableSpec("vq_state_up",        ("node",)),
-    VariableSpec("vq_state_down",      ("node",)),
+    # Two-tier slack (Agent 3 / SLACK_CONVENTION.md): HiGHS emits
+    # ``vq_state_up_primary`` + ``vq_state_up_escape``; the parquet
+    # column ``vq_state_up`` is their sum so downstream CSV/parquet
+    # consumers see no schema change.  Agent 9: ``unscale_by="node_cap"``
+    # un-scales row scaling (no-op in Mode A).
+    VariableSpec(
+        "vq_state_up", ("node",),
+        derived_from=("vq_state_up_primary", "vq_state_up_escape"),
+        unscale_by="node_cap",
+    ),
+    VariableSpec(
+        "vq_state_down", ("node",),
+        derived_from=("vq_state_down_primary", "vq_state_down_escape"),
+        unscale_by="node_cap",
+    ),
     # Column level names must match the CSV reader
     # (``read_variables._read_from_csv``) so cross-reader mul aligns
     # cleanly — both readers use ('reserve', 'updown', 'node_group').
-    VariableSpec("vq_reserve",         ("reserve", "updown", "node_group")),
-    VariableSpec("vq_inertia",         ("group",)),
-    VariableSpec("vq_non_synchronous", ("group",)),
-    VariableSpec("vq_state_up_group",  ("group",)),
+    # Two-tier slack (Agent 4 / SLACK_CONVENTION.md): unlike the other
+    # two-tier slacks, the primary here keeps its historic name
+    # ``vq_reserve`` (already <= 1); only an ``_escape`` companion was
+    # added.  The parquet column is the sum of both HiGHS variables.
+    VariableSpec(
+        "vq_reserve", ("reserve", "updown", "node_group"),
+        derived_from=("vq_reserve", "vq_reserve_escape"),
+    ),
+    # Two-tier slack (Agent 4): primary keeps historic name vq_inertia;
+    # escape companion added.  Parquet sums both.
+    VariableSpec(
+        "vq_inertia", ("group",),
+        derived_from=("vq_inertia", "vq_inertia_escape"),
+    ),
+    # Two-tier slack (Agent 2 / SLACK_CONVENTION.md): HiGHS emits
+    # ``vq_non_synchronous_primary`` + ``vq_non_synchronous_escape``;
+    # the parquet column ``vq_non_synchronous`` is their sum so
+    # downstream CSV/parquet consumers see no schema change.  Agent 9:
+    # ``unscale_by="group_cap"`` un-scales row scaling (no-op in Mode A).
+    VariableSpec(
+        "vq_non_synchronous", ("group",),
+        derived_from=(
+            "vq_non_synchronous_primary",
+            "vq_non_synchronous_escape",
+        ),
+        unscale_by="group_cap",
+    ),
+    # Two-tier slack (Agent 4 / SLACK_CONVENTION.md): HiGHS emits
+    # ``vq_state_up_group_primary`` + ``vq_state_up_group_escape``;
+    # the parquet column ``vq_state_up_group`` is their sum so
+    # downstream CSV/parquet consumers see no schema change.  Agent 9:
+    # ``unscale_by="group_cap"`` un-scales row scaling (no-op in Mode A).
+    VariableSpec(
+        "vq_state_up_group", ("group",),
+        derived_from=(
+            "vq_state_up_group_primary",
+            "vq_state_up_group_escape",
+        ),
+        unscale_by="group_cap",
+    ),
 
     # -- Period-only (no time) decision / slack variables -------------------
     VariableSpec("v_invest",           ("entity",), has_time=False),
     VariableSpec("v_divest",           ("entity",), has_time=False),
-    VariableSpec("vq_capacity_margin", ("group",),  has_time=False),
+    # Two-tier slack (Agent 4 / SLACK_CONVENTION.md): HiGHS emits
+    # ``vq_capacity_margin_primary`` + ``vq_capacity_margin_escape``;
+    # the parquet column ``vq_capacity_margin`` is their sum so
+    # downstream CSV/parquet consumers see no schema change.  Agent 9:
+    # ``unscale_by="group_cap"`` un-scales row scaling (no-op in Mode A).
+    # This slack has no t axis; the row scaler is still keyed by (g, d).
+    VariableSpec(
+        "vq_capacity_margin", ("group",), has_time=False,
+        derived_from=(
+            "vq_capacity_margin_primary",
+            "vq_capacity_margin_escape",
+        ),
+        unscale_by="group_cap",
+    ),
 
     # -- Commodity-ladder period-level trade ---------------------------------
     # ``v_trade[c, n, d, i]`` — no time, no branch.  ``tier`` sits after
@@ -686,19 +819,67 @@ def write_variable_parquet(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    df = extract_variable(
-        h, spec.name, spec.col_names,
-        solve_name=solve_name,
-        has_time=spec.has_time,
-        has_period=spec.has_period,
-        source=spec.source,
-        value_scale=spec.value_scale,
-        realized_dispatch_csv=realized_dispatch_csv,
-        realized_periods_csv=realized_periods_csv,
-        leading_ignore=spec.leading_ignore,
-        trailing_ignore=spec.trailing_ignore,
-        trailing_col_names=spec.trailing_col_names,
+    # Agent 12: when the spec uses ``_INV_SCALE_THE_OBJECTIVE`` as a
+    # sentinel default (value_scale == 1e6, matching the legacy 1e-6
+    # hardcoded objective scalar), substitute the live reciprocal of the
+    # current solve's ``scale_the_objective``.  Specs with an explicit
+    # non-sentinel ``value_scale`` (e.g. ``-1e6`` for node balance duals)
+    # still honour that — see :func:`write_v_dual_node_balance`.
+    work_folder = (
+        Path(realized_dispatch_csv).parent.parent
+        if realized_dispatch_csv is not None
+        else (
+            Path(realized_periods_csv).parent.parent
+            if realized_periods_csv is not None
+            else None
+        )
     )
+    effective_scale = spec.value_scale
+    if spec.value_scale == _INV_SCALE_THE_OBJECTIVE:
+        effective_scale = _resolve_inv_scale_the_objective(work_folder)
+    # Multi-source fan-out: when the output quantity is the sum of two or
+    # more HiGHS variables (e.g. two-tier slack), extract each source and
+    # add them.  Per-source frames share the same index shape, so
+    # ``DataFrame.add(fill_value=0.0)`` is safe and correct: columns that
+    # appear only in one source contribute that source's value plus 0.
+    if spec.derived_from:
+        df: pd.DataFrame | None = None
+        for src_name in spec.derived_from:
+            src_df = extract_variable(
+                h, src_name, spec.col_names,
+                solve_name=solve_name,
+                has_time=spec.has_time,
+                has_period=spec.has_period,
+                source=spec.source,
+                value_scale=effective_scale,
+                realized_dispatch_csv=realized_dispatch_csv,
+                realized_periods_csv=realized_periods_csv,
+                leading_ignore=spec.leading_ignore,
+                trailing_ignore=spec.trailing_ignore,
+                trailing_col_names=spec.trailing_col_names,
+            )
+            df = src_df if df is None else df.add(src_df, fill_value=0.0)
+        assert df is not None  # guaranteed: derived_from is non-empty
+    else:
+        df = extract_variable(
+            h, spec.name, spec.col_names,
+            solve_name=solve_name,
+            has_time=spec.has_time,
+            has_period=spec.has_period,
+            source=spec.source,
+            value_scale=effective_scale,
+            realized_dispatch_csv=realized_dispatch_csv,
+            realized_periods_csv=realized_periods_csv,
+            leading_ignore=spec.leading_ignore,
+            trailing_ignore=spec.trailing_ignore,
+            trailing_col_names=spec.trailing_col_names,
+        )
+    # Agent 9 — row-scaling un-scaling applied at the output boundary.
+    # Source CSV comes from the same work folder as realized_*_csv
+    # (``work_folder`` was inferred above for the scale_the_objective
+    # resolution — reuse it).
+    if spec.unscale_by is not None:
+        df = _apply_unscale(df, spec.unscale_by, work_folder, solve_name)
     if file_name is None:
         file_name = f"{spec.output_name or spec.name}__{solve_name}.parquet"
     path = output_dir / file_name
@@ -762,21 +943,146 @@ def _load_complete_period_share_of_year(work_folder: Path) -> dict[str, float]:
     return dict(zip(df[period_col].astype(str), df[value_col].astype(float)))
 
 
+# ---------------------------------------------------------------------------
+# Row-scaler CSVs (Agent 9)
+# ---------------------------------------------------------------------------
+
+
+def _load_row_scaler(
+    work_folder: Path | str | None,
+    kind: str,
+    solve_name: str,
+) -> pd.DataFrame | None:
+    """Read ``solve_data/{node,group}_capacity_for_scaling.csv``.
+
+    Format (wide, produced by the AMPL phase-1 printf block at
+    ``flextool.mod:4805``)::
+
+        solve,period,entity1,entity2,...
+        <solve>,<period>,<scaler>,...
+
+    Returned frame has ``(solve, period)`` as row MultiIndex and the
+    entity names as columns.  Filtered to ``solve_name`` on read.
+
+    Returns ``None`` when the CSV is missing or empty — callers then
+    treat the scaler as 1 everywhere (no-op).
+
+    ``kind`` is ``"node"`` or ``"group"``.
+    """
+    if work_folder is None:
+        return None
+    path = Path(work_folder) / "solve_data" / f"{kind}_capacity_for_scaling.csv"
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return None
+    if df.empty or "solve" not in df.columns or "period" not in df.columns:
+        return None
+    df = df[df["solve"].astype(str) == str(solve_name)]
+    if df.empty:
+        return None
+    df = df.set_index(["solve", "period"])
+    # Column dtype: float.  Empty-entity columns possible if the model
+    # emitted headers but no values; ignore parsing failures.
+    df = df.apply(pd.to_numeric, errors="coerce")
+    return df
+
+
+def _apply_unscale(
+    df: pd.DataFrame,
+    unscale_by: str,
+    work_folder: Path | str | None,
+    solve_name: str,
+) -> pd.DataFrame:
+    """Multiply *df* by the row scaler identified by *unscale_by*.
+
+    Handles two scaler kinds:
+
+    * ``"node_cap"`` — ``solve_data/node_capacity_for_scaling.csv`` keyed
+      by (period, node).  ``df`` row index is ``(solve, period[, time])``
+      and columns are node names; we broadcast the period row of the
+      scaler across the time dimension.
+    * ``"group_cap"`` — ``solve_data/group_capacity_for_scaling.csv``
+      keyed by (period, group).  Columns = group names.  Same
+      period-broadcast for time-indexed frames; for the no-t case (only
+      ``vq_capacity_margin`` today) the row index is just ``(solve,
+      period)`` and the element-wise multiply aligns directly.
+
+    Missing CSV / unknown columns / Mode A (scaler = 1) all collapse to
+    a safe no-op: rows without a matching scaler are unchanged.
+    """
+    if df.empty or df.shape[1] == 0:
+        return df
+    kind = {"node_cap": "node", "group_cap": "group"}.get(unscale_by)
+    if kind is None:
+        return df
+    scaler = _load_row_scaler(work_folder, kind, solve_name)
+    if scaler is None or scaler.empty:
+        return df
+
+    # Re-key the scaler by period alone (drop the solve level — we already
+    # filtered on solve_name).  Columns = entity.
+    scaler_by_period = scaler.droplevel("solve") if "solve" in (scaler.index.names or []) else scaler
+
+    # Build an aligned multiplier with the same shape as ``df``.
+    # 1) Keep only columns of ``scaler_by_period`` that appear in ``df``.
+    #    Data column name is the entity — for MultiIndex column frames
+    #    the first level holds the entity name used in the CSV header.
+    entity_level = 0  # col_names[0] by construction for unscaled slacks
+    if isinstance(df.columns, pd.MultiIndex):
+        entity_names = df.columns.get_level_values(entity_level).astype(str).tolist()
+    else:
+        entity_names = df.columns.astype(str).tolist()
+    present = [e for e in entity_names if e in scaler_by_period.columns]
+    if not present:
+        return df
+
+    # 2) For each row of ``df``, fetch the scaler row for that period.
+    #    Rows whose period has no scaler row get multiplier = 1
+    #    (no-op).  Time-indexed df: broadcast the same period row across
+    #    all timesteps of that period.
+    if isinstance(df.index, pd.MultiIndex) and "period" in (df.index.names or []):
+        periods = df.index.get_level_values("period").astype(str)
+    else:
+        # Shouldn't happen for un-scaled slacks (all have period at least),
+        # but guard for the no-period edge.
+        return df
+
+    # Construct the multiplier frame: same rows as df, columns = entity_names
+    # order.  Use reindex on scaler_by_period to align columns → NaN for
+    # missing entities → fill with 1 so they remain unchanged.
+    mult = scaler_by_period.reindex(columns=entity_names).astype(float)
+    mult = mult.reindex(periods.astype(str)).fillna(1.0)
+    mult.index = df.index
+    # Preserve the df column index (could be MultiIndex); numpy-level
+    # multiply keeps the dtype and index.
+    mult.columns = df.columns
+
+    return df * mult
+
+
 def write_v_obj(
     h: "highspy.Highs",
     *,
     solve_name: str,
     output_dir: Path | str,
+    work_folder: Path | str | None = None,
 ) -> Path:
     """Write ``v_obj__{solve}.parquet`` — objective value for this solve.
 
     Model writes ``total_cost.val / scale_the_objective``.  HiGHS's
     ``getObjectiveValue()`` returns the raw (scaled) value; we undo the
-    scaling.
+    scaling.  Agent 12: ``scale_the_objective`` is now per-solve
+    (``solve_data/scale_the_objective.csv``); pass ``work_folder`` so
+    the live value is read, else fall back to the legacy ``1e-6`` scalar.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    obj = float(h.getObjectiveValue()) * _INV_SCALE_THE_OBJECTIVE
+    wf = Path(work_folder) if work_folder is not None else output_dir.parent
+    inv_scale = _resolve_inv_scale_the_objective(wf)
+    obj = float(h.getObjectiveValue()) * inv_scale
     df = pd.DataFrame(
         {"objective": [obj]},
         index=pd.Index([solve_name], name="solve"),
@@ -871,11 +1177,14 @@ def write_v_dual_node_balance(
     output_dir.mkdir(parents=True, exist_ok=True)
     wf = Path(work_folder) if work_folder is not None else output_dir.parent
 
-    # Raw duals × −1e6; per-period inflation division applied after.
+    # Raw duals × -(1 / scale_the_objective); per-period inflation
+    # division applied after.  Agent 12: resolve the live scalar so a
+    # non-default scale_the_objective propagates.
+    inv_scale = _resolve_inv_scale_the_objective(wf)
     df = extract_variable(
         h, "nodeBalance_eq", ("node",),
         solve_name=solve_name, has_time=True, source="row_dual",
-        value_scale=-_INV_SCALE_THE_OBJECTIVE,
+        value_scale=-inv_scale,
         realized_dispatch_csv=realized_dispatch_csv,
         leading_ignore=1,   # ``c`` (solve) — already captured in row index
         trailing_ignore=4,  # tp, tpwt, dp, tpws — bookkeeping only
@@ -893,6 +1202,27 @@ def write_v_dual_node_balance(
                 dtype=float,
             )
             df = df.div(divisors, axis=0)
+
+        # Agent 9 — un-scale row scaling on nodeBalance_eq.  Divide each
+        # (period, node) cell by node_capacity_for_scaling[n, d] so the
+        # nodal price returns to user-facing EUR/MWh.  Mode A: scaler = 1
+        # everywhere → no effect.
+        scaler = _load_row_scaler(wf, "node", solve_name)
+        if scaler is not None and not scaler.empty:
+            scaler_by_period = (
+                scaler.droplevel("solve")
+                if "solve" in (scaler.index.names or [])
+                else scaler
+            )
+            # Align columns to df's node names; missing → 1.
+            node_names = df.columns.astype(str).tolist()
+            mult = scaler_by_period.reindex(columns=node_names).astype(float)
+            periods = df.index.get_level_values("period").astype(str)
+            mult = mult.reindex(periods.astype(str)).fillna(1.0)
+            mult.index = df.index
+            mult.columns = df.columns
+            # dual / node_cap  ⇒  element-wise divide
+            df = df.div(mult)
 
     path = output_dir / f"v_dual_node_balance__{solve_name}.parquet"
     write_lean_parquet(df, path)
@@ -1034,6 +1364,18 @@ def write_all_variables(
     """
     specs = specs if specs is not None else VARIABLE_SPECS
     written: list[Path] = []
+    # Derive the work folder from the realized-dispatch CSV (preferred)
+    # so custom writers (esp. write_v_obj) can find
+    # ``solve_data/scale_the_objective.csv`` at the live path.
+    _derived_wf: Path | None = (
+        Path(realized_dispatch_csv).parent.parent
+        if realized_dispatch_csv is not None
+        else (
+            Path(realized_periods_csv).parent.parent
+            if realized_periods_csv is not None
+            else None
+        )
+    )
     for spec in specs:
         try:
             path = write_variable_parquet(
@@ -1054,6 +1396,7 @@ def write_all_variables(
     _custom_writers = (
         ("v_obj", lambda: write_v_obj(
             h, solve_name=solve_name, output_dir=output_dir,
+            work_folder=_derived_wf,
         )),
         ("v_dual_invest_{unit,connection,node}", lambda: write_v_dual_invest_by_class(
             h, solve_name=solve_name, output_dir=output_dir,

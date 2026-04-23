@@ -1046,6 +1046,8 @@ def migrate_database(database_path, up_to: int | None = None):
                 _migrate_v44_parameter_groups(db)
             elif next_version == 45:
                 _migrate_v45_parameter_group_colors(db)
+            elif next_version == 46:
+                _migrate_v46_use_row_scaling(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -1832,6 +1834,43 @@ def _migrate_v45_parameter_group_colors(db) -> None:
             "(readable on both light and dark IDE themes); calm cool tones "
             "for the common groups, warm tones for advanced / risk-prone "
             "groups"
+        )
+    except SpineDBAPIError:
+        pass
+
+
+def _migrate_v46_use_row_scaling(db) -> None:
+    """Add the ``use_row_scaling`` parameter on the ``solve`` entity (Agent 5).
+
+    Default "no" preserves pre-Agent-5 behaviour exactly; setting it to
+    "yes" on a solve makes the AMPL model derive
+    ``node_capacity_for_scaling`` / ``group_capacity_for_scaling`` from
+    connected-unit ``unitsize`` (rounded to the nearest power of 10) so
+    matrix coefficients stay in a narrower band.
+    """
+    add_parameters_manual(db, [[
+        "solve",
+        "use_row_scaling",
+        "no",
+        "yes_no",
+        "Enable automatic row scaling (experimental): derive "
+        "node_capacity_for_scaling / group_capacity_for_scaling from "
+        "connected-unit unitsizes (rounded to nearest power of 10) so "
+        "HiGHS sees matrix coefficients on a narrower range.  Default "
+        "'no' preserves pre-scaling behaviour exactly.  See "
+        "flextool/SLACK_CONVENTION.md.",
+    ]])
+    try:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="use_row_scaling",
+            parameter_group_name="solve_advanced",
+        )
+        db.commit_session(
+            "v46: added solve.use_row_scaling parameter (Agent 5 LP-scaling): "
+            "per-solve opt-in for automatic row scaling; default 'no' "
+            "preserves pre-scaling behaviour."
         )
     except SpineDBAPIError:
         pass

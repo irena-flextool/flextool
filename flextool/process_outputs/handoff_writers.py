@@ -67,8 +67,12 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-# Same constant that the model uses; multiply duals by this to undo the
-# 1e-6 scaling baked into the objective.
+# Legacy fallback — the model used to hardcode scale_the_objective at
+# 1e-6; multiply duals by the inverse (1e6) to undo that scaling.
+# Agent 12 centralised scale_the_objective in Python, so the live per-
+# solve value is now read via
+# :func:`flextool.process_outputs.read_highs_solution._resolve_inv_scale_the_objective`
+# — this constant only applies when the CSV can't be read.
 _INV_SCALE_THE_OBJECTIVE = 1e6
 
 
@@ -568,6 +572,9 @@ def write_fix_storage_price(
     the four "previous" indices — exactly one constraint exists per
     ``(c, n, d, t)`` so the dual is well-defined.
     """
+    from flextool.process_outputs.read_highs_solution import (
+        _resolve_inv_scale_the_objective,
+    )
     out_path = work_folder / "solve_data" / "fix_storage_price.csv"
 
     target_nodes = _load_storage_fix_methods(work_folder, "fix_price")
@@ -576,6 +583,8 @@ def write_fix_storage_price(
     )
     inflation = _load_inflation_factor_operations_yearly(work_folder)
     period_share = _load_complete_period_share_of_year(work_folder)
+    # Agent 12: resolve live scale_the_objective from the per-solve CSV.
+    inv_scale = _resolve_inv_scale_the_objective(work_folder)
 
     # Empty short-circuit — most scenarios have no fix_price nodes.
     if not target_nodes or not fix_steps:
@@ -624,7 +633,7 @@ def write_fix_storage_price(
                 -1.0
                 / inflation.get(period, 1.0)
                 * period_share.get(period, 1.0)
-                / (1.0 / _INV_SCALE_THE_OBJECTIVE)
+                * inv_scale
             )
             rows.append((period, time, node, float(dual_val) * scale))
 

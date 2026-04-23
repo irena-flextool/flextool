@@ -563,6 +563,87 @@ To add a new variable or dual to the parquet pipeline, append a
 output_name)` to `VARIABLE_SPECS` in `read_highs_solution.py`.  No code
 changes elsewhere.
 
+## Numerical scaling
+
+FlexTool's LP/MIP can accumulate coefficients spanning many decades when
+users combine entities of different physical scale (e.g., a 10 kW building
+heat pump alongside a 10 GW continental grid).  Left unchecked this
+causes HiGHS to miss symmetry, presolve aggressively on the wrong rows,
+slow down, or raise false-infeasibility warnings.  The scaling pipeline
+runs on every solve and is layered so each mechanism targets one source
+of spread.
+
+### Layers (bottom up)
+
+1. **Unitsize column normalisation (user convention).**  Every variable
+   `v_flow`, `v_state`, `v_reserve`, `v_invest`, etc. is written in
+   units of `p_entity_unitsize` per entity, so the raw values stay
+   near O(1).  Predates the scaling project — this is the single
+   biggest contributor to well-conditioned inputs.
+2. **Two-tier slack convention (`flextool/SLACK_CONVENTION.md`).**
+   Every `vq_*` is a primary slack `≤ K_rel` (bounded, scaler-relative,
+   `K_rel = 1` default) plus an unbounded escape slack penalised at
+   `× 1000`.  Keeps the slack column coefficients bounded against the
+   row scaler; escape activity becomes a user diagnostic rather than
+   false infeasibility.  Agents 2-4 implemented this.
+3. **Row scaling (opt-in, `solve.use_row_scaling`).**  Node-balance
+   and group-balance constraint rows get multiplied by
+   `node_capacity_for_scaling` / `group_capacity_for_scaling` derived
+   from the unitsizes of connected entities, rounded to powers of 10
+   to preserve HiGHS symmetry detection.  Agent 5 added the flag and
+   the formulas; the hardcoded `node_capacity_for_scaling := 1`
+   stays active until the user opts in.
+4. **Precision cleanup (always on, `--precision-digits`).**  Every
+   numeric CSV cell is rounded to 10 significant figures before
+   write.  Removes benign precision artifacts that would otherwise
+   trip the near-duplicate detector and waste HiGHS scaling passes.
+5. **ScaleAnalyzer (`flextool/flextoolrunner/scaling.py`).**  After
+   the input CSVs are written but before the solver runs, a pure-
+   stdlib analyzer walks the cost / flow / unitsize / penalty CSV
+   families, computes per-family log10 spread stats, and recommends:
+   * `use_row_scaling = "yes"` when unitsize spread > 3 decades;
+   * `scale_the_objective = 10 ** -round(log10(rough_obj_estimate))`,
+     clamped to `[1e-12, 1e0]`.
+   Output: `solve_data/scaling_analysis.json`.
+6. **`--auto-scale` application.**  When the `--auto-scale` CLI
+   flag is set (or `FLEXTOOL_AUTO_SCALE=1`), the analyzer's row-
+   scaling recommendation is applied if and only if the user has not
+   explicitly set `solve.use_row_scaling`.  The objective scalar
+   recommendation is not auto-applied (user-controlled only).
+7. **Output un-scaling (`flextool/process_outputs/read_highs_solution.py`).**
+   Every `VariableSpec` carries a `unscale_by` field; slack parquets,
+   node-balance duals, and reserve-balance duals are multiplied back
+   into the user's absolute units before parquet / CSV write.
+   Downstream consumers see no change regardless of whether row
+   scaling was active.
+8. **Diagnostic report (`flextool/flextoolrunner/scaling_report.py`).**
+   After the solve, `scaling_report.txt` is written next to the
+   solve's `scaling_analysis.json`.  Nine sections (header, decisions,
+   family ranges, bimodal detection, composite-scale mismatch,
+   near-duplicate clusters, escape-tier slack activity, HiGHS matrix
+   ranges, summary verdict).  A 3-10 line echo goes to stdout so the
+   verdict is visible without opening the file.
+
+### What the user sees
+
+- On every solve: `scaling_analysis.json` + `scaling_report.txt` in
+  `<work_folder>/solve_data/`.  A short stdout echo summarising the
+  verdict (`well-scaled`, `acceptably`, or `poorly scaled`).
+- On pathological inputs (composite-scale mismatch, bimodal cost
+  family, escape-slack activity): the stdout echo expands to include
+  the load-bearing diagnostic and its recommendation.
+- Per-solve caching is keyed on the solve name — rolling-window
+  solves reuse the cached ScaleTable with no CSV re-read.
+
+### Where to look
+
+- **User-facing guide**: `flextool/SCALING_USER_GUIDE.md`.
+- **Slack implementation reference**: `flextool/SLACK_CONVENTION.md`.
+- **Benchmark harness + validation**: `scaling_benchmark/README.md`
+  and `scaling_benchmark/VALIDATION_REPORT.md`.
+- **Design memo**:
+  `~/.claude/projects/-home-jkiviluo-sources-flextool/memory/project_lp_scaling_2026-04.md`.
+
 ## Key Architectural Patterns
 
 - **CLI → Core delegation**: All user-facing entry points (CLI scripts, GUI) delegate to core library modules.
