@@ -255,80 +255,38 @@ VARIABLE_SPECS: list[VariableSpec] = [
     VariableSpec("v_angle",            ("node",)),
 
     # -- Time-indexed slack / penalty variables -----------------------------
-    # Two-tier slack (Agent 3 / SLACK_CONVENTION.md): HiGHS emits
-    # ``vq_state_up_primary`` + ``vq_state_up_escape``; the parquet
-    # column ``vq_state_up`` is their sum so downstream CSV/parquet
-    # consumers see no schema change.  Agent 9: ``unscale_by="node_cap"``
-    # un-scales row scaling (no-op in Mode A).
+    # Agent 9 ``unscale_by="node_cap"`` / ``"group_cap"`` un-scales row
+    # scaling when ``use_row_scaling=yes`` (no-op in Mode A where the
+    # scaler defaults to 1).  See flextool/SLACK_CONVENTION.md for the
+    # single-variable slack convention.
     VariableSpec(
         "vq_state_up", ("node",),
-        derived_from=("vq_state_up_primary", "vq_state_up_escape"),
         unscale_by="node_cap",
     ),
     VariableSpec(
         "vq_state_down", ("node",),
-        derived_from=("vq_state_down_primary", "vq_state_down_escape"),
         unscale_by="node_cap",
     ),
     # Column level names must match the CSV reader
     # (``read_variables._read_from_csv``) so cross-reader mul aligns
     # cleanly — both readers use ('reserve', 'updown', 'node_group').
-    # Two-tier slack (Agent 4 / SLACK_CONVENTION.md): unlike the other
-    # two-tier slacks, the primary here keeps its historic name
-    # ``vq_reserve`` (already <= 1); only an ``_escape`` companion was
-    # added.  The parquet column is the sum of both HiGHS variables.
-    VariableSpec(
-        "vq_reserve", ("reserve", "updown", "node_group"),
-        derived_from=("vq_reserve", "vq_reserve_escape"),
-    ),
-    # Two-tier slack (Agent 4): primary keeps historic name vq_inertia;
-    # escape companion added.  Parquet sums both.
-    VariableSpec(
-        "vq_inertia", ("group",),
-        derived_from=("vq_inertia", "vq_inertia_escape"),
-    ),
-    # Two-tier slack (Agent 2 / SLACK_CONVENTION.md): HiGHS emits
-    # ``vq_non_synchronous_primary`` + ``vq_non_synchronous_escape``;
-    # the parquet column ``vq_non_synchronous`` is their sum so
-    # downstream CSV/parquet consumers see no schema change.  Agent 9:
-    # ``unscale_by="group_cap"`` un-scales row scaling (no-op in Mode A).
+    VariableSpec("vq_reserve", ("reserve", "updown", "node_group")),
+    VariableSpec("vq_inertia", ("group",)),
     VariableSpec(
         "vq_non_synchronous", ("group",),
-        derived_from=(
-            "vq_non_synchronous_primary",
-            "vq_non_synchronous_escape",
-        ),
         unscale_by="group_cap",
     ),
-    # Two-tier slack (Agent 4 / SLACK_CONVENTION.md): HiGHS emits
-    # ``vq_state_up_group_primary`` + ``vq_state_up_group_escape``;
-    # the parquet column ``vq_state_up_group`` is their sum so
-    # downstream CSV/parquet consumers see no schema change.  Agent 9:
-    # ``unscale_by="group_cap"`` un-scales row scaling (no-op in Mode A).
     VariableSpec(
         "vq_state_up_group", ("group",),
-        derived_from=(
-            "vq_state_up_group_primary",
-            "vq_state_up_group_escape",
-        ),
         unscale_by="group_cap",
     ),
 
     # -- Period-only (no time) decision / slack variables -------------------
     VariableSpec("v_invest",           ("entity",), has_time=False),
     VariableSpec("v_divest",           ("entity",), has_time=False),
-    # Two-tier slack (Agent 4 / SLACK_CONVENTION.md): HiGHS emits
-    # ``vq_capacity_margin_primary`` + ``vq_capacity_margin_escape``;
-    # the parquet column ``vq_capacity_margin`` is their sum so
-    # downstream CSV/parquet consumers see no schema change.  Agent 9:
-    # ``unscale_by="group_cap"`` un-scales row scaling (no-op in Mode A).
-    # This slack has no t axis; the row scaler is still keyed by (g, d).
+    # No t axis; the row scaler is still keyed by (g, d).
     VariableSpec(
         "vq_capacity_margin", ("group",), has_time=False,
-        derived_from=(
-            "vq_capacity_margin_primary",
-            "vq_capacity_margin_escape",
-        ),
         unscale_by="group_cap",
     ),
 

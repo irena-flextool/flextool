@@ -580,12 +580,15 @@ of spread.
    units of `p_entity_unitsize` per entity, so the raw values stay
    near O(1).  Predates the scaling project — this is the single
    biggest contributor to well-conditioned inputs.
-2. **Two-tier slack convention (`flextool/SLACK_CONVENTION.md`).**
-   Every `vq_*` is a primary slack `≤ K_rel` (bounded, scaler-relative,
-   `K_rel = 1` default) plus an unbounded escape slack penalised at
-   `× 1000`.  Keeps the slack column coefficients bounded against the
-   row scaler; escape activity becomes a user diagnostic rather than
-   false infeasibility.  Agents 2-4 implemented this.
+2. **Single-variable slack convention (`flextool/SLACK_CONVENTION.md`).**
+   Every `vq_*` is a single non-negative variable, relative to its
+   row-scaler where one applies.  The user-supplied penalty coefficient
+   is the only valve: high enough to keep the slack quiescent on
+   well-posed inputs, low enough that the solver will absorb
+   pathological input rather than returning false infeasibility.  An
+   earlier primary+escape two-tier design was reverted after profiling
+   showed the second tier was redundant and its twin columns caused
+   degeneracy.
 3. **Row scaling (opt-in, `solve.use_row_scaling`).**  Node-balance
    and group-balance constraint rows get multiplied by
    `node_capacity_for_scaling` / `group_capacity_for_scaling` derived

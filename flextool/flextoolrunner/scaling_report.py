@@ -596,8 +596,8 @@ def _render_header(solve_name: str, highs_version: Optional[str]) -> list[str]:
         "This report diagnoses numerical scaling of the LP/MIP matrix that HiGHS just",
         "solved.  It flags coefficient-range spread, bimodal coefficient distributions,",
         "composite-scale mismatches between directly-connected entities, near-duplicate",
-        "parameter values, and escape-tier slack activity.  See",
-        "flextool/SLACK_CONVENTION.md and project_lp_scaling_2026-04.md for background.",
+        "parameter values, and slack activity.  See flextool/SLACK_CONVENTION.md and",
+        "project_lp_scaling_2026-04.md for background.",
         "",
     ]
     return lines
@@ -927,13 +927,10 @@ def _render_slack_activity(
         )
     lines.append("")
     lines.append(
-        "Any non-zero slack indicates saturation of physical constraints.  Escape-tier"
+        "Any non-zero slack indicates saturation of physical constraints."
     )
     lines.append(
-        "activity specifically means the bounded primary slack ran out and the unbounded"
-    )
-    lines.append(
-        "escape valve absorbed excess demand.  Review the offending cells' inputs."
+        "Review the offending cells' inputs."
     )
     lines.append("")
     return lines, len(firing)

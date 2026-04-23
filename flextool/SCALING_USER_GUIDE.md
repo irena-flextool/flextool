@@ -19,18 +19,18 @@ cases — declare false infeasibility.
 The scaling pipeline does three things on every solve, without user
 intervention:
 
-1. Applies a **unified slack convention** (primary `≤ K_rel` plus an
-   unbounded escape tier) so every `vq_*` in the objective uses the
-   same two-term pattern. Escape activity becomes a user-facing
-   diagnostic instead of a false-infeasibility signal.
+1. Applies a **unified slack convention** — every `vq_*` is a single
+   non-negative variable with the user-supplied penalty as the sole
+   valve: high enough to keep the slack quiescent on well-posed
+   inputs, low enough that the solver absorbs pathological input
+   rather than returning false infeasibility.
 2. Runs a **ScaleAnalyzer** over the solve's input CSVs, summarises
    coefficient spreads per parameter family, and emits
    `solve_data/scaling_analysis.json`.
 3. Writes a **diagnostic report** (`solve_data/scaling_report.txt`)
    covering matrix / cost / bound ranges, bimodal coefficient
-   distributions, composite-scale mismatches, near-duplicate
-   parameter clusters, and escape-tier slack activity. A one-line
-   summary also echoes to stdout.
+   distributions, composite-scale mismatches, and near-duplicate
+   parameter clusters. A one-line summary also echoes to stdout.
 
 Nothing here changes the LP optimum. Every scaling operation is
 paired with an output un-scaler so downstream consumers (parquet,

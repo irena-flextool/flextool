@@ -20,7 +20,6 @@ from flextool.flextoolrunner.scaling import (
     write_scaling_analysis_json,
 )
 from flextool.flextoolrunner.scaling_report import write_scaling_report
-from flextool.flextoolrunner.slack_bounds import write_p_state_slack_k_rel
 from flextool.flextoolrunner.stochastic import StochasticSolver
 from flextool.flextoolrunner.timeline_config import get_active_time, make_period_block, separate_period_and_timeseries_data
 from flextool.flextoolrunner import solve_writers
@@ -425,15 +424,6 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                 timeset_weights=state.timeline.timeset_weights,
                 work_folder=wf,
             )
-
-        # Compute per-node-per-period primary-slack cap K_rel.  Must
-        # happen after steps_in_use.csv is in place (done above via
-        # write_active_timelines); reads any node_capacity_for_scaling.csv
-        # left over from a previous solve and falls back to 1 when
-        # absent (first solve of a model).  See
-        # flextool/flextoolrunner/slack_bounds.py and
-        # flextool/SLACK_CONVENTION.md.
-        write_p_state_slack_k_rel(solve, work_folder=wf)
 
         state.logger.info("Starting model creation")
 

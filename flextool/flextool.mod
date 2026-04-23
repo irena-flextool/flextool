@@ -1477,17 +1477,6 @@ param inv_node_cap{n in node, d in period_in_use} :=
     1 / node_capacity_for_scaling[n, d];
 param inv_group_cap{g in group, d in period_in_use} :=
     1 / group_capacity_for_scaling[g, d];
-# Per-node per-period primary cap for the two-tier state slack.  See
-# flextool/SLACK_CONVENTION.md and flextool/flextoolrunner/slack_bounds.py.
-# Default is 1; Python pre-solve helper overrides to ceil-pow10 of
-# the max |demand| per step whenever that ratio exceeds 1 so the
-# primary (<= K_rel) tier absorbs all realistic slack demand and the
-# escape tier remains quiescent on well-posed inputs.
-param p_state_slack_k_rel{n in node, d in period_in_use} default 1;
-# Loaded from the pre-solve CSV (only non-default rows emitted; nodes
-# missing from the file inherit default 1).
-table data IN 'CSV' 'solve_data/p_state_slack_k_rel.csv'
-    : [node, period], p_state_slack_k_rel;
 param p_inflation := (if sum{m in model} 1 then max{m in model} p_inflation_rate[m] else 0);
 param p_infl_offset_investment := (if sum{m in model} 1 then max{m in model} p_inflation_offset_investment[m] else 0);
 param p_infl_offset_operations := (if sum{m in model} 1 then max{m in model} p_inflation_offset_operations[m] else 0.5);
@@ -2181,48 +2170,22 @@ var v_startup_integer {p in process_online_integer, (d, t) in dt} >= 0, <= p_ent
 var v_shutdown_integer {p in process_online_integer, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
 var v_invest {(e, d) in ed_invest} >= 0, <= p_entity_max_units[e, d];
 var v_divest {(e, d) in ed_divest} >= 0, <= p_entity_max_units[e, d];
-# Two-tier state slack (see flextool/SLACK_CONVENTION.md): the primary
-# tier is bounded by p_state_slack_k_rel[n, d] so the slack column
-# stays numerically well-behaved; the escape tier is unbounded and
-# only binds on pathological inputs, at 1000x penalty.  Output CSV
-# writes (primary + escape), preserving callers.
-var vq_state_up_primary   {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} >= 0, <= p_state_slack_k_rel[n, d];
-var vq_state_up_escape    {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} >= 0;
-var vq_state_down_primary {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} >= 0, <= p_state_slack_k_rel[n, d];
-var vq_state_down_escape  {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} >= 0;
+# Slack variables (see flextool/SLACK_CONVENTION.md).  Single-variable
+# form with the user-supplied penalty itself acting as the valve that
+# keeps the slack quiescent on well-posed inputs while still absorbing
+# pathological inputs without false infeasibility.  Output CSV writes
+# the single-variable value directly, un-scaled by the row scaler.
+var vq_state_up   {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} >= 0;
+var vq_state_down {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0, <= 1;
-# Two-tier slack (see flextool/SLACK_CONVENTION.md): the primary
-# vq_reserve already carries <= 1, so only the escape companion is
-# added here -- no rename (Agent 4 decision).  Escape penalty is
-# 1000x the primary penalty.  Output CSV writes (primary + escape).
-var vq_reserve_escape {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0, <= 1;
-# Two-tier slack (see flextool/SLACK_CONVENTION.md): escape companion
-# for the already-bounded vq_inertia; no rename (Agent 4 decision).
-var vq_inertia_escape {g in groupInertia, (d, t) in dt} >= 0;
-# Two-tier slack (see flextool/SLACK_CONVENTION.md): bounded primary
-# absorbs the expected non-sync shortfall; unbounded escape absorbs
-# pathological inputs at a 1000x penalty and drives the post-solve
-# diagnostic.  Output CSV writes the sum, preserving callers.
-var vq_non_synchronous_primary {g in groupNonSync, (d, t) in dt} >= 0, <= 1;
-var vq_non_synchronous_escape  {g in groupNonSync, (d, t) in dt} >= 0;
-# Two-tier capacity-margin slack (see flextool/SLACK_CONVENTION.md):
-# primary bounded at 1 (fraction of group capacity); escape unbounded.
-# No t index — period-only.  The historic ``* 1000`` hack in the
-# objective is removed; the canonical escape multiplier provides that
-# role now.  Output CSV writes (primary + escape).
-var vq_capacity_margin_primary {g in groupCapacityMargin, d in period_invest} >= 0, <= 1;
-var vq_capacity_margin_escape  {g in groupCapacityMargin, d in period_invest} >= 0;
-# Two-tier group-level state slack (see flextool/SLACK_CONVENTION.md).
-# Unlike the other slacks, vq_state_up_group has no objective term of
-# its own: it is tied by the group_loss_share_constraint equality to
-# vq_state_up (which is penalised in the objective), so the group
-# slack is penalised indirectly through its sibling.  We still split
-# it into primary + escape so the bound structure matches the rest of
-# the roster; the two tiers both appear in the equality RHS.  Output
-# CSV writes (primary + escape).
-var vq_state_up_group_primary {g in group_loss_share, (d,t) in dt} >= 0, <= 1;
-var vq_state_up_group_escape  {g in group_loss_share, (d,t) in dt} >= 0;
+var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
+var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0;
+# vq_state_up_group has no objective term of its own: it is tied by the
+# group_loss_share_constraint equality to vq_state_up (which is
+# penalised in the objective), so the group slack is penalised
+# indirectly through its sibling.
+var vq_state_up_group {g in group_loss_share, (d,t) in dt} >= 0;
 
 # Commodity-ladder period-level trade variable.  Column unit is
 # MWh / p_commodity_unitsize[c] (matches entity-unitsize convention
@@ -2497,24 +2460,14 @@ minimize total_cost:
 #    ( + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p] * pProcess_source_sink[p, source, sink, 'ramp_cost'] ) * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
   + sum {g in groupInertia, (d, t) in dt} pdt_branch_weight[d,t] * vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
                                             * pdGroup[g, 'penalty_inertia', d] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
-  + sum {g in groupInertia, (d, t) in dt} pdt_branch_weight[d,t] * vq_inertia_escape[g, d, t] * pdGroup[g, 'inertia_limit', d]
-                                            * pdGroup[g, 'penalty_inertia', d] * 1000 * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
-  + sum {g in groupNonSync, (d, t) in dt} pdt_branch_weight[d,t] * vq_non_synchronous_primary[g, d, t] * group_capacity_for_scaling[g, d]
+  + sum {g in groupNonSync, (d, t) in dt} pdt_branch_weight[d,t] * vq_non_synchronous[g, d, t] * group_capacity_for_scaling[g, d]
                                             * pdGroup[g, 'penalty_non_synchronous', d] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
-  + sum {g in groupNonSync, (d, t) in dt} pdt_branch_weight[d,t] * vq_non_synchronous_escape[g, d, t] * group_capacity_for_scaling[g, d]
-                                            * pdGroup[g, 'penalty_non_synchronous', d] * 1000 * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
-  + sum {n in nodeBalance union nodeBalancePeriod, (d, t) in dt} pdt_branch_weight[d,t] * vq_state_up_primary[n, d, t] * node_capacity_for_scaling[n, d]
+  + sum {n in nodeBalance union nodeBalancePeriod, (d, t) in dt} pdt_branch_weight[d,t] * vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
                                             * pdtNode[n, 'penalty_up', d, t] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
-  + sum {n in nodeBalance union nodeBalancePeriod, (d, t) in dt} pdt_branch_weight[d,t] * vq_state_up_escape[n, d, t] * node_capacity_for_scaling[n, d]
-                                            * pdtNode[n, 'penalty_up', d, t] * 1000 * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
-  + sum {n in nodeBalance union nodeBalancePeriod, (d, t) in dt} pdt_branch_weight[d,t] * vq_state_down_primary[n, d, t] * node_capacity_for_scaling[n, d]
+  + sum {n in nodeBalance union nodeBalancePeriod, (d, t) in dt} pdt_branch_weight[d,t] * vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
                                             * pdtNode[n, 'penalty_down', d, t] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
-  + sum {n in nodeBalance union nodeBalancePeriod, (d, t) in dt} pdt_branch_weight[d,t] * vq_state_down_escape[n, d, t] * node_capacity_for_scaling[n, d]
-                                            * pdtNode[n, 'penalty_down', d, t] * 1000 * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
   + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} pdt_branch_weight[d,t] * vq_reserve[r, ud, ng, d, t]  * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
                                             * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
-  + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} pdt_branch_weight[d,t] * vq_reserve_escape[r, ud, ng, d, t] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
-                                            * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * 1000 * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
   - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
     (+ p_storage_state_reference_price[n,d]
         * v_state[n, d, t] * p_entity_unitsize[n]
@@ -2551,12 +2504,8 @@ minimize total_cost:
           * p_entity_unitsize[e]
           * ed_entity_annual_divest_discounted[e, d]
   + sum {g in groupCapacityMargin, d in period_invest}
-    + vq_capacity_margin_primary[g, d] * group_capacity_for_scaling[g, d]
+    + vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
 	  * pdGroup[g, 'penalty_capacity_margin', d]
-	  * p_inflation_factor_operations_yearly[d]
-  + sum {g in groupCapacityMargin, d in period_invest}
-    + vq_capacity_margin_escape[g, d] * group_capacity_for_scaling[g, d]
-	  * pdGroup[g, 'penalty_capacity_margin', d] * 1000
 	  * p_inflation_factor_operations_yearly[d]
 ) * scale_the_objective
 ;
@@ -2623,8 +2572,8 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
 	    * (-1 + (1 + pdtNode[n, 'self_discharge_loss', d, t]) ** step_duration[d, t])
 		  * p_entity_unitsize[n] * inv_node_cap[n, d]
     )
-  + (vq_state_up_primary[n, d, t] + vq_state_up_escape[n, d, t]) * step_duration[d, t]
-  - (vq_state_down_primary[n, d, t] + vq_state_down_escape[n, d, t]) * step_duration[d, t]
+  + vq_state_up[n, d, t] * step_duration[d, t]
+  - vq_state_down[n, d, t] * step_duration[d, t]
 ;
 
 # Energy balance within period in each node
@@ -2653,8 +2602,8 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
     ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
     ) * step_duration[d, t] * inv_node_cap[n, d]
   + (if (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt} pdtNodeInflow[n, d, t] * inv_node_cap[n, d])
-  + sum {(d, t) in dt} (vq_state_up_primary[n, d, t] + vq_state_up_escape[n, d, t]) * step_duration[d, t]
-  - sum {(d, t) in dt} (vq_state_down_primary[n, d, t] + vq_state_down_escape[n, d, t]) * step_duration[d, t]
+  + sum {(d, t) in dt} vq_state_up[n, d, t] * step_duration[d, t]
+  - sum {(d, t) in dt} vq_state_down[n, d, t] * step_duration[d, t]
 ;
 
 # Within-block constancy of v_state for nodeStateBlock (bind_intraperiod_blocks).
@@ -2710,9 +2659,9 @@ s.t. nodeBalanceBlock_eq {c in solve_current, n in nodeStateBlock,
     )
   # Penalty slacks (still per timestep so the solver can locate infeasibilities)
   + sum {(d, b_first, t) in period_block_time}
-      (vq_state_up_primary[n, d, t] + vq_state_up_escape[n, d, t]) * step_duration[d, t]
+      vq_state_up[n, d, t] * step_duration[d, t]
   - sum {(d, b_first, t) in period_block_time}
-      (vq_state_down_primary[n, d, t] + vq_state_down_escape[n, d, t]) * step_duration[d, t]
+      vq_state_down[n, d, t] * step_duration[d, t]
 ;
 
 param balance := gmtime();
@@ -2739,7 +2688,7 @@ s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__m
 	      * p_process_reserve_upDown_node_reliability[p, r, ud, n]
 	      * pdtProcess_slope[p, d, t]
 		)
-  + (vq_reserve[r, ud, ng, d, t] + vq_reserve_escape[r, ud, ng, d, t]) * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
+  + vq_reserve[r, ud, ng, d, t] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
   >=
   + pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
 ;
@@ -2764,7 +2713,7 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 	      * p_process_reserve_upDown_node_reliability[p, r, ud, n]
 	      * pdtProcess_slope[p, d, t]
 		)
-  + (vq_reserve[r, ud, ng, d, t] + vq_reserve_escape[r, ud, ng, d, t]) * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
+  + vq_reserve[r, ud, ng, d, t] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
   >=
   + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in group_node
           && (r, ud, ng) in reserve__upDown__group}
@@ -2802,7 +2751,7 @@ s.t. reserveBalance_up_n_1_eq{(r, 'up', ng, r_m) in reserve__upDown__group__meth
 	      * p_process_reserve_upDown_node_reliability[p, r, 'up', n]
 	      * pdtProcess_slope[p, d, t]
 		)
-  + (vq_reserve[r, 'up', ng, d, t] + vq_reserve_escape[r, 'up', ng, d, t]) * pdtReserve_upDown_group[r, 'up', ng, 'reservation', d, t]
+  + vq_reserve[r, 'up', ng, d, t] * pdtReserve_upDown_group[r, 'up', ng, 'reservation', d, t]
   >=
   + sum{(p_n_1, source, n) in process_source_sink : (ng, n) in group_node}
       + v_flow[p_n_1, source, n, d, t] * p_entity_unitsize[p_n_1]
@@ -2834,7 +2783,7 @@ s.t. reserveBalance_down_n_1_eq{(r, 'down', ng, r_m) in reserve__upDown__group__
 	      * p_process_reserve_upDown_node[p, r, 'down', n, 'reliability']
 	      * pdtProcess_slope[p, d, t]
 		)
-  + (vq_reserve[r, 'down', ng, d, t] + vq_reserve_escape[r, 'down', ng, d, t]) * pdtReserve_upDown_group[r, 'down', ng, 'reservation', d, t]
+  + vq_reserve[r, 'down', ng, d, t] * pdtReserve_upDown_group[r, 'down', ng, 'reservation', d, t]
   >=
   + sum{(p_n_1, n, sink) in process_source_sink_noEff : (ng, n) in group_node}
       + v_flow[p_n_1, n, sink, d, t] * p_entity_unitsize[p_n_1]
@@ -4104,7 +4053,7 @@ s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
       + (if p in process_online_integer then v_online_integer[p, d, t])
 	  + (if p not in process_online then v_flow[p, source, sink, d, t])
     ) * p_process_sink[p, sink, 'inertia_constant'] * p_entity_unitsize[p]
-  + (vq_inertia[g, d, t] + vq_inertia_escape[g, d, t]) * pdGroup[g, 'inertia_limit', d]
+  + vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
   >=
   + pdGroup[g, 'inertia_limit', d]
 ;
@@ -4217,7 +4166,7 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
 		* inv_group_cap[g, d] )
   # Assumes that exogenous inflows are always non-synchronous (there is no separate parameter for this)
   + sum {(g, n) in group_node} p_positive_inflow[n,d,t] * inv_group_cap[g, d]
-  - (vq_non_synchronous_primary[g, d, t] + vq_non_synchronous_escape[g, d, t]) * step_duration[d, t]
+  - vq_non_synchronous[g, d, t] * step_duration[d, t]
   <=
 # Sum all outgoing flows from the group nodes and multiply that with the non-sync limit
   ( + sum {(p, source, sink) in process_source_sink_noEff : (g, source) in group_node && (p,g) not in process__group_inside_group_nonSync}
@@ -4298,7 +4247,7 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
         ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
         )
 	) * inv_group_cap[g, d]
-  + (vq_capacity_margin_primary[g, d] + vq_capacity_margin_escape[g, d])
+  + vq_capacity_margin[g, d]
   >=
   + sum {(g, n) in group_node : n not in nodeState}
     ( - (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t] / step_duration[d, t])
@@ -4314,9 +4263,9 @@ s.t. group_loss_share_constraint{(g,n) in group_node, (d,t) in dt: g in group_lo
   # node n occupies that fraction of the group's aggregate capacity
   # when converted into the group-level slack share.  The RHS slack
   # term's * group_cap cancels with inv_group_cap.
-  + (vq_state_up_primary[n,d,t] + vq_state_up_escape[n,d,t]) * node_capacity_for_scaling[n, d] * inv_group_cap[g, d]
+  + vq_state_up[n,d,t] * node_capacity_for_scaling[n, d] * inv_group_cap[g, d]
   =
-  + p_state_slack_share[g,n,d,t] * (vq_state_up_group_primary[g,d,t] + vq_state_up_group_escape[g,d,t]);
+  + p_state_slack_share[g,n,d,t] * vq_state_up_group[g,d,t];
 
 s.t. non_anticipativity_storage_use{n in nodeState, (d,b) in period__branch, (d,t) in dt_non_anticipativity:
       d != b && b in period_in_use && exists{(g,n) in group_node: g in groupStochastic} 1}:
@@ -5625,11 +5574,11 @@ for {s in solve_current, d in d_realize_invest} {
     }
 }
 
-# Write vq_state_up (two-tier: CSV cell = primary + escape)
-# Agent 9b: multiply by node_capacity_for_scaling[n, d] to un-scale the
-# row-scaling division (Agent 5c).  In Mode A node_cap = 1 so this is a
-# no-op; in Mode B the variable lives in "fraction of node_cap" units and
-# this factor recovers the absolute (pre-Agent-5) CSV magnitude.
+# Write vq_state_up.  Agent 9b: multiply by node_capacity_for_scaling[n, d]
+# to un-scale the row-scaling division (Agent 5c).  In Mode A
+# node_cap = 1 so this is a no-op; in Mode B the variable lives in
+# "fraction of node_cap" units and this factor recovers the absolute
+# CSV magnitude.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_state_up.csv";
   for {n in (nodeBalance union nodeBalancePeriod)} {printf ",%s", n >> "output_raw/vq_state_up.csv";}
@@ -5637,12 +5586,12 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_state_up.csv";
     for {n in (nodeBalance union nodeBalancePeriod)} {
-        printf ",%.6g", (vq_state_up_primary[n, d, t].val + vq_state_up_escape[n, d, t].val) * node_capacity_for_scaling[n, d] >> "output_raw/vq_state_up.csv";
+        printf ",%.6g", vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d] >> "output_raw/vq_state_up.csv";
     }
 }
 
-# Write vq_state_down (two-tier: CSV cell = primary + escape)
-# Agent 9b: * node_capacity_for_scaling — see vq_state_up note above.
+# Write vq_state_down.  Agent 9b: * node_capacity_for_scaling — see
+# vq_state_up note above.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_state_down.csv";
   for {n in (nodeBalance union nodeBalancePeriod)} {printf ",%s", n >> "output_raw/vq_state_down.csv";}
@@ -5650,32 +5599,11 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_state_down.csv";
     for {n in (nodeBalance union nodeBalancePeriod)} {
-        printf ",%.6g", (vq_state_down_primary[n, d, t].val + vq_state_down_escape[n, d, t].val) * node_capacity_for_scaling[n, d] >> "output_raw/vq_state_down.csv";
+        printf ",%.6g", vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d] >> "output_raw/vq_state_down.csv";
     }
 }
 
-# Two-tier slack escape-activity diagnostic for vq_state_up / vq_state_down.
-# Fires once per slack per solve if any escape value exceeds the
-# feasibility tolerance (1e-8 absolute -- with node_capacity_for_scaling
-# = 1 today).  Per-node drill-down is Agent 10's work.
-param vq_state_up_escape_sum :=
-    sum {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} vq_state_up_escape[n, d, t].val;
-if vq_state_up_escape_sum > 1e-8 then {
-    printf "WARNING: vq_state_up escape tier active - sum=%g.\n", vq_state_up_escape_sum;
-    printf "  This indicates node demand exceeded the primary slack cap K_rel;\n";
-    printf "  check pdtNodeInflow magnitudes vs p_state_slack_k_rel.csv.\n";
-}
-param vq_state_down_escape_sum :=
-    sum {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} vq_state_down_escape[n, d, t].val;
-if vq_state_down_escape_sum > 1e-8 then {
-    printf "WARNING: vq_state_down escape tier active - sum=%g.\n", vq_state_down_escape_sum;
-    printf "  This indicates node surplus exceeded the primary slack cap K_rel;\n";
-    printf "  check pdtNodeInflow magnitudes vs p_state_slack_k_rel.csv.\n";
-}
-
-# Write vq_reserve (two-tier: CSV cell = primary + escape; primary
-# keeps its historic vq_reserve name, escape companion added by
-# Agent 4c).
+# Write vq_reserve.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_reserve.csv";
   for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", r >> "output_raw/vq_reserve.csv";}
@@ -5687,22 +5615,11 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_reserve.csv";
     for {(r, ud, ng) in reserve__upDown__group} {
-        printf ",%.6g", vq_reserve[r, ud, ng, d, t].val + vq_reserve_escape[r, ud, ng, d, t].val >> "output_raw/vq_reserve.csv";
+        printf ",%.6g", vq_reserve[r, ud, ng, d, t].val >> "output_raw/vq_reserve.csv";
     }
 }
 
-# Two-tier slack escape-activity diagnostic for vq_reserve.
-param vq_reserve_escape_sum :=
-    sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} vq_reserve_escape[r, ud, ng, d, t].val;
-if vq_reserve_escape_sum > 1e-8 then {
-    printf "WARNING: vq_reserve escape tier active - sum=%g.\n", vq_reserve_escape_sum;
-    printf "  Reserve reservation demand exceeded the primary slack cap (= 1);\n";
-    printf "  check pdtReserve_upDown_group reservation requirements vs installed reserve capability.\n";
-}
-
-# Write vq_inertia (two-tier: CSV cell = primary + escape; primary
-# keeps its historic vq_inertia name, escape companion added by
-# Agent 4c).
+# Write vq_inertia.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_inertia.csv";
   for {g in groupInertia} {printf ",%s", g >> "output_raw/vq_inertia.csv";}
@@ -5710,23 +5627,14 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_inertia.csv";
     for {g in groupInertia} {
-        printf ",%.6g", vq_inertia[g, d, t].val + vq_inertia_escape[g, d, t].val >> "output_raw/vq_inertia.csv";
+        printf ",%.6g", vq_inertia[g, d, t].val >> "output_raw/vq_inertia.csv";
     }
 }
 
-# Two-tier slack escape-activity diagnostic for vq_inertia.
-param vq_inertia_escape_sum :=
-    sum {g in groupInertia, (d, t) in dt} vq_inertia_escape[g, d, t].val;
-if vq_inertia_escape_sum > 1e-8 then {
-    printf "WARNING: vq_inertia escape tier active - sum=%g.\n", vq_inertia_escape_sum;
-    printf "  System inertia demand exceeded the primary slack cap (= 1);\n";
-    printf "  check pdGroup[g, 'inertia_limit', d] vs installed inertia sources.\n";
-}
-
-# Write vq_non_synchronous
-# Agent 9b: * group_capacity_for_scaling[g, d] to un-scale the row-scaling
-# division applied in non_sync_constraint (Agent 5c).  Mode A: group_cap = 1,
-# no effect; Mode B: recovers the absolute CSV magnitude.
+# Write vq_non_synchronous.  Agent 9b: * group_capacity_for_scaling[g, d]
+# to un-scale the row-scaling division applied in non_sync_constraint
+# (Agent 5c).  Mode A: group_cap = 1, no effect; Mode B: recovers the
+# absolute CSV magnitude.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_non_synchronous.csv";
   for {g in groupNonSync} {printf ",%s", g >> "output_raw/vq_non_synchronous.csv";}
@@ -5734,27 +5642,14 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_non_synchronous.csv";
     for {g in groupNonSync} {
-        printf ",%.6g", (vq_non_synchronous_primary[g, d, t].val + vq_non_synchronous_escape[g, d, t].val) * group_capacity_for_scaling[g, d] >> "output_raw/vq_non_synchronous.csv";
+        printf ",%.6g", vq_non_synchronous[g, d, t].val * group_capacity_for_scaling[g, d] >> "output_raw/vq_non_synchronous.csv";
     }
 }
 
-# Two-tier slack escape-activity diagnostic.  Fires once per solve if
-# any vq_non_synchronous_escape value exceeds the feasibility tolerance
-# (1e-8 absolute — with group_capacity_for_scaling = 1 today; scaler
-# awareness lands with Agent 5).  Detailed per-group drill-down is
-# Agent 10's work.
-param vq_non_synchronous_escape_sum :=
-    sum {g in groupNonSync, (d, t) in dt} vq_non_synchronous_escape[g, d, t].val;
-if vq_non_synchronous_escape_sum > 1e-8 then {
-    printf "WARNING: vq_non_synchronous escape tier active - sum=%g.\n", vq_non_synchronous_escape_sum;
-    printf "  This indicates input demand exceeded bounded-slack capacity;\n";
-    printf "  check non-sync group definitions and penalties.\n";
-}
-
-# Write vq_capacity_margin (two-tier: CSV cell = primary + escape)
-# Agent 9b: * group_capacity_for_scaling[g, d] to un-scale the row-scaling
-# division applied in capacityMargin constraint (Agent 5c).  No t dimension.
-# Mode A: group_cap = 1, no effect.
+# Write vq_capacity_margin.  Agent 9b: * group_capacity_for_scaling[g, d]
+# to un-scale the row-scaling division applied in capacityMargin
+# constraint (Agent 5c).  No t dimension.  Mode A: group_cap = 1, no
+# effect.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/vq_capacity_margin.csv";
   for {g in groupCapacityMargin} {printf ",%s", g >> "output_raw/vq_capacity_margin.csv";}
@@ -5762,25 +5657,14 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/vq_capacity_margin.csv";
     for {g in groupCapacityMargin} {
-        printf ",%.6g", (vq_capacity_margin_primary[g, d].val + vq_capacity_margin_escape[g, d].val) * group_capacity_for_scaling[g, d] >> "output_raw/vq_capacity_margin.csv";
+        printf ",%.6g", vq_capacity_margin[g, d].val * group_capacity_for_scaling[g, d] >> "output_raw/vq_capacity_margin.csv";
     }
 }
 
-# Two-tier slack escape-activity diagnostic for vq_capacity_margin.
-# No t dimension; fires if (g, d) escape sum exceeds the feasibility
-# tolerance (1e-8 absolute -- with group_capacity_for_scaling = 1 today).
-param vq_capacity_margin_escape_sum :=
-    sum {g in groupCapacityMargin, d in period_invest} vq_capacity_margin_escape[g, d].val;
-if vq_capacity_margin_escape_sum > 1e-8 then {
-    printf "WARNING: vq_capacity_margin escape tier active - sum=%g.\n", vq_capacity_margin_escape_sum;
-    printf "  This indicates the capacity margin requirement exceeded primary slack capacity;\n";
-    printf "  check pdGroup[g, 'capacity_margin', d] vs group_capacity_for_scaling.\n";
-}
-
-# Write vq_state_up_group (two-tier: CSV cell = primary + escape)
-# Agent 9b: * group_capacity_for_scaling[g, d] to un-scale the row-scaling
-# division applied in group_loss_share_constraint (Agent 5c).
-# Mode A: group_cap = 1, no effect.
+# Write vq_state_up_group.  Agent 9b: * group_capacity_for_scaling[g, d]
+# to un-scale the row-scaling division applied in
+# group_loss_share_constraint (Agent 5c).  Mode A: group_cap = 1, no
+# effect.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_state_up_group.csv";
   for {g in group_loss_share} {printf ",%s", g >> "output_raw/vq_state_up_group.csv";}
@@ -5788,22 +5672,8 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_state_up_group.csv";
     for {g in group_loss_share} {
-        printf ",%.6g", (vq_state_up_group_primary[g, d, t].val + vq_state_up_group_escape[g, d, t].val) * group_capacity_for_scaling[g, d] >> "output_raw/vq_state_up_group.csv";
+        printf ",%.6g", vq_state_up_group[g, d, t].val * group_capacity_for_scaling[g, d] >> "output_raw/vq_state_up_group.csv";
     }
-}
-
-# Two-tier slack escape-activity diagnostic for vq_state_up_group.
-# This slack has no objective term of its own -- it's tied by
-# group_loss_share_constraint to vq_state_up and penalised indirectly
-# through that sibling.  The escape-tier diagnostic still fires
-# independently if the bound-1 primary saturates and the unbounded
-# escape carries positive activity.
-param vq_state_up_group_escape_sum :=
-    sum {g in group_loss_share, (d, t) in dt} vq_state_up_group_escape[g, d, t].val;
-if vq_state_up_group_escape_sum > 1e-8 then {
-    printf "WARNING: vq_state_up_group escape tier active - sum=%g.\n", vq_state_up_group_escape_sum;
-    printf "  Group-level loss-share slack exceeded its primary cap;\n";
-    printf "  check p_state_slack_share shares against per-node vq_state_up activity.\n";
 }
 
 # Write v_dual_node_balance
@@ -6268,8 +6138,8 @@ printf ',%s', w_capacity - w_raw >> solve_progress;
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p];
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t];
-#display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: (vq_state_up_primary[n, d, t].val + vq_state_up_escape[n, d, t].val) * node_capacity_for_scaling[n, d];
-#display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: (vq_state_down_primary[n, d, t].val + vq_state_down_escape[n, d, t].val) * node_capacity_for_scaling[n, d];
+#display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
+#display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_inflation_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective;
 #display {(r, ud, g, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt : (d, t) in test_dt}: reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual;
