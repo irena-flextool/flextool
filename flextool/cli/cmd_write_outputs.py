@@ -1,8 +1,10 @@
 from flextool.process_outputs.result_writer import write_outputs
+from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api import DatabaseMapping
 from spinedb_api.filters.tools import name_from_dict
 import logging
 import sys
+from pathlib import Path
 
 def main():
 
@@ -43,6 +45,16 @@ def main():
         args = parser.parse_args()
         input_db_url = args.input_db_url
         output_locations_db_url = args.output_locations_db_url
+
+        # Self-heal missing lightweight settings DBs so fresh clones don't
+        # fail opaquely when the user forgot to run `flextool-update`.
+        # Only seeds output_info / output_settings / comparison_settings.
+        _repo_root = Path(__file__).resolve().parent.parent.parent
+        for _candidate in (output_locations_db_url, args.settings_db_url):
+            try:
+                ensure_settings_db(_candidate, _repo_root)
+            except Exception as _exc:
+                logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
         if args.scenario_name:
             scenario_names = [args.scenario_name]
         else:

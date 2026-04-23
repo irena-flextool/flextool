@@ -20,6 +20,7 @@ from flextool.flextoolrunner.solver_runner import (
     resolve_ipm,
     resolve_relax_feasibility,
 )
+from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import DatabaseMapping, to_database, DateTime
 from spinedb_api.exception import NothingToCommit
@@ -141,6 +142,18 @@ def main():
         format='%(levelname)s:%(filename)s:%(lineno)d:%(message)s',
         handlers=[logging.StreamHandler(sys.stdout)]
     )
+
+    # Self-heal missing lightweight settings DBs so fresh clones don't
+    # fail opaquely when the user forgot to run `flextool-update`. Only
+    # seeds output_info / output_settings / comparison_settings by
+    # basename; other paths are left untouched.
+    _repo_root = Path(__file__).resolve().parent.parent.parent
+    for _candidate in (args.output_db_url, args.settings_db_url):
+        try:
+            ensure_settings_db(_candidate, _repo_root)
+        except Exception as _exc:
+            logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
+
     timer = []
     timer.append(time.perf_counter())
 

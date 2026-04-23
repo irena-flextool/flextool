@@ -11,9 +11,13 @@ Each phase can be skipped independently using --skip-* flags.
 """
 
 import argparse
+import logging
 import subprocess
 import sys
 import os
+from pathlib import Path
+
+from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 
 
 def main():
@@ -67,6 +71,17 @@ Examples:
                         help='Enable debug output for model run')
 
     args = parser.parse_args()
+
+    # Self-heal missing lightweight settings DBs so fresh clones don't
+    # fail opaquely when the user forgot to run `flextool-update`. Only
+    # seeds output_info / output_settings / comparison_settings by
+    # basename; other paths are left untouched.
+    _repo_root = Path(__file__).resolve().parent.parent.parent
+    for _candidate in (args.output_db_url,):
+        try:
+            ensure_settings_db(_candidate, _repo_root)
+        except Exception as _exc:
+            logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
 
     # Validate arguments
     if not args.skip_input_prep and not (args.tabular_file_path or args.csv_directory_path):
