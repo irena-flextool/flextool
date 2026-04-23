@@ -14,8 +14,8 @@ Agent 1.1 of the flex-temporal / decomposition refactor.  Purpose:
   timestep) tuples it contains, with the area-fraction the fine step
   contributes to the coarse row.  Agent 1.3's generalised node balance
   consumes this set.
-* Emit four CSVs in ``solve_data/`` so downstream GMPL / Python layers
-  can index by block without re-running the derivation:
+* Emit CSVs in ``solve_data/`` so downstream GMPL / Python layers can
+  index by block without re-running the derivation:
 
   * ``entity_block.csv``            — one row per node.
   * ``process_side_block.csv``      — two rows per process (source + sink).
@@ -24,6 +24,21 @@ Agent 1.1 of the flex-temporal / decomposition refactor.  Purpose:
                                        ``steps_in_use.csv``.
   * ``overlap_set.csv``             — (period, block_coarse, step_coarse,
                                        block_fine, step_fine, fraction).
+  * ``block_step_previous.csv``     — per-block predecessor relations
+                                       analogous to ``step_previous.csv``
+                                       (Agent 1.4): for each
+                                       (block, period, step) row the
+                                       corresponding
+                                       ``step_previous``,
+                                       ``step_previous_within_timeset``,
+                                       ``period_previous`` and
+                                       ``step_previous_within_solve``.
+  * ``block_period_time_first.csv`` — per-block first step of each
+                                       period (Agent 1.4).  Analogous
+                                       to ``first_timesteps.csv``.
+  * ``block_period_time_last.csv``  — per-block last step of each
+                                       period (Agent 1.4).  Analogous
+                                       to ``last_timesteps.csv``.
 
 The module is **inert for Agent 1.1**: nothing in ``flextool.mod``
 consumes these CSVs yet — Agent 1.2 adds the GMPL set/parameter
@@ -148,6 +163,37 @@ class BlockTimelines:
     the overlap set.
     """
     per_block: dict[str, dict[str, list[tuple[str, float]]]] = field(default_factory=dict)
+
+
+@dataclass
+class BlockPredecessors:
+    """Per-block predecessor relations (Agent 1.4).
+
+    One row per ``(block, period, step)`` in each block's timeline,
+    carrying the successor→predecessor mapping analogous to
+    ``dtttdt`` / ``step_previous.csv``.  In the degenerate case (only
+    the ``"default"`` block) the row set equals the solve's existing
+    ``dtttdt`` with the ``"default"`` tag prepended.
+
+    Row schema: ``(block, period, step, step_previous,
+    step_previous_within_timeset, period_previous,
+    step_previous_within_solve)``.
+    """
+    rows: list[tuple[str, str, str, str, str, str, str]] = field(default_factory=list)
+
+
+@dataclass
+class BlockBoundaries:
+    """Per-block first / last step of each period (Agent 1.4).
+
+    ``first`` and ``last`` are lists of ``(block, period, step)`` rows,
+    covering every block in ``BlockAssignments.block_step_duration``.
+    In the degenerate case ``first`` and ``last`` for the ``"default"``
+    block equal the solve's ``period__time_first`` / ``period__time_last``
+    with the ``"default"`` tag prepended.
+    """
+    first: list[tuple[str, str, str]] = field(default_factory=list)
+    last: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -689,6 +735,197 @@ def derive_overlap_set(
 
 
 # ---------------------------------------------------------------------------
+# Per-block predecessors + boundaries (Agent 1.4)
+# ---------------------------------------------------------------------------
+
+
+def derive_block_predecessors(
+    solve: str,
+    block_assignments: BlockAssignments,
+    block_timelines: BlockTimelines,
+    default_jump_list: Iterable[tuple] | None = None,
+) -> BlockPredecessors:
+    """Compute per-block predecessor relations analogous to ``dtttdt``.
+
+    For the ``"default"`` block the predecessor rows are taken straight
+    from *default_jump_list* — the orchestration-level
+    ``jump_list[solve]`` produced by :func:`make_step_jump` — and
+    tagged with the ``"default"`` block label.  This guarantees the
+    degenerate case is bit-identical to pre-v51 behaviour: every row
+    carries exactly the same ``(step_previous,
+    step_previous_within_timeset, period_previous,
+    step_previous_within_solve)`` values the GMPL side already
+    consumes from ``step_previous.csv``.
+
+    For every non-default block we derive the predecessor relations
+    from that block's own aggregated timeline (``block_timelines``).
+    The block's timeline is a per-period ordered list of
+    ``(step, duration)`` rows; the predecessor of step ``i`` in
+    period ``p`` is step ``i - 1`` in the same period (``jump = 1``),
+    except the first step of the first period which wraps cyclically
+    to the last step of the last period (``jump = -N + 1``), and the
+    first step of any subsequent period which points at the last step
+    of the previous period.  This mirrors the ``make_step_jump``
+    behaviour — block aggregation preserves the simple cyclic pattern
+    because the aligned-subsets assumption collapses every block
+    internally to one monotone timestep sequence per period.
+
+    Args:
+        solve: Solve name (unused for now — kept for symmetry with
+            sibling functions).
+        block_assignments: From :func:`derive_blocks`.
+        block_timelines: From :func:`_build_block_timelines`.
+        default_jump_list: Iterable of 7-tuples as produced by
+            :func:`flextool.flextoolrunner.timeline_config.make_step_jump`.
+            When ``None`` the default-block rows fall back to the
+            simple cyclic pattern used for non-default blocks — this
+            only matters for unit tests; the orchestration loop always
+            passes the real list.
+
+    Returns:
+        BlockPredecessors.  ``rows`` preserves iteration order:
+        default block first, then resolution-group blocks in insertion
+        order.
+    """
+    rows: list[tuple[str, str, str, str, str, str, str]] = []
+
+    # --- Default block ------------------------------------------------------
+    if default_jump_list is not None:
+        for entry in default_jump_list:
+            # jump_list entries are 7-tuples (period, step, previous,
+            # previous_within_timeset, previous_period,
+            # previous_within_solve, jump).  Re-project onto the block-
+            # tagged 7-tuple (block, period, step, previous,
+            # previous_within_timeset, previous_period,
+            # previous_within_solve).
+            period = entry[0]
+            step = entry[1]
+            previous = entry[2]
+            previous_within_timeset = entry[3]
+            previous_period = entry[4]
+            previous_within_solve = entry[5]
+            rows.append(
+                (
+                    DEFAULT_BLOCK,
+                    period,
+                    step,
+                    previous,
+                    previous_within_timeset,
+                    previous_period,
+                    previous_within_solve,
+                )
+            )
+    else:
+        default_rows = block_timelines.per_block.get(DEFAULT_BLOCK, {})
+        rows.extend(_cyclic_block_predecessors(DEFAULT_BLOCK, default_rows))
+
+    # --- Non-default blocks -------------------------------------------------
+    for block in block_assignments.block_step_duration:
+        if block == DEFAULT_BLOCK:
+            continue
+        block_rows_per_period = block_timelines.per_block.get(block, {})
+        if not block_rows_per_period:
+            # Block declared in block_step_duration but no entity is on
+            # it — skip to avoid empty period rows.
+            continue
+        rows.extend(_cyclic_block_predecessors(block, block_rows_per_period))
+
+    return BlockPredecessors(rows=rows)
+
+
+def _cyclic_block_predecessors(
+    block: str,
+    per_period_rows: dict[str, list[tuple[str, float]]],
+) -> list[tuple[str, str, str, str, str, str, str]]:
+    """Cyclic predecessor pattern over a block's aggregated timeline.
+
+    Cycles within the whole block's timeline: the first step of the
+    first period wraps to the last step of the last period.  Within a
+    period interior steps point at the preceding step (jump=1), and
+    the first step of non-first periods points at the last step of
+    the previous period (jump across periods).
+
+    The ``step_previous_within_timeset`` column follows the pre-v51
+    convention: it equals ``step_previous`` for interior steps
+    (rows where the previous step is the immediately adjacent row in
+    the same period).  For first-of-period rows — where the jump
+    crosses a period boundary — it's pinned at the current period's
+    block-last step (matching the ``block_last.timestep`` projection
+    used by :func:`make_step_jump`).  In the degenerate case this
+    column is populated from the real ``jump_list`` instead of this
+    fallback, so the bit-identical promise still holds.
+    """
+    periods = list(per_period_rows.keys())
+    if not periods:
+        return []
+    first_period = periods[0]
+    last_period = periods[-1]
+
+    out: list[tuple[str, str, str, str, str, str, str]] = []
+    for pi, period in enumerate(periods):
+        rows = per_period_rows[period]
+        if not rows:
+            continue
+        block_last_step = rows[-1][0]
+        for si, (step, _dur) in enumerate(rows):
+            if si > 0:
+                prev_step = rows[si - 1][0]
+                prev_within_ts = prev_step
+                prev_period = period
+                prev_within_solve = prev_step
+            else:
+                # First step of the period — cross-period predecessor.
+                if period == first_period:
+                    # Wrap to last period's last step (cyclic).
+                    prev_period_rows = per_period_rows[last_period]
+                    prev_step = prev_period_rows[-1][0] if prev_period_rows else step
+                    prev_period = last_period
+                    prev_within_solve = prev_step
+                    prev_within_ts = block_last_step
+                else:
+                    prev_period = periods[pi - 1]
+                    prev_rows = per_period_rows[prev_period]
+                    prev_step = prev_rows[-1][0] if prev_rows else step
+                    prev_within_solve = prev_step
+                    prev_within_ts = block_last_step
+            out.append(
+                (
+                    block,
+                    period,
+                    step,
+                    prev_step,
+                    prev_within_ts,
+                    prev_period,
+                    prev_within_solve,
+                )
+            )
+    return out
+
+
+def derive_block_boundaries(
+    block_assignments: BlockAssignments,
+    block_timelines: BlockTimelines,
+) -> BlockBoundaries:
+    """Compute per-block first and last step of each period.
+
+    Mirrors the solve-level ``period__time_first`` /
+    ``period__time_last`` sets, but keyed at the block level.  In the
+    degenerate (default-block-only) case ``first`` / ``last`` for
+    ``"default"`` equal the pre-v51 sets with the block tag prepended.
+    """
+    first: list[tuple[str, str, str]] = []
+    last: list[tuple[str, str, str]] = []
+    for block in block_assignments.block_step_duration:
+        rows_per_period = block_timelines.per_block.get(block, {})
+        for period, rows in rows_per_period.items():
+            if not rows:
+                continue
+            first.append((block, period, rows[0][0]))
+            last.append((block, period, rows[-1][0]))
+    return BlockBoundaries(first=first, last=last)
+
+
+# ---------------------------------------------------------------------------
 # CSV emission
 # ---------------------------------------------------------------------------
 
@@ -698,6 +935,8 @@ def write_block_data(
     overlap_set: OverlapSet,
     block_timelines: BlockTimelines | None,
     solve_data_dir: Path,
+    block_predecessors: BlockPredecessors | None = None,
+    block_boundaries: BlockBoundaries | None = None,
 ) -> None:
     """Emit the four block CSVs into *solve_data_dir*.
 
@@ -752,6 +991,35 @@ def write_block_data(
         for row in overlap_set.rows:
             writer.writerow(row)
 
+    # block_step_previous.csv (Agent 1.4) -------------------------------
+    # Per-block predecessor relations, analogous to step_previous.csv.
+    # In the degenerate case the default-block rows match step_previous
+    # bit-identically (they're reprojected from the same jump_list).
+    with open(solve_data_dir / "block_step_previous.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            ["block", "period", "step", "step_previous",
+             "step_previous_within_timeset", "period_previous",
+             "step_previous_within_solve"]
+        )
+        if block_predecessors is not None:
+            for row in block_predecessors.rows:
+                writer.writerow(row)
+
+    # block_period_time_first.csv / block_period_time_last.csv (Agent 1.4)
+    with open(solve_data_dir / "block_period_time_first.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["block", "period", "step"])
+        if block_boundaries is not None:
+            for row in block_boundaries.first:
+                writer.writerow(row)
+    with open(solve_data_dir / "block_period_time_last.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["block", "period", "step"])
+        if block_boundaries is not None:
+            for row in block_boundaries.last:
+                writer.writerow(row)
+
 
 # ---------------------------------------------------------------------------
 # Orchestration hook
@@ -764,6 +1032,7 @@ def write_block_data_for_solve(
     timeline_config: "TimelineConfig",
     work_folder: Path,
     active_time_list: dict[str, list] | None = None,
+    default_jump_list: Iterable[tuple] | None = None,
 ) -> BlockAssignments:
     """End-to-end helper called from the orchestration loop.
 
@@ -934,11 +1203,24 @@ def write_block_data_for_solve(
         block_timelines=block_timelines,
     )
 
+    block_predecessors = derive_block_predecessors(
+        solve=solve,
+        block_assignments=block_assignments,
+        block_timelines=block_timelines,
+        default_jump_list=default_jump_list,
+    )
+    block_boundaries = derive_block_boundaries(
+        block_assignments=block_assignments,
+        block_timelines=block_timelines,
+    )
+
     write_block_data(
         block_assignments=block_assignments,
         overlap_set=overlap,
         block_timelines=block_timelines,
         solve_data_dir=wf / "solve_data",
+        block_predecessors=block_predecessors,
+        block_boundaries=block_boundaries,
     )
 
     return block_assignments

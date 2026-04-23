@@ -374,6 +374,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                 timeline_config=state.timeline,
                 work_folder=wf,
                 active_time_list=active_time_lists[solve],
+                default_jump_list=jump_lists[solve],
             )
         except FlexToolConfigError:
             raise
