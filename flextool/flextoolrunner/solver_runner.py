@@ -132,7 +132,7 @@ class SolverRunner:
         wf = self.state.paths.work_folder
         glp_solution_file = str(wf / "glpsol_solution.txt")
         mps_file = str(wf / "flextool.mps")
-        highs_option_file = str(self.state.paths.bin_dir / "highs.opt")
+        highs_option_file = self._ensure_highs_opt()
         cplex_sol_file = str(wf / "cplex.sol")
         flextool_sol_file = str(wf / "flextool.sol")
 
@@ -158,6 +158,28 @@ class SolverRunner:
     # ------------------------------------------------------------------
     # Solver workflows
     # ------------------------------------------------------------------
+
+    def _ensure_highs_opt(self) -> str:
+        """Return the path to ``bin/highs.opt``, seeding it from the
+        tracked template on first use.
+
+        ``bin/highs.opt`` is a user-editable tuning file; local edits must
+        persist across updates, so the repo only ships the defaults as
+        ``bin/highs.opt.template``.  On every solve we check the live file
+        exists; if missing, copy the template over.  This keeps the setup
+        self-healing without blowing away user edits on subsequent runs.
+        """
+        bin_dir = self.state.paths.bin_dir
+        opt_path = bin_dir / "highs.opt"
+        if not opt_path.exists():
+            template = bin_dir / "highs.opt.template"
+            if template.exists():
+                import shutil
+                shutil.copy(template, opt_path)
+                self.logger.info(
+                    "bin/highs.opt missing; seeded from bin/highs.opt.template"
+                )
+        return str(opt_path)
 
     def _platform_binaries(self) -> tuple[str, str]:
         """Return (glpsol_path, highs_path) and set executable permissions on Linux.
