@@ -988,8 +988,8 @@ How to create the three lower information solve types for investment and storage
 To create a lower resolution (longer timesteps) solve:
 
 - Make a new `timeset`, but use the same `timeline` and `timeset_duration` for it as with the high resolution solve
-- Set `timeset` parameter `new_stepduration`: Hours
 - In the `solve` use this new `timeset` in the `period_timeset`
+- Set `solve` parameter `new_stepduration`: Hours
 
 The model will create a new timeline for this solve with the `new_stepduration`. All the timestep map data like `inflow` or `profile` will be either summed or averaged for the new timeline. Again, the `new_stepduration` should be multiple of the old step duration. If the `timeset_duration` is not a multiple of the `new_stepduration` the last timestep will be shorter than the rest.
 ![New step duration](./new_stepduration.PNG)

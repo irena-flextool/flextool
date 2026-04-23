@@ -52,6 +52,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
 - `solve`: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timesets to connect with a timeline.
 
   - *period_timeset*: map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.
+  - *new_stepduration*: Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps. All timesets used by the solve must resolve to the same underlying timeline.
   - *realized_periods*: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve
   - *realized_invest_periods* Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods are used to realize the invests as well
   - *invest_periods*: array of periods where investements are allowed in this solve (applies only to entities that can be invested in)
@@ -85,7 +86,6 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
 
   - *timeset_duration* a map with index *timestep_name* that starts the timeset and value that defines the duration of the timeset (how many timesteps)
   - *timeline* The name of the timeline that the timeset uses. (String)
-  - *new_stepduration*: Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.
   - *timeset_weights*: Optional per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year — e.g. a coarse OSeMOSYS-style timeslice structure where wet-season steps cover more year-hours than dry-season ones. Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps, so uniform input reproduces weight = 1 per step (the default). Must not be combined with `representative_period_weights` on the same timeset — the runner errors out if both are set.
 
 

@@ -3846,6 +3846,17 @@
     ],
     [
       "solve",
+      "new_stepduration",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.",
+      null
+    ],
+    [
+      "solve",
       "period_timeset",
       [
         "bnVsbA==",
@@ -3985,17 +3996,6 @@
       ],
       null,
       "Map of time steps in the timeline. Index: time step name, value: time step duration in hours.",
-      null
-    ],
-    [
-      "timeset",
-      "new_stepduration",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.",
       null
     ],
     [
@@ -5774,6 +5774,12 @@
     ],
     [
       "solve",
+      "new_stepduration",
+      "float",
+      0
+    ],
+    [
+      "solve",
       "period_timeset",
       "map",
       1
@@ -5861,12 +5867,6 @@
       "timestep_duration",
       "map",
       1
-    ],
-    [
-      "timeset",
-      "new_stepduration",
-      "float",
-      0
     ],
     [
       "timeset",
@@ -8316,6 +8316,16 @@
     [
       "solve",
       "invest_24h",
+      "new_stepduration",
+      [
+        "MjQuMA==",
+        "float"
+      ],
+      "fullYear"
+    ],
+    [
+      "solve",
+      "invest_24h",
       "period_timeset",
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMjAiLCAiZnVsbFllYXJfMjRoIl0sIFsicDIwMjUiLCAiZnVsbFllYXJfMjRoIl0sIFsicDIwMzAiLCAiZnVsbFllYXJfMjRoIl0sIFsicDIwMzUiLCAiZnVsbFllYXJfMjRoIl1dfQ==",
@@ -8512,6 +8522,16 @@
         "array"
       ],
       "storage_fullYear_6h"
+    ],
+    [
+      "solve",
+      "storage_fullYear_6h",
+      "new_stepduration",
+      [
+        "Ng==",
+        "float"
+      ],
+      "fullYear"
     ],
     [
       "solve",
@@ -9356,16 +9376,6 @@
     [
       "timeset",
       "fullYear_24h",
-      "new_stepduration",
-      [
-        "MjQuMA==",
-        "float"
-      ],
-      "fullYear"
-    ],
-    [
-      "timeset",
-      "fullYear_24h",
       "timeline",
       [
         "InkyMDIwIg==",
@@ -9380,16 +9390,6 @@
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIDcyLjBdXSwgInR5cGUiOiAibWFwIn0=",
         "map"
-      ],
-      "fullYear"
-    ],
-    [
-      "timeset",
-      "fullYear_6h",
-      "new_stepduration",
-      [
-        "Ng==",
-        "float"
       ],
       "fullYear"
     ],
