@@ -3428,7 +3428,15 @@ s.t. rp_inter_period_max_state
   - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 ;
 
-s.t. maxToSink {(p, source, sink) in process__source__sinkIsNode, (d, t) in dt : p_process_sink_flow_coefficient[p, sink]} :
+# Block-aware (Agent 1.5): capacity bounds emit once per (d, t) in the
+# sink-side block b_out's timeline — v_flow, startup/shutdown
+# tightening terms, v_online and availability all evaluate at that
+# block's timesteps.  Degenerate case (b_out = 'default') reduces to
+# the pre-v51 fine-grid indexing exactly.
+s.t. maxToSink {(p, source, sink) in process__source__sinkIsNode,
+    (p, 'sink', b_out) in process__side__block,
+    (b_out, d, t) in block__period__step
+    : p_process_sink_flow_coefficient[p, sink]} :
   + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active} v_reserve[p, r, 'up', sink, d, t] * p_entity_unitsize[p]
   <=
@@ -3482,18 +3490,30 @@ s.t. maxToSink {(p, source, sink) in process__source__sinkIsNode, (d, t) in dt :
     )
 ;
 
-s.t. minToSink {(p, source, sink) in process__source__sinkIsNode_not2way1var, (d, t) in dt : p_process_sink_flow_coefficient[p, sink]} :
+s.t. minToSink {(p, source, sink) in process__source__sinkIsNode_not2way1var,
+    (p, 'sink', b_out) in process__side__block,
+    (b_out, d, t) in block__period__step
+    : p_process_sink_flow_coefficient[p, sink]} :
   + v_flow[p, source, sink, d, t] >= 0
 ;
 
-s.t. minToSink_minload {(p, source, sink) in process__source__sinkIsNode_not2way1var, (d, t) in dt : p_process_sink_flow_coefficient[p, sink] && p in process_online} :
+s.t. minToSink_minload {(p, source, sink) in process__source__sinkIsNode_not2way1var,
+    (p, 'sink', b_out) in process__side__block,
+    (b_out, d, t) in block__period__step
+    : p_process_sink_flow_coefficient[p, sink] && p in process_online} :
   + sum{(p, source, sink2) in process__source__sinkIsNode_not2way1var} v_flow[p, source, sink2, d, t]
   >=
   + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_process_sink_min_capacity_coefficient[p, sink] else 0)
   + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_process_sink_min_capacity_coefficient[p, sink] else 0)
 ;
 
-s.t. maxFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_flow_coefficient[p, source]} :
+# Block-aware (Agent 1.5): source-side capacity bounds iterate the
+# source-side block b_in's timeline.  Degenerate (b_in = 'default')
+# reproduces the pre-v51 fine-grid domain.
+s.t. maxFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source,
+    (p, 'source', b_in) in process__side__block,
+    (b_in, d, t) in block__period__step
+    : p_process_source_flow_coefficient[p, source]} :
   + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
   <=
   + ( if p not in process_online then
@@ -3547,11 +3567,17 @@ s.t. maxFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSink
 ;
 
 # Force source flows from 1-way processes with more than 1 source to be at least 0 (conversion equation does not do it)
-s.t. minFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_flow_coefficient[p, source]} :
+s.t. minFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source,
+    (p, 'source', b_in) in process__side__block,
+    (b_in, d, t) in block__period__step
+    : p_process_source_flow_coefficient[p, source]} :
   + v_flow[p, source, sink, d, t] * p_process_source_flow_coefficient[p, source] >= 0
 ;
 
-s.t. minFromSource_minload {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_flow_coefficient[p, source] && p in process_online} :
+s.t. minFromSource_minload {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source,
+    (p, 'source', b_in) in process__side__block,
+    (b_in, d, t) in block__period__step
+    : p_process_source_flow_coefficient[p, source] && p in process_online} :
   +  sum{(p, source2, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source} v_flow[p, source2, sink, d, t] * p_process_source_min_capacity_coefficient[p, source]
   >=
   + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] else 0)
@@ -3559,7 +3585,11 @@ s.t. minFromSource_minload {(p, source, sink) in process__sourceIsNode__sink_1wa
 ;
 
 # Special equation to limit the 1variable connection on the negative transfer
-s.t. minToSink_1var {(p, source, sink) in process__source__sinkIsNode_2way1var, (d, t) in dt : p_process_sink_flow_coefficient[p, sink]} :
+# Block-aware (Agent 1.5): operates on v_flow at the sink-side block b_out.
+s.t. minToSink_1var {(p, source, sink) in process__source__sinkIsNode_2way1var,
+    (p, 'sink', b_out) in process__side__block,
+    (b_out, d, t) in block__period__step
+    : p_process_sink_flow_coefficient[p, sink]} :
   + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
   >=
   - ( if p not in process_online then
@@ -3582,7 +3612,12 @@ s.t. minToSink_1var {(p, source, sink) in process__source__sinkIsNode_2way1var, 
 ;
 
 # Special equations for the method with 2 variables presenting a direct 2way connection between source and sink (without the process)
-s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt : p_process_source_flow_coefficient[p, source]} :
+# Block-aware (Agent 1.5): flow direction is sink→source so the variable
+# lives at the source-side block b_in.
+s.t. maxToSource {(p, sink, source) in process_sink_toSource,
+    (p, 'source', b_in) in process__side__block,
+    (b_in, d, t) in block__period__step
+    : p_process_source_flow_coefficient[p, source]} :
   + v_flow[p, sink, source, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'up', source) in process_reserve_upDown_node_active} v_reserve[p, r, 'up', source, d, t] * p_entity_unitsize[p]
   <=
@@ -3612,7 +3647,10 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt : p_p
     )
 ;
 
-s.t. minToSource {(p, source, sink) in process__source__sinkIsNode_2way2var, (d, t) in dt : p_process_source_flow_coefficient[p, source]} :
+s.t. minToSource {(p, source, sink) in process__source__sinkIsNode_2way2var,
+    (p, 'source', b_in) in process__side__block,
+    (b_in, d, t) in block__period__step
+    : p_process_source_flow_coefficient[p, source]} :
   + v_flow[p, sink, source, d, t]
   >=
   + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_process_source_min_capacity_coefficient[p, source] else 0)
@@ -3620,9 +3658,16 @@ s.t. minToSource {(p, source, sink) in process__source__sinkIsNode_2way2var, (d,
 ;
 
 # DC power flow: flow on connection equals susceptance * angle difference
+# Block-aware (Agent 1.5): emit at the sink-side block b_out's timeline.
+# In V1 DC power flow scenarios the participating nodes sit at the default
+# (hourly) electricity grid, so b_out = 'default' and this reduces to the
+# pre-v51 fine-grid domain.  v_angle stays on the fine timeline; a
+# non-default b_out would need angle variables redefined on the block —
+# out of scope for V1.
 s.t. dc_flow_eq {p in connection_dc_power_flow,
                  (p, source, sink) in process_source_toSink,
-                 (d, t) in dt
+                 (p, 'sink', b_out) in process__side__block,
+                 (b_out, d, t) in block__period__step
                  : source in node_dc_power_flow && sink in node_dc_power_flow} :
   v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
   =
