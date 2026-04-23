@@ -38,7 +38,10 @@ class TimelineConfig:
     timeset_durations : defaultdict[str, list[tuple]]
         timeset_name -> [(start, count), ...].
     new_step_durations : dict[str, str]
-        timeset_name -> new_duration.
+        solve_name -> new_duration (hours).  Solve-scoped as of DB v50
+        (prior to v50 this was keyed by timeset_name; the runtime
+        already required all timesets within a solve to carry the same
+        value, so the effective scope is unchanged).
     rp_weights : dict[str, dict]
         timeset_name -> {base_start: {rep_start: weight}}.
     stochastic_timesteps : defaultdict[str, list[tuple]]
@@ -89,8 +92,10 @@ class TimelineConfig:
         timesets__timeline: defaultdict = params_to_dict(
             db=db, cl="timeset", par="timeline", mode=DictMode.DEFAULTDICT
         )
+        # Solve-scoped as of DB v50 (moved from timeset.new_stepduration
+        # by db_migration v50).  Keys are solve entity names.
         new_step_durations: dict = params_to_dict(
-            db=db, cl="timeset", par="new_stepduration", mode=DictMode.DICT
+            db=db, cl="solve", par="new_stepduration", mode=DictMode.DICT
         )
         # Read representative period weights (nested Map: base_start -> {rep_start -> weight})
         rp_weights_raw = params_to_dict(
@@ -153,11 +158,51 @@ class TimelineConfig:
     # Methods (moved from FlexToolRunner)
     # ------------------------------------------------------------------
 
-    def create_timeline_from_timestep_duration(self) -> None:
-        """Synthesize new timelines when a timeset has a new_stepduration parameter."""
-        for timeset_name, timeset in list(self.timeset_durations.items()):
-            if timeset_name in self.new_step_durations:
-                step_duration = float(self.new_step_durations[timeset_name])
+    def create_timeline_from_timestep_duration(
+        self, solve_config: SolveConfig
+    ) -> None:
+        """Synthesize new timelines for every solve that sets new_stepduration.
+
+        As of DB v50 ``new_stepduration`` is a ``solve`` parameter
+        (previously it was on ``timeset``; the runtime has always
+        required the value to be identical across every timeset used
+        by a given solve, so the scope change is a no-op semantically).
+
+        Each solve with a ``new_stepduration`` value gets:
+
+        * a freshly aggregated timeline named ``"{timeline}_{solve}"``
+          in :attr:`timelines`,
+        * every timeset it uses re-pointed at that new timeline in
+          :attr:`timesets__timeline`,
+        * re-computed :attr:`timeset_durations` entries for those
+          timesets,
+        * a :attr:`original_timeline` entry mapping the new timeline
+          back to the original.
+
+        If a timeset is shared between two solves with different
+        ``new_stepduration`` values the runtime still needs one
+        timeline per timeset — any such config should already have
+        been rejected at migration time.
+        """
+        logger = logging.getLogger(__name__)
+        for solve_name, step_duration_raw in self.new_step_durations.items():
+            if step_duration_raw is None:
+                continue
+            step_duration = float(step_duration_raw)
+            period_timesets = solve_config.timesets_used_by_solves.get(solve_name, [])
+            # De-duplicate timeset names while keeping their order.
+            seen_timesets: set[str] = set()
+            timesets_in_solve: list[str] = []
+            for _period, timeset_name in period_timesets:
+                if timeset_name in seen_timesets:
+                    continue
+                seen_timesets.add(timeset_name)
+                timesets_in_solve.append(timeset_name)
+
+            for timeset_name in timesets_in_solve:
+                timeset = self.timeset_durations.get(timeset_name)
+                if not timeset:
+                    continue
                 timeline_name = self.timesets__timeline[timeset_name]
                 old_steps = self.timelines[timeline_name]
                 new_steps: list[tuple[str, str]] = []
@@ -175,7 +220,7 @@ class TimelineConfig:
                             step_counter = 0
                             added_steps += 1
                             if step_counter > step_duration:
-                                logging.getLogger(__name__).warning(
+                                logger.warning(
                                     "Warning: All new steps are not the size of the given "
                                     "step duration. The new step duration has to be multiple "
                                     "of old step durations for this to happen."
@@ -185,7 +230,7 @@ class TimelineConfig:
                     added_steps += 1
                     new_timesets.append((ts[0], added_steps))
                 self.timeset_durations[timeset_name] = new_timesets
-                new_timeline_name = timeline_name + "_" + timeset_name
+                new_timeline_name = timeline_name + "_" + solve_name
                 self.timelines[new_timeline_name] = new_steps
                 self.timesets__timeline[timeset_name] = new_timeline_name
                 self.original_timeline[new_timeline_name] = timeline_name
@@ -342,8 +387,9 @@ class TimelineConfig:
     ) -> None:
         """Average or sum timeseries data when step durations have been changed.
 
-        If no timeset in the solve uses new_step_durations, simply copies files.
-        Otherwise re-aggregates each timeseries file to match the new step size.
+        If *solve* does not set ``new_stepduration`` (solve-scoped as of
+        DB v50), simply copies files.  Otherwise re-aggregates each
+        timeseries file to match the new step size.
 
         Args:
             solve: Name of the current solve.
@@ -374,22 +420,30 @@ class TimelineConfig:
             'pbt_process_sink.csv': "average",
             'pbt_reserve__upDown__group.csv': "average",
         }
-        create = False
-        for period_timeset in solve_config.timesets_used_by_solves[solve]:
-            if period_timeset[1] in self.new_step_durations:
-                create = True
+        # As of DB v50 new_stepduration is keyed by solve.  A value of
+        # ``None`` (the parameter_definition default in the master
+        # template) counts as "not set" so we skip aggregation in that
+        # case too.
+        create = (
+            solve in self.new_step_durations
+            and self.new_step_durations[solve] is not None
+        )
         if not create:
             for timeseries in timeseries_map:
                 shutil.copy(str(wf / 'input' / timeseries), str(wf / 'solve_data' / timeseries))
         else:
+            # All timesets used by *solve* must resolve to the same
+            # timeline — new_stepduration rewrites that timeline once
+            # per solve and we re-aggregate every timeseries row by it.
             timelines_list: list[str] = []
             for period, timeset in solve_config.timesets_used_by_solves[solve]:
                 timeline = self.timesets__timeline[timeset]
                 if timeline not in timelines_list:
                     if len(timelines_list) != 0:
                         message = (
-                            "Error: More than one timeline in the solve or the same timeline "
-                            "with different step durations in different timesets"
+                            f"solve '{solve}' sets new_stepduration but its timesets "
+                            f"resolve to more than one timeline; new_stepduration "
+                            f"requires a single shared timeline per solve."
                         )
                         logger.error(message)
                         raise FlexToolConfigError(message)

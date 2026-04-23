@@ -77,7 +77,7 @@ class FlexToolRunner:
 
             # Post-DB initialization of timeline
             timeline.create_assumptive_parts(solve)
-            timeline.create_timeline_from_timestep_duration()
+            timeline.create_timeline_from_timestep_duration(solve)
 
             # Assemble RunnerState — the single cross-cutting state container
             self.state = RunnerState(
