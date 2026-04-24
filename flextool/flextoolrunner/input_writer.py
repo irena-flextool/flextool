@@ -1535,45 +1535,6 @@ def _validate_timeline_timestep_duration(db) -> None:
         )
 
 
-def _validate_entity_names_no_hyphen(db) -> None:
-    """Raise FlexToolConfigError if any entity name contains ``-``.
-
-    Hyphens are the subtraction operator in MathProg; names carrying one
-    are loaded from CSV but then get silently re-parsed as arithmetic in
-    some code paths, which surfaces as an ``out of domain`` error on a
-    *different* symbol (often a neighbouring node name) — e.g.
-    ``pdtProcess[ARG_H2,...]`` when the offending process was actually
-    ``BRA_ARG-H2``.  Catch the name at write-time with a clear message
-    rather than shipping ambiguous GLPK errors to the user.
-    """
-    # Entity classes whose names become symbolic indices in flextool.mod.
-    # Keep this list tight — adding every multi-dim class would overreport
-    # without helping the user (offending names always trace back to a
-    # single-dim class).
-    classes = ["node", "unit", "connection", "group",
-               "commodity", "profile", "constraint"]
-    offenders: dict[str, list[str]] = {}
-    for cl in classes:
-        bad = [ent["entity_byname"][0]
-               for ent in db.find_entities(entity_class_name=cl)
-               if "-" in ent["entity_byname"][0]]
-        if bad:
-            offenders[cl] = sorted(bad)
-    if not offenders:
-        return
-    lines = [
-        "Entity names containing '-' (hyphen) are not allowed because MathProg "
-        "treats '-' as the subtraction operator. Rename (e.g. '-' → '_') the "
-        "following entities:"
-    ]
-    total = 0
-    for cl, names in offenders.items():
-        total += len(names)
-        shown = ", ".join(names[:5]) + (f", ... (+{len(names)-5} more)" if len(names) > 5 else "")
-        lines.append(f"  {cl} ({len(names)}): {shown}")
-    raise FlexToolConfigError("\n".join(lines) + f"\n[{total} entity name(s) to fix]")
-
-
 def _validate_ladder_methods(db, logger: logging.Logger) -> None:
     """Raise FlexToolConfigError if any commodity declares a ladder
     ``price_method`` but does not have the corresponding ladder parameter
@@ -1858,12 +1819,6 @@ def write_input(
         if scenario_name:
             api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
         os.makedirs(wf / "input", exist_ok=True)
-
-        # Fail fast on hyphenated entity names — they collide with
-        # MathProg's subtraction operator and surface as misleading
-        # out-of-domain errors at solve time (see
-        # _validate_entity_names_no_hyphen for details).
-        _validate_entity_names_no_hyphen(db)
 
         for spec in _DEFAULT_VALUES_SPECS:
             prefixed_spec = dict(spec)
