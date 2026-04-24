@@ -83,19 +83,19 @@ split_params:
     solve:
       params: ["solve_mode", "solver", "highs_method", "highs_parallel",
                "highs_presolve", "contains_solves", "solver_precommand",
-               "solver_arguments"]
+               "solver_arguments", "new_stepduration", "use_row_scaling"]
     solve_period:
       params: ["period_timeset", "years_represented", "realized_periods",
                "invest_periods", "realized_invest_periods", "fix_storage_periods"]
     rolling_parameters:
-      params: ["rolling_solve_jump", "rolling_solve_horizon", "rolling_duration",
-               "rolling_solve_horizon_methods"]
+      params: ["rolling_solve_jump", "rolling_solve_horizon", "rolling_duration"]
     solve_s_stochastic_branches:
       params: ["stochastic_branches"]
   model:
     model:
-      params: ["discount_rate",
-               "discount_offset_investment", "discount_offset_operations",
+      params: ["inflation_rate",
+               "inflation_offset_investment", "inflation_offset_operations",
+               "max_flow_for_unconstrained_variables",
                "debug", "output_horizon",
                "output_node_balance_t", "output_unit__node_flow_t",
                "output_unit__node_ramp_t", "output_connection__node__node_flow_t",
@@ -110,9 +110,9 @@ split_params:
       params: ["timestep_duration"]
   timeset:
     timeset_c:
-      params: ["new_stepduration", "timeline"]
+      params: ["timeline"]
     timeset_t:
-      params: ["timeset_duration"]
+      params: ["timeset_duration", "timeset_weights"]
 
 # Dimensions to drop from generated sheet names (always-present relationship dims).
 drop_dimensions: ["upDown"]

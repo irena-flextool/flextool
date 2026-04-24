@@ -12,12 +12,20 @@ import openpyxl
 import pytest
 
 from flextool.export_to_tabular.db_reader import DatabaseContents, read_database
-from flextool.export_to_tabular.sheet_config import build_sheet_specs, SheetSpec
+from flextool.export_to_tabular.sheet_config import build_sheet_specs, SheetSpec, load_settings
 from flextool.export_to_tabular.export_to_excel import export_to_excel
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_DB = FLEXTOOL_ROOT / "templates" / "examples.sqlite"
 EXAMPLE_DB_URL = f"sqlite:///{EXAMPLE_DB}"
+MASTER_TEMPLATE = FLEXTOOL_ROOT / "version" / "flextool_template_master.json"
+
+# Parameters on split_params classes that are intentionally not surfaced in the
+# Excel whitelist (e.g. handled by a dedicated writer or never user-editable).
+# Keys are entity-class names; values are the param names to exclude.
+WHITELIST_EXEMPT_PARAMS: dict[str, set[str]] = {
+    "model": {"version"},  # written by write_version_sheet, not a user param
+}
 
 
 # ---------------------------------------------------------------------------
@@ -374,3 +382,71 @@ class TestConstraintSheet:
                 has_data = True
                 break
         assert has_data, "unit_node_constraint_c: no data rows found"
+
+
+# ---------------------------------------------------------------------------
+# Test 9: schema ⇄ export_settings.yaml sync for split_params classes
+# ---------------------------------------------------------------------------
+
+class TestSplitParamsSchemaSync:
+    """Guard against schema drift on classes that use explicit param whitelists.
+
+    Classes listed in ``split_params`` use hardcoded param lists rather than
+    schema discovery, so a parameter added via migration is silently dropped
+    from the Excel export until someone updates ``export_settings.yaml``.
+    This test catches that class of gap in both directions.
+    """
+
+    @pytest.fixture(scope="class")
+    def schema_params_by_class(self) -> dict[str, set[str]]:
+        import json
+        assert MASTER_TEMPLATE.exists(), f"Master template not found: {MASTER_TEMPLATE}"
+        data = json.loads(MASTER_TEMPLATE.read_text())
+        result: dict[str, set[str]] = {}
+        for row in data.get("parameter_definitions", []):
+            cls, pname = row[0], row[1]
+            result.setdefault(cls, set()).add(pname)
+        return result
+
+    @pytest.fixture(scope="class")
+    def listed_params_by_class(self) -> dict[str, set[str]]:
+        settings = load_settings()
+        result: dict[str, set[str]] = {}
+        for cls, sub_groups in settings.get("split_params", {}).items():
+            for _sub_name, rule in sub_groups.items():
+                result.setdefault(cls, set()).update(rule.get("params", []))
+        return result
+
+    def test_no_schema_params_missing_from_yaml(
+        self,
+        schema_params_by_class: dict[str, set[str]],
+        listed_params_by_class: dict[str, set[str]],
+    ) -> None:
+        gaps: dict[str, set[str]] = {}
+        for cls, listed in listed_params_by_class.items():
+            schema = schema_params_by_class.get(cls, set())
+            exempt = WHITELIST_EXEMPT_PARAMS.get(cls, set())
+            missing = schema - listed - exempt
+            if missing:
+                gaps[cls] = missing
+        assert not gaps, (
+            "Schema parameters missing from export_settings.yaml split_params "
+            f"whitelists: {gaps}. Add each to the appropriate sub-group or to "
+            "WHITELIST_EXEMPT_PARAMS if intentionally not surfaced."
+        )
+
+    def test_no_yaml_params_missing_from_schema(
+        self,
+        schema_params_by_class: dict[str, set[str]],
+        listed_params_by_class: dict[str, set[str]],
+    ) -> None:
+        stale: dict[str, set[str]] = {}
+        for cls, listed in listed_params_by_class.items():
+            schema = schema_params_by_class.get(cls, set())
+            extra = listed - schema
+            if extra:
+                stale[cls] = extra
+        assert not stale, (
+            "export_settings.yaml split_params lists parameters not in the "
+            f"master template schema: {stale}. Remove or rename."
+        )
