@@ -238,6 +238,13 @@ set nodeStateBlock := {n in nodeState : (n, 'bind_intraperiod_blocks') in node__
 set node__block 'per-node block assignment' dimen 2;
 set process_side 'source/sink side label' := {'source', 'sink'};
 set process__side__block 'per-process per-side block assignment' dimen 3;
+# Agent 1.6: per-process unified block used by UC (online/startup/shutdown),
+# ramp and profile constraints.  Equals the process's explicit resolution-
+# group block if set, else the finer of (process_block_in,
+# process_block_out).  Every process has exactly one row.  In the degenerate
+# case all rows carry ``'default'``, so UC / ramp / profile constraints
+# indexed via this set reduce to the pre-v51 fine-grid domain.
+set process__block 'per-process unified block (finer-of-sides, or group override)' dimen 2;
 # block__period__step companion set carries the keys of block_step_duration
 # so the parameter can be iterated without relying on a default-0 sentinel.
 set block__period__step 'active (block, period, step) triples' dimen 3;
@@ -262,6 +269,7 @@ set block__period__time_last 'per-block period last step' dimen 3;
 set block 'temporal-resolution classes for nodes and processes'
     := setof {(n, b) in node__block} (b)
        union setof {(p, s, b) in process__side__block} (b)
+       union setof {(p, b) in process__block} (b)
        union setof {(b, d, t) in block__period__step} (b)
        union setof {(d, bc, tc, bf, tf) in overlap} (bc)
        union setof {(d, bc, tc, bf, tf) in overlap} (bf);
@@ -824,6 +832,9 @@ table data IN 'CSV' 'solve_data/entity_block.csv' :
     node__block <- [entity, block];
 table data IN 'CSV' 'solve_data/process_side_block.csv' :
     process__side__block <- [process, side, block];
+# Agent 1.6: per-process unified block for UC / ramp / profile.
+table data IN 'CSV' 'solve_data/process_block.csv' :
+    process__block <- [process, block];
 table data IN 'CSV' 'solve_data/block_step_duration.csv' :
     block__period__step <- [block, period, step], block_step_duration ~ step_duration;
 table data IN 'CSV' 'solve_data/overlap_set.csv' :
@@ -2239,12 +2250,39 @@ var v_state {n in nodeState, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_m
 var v_state_inter {n in nodeState_rp, b in rp_base_period} >= 0;
 # Starting state of each representative period (Paper: σ^{intra,0}_{s,r})
 var v_state_rp_start {n in nodeState_rp, (d, t) in rp_block_first} >= 0, <= p_entity_dispatch_capacity_max[n, d] / p_entity_unitsize[n];
-var v_online_linear {p in process_online_linear,(d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
-var v_startup_linear {p in process_online_linear, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
-var v_shutdown_linear {p in process_online_linear, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
-var v_online_integer {p in process_online_integer, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p], integer;
-var v_startup_integer {p in process_online_integer, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
-var v_shutdown_integer {p in process_online_integer, (d, t) in dt} >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+# Agent 1.6: UC / startup / shutdown variables live at the process's
+# own block (process__block).  Declaring the variable at the process's
+# block timeline means fewer columns in the coarse case and matches
+# Gao's pattern where commitment is aggregated together with flow.
+# Variable column index stays ``[p, d, t]`` so all cross-referencing
+# constraints (maxToSink, ramp, reserve, …) keep their existing
+# dereferences; the indexing set restricts ``(p, d, t)`` to the
+# process's block's active timesteps.  In the degenerate case
+# (process_block[p] = 'default') block__period__step at 'default'
+# covers every fine (d, t), so this reduces to the pre-v51 declaration
+# bit-identically.
+#
+# V1 limitation (see Agent 1.6 check stanzas below): UC processes are
+# required to have matched source and sink blocks, i.e.
+# process_block_in = process_block_out = process_block.  That keeps
+# Agent 1.5's capacity-bound references to v_online_* at b_out / b_in
+# valid 1-to-1 without overlap aggregation.
+set p_online_dt
+    'UC variable indexing: (process, period, step) at the process''s block'
+    := {p in process_online, (d, t) in dt :
+           exists {(p, b) in process__block : (b, d, t) in block__period__step} 1};
+var v_online_linear {(p, d, t) in p_online_dt : p in process_online_linear}
+    >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_startup_linear {(p, d, t) in p_online_dt : p in process_online_linear}
+    >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_shutdown_linear {(p, d, t) in p_online_dt : p in process_online_linear}
+    >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_online_integer {(p, d, t) in p_online_dt : p in process_online_integer}
+    >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p], integer;
+var v_startup_integer {(p, d, t) in p_online_dt : p in process_online_integer}
+    >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
+var v_shutdown_integer {(p, d, t) in p_online_dt : p in process_online_integer}
+    >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
 var v_invest {(e, d) in ed_invest} >= 0, <= p_entity_max_units[e, d];
 var v_divest {(e, d) in ed_divest} >= 0, <= p_entity_max_units[e, d];
 # Slack variables (see flextool/SLACK_CONVENTION.md).  Single-variable
@@ -2412,6 +2450,21 @@ if p_model["solveFirst"] == 1 && 'read' in phase then {
     p_entity_all_existing[e, d] <= ed_cumulative_max_capacity[e, d];
   printf 'Checking: Delayed flows must be one-way:  ';
   check {p in process_delayed} sum{(p, m) in process_method : m in method_1way} 1 > 0;
+
+  # Agent 1.6 V1 limitation: unit-commitment processes (v_online_* present)
+  # must have their source and sink flows on the same temporal block as the
+  # process's unified block.  The cross-referencing capacity / ramp / reserve
+  # constraints from Agents 1.5 / 1.6 read v_online_*[p, d, t] at the side's
+  # block timesteps — if the process sits at a finer block than one of the
+  # sides, the fine-grid online value has no 1-to-1 counterpart at the
+  # coarser side and overlap aggregation would be required.  V1 forbids this
+  # configuration outright.  In the degenerate case (everything on
+  # 'default') the check is trivially satisfied.
+  printf 'Checking: UC (online) processes must have matched source/sink blocks (Agent 1.6 V1 limitation)\n';
+  check {p in process_online, (p, 'source', b_in) in process__side__block,
+         (p, 'sink', b_out) in process__side__block,
+         (p, b_proc) in process__block} :
+    b_in == b_proc && b_out == b_proc;
 }
 
 param setup := gmtime();
@@ -3038,7 +3091,18 @@ s.t. conversion_indirect {(p, m) in process__method_indirect,
             * pdtProcess_section[p, d, t] * p_entity_unitsize[p])
 ;
 
-s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
+# Agent 1.6: profile constraints are block-aware.
+#
+# Flow profile bounds (upper / lower / fixed) iterate at the process's
+# own block (``process__block``) so the profile values are aggregated
+# to the same resolution used by the UC / capacity constraints.
+# State profile bounds iterate at the node's block (``node__block``)
+# because v_state lives at the node's temporal resolution.  In the
+# degenerate case every process / node sits on ``'default'`` and
+# ``block__period__step`` at 'default' matches ``dt`` row-for-row.
+s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__source__sink__profile__profile_method,
+    (p, b_p) in process__block,
+    (b_p, d, t) in block__period__step} :
   + ( + v_flow[p, source, sink, d, t]
       + sum{(p, r, 'up', sink) in process_reserve_upDown_node_active} v_reserve[p, r, 'up', sink, d, t]
 	) * 1000
@@ -3052,7 +3116,9 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
       * 1000
 ;
 
-s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
+s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__source__sink__profile__profile_method,
+    (p, b_p) in process__block,
+    (b_p, d, t) in block__period__step} :
   + ( + v_flow[p, source, sink, d, t]
       - sum{(p, r, 'down', sink) in process_reserve_upDown_node_active} v_reserve[p, r, 'down', sink, d, t]
     ) * 1000
@@ -3066,7 +3132,9 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
       * 1000
 ;
 
-s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method, (d, t) in dt} :
+s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method,
+    (p, b_p) in process__block,
+    (b_p, d, t) in block__period__step} :
   + v_flow[p, source, sink, d, t] * 1000
   =
   + pdtProfile[f, d, t]
@@ -3078,7 +3146,9 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
       * 1000
 ;
 
-s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
+s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method,
+    (n, b_n) in node__block,
+    (b_n, d, t) in block__period__step} :
   + v_state[n, d, t] * 1000
   <=
   + pdtProfile[f, d, t]
@@ -3090,7 +3160,9 @@ s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_
       * 1000
 ;
 
-s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_method, (d, t) in dt} :
+s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_method,
+    (n, b_n) in node__block,
+    (b_n, d, t) in block__period__step} :
   + v_state[n, d, t] * 1000
   >=
   + pdtProfile[f, d, t]
@@ -3102,7 +3174,9 @@ s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_
       * 1000
 ;
 
-s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
+s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method,
+    (n, b_n) in node__block,
+    (b_n, d, t) in block__period__step} :
   + v_state[n, d, t] * 1000
   =
   + pdtProfile[f, d, t]
@@ -3674,7 +3748,16 @@ s.t. dc_flow_eq {p in connection_dc_power_flow,
   p_connection_susceptance[p] * (v_angle[source, d, t] - v_angle[sink, d, t])
 ;
 
-s.t. maxOnline {p in process_online, (d, t) in dt} :
+# Agent 1.6: UC constraints are emitted on the process's own block
+# (``process__block``) rather than the solve-wide fine ``dt``.  The
+# startup/shutdown equalities use ``block_dtttdt`` (Agent 1.4) at the
+# process's block so the predecessor lookup is block-consistent; the
+# min-up/min-down equations retain their ``pdt_uptime`` / ``pdt_downtime``
+# domain but are filtered through the ``p_online_dt`` helper set so the
+# rows line up with the timesteps at which ``v_online_*`` / ``v_startup_*``
+# actually exist.  In the degenerate case (process_block = 'default')
+# the filter is a no-op and every constraint reduces to its pre-v51 form.
+s.t. maxOnline {(p, d, t) in p_online_dt} :
   + (if p in process_online_linear then v_online_linear[p, d, t])
   + (if p in process_online_integer then v_online_integer[p, d, t])
   <=
@@ -3683,21 +3766,25 @@ s.t. maxOnline {p in process_online, (d, t) in dt} :
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
 
-s.t. online__startup_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__startup_linear {p in process_online_linear,
+    (p, b) in process__block,
+    (b, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt} :
   + v_startup_linear[p, d, t]
   >=
   + v_online_linear[p, d, t]
   - v_online_linear[p, d_previous, t_previous_within_solve]
 ;
 
-s.t. online__startup_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__startup_integer {p in process_online_integer,
+    (p, b) in process__block,
+    (b, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt} :
   + v_startup_integer[p, d, t]
   >=
   + v_online_integer[p, d, t]
   - v_online_integer[p, d_previous, t_previous_within_solve]
 ;
 
-s.t. maxStartup {p in process_online, (d, t) in dt} :
+s.t. maxStartup {(p, d, t) in p_online_dt} :
   + (if p in process_online_linear then v_startup_linear[p, d, t])
   + (if p in process_online_integer then v_startup_integer[p, d, t])
   <=
@@ -3706,21 +3793,25 @@ s.t. maxStartup {p in process_online, (d, t) in dt} :
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
 
-s.t. online__shutdown_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__shutdown_linear {p in process_online_linear,
+    (p, b) in process__block,
+    (b, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt} :
   + v_shutdown_linear[p, d, t]
   >=
   - v_online_linear[p, d, t]
   + v_online_linear[p, d_previous, t_previous_within_solve]
 ;
 
-s.t. online__shutdown_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__shutdown_integer {p in process_online_integer,
+    (p, b) in process__block,
+    (b, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt} :
   + v_shutdown_integer[p, d, t]
   >=
   - v_online_integer[p, d, t]
   + v_online_integer[p, d_previous, t_previous_within_solve]
 ;
 
-s.t. maxShutdown {p in process_online, (d, t) in dt} :
+s.t. maxShutdown {(p, d, t) in p_online_dt} :
   + (if p in process_online_linear then v_shutdown_linear[p, d, t])
   + (if p in process_online_integer then v_shutdown_integer[p, d, t])
   <=
@@ -3729,31 +3820,57 @@ s.t. maxShutdown {p in process_online, (d, t) in dt} :
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
 
-# Minimum downtime: if a unit shut down within the last min_downtime hours, it must still be offline
-s.t. minimum_downtime {(p, d, t) in pdt_downtime : p in process_online} :
+# Minimum downtime: if a unit shut down within the last min_downtime hours, it must still be offline.
+# Agent 1.6: restrict (d, t) to timesteps at which v_online_* is defined
+# (i.e. the process's block).  In the degenerate case this filter is a
+# no-op.  pdt_downtime / downtime_lookback are computed on the fine
+# solve timeline; rows that target a (d2, t2) outside the process's
+# block timeline remain on the fine grid — V1 requires matched side
+# blocks for UC so this is consistent (the fine timeline of the
+# process's block equals the matching-side timeline).
+s.t. minimum_downtime {(p, d, t) in pdt_downtime : p in process_online
+                        && (p, d, t) in p_online_dt} :
   + p_entity_all_existing[p, d] / p_entity_unitsize[p]
   + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest]
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
   - (if p in process_online_linear then v_online_linear[p, d, t])
   - (if p in process_online_integer then v_online_integer[p, d, t])
   >=
-  + sum{(p, d, t, d2, t2) in downtime_lookback}
+  + sum{(p, d, t, d2, t2) in downtime_lookback : (p, d2, t2) in p_online_dt}
     ( + (if p in process_online_linear then v_shutdown_linear[p, d2, t2])
       + (if p in process_online_integer then v_shutdown_integer[p, d2, t2])
     )
 ;
 
 # Minimum uptime: if a unit started up within the last min_uptime hours, it must still be online
-s.t. minimum_uptime {(p, d, t) in pdt_uptime : p in process_online} :
+s.t. minimum_uptime {(p, d, t) in pdt_uptime : p in process_online
+                      && (p, d, t) in p_online_dt} :
   + (if p in process_online_linear then v_online_linear[p, d, t])
   + (if p in process_online_integer then v_online_integer[p, d, t])
   >=
-  + sum{(p, d, t, d2, t2) in uptime_lookback}
+  + sum{(p, d, t, d2, t2) in uptime_lookback : (p, d2, t2) in p_online_dt}
     ( + (if p in process_online_linear then v_startup_linear[p, d2, t2])
       + (if p in process_online_integer then v_startup_integer[p, d2, t2])
     )
 ;
 
+# Agent 1.6: ramp constraints are block-aware.
+#
+# ``ramp_up_variable`` defines v_ramp from two consecutive v_flow values.
+# Since v_flow / v_ramp are declared on the fine ``(d, t) in dt`` grid we
+# stick with ``dtttdt`` for the predecessor linkage — the equality links
+# a flow at t to the flow at t_previous, and the block-aware capacity
+# checks downstream already gate where non-zero values are permitted.
+# In the degenerate case this reduces exactly to the pre-v51 equation.
+#
+# The four ramp-limit constraints live at the flow's own side's block —
+# source-side ramps at ``process_block_in`` (b_in), sink-side at
+# ``process_block_out`` (b_out).  Iteration uses ``block_dtttdt`` so the
+# predecessor is consistent with that block's own timeline; the existing
+# ramp-set filters (ramp_speed × 60 < step_duration && dt_jump == 1) are
+# inlined here so we do not re-derive the Cartesian set on a mixed-grid
+# domain.  In the degenerate case ``block_dtttdt`` tagged with 'default'
+# equals ``dtttdt`` and the inlined filter matches the original.
 s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_ramp[p, source, sink, d, t]
   =
@@ -3761,7 +3878,11 @@ s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_p
   - v_flow[p, source, sink, d, t_previous] * step_duration[d, t]
 ;
 
-s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_up} :
+s.t. ramp_source_up_constraint {(p, source, sink) in process_source_sink_ramp_limit_source_up,
+    (p, 'source', b_in) in process__side__block,
+    (b_in, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt
+    : p_process_source[p, source, 'ramp_speed_up'] * 60 < step_duration[d, t]
+      && dt_jump[d, t] == 1} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'up', source) in process_reserve_upDown_node_active}
          (v_reserve[p, r, 'up', source, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -3777,7 +3898,11 @@ s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_w
   + ( if p in process_online_integer then v_startup_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
 ;
 
-s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_up} :
+s.t. ramp_sink_up_constraint {(p, source, sink) in process_source_sink_ramp_limit_sink_up,
+    (p, 'sink', b_out) in process__side__block,
+    (b_out, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt
+    : p_process_sink[p, sink, 'ramp_speed_up'] * 60 < step_duration[d, t]
+      && dt_jump[d, t] == 1} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active}
          (v_reserve[p, r, 'up', sink, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -3793,7 +3918,11 @@ s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_wit
   + ( if p in process_online_integer then v_startup_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
 ;
 
-s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_down} :
+s.t. ramp_source_down_constraint {(p, source, sink) in process_source_sink_ramp_limit_source_down,
+    (p, 'source', b_in) in process__side__block,
+    (b_in, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt
+    : p_process_source[p, source, 'ramp_speed_down'] * 60 < step_duration[d, t]
+      && dt_jump[d, t] == 1} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'down', source) in process_reserve_upDown_node_active}
          (v_reserve[p, r, 'down', source, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -3809,7 +3938,11 @@ s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous
   - ( if p in process_online_integer then v_shutdown_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
 
-s.t. ramp_sink_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_down} :
+s.t. ramp_sink_down_constraint {(p, source, sink) in process_source_sink_ramp_limit_sink_down,
+    (p, 'sink', b_out) in process__side__block,
+    (b_out, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in block_dtttdt
+    : p_process_sink[p, sink, 'ramp_speed_down'] * 60 < step_duration[d, t]
+      && dt_jump[d, t] == 1} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'down', sink) in process_reserve_upDown_node_active}
          (v_reserve[p, r, 'down', sink, d, t] * p_entity_unitsize[p] / step_duration[d, t])
