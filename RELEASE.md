@@ -1,3 +1,264 @@
+## Release 3.28.0 (24.4.2026)
+**Bug fixes**
+- Default HiGHS to serial simplex (`parallel=off`, `threads=1`) to avoid non-determinism and occasional stalls on small models; defaults reinforced in `solver_runner` as belt-and-suspenders
+- Restore 0.05 `discount_rate` default and related advisory defaults that had drifted
+- Revert slack primary+escape split — back to single-variable slacks with penalty acting as a valve
+
+**New features**
+- HiGHS upgraded to 1.14 (`highspy>=1.14`)
+- Auto-scaling of LP/MIP numerics: row scaling via `node_cap`/`group_cap`, objective scaling, and bound scaling with diagnostics printed
+- `--auto-scale` CLI flag that gates objective/state auto-apply behaviour
+- `--highs-threads` CLI flag
+- HiGHS `mip_detect_symmetry` enabled — ~15× speed-up on unit-commitment with identical units
+- `virtual_unitsize` documented as a speed lever for UC with identical units
+- `unidirectional` transfer method for connections
+- Cost-aggregation semantics fixed — weighting factors applied per variable class
+- Divest salvage included in objective; `pre_existing` renamed to `all_existing`; storage valuation documented
+- Auto-seed missing `output_info`, `output_settings` and `comparison_settings` databases on first run
+- Seed `bin/highs.opt` from tracked template on first run
+- `scaling_benchmark` harness relocated to `benchmarks/scaling`; unit tests moved to `tests/`
+- `min_load_efficiency` section-term test promoted from xfail to passing
+
+## Release 3.27.0 (22.4.2026)
+**Bug fixes**
+- Annualize `nodeGroup_flows_d_gpe` to match the `node_d_ep` convention
+- Column misalignment in `ed_lifetime_fixed_cost[_divest].csv` writers
+- Harden axis-manifest override against `None` active_scenarios
+- Sum only over `stack_levels` in shared axis-bound resolution
+- Reserve provision with a timeseries reserve requirement
+- Reserve provision active only when there is demand
+- Delete dead plot functions
+
+**New features**
+- Parameter groups — every parameter now assigned to a group; "Outputs" renamed to "output"
+- Parameter-group colours re-tuned for readability in both light and dark theme
+- Colour template infrastructure for plots: category-based colouring (costs, node_flows) and entity_class.group colouring (flowGroup)
+- Cross-scenario axis-bounds manifest — viewer reads shared bounds so y-axes stay stable across scenarios
+- Per-scenario axis manifest with subset filter
+- Composite colour lookup for `nodeGroup_flows` plots
+- Colour template plumbed into the batch render path
+- Plot plan JSON cleanup (redundant timestep fields dropped)
+- Group-output parameters renamed; `output_results` split; flow-group indicator stub added
+- Alphabetical sorting of subplots
+- Periods ordered left-to-right in vertical p-variant bar plots
+
+## Release 3.26.0 (21.4.2026)
+**Bug fixes**
+- Negative-remaining infeasibility in cumulative price-ladder cap
+- Bug in `realized_invest` uniqueness
+- Parameter_type_list corrections across migrations and master template
+
+**New features**
+- Commodity price ladder — `price_method`, `unitsize`, `price_ladder` parameters for commodities
+- `v_trade` variable (MWh × unitsize) with tier caps and objective routing
+- Rolling cumulative-quota handoff for `price_ladder_cumulative` — per-period accumulators preserve remaining quota across rolls
+- Two-roll cumulative-ladder validation scenario
+- Rolling-aware `co2_max_total` with per-period accumulators
+- Node-type consolidation aligned with the ladder work
+
+## Release 3.25.0 (20.4.2026)
+**Bug fixes**
+- Align `fix_storage_*.csv` header between init and phase 3
+- Carry fractional tail in `write_years_represented` (tested at R=2.5)
+- `canonical_sort` sorts stably by `solve_pos` only, preserving within-solve order
+- Drop `_round_to_sig` from the parquet read path
+- Reindex `extract_variable` output to canonical phase-1 row order
+
+**New features**
+- Direct HiGHS → parquet extraction replaces the phase-3 glpsol reader round-trip for solver outputs and solve handoffs
+- Phase-3 glpsol retirement — derived-parameter printfs moved pre-solve; readers repointed at `input/` and `solve_data/`
+- Canonicalise row order by solve-creation order across all readers
+- `has_balance`, `has_storage` and `node_type` consolidated into a single `node_type` enum
+- Parquet `VariableSpec` column names aligned with CSV readers
+- `empty_variable_frame` helper for same-shape empties
+
+## Release 3.24.0 (19.4.2026)
+**Bug fixes**
+- `storage_state_start` first-timestep semantics corrected for cyclic bindings
+- Goldens regenerated for the sink-flow coefficient flip
+
+**New features**
+- `coefficient` on capacity constraints split into `flow_coefficient`, `max_capacity_coefficient`, `min_capacity_coefficient`
+- Sink-side `flow_coefficient` flipped from division to multiplication — both sides of the balance now use the same convention
+- New `pre_built` capacity-coefficient term alongside the invested term
+- Growth-cap recipe documented
+- Lifetime-aware dispatch capacity bound
+- `max_flow_for_unconstrained_variables` model parameter replaces the previous 1e6 literal
+- CO2 duals exposed; `rp_cost_weight` threaded into constraints; horizon-vs-annual outputs distinguished
+- `timeset_weights` wired through the runner (populates `rp_cost_weight.csv`)
+- `no_investment` handled as a `lifetime_method`
+
+## Release 3.23.0 (17.4.2026)
+**Bug fixes**
+- Pre-processing now also updates the solve `period_timeset`
+- Step duration correctly applied in period aggregations of flow-derived outputs
+- Reserve Excel handling fixed
+
+**New features**
+- Greedy convex-hull clustering for representative-period selection
+- Representative-period storage binding via `bind_using_blended_weights` (renamed from `bind_using_rp_weights`)
+- `bind_intraperiod_blocks` storage binding method for LTS-style intra-period blocks (blocks defined by gaps in timeline indices)
+- Multi-year wind `no_investment` scenario test and goldens
+- Base-weighted scenario test and goldens
+- Delays for units and connections (constant or map)
+- `5weeks_battery_intraperiod_blocks` scenario test and goldens
+
+## Release 3.22.0 (7.4.2026)
+**Bug fixes**
+- Parquet loading strips the scenario column level
+- `savefig` works for `Figure()` objects not registered with `pyplot`
+- Threading errors from `plt.figure()` replaced with `Figure()` usage
+- Dispatch colors and `nodeGroup` filtering
+- Cancel pending `draw_idle` to prevent redundant re-renders
+- Numerous canvas / toolbar jitter fixes (freeze/thaw around draws, layout locking)
+- Legend clipping, tree navigation, canvas clearing
+- Stacked-area plot axis limits
+- Empty `years_represented` for rolling dispatch solves
+- CO2 emissions parquet key mismatch
+- Scenarios without connections
+
+**New features**
+- `PlotPlan` — pre-computed plot plans saved to disk
+- Threaded figure building with prefetch cache and memory-based GB cache limit
+- Time-series downsampling via `tsdownsample` with a numpy fallback
+- Network graph visualisation from the Spine database
+- Cross-scenario dispatch y-limits and column consistency
+- Comparison-mode parquet pipeline
+- Availability manifest for three-level variant display
+- Redesigned three-level variant navigation (Shift+Up/Down to next row with data at focus column)
+- `PlotPlan` unit tests
+- YAML config restructured with entry names as top-level keys
+- Per-variant `plot_name` and explicit `variant` field in configs
+- Dispatch mode in Result Viewer
+- `combine_scenario_parquets` and comparison checkboxes in the viewer
+- Parquet file-size reduction by dropping DataFrame multi-index bloat
+
+## Release 3.21.0 (1.4.2026)
+**Bug fixes**
+- Handle scenarios without connections
+- Connection output for `method_2way_1var` (DC power flow)
+- Guard against all-NaN values in plotting
+- Reserve provision active only when there is demand for the reserve
+- Mac glpsol binary naming and selection across platforms
+- Fixed and cleaned-up test suite
+
+**New features**
+- DC power flow B-θ formulation in the GMPL model
+- Method resolution moved from GMPL to Python
+- DC power flow data pipeline and database migration
+- Output processing and parquet passthrough for DC power flow
+- MATPOWER import CLI wrapper
+- PGLib-OPF IEEE 14-bus integration test
+- 24-test DC power flow pytest suite
+- glpsol built for macOS, Linux and Windows via GitHub Actions (including macos-15 arm64)
+
+## Release 3.20.0 (29.3.2026)
+**Bug fixes**
+- Excel migration edge cases
+- Direct execution from Excel (`.xlsx`) corrected
+- GUI updated to handle different input Excel versions
+
+**New features**
+- FlexTool 2.0 importer — reads old FlexTool 2.0 Excel `.xlsm` files into a Spine database
+- Import of sensitivity scenarios from FlexTool 2.0
+- CLI entry point for FlexTool 2.0 sensitivity import
+- Version-aware importer that handles older FlexTool 3.0 Excels as well
+- `invest_method` support in the FT2 importer
+- `_inflow` renamed to `_node`; `_storage` used where applicable
+- `base` used instead of `Base` as the default alternative
+- Stochastic sheets in Excel
+- Improved Excel read/write roundtrip, including DB-to-Excel export
+- Dialog to migrate Excel files
+- Single source of truth for the FlexTool input DB version (`flextool/update_flextool/__init__.py`)
+
+## Release 3.19.0 (14.3.2026)
+**Bug fixes**
+- Execution runs from the FlexTool root with isolated work folders
+- Comparison Excel written to the correct directory
+- All scenarios no longer produce identical results
+- Output-actions column order, drag-select and spinbox sync
+- Foreground-color crash on start
+- Several threading and layout issues
+
+**New features**
+- Result Viewer window with scenario listbox, plot tree and variant panel
+- `PlotCache` with memory-based GB limit
+- `PlotCanvas` with PNG display wired into ResultViewer
+- Dark mode with `sv_ttk` and a theme-toggle radio
+- Font-relative and DPI-aware GUI sizing
+- Plot-settings dialog with YAML config parsing
+- Execution menu window with subprocess pool and parallel workers
+- Database version checking and auto-upgrade from the GUI
+- Custom file picker with last-modified column and sorting
+- Visual feedback: green/grey/red highlights, boxed outputs, auto-check
+- Keyboard shortcuts (including `Ctrl-A` to select all) and rearranged move arrows
+- DB-editor integration with process tracking
+- `--work-folder` support for parallel scenario execution
+- `--parquet-base-dir` for comparison without a database
+- `output_db_url` optional in `cmd_run_flextool`
+- Dual variant state in the viewer: desired (dashed) + shown (solid)
+- Animated hourglass spinner on output-action buttons
+- Persisted checkboxes, View button, sizing adjustments
+- Parent-directory button in the file-picker dialog
+
+## Release 3.18.0 (27.2.2026)
+**Bug fixes**
+- Fix reading input files in `run_flextool.py`
+- Many small issues surfaced by the refactor fixed so all examples execute
+
+**New features**
+- Major refactoring into deep modules — package structure reorganised for separation of concerns
+- New subdirectories to keep the FlexTool root uncluttered
+- Initialisation now also creates settings databases
+- Updated `update_flextool.py`
+- Walked back global `flextool` CLI commands — they do not work with multiple installs
+- Added `output_info_template.sqlite`
+- `flextool_location.txt` for runner discovery
+
+## Release 3.17.0 (14.1.2026)
+**Bug fixes**
+- Float-to-string handling in the import spec
+- Node-summary column alignment
+- `nodeBalancePeriod` uses `pdtNodeInflow` (sum over period) instead of `annual_flow` (`annual_flow` should not carry a sign)
+- Rolling-model fixes including `p_roll_continue` handling
+
+**New features**
+- Excel import specification
+- Direct Excel-to-DB read pipeline
+- Calamine engine for faster spreadsheet reading
+- Full FlexTool execution from Python — no Toolbox required
+- Removed data checks from later solves (they belong in the first solve)
+
+## Release 3.16.0 (5.12.2025)
+**Bug fixes**
+- Fixed costs split off from investment costs and their calculation corrected
+- `years_represented` with a discount factor >1 now calculated correctly
+- Timestep durations checked to be positive and non-zero
+
+**New features**
+- Speed-up in Python output writing
+- Result list refactored
+- Old `write_outputs.mod` glpsol output code removed from `flextool.mod`
+- Further plotting enhancements and minor refactoring
+- `solve_progress.csv` with timings and scenario name
+- Vertical plots, sums and means, better subplot spacing
+- `write_outputs` can be used to plot a single ad-hoc time series
+
+## Release 3.15.0 (2.12.2025)
+**Bug fixes**
+- `costs_discounted.csv` calculation for multi-year models
+- Empty sets and rolling-model crashes
+- Negative capacity units handling in outputs
+- Inertia calculation in outputs
+- Missing `fix_storage_time_lists`
+- Several output-processing bugs (ramp, investment, storage, group results)
+
+**New features**
+- Python post-processing pipeline reaches parity with the old glpsol `write_outputs.mod` — all result CSVs replicated except node ramp envelopes
+- Scenario-comparison specification (`scenario_comparison.json`) and combined-scenario results framework
+- Removed redundant `fix_storage` constraint that used `dt_realized_dispatch`
+- First ugly-duckling plotting on top of the Python pipeline
+
 ## Release 3.14.0 (6.8.2025)
 **Bug fixes**
 - Fixing problems with group results (wrong signs)
