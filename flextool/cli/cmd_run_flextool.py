@@ -80,10 +80,15 @@ def main():
     parser.add_argument('--use-old-raw-csv', action='store_true', default=False,
                         help='Keep only the legacy glpsol-driven output_raw/*.csv pathway; '
                              'skip the HiGHS → parquet extractor.')
-    parser.add_argument('--highs-threads', metavar='N', type=int, default=4,
-                        help='Number of threads HiGHS may use for the MIP / LP solve (default: 4). '
-                             'Set to 1 to force serial solves (useful when running many scenarios '
-                             'in parallel on the same machine — give each scenario its own core).')
+    parser.add_argument('--highs-threads', metavar='N', type=int, default=1,
+                        help='Number of threads HiGHS may use for the MIP / LP solve (default: 1). '
+                             'Serial is the reliable default because HiGHS PAMI (parallel dual '
+                             'simplex) can stall indefinitely on degenerate LPs that reappear with '
+                             'tiny post-optimality residuals — observed across HiGHS 1.11 / 1.12 / '
+                             '1.14 on rivendell hydro-cascade and UC scenarios. Raise this only on '
+                             'machines with spare cores AND after confirming PAMI is actually '
+                             'faster on your specific model; be ready to drop back to 1 if stalls '
+                             'resurface.')
     parser.add_argument('--precision-digits', metavar='N', type=int, default=None,
                         help='Round every numeric input parameter to N significant '
                              'figures before writing CSVs (typical: 10).  '

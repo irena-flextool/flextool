@@ -6,3 +6,13 @@ mip_heuristic_effort=0.5
 mip_detect_symmetry=true
 mip_rel_gap=0.002
 log_to_console=true
+# Serial dual simplex by default.  HiGHS PAMI (parallel dual simplex)
+# can stall indefinitely on degenerate LPs where a tiny post-optimality
+# residual (e.g. 1e-6) reappears after the quality rescan: concurrent
+# trajectories cannot agree on how to clear it and the Markowitz-bump
+# loop runs forever.  Observed across HiGHS 1.11 / 1.12 / 1.14 on
+# rivendell hydro-cascade and UC scenarios.  Enable parallel only if
+# PAMI is measurably faster on YOUR model AND your machine has >= 8
+# spare threads (PAMI concurrency is hardcoded to 8 inside HiGHS;
+# oversubscription makes the stall worse).
+parallel=off
