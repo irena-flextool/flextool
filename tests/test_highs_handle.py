@@ -232,3 +232,30 @@ def test_num_cols_and_rows(handle: HighsModelHandle) -> None:
     assert handle.num_rows() == 1
     handle.add_row("extra", {0: 1.0}, upper=100.0)
     assert handle.num_rows() == 2
+
+
+# ---------------------------------------------------------------------------
+# Defensive consistency check (per Juha 2026-04-24 heads-up on scaling paths)
+# ---------------------------------------------------------------------------
+def test_check_consistency_reports_ok_for_fresh_map(handle: HighsModelHandle) -> None:
+    """Freshly-built name maps match the live Lp → no diagnostic."""
+    assert handle.check_consistency() is None
+
+
+def test_check_consistency_detects_stale_cached_index(
+    handle: HighsModelHandle,
+) -> None:
+    """Corrupting the cache simulates a column reorder; the check should
+    surface a diagnostic rather than silently returning wrong indices."""
+    # Swap two cached indices — emulates a post-reorder stale map.
+    handle.col_by_name["x[1]"], handle.col_by_name["x[2]"] = (
+        handle.col_by_name["x[2]"],
+        handle.col_by_name["x[1]"],
+    )
+    diag = handle.check_consistency()
+    assert diag is not None
+    assert "x[" in diag
+
+    # Rebuild restores consistency.
+    handle.build_name_maps()
+    assert handle.check_consistency() is None

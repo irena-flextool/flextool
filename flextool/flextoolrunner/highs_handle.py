@@ -154,6 +154,41 @@ class HighsModelHandle:
         ]
         return sorted(matches)
 
+    def check_consistency(self) -> str | None:
+        """Verify every cached ``col_by_name`` / ``row_by_name`` entry
+        still matches the live ``Highs`` Lp.
+
+        Returns a short human-readable diagnostic when stale (callers
+        typically respond by calling :meth:`build_name_maps` and
+        re-resolving their cached column/row indices) or ``None`` when
+        consistent.
+
+        Motivation: decomposition loops (Lagrangian, Benders) cache
+        indices returned from :meth:`cols_matching` and then call
+        :meth:`change_costs` / :meth:`fix_cols` every outer iteration.
+        If anything between solves reorders the Lp's columns — notably
+        scaling or presolve pathways that rewrite the model — those
+        cached indices silently address the wrong columns.  This is a
+        cheap (O(n) dict scan) consistency check meant to be called
+        once per outer iteration as defensive insurance.
+        """
+        lp = self.h.getLp()
+        n_cols = len(lp.col_names_)
+        for name, idx in self.col_by_name.items():
+            if idx >= n_cols:
+                return f"cached col {name!r} at idx {idx} out of range (n={n_cols})"
+            actual = lp.col_names_[idx]
+            if actual != name:
+                return f"col idx {idx}: cached {name!r}, live {actual!r}"
+        n_rows = len(lp.row_names_)
+        for name, idx in self.row_by_name.items():
+            if idx >= n_rows:
+                return f"cached row {name!r} at idx {idx} out of range (n={n_rows})"
+            actual = lp.row_names_[idx]
+            if actual != name:
+                return f"row idx {idx}: cached {name!r}, live {actual!r}"
+        return None
+
     # ------------------------------------------------------------------
     # Column bounds
     # ------------------------------------------------------------------

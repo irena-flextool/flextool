@@ -567,6 +567,24 @@ def run_lagrangian(
     for it in range(1, max_iterations + 1):
         alpha_k = alpha / math.sqrt(it)
 
+        # 0. Defensive: scaling or presolve pathways can in principle
+        #    reorder columns between solves.  Flagged by Juha 2026-04-24
+        #    during post-merge integration.  If any cached col/row
+        #    index drifted, rebuild the name map and re-resolve the
+        #    coupling columns before applying λ — otherwise
+        #    change_costs would silently address the wrong columns.
+        for region in regions:
+            diag = handles[region].check_consistency()
+            if diag is not None:
+                logger.warning(
+                    "Lagrangian it=%d region=%s: rebuilding name map (%s)",
+                    it, region, diag,
+                )
+                handles[region].build_name_maps()
+                _resolve_coupling_columns(
+                    handles[region], region, couplings, half_flows_by_region[region],
+                )
+
         # 1. Update each region's objective with current λ.
         for region in regions:
             _apply_lambda_costs(handles[region], region, couplings)
