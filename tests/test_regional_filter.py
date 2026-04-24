@@ -205,16 +205,21 @@ class TestRegionAMembership:
             "pipe_AB should be removed from region_A process_connection.csv "
             "(replaced by half-flow)"
         )
-        # Virtual half-flow connection present.
-        virtual_name = "pipe_AB__export__region_A"
-        assert virtual_name in process_conn, (
-            f"{virtual_name!r} (export half-flow) should be in "
+        # Virtual half-flow connection present.  Naming convention
+        # (Agent 3.2): virtual CONNECTION has an ``hf_`` prefix so it
+        # is distinct from the virtual NODE (which keeps the
+        # ``<pipe>__<side>__<region>`` stem) — entity.csv carries
+        # both, and GMPL flags a duplicate tuple otherwise.
+        virtual_node = "pipe_AB__export__region_A"
+        virtual_connection = "hf_pipe_AB__export__region_A"
+        assert virtual_connection in process_conn, (
+            f"{virtual_connection!r} (export half-flow) should be in "
             f"region_A process_connection.csv"
         )
         # Virtual node present in node.csv.
         nodes = _first_col_set(out / "node.csv")
-        assert virtual_name in nodes, (
-            f"virtual export node {virtual_name!r} should appear in "
+        assert virtual_node in nodes, (
+            f"virtual export node {virtual_node!r} should appear in "
             f"region_A node.csv"
         )
         # pipe_BC is not in region_A at all.
@@ -226,7 +231,8 @@ class TestRegionAMembership:
         assert hf.original_connection == "pipe_AB"
         assert hf.side == "export"
         assert hf.in_region_node == "lh2_A"
-        assert hf.virtual_node == virtual_name
+        assert hf.virtual_node == virtual_node
+        assert hf.virtual_connection == virtual_connection
 
     def test_region_a_process_source_sink(
         self, region_a_dir: tuple[Path, dict]
@@ -235,16 +241,18 @@ class TestRegionAMembership:
         # process__source.csv contains (process, source)
         src_rows = _read_rows(out / "process__source.csv")[1:]
         src_map = {r[0]: r[1] for r in src_rows if len(r) >= 2}
-        # The virtual export connection has source = lh2_A (the in-region
-        # endpoint) and sink = the virtual node.
-        virtual = "pipe_AB__export__region_A"
-        assert src_map.get(virtual) == "lh2_A", (
-            f"expected {virtual} source to be lh2_A, got {src_map.get(virtual)!r}"
+        # The virtual export connection (hf_-prefixed) has source = lh2_A
+        # (the in-region endpoint) and sink = the virtual node (un-prefixed).
+        virtual_node = "pipe_AB__export__region_A"
+        virtual_connection = "hf_pipe_AB__export__region_A"
+        assert src_map.get(virtual_connection) == "lh2_A", (
+            f"expected {virtual_connection} source to be lh2_A, "
+            f"got {src_map.get(virtual_connection)!r}"
         )
         snk_rows = _read_rows(out / "process__sink.csv")[1:]
         snk_map = {r[0]: r[1] for r in snk_rows if len(r) >= 2}
-        assert snk_map.get(virtual) == virtual, (
-            f"expected {virtual} sink to be the virtual node itself"
+        assert snk_map.get(virtual_connection) == virtual_node, (
+            f"expected {virtual_connection} sink to be {virtual_node}"
         )
 
 
@@ -285,11 +293,13 @@ class TestRegionBHasImportAndExport:
     ) -> None:
         out, _ = region_b_dir
         pc = _first_col_set(out / "process_connection.csv")
-        # Originals removed, virtuals present.
+        # Originals removed, virtuals present.  Virtual CONNECTIONs use
+        # the ``hf_`` prefix (Agent 3.2 naming fix) so they're distinct
+        # from virtual NODEs in entity.csv.
         assert "pipe_AB" not in pc
         assert "pipe_BC" not in pc
-        assert "pipe_AB__import__region_B" in pc
-        assert "pipe_BC__export__region_B" in pc
+        assert "hf_pipe_AB__import__region_B" in pc
+        assert "hf_pipe_BC__export__region_B" in pc
 
     def test_region_b_source_sink_wiring(
         self, region_b_dir: tuple[Path, dict]
@@ -299,14 +309,18 @@ class TestRegionBHasImportAndExport:
         src_map = {r[0]: r[1] for r in src_rows if len(r) >= 2}
         snk_rows = _read_rows(out / "process__sink.csv")[1:]
         snk_map = {r[0]: r[1] for r in snk_rows if len(r) >= 2}
-        # Import half-flow: source = virtual node, sink = in-region node
-        v_in = "pipe_AB__import__region_B"
-        assert src_map.get(v_in) == v_in
-        assert snk_map.get(v_in) == "lh2_B"
+        # Import half-flow: virtual CONNECTION is ``hf_<pipe>__import__
+        # <region>``; source = virtual NODE (un-prefixed stem), sink =
+        # in-region node.
+        v_in_conn = "hf_pipe_AB__import__region_B"
+        v_in_node = "pipe_AB__import__region_B"
+        assert src_map.get(v_in_conn) == v_in_node
+        assert snk_map.get(v_in_conn) == "lh2_B"
         # Export half-flow: source = in-region node, sink = virtual node
-        v_out = "pipe_BC__export__region_B"
-        assert src_map.get(v_out) == "lh2_B"
-        assert snk_map.get(v_out) == v_out
+        v_out_conn = "hf_pipe_BC__export__region_B"
+        v_out_node = "pipe_BC__export__region_B"
+        assert src_map.get(v_out_conn) == "lh2_B"
+        assert snk_map.get(v_out_conn) == v_out_node
 
 
 class TestRegionCMembership:
