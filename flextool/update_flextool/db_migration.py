@@ -2011,11 +2011,17 @@ def _migrate_v50_new_stepduration_to_solve(db) -> None:
     parameter_definitions = db.mapped_table("parameter_definition")
 
     # --- Step 1: capture existing definition metadata ---------------
-    timeset_def = db.item(
-        parameter_definitions,
-        entity_class_name="timeset",
-        name="new_stepduration",
-    )
+    # ``db.item`` raises ``SpineDBAPIError`` when the row is absent
+    # (spinedb_api ≥ 0.34); the fallback branch below was written for
+    # the older silently-None return, so guard with try/except.
+    try:
+        timeset_def = db.item(
+            parameter_definitions,
+            entity_class_name="timeset",
+            name="new_stepduration",
+        )
+    except SpineDBAPIError:
+        timeset_def = None
     if timeset_def is None:
         # Nothing to migrate — schema was already missing the old
         # definition (hand-edited DB).  Create the solve-level

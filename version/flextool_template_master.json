@@ -783,6 +783,10 @@
       "dc_power_flow_with_angles"
     ],
     [
+      "transfer_methods_group",
+      "unidirectional"
+    ],
+    [
       "yes_no",
       "yes"
     ],
@@ -1474,7 +1478,7 @@
       "transfer_method",
       "use_connection_transfer_methods",
       "transfer_methods_group",
-      "Override transfer_method for all connections within this nodeGroup. Options: use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, variable_cost_only, dc_power_flow_with_angles. When set to dc_power_flow_with_angles, connections between member nodes use B-theta DC power flow (requires reactance parameter on connections).",
+      "Override transfer_method for all connections within this nodeGroup. Options: use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, variable_cost_only, unidirectional, dc_power_flow_with_angles. Setting 'unidirectional' gates every member connection to one-way flow (source → sink only). Setting 'dc_power_flow_with_angles' uses B-theta DC power flow (requires reactance on connections).",
       "network"
     ],
     [
