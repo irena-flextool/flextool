@@ -123,6 +123,32 @@ def main():
                              '``solve_data/region_coupling.csv``.  When this '
                              'flag is set, GMPL is NOT invoked — this is the '
                              'filter-only entry point used by the coordinator.')
+    parser.add_argument('--decomposition',
+                        metavar='SCHEME',
+                        choices=['none', 'lagrangian'],
+                        default='none',
+                        help='Run the full solve via a decomposition scheme '
+                             'instead of the monolithic orchestrator.  Only '
+                             '``lagrangian`` is currently supported: it drives '
+                             'one HiGHS instance per decomposition-region and '
+                             'prices the cross-region pipeline flows via a '
+                             'damped subgradient on λ until the '
+                             'primal-average imbalance is below tolerance '
+                             '(Agent 3.2).  Requires at least two groups '
+                             'declared with ``decomposition_method='
+                             '"lagrangian_region"``.  See docs/decomposition'
+                             '.md for the full workflow.')
+    parser.add_argument('--lagrangian-alpha', type=float, default=0.1,
+                        help='Base step size for the Lagrangian subgradient '
+                             'loop (default 0.1).  The actual per-iteration '
+                             'step is ``α / √k``.')
+    parser.add_argument('--lagrangian-max-iter', type=int, default=80,
+                        help='Maximum outer-loop iterations for '
+                             '``--decomposition lagrangian`` (default 80).')
+    parser.add_argument('--lagrangian-tolerance', type=float, default=1.0,
+                        help='Tail-averaged imbalance threshold (primal '
+                             'units) for declaring Lagrangian convergence '
+                             '(default 1.0).')
     parser.add_argument('--auto-scale', action='store_true', default=False,
                         help='Apply the per-solve ScaleAnalyzer recommendation '
                              'for use_row_scaling (Agent 8, LP-scaling).  Without '
@@ -200,6 +226,54 @@ def main():
             f"{[hf.virtual_node for hf in result['half_flows']]}"
         )
         sys.exit(0)
+
+    # --- Lagrangian decomposition mode (Agent 3.2) ----------------------
+    # ``--decomposition lagrangian`` drives the spatial Lagrangian
+    # coordinator instead of the monolithic orchestrator.  Requires the
+    # scenario to declare ≥ 2 decomposition-region groups; we bail out
+    # with a clear error if that precondition is unmet.
+    if args.decomposition == 'lagrangian':
+        from flextool.flextoolrunner.lagrangian import run_lagrangian
+        from flextool.flextoolrunner import region_filter as _region_filter
+        if not scenario_name:
+            logging.error(
+                "--decomposition lagrangian requires --scenario-name (the "
+                "group filter needs to know which DB scenario to read)."
+            )
+            sys.exit(-1)
+        regions_detected = _region_filter.discover_decomposition_regions_from_db(input_db_url)
+        if len(regions_detected) < 2:
+            logging.error(
+                "--decomposition lagrangian needs at least two groups with "
+                "decomposition_method='lagrangian_region' in the scenario; "
+                "found %s.", regions_detected or '(none)',
+            )
+            sys.exit(-1)
+        try:
+            lag_logger = logging.getLogger("flextool.lagrangian")
+            result = run_lagrangian(
+                db_url=input_db_url,
+                scenario=scenario_name,
+                alpha=args.lagrangian_alpha,
+                max_iterations=args.lagrangian_max_iter,
+                tolerance=args.lagrangian_tolerance,
+                work_folder=work_folder,
+                logger=lag_logger,
+                precision_digits=effective_precision,
+            )
+        except Exception as exc:
+            logging.error("Lagrangian coordinator failed: %s", exc, exc_info=True)
+            sys.exit(1)
+        print(
+            f"Lagrangian decomposition: converged={result.converged}, "
+            f"iterations={result.iterations}, "
+            f"total_objective={result.total_objective:.6g}"
+        )
+        for r, obj in result.region_objectives.items():
+            print(f"  region {r}: {obj:.6g}")
+        for pipe, lam in result.final_lambdas.items():
+            print(f"  λ[{pipe}] = {lam:.6g}")
+        sys.exit(0 if result.converged else 1)
 
     if scenario_name:
         runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm)
