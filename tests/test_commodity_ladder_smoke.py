@@ -285,25 +285,25 @@ class TestLadderPerPeriodAnnual:
         url = json_to_db(TEST_DIR / "fixtures" / "tests.json", db_path)
         migrate_database(url, up_to=40)
 
-        # 2d: Map(tier -> Map(period -> {price, quantity})).  Only a
-        # single-period fixture is available in tests.json; we repeat
-        # the period twice to confirm the 2d shape is accepted and the
-        # CSV row-schema is (commodity, tier, period, price, quantity).
+        # 3d_map: Map(period -> Map(tier -> {price, quantity})).  Only a
+        # single-period fixture is available in tests.json; we confirm
+        # the 3d_map shape is accepted and the CSV row-schema is
+        # (commodity, period, tier, price, quantity) — period outer,
+        # matching the user-facing format documented on the
+        # commodity.price_ladder_annual parameter.
         price_ladder_2d = Map(
-            ["1", "2"],
+            ["p2020"],
             [
                 Map(
-                    ["p2020"],
-                    [Map(["price", "quantity"], [20.0, 1.0])],
-                    index_name="period",
-                ),
-                Map(
-                    ["p2020"],
-                    [Map(["price", "quantity"], [50.0, float("inf")])],
-                    index_name="period",
+                    ["1", "2"],
+                    [
+                        Map(["price", "quantity"], [20.0, 1.0]),
+                        Map(["price", "quantity"], [50.0, float("inf")]),
+                    ],
+                    index_name="tier",
                 ),
             ],
-            index_name="tier",
+            index_name="period",
         )
 
         with DatabaseMapping(url) as db_map:
@@ -335,7 +335,7 @@ class TestLadderPerPeriodAnnual:
         ann_csv = workdir / "input" / "commodity_ladder_annual.csv"
         assert ann_csv.exists(), f"missing {ann_csv}"
         header = ann_csv.read_text().splitlines()[0]
-        assert header == "commodity,tier,period,price,quantity", header
+        assert header == "commodity,period,tier,price,quantity", header
 
         # At least two rows (one per tier for p2020) with the 2d layout.
         lines = ann_csv.read_text().splitlines()[1:]

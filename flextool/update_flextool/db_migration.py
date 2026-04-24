@@ -689,28 +689,30 @@ def migrate_database(database_path, up_to: int | None = None):
                     "parameter_definition",
                     entity_class_name="commodity",
                     name="price_ladder_cumulative",
-                    parameter_type_list=("1d_map",),
+                    parameter_type_list=("2d_map",),
                     description=(
                         "Stepped supply curve for "
                         "price_method='price_ladder_cumulative'.  "
-                        "Structure: Map(tier -> {price, quantity}).  "
-                        "1-based integer tier index.  quantity=inf marks an "
-                        "unbounded tail tier.  Period-agnostic — the cap is "
-                        "a single total across the full model horizon."
+                        "2d map with rows 'tier,price,quantity' — one row "
+                        "per tier, giving the tier's unit price and its "
+                        "cumulative quantity cap.  1-based integer tier "
+                        "index.  quantity=inf marks an unbounded tail tier.  "
+                        "Period-agnostic — the cap is a single total across "
+                        "the full model horizon."
                     ),
                 )
                 db.add_update_item(
                     "parameter_definition",
                     entity_class_name="commodity",
                     name="price_ladder_annual",
-                    parameter_type_list=("1d_map", "2d_map"),
+                    parameter_type_list=("2d_map", "3d_map"),
                     description=(
                         "Stepped supply curve for "
                         "price_method='price_ladder_annual'.  Two forms "
-                        "accepted: 1d Map(tier -> {price, quantity}) applies "
-                        "the same limit every period; 2d "
-                        "Map(tier -> Map(period -> {price, quantity})) "
-                        "varies per period.  1-based integer tier.  "
+                        "accepted: 2d map with rows 'tier,price,quantity' "
+                        "applies the same per-year limit every period; 3d "
+                        "map with rows 'period,tier,price,quantity' varies "
+                        "the limit per period.  1-based integer tier.  "
                         "quantity=inf marks an unbounded tail tier."
                     ),
                 )
