@@ -316,6 +316,118 @@ class TestValidateGroupMembership:
             decomposition_groups={"region_a": "lagrangian_region"},
         )  # no raise
 
+    # ---- Agent 1.7: reserve-block compatibility ---------------------------
+
+    def test_reserve_group_node_in_resolution_group_raises(self) -> None:
+        """V1: a node belonging to a reserve group and a
+        resolution-group at the same time is rejected."""
+        with pytest.raises(FlexToolConfigError) as excinfo:
+            validate_group_membership(
+                group_unit=[],
+                group_connection=[],
+                group_node=[
+                    ("daily", "n1"),
+                    ("reserve_up_group", "n1"),
+                ],
+                resolution_groups={"daily": 24.0},
+                decomposition_groups={},
+                reserve_upDown_group=[
+                    ("primary", "up", "reserve_up_group"),
+                ],
+            )
+        msg = str(excinfo.value)
+        assert "n1" in msg
+        assert "reserve" in msg.lower()
+
+    def test_reserve_participating_process_in_resolution_group_raises(
+        self,
+    ) -> None:
+        """V1: a process listed in process_reserve_upDown_node is
+        rejected when it carries a resolution-group membership."""
+        with pytest.raises(FlexToolConfigError) as excinfo:
+            validate_group_membership(
+                group_unit=[("daily", "gen1")],
+                group_connection=[],
+                group_node=[],
+                resolution_groups={"daily": 24.0},
+                decomposition_groups={},
+                reserve_upDown_group=[
+                    ("primary", "up", "reserve_up_group"),
+                ],
+                process_reserve_upDown_node=[
+                    ("gen1", "primary", "up", "elec_node"),
+                ],
+            )
+        msg = str(excinfo.value)
+        assert "gen1" in msg
+        assert "reserve" in msg.lower()
+
+    def test_reserve_participating_process_node_in_resolution_group_raises(
+        self,
+    ) -> None:
+        """V1: the *node* that a reserve-participating process connects
+        to must also be on the default block."""
+        with pytest.raises(FlexToolConfigError) as excinfo:
+            validate_group_membership(
+                group_unit=[],
+                group_connection=[],
+                group_node=[("daily", "elec_node")],
+                resolution_groups={"daily": 24.0},
+                decomposition_groups={},
+                reserve_upDown_group=[
+                    ("primary", "up", "reserve_up_group"),
+                ],
+                process_reserve_upDown_node=[
+                    ("gen1", "primary", "up", "elec_node"),
+                ],
+            )
+        msg = str(excinfo.value)
+        assert "elec_node" in msg
+
+    def test_reserve_entities_on_default_block_ok(self) -> None:
+        """Reserve participants whose resolution-group membership is
+        empty (i.e. effectively default block) pass validation."""
+        validate_group_membership(
+            group_unit=[],
+            group_connection=[],
+            # only a regular (non-resolution) group.
+            group_node=[("reserve_up_group", "elec_node")],
+            resolution_groups={"daily": 24.0},  # daily declared but unused
+            decomposition_groups={},
+            reserve_upDown_group=[
+                ("primary", "up", "reserve_up_group"),
+            ],
+            process_reserve_upDown_node=[
+                ("gen1", "primary", "up", "elec_node"),
+            ],
+        )  # no raise
+
+    def test_no_reserves_defined_rule_is_noop(self) -> None:
+        """When no reserves are defined the rule shouldn't fire even if
+        some entities sit in resolution groups."""
+        validate_group_membership(
+            group_unit=[("daily", "gen1")],
+            group_connection=[],
+            group_node=[("daily", "elec_node")],
+            resolution_groups={"daily": 24.0},
+            decomposition_groups={},
+            reserve_upDown_group=[],
+            process_reserve_upDown_node=[],
+        )  # no raise
+
+    def test_reserve_check_backward_compatible_with_keyword_omission(
+        self,
+    ) -> None:
+        """Old callers that don't pass the reserve arguments at all must
+        still work (the rule can't fire without the data)."""
+        validate_group_membership(
+            group_unit=[("daily", "gen1")],
+            group_connection=[],
+            group_node=[],
+            resolution_groups={"daily": 24.0},
+            decomposition_groups={},
+        )  # no raise
+
 
 # ---------------------------------------------------------------------------
 # derive_block_predecessors (Agent 1.4)

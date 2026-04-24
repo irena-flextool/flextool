@@ -2465,6 +2465,68 @@ if p_model["solveFirst"] == 1 && 'read' in phase then {
          (p, 'sink', b_out) in process__side__block,
          (p, b_proc) in process__block} :
     b_in == b_proc && b_out == b_proc;
+
+  # -----------------------------------------------------------------------
+  # Agent 1.7: structural block-invariant checks.
+  #
+  # In the degenerate ('default'-only) case every check below is trivially
+  # satisfied because node__block / process__block / process__side__block
+  # each carry exactly one row per entity at 'default'.  These guard the
+  # CSVs produced by flextool/flextoolrunner/blocks.py against silent
+  # corruption (e.g. a hand-edited solve_data/entity_block.csv) and stop
+  # the LP build before the block-aware sums misbehave.
+  # -----------------------------------------------------------------------
+
+  # 1. Every node must appear in node__block exactly once.
+  printf 'Checking: Every node is in exactly one block (node__block)\n';
+  check {n in node} : sum{(n, b) in node__block} 1 == 1;
+
+  # 2a. Every process must appear in process__block exactly once.
+  printf 'Checking: Every process is in exactly one unified block (process__block)\n';
+  check {p in process} : sum{(p, b) in process__block} 1 == 1;
+
+  # 2b. Every process must have exactly one source-side and one sink-side
+  # entry in process__side__block.
+  printf 'Checking: Every process has a source-side block (process__side__block)\n';
+  check {p in process} : sum{(p, 'source', b) in process__side__block} 1 == 1;
+  printf 'Checking: Every process has a sink-side block (process__side__block)\n';
+  check {p in process} : sum{(p, 'sink', b) in process__side__block} 1 == 1;
+
+  # 3. block_step_duration must be strictly positive everywhere it's
+  # declared.  The parameter is declared over block__period__step so this
+  # loop covers every used (block, period, step) triple.
+  printf 'Checking: block_step_duration is strictly positive\n';
+  check {(b, d, t) in block__period__step} : block_step_duration[b, d, t] > 0;
+
+  # 4. p_overlap must be in [0, 1].  Rows not present default to 0 so we
+  # only need to bound the explicit entries.
+  printf 'Checking: p_overlap is in [0, 1]\n';
+  check {(d, bc, tc, bf, tf) in overlap} :
+    p_overlap[d, bc, tc, bf, tf] >= 0 && p_overlap[d, bc, tc, bf, tf] <= 1;
+
+  # -----------------------------------------------------------------------
+  # Agent 1.7 reserve-block compatibility (V1).
+  #
+  # Reserves are intrinsically short-term (intra-hour in practice).
+  # Mixing reserves with coarse-resolution participants creates subtle
+  # semantic issues around energy vs. power aggregation.  V1 requires
+  # every reserve participant (reserve-group member nodes + reserve-
+  # participating processes) to sit on the default block so the reserve
+  # balance / reserve_process constraints can stay at the fine ``dt``
+  # index without overlap-aggregation gymnastics.  The Python-side
+  # validate_group_membership enforces the same rule at input-write time;
+  # duplicating the check here guarantees a solve-time failure even when
+  # the block CSVs were hand-edited.
+  # -----------------------------------------------------------------------
+  printf 'Checking: reserve-group member nodes must sit on the default block (Agent 1.7 V1)\n';
+  check {(r, ud, g) in reserve__upDown__group, (g, n) in group_node,
+         (n, b) in node__block} : b == 'default';
+  printf 'Checking: reserve-participating processes must sit on the default block (Agent 1.7 V1)\n';
+  check {(p, r, ud, n) in process_reserve_upDown_node,
+         (p, b) in process__block} : b == 'default';
+  printf 'Checking: reserve-participating process nodes must sit on the default block (Agent 1.7 V1)\n';
+  check {(p, r, ud, n) in process_reserve_upDown_node,
+         (n, b) in node__block} : b == 'default';
 }
 
 param setup := gmtime();
