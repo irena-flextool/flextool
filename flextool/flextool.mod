@@ -5874,6 +5874,20 @@ for {s in solve_current} {
 }
 
 
+# Agent 1.8: block-aware expansion.  Every fine (d, t) row resolves the
+# variable at the coarse step ``tc`` that covers ``t`` on the variable's
+# own resolution block (``process__block[p]`` for process-indexed
+# variables, ``node__block[n]`` for node-indexed variables).  The
+# sum-over-overlap pattern picks the unique ``(b_c, tc)`` pair whose
+# default-block fine step equals ``t`` — in the degenerate case every
+# node/process maps to 'default' and overlap carries identity rows
+# ``(d, 'default', t, 'default', t, 1.0)``, so each sum collapses to
+# ``v_foo[..., d, t].val`` and output CSVs are bit-identical to the
+# pre-Agent-1.8 state.  For non-degenerate (LH2-style) scenarios each
+# coarse value is broadcast across all fine timesteps it covers, so the
+# CSV stays rectangular at the finest resolution (design rule: "print
+# all at finest resolution and drop the block dimension").
+
 # Write v_flow
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/v_flow.csv";
@@ -5886,7 +5900,12 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_flow.csv";
     for {(p, source, sink) in process_source_sink} {
-        printf ",%.6g", v_flow[p, source, sink, d, t].val >> "output_raw/v_flow.csv";
+        printf ",%.6g",
+            sum {(p, b_p) in process__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_p and b_f = 'default' and tf = t}
+                v_flow[p, source, sink, d, tc].val
+            >> "output_raw/v_flow.csv";
     }
 }
 
@@ -5902,11 +5921,20 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_ramp.csv";
     for {(p, source, sink) in process_source_sink_ramp} {
-        printf ",%.6g", v_ramp[p, source, sink, d, t].val >> "output_raw/v_ramp.csv";
+        printf ",%.6g",
+            sum {(p, b_p) in process__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_p and b_f = 'default' and tf = t}
+                v_ramp[p, source, sink, d, tc].val
+            >> "output_raw/v_ramp.csv";
     }
 }
 
-# Write v_reserve
+# Write v_reserve.  Agent 1.7 V1 constraint pins every reserve-
+# participating process/node to the default block, so expansion here is
+# a no-op (the sum reduces to v_reserve[..., d, t].val directly).  The
+# overlap-based lookup is retained for consistency with the rest of the
+# variables and to remain correct when that V1 restriction is lifted.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/v_reserve.csv";
   for {(p, r, ud, n) in process_reserve_upDown_node_active} {printf ",%s", p >> "output_raw/v_reserve.csv";}
@@ -5920,7 +5948,13 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_reserve.csv";
     for {(p, r, ud, n) in process_reserve_upDown_node_active} {
-        printf ",%.6g", (if (p, r, ud, n, d, t) in prundt then v_reserve[p, r, ud, n, d, t].val else 0) >> "output_raw/v_reserve.csv";
+        printf ",%.6g",
+            sum {(p, b_p) in process__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_p and b_f = 'default' and tf = t
+                   and (p, r, ud, n, d, tc) in prundt}
+                v_reserve[p, r, ud, n, d, tc].val
+            >> "output_raw/v_reserve.csv";
     }
 }
 
@@ -5932,11 +5966,18 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_state.csv";
     for {n in nodeState} {
-        printf ",%.6g", v_state[n, d, t].val >> "output_raw/v_state.csv";
+        printf ",%.6g",
+            sum {(n, b_n) in node__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_n and b_f = 'default' and tf = t}
+                v_state[n, d, tc].val
+            >> "output_raw/v_state.csv";
     }
 }
 
-# Write v_online_linear
+# Write v_online_linear.  Agent 1.6 redeclared v_online_* at
+# p_online_dt (= process__block timesteps), so the overlap-based
+# lookup is required whenever the process block is not 'default'.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/v_online_linear.csv";
   for {p in process_online_linear} {printf ",%s", p >> "output_raw/v_online_linear.csv";}
@@ -5944,7 +5985,13 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_online_linear.csv";
     for {p in process_online_linear} {
-        printf ",%.6g", v_online_linear[p, d, t].val >> "output_raw/v_online_linear.csv";
+        printf ",%.6g",
+            sum {(p, b_p) in process__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_p and b_f = 'default' and tf = t
+                   and (p, d, tc) in p_online_dt}
+                v_online_linear[p, d, tc].val
+            >> "output_raw/v_online_linear.csv";
     }
 }
 
@@ -5956,7 +6003,13 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_startup_linear.csv";
     for {p in process_online_linear} {
-        printf ",%.6g", v_startup_linear[p, d, t].val >> "output_raw/v_startup_linear.csv";
+        printf ",%.6g",
+            sum {(p, b_p) in process__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_p and b_f = 'default' and tf = t
+                   and (p, d, tc) in p_online_dt}
+                v_startup_linear[p, d, tc].val
+            >> "output_raw/v_startup_linear.csv";
     }
 }
 
@@ -5968,7 +6021,13 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_shutdown_linear.csv";
     for {p in process_online_linear} {
-        printf ",%.6g", v_shutdown_linear[p, d, t].val >> "output_raw/v_shutdown_linear.csv";
+        printf ",%.6g",
+            sum {(p, b_p) in process__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_p and b_f = 'default' and tf = t
+                   and (p, d, tc) in p_online_dt}
+                v_shutdown_linear[p, d, tc].val
+            >> "output_raw/v_shutdown_linear.csv";
     }
 }
 
@@ -5980,7 +6039,13 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_online_integer.csv";
     for {p in process_online_integer} {
-        printf ",%.6g", v_online_integer[p, d, t].val >> "output_raw/v_online_integer.csv";
+        printf ",%.6g",
+            sum {(p, b_p) in process__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_p and b_f = 'default' and tf = t
+                   and (p, d, tc) in p_online_dt}
+                v_online_integer[p, d, tc].val
+            >> "output_raw/v_online_integer.csv";
     }
 }
 
@@ -5992,7 +6057,13 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_startup_integer.csv";
     for {p in process_online_integer} {
-        printf ",%.6g", v_startup_integer[p, d, t].val >> "output_raw/v_startup_integer.csv";
+        printf ",%.6g",
+            sum {(p, b_p) in process__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_p and b_f = 'default' and tf = t
+                   and (p, d, tc) in p_online_dt}
+                v_startup_integer[p, d, tc].val
+            >> "output_raw/v_startup_integer.csv";
     }
 }
 
@@ -6004,11 +6075,20 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_shutdown_integer.csv";
     for {p in process_online_integer} {
-        printf ",%.6g", v_shutdown_integer[p, d, t].val >> "output_raw/v_shutdown_integer.csv";
+        printf ",%.6g",
+            sum {(p, b_p) in process__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_p and b_f = 'default' and tf = t
+                   and (p, d, tc) in p_online_dt}
+                v_shutdown_integer[p, d, tc].val
+            >> "output_raw/v_shutdown_integer.csv";
     }
 }
 
-# Write v_angle (DC power flow voltage angles)
+# Write v_angle (DC power flow voltage angles).  V1 DC power flow
+# scenarios pin node_dc_power_flow nodes to the default block so the
+# overlap lookup collapses to identity; retained for symmetry with the
+# other writers.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/v_angle.csv";
   for {n in node_dc_power_flow} {printf ",%s", n >> "output_raw/v_angle.csv";}
@@ -6016,7 +6096,12 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_angle.csv";
     for {n in node_dc_power_flow} {
-        printf ",%.8g", v_angle[n, d, t].val >> "output_raw/v_angle.csv";
+        printf ",%.8g",
+            sum {(n, b_n) in node__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_n and b_f = 'default' and tf = t}
+                v_angle[n, d, tc].val
+            >> "output_raw/v_angle.csv";
     }
 }
 
@@ -6048,7 +6133,10 @@ for {s in solve_current, d in d_realize_invest} {
 # to un-scale the row-scaling division (Agent 5c).  In Mode A
 # node_cap = 1 so this is a no-op; in Mode B the variable lives in
 # "fraction of node_cap" units and this factor recovers the absolute
-# CSV magnitude.
+# CSV magnitude.  Agent 1.8: slack lives in the balance equation which
+# is emitted at the node's block; expand via the overlap set so fine-t
+# rows carry the coarse slack value.  Degenerate (block='default'):
+# identity sum, bit-identical.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_state_up.csv";
   for {n in (nodeBalance union nodeBalancePeriod)} {printf ",%s", n >> "output_raw/vq_state_up.csv";}
@@ -6056,12 +6144,17 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_state_up.csv";
     for {n in (nodeBalance union nodeBalancePeriod)} {
-        printf ",%.6g", vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d] >> "output_raw/vq_state_up.csv";
+        printf ",%.6g",
+            sum {(n, b_n) in node__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_n and b_f = 'default' and tf = t}
+                vq_state_up[n, d, tc].val * node_capacity_for_scaling[n, d]
+            >> "output_raw/vq_state_up.csv";
     }
 }
 
 # Write vq_state_down.  Agent 9b: * node_capacity_for_scaling — see
-# vq_state_up note above.
+# vq_state_up note above.  Agent 1.8: block expansion via node__block.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_state_down.csv";
   for {n in (nodeBalance union nodeBalancePeriod)} {printf ",%s", n >> "output_raw/vq_state_down.csv";}
@@ -6069,11 +6162,18 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_state_down.csv";
     for {n in (nodeBalance union nodeBalancePeriod)} {
-        printf ",%.6g", vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d] >> "output_raw/vq_state_down.csv";
+        printf ",%.6g",
+            sum {(n, b_n) in node__block,
+                 (d, b_c, tc, b_f, tf) in overlap
+                 : b_c = b_n and b_f = 'default' and tf = t}
+                vq_state_down[n, d, tc].val * node_capacity_for_scaling[n, d]
+            >> "output_raw/vq_state_down.csv";
     }
 }
 
-# Write vq_reserve.
+# Write vq_reserve.  Agent 1.7 V1: reserve participants pinned to the
+# default block, so no expansion is effectively needed — the overlap
+# lookup collapses to identity.  Kept at fine (d, t) for output.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_reserve.csv";
   for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", r >> "output_raw/vq_reserve.csv";}
@@ -6089,7 +6189,8 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     }
 }
 
-# Write vq_inertia.
+# Write vq_inertia.  Agent 1.7 V1: groupInertia nodes pinned to the
+# default block, so no expansion needed (identity overlap).
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_inertia.csv";
   for {g in groupInertia} {printf ",%s", g >> "output_raw/vq_inertia.csv";}
@@ -6104,7 +6205,8 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
 # Write vq_non_synchronous.  Agent 9b: * group_capacity_for_scaling[g, d]
 # to un-scale the row-scaling division applied in non_sync_constraint
 # (Agent 5c).  Mode A: group_cap = 1, no effect; Mode B: recovers the
-# absolute CSV magnitude.
+# absolute CSV magnitude.  Agent 1.7 V1: groupNonSync members pinned to
+# the default block, so no block expansion needed.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_non_synchronous.csv";
   for {g in groupNonSync} {printf ",%s", g >> "output_raw/vq_non_synchronous.csv";}
@@ -6134,7 +6236,8 @@ for {s in solve_current, d in d_realize_invest} {
 # Write vq_state_up_group.  Agent 9b: * group_capacity_for_scaling[g, d]
 # to un-scale the row-scaling division applied in
 # group_loss_share_constraint (Agent 5c).  Mode A: group_cap = 1, no
-# effect.
+# effect.  group_loss_share_constraint is emitted at every fine (d, t),
+# so vq_state_up_group needs no block expansion.
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/vq_state_up_group.csv";
   for {g in group_loss_share} {printf ",%s", g >> "output_raw/vq_state_up_group.csv";}

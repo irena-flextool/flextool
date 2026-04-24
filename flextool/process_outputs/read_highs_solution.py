@@ -183,6 +183,24 @@ class VariableSpec(NamedTuple):
     # is a no-op.  Mode B: recovers absolute CSV magnitudes matching the
     # pre-row-scaling (Agent 1) baselines.
     unscale_by: str | None = None
+    # Agent 1.8 — block-aware output expansion.  When non-None, the
+    # extracted frame is broadcast from the variable's temporal-resolution
+    # block down to the finest timeline.  The raw MPS only emits values
+    # at the block's coarse ``(period, step)`` pairs; fine steps covered
+    # by a coarse step receive the same value so downstream CSV / parquet
+    # readers always see a rectangular fine-grid frame (design rule
+    # from Agent 1.8: "print all at finest resolution and drop the block
+    # dimension").
+    # Recognised values:
+    #   * "process_block" — lookup per ``col_names[0]`` in
+    #                       ``solve_data/process_block.csv``.  Used for
+    #                       v_flow, v_ramp, v_online_*, v_startup_*,
+    #                       v_shutdown_* (every process-scoped var).
+    #   * "node_block"    — lookup in ``solve_data/entity_block.csv``.
+    #                       Used for v_state, v_angle.
+    # In the degenerate case every entity maps to ``"default"`` so the
+    # overlap lookup is identity and the broadcast is a no-op.
+    expand_by: str | None = None
 
 
 # Registry — add a new line here to add a new variable to the pipeline.
@@ -248,40 +266,51 @@ def _invest_dual(mps_name: str, col: str, output_suffix: str) -> VariableSpec:
 
 VARIABLE_SPECS: list[VariableSpec] = [
     # -- Time-indexed decision variables ------------------------------------
-    VariableSpec("v_flow",             ("process", "source", "sink")),
-    VariableSpec("v_ramp",             ("process", "source", "sink")),
-    VariableSpec("v_reserve",          ("process", "reserve", "updown", "node")),
-    VariableSpec("v_state",            ("node",)),
-    VariableSpec("v_online_linear",    ("process",)),
-    VariableSpec("v_startup_linear",   ("process",)),
-    VariableSpec("v_shutdown_linear",  ("process",)),
-    VariableSpec("v_online_integer",   ("process",)),
-    VariableSpec("v_startup_integer",  ("process",)),
-    VariableSpec("v_shutdown_integer", ("process",)),
-    VariableSpec("v_angle",            ("node",)),
+    # Agent 1.8: ``expand_by`` broadcasts coarse-block values to every
+    # covered fine timestep.  Degenerate (every entity on 'default'): no-op.
+    VariableSpec("v_flow",             ("process", "source", "sink"), expand_by="process_block"),
+    VariableSpec("v_ramp",             ("process", "source", "sink"), expand_by="process_block"),
+    # Reserve participants are pinned to the default block in V1 (Agent
+    # 1.7), so v_reserve effectively needs no expansion — but the
+    # broadcast is still safely identity there.
+    VariableSpec("v_reserve",          ("process", "reserve", "updown", "node"), expand_by="process_block"),
+    VariableSpec("v_state",            ("node",), expand_by="node_block"),
+    VariableSpec("v_online_linear",    ("process",), expand_by="process_block"),
+    VariableSpec("v_startup_linear",   ("process",), expand_by="process_block"),
+    VariableSpec("v_shutdown_linear",  ("process",), expand_by="process_block"),
+    VariableSpec("v_online_integer",   ("process",), expand_by="process_block"),
+    VariableSpec("v_startup_integer",  ("process",), expand_by="process_block"),
+    VariableSpec("v_shutdown_integer", ("process",), expand_by="process_block"),
+    VariableSpec("v_angle",            ("node",), expand_by="node_block"),
 
     # -- Time-indexed slack / penalty variables -----------------------------
     # Agent 9 ``unscale_by="node_cap"`` / ``"group_cap"`` un-scales row
     # scaling when ``use_row_scaling=yes`` (no-op in Mode A where the
     # scaler defaults to 1).  See flextool/SLACK_CONVENTION.md for the
     # single-variable slack convention.
+    # Agent 1.8: vq_state_up / vq_state_down appear in the node balance,
+    # which is emitted at the node's block — broadcast via node_block.
     VariableSpec(
         "vq_state_up", ("node",),
-        unscale_by="node_cap",
+        unscale_by="node_cap", expand_by="node_block",
     ),
     VariableSpec(
         "vq_state_down", ("node",),
-        unscale_by="node_cap",
+        unscale_by="node_cap", expand_by="node_block",
     ),
     # Column level names must match the CSV reader
     # (``read_variables._read_from_csv``) so cross-reader mul aligns
     # cleanly — both readers use ('reserve', 'updown', 'node_group').
+    # Reserves + inertia pinned to default block (Agent 1.7 V1) — no
+    # expansion needed.
     VariableSpec("vq_reserve", ("reserve", "updown", "node_group")),
     VariableSpec("vq_inertia", ("group",)),
     VariableSpec(
         "vq_non_synchronous", ("group",),
         unscale_by="group_cap",
     ),
+    # group_loss_share_constraint is emitted at every fine (d, t), so
+    # vq_state_up_group lives on the fine timeline directly.
     VariableSpec(
         "vq_state_up_group", ("group",),
         unscale_by="group_cap",
@@ -844,6 +873,14 @@ def write_variable_parquet(
             mid_ignore=spec.mid_ignore,
             trailing_col_names=spec.trailing_col_names,
         )
+    # Agent 1.8 — block-aware output expansion.  Broadcast coarse-block
+    # values to every covered fine timestep so parquet output stays
+    # rectangular at the finest resolution.  Degenerate case (every
+    # entity on 'default'): no-op, bit-identical to pre-Agent-1.8.
+    # Apply BEFORE unscale so the row scaler (keyed at the fine grid)
+    # multiplies the broadcasted values consistently.
+    if spec.expand_by is not None:
+        df = _apply_block_expand(df, spec.expand_by, work_folder)
     # Agent 9 — row-scaling un-scaling applied at the output boundary.
     # Source CSV comes from the same work folder as realized_*_csv
     # (``work_folder`` was inferred above for the scale_the_objective
@@ -958,6 +995,173 @@ def _load_row_scaler(
     # emitted headers but no values; ignore parsing failures.
     df = df.apply(pd.to_numeric, errors="coerce")
     return df
+
+
+# ---------------------------------------------------------------------------
+# Agent 1.8 — block-aware output expansion
+# ---------------------------------------------------------------------------
+
+
+def _load_entity_block_map(
+    work_folder: Path | str | None, kind: str,
+) -> dict[str, str]:
+    """Return ``{entity: block}`` read from ``solve_data/{entity,process}_block.csv``.
+
+    * ``kind="node_block"``  → reads ``entity_block.csv`` (columns
+      ``entity, block``) — every node maps to its temporal-resolution
+      block.
+    * ``kind="process_block"`` → reads ``process_block.csv`` (columns
+      ``process, block``) — per-process unified block (Agent 1.6).
+
+    Missing file / missing entity → empty / default fall-through (caller
+    treats entity as on the ``"default"`` block, i.e. identity overlap).
+    """
+    if work_folder is None:
+        return {}
+    wf = Path(work_folder)
+    if kind == "node_block":
+        path = wf / "solve_data" / "entity_block.csv"
+        key_col = "entity"
+    elif kind == "process_block":
+        path = wf / "solve_data" / "process_block.csv"
+        key_col = "process"
+    else:
+        return {}
+    if not path.exists():
+        return {}
+    try:
+        df = pd.read_csv(path, dtype=str)
+    except Exception:
+        return {}
+    if df.empty or key_col not in df.columns or "block" not in df.columns:
+        return {}
+    return dict(zip(df[key_col].astype(str), df["block"].astype(str)))
+
+
+def _load_overlap_fine_to_coarse(
+    work_folder: Path | str | None,
+) -> dict[tuple[str, str, str], str]:
+    """Return ``{(period, block_coarse, step_fine): step_coarse}``.
+
+    Read from ``solve_data/overlap_set.csv`` (columns ``period,
+    block_coarse, step_coarse, block_fine, step_fine, fraction``).
+    Only rows where ``block_fine == 'default'`` are kept — those are the
+    rows used to broadcast a coarse-block value to every fine timestep
+    it covers.
+
+    Missing file → empty dict (caller treats every entity as on the
+    default block → identity broadcast).
+    """
+    if work_folder is None:
+        return {}
+    path = Path(work_folder) / "solve_data" / "overlap_set.csv"
+    if not path.exists():
+        return {}
+    try:
+        df = pd.read_csv(path, dtype=str)
+    except Exception:
+        return {}
+    required = {"period", "block_coarse", "step_coarse", "block_fine", "step_fine"}
+    if not required.issubset(df.columns):
+        return {}
+    df = df[df["block_fine"].astype(str) == "default"]
+    if df.empty:
+        return {}
+    return {
+        (str(p), str(bc), str(sf)): str(sc)
+        for p, bc, sf, sc in zip(
+            df["period"], df["block_coarse"],
+            df["step_fine"], df["step_coarse"],
+        )
+    }
+
+
+def _apply_block_expand(
+    df: pd.DataFrame,
+    expand_by: str,
+    work_folder: Path | str | None,
+) -> pd.DataFrame:
+    """Broadcast coarse-block variable values to covered fine timesteps.
+
+    For each column ``e`` whose entity maps to a non-default block ``b``,
+    every fine row ``(d, tf)`` has its value replaced with the coarse
+    value at ``(d, tc)`` where ``tc = overlap[(d, b, tf)]``.  Entities on
+    the default block are left untouched (identity broadcast).
+
+    The DataFrame's row index must be ``(solve, period, time)``; the
+    column (Multi)Index's first level is the entity name.
+
+    Degenerate case (every entity on ``'default'``): no columns trigger
+    the broadcast → returns *df* unchanged, bit-identical to pre-Agent-
+    1.8 state.
+    """
+    if df.empty or df.shape[1] == 0:
+        return df
+    if expand_by not in ("process_block", "node_block"):
+        return df
+    if not isinstance(df.index, pd.MultiIndex):
+        return df
+    level_names = df.index.names or []
+    if "period" not in level_names or "time" not in level_names:
+        return df
+
+    entity_block = _load_entity_block_map(work_folder, expand_by)
+    # Fast path: no entity on a non-default block → nothing to do.
+    if not any(v != "default" for v in entity_block.values()):
+        return df
+
+    overlap = _load_overlap_fine_to_coarse(work_folder)
+    if not overlap:
+        return df
+
+    # Entity level on the column index (row 0 of MultiIndex; the only
+    # level otherwise).  Agent 1.8's expand_by is always keyed on
+    # ``col_names[0]`` by construction.
+    if isinstance(df.columns, pd.MultiIndex):
+        entity_names = df.columns.get_level_values(0).astype(str).tolist()
+    else:
+        entity_names = df.columns.astype(str).tolist()
+
+    # Working in-place would mutate the caller's frame — copy once.
+    out = df.copy()
+
+    # Row tuples (period, time) in the frame's order — we'll vector-assign
+    # into each expand-target column via numpy positional writes.
+    periods = df.index.get_level_values("period").astype(str).to_numpy()
+    times = df.index.get_level_values("time").astype(str).to_numpy()
+    row_count = len(periods)
+
+    # Column axis for block-aware expansion: entity per column position.
+    for col_pos, entity in enumerate(entity_names):
+        block = entity_block.get(entity, "default")
+        if block == "default":
+            continue  # identity broadcast → leave column alone
+        # Build a per-row source index — position of the coarse row to copy
+        # from.  For each (d, tf), find tc via overlap; then locate the row
+        # in the frame.  Rows whose (d, tf) has no overlap entry keep their
+        # own value (defensive — shouldn't happen with consistent data).
+        source_pos = list(range(row_count))
+        # Build a (period, time) → row_pos map once.
+        row_pos_map: dict[tuple[str, str], int] = {
+            (p, t): i for i, (p, t) in enumerate(zip(periods, times))
+        }
+        for i in range(row_count):
+            d = periods[i]
+            tf = times[i]
+            tc = overlap.get((d, block, tf))
+            if tc is None:
+                continue
+            src = row_pos_map.get((d, tc))
+            if src is None:
+                continue
+            source_pos[i] = src
+        # Apply the column-scoped rewrite: new values = existing values
+        # indexed by source_pos.  ``out.iloc[:, col_pos]`` returns a view;
+        # reassign so pandas records the update without triggering a
+        # SettingWithCopy warning.
+        col_values = out.iloc[:, col_pos].to_numpy()
+        out.iloc[:, col_pos] = col_values[source_pos]
+    return out
 
 
 def _apply_unscale(
