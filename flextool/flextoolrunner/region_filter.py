@@ -682,7 +682,39 @@ def _virtual_rows(
         # and v_flow[hf_*, ...] columns are absent from the MPS.
         for hf in half_flows:
             rows.append([hf.virtual_connection, "method_1way_1var_off"])
+    elif filename == "p_process.csv":
+        # The half-flow's ``existing`` capacity gates ``p_flow_max`` at
+        # zero otherwise (v_flow columns appear in the MPS but with
+        # ``lb = ub = 0``, so Lagrangian λ updates have no effect).
+        # ``efficiency = 1.0`` because the half-flow is a bookkeeping
+        # artefact, not a physical pipe — the underlying pipe
+        # efficiency stays embedded in the importing region's import
+        # half-flow.
+        #
+        # Capacity: we source the original pipe's ``existing`` from
+        # :func:`_original_connection_existing` (reads
+        # input/p_process.csv one directory up from the filtered copy
+        # before the rename swap, or defaults to a conservative
+        # ``1e3`` when that information is no longer available).  The
+        # caller (input_writer) sets the value via a module-level
+        # context dict — see
+        # :data:`_virtual_capacity_override`.
+        for hf in half_flows:
+            cap = _virtual_capacity_override.get(hf.original_connection, 1e3)
+            rows.append([hf.virtual_connection, "existing", str(cap)])
+            rows.append([hf.virtual_connection, "efficiency", "1.0"])
+            rows.append([hf.virtual_connection, "availability", "1.0"])
+            rows.append([hf.virtual_connection, "virtual_unitsize", "1.0"])
     return rows
+
+
+# Module-level override for original-connection capacities injected
+# into the filtered ``p_process.csv`` for virtual half-flow
+# connections.  Populated by ``build_region_directory`` before
+# ``_virtual_rows`` is called, cleared afterwards.  Using a module
+# attribute rather than function parameters keeps the ``_virtual_rows``
+# signature backward-compatible with the tests added by Agent 3.1.
+_virtual_capacity_override: dict[str, float] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -747,6 +779,22 @@ def build_region_directory(
     # Cross-region connection names: these are REMOVED from the filtered
     # output (replaced by virtual half-flow connections).
     cross_region_conns = {hf.original_connection for hf in half_flows}
+
+    # Populate per-pipe capacity override so _virtual_rows can inject a
+    # matching ``existing`` line into the filtered ``p_process.csv``.
+    # Without this, p_flow_max gates v_flow[hf_*, ...] at zero and
+    # Lagrangian cost updates have no effect on the solve.
+    _virtual_capacity_override.clear()
+    try:
+        _, p_process_rows = _read_csv_rows(input_dir / "p_process.csv")
+        for row in p_process_rows:
+            if len(row) >= 3 and row[0] in cross_region_conns and row[1] == "existing":
+                try:
+                    _virtual_capacity_override[row[0]] = float(row[2])
+                except ValueError:
+                    continue
+    except Exception:  # noqa: BLE001 — defensive; fall back to defaults.
+        pass
 
     # Ensure output dir exists and is empty.
     output_dir.mkdir(parents=True, exist_ok=True)

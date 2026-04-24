@@ -82,6 +82,10 @@ class CouplingVar:
     # sides sit on the same process with the same unitsize).
     last_export: float = 0.0
     last_import: float = 0.0
+    # Per-column primal vectors captured at the last solve (used by
+    # the primal-averaging recovery step — see :func:`run_lagrangian`).
+    last_export_vec: list[float] = field(default_factory=list)
+    last_import_vec: list[float] = field(default_factory=list)
 
     @property
     def imbalance(self) -> float:
@@ -401,9 +405,11 @@ def _measure_primal(
         if region == cpl.export_region and cpl.export_cols.get(region):
             vals = handle.primal(cpl.export_cols[region])
             cpl.last_export = float(sum(vals))
+            cpl.last_export_vec = [float(v) for v in vals]
         if region == cpl.import_region and cpl.import_cols.get(region):
             vals = handle.primal(cpl.import_cols[region])
             cpl.last_import = float(sum(vals))
+            cpl.last_import_vec = [float(v) for v in vals]
 
 
 # ---------------------------------------------------------------------------
@@ -531,12 +537,36 @@ def run_lagrangian(
         handles[region] = handle
 
     # ------------------------------------------------------------------
-    # Outer loop.
+    # Outer loop — diminishing sub-gradient (step = α/√k) plus
+    # primal averaging for recovery.
+    #
+    # LP Lagrangian duality at degenerate extreme points (where the
+    # region's primal response to λ is bang-bang) produces oscillation
+    # under a constant step size.  A diminishing step size
+    # (``α_k = α / √k``) is theoretically convergent for the dual
+    # objective; the *primal* iterate never converges, but the
+    # **time-averaged primal** does.  We therefore track the averaged
+    # export / import flow vectors over the final ``primal_tail``
+    # iterations and emit a "primal recovery" pass at the end where
+    # each region is re-solved with its coupling columns fixed to the
+    # averaged primal — that recovered objective is what we report as
+    # ``total_objective``.
     # ------------------------------------------------------------------
+    import math
+
+    primal_tail = max(10, max_iterations // 4)
+    # Running sums of per-column primal vectors (by pipeline):
+    sum_export_vec: dict[str, list[float]] = {}
+    sum_import_vec: dict[str, list[float]] = {}
+    tail_count = 0
+
     iteration_log: list[dict] = []
     converged = False
     iter_obj: dict[str, float] = {r: float("nan") for r in regions}
+    max_abs_imb = float("inf")
     for it in range(1, max_iterations + 1):
+        alpha_k = alpha / math.sqrt(it)
+
         # 1. Update each region's objective with current λ.
         for region in regions:
             _apply_lambda_costs(handles[region], region, couplings)
@@ -552,7 +582,7 @@ def run_lagrangian(
             iter_obj[region] = handles[region].objective()
             _measure_primal(handles[region], region, couplings)
 
-        # 3. Imbalance + λ update.
+        # 3. Imbalance + tail-window primal accumulation.
         max_abs_imb = 0.0
         imbalances: dict[str, float] = {}
         for cpl in couplings:
@@ -561,8 +591,26 @@ def run_lagrangian(
             if abs(imb) > max_abs_imb:
                 max_abs_imb = abs(imb)
 
+        if it > max_iterations - primal_tail:
+            # Accumulate per-column primals for averaging.
+            for cpl in couplings:
+                if cpl.last_export_vec:
+                    cur = sum_export_vec.setdefault(
+                        cpl.pipeline, [0.0] * len(cpl.last_export_vec)
+                    )
+                    for i, v in enumerate(cpl.last_export_vec):
+                        cur[i] += v
+                if cpl.last_import_vec:
+                    cur = sum_import_vec.setdefault(
+                        cpl.pipeline, [0.0] * len(cpl.last_import_vec)
+                    )
+                    for i, v in enumerate(cpl.last_import_vec):
+                        cur[i] += v
+            tail_count += 1
+
         iteration_log.append({
             "iter": it,
+            "alpha_k": alpha_k,
             "lambdas": {c.pipeline: c.lam for c in couplings},
             "imbalances": dict(imbalances),
             "region_objectives": dict(iter_obj),
@@ -570,26 +618,93 @@ def run_lagrangian(
             "max_abs_imbalance": max_abs_imb,
         })
         logger.info(
-            "Lagrangian iter %d: max|imb|=%.6g  Σ_obj=%.6g  λ=%s  imb=%s",
-            it, max_abs_imb, sum(iter_obj.values()),
-            {c.pipeline: round(c.lam, 6) for c in couplings},
-            {k: round(v, 6) for k, v in imbalances.items()},
+            "Lagrangian iter %d: α_k=%.4g  max|imb|=%.6g  Σ_obj=%.6g  λ=%s",
+            it, alpha_k, max_abs_imb, sum(iter_obj.values()),
+            {c.pipeline: round(c.lam, 4) for c in couplings},
         )
 
         if max_abs_imb < tolerance:
             converged = True
             break
 
-        # 4. Subgradient update on each coupling.
+        # 4. Sub-gradient update with diminishing step.
         for cpl in couplings:
-            cpl.lam = cpl.lam + alpha * cpl.imbalance
+            cpl.lam = cpl.lam + alpha_k * cpl.imbalance
 
-    total = sum(iter_obj.values())
+    # ------------------------------------------------------------------
+    # Primal recovery — fix coupling columns to the tail-averaged
+    # primal flows, zero-out the λ cost additions, and re-solve each
+    # region once.  The summed regional objectives from that final
+    # solve is our reported ``total_objective`` — it's the cost of
+    # the averaged feasible primal, which for LP Lagrangian converges
+    # to the monolithic optimum (up to residual feasibility gap in
+    # ``export ≈ import``).
+    # ------------------------------------------------------------------
+    recovery_obj: dict[str, float] = dict(iter_obj)
+    avg_imbalance_tail: dict[str, float] = {}
+    if tail_count > 0:
+        avg_export_vec = {
+            p: [s / tail_count for s in vec]
+            for p, vec in sum_export_vec.items()
+        }
+        avg_import_vec = {
+            p: [s / tail_count for s in vec]
+            for p, vec in sum_import_vec.items()
+        }
+        # Tail-averaged imbalance: for the averaged primal to be
+        # feasible (= monolithic-equivalent) we need
+        # sum(avg_export) ≈ sum(avg_import) per pipe.
+        for cpl in couplings:
+            avg_imbalance_tail[cpl.pipeline] = (
+                sum(avg_export_vec.get(cpl.pipeline, []))
+                - sum(avg_import_vec.get(cpl.pipeline, []))
+            )
+        max_avg_abs_imb = (
+            max(abs(v) for v in avg_imbalance_tail.values())
+            if avg_imbalance_tail
+            else 0.0
+        )
+        if max_avg_abs_imb < tolerance:
+            # Primal-averaged imbalance is effectively zero — consider
+            # the decomposition converged in the averaged sense, even
+            # if the instantaneous primal at the last iterate still
+            # oscillates.
+            converged = True
+        logger.info(
+            "Lagrangian: primal recovery — fixing coupling flows to "
+            "tail-%d averages (max avg|imb|=%.4g) and re-solving",
+            tail_count, max_avg_abs_imb,
+        )
+        for region in regions:
+            for cpl in couplings:
+                if region == cpl.export_region and cpl.export_cols.get(region):
+                    handles[region].change_costs(cpl.export_cols[region], 0.0)
+                    handles[region].fix_cols(
+                        cpl.export_cols[region],
+                        avg_export_vec[cpl.pipeline],
+                    )
+                if region == cpl.import_region and cpl.import_cols.get(region):
+                    handles[region].change_costs(cpl.import_cols[region], 0.0)
+                    handles[region].fix_cols(
+                        cpl.import_cols[region],
+                        avg_import_vec[cpl.pipeline],
+                    )
+            handles[region].solve()
+            if handles[region].is_optimal():
+                recovery_obj[region] = handles[region].objective()
+            else:
+                logger.warning(
+                    "Lagrangian: primal-recovery solve for region %s did "
+                    "NOT reach optimal (status=%s); reporting last iterate",
+                    region, handles[region].h.getModelStatus(),
+                )
+
+    total = sum(recovery_obj.values())
     return LagrangianResult(
         converged=converged,
         iterations=it,
         total_objective=total,
-        region_objectives=dict(iter_obj),
+        region_objectives=dict(recovery_obj),
         final_lambdas={c.pipeline: c.lam for c in couplings},
         iteration_log=iteration_log,
         region_work_folders=dict(region_wf),
