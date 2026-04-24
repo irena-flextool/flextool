@@ -503,13 +503,23 @@ class SolverRunner:
                 "dual_feasibility_tolerance=%s, solver=%s",
                 tol_str, tol_str, solver_opt,
             )
-        # Parallel MIP / concurrent LP on by default now that HiGHS 1.14 has
-        # fixed the older multi-thread bugs.  Precedence: DB > opt file > default.
+        # Parallel dual simplex (PAMI) off by default. HiGHS 1.11, 1.12, and
+        # 1.14 all stall indefinitely on a class of degenerate LPs that
+        # reach ``Pr=0 Du=0`` and then have a tiny residual reappear during
+        # the post-optimality rescan: concurrent simplex trajectories
+        # cannot agree on the clearing pivot, the Markowitz-bump loop runs
+        # forever. Serial EKK takes exactly one extra pivot and terminates.
+        # HiGHS upstream (issue #1547, open since 2024) and maintainer
+        # @jajhall's own recommendation in #780 / #1044 is ``threads=1`` /
+        # ``parallel=off``. Note that ``threads=1`` alone is NOT enough:
+        # HiGHS still engages PAMI at hardcoded concurrency 8 against a
+        # single thread — the worst oversubscription regime. We must also
+        # set ``parallel=off`` explicitly. Precedence: DB > opt file > default.
         if current_solve in self.state.solve.highs.parallel:
             h.setOptionValue('parallel', self.state.solve.highs.parallel[current_solve])
         elif 'parallel' not in keys_from_opt:
-            h.setOptionValue('parallel', 'on')
-        # Thread count precedence: CLI/runner override > opt file > default (4).
+            h.setOptionValue('parallel', 'off')
+        # Thread count precedence: CLI/runner override > opt file > default (1).
         # ``state.highs_threads`` is only non-None when a caller (e.g. the CLI
         # ``--highs-threads`` flag) explicitly set it; the default-init path
         # leaves it unset so the opt file can win in test context.
@@ -517,7 +527,7 @@ class SolverRunner:
         if highs_threads is not None:
             h.setOptionValue('threads', int(highs_threads))
         elif 'threads' not in keys_from_opt:
-            h.setOptionValue('threads', 4)
+            h.setOptionValue('threads', 1)
 
         # Read and solve
         status = h.readModel(mps_file)

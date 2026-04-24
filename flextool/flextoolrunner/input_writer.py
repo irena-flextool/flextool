@@ -1554,45 +1554,6 @@ def _validate_timeline_timestep_duration(db) -> None:
         )
 
 
-def _validate_entity_names_no_hyphen(db) -> None:
-    """Raise FlexToolConfigError if any entity name contains ``-``.
-
-    Hyphens are the subtraction operator in MathProg; names carrying one
-    are loaded from CSV but then get silently re-parsed as arithmetic in
-    some code paths, which surfaces as an ``out of domain`` error on a
-    *different* symbol (often a neighbouring node name) — e.g.
-    ``pdtProcess[ARG_H2,...]`` when the offending process was actually
-    ``BRA_ARG-H2``.  Catch the name at write-time with a clear message
-    rather than shipping ambiguous GLPK errors to the user.
-    """
-    # Entity classes whose names become symbolic indices in flextool.mod.
-    # Keep this list tight — adding every multi-dim class would overreport
-    # without helping the user (offending names always trace back to a
-    # single-dim class).
-    classes = ["node", "unit", "connection", "group",
-               "commodity", "profile", "constraint"]
-    offenders: dict[str, list[str]] = {}
-    for cl in classes:
-        bad = [ent["entity_byname"][0]
-               for ent in db.find_entities(entity_class_name=cl)
-               if "-" in ent["entity_byname"][0]]
-        if bad:
-            offenders[cl] = sorted(bad)
-    if not offenders:
-        return
-    lines = [
-        "Entity names containing '-' (hyphen) are not allowed because MathProg "
-        "treats '-' as the subtraction operator. Rename (e.g. '-' → '_') the "
-        "following entities:"
-    ]
-    total = 0
-    for cl, names in offenders.items():
-        total += len(names)
-        shown = ", ".join(names[:5]) + (f", ... (+{len(names)-5} more)" if len(names) > 5 else "")
-        lines.append(f"  {cl} ({len(names)}): {shown}")
-    raise FlexToolConfigError("\n".join(lines) + f"\n[{total} entity name(s) to fix]")
-
-
 def _validate_ladder_methods(db, logger: logging.Logger) -> None:
     """Raise FlexToolConfigError if any commodity declares a ladder
     ``price_method`` but does not have the corresponding ladder parameter
@@ -1669,8 +1630,10 @@ def _write_commodity_ladder_cumulative(
     ``commodity, tier, price, quantity`` — one row per (commodity, tier).
 
     Only the ``commodity.price_ladder_cumulative`` parameter is consulted
-    (always a 1d map: ``Map(tier -> {price, quantity})``).  The ``price_method``
-    filter happens mod-side via the ``commodity_with_ladder_cumulative`` set.
+    (always a 2d map: ``Map(tier -> {price, quantity})`` — 2d in Spine's
+    counting because ``{price, quantity}`` is a second index layer).  The
+    ``price_method`` filter happens mod-side via the
+    ``commodity_with_ladder_cumulative`` set.
     """
     filepath = wf / "input" / "commodity_ladder_cumulative.csv"
     rows: list[tuple[str, int, str, str]] = []
@@ -1726,15 +1689,15 @@ def _write_commodity_ladder_annual(
     db, wf: Path, logger: logging.Logger,
 ) -> None:
     """Emit ``input/commodity_ladder_annual.csv`` with columns
-    ``commodity, tier, period, price, quantity`` — one row per
-    (commodity, tier, period).
+    ``commodity, period, tier, price, quantity`` — one row per
+    (commodity, period, tier).
 
     Reads ``commodity.price_ladder_annual``.  Auto-detects the map depth:
 
-    * 1d form: ``Map(tier -> {price, quantity})`` — the same (price,
-      quantity) is expanded across every model period.
-    * 2d form: ``Map(tier -> Map(period -> {price, quantity}))`` —
-      per-period rows are kept as-is.
+    * 2d form (Spine 2d_map): ``Map(tier -> {price, quantity})`` — the
+      same (price, quantity) is expanded across every model period.
+    * 3d form (Spine 3d_map): ``Map(period -> Map(tier -> {price,
+      quantity}))`` — per-period rows are kept as-is.
     """
     filepath = wf / "input" / "commodity_ladder_annual.csv"
     rows: list[tuple[str, int, str, str, str]] = []
@@ -1758,12 +1721,14 @@ def _write_commodity_ladder_annual(
         if not flat:
             continue
 
-        # Depth detection via the flat table row length:
-        #   1d: [tier, facet, value]                 → len 3
-        #   2d: [tier, period, facet, value]         → len 4
+        # Depth detection via the flat table row length.  Spine's Map
+        # dimension count matches the flat row length: 2d_map yields
+        # length-3 rows, 3d_map yields length-4 rows.
+        #   2d_map: [tier, facet, value]                      → len 3
+        #   3d_map: [period, tier, facet, value]              → len 4
         max_len = max((len(row) for row in flat), default=0)
         if max_len == 3:
-            # 1d → expand across all model periods.
+            # 2d_map → expand across all model periods.
             per_tier: dict[str, dict[str, str]] = {}
             for entry in flat:
                 if len(entry) < 3:
@@ -1776,49 +1741,51 @@ def _write_commodity_ladder_annual(
                 periods_cache = _collect_periods(db, wf)
             if not periods_cache:
                 logger.warning(
-                    "commodity.price_ladder_annual on '%s' is 1d but no "
-                    "model periods were available for expansion; "
+                    "commodity.price_ladder_annual on '%s' is 2d_map but "
+                    "no model periods were available for expansion; "
                     "skipping.", commodity,
                 )
                 continue
-            for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
-                facets = per_tier[tier_str]
-                price = facets.get("price", "0")
-                quantity = _quantity_sentinel(facets.get("quantity", "inf"))
-                try:
-                    tier_int = int(tier_str)
-                except ValueError:
-                    logger.warning(
-                        "commodity.price_ladder_annual tier on '%s' is not "
-                        "an integer ('%s'); skipping tier.",
-                        commodity, tier_str,
-                    )
-                    continue
-                for period in periods_cache:
+            for period in periods_cache:
+                for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
+                    facets = per_tier[tier_str]
+                    price = facets.get("price", "0")
+                    quantity = _quantity_sentinel(facets.get("quantity", "inf"))
+                    try:
+                        tier_int = int(tier_str)
+                    except ValueError:
+                        logger.warning(
+                            "commodity.price_ladder_annual tier on '%s' is "
+                            "not an integer ('%s'); skipping tier.",
+                            commodity, tier_str,
+                        )
+                        continue
                     rows.append(
-                        (commodity, tier_int, period, price, quantity)
+                        (commodity, period, tier_int, price, quantity)
                     )
         elif max_len >= 4:
-            # 2d → per-period.  Row layout [tier, period, facet, value].
-            per_tier_period: dict[tuple[str, str], dict[str, str]] = {}
+            # 3d_map → per-period.  Flat row layout [period, tier,
+            # facet, value] — Spine nests Map(period -> Map(tier ->
+            # {price, quantity})).
+            per_period_tier: dict[tuple[str, str], dict[str, str]] = {}
             for entry in flat:
                 if len(entry) < 4:
                     continue
-                tier_str = str(entry[0])
-                period = str(entry[1])
+                period = str(entry[0])
+                tier_str = str(entry[1])
                 facet = str(entry[2])
                 val = entry[-1]
-                per_tier_period.setdefault(
-                    (tier_str, period), {}
+                per_period_tier.setdefault(
+                    (period, tier_str), {}
                 )[facet] = str(val)
 
             def _sort_key(k: tuple[str, str]) -> tuple:
-                return (_tier_sort_key(k[0]), k[1])
+                return (k[0], _tier_sort_key(k[1]))
 
-            for (tier_str, period) in sorted(
-                per_tier_period.keys(), key=_sort_key,
+            for (period, tier_str) in sorted(
+                per_period_tier.keys(), key=_sort_key,
             ):
-                facets = per_tier_period[(tier_str, period)]
+                facets = per_period_tier[(period, tier_str)]
                 price = facets.get("price", "0")
                 quantity = _quantity_sentinel(facets.get("quantity", "inf"))
                 try:
@@ -1831,7 +1798,7 @@ def _write_commodity_ladder_annual(
                     )
                     continue
                 rows.append(
-                    (commodity, tier_int, period, price, quantity)
+                    (commodity, period, tier_int, price, quantity)
                 )
         else:
             logger.warning(
@@ -1844,7 +1811,7 @@ def _write_commodity_ladder_annual(
     with open(filepath, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(
-            ["commodity", "tier", "period", "price", "quantity"]
+            ["commodity", "period", "tier", "price", "quantity"]
         )
         for row in rows:
             writer.writerow(row)
@@ -1871,12 +1838,6 @@ def write_input(
         if scenario_name:
             api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
         os.makedirs(wf / "input", exist_ok=True)
-
-        # Fail fast on hyphenated entity names — they collide with
-        # MathProg's subtraction operator and surface as misleading
-        # out-of-domain errors at solve time (see
-        # _validate_entity_names_no_hyphen for details).
-        _validate_entity_names_no_hyphen(db)
 
         for spec in _DEFAULT_VALUES_SPECS:
             prefixed_spec = dict(spec)

@@ -890,7 +890,7 @@
       "price_ladder_annual",
       null,
       null,
-      "Stepped supply curve for price_method='price_ladder_annual'.  Two forms accepted: 1d Map(tier -> {price, quantity}) applies the same limit every period; 2d Map(tier -> Map(period -> {price, quantity})) varies per period.  1-based integer tier.  quantity=inf marks an unbounded tail tier.",
+      "Stepped supply curve for price_method='price_ladder_annual'.  Two forms accepted: 2d map with rows 'tier,price,quantity' applies the same per-year limit every period; 3d map with rows 'period,tier,price,quantity' varies the limit per period.  1-based integer tier.  quantity=inf marks an unbounded tail tier.",
       "basics"
     ],
     [
@@ -898,7 +898,7 @@
       "price_ladder_cumulative",
       null,
       null,
-      "Stepped supply curve for price_method='price_ladder_cumulative'.  Structure: Map(tier -> {price, quantity}).  1-based integer tier index.  quantity=inf marks an unbounded tail tier.  Period-agnostic — the cap is a single total across the full model horizon.",
+      "Stepped supply curve for price_method='price_ladder_cumulative'.  2d map with rows 'tier,price,quantity' — one row per tier, giving the tier's unit price and its cumulative quantity cap.  1-based integer tier index.  quantity=inf marks an unbounded tail tier.  Period-agnostic — the cap is a single total across the full model horizon.",
       "basics"
     ],
     [
@@ -2693,19 +2693,19 @@
       "commodity",
       "price_ladder_annual",
       "map",
-      1
+      2
     ],
     [
       "commodity",
       "price_ladder_annual",
       "map",
-      2
+      3
     ],
     [
       "commodity",
       "price_ladder_cumulative",
       "map",
-      1
+      2
     ],
     [
       "commodity",
