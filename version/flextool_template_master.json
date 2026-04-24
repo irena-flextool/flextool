@@ -759,6 +759,10 @@
       "variable_cost_only"
     ],
     [
+      "transfer_methods",
+      "unidirectional"
+    ],
+    [
       "transfer_methods_group",
       "use_connection_transfer_methods"
     ],
@@ -1150,7 +1154,7 @@
       "transfer_method",
       "regular",
       "transfer_methods",
-      "Choice of transfer method",
+      "Choice of transfer method. Options: regular (default), no_losses_no_variable_cost, variable_cost_only, exact, unidirectional. 'unidirectional' restricts flow to source → sink only (single non-negative variable); 'regular'/'exact'/'variable_cost_only' are bidirectional two-variable variants; 'no_losses_no_variable_cost' is a single signed variable with no losses and no VOM.",
       "basics"
     ],
     [

@@ -1058,22 +1058,34 @@ def migrate_database(database_path, up_to: int | None = None):
                 # use case that previously forced users to work around
                 # with a unit instead of a connection.
                 #
-                # Two touch points in the schema:
+                # Schema touch points:
                 #
-                # 1. transfer_methods_group value list.  The group-level
-                #    override must accept "unidirectional" so users can
-                #    promote a subnet to unidirectional via the group
-                #    override as well.
-                # 2. Description refresh on group.transfer_method so the
-                #    dropdown tooltip advertises the new option.
-                #
-                # connection.transfer_method itself carries only
-                # parameter_type_list=("str",) today — no value list
-                # constraint — so "unidirectional" is already accepted at
-                # the connection level without a further schema edit.
+                # 1. transfer_methods value list (attached to
+                #    connection.transfer_method) — the per-connection
+                #    dropdown must offer "unidirectional".
+                # 2. transfer_methods_group value list (attached to
+                #    group.transfer_method) — the group-level override
+                #    must also accept "unidirectional".
+                # 3. Description refreshes on both parameter definitions
+                #    so the dropdown tooltip advertises the new option.
                 add_value_list_manual(db, [
+                    ["transfer_methods", "unidirectional"],
                     ["transfer_methods_group", "unidirectional"],
                 ])
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="connection",
+                    name="transfer_method",
+                    description=(
+                        "Choice of transfer method. Options: regular (default), "
+                        "no_losses_no_variable_cost, variable_cost_only, exact, "
+                        "unidirectional. 'unidirectional' restricts flow to "
+                        "source → sink only (single non-negative variable); "
+                        "'regular'/'exact'/'variable_cost_only' are bidirectional "
+                        "two-variable variants; 'no_losses_no_variable_cost' is a "
+                        "single signed variable with no losses and no VOM."
+                    ),
+                )
                 db.add_update_item(
                     "parameter_definition",
                     entity_class_name="group",
@@ -1092,7 +1104,8 @@ def migrate_database(database_path, up_to: int | None = None):
                 )
                 try:
                     db.commit_session(
-                        "Added 'unidirectional' to transfer_methods_group"
+                        "Added 'unidirectional' to transfer_methods and "
+                        "transfer_methods_group value lists"
                     )
                 except SpineDBAPIError:
                     pass
