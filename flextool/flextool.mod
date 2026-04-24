@@ -869,10 +869,9 @@ set process_process_toSink :=
 		   )
 	};
 set process_sink_toProcess :=
-    { sink in node, p in process, p2 in process
+	{ (p, sink) in process_sink, p2 in process
 	    :  p = p2
 	    && (p, sink) in process_sink
-	    && (p2, sink) in process_sink
 	    && sum{(p, m) in process_method : m in method_2way_nvar} 1
 	};
 set process_process_toSource :=
