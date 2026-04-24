@@ -747,10 +747,29 @@ _PARAMETER_SPECS: list[dict] = [
                     ("group", "non_synchronous_limit"),
                     ("group", "penalty_capacity_margin"),
                     ("group", "penalty_inertia"),
-                    ("group", "penalty_non_synchronous")],
+                    ("group", "penalty_non_synchronous"),
+                    # Agent 1.9: v51 group-level new_stepduration is
+                    # numeric so it flows through the normal p_group
+                    # numeric channel.  The companion
+                    # ``decomposition_method`` is a *string* enum and
+                    # would break ``p_group``'s numeric type — it lives
+                    # in its own ``input/p_group_decomposition.csv``
+                    # written below (consumed only by ``blocks.py``).
+                    ("group", "new_stepduration")],
         "header": "group,groupParam,p_group",
         "filename": "input/p_group.csv",
         "filter_in_type": ["float", "str", "bool"],
+        "param_print": True,
+    },
+    # Agent 1.9: separate file for the (string) decomposition_method
+    # so the numeric p_group channel stays clean.  ``blocks.py``
+    # falls back to this file when the row isn't found in
+    # ``p_group.csv``.
+    {
+        "cl_pars": [("group", "decomposition_method")],
+        "header": "group,groupParam,p_group",
+        "filename": "input/p_group_decomposition.csv",
+        "filter_in_type": ["str"],
         "param_print": True,
     },
     # --- pd_process (period maps) ---

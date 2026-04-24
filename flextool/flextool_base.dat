@@ -199,7 +199,8 @@ set groupParam := has_capacity_margin, capacity_margin, has_inertia, inertia_lim
 				  non_synchronous_limit, co2_price, co2_max_period, co2_max_total, 
 				  penalty_inertia, penalty_non_synchronous, max_cumulative_flow, min_cumulative_flow,
 				  max_instant_flow, min_instant_flow, output_nodeGroup_indicators, output_flowGroup_indicators, penalty_capacity_margin,
-				  cumulative_max_capacity, cumulative_min_capacity;
+				  cumulative_max_capacity, cumulative_min_capacity,
+				  new_stepduration;
 set groupPeriodParam := capacity_margin, co2_price, co2_max_period, co2_max_total, inertia_limit, invest_max_period,
                   invest_min_period, max_cumulative_flow, min_cumulative_flow,
 				  non_synchronous_limit, penalty_inertia, penalty_non_synchronous,

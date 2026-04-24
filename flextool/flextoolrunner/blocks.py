@@ -717,8 +717,28 @@ def derive_overlap_set(
     # consider "fine" = default (and any block strictly finer than
     # coarse); "coarse" = the resolution-group block itself.  Every
     # fine step that falls inside a coarse step becomes an overlap row.
+    #
+    # Agent 1.9 fix: also emit *self-identity* rows for every
+    # non-default block (e.g. ``(d, daily, t, daily, t, 1.0)``).  The
+    # generalised node-balance constraints in ``flextool.mod`` look up
+    # ``(d, b_c, tc, b_f, t_f) in overlap`` with ``b_c = b_n`` (node
+    # block) and ``b_f`` = the process-side block.  When both the node
+    # AND the process side live on the same coarse block (e.g. an H2
+    # node and a liquefier flow both at ``daily``) the self-identity
+    # row is what carries the contribution.  Agent 1.1 only emitted
+    # ``(default, default)`` self-identity which is fine for the
+    # degenerate case but silently zeroes out coarse-coarse couplings.
     for coarse in non_default:
         coarse_rows = per_block.get(coarse, {})
+        # Self-identity: every (period, step) on the coarse block maps
+        # onto itself with fraction 1.0.  Without this row, a
+        # daily→daily flow would produce no contribution to the daily
+        # node balance.
+        for period, c_rows in coarse_rows.items():
+            for coarse_step, _coarse_dur in c_rows:
+                rows.append(
+                    (period, coarse, coarse_step, coarse, coarse_step, 1.0)
+                )
         fine_rows_per_period = default_rows
         for period, c_rows in coarse_rows.items():
             # Walk the fine timeline in parallel, packing fine rows
@@ -1181,7 +1201,18 @@ def write_block_data_for_solve(
                     except (TypeError, ValueError):
                         continue
     decomposition_groups: dict[str, str] = {}
-    if p_group_csv.exists():
+    # Agent 1.9: decomposition_method is a string enum and lives in its
+    # own ``p_group_decomposition.csv`` (separate from the numeric
+    # ``p_group.csv``).  Older fixtures may still write the row to
+    # ``p_group.csv`` — fall back to it for compatibility.
+    p_group_decomp_csv = inp / "p_group_decomposition.csv"
+    if p_group_decomp_csv.exists():
+        with open(p_group_decomp_csv) as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("groupParam") == "decomposition_method":
+                    decomposition_groups[row["group"]] = str(row["p_group"])
+    if not decomposition_groups and p_group_csv.exists():
         with open(p_group_csv) as f:
             reader = csv.DictReader(f)
             for row in reader:
