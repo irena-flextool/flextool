@@ -1,0 +1,392 @@
+"""Tests for the regional filter in ``input_writer`` / ``region_filter``
+(Agent 3.1).
+
+The filter reads the full ``input/`` directory produced by
+:func:`write_input` and copies it into ``input_region_<region>/``, keeping
+only entities that belong to the region or are shared (not assigned to
+any decomposition region), and replacing cross-region process_connection
+entities with import/export half-flows whose flow is the Lagrangian
+coupling variable.
+
+These tests use the LH2 three-region fixture:
+
+* region_A has nodes elec_A, h2_A, lh2_A, battery_A
+* region_B has nodes elec_B, h2_B, lh2_B, battery_B
+* region_C has nodes elec_C, h2_C, lh2_C, battery_C
+* coal_market is a shared commodity node (not in any region)
+* pipe_AB: lh2_A → lh2_B (source side: region_A, sink side: region_B)
+* pipe_BC: lh2_B → lh2_C (source side: region_B, sink side: region_C)
+
+So for the filter:
+
+* region_A: pipe_AB (in-region source) → EXPORT half-flow
+* region_B: pipe_AB (in-region sink)   → IMPORT half-flow
+            pipe_BC (in-region source) → EXPORT half-flow
+* region_C: pipe_BC (in-region sink)   → IMPORT half-flow
+"""
+from __future__ import annotations
+
+import csv
+import logging
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+TEST_DIR = Path(__file__).parent
+REPO_ROOT = TEST_DIR.parent
+
+if str(TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(TEST_DIR))
+if str(TEST_DIR / "fixtures") not in sys.path:
+    sys.path.insert(0, str(TEST_DIR / "fixtures"))
+
+from build_lh2_three_region import (  # noqa: E402
+    SCENARIO,
+    build,
+)
+
+from flextool.flextoolrunner import input_writer  # noqa: E402
+from flextool.flextoolrunner.region_filter import (  # noqa: E402
+    HalfFlow,
+    build_region_directory,
+    classify_half_flows,
+    discover_decomposition_regions_from_db,
+    discover_region_membership,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def lh2_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    db_path = tmp_path_factory.mktemp("lh2_db") / "lh2_three_region.sqlite"
+    return build(db_path)
+
+
+@pytest.fixture(scope="module")
+def staged_input(
+    lh2_db_url: str, tmp_path_factory: pytest.TempPathFactory
+) -> Path:
+    """Produce the monolithic ``input/`` staging directory once per module."""
+    workdir = tmp_path_factory.mktemp("lh2_stage")
+    prev_cwd = os.getcwd()
+    try:
+        os.chdir(workdir)
+        input_writer.write_input(
+            lh2_db_url,
+            SCENARIO,
+            logging.getLogger("test_regional_filter"),
+            work_folder=workdir,
+        )
+    finally:
+        os.chdir(prev_cwd)
+    assert (workdir / "input" / "node.csv").exists()
+    return workdir
+
+
+@pytest.fixture(scope="module")
+def region_a_dir(staged_input: Path) -> tuple[Path, dict]:
+    out = staged_input / "input_region_region_A"
+    result = build_region_directory(
+        input_dir=staged_input / "input",
+        output_dir=out,
+        region="region_A",
+        all_regions=["region_A", "region_B", "region_C"],
+    )
+    return out, result
+
+
+@pytest.fixture(scope="module")
+def region_b_dir(staged_input: Path) -> tuple[Path, dict]:
+    out = staged_input / "input_region_region_B"
+    result = build_region_directory(
+        input_dir=staged_input / "input",
+        output_dir=out,
+        region="region_B",
+        all_regions=["region_A", "region_B", "region_C"],
+    )
+    return out, result
+
+
+@pytest.fixture(scope="module")
+def region_c_dir(staged_input: Path) -> tuple[Path, dict]:
+    out = staged_input / "input_region_region_C"
+    result = build_region_directory(
+        input_dir=staged_input / "input",
+        output_dir=out,
+        region="region_C",
+        all_regions=["region_A", "region_B", "region_C"],
+    )
+    return out, result
+
+
+# ---------------------------------------------------------------------------
+# Helper readers
+# ---------------------------------------------------------------------------
+
+
+def _read_rows(path: Path) -> list[list[str]]:
+    if not path.exists():
+        return []
+    with path.open() as fh:
+        return [r for r in csv.reader(fh) if r]
+
+
+def _first_col_set(path: Path) -> set[str]:
+    rows = _read_rows(path)
+    if not rows:
+        return set()
+    # Skip header.
+    return {r[0] for r in rows[1:] if r}
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestRegionDiscovery:
+    def test_decomposition_regions_from_db(self, lh2_db_url: str) -> None:
+        regions = set(discover_decomposition_regions_from_db(lh2_db_url))
+        assert regions == {"region_A", "region_B", "region_C"}
+
+    def test_region_membership_parses(self, staged_input: Path) -> None:
+        mem = discover_region_membership(
+            staged_input / "input", "region_A",
+        )
+        assert {"elec_A", "h2_A", "lh2_A", "battery_A"} <= mem.nodes
+        # Other regions' nodes should not be in region_A's set.
+        assert "elec_B" not in mem.nodes
+        assert "elec_C" not in mem.nodes
+
+
+class TestRegionAMembership:
+    def test_region_a_nodes(
+        self, region_a_dir: tuple[Path, dict]
+    ) -> None:
+        out, _ = region_a_dir
+        nodes = _first_col_set(out / "node.csv")
+        for required in ("elec_A", "h2_A", "lh2_A", "battery_A"):
+            assert required in nodes, f"{required} missing from region_A node.csv"
+        # shared commodity
+        assert "coal_market" in nodes, "coal_market (shared) should be kept"
+        # other regions' nodes must not appear
+        for forbidden in ("elec_B", "h2_B", "lh2_B", "battery_B",
+                          "elec_C", "h2_C", "lh2_C", "battery_C"):
+            assert forbidden not in nodes, (
+                f"{forbidden} should NOT appear in region_A node.csv"
+            )
+
+    def test_region_a_units(
+        self, region_a_dir: tuple[Path, dict]
+    ) -> None:
+        out, _ = region_a_dir
+        units = _first_col_set(out / "process_unit.csv")
+        for required in (
+            "wind_A", "coal_A", "battery_charge_A", "battery_discharge_A",
+            "liquefier_A",
+        ):
+            assert required in units, f"{required} missing from region_A process_unit.csv"
+        for forbidden in ("wind_B", "coal_B", "liquefier_B", "wind_C"):
+            assert forbidden not in units
+
+    def test_region_a_pipelines_replaced(
+        self, region_a_dir: tuple[Path, dict]
+    ) -> None:
+        out, result = region_a_dir
+        process_conn = _first_col_set(out / "process_connection.csv")
+        # Original pipe_AB removed from region_A's input.
+        assert "pipe_AB" not in process_conn, (
+            "pipe_AB should be removed from region_A process_connection.csv "
+            "(replaced by half-flow)"
+        )
+        # Virtual half-flow connection present.
+        virtual_name = "pipe_AB__export__region_A"
+        assert virtual_name in process_conn, (
+            f"{virtual_name!r} (export half-flow) should be in "
+            f"region_A process_connection.csv"
+        )
+        # Virtual node present in node.csv.
+        nodes = _first_col_set(out / "node.csv")
+        assert virtual_name in nodes, (
+            f"virtual export node {virtual_name!r} should appear in "
+            f"region_A node.csv"
+        )
+        # pipe_BC is not in region_A at all.
+        assert "pipe_BC" not in process_conn
+        # HalfFlow record matches.
+        hfs = result["half_flows"]
+        assert len(hfs) == 1, f"expected 1 half-flow for region_A, got {len(hfs)}"
+        hf = hfs[0]
+        assert hf.original_connection == "pipe_AB"
+        assert hf.side == "export"
+        assert hf.in_region_node == "lh2_A"
+        assert hf.virtual_node == virtual_name
+
+    def test_region_a_process_source_sink(
+        self, region_a_dir: tuple[Path, dict]
+    ) -> None:
+        out, _ = region_a_dir
+        # process__source.csv contains (process, source)
+        src_rows = _read_rows(out / "process__source.csv")[1:]
+        src_map = {r[0]: r[1] for r in src_rows if len(r) >= 2}
+        # The virtual export connection has source = lh2_A (the in-region
+        # endpoint) and sink = the virtual node.
+        virtual = "pipe_AB__export__region_A"
+        assert src_map.get(virtual) == "lh2_A", (
+            f"expected {virtual} source to be lh2_A, got {src_map.get(virtual)!r}"
+        )
+        snk_rows = _read_rows(out / "process__sink.csv")[1:]
+        snk_map = {r[0]: r[1] for r in snk_rows if len(r) >= 2}
+        assert snk_map.get(virtual) == virtual, (
+            f"expected {virtual} sink to be the virtual node itself"
+        )
+
+
+class TestRegionBHasImportAndExport:
+    def test_region_b_two_half_flows(
+        self, region_b_dir: tuple[Path, dict]
+    ) -> None:
+        _, result = region_b_dir
+        hfs: list[HalfFlow] = result["half_flows"]
+        assert len(hfs) == 2, (
+            f"expected 2 half-flows for region_B (pipe_AB + pipe_BC), "
+            f"got {len(hfs)}: {[(h.original_connection, h.side) for h in hfs]}"
+        )
+        by_conn = {hf.original_connection: hf for hf in hfs}
+        # pipe_AB flows INTO B (B is sink) → import
+        assert "pipe_AB" in by_conn
+        assert by_conn["pipe_AB"].side == "import"
+        assert by_conn["pipe_AB"].in_region_node == "lh2_B"
+        # pipe_BC flows OUT OF B (B is source) → export
+        assert "pipe_BC" in by_conn
+        assert by_conn["pipe_BC"].side == "export"
+        assert by_conn["pipe_BC"].in_region_node == "lh2_B"
+
+    def test_region_b_virtual_nodes_present(
+        self, region_b_dir: tuple[Path, dict]
+    ) -> None:
+        out, _ = region_b_dir
+        nodes = _first_col_set(out / "node.csv")
+        assert "pipe_AB__import__region_B" in nodes
+        assert "pipe_BC__export__region_B" in nodes
+        # Original cross-region pipe nodes that belong to *other* regions
+        # must not bleed through.
+        assert "lh2_A" not in nodes
+        assert "lh2_C" not in nodes
+
+    def test_region_b_process_connection(
+        self, region_b_dir: tuple[Path, dict]
+    ) -> None:
+        out, _ = region_b_dir
+        pc = _first_col_set(out / "process_connection.csv")
+        # Originals removed, virtuals present.
+        assert "pipe_AB" not in pc
+        assert "pipe_BC" not in pc
+        assert "pipe_AB__import__region_B" in pc
+        assert "pipe_BC__export__region_B" in pc
+
+    def test_region_b_source_sink_wiring(
+        self, region_b_dir: tuple[Path, dict]
+    ) -> None:
+        out, _ = region_b_dir
+        src_rows = _read_rows(out / "process__source.csv")[1:]
+        src_map = {r[0]: r[1] for r in src_rows if len(r) >= 2}
+        snk_rows = _read_rows(out / "process__sink.csv")[1:]
+        snk_map = {r[0]: r[1] for r in snk_rows if len(r) >= 2}
+        # Import half-flow: source = virtual node, sink = in-region node
+        v_in = "pipe_AB__import__region_B"
+        assert src_map.get(v_in) == v_in
+        assert snk_map.get(v_in) == "lh2_B"
+        # Export half-flow: source = in-region node, sink = virtual node
+        v_out = "pipe_BC__export__region_B"
+        assert src_map.get(v_out) == "lh2_B"
+        assert snk_map.get(v_out) == v_out
+
+
+class TestRegionCMembership:
+    def test_region_c_import_only(
+        self, region_c_dir: tuple[Path, dict]
+    ) -> None:
+        _, result = region_c_dir
+        hfs: list[HalfFlow] = result["half_flows"]
+        assert len(hfs) == 1
+        hf = hfs[0]
+        assert hf.original_connection == "pipe_BC"
+        assert hf.side == "import"
+        assert hf.in_region_node == "lh2_C"
+
+    def test_region_c_no_pipes(
+        self, region_c_dir: tuple[Path, dict]
+    ) -> None:
+        out, _ = region_c_dir
+        pc = _first_col_set(out / "process_connection.csv")
+        assert "pipe_AB" not in pc
+        assert "pipe_BC" not in pc
+
+
+class TestRegionCouplingManifest:
+    def test_manifest_present_after_write_input_for_region(
+        self, lh2_db_url: str, tmp_path: Path
+    ) -> None:
+        """Invoking ``write_input_for_region`` writes
+        ``solve_data/region_coupling.csv`` with the right rows.
+        """
+        prev_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            result = input_writer.write_input_for_region(
+                input_db_url=lh2_db_url,
+                scenario_name=SCENARIO,
+                logger=logging.getLogger("test_region_manifest"),
+                region_group="region_B",
+                output_dir=tmp_path / "input_region_region_B",
+                work_folder=tmp_path,
+            )
+        finally:
+            os.chdir(prev_cwd)
+        manifest = tmp_path / "solve_data" / "region_coupling.csv"
+        assert manifest.exists(), "region_coupling.csv was not written"
+        rows = _read_rows(manifest)
+        assert rows[0] == ["region", "process", "side", "virtual_node"]
+        data = rows[1:]
+        # Two coupling variables for region_B.
+        assert len(data) == 2
+        recs = {(r[0], r[1], r[2], r[3]) for r in data if len(r) >= 4}
+        assert (
+            "region_B", "pipe_AB", "import", "pipe_AB__import__region_B",
+        ) in recs
+        assert (
+            "region_B", "pipe_BC", "export", "pipe_BC__export__region_B",
+        ) in recs
+        # Double-check the result dict.
+        assert len(result["half_flows"]) == 2
+
+
+class TestFilterPreservesSharedEntities:
+    def test_coal_market_and_coal_commodity_kept(
+        self, region_a_dir: tuple[Path, dict]
+    ) -> None:
+        out, _ = region_a_dir
+        nodes = _first_col_set(out / "node.csv")
+        assert "coal_market" in nodes, (
+            "shared commodity node coal_market must be kept in every region"
+        )
+        commodities = _first_col_set(out / "commodity.csv")
+        assert "coal" in commodities, "coal commodity must be kept"
+
+    def test_profiles_kept_globally(
+        self, region_a_dir: tuple[Path, dict]
+    ) -> None:
+        out, _ = region_a_dir
+        profiles = _first_col_set(out / "profile.csv")
+        # Wind profiles for all regions live in the profile namespace;
+        # the filter does not prune profiles by region (profiles are
+        # shared identifier objects, not spatial).  We only check that
+        # at least the in-region wind profile is present.
+        assert "wind_profile_A" in profiles

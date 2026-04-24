@@ -1939,6 +1939,70 @@ def write_input(
         _validate_group_output_memberships(db, logger)
 
 
+def write_input_for_region(
+    input_db_url: str,
+    scenario_name: str | None,
+    logger: logging.Logger,
+    region_group: str,
+    output_dir: Path,
+    work_folder: Path | None = None,
+    precision_digits: int = 0,
+) -> dict:
+    """Write a self-contained ``input_region_<region>/`` directory for one
+    decomposition region's standalone GMPL solve (Agent 3.1).
+
+    This is a thin wrapper around :func:`write_input` plus the regional
+    filter in :mod:`flextool.flextoolrunner.region_filter`.  The monolithic
+    ``input/`` is produced first (exactly as in a normal run), then the
+    filter copies and filters each CSV into *output_dir*, synthesising
+    virtual import/export nodes and half-flow connections for every
+    cross-region process.
+
+    Parameters
+    ----------
+    input_db_url, scenario_name, logger, work_folder, precision_digits
+        Same semantics as :func:`write_input`.
+    region_group
+        The group name whose ``decomposition_method`` is ``lagrangian_region``.
+        Must exist in the database.
+    output_dir
+        Destination directory, typically
+        ``work_folder / "input_region_<region>"``.  Created if missing.
+
+    Returns a dict: ``{"region": ..., "half_flows": [...], "kept_nodes": ...,
+    "kept_units": ..., "kept_connections": ...}``.
+    """
+    from flextool.flextoolrunner import region_filter
+
+    wf = work_folder if work_folder is not None else Path.cwd()
+    # Produce the full input/ directory first — this is the staging area.
+    write_input(
+        input_db_url,
+        scenario_name,
+        logger,
+        work_folder=work_folder,
+        precision_digits=precision_digits,
+    )
+    all_regions = region_filter.discover_decomposition_regions_from_db(input_db_url)
+    if region_group not in all_regions:
+        raise FlexToolConfigError(
+            f"Region '{region_group}' is not declared with "
+            f"decomposition_method='lagrangian_region' in the database. "
+            f"Available regions: {sorted(all_regions) or '(none)'}"
+        )
+    result = region_filter.build_region_directory(
+        input_dir=wf / "input",
+        output_dir=Path(output_dir),
+        region=region_group,
+        all_regions=all_regions,
+    )
+    region_filter.write_region_coupling_manifest(
+        work_folder=wf,
+        results=[result],
+    )
+    return result
+
+
 def _validate_group_output_memberships(db, logger: logging.Logger) -> None:
     """Warn when a group-level output flag is ``yes`` but the group lacks
     the membership class required for that output to produce any data.

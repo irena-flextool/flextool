@@ -112,6 +112,17 @@ def main():
                              'dual simplex does on rivendell S19.  For MIPs the LP '
                              'relaxation uses IPM; branch-and-bound still drives the '
                              'integer search.  Also triggered by FLEXTOOL_IPM=1.')
+    parser.add_argument('--region', metavar='GROUP_NAME', default=None,
+                        help='Produce a filtered per-region input directory '
+                             '``input_region_<GROUP_NAME>/`` for Lagrangian '
+                             'decomposition (Agent 3.1).  The group must have '
+                             '``decomposition_method=lagrangian_region`` in '
+                             'the DB.  Cross-region processes are replaced '
+                             'with import/export half-flows; the coupling '
+                             'variables are listed in '
+                             '``solve_data/region_coupling.csv``.  When this '
+                             'flag is set, GMPL is NOT invoked — this is the '
+                             'filter-only entry point used by the coordinator.')
     parser.add_argument('--auto-scale', action='store_true', default=False,
                         help='Apply the per-solve ScaleAnalyzer recommendation '
                              'for use_row_scaling (Agent 8, LP-scaling).  Without '
@@ -162,6 +173,33 @@ def main():
     auto_scale = resolve_auto_scale(args.auto_scale)
     relax_feasibility = resolve_relax_feasibility(args.relax_feasibility)
     use_ipm = resolve_ipm(args.ipm)
+
+    # --- Regional filter mode (Agent 3.1) --------------------------------
+    # ``--region GROUP`` produces ``input_region_<GROUP>/`` and exits
+    # without invoking the solver.  The Lagrangian coordinator (Agent
+    # 3.2) then orchestrates multiple region solves itself.
+    if args.region:
+        from flextool.flextoolrunner import input_writer as _input_writer
+        _region_output = wf / f"input_region_{args.region}"
+        try:
+            result = _input_writer.write_input_for_region(
+                input_db_url=input_db_url,
+                scenario_name=scenario_name,
+                logger=logging.getLogger("flextool.region_filter"),
+                region_group=args.region,
+                output_dir=_region_output,
+                work_folder=work_folder,
+                precision_digits=effective_precision,
+            )
+        except Exception as exc:
+            logging.error("Regional filter failed: %s", exc, exc_info=True)
+            sys.exit(-1)
+        print(f"Wrote filtered region inputs to {_region_output}")
+        print(
+            f"Coupling variables ({len(result['half_flows'])}): "
+            f"{[hf.virtual_node for hf in result['half_flows']]}"
+        )
+        sys.exit(0)
 
     if scenario_name:
         runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm)
