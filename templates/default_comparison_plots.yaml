@@ -53,6 +53,14 @@
 # - always_include_zero_in_axis: true/false (default true). Zero will always be within the axis bounds (preventing automatic behaviour where it can be hard to see the scale of the plot)
 # - skip_data_with_only_zeroes: true/false (default false). Drops all-zero columns (and all-zero rows for bar charts) before plotting
 
+# Default time-range duration per variant letter, used the first time the
+# user views that variant. After that, the user's last setting persists in
+# the project's settings.yaml. The value 'all' means "show the full
+# timeline" (resolved at view time to the available data length).
+default_duration:
+  h: 168
+  w: all
+
 order_of_variants: [p, a, h, w]
 max_items_per_subplot_column: 40
 

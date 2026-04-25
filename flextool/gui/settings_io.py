@@ -67,6 +67,18 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     settings.checked_available_scenarios = data.get("checked_available_scenarios", [])
     settings.checked_executed_scenarios = data.get("checked_executed_scenarios", [])
 
+    def _clean_variant_durations(raw: object) -> dict[str, int]:
+        if not isinstance(raw, dict):
+            return {}
+        cleaned: dict[str, int] = {}
+        for k, v in raw.items():
+            if isinstance(v, bool):
+                # bool is an int subclass — exclude explicitly
+                continue
+            if isinstance(v, (int, float)):
+                cleaned[str(k)] = int(v)
+        return cleaned
+
     single_plot = data.get("single_plot_settings")
     if isinstance(single_plot, dict):
         settings.single_plot_settings = PlotSettings(
@@ -75,6 +87,9 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             config_file=single_plot.get("config_file", ""),
             active_configs=single_plot.get("active_configs", []),
             only_first_file=single_plot.get("only_first_file", False),
+            variant_durations=_clean_variant_durations(
+                single_plot.get("variant_durations", {})
+            ),
         )
 
     comp_plot = data.get("comparison_plot_settings")
@@ -86,6 +101,9 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             active_configs=comp_plot.get("active_configs", []),
             dispatch_plots=comp_plot.get("dispatch_plots", True),
             only_first_file=comp_plot.get("only_first_file", False),
+            variant_durations=_clean_variant_durations(
+                comp_plot.get("variant_durations", {})
+            ),
         )
 
     viewer = data.get("viewer_settings")

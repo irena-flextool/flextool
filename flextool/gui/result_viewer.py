@@ -20,7 +20,9 @@ from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.data_models import ProjectSettings
 from flextool.gui.network_graph import build_network_figure
 from flextool.gui.plot_canvas import PlotCanvas
-from flextool.gui.plot_config_reader import PlotEntry, PlotGroup, PlotVariant, parse_plot_config
+from flextool.gui.plot_config_reader import (
+    PlotConfigData, PlotEntry, PlotGroup, PlotVariant, parse_plot_config,
+)
 from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.settings_io import save_project_settings
 from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, flatten_new_format
@@ -84,9 +86,27 @@ class ResultViewer(tk.Toplevel):
         self._file_index = 0
         self._file_count = 1
 
-        # Per-variant slider state: {letter: (start, duration)}
-        self._variant_slider_state: dict[str, tuple[int, int]] = {}
+        # Per-variant slider state.
+        # Starts are session-local (not persisted): {letter: start}.
+        # Durations are persisted in settings.<plot>.variant_durations and
+        # are looked up there directly — see ``_active_plot_settings``.
+        self._variant_start_state: dict[str, int] = {}
         self._last_slider_variant: str | None = None
+
+        # Template-supplied default durations (per variant letter).
+        # Populated in ``_populate_plot_tree`` whenever the YAML config is
+        # (re)loaded. Values are int or the sentinel string ``"all"``.
+        self._template_default_durations: dict[str, int | str] = {}
+
+        # Guard flag — when True, ``_on_time_range_changed``'s persistence
+        # path is skipped. Set around programmatic ``_duration_var.set(...)``
+        # calls inside ``_update_time_range`` so a data-driven clamp does
+        # not overwrite the user's saved intent.
+        self._suppress_duration_save: bool = False
+
+        # Pending after() id for debounced duration save, or None if no
+        # save is currently scheduled.
+        self._duration_save_after_id: str | None = None
 
         # Caches for parquet pipeline
         self._yaml_cache: dict[Path, dict] = {}
@@ -582,7 +602,13 @@ class ResultViewer(tk.Toplevel):
             return
 
         config_path = self._get_config_path_for_mode()
-        self._plot_groups = parse_plot_config(config_path)
+        parsed = parse_plot_config(config_path)
+        if isinstance(parsed, PlotConfigData):
+            self._plot_groups = parsed.groups
+            self._template_default_durations = dict(parsed.default_durations)
+        else:  # defensive: legacy list shape
+            self._plot_groups = list(parsed)
+            self._template_default_durations = {}
 
         for group in self._plot_groups:
             group_iid = f"group_{group.number}"
@@ -1708,42 +1734,112 @@ class ResultViewer(tk.Toplevel):
     # Time range controls
     # ------------------------------------------------------------------
 
+    def _active_plot_settings(self) -> 'PlotSettings':  # type: ignore[name-defined]
+        """Return the PlotSettings for the active mode (single vs comparison).
+
+        ``dispatch`` and ``network`` modes also use the single settings as
+        a sane fallback — they do not surface their own duration controls.
+        """
+        if self._mode.get() == "comparison":
+            return self._settings.comparison_plot_settings
+        return self._settings.single_plot_settings
+
+    def _resolve_initial_duration(self, letter: str, data_length: int) -> int:
+        """Compute the duration to show the FIRST time *letter* is viewed.
+
+        Resolution order (short-circuits on the first match):
+
+        1. If ``letter`` is already in ``settings.variant_durations`` →
+           saved user intent wins, even on a fresh GUI session.
+        2. Else if ``letter`` is in ``self._template_default_durations``:
+              - value ``"all"`` → resolve to ``data_length`` (or 168 if
+                ``data_length <= 0``);
+              - integer value → use that integer.
+           The resolved int is then persisted into
+           ``settings.variant_durations[letter]`` and a settings save is
+           triggered so the user's first sighting becomes the new baseline.
+        3. Else fall back to 168, except for ``'w'`` which preserves the
+           legacy "full timeline" behaviour when no template default exists.
+        """
+        plot_settings = self._active_plot_settings()
+        saved = plot_settings.variant_durations
+        if letter in saved:
+            try:
+                return int(saved[letter])
+            except (TypeError, ValueError):
+                pass
+
+        template = self._template_default_durations
+        if letter in template:
+            tmpl_val = template[letter]
+            if isinstance(tmpl_val, str) and tmpl_val.strip().lower() == "all":
+                resolved = data_length if data_length > 0 else 168
+            else:
+                try:
+                    resolved = int(tmpl_val)
+                except (TypeError, ValueError):
+                    resolved = 168
+            saved[letter] = int(resolved)
+            self._schedule_settings_save()
+            return int(resolved)
+
+        if letter == 'w':
+            return data_length if data_length > 0 else 168
+        return 168
+
     def _update_time_range(self, data_length: int) -> None:
         """Update the Start slider and Duration spinbox for *data_length* rows.
 
-        Saves the current start/duration under the previous variant letter
-        and restores the values for the current variant letter.  The 'w'
-        (weekly) variant defaults to showing the full timeline.
+        Saves the current start under the previous variant letter and
+        restores the values for the current variant letter. Durations are
+        resolved against persisted settings (and template defaults on the
+        first sighting); see :meth:`_resolve_initial_duration`.
+
+        The spinbox value MAY be clamped down to ``data_length`` for
+        display, but the persisted user intent in
+        ``settings.variant_durations[letter]`` is *not* overwritten by
+        that clamp — the ``_suppress_duration_save`` guard ensures the
+        trace callback ignores the programmatic write.
         """
         self._updating_time_range = True
+        plot_settings = self._active_plot_settings()
         try:
-            # ── Save outgoing variant's slider state ──
+            # ── Save outgoing variant's start state ──
             prev = getattr(self, '_last_slider_variant', None)
             current = self._active_variant or 'h'
             if prev is not None and prev != current:
-                self._variant_slider_state[prev] = (
-                    self._start_var.get(), self._duration_var.get(),
-                )
+                self._variant_start_state[prev] = self._start_var.get()
+                # Outgoing duration is already in plot_settings — last
+                # user-driven write came through the trace handler and
+                # was already persisted (or scheduled to be).
 
             # ── Restore or initialise incoming variant's slider state ──
             if current != prev:
-                if current in self._variant_slider_state:
-                    saved_start, saved_dur = self._variant_slider_state[current]
-                elif current == 'w':
-                    # Weekly variant defaults to full timeline
-                    saved_start, saved_dur = 0, data_length
+                # Determine duration: settings → template → fallback.
+                if current in plot_settings.variant_durations:
+                    saved_dur = int(plot_settings.variant_durations[current])
                 else:
-                    saved_start = self._start_var.get()
-                    saved_dur = self._duration_var.get()
-                self._duration_var.set(saved_dur)
+                    saved_dur = self._resolve_initial_duration(current, data_length)
+                # Determine start: session-local dict, default 0.
+                saved_start = self._variant_start_state.get(current, 0)
+
+                self._suppress_duration_save = True
+                try:
+                    self._duration_var.set(int(saved_dur))
+                finally:
+                    self._suppress_duration_save = False
                 self._start_var.set(saved_start)
             self._last_slider_variant = current
 
-            # ── Clamp duration to data_length ──
+            # ── Clamp duration FOR DISPLAY only — do NOT overwrite intent ──
             duration = self._duration_var.get()
             if duration > data_length and data_length > 0:
+                self._suppress_duration_save = True
+                try:
+                    self._duration_var.set(data_length)
+                finally:
+                    self._suppress_duration_save = False
                 duration = data_length
-                self._duration_var.set(duration)
 
             # ── Update duration step list (always include data_length) ──
             valid = [v for v in self._duration_steps if v <= data_length]
@@ -1766,12 +1862,57 @@ class ResultViewer(tk.Toplevel):
             self._updating_time_range = False
 
     def _on_time_range_changed(self, *_args) -> None:
-        """Handle Start or Duration change — trigger replot."""
+        """Handle Start or Duration change.
+
+        Persists the *unclamped* user intent into
+        ``settings.variant_durations`` and triggers a debounced settings
+        save (500 ms). Programmatic clamps inside ``_update_time_range``
+        bypass this path via ``_suppress_duration_save``.
+        """
         if self._updating_time_range:
             return
+        if not self._suppress_duration_save:
+            letter = self._active_variant or self._last_slider_variant
+            if letter:
+                try:
+                    intent = int(self._duration_var.get())
+                except tk.TclError:
+                    intent = None
+                if intent is not None and intent > 0:
+                    plot_settings = self._active_plot_settings()
+                    plot_settings.variant_durations[letter] = intent
+                    self._schedule_settings_save()
         self._file_index = 0
         self._clear_prefetched_figures()
         self._trigger_replot()
+
+    def _schedule_settings_save(self, delay_ms: int = 500) -> None:
+        """Debounced ``save_project_settings`` — coalesce keystroke bursts.
+
+        Cancels any previously scheduled save and schedules a new one
+        ``delay_ms`` from now. Saves run on the Tk main thread.
+        """
+        if self._duration_save_after_id is not None:
+            try:
+                self.after_cancel(self._duration_save_after_id)
+            except (tk.TclError, ValueError):
+                pass
+            self._duration_save_after_id = None
+        try:
+            self._duration_save_after_id = self.after(
+                delay_ms, self._flush_settings_save,
+            )
+        except tk.TclError:
+            # Window may already be destroyed — fall back to immediate save.
+            self._flush_settings_save()
+
+    def _flush_settings_save(self) -> None:
+        """Persist project settings now and clear the pending after() id."""
+        self._duration_save_after_id = None
+        try:
+            save_project_settings(self._project_path, self._settings)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to persist variant durations", exc_info=True)
 
     # ------------------------------------------------------------------
     # Figure cache management
@@ -2977,6 +3118,15 @@ class ResultViewer(tk.Toplevel):
         self._render_gen += 1  # invalidate in-flight builds
         self._executor.shutdown(wait=False)
         self._clear_figure_cache()
+
+        # Cancel any pending debounced save — the ``save_project_settings``
+        # call below already covers the latest variant_durations state.
+        if self._duration_save_after_id is not None:
+            try:
+                self.after_cancel(self._duration_save_after_id)
+            except (tk.TclError, ValueError):
+                pass
+            self._duration_save_after_id = None
 
         # Unbind global key bindings added with bind_all
         for seq in ("<Prior>", "<Next>", "<Left>", "<Right>"):

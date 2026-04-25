@@ -12,6 +12,10 @@ class PlotSettings:
     active_configs: list[str] = field(default_factory=list)
     dispatch_plots: bool = True  # comparison only: include --dispatch-plots
     only_first_file: bool = False  # limit to one file per plot (quick overview)
+    # Per-variant duration, keyed by variant letter (e.g. {"h": 168, "w": 8760}).
+    # Only ints — "all" sentinel from the template is resolved to a concrete
+    # integer the first time the variant is seen and stored here.
+    variant_durations: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

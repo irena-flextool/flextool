@@ -53,6 +53,14 @@
 #
 # There is also filename configuration section after the plot rules (used by csv and parquet)
 
+# Default time-range duration per variant letter, used the first time the
+# user views that variant. After that, the user's last setting persists in
+# the project's settings.yaml. The value 'all' means "show the full
+# timeline" (resolved at view time to the available data length).
+default_duration:
+  h: 168
+  w: all
+
 order_of_variants: [p, a, h, w]
 max_items_per_subplot_column: 40
 

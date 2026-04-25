@@ -53,6 +53,49 @@ class PlotGroup:
     entries: list[PlotEntry] = field(default_factory=list)
 
 
+@dataclass
+class PlotConfigData:
+    """Parsed plot config: tree groups plus top-level metadata.
+
+    Attributes
+    ----------
+    groups:
+        Plot tree as a list of :class:`PlotGroup` objects.
+    default_durations:
+        Map of variant letter -> default time-range duration. Values are
+        either an ``int`` (number of timesteps) or the string ``"all"``
+        (resolved at view time to the available data length). Empty if
+        the YAML does not define a ``default_duration`` key.
+    """
+
+    groups: list[PlotGroup] = field(default_factory=list)
+    default_durations: dict[str, int | str] = field(default_factory=dict)
+
+    # Allow legacy callers that treat the result as a list of groups
+    # (iteration, len, indexing, equality with []) to keep working.
+    def __iter__(self):
+        return iter(self.groups)
+
+    def __len__(self) -> int:
+        return len(self.groups)
+
+    def __getitem__(self, index):
+        return self.groups[index]
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, PlotConfigData):
+            return (
+                self.groups == other.groups
+                and self.default_durations == other.default_durations
+            )
+        if isinstance(other, list):
+            return self.groups == other
+        return NotImplemented
+
+    def __bool__(self) -> bool:
+        return bool(self.groups) or bool(self.default_durations)
+
+
 
 def _derive_variant_letter(result_key: str, sub_config: str,
                            sub_value: dict | None = None) -> str:
@@ -124,33 +167,63 @@ def _extract_plot_items(
     return items
 
 
-def parse_plot_config(config_path: Path) -> list[PlotGroup]:
-    """Parse a plot config YAML and return the tree structure.
+def _parse_default_durations(data: dict) -> dict[str, int | str]:
+    """Extract ``default_duration`` mapping from a parsed YAML doc.
 
-    Returns a list of :class:`PlotGroup` objects sorted by group number.
-    Each group contains :class:`PlotEntry` objects sorted by entry number,
-    and each entry contains :class:`PlotVariant` objects for available
-    variant letters.
+    Values are either an ``int`` (number of timesteps) or the literal
+    string ``"all"`` (resolve at view time to the available data length).
+    Anything else is silently dropped.
+    """
+    raw = data.get("default_duration")
+    if not isinstance(raw, dict):
+        return {}
+    cleaned: dict[str, int | str] = {}
+    for letter, value in raw.items():
+        key = str(letter)
+        if isinstance(value, bool):
+            continue  # reject bools (int subclass)
+        if isinstance(value, (int, float)):
+            cleaned[key] = int(value)
+        elif isinstance(value, str) and value.strip().lower() == "all":
+            cleaned[key] = "all"
+    return cleaned
 
-    Entries without ``map_dimensions_for_plots`` are excluded.
+
+def parse_plot_config(config_path: Path) -> PlotConfigData:
+    """Parse a plot config YAML and return the tree structure plus defaults.
+
+    Returns a :class:`PlotConfigData` with two attributes:
+
+    * ``groups`` — list of :class:`PlotGroup` objects sorted by group number.
+      Each group contains :class:`PlotEntry` objects sorted by entry number,
+      and each entry contains :class:`PlotVariant` objects for available
+      variant letters. Entries without ``map_dimensions_for_plots`` are
+      excluded.
+    * ``default_durations`` — mapping of variant letter to default time-range
+      duration (``int`` or the sentinel string ``"all"``).
+
+    The returned object is iterable / indexable / comparable to a list of
+    :class:`PlotGroup`, so legacy callers keep working.
     """
     if not config_path.is_file():
         logger.warning("Plot config file not found: %s", config_path)
-        return []
+        return PlotConfigData()
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except (yaml.YAMLError, OSError) as exc:
         logger.error("Failed to read plot config %s: %s", config_path, exc)
-        return []
+        return PlotConfigData()
 
     if not isinstance(data, dict):
-        return []
+        return PlotConfigData()
+
+    default_durations = _parse_default_durations(data)
 
     plots = data.get("plots")
     if not isinstance(plots, dict):
-        return []
+        return PlotConfigData(default_durations=default_durations)
 
     items = _extract_plot_items(plots)
 
@@ -196,4 +269,4 @@ def parse_plot_config(config_path: Path) -> list[PlotGroup]:
     for group in groups:
         group.entries.sort(key=lambda e: [int(x) for x in e.number.split(".")])
 
-    return groups
+    return PlotConfigData(groups=groups, default_durations=default_durations)
