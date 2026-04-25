@@ -1554,6 +1554,9 @@ class MainWindow(tk.Tk):
         # Configure tags for problem rows
         self.input_sources_tree.tag_configure("error", background="#6b2020")
         self.input_sources_tree.tag_configure("empty", background="#5c4a00")
+        # Brief flash used when an open is refused because the file is
+        # already open elsewhere — overlays the row's normal tags.
+        self.input_sources_tree.tag_configure("flash_open", background="#aa3333")
 
         # Populate input sources tree
         saved_checked = set(self.project_settings.checked_input_sources)
@@ -1854,6 +1857,9 @@ class MainWindow(tk.Tk):
 
         ext = filepath.suffix.lower()
         if ext in (".xlsx", ".ods"):
+            if self.input_source_mgr._check_lock(filepath):
+                self._flash_input_source_open(source_name)
+                return
             try:
                 open_file_in_default_app(filepath)
                 self.input_source_mgr.mark_as_editing(source_name)
@@ -1861,6 +1867,9 @@ class MainWindow(tk.Tk):
                 messagebox.showerror("Error", f"Could not open file:\n{exc}")
                 return
         elif ext == ".sqlite":
+            if self.db_editor_mgr.is_editor_running(source_name):
+                self._flash_input_source_open(source_name)
+                return
             db_url = f"sqlite:///{filepath}"
             proc = self.db_editor_mgr.open_database(db_url, source_name)
             if proc is None:
@@ -1878,6 +1887,28 @@ class MainWindow(tk.Tk):
 
         # Refresh to show editing status
         self._refresh_input_sources()
+
+    def _flash_input_source_open(self, source_name: str) -> None:
+        """Briefly flash a source row red to signal "already open elsewhere"."""
+        candidates = (source_name, f"ext:{source_name}")
+        iid = next(
+            (c for c in candidates if self.input_sources_tree.exists(c)),
+            None,
+        )
+        if iid is None:
+            return
+        original = tuple(self.input_sources_tree.item(iid, "tags") or ())
+        self.input_sources_tree.item(iid, tags=("flash_open",) + original)
+        try:
+            self.bell()
+        except tk.TclError:
+            pass
+
+        def _revert() -> None:
+            if self.input_sources_tree.exists(iid):
+                self.input_sources_tree.item(iid, tags=original)
+
+        self.after(700, _revert)
 
     # ── Convert button handler ──────────────────────────────────────
 
