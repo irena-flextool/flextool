@@ -9,6 +9,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from flextool.plot_outputs.format_helpers import DynamicFormatter
 
+# Bar geometry constants (kept in sync with plot_bars.py module-level
+# values). Duplicated here to avoid a circular import — plot_bars.py
+# imports the rendering functions from this module.
+BAR_GAP_FRACTION = 0.10
+REFERENCE_BAR_THICKNESS = 0.0558    # matches plot_bars.REFERENCE_BAR_THICKNESS
+SOLO_BAR_THICKNESS = 0.1116         # = 2 × REFERENCE_BAR_THICKNESS
+
 
 def _stack_label(stack_idx: int, stacks: list, labeled_stacks: set) -> str:
     """Return the legend label for a stack segment (empty string if already labeled)."""
@@ -133,14 +140,16 @@ def _plot_grouped_bars(
             else:
                 label = ''
 
-            # Plot bar with per-position offset and width
-            slot_h = slot_heights[bar_idx] if slot_heights else 1.0
-            bar_w = TOTAL_BAR_FRACTION * slot_h / n_grouped
-            total_w = TOTAL_BAR_FRACTION * slot_h
+            # Plot bar with FIXED thickness (does not depend on slot_h or
+            # n_grouped). Bars are centred within the slot — extra slot
+            # space appears as whitespace top/bottom (or left/right).
+            bar_w = SOLO_BAR_THICKNESS if n_grouped == 1 else REFERENCE_BAR_THICKNESS
+            step = bar_w * (1 + BAR_GAP_FRACTION)
+            total_w = bar_w * n_grouped + bar_w * BAR_GAP_FRACTION * max(0, n_grouped - 1)
             if bar_orientation == 'horizontal':
-                offset = total_w / 2 - bar_w / 2 - grouped_idx * bar_w  # top to bottom
+                offset = total_w / 2 - bar_w / 2 - grouped_idx * step  # top to bottom
             else:
-                offset = -total_w / 2 + bar_w / 2 + grouped_idx * bar_w  # left to right
+                offset = -total_w / 2 + bar_w / 2 + grouped_idx * step  # left to right
             y_pos = y_positions[bar_idx] if y_positions else bar_idx
             bar_position = y_pos + offset
             if bar_orientation == 'horizontal':
@@ -284,8 +293,8 @@ def _plot_stacked_bars(
                 neg_stacks.add(stack_idx)
 
         y_pos = y_positions[bar_idx] if y_positions else bar_idx
-        slot_h = slot_heights[bar_idx] if slot_heights else 0.8
-        bar_h = 0.8 * slot_h  # 80% of slot for the bar
+        # Stacked bars have one bar per row → fixed solo thickness.
+        bar_h = SOLO_BAR_THICKNESS
 
         # Stack positive values (forward order: 0,1,...,N)
         left_pos = 0
@@ -366,10 +375,9 @@ def _plot_simple_bars(
         else:
             value = df_bar.loc[period].sum() if period in df_bar.index else 0
 
-        # Plot single-color bar
+        # Plot single-color bar — fixed solo thickness.
         y_pos = y_positions[bar_idx] if y_positions else bar_idx
-        slot_h = slot_heights[bar_idx] if slot_heights else 0.8
-        bar_h = 0.8 * slot_h
+        bar_h = SOLO_BAR_THICKNESS
         if bar_orientation == 'horizontal':
             container = ax.barh(y_pos, value, height=bar_h, color='steelblue')
         else:  # vertical

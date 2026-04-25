@@ -24,7 +24,17 @@ from flextool.plot_outputs.plot_bars_detail import (
 CHAR_WIDTH = 0.081          # Approximate width per character at font-size 9
 LEFT_PAD = 0.25             # Left edge padding
 RIGHT_PAD = 0.35            # Right margin for value-axis tick labels
-BAR_HEIGHT = 0.24           # Height (or width) per bar including gap
+BAR_HEIGHT = 0.24           # Minimum row slot height (font-driven baseline)
+# Bar thickness is fixed per row regardless of how many bars share the row.
+# REFERENCE_BARS_PER_ROW + (n-1) gaps fit exactly into BAR_HEIGHT, so a row
+# of REFERENCE_BARS_PER_ROW bars uses the baseline slot. Fewer bars leave
+# whitespace; more bars grow the slot.
+REFERENCE_BARS_PER_ROW = 4
+BAR_GAP_FRACTION = 0.10            # gap between adjacent bars = 10% of bar thickness
+SOLO_BAR_THICKNESS_MULT = 2.0      # one-bar-per-row case (no grouping → no legend needed for groups)
+_REF_DENOM = REFERENCE_BARS_PER_ROW + (REFERENCE_BARS_PER_ROW - 1) * BAR_GAP_FRACTION
+REFERENCE_BAR_THICKNESS = BAR_HEIGHT / _REF_DENOM   # ≈ 0.0558 in
+SOLO_BAR_THICKNESS = REFERENCE_BAR_THICKNESS * SOLO_BAR_THICKNESS_MULT  # ≈ 0.1116 in
 SUBPLOT_VPAD = 0.3          # Space above axes for subplot title
 INTER_COL_GAP = 0.4         # Horizontal gap between subplot columns
 INTER_ROW_GAP = 0.6         # Vertical gap between subplot rows
@@ -222,16 +232,16 @@ def _build_bar_figure(
 
     # Per-position bar height: when grouped bars exceed 3, scale up the slot
     # so each individual bar stays at least 1/3 of font height (~10pt).
-    # Computed per-position so labels with few bars don't waste space.
-    FONT_HEIGHT = 10 / 72  # 10pt in inches
-    MIN_INDIVIDUAL_BAR = FONT_HEIGHT / 2.5
-    TOTAL_BAR_WIDTH = 0.8  # fraction of slot used by bars
-
+    # Slot height for a label row containing n bars at the FIXED bar
+    # thickness (REFERENCE_BAR_THICKNESS for n>1, SOLO_BAR_THICKNESS for
+    # n==1). Slot stays at the BAR_HEIGHT baseline whenever the bars +
+    # gaps fit; grows once they don't.
     def _slot_height_for_n_grouped(n: int) -> float:
         """Bar slot height for n grouped bars at one label."""
         if n <= 0:
             return BAR_HEIGHT
-        needed = MIN_INDIVIDUAL_BAR * n / TOTAL_BAR_WIDTH
+        bar_t = SOLO_BAR_THICKNESS if n == 1 else REFERENCE_BAR_THICKNESS
+        needed = n * bar_t + max(0, n - 1) * BAR_GAP_FRACTION * bar_t
         return max(BAR_HEIGHT, needed)
 
     def _count_grouped(df_check: pd.DataFrame) -> int:
