@@ -1089,7 +1089,7 @@ def write_scaling_report(
     out_path.write_text(report_text)
 
     if logger is not None:
-        logger.info(
+        logger.debug(
             "[scaling-report] %s written (%d warnings, mismatch=%s)",
             out_path, total_warnings, mismatch_fired,
         )

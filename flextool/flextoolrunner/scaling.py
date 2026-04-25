@@ -1161,7 +1161,7 @@ def analyze_solve(
     _scale_cache[solve_name] = table
 
     if logger is not None:
-        logger.info(
+        logger.debug(
             "[scaling] %s: unitsize_spread=%.2f rhs_spread=%.2f cost_spread=%.2f "
             "decades → use_row_scaling=%s (trigger=%s); "
             "rough_obj=%.3g → scale_the_objective=%g",

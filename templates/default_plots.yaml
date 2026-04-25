@@ -752,7 +752,7 @@ plots:
     CO2__:
       default:
         variant: a
-        map_dimensions_for_plots: [_, m_b]
+        map_dimensions_for_plots: [x_x, m_b]
         xlabel: Mt CO2
   'Emissions CO2 per nodeGroup':
     group: 5

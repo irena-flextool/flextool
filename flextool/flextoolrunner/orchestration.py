@@ -165,7 +165,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                 raise FlexToolConfigError(message)
 
     timing = time.perf_counter() - timer
-    state.logger.info(f"--- Pre-processing of data: {timing:.4f} seconds ---")
+    state.logger.debug(f"--- Pre-processing of data: {timing:.4f} seconds ---")
     with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
         solve_progress.write(',,solve,write_solve_input,setup,total_obj_cost,balance,reserves,rest,constraints,glpsol_input,solver,' \
             'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,glpsol_output,\n')
@@ -214,7 +214,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
     for i, solve in enumerate(all_solves):
         timer_in_solve = time.perf_counter()
 
-        state.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
+        state.logger.debug("Creating timelines for solve " + solve + " (" + str(i) + ")")
         cs = complete_solve[solve]
         if cs not in cached_complete_active_time_lists:
             cached_complete_active_time_lists[cs] = get_active_time(cs, state.solve.timesets_used_by_solves, state.timeline.timeset_durations, state.timeline.timelines, state.timeline.timesets__timeline)
@@ -243,7 +243,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         pb_time, pb_succ = make_period_block(active_time_lists[solve])
         solve_writers.write_period_block(pb_time, pb_succ, work_folder=wf)
         solve_writers.write_timesets(state.solve.timesets_used_by_solves, state.timeline.timesets__timeline, work_folder=wf)
-        state.logger.info("Creating period data")
+        state.logger.debug("Creating period data")
         solve_writers.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], str(wf / 'solve_data/period_with_history.csv'))
         solve_writers.write_periods(complete_solve[solve], state.solve.realized_invest_periods, str(wf / 'solve_data/realized_invest_periods_of_current_solve.csv'))
         #assume that if realized_invest_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the realized_invest_periods
@@ -333,11 +333,11 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         solve_writers.write_first_steps(active_time_lists[solve], str(wf / 'solve_data/first_timesteps.csv'))
         solve_writers.write_last_steps(active_time_lists[solve], str(wf / 'solve_data/last_timesteps.csv'))
         solve_writers.write_last_realized_step(active_time_lists[solve], complete_solve[solve], state.solve.realized_periods.get(complete_solve[solve], []), str(wf / 'solve_data/last_realized_timestep.csv'))
-        state.logger.info("Create realized timeline")
+        state.logger.debug("Create realized timeline")
         solve_writers.write_realized_dispatch(realized_time_lists[solve], complete_solve[solve], state.solve.realized_periods.get(complete_solve[solve], []), work_folder=wf)
         solve_writers.write_fix_storage_timesteps(fix_storage_time_lists[solve], complete_solve[solve], state.solve.fix_storage_periods.get(complete_solve[solve], []), work_folder=wf)
         solve_writers.write_delayed_durations(active_time_lists[solve], complete_solve[solve], state.solve.delay_durations, work_folder=wf)
-        state.logger.info("Possible stochastics")
+        state.logger.debug("Possible stochastics")
         solve_writers.write_branch__period_relationship(period__branch_lists[solve], str(wf / 'solve_data/period__branch.csv'))
         solve_writers.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve], state.logger, work_folder=wf)
         solve_writers.write_branch_weights_and_map(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve], state.solve.stochastic_branches, work_folder=wf)
@@ -356,7 +356,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                 realfile.write("period,step,upper_step\n")
         #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
         if previous_complete_solve != complete_solve[solve]:
-            state.logger.info("Aggregating timeline and parameters for the new step size")
+            state.logger.debug("Aggregating timeline and parameters for the new step size")
             state.timeline.create_averaged_timeseries(complete_solve[solve], state.solve, state.logger, work_folder=wf)
         previous_complete_solve = complete_solve[solve]
 
@@ -469,7 +469,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                 work_folder=wf,
             )
 
-        state.logger.info("Starting model creation")
+        state.logger.debug("Starting model creation")
 
         with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',,' + solve + ',' + str(round(time.perf_counter() - timer_in_solve,4)))
@@ -484,8 +484,8 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         exit_status = solver.run(complete_solve[solve])
         state.current_scale_solve_name = None
         if exit_status == 0:
-            state.logger.info('Success!')
-            state.logger.info("-------------------------------------------------------------------------------------------")
+            state.logger.debug('Success!')
+            state.logger.debug("-------------------------------------------------------------------------------------------")
         else:
             message = f'Error: {exit_status}'
             state.logger.error(message)

@@ -597,7 +597,7 @@ class SolverRunner:
         # Write solution file explicitly — the highspy API does not honor the
         # write_solution_to_file / solution_file options from highs.opt.
         h.writeSolution(flextool_sol_file, solution_style)
-        self.logger.info("HiGHS solved the problem")
+        self.logger.debug("HiGHS solved the problem")
 
         # NOTE: parquet extraction moved out of this method — it now runs
         # AFTER phase 3 inside ``_run_highs_or_cplex`` so that the

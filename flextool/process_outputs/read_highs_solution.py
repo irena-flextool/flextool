@@ -891,7 +891,7 @@ def write_variable_parquet(
         file_name = f"{spec.output_name or spec.name}__{solve_name}.parquet"
     path = output_dir / file_name
     write_lean_parquet(df, path)
-    _logger.info(
+    _logger.debug(
         "Wrote %s for solve '%s' → %s (shape %s)",
         spec.output_name or spec.name, solve_name, path, df.shape,
     )
@@ -1267,7 +1267,7 @@ def write_v_obj(
     # callers parsing the FlexTool stdout (e.g. test_representative_periods)
     # still see the objective value when phase 3 is off.
     print(f"total_cost.val = {obj:.12g}")
-    _logger.info("Wrote v_obj for solve '%s' → %s (%.10g)", solve_name, path, obj)
+    _logger.debug("Wrote v_obj for solve '%s' → %s (%.10g)", solve_name, path, obj)
     return path
 
 
@@ -1317,7 +1317,7 @@ def write_v_dual_invest_by_class(
         fname = f"v_dual_invest_{output_suffixes[cls_name]}__{solve_name}.parquet"
         path = output_dir / fname
         write_lean_parquet(subset, path)
-        _logger.info(
+        _logger.debug(
             "Wrote v_dual_invest_%s for solve '%s' → %s (shape %s)",
             output_suffixes[cls_name], solve_name, path, subset.shape,
         )
@@ -1405,7 +1405,7 @@ def write_v_dual_node_balance(
 
     path = output_dir / f"v_dual_node_balance__{solve_name}.parquet"
     write_lean_parquet(df, path)
-    _logger.info(
+    _logger.debug(
         "Wrote v_dual_node_balance for solve '%s' → %s (shape %s)",
         solve_name, path, df.shape,
     )
@@ -1457,7 +1457,7 @@ def write_v_dual_reserve_balance(
 
     if df.empty:
         write_lean_parquet(df.droplevel("method", axis=1) if "method" in (df.columns.names or []) else df, out_path)
-        _logger.info(
+        _logger.debug(
             "Wrote v_dual_reserve_balance for solve '%s' → %s (empty)",
             solve_name, out_path,
         )
@@ -1485,7 +1485,7 @@ def write_v_dual_reserve_balance(
     df = df.mul(factor, axis=0)
 
     write_lean_parquet(df, out_path)
-    _logger.info(
+    _logger.debug(
         "Wrote v_dual_reserve_balance for solve '%s' → %s (shape %s)",
         solve_name, out_path, df.shape,
     )
@@ -1606,6 +1606,10 @@ def write_all_variables(
                 "custom writer failed for %s (solve '%s'): %s",
                 label, solve_name, exc,
             )
+    _logger.info(
+        "Wrote %d output variables for solve '%s' → %s",
+        len(written), solve_name, output_dir,
+    )
     return written
 
 
