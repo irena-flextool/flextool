@@ -3861,9 +3861,16 @@ class MainWindow(tk.Tk):
 
         When *source_number* is given, matches on ``(source_number, scenario_name)``
         so same-named scenarios from different sources don't alias.
+
+        If the scenario is already part of the viewer set (its row is
+        checked in executed_tree), this is a pure single-view: the
+        viewer opens / raises without triggering a comparison rebuild.
+        If it isn't checked yet, we auto-check it and go through the
+        rebuild path so the new scenario shows up everywhere.
         """
         if not self.current_project:
             return
+        target_item: str | None = None
         for item in self.executed_tree.get_children():
             values = self.executed_tree.item(item, "values")
             if not values:
@@ -3876,12 +3883,57 @@ class MainWindow(tk.Tk):
                         continue
                 except (ValueError, IndexError):
                     continue
-            self.executed_tree.set(item, "check", CHECK_ON)
+            target_item = item
             break
-        self._save_checked_executed_scenarios()
-        self._open_or_raise_result_viewer()
+
+        was_already_checked = (
+            target_item is not None
+            and self.executed_tree.item(target_item, "values")[0] == CHECK_ON
+        )
+        if target_item is not None and not was_already_checked:
+            self.executed_tree.set(target_item, "check", CHECK_ON)
+            self._save_checked_executed_scenarios()
+
+        if was_already_checked:
+            self._open_result_viewer_no_rebuild()
+        else:
+            self._open_or_raise_result_viewer()
+
         if self._result_viewer is not None and self._result_viewer.winfo_exists():
             self._result_viewer.show_scenario_in_single_mode(scenario_name)
+
+    def _open_result_viewer_no_rebuild(self) -> None:
+        """Open or raise the ResultViewer without triggering a rebuild.
+
+        Used by the View action: the user is asking for a single-mode
+        view of one scenario, so we mustn't kick off the comparison
+        combine just because metadata.json may be out of sync. The
+        explicit "Update view scenarios" button is still the way to
+        pull main-window check changes into the comparison set.
+        """
+        if (
+            self._result_viewer is not None
+            and self._result_viewer.winfo_exists()
+        ):
+            self._result_viewer.deiconify()
+            self._result_viewer.lift()
+            self._result_viewer.attributes("-topmost", True)
+            self._result_viewer.update_idletasks()
+            self._result_viewer.attributes("-topmost", False)
+            self._result_viewer.focus_force()
+            self._update_view_results_btn()
+            return
+
+        project_path = get_projects_dir() / self.current_project
+        self._result_viewer = ResultViewer(
+            master=self,
+            project_path=project_path,
+            settings=self.project_settings,
+            scenario_db_map=self._get_scenario_db_map(),
+            desired_viewer_scenarios=None,
+        )
+        self._update_view_results_btn()
+        self._result_viewer.bind("<Destroy>", lambda e: self._update_view_results_btn())
 
     # ── Checkbox state persistence helpers ────────────────────────
 
