@@ -6,9 +6,11 @@ from pathlib import Path
 import yaml
 
 from flextool.gui.data_models import (
+    ExecutionLimits,
     GlobalSettings,
     PlotSettings,
     ProjectSettings,
+    ScenarioRun,
     ViewerSettings,
 )
 
@@ -99,6 +101,19 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             cache_gb=viewer.get("cache_gb", 0.5),
         )
 
+    history_data = data.get("scenario_resource_history", {})
+    if isinstance(history_data, dict):
+        history: dict[str, ScenarioRun] = {}
+        for subdir, run_data in history_data.items():
+            if not isinstance(run_data, dict):
+                continue
+            history[str(subdir)] = ScenarioRun(
+                peak_rss_mb=float(run_data.get("peak_rss_mb", 0.0)),
+                runtime_s=float(run_data.get("runtime_s", 0.0)),
+                last_run=str(run_data.get("last_run", "")),
+            )
+        settings.scenario_resource_history = history
+
     return settings
 
 
@@ -134,11 +149,23 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
     if theme not in ("dark", "light", "os"):
         theme = "dark"
 
+    limits_data = data.get("execution_limits")
+    if isinstance(limits_data, dict):
+        execution_limits = ExecutionLimits(
+            max_cores_per_job=limits_data.get("max_cores_per_job", 1),
+            memory_cap_per_job_gb=limits_data.get("memory_cap_per_job_gb", 0.0),
+            system_reserve_gb=limits_data.get("system_reserve_gb", 4.0),
+            swap_allowance_gb=limits_data.get("swap_allowance_gb", 0.0),
+        )
+    else:
+        execution_limits = ExecutionLimits()
+
     return GlobalSettings(
         recent_project=data.get("recent_project"),
         theme=theme,
         exec_jobs_sash=data.get("exec_jobs_sash", 0),
         max_workers=data.get("max_workers", 0),
+        execution_limits=execution_limits,
     )
 
 

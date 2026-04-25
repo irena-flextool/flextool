@@ -17,6 +17,8 @@ dependencies = [
     "sv-ttk",
     "highspy>=1.14",
     "matplotlib",
+    "psutil",
+    "pywin32; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

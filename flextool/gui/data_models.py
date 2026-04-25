@@ -28,6 +28,19 @@ class ViewerSettings:
 
 
 @dataclass
+class ScenarioRun:
+    """Recorded resource usage from a previous successful scenario run.
+
+    Persisted in settings.yaml under ``scenario_resource_history``, keyed
+    by output subdir. Used by the execution manager to set a learned
+    memory budget for the next run of the same scenario.
+    """
+    peak_rss_mb: float = 0.0    # high-water mark observed by MemoryWatchdog
+    runtime_s: float = 0.0      # wall-clock seconds from start_time to end_time
+    last_run: str = ""          # ISO-8601 local timestamp, e.g. "2026-04-25T14:30:15"
+
+
+@dataclass
 class ProjectSettings:
     """Per-project settings stored in settings.yaml."""
     # Auto-generate flags
@@ -74,9 +87,28 @@ class ProjectSettings:
     # Result viewer settings
     viewer_settings: ViewerSettings = field(default_factory=ViewerSettings)
 
+    # Per-scenario resource history: output_subdir -> ScenarioRun.
+    # Populated after a successful run; consulted at dispatch time so the
+    # next run gets a learned memory budget instead of the static auto fallback.
+    scenario_resource_history: dict[str, ScenarioRun] = field(default_factory=dict)
+
     # Transient flag (not persisted): set by execution manager when scenarios
     # finish, cleared by the result viewer when it picks up the changes.
     scenarios_changed: bool = field(default=False, repr=False)
+
+
+@dataclass
+class ExecutionLimits:
+    """Per-machine resource limits for FlexTool subprocess execution.
+
+    All fields are persisted in projects/projects.yaml under
+    ``execution_limits``. A value of 0 / 0.0 means "auto" (compute at
+    dispatch time from system info).
+    """
+    max_cores_per_job: int = 1            # passed as --highs-threads to each subprocess
+    memory_cap_per_job_gb: float = 0.0    # 0 = auto: (system_total - system_reserve_gb) / max_workers
+    system_reserve_gb: float = 4.0        # tier 4: leave at least this much free system RAM
+    swap_allowance_gb: float = 0.0        # tier 4: 0 = no swap; >0 allowed but warns user
 
 
 @dataclass
@@ -88,6 +120,7 @@ class GlobalSettings:
     # Last chosen value for "Max. parallel executions" in the execution
     # window. 0 means "not set yet" → use cpu_count() - 1.
     max_workers: int = 0
+    execution_limits: ExecutionLimits = field(default_factory=ExecutionLimits)
 
 
 @dataclass

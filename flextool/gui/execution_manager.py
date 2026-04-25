@@ -16,11 +16,151 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Callable
 
+import psutil
+
 from flextool.gui.cli_format import format_cmd_for_log
-from flextool.gui.data_models import ProjectSettings, ScenarioInfo
+from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.scenario_key import choose_output_subdir_for_write
 
 logger = logging.getLogger(__name__)
+
+
+def _wrap_for_memory_cap(
+    cmd: list[str],
+    estimate_gb: float,
+) -> tuple[list[str], dict, Callable[[subprocess.Popen], object | None] | None]:
+    """Wrap a command for cgroup-scoped soft memory pressure (Linux only).
+
+    On Linux, runs the command inside a transient systemd user scope so it
+    can be monitored as a unit. If estimate_gb > 0, sets MemoryHigh (soft
+    throttle) at that level. There is no MemoryMax / hard cap — actual
+    enforcement is global, via MemoryWatchdog.
+
+    On macOS and Windows, returns the command unchanged (watchdog enforces).
+    """
+    if sys.platform.startswith("linux") and shutil.which("systemd-run"):
+        wrapped = ["systemd-run", "--user", "--scope", "--quiet"]
+        if estimate_gb > 0:
+            wrapped.extend(["-p", f"MemoryHigh={int(estimate_gb * 1024)}M"])
+        wrapped.append("--")
+        wrapped.extend(cmd)
+        return wrapped, {}, None
+
+    return cmd, {}, None
+
+
+class MemoryWatchdog:
+    """Polls running scenario jobs every 5s; tracks peak RSS and enforces
+    global memory/swap thresholds by killing the job most over its
+    budget."""
+
+    POLL_INTERVAL_S = 5.0
+
+    def __init__(self, manager: "ExecutionManager") -> None:
+        self._manager = manager
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        # Captured at start(): swap usage attributable to other processes
+        # (kswapd cache of inactive pages, other apps, etc.). Only swap
+        # GROWTH past this baseline counts toward swap_allowance_gb.
+        self._baseline_swap_used: int = 0
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        try:
+            self._baseline_swap_used = psutil.swap_memory().used
+        except Exception:
+            self._baseline_swap_used = 0
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.POLL_INTERVAL_S):
+            with self._manager._lock:
+                snapshot = [
+                    (j, j.process, j.memory_cap_gb)
+                    for j in self._manager._jobs
+                    if j.status == JobStatus.RUNNING and j.process is not None
+                ]
+
+            measured: list[tuple[ExecutionJob, int, int]] = []
+            for job, proc, est_gb in snapshot:
+                if proc.poll() is not None:
+                    continue
+                try:
+                    parent = psutil.Process(proc.pid)
+                    rss = parent.memory_info().rss
+                    for child in parent.children(recursive=True):
+                        try:
+                            rss += child.memory_info().rss
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                rss_mb = rss / (1024 ** 2)
+                with self._manager._lock:
+                    if rss_mb > job.peak_rss_mb:
+                        job.peak_rss_mb = rss_mb
+                est_bytes = int(est_gb * (1024 ** 3))
+                measured.append((job, rss, est_bytes))
+
+            if not measured:
+                continue
+
+            limits = self._manager.execution_limits
+            reserve_bytes = int(limits.system_reserve_gb * (1024 ** 3))
+            swap_allow_bytes = int(limits.swap_allowance_gb * (1024 ** 3))
+
+            try:
+                vm = psutil.virtual_memory()
+                sm = psutil.swap_memory()
+            except Exception:
+                continue
+
+            reason = ""
+            if vm.available < reserve_bytes:
+                reason = (
+                    f"global memory pressure: {vm.available / 1024**3:.1f} GB free, "
+                    f"reserve is {limits.system_reserve_gb:.1f} GB"
+                )
+            else:
+                swap_growth = max(0, sm.used - self._baseline_swap_used)
+                if swap_growth > swap_allow_bytes:
+                    reason = (
+                        f"global swap pressure: swap grew {swap_growth / 1024**3:.1f} GB "
+                        f"since FlexTool started > allowance {limits.swap_allowance_gb:.1f} GB"
+                    )
+
+            if not reason:
+                continue
+
+            victim, victim_rss, victim_est = max(
+                measured, key=lambda t: t[1] - t[2]
+            )
+            overage_gb = (victim_rss - victim_est) / 1024**3
+            logger.warning(
+                "Killing job %d (%s): %s. RSS %.1f GB, estimate %.1f GB (overage %+.1f GB).",
+                victim.job_id,
+                victim.scenario_name or victim.display_name,
+                reason,
+                victim_rss / 1024**3,
+                victim_est / 1024**3,
+                overage_gb,
+            )
+            with self._manager._lock:
+                victim.killed_for_memory = True
+                victim.kill_reason = reason
+            try:
+                vproc = victim.process
+                if vproc is not None:
+                    vproc.kill()
+            except OSError:
+                pass
 
 
 class JobStatus(Enum):
@@ -68,6 +208,10 @@ class ExecutionJob:
     end_time: datetime | None = None
     process: subprocess.Popen | None = None
     finish_timestamp: str = ""  # DD.MM.YY hh:mm format
+    memory_cap_gb: float = 0.0       # snapshot of cap at dispatch (0 = uncapped)
+    peak_rss_mb: float = 0.0         # high-water mark, fed by MemoryWatchdog
+    killed_for_memory: bool = False  # set by watchdog just before SIGTERM
+    kill_reason: str = ""  # populated by watchdog: "exceeded estimate" / "global memory pressure" / "global swap pressure"
 
 
 class ExecutionManager:
@@ -79,6 +223,7 @@ class ExecutionManager:
         settings: ProjectSettings,
         on_status_change: Callable[[ExecutionJob], None] | None = None,
         on_all_finished: Callable[[], None] | None = None,
+        global_settings: GlobalSettings | None = None,
     ):
         """
         Args:
@@ -89,16 +234,23 @@ class ExecutionManager:
                 safely update tkinter.
             on_all_finished: Callback when all jobs are done (for post-execution
                 hooks like comparison).
+            global_settings: Optional global settings (for execution limits).
         """
         self._lock = threading.Lock()
+        # Separate lock for settings.yaml saves so worker threads don't
+        # serialize on the manager lock during file I/O.
+        self._settings_save_lock = threading.Lock()
         self._jobs: list[ExecutionJob] = []
         self._next_id = 0
         self._max_workers = max(1, (os.cpu_count() or 2) - 1)
         self._running_count = 0
         self._wind_down = False
         self._stopped = False
+        self._memory_limited: bool = False  # set by scheduler when admission blocked by RAM
+        self._thread_limited: bool = False  # set by scheduler when running == max_workers and pending exist
         self.project_path = project_path
         self.settings = settings
+        self._global_settings = global_settings
         self._on_status_change = on_status_change
         self._on_all_finished = on_all_finished
         self._scheduler_thread: threading.Thread | None = None
@@ -106,9 +258,93 @@ class ExecutionManager:
         self._pending_select_job_id: int | None = None  # for auto-selecting new jobs in UI
 
         self._converted_xlsx: set[str] = set()  # source_names already converted
+        self._watchdog: MemoryWatchdog | None = None
 
         # Register cleanup for when the Python process exits
         atexit.register(self.cleanup)
+
+    @property
+    def execution_limits(self):
+        from flextool.gui.data_models import ExecutionLimits
+        if self._global_settings is None:
+            return ExecutionLimits()
+        return self._global_settings.execution_limits
+
+    def set_global_settings(self, gs: GlobalSettings) -> None:
+        self._global_settings = gs
+
+    def _compute_memory_budget_for_job(self, job: ExecutionJob | None = None) -> float:
+        """Return per-job memory budget in GB. 0 means no budget set.
+
+        Resolution order:
+          1. User-set value (``ExecutionLimits.memory_cap_per_job_gb``) when > 0.
+          2. Learned peak from ``ProjectSettings.scenario_resource_history``,
+             scaled by 1.5 for safety, when this job has a prior successful run.
+          3. Auto fallback: ``(system_total - reserve) / max_workers``.
+        """
+        limits = self.execution_limits
+        if limits.memory_cap_per_job_gb > 0:
+            return limits.memory_cap_per_job_gb
+        if job is not None and job.output_subdir:
+            history = self.settings.scenario_resource_history.get(job.output_subdir)
+            if history is not None and history.peak_rss_mb > 0:
+                return (history.peak_rss_mb / 1024.0) * 1.5
+        try:
+            total_gb = psutil.virtual_memory().total / (1024 ** 3)
+        except Exception:
+            return 0.0
+        available = max(0.0, total_gb - limits.system_reserve_gb)
+        workers = max(1, self._max_workers)
+        return available / workers
+
+    def _can_admit_memory(self, next_estimate_gb: float) -> bool:
+        """Return True if dispatching another job won't breach the memory reserve.
+
+        Sums the budgets (``memory_cap_gb``) of currently-running scenario jobs and
+        checks whether ``running_budget + next_estimate <= total - reserve``.
+
+        Must be called while holding ``self._lock``.
+        """
+        if next_estimate_gb <= 0:
+            return True  # no estimate available; let the watchdog handle it
+        try:
+            total_gb = psutil.virtual_memory().total / (1024 ** 3)
+        except Exception:
+            return True
+        limits = self.execution_limits
+        headroom = max(0.0, total_gb - limits.system_reserve_gb)
+        running_budget = sum(
+            j.memory_cap_gb for j in self._jobs
+            if j.status == JobStatus.RUNNING and j.memory_cap_gb > 0
+        )
+        return running_budget + next_estimate_gb <= headroom
+
+    def _record_scenario_peak(self, job: ExecutionJob, runtime_s: float) -> None:
+        """Persist this job's peak RSS into the project settings history.
+
+        Called once per successful scenario run. Auxiliary jobs are skipped.
+        """
+        if job.job_type != JobType.SCENARIO:
+            return
+        if not job.output_subdir or job.peak_rss_mb <= 0:
+            return
+        from flextool.gui.data_models import ScenarioRun
+        record = ScenarioRun(
+            peak_rss_mb=float(job.peak_rss_mb),
+            runtime_s=float(runtime_s),
+            last_run=datetime.now().isoformat(timespec="seconds"),
+        )
+        with self._lock:
+            self.settings.scenario_resource_history[job.output_subdir] = record
+        with self._settings_save_lock:
+            try:
+                from flextool.gui.settings_io import save_project_settings
+                save_project_settings(self.project_path, self.settings)
+            except Exception:
+                logger.warning(
+                    "Could not persist scenario_resource_history for '%s'",
+                    job.output_subdir, exc_info=True,
+                )
 
     # ------------------------------------------------------------------
     # max_workers property
@@ -331,6 +567,10 @@ class ExecutionManager:
         )
         self._scheduler_thread.start()
 
+        if self._watchdog is None:
+            self._watchdog = MemoryWatchdog(self)
+        self._watchdog.start()
+
     # ------------------------------------------------------------------
     # Scheduler
     # ------------------------------------------------------------------
@@ -348,16 +588,28 @@ class ExecutionManager:
                 if self._stopped:
                     break
 
-                # Find the next pending SCENARIO job if capacity is available
-                next_job: ExecutionJob | None = None
-                if not self._wind_down and self._running_count < self._max_workers:
-                    for job in self._jobs:
-                        if job.job_type == JobType.SCENARIO and job.status == JobStatus.PENDING:
-                            next_job = job
-                            break
+                # Find the first pending scenario job (if any)
+                candidate: ExecutionJob | None = None
+                for job in self._jobs:
+                    if job.job_type == JobType.SCENARIO and job.status == JobStatus.PENDING:
+                        candidate = job
+                        break
 
-                if next_job is not None:
-                    self._running_count += 1
+                # Reset both flags; we'll set whichever applies below
+                self._thread_limited = False
+                self._memory_limited = False
+
+                next_job: ExecutionJob | None = None
+                if not self._wind_down and candidate is not None:
+                    if self._running_count >= self._max_workers:
+                        self._thread_limited = True
+                    else:
+                        estimate_gb = self._compute_memory_budget_for_job(candidate)
+                        if self._can_admit_memory(estimate_gb):
+                            next_job = candidate
+                            self._running_count += 1
+                        else:
+                            self._memory_limited = True
 
                 # Check if all SCENARIO jobs are done (auxiliary jobs are
                 # managed externally and don't block the scheduler)
@@ -420,7 +672,15 @@ class ExecutionManager:
             work_folder.mkdir(parents=True, exist_ok=True)
 
             cmd = self._build_run_command(job, work_folder)
-            cmd_str = format_cmd_for_log(cmd)
+
+            estimate_gb = self._compute_memory_budget_for_job(job)
+            with self._lock:
+                job.memory_cap_gb = estimate_gb
+
+            wrapped_cmd, popen_extras, post_spawn = _wrap_for_memory_cap(
+                cmd, estimate_gb
+            )
+            cmd_str = format_cmd_for_log(wrapped_cmd)
             logger.info("Running job %d (%s):\n%s", job.job_id, job.scenario_name, cmd_str)
 
             # Log the CLI command as the first line in the progress output
@@ -433,15 +693,12 @@ class ExecutionManager:
             flextool_root = Path(__file__).resolve().parent.parent.parent
 
             env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                cwd=str(flextool_root),
-                env=env,
+            popen_kwargs = dict(
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1, cwd=str(flextool_root), env=env,
             )
+            popen_kwargs.update(popen_extras)
+            proc = subprocess.Popen(wrapped_cmd, **popen_kwargs)
             killed = False
             with self._lock:
                 # Check if killed while we were setting up
@@ -468,6 +725,7 @@ class ExecutionManager:
 
             # Finalise
             now = datetime.now()
+            peak_to_record: tuple[ExecutionJob, float] | None = None
             with self._lock:
                 if job.status == JobStatus.KILLED:
                     return
@@ -477,12 +735,25 @@ class ExecutionManager:
                 if return_code == 0:
                     job.status = JobStatus.SUCCESS
                     self.settings.scenarios_changed = True
+                    runtime_s = (
+                        (now - job.start_time).total_seconds()
+                        if job.start_time else 0.0
+                    )
+                    # Capture under lock; persist below (outside lock) to
+                    # avoid blocking other workers on YAML I/O.
+                    peak_to_record = (job, runtime_s)
                 else:
                     job.status = JobStatus.FAILED
+                    if job.killed_for_memory:
+                        job.stdout_lines.append(
+                            f"[execution_manager] Killed: {job.kill_reason or 'memory pressure'}"
+                        )
                     job.stdout_lines.append(
                         f"[execution_manager] Process exited with code {return_code}"
                     )
                 self._prune_old_jobs(job)
+            if peak_to_record is not None:
+                self._record_scenario_peak(*peak_to_record)
             self._notify_status_change(job)
 
         except Exception:
@@ -550,6 +821,8 @@ class ExecutionManager:
 
         if single.only_first_file:
             cmd.append("--only-first-file-per-plot")
+
+        cmd.extend(["--highs-threads", str(self.execution_limits.max_cores_per_job)])
 
         return cmd
 
@@ -652,8 +925,13 @@ class ExecutionManager:
 
         try:
             env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-            proc = subprocess.Popen(
-                cmd,
+            estimate_gb = self._compute_memory_budget_for_job(None)
+            with self._lock:
+                job.memory_cap_gb = estimate_gb
+            wrapped_cmd, popen_extras, post_spawn = _wrap_for_memory_cap(
+                cmd, estimate_gb
+            )
+            popen_kwargs = dict(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -661,6 +939,8 @@ class ExecutionManager:
                 cwd=str(flextool_root),
                 env=env,
             )
+            popen_kwargs.update(popen_extras)
+            proc = subprocess.Popen(wrapped_cmd, **popen_kwargs)
             with self._lock:
                 job.process = proc
             assert proc.stdout is not None
@@ -732,6 +1012,8 @@ class ExecutionManager:
         call explicitly from signal handlers or window-close callbacks --
         the method is idempotent.
         """
+        if self._watchdog is not None:
+            self._watchdog.stop()
         with self._lock:
             self._stopped = True
             for job in self._jobs:
@@ -853,6 +1135,44 @@ class ExecutionManager:
             return any(
                 j.status in (JobStatus.PENDING, JobStatus.RUNNING) for j in self._jobs
             )
+
+    def get_execution_status(self) -> dict:
+        """Return a snapshot of the dispatcher's state for the GUI status bar.
+
+        Keys:
+            running          int  — number of currently running scenario jobs
+            max_threads      int  — current ``max_workers`` setting
+            pending          int  — number of queued scenario jobs
+            used_gb          float — system RAM in use (total - available)
+            total_gb         float — system RAM total
+            thread_limited   bool  — pending jobs are being held by max_workers
+            memory_limited   bool  — pending jobs are being held by memory reserve
+        """
+        with self._lock:
+            running = self._running_count
+            max_threads = self._max_workers
+            pending = sum(
+                1 for j in self._jobs
+                if j.job_type == JobType.SCENARIO and j.status == JobStatus.PENDING
+            )
+            thread_limited = self._thread_limited
+            memory_limited = self._memory_limited
+        try:
+            vm = psutil.virtual_memory()
+            total_gb = vm.total / (1024 ** 3)
+            used_gb = (vm.total - vm.available) / (1024 ** 3)
+        except Exception:
+            total_gb = 0.0
+            used_gb = 0.0
+        return {
+            "running": running,
+            "max_threads": max_threads,
+            "pending": pending,
+            "used_gb": used_gb,
+            "total_gb": total_gb,
+            "thread_limited": thread_limited,
+            "memory_limited": memory_limited,
+        }
 
     def has_pending_or_running_scenarios(self) -> bool:
         """Check if there are pending or running scenario jobs specifically."""

@@ -9,6 +9,7 @@ import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus, JobType
+from flextool.gui.hover_tooltip import attach_tooltip
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,20 @@ _STATUS_ICONS: dict[JobStatus, str] = {
     JobStatus.PENDING: "\u2610",   # ☐
     JobStatus.KILLED: "\u2717",    # ✗
 }
+
+
+def _format_status_text(status: dict) -> str:
+    """Format the dispatcher status dict as a single-line label."""
+    base = (
+        f"{status['running']}/{status['max_threads']} threads | "
+        f"{status['used_gb']:.1f}/{status['total_gb']:.1f} GB"
+    )
+    if status['pending'] > 0:
+        if status['thread_limited']:
+            base += " | Thread limited"
+        elif status['memory_limited']:
+            base += " | Memory limited"
+    return base
 
 
 class ExecutionWindow(tk.Toplevel):
@@ -115,6 +130,122 @@ class ExecutionWindow(tk.Toplevel):
         # Also sync the spinbox to the current manager value
         self._max_workers_var.set(self._mgr.max_workers)
 
+        # Cores per job
+        ttk.Label(top_frame, text="  Cores per job:").pack(side="left", padx=(15, 5))
+
+        limits = self._global_settings.execution_limits if self._global_settings else None
+        initial_cores = limits.max_cores_per_job if (limits and limits.max_cores_per_job > 0) else 1
+        self._cores_per_job_var = tk.IntVar(value=initial_cores)
+        self._cores_per_job_spin = ttk.Spinbox(
+            top_frame,
+            from_=1,
+            to=cpu * 2,
+            textvariable=self._cores_per_job_var,
+            width=4,
+            command=self._on_cores_per_job_changed,
+        )
+        self._cores_per_job_spin.pack(side="left")
+        self._cores_per_job_spin.bind("<Return>", lambda e: self._on_cores_per_job_changed())
+        self._cores_per_job_spin.bind("<FocusOut>", lambda e: self._on_cores_per_job_changed())
+
+        # Memory budget per job (soft target; used to pick a victim under global pressure)
+        mem_label = ttk.Label(top_frame, text="  Memory budget/job (GB, 0=auto):")
+        mem_label.pack(side="left", padx=(15, 5))
+
+        initial_cap = limits.memory_cap_per_job_gb if limits else 0.0
+        self._mem_cap_var = tk.DoubleVar(value=initial_cap)
+        self._mem_cap_spin = ttk.Spinbox(
+            top_frame,
+            from_=0.0,
+            to=4096.0,
+            increment=1.0,
+            textvariable=self._mem_cap_var,
+            width=6,
+            command=self._on_mem_cap_changed,
+        )
+        self._mem_cap_spin.pack(side="left")
+        self._mem_cap_spin.bind("<Return>", lambda e: self._on_mem_cap_changed())
+        self._mem_cap_spin.bind("<FocusOut>", lambda e: self._on_mem_cap_changed())
+
+        _budget_tip = (
+            "Default budget for each job. Soft target — jobs are allowed to\n"
+            "exceed it when the system has memory to spare. Only enforced\n"
+            "when free RAM drops below the reserve or swap grows past the\n"
+            "allowance: the watchdog then kills whichever running job is\n"
+            "most over its budget.\n"
+            "\n"
+            "0 = auto: after a scenario has been run successfully, its\n"
+            "measured peak (×1.5 safety margin) becomes its budget for the\n"
+            "next run, persisted in the project's settings.yaml. Scenarios\n"
+            "that haven't been run yet fall back to:\n"
+            "    (system memory − reserve) ÷ max parallel jobs."
+        )
+        attach_tooltip(mem_label, _budget_tip)
+        attach_tooltip(self._mem_cap_spin, _budget_tip)
+
+        # Min free RAM
+        min_free_label = ttk.Label(top_frame, text="  Min free RAM (GB):")
+        min_free_label.pack(side="left", padx=(15, 5))
+
+        initial_reserve = limits.system_reserve_gb if limits else 4.0
+        self._min_free_var = tk.DoubleVar(value=initial_reserve)
+        self._min_free_spin = ttk.Spinbox(
+            top_frame,
+            from_=0.0,
+            to=64.0,
+            increment=1.0,
+            textvariable=self._min_free_var,
+            width=5,
+            command=self._on_min_free_changed,
+        )
+        self._min_free_spin.pack(side="left")
+        self._min_free_spin.bind("<Return>", lambda e: self._on_min_free_changed())
+        self._min_free_spin.bind("<FocusOut>", lambda e: self._on_min_free_changed())
+
+        _min_free_tip = (
+            "Floor for system free memory. When the watchdog detects free\n"
+            "RAM dropping below this threshold, it kills whichever running\n"
+            "job is most over its memory budget.\n"
+            "\n"
+            "This prevents FlexTool from triggering a system-wide OOM that\n"
+            "would also take down other applications (browser, editor, etc.)."
+        )
+        attach_tooltip(min_free_label, _min_free_tip)
+        attach_tooltip(self._min_free_spin, _min_free_tip)
+
+        # Allow swap
+        swap_label = ttk.Label(top_frame, text="  Allow swap (GB):")
+        swap_label.pack(side="left", padx=(15, 5))
+
+        initial_swap = limits.swap_allowance_gb if limits else 0.0
+        self._swap_allow_var = tk.DoubleVar(value=initial_swap)
+        self._swap_allow_spin = ttk.Spinbox(
+            top_frame,
+            from_=0.0,
+            to=512.0,
+            increment=1.0,
+            textvariable=self._swap_allow_var,
+            width=5,
+            command=self._on_swap_allow_changed,
+        )
+        self._swap_allow_spin.pack(side="left")
+        self._swap_allow_spin.bind("<Return>", lambda e: self._on_swap_allow_changed())
+        self._swap_allow_spin.bind("<FocusOut>", lambda e: self._on_swap_allow_changed())
+
+        _swap_tip = (
+            "How much swap usage to tolerate, measured as growth since\n"
+            "FlexTool started (pre-existing system swap is ignored).\n"
+            "\n"
+            "0 = forbid swap entirely. Allowing swap (>0) lets large models\n"
+            "complete when they wouldn't otherwise fit, but they will run\n"
+            "much slower because pages move between RAM and disk.\n"
+            "\n"
+            "When swap growth exceeds this allowance, the most-over-budget\n"
+            "running job is killed."
+        )
+        attach_tooltip(swap_label, _swap_tip)
+        attach_tooltip(self._swap_allow_spin, _swap_tip)
+
         # ── Horizontal PanedWindow for Jobs / Progress ─────────────────
         self._paned = ttk.PanedWindow(self, orient="horizontal")
         self._paned.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
@@ -134,19 +265,21 @@ class ExecutionWindow(tk.Toplevel):
 
         self._job_tree = ttk.Treeview(
             left_frame,
-            columns=("status", "source", "scenario", "timestamp"),
+            columns=("status", "source", "scenario", "peak", "timestamp"),
             show="headings",
             selectmode="extended",
         )
         self._job_tree.heading("status", text="")
         self._job_tree.heading("source", text="#")
         self._job_tree.heading("scenario", text="Scenario")
+        self._job_tree.heading("peak", text="Peak GB")
         self._job_tree.heading("timestamp", text="Timestamp")
 
         self._job_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
         self._job_tree.column("source", width=cw * 4, minwidth=cw * 3, stretch=False)
         self._job_tree.column("scenario", width=cw * 20, minwidth=cw * 10, stretch=True)
-        self._job_tree.column("timestamp", width=cw * 16, minwidth=cw * 16, stretch=False)
+        self._job_tree.column("peak", width=cw * 6, minwidth=cw * 6, stretch=False)
+        self._job_tree.column("timestamp", width=cw * 13, minwidth=cw * 13, stretch=False)
 
         self._job_tree.grid(row=0, column=0, sticky="nsew")
 
@@ -224,7 +357,9 @@ class ExecutionWindow(tk.Toplevel):
         self._kill_all_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
 
         col += 1
-        btn_frame.columnconfigure(col, weight=1)  # spacer to push Close right
+        self._status_label = ttk.Label(btn_frame, text="", anchor="center")
+        self._status_label.grid(row=0, column=col, rowspan=2, padx=15, sticky="ew")
+        btn_frame.columnconfigure(col, weight=1)  # status label stretches
 
         col += 1
         self._close_btn = ttk.Button(btn_frame, text="Close", command=self._on_close_attempt)
@@ -298,6 +433,86 @@ class ExecutionWindow(tk.Toplevel):
             except Exception:
                 logger.warning("Could not persist max_workers to projects.yaml", exc_info=True)
 
+    def _on_cores_per_job_changed(self) -> None:
+        """Sync cores-per-job to global settings."""
+        try:
+            val = self._cores_per_job_var.get()
+        except tk.TclError:
+            return
+        if val < 1:
+            val = 1
+            self._cores_per_job_var.set(val)
+        if self._global_settings is None:
+            return
+        self._global_settings.execution_limits.max_cores_per_job = val
+        try:
+            from flextool.gui.project_utils import get_projects_dir
+            from flextool.gui.settings_io import save_global_settings
+            save_global_settings(get_projects_dir(), self._global_settings)
+        except Exception:
+            logger.warning("Could not persist max_cores_per_job to projects.yaml", exc_info=True)
+
+    def _on_mem_cap_changed(self) -> None:
+        """Sync memory budget/job to global settings."""
+        try:
+            val = float(self._mem_cap_var.get())
+        except (tk.TclError, ValueError):
+            return
+        if val < 0:
+            val = 0.0
+            self._mem_cap_var.set(val)
+        if self._global_settings is None:
+            return
+        self._global_settings.execution_limits.memory_cap_per_job_gb = val
+        try:
+            from flextool.gui.project_utils import get_projects_dir
+            from flextool.gui.settings_io import save_global_settings
+            save_global_settings(get_projects_dir(), self._global_settings)
+        except Exception:
+            logger.warning("Could not persist memory_cap_per_job_gb to projects.yaml", exc_info=True)
+
+    def _on_min_free_changed(self) -> None:
+        """Sync min-free-RAM threshold to global settings."""
+        try:
+            val = float(self._min_free_var.get())
+        except (tk.TclError, ValueError):
+            return
+        if val < 0:
+            val = 0.0
+            self._min_free_var.set(val)
+        if self._global_settings is None:
+            return
+        self._global_settings.execution_limits.system_reserve_gb = val
+        try:
+            from flextool.gui.project_utils import get_projects_dir
+            from flextool.gui.settings_io import save_global_settings
+            save_global_settings(get_projects_dir(), self._global_settings)
+        except Exception:
+            logger.warning("Could not persist system_reserve_gb to projects.yaml", exc_info=True)
+
+    def _on_swap_allow_changed(self) -> None:
+        """Sync swap-allowance threshold to global settings.
+
+        Shows a warning dialog the first time the user raises the allowance
+        above zero in this session.
+        """
+        try:
+            val = float(self._swap_allow_var.get())
+        except (tk.TclError, ValueError):
+            return
+        if val < 0:
+            val = 0.0
+            self._swap_allow_var.set(val)
+        if self._global_settings is None:
+            return
+        self._global_settings.execution_limits.swap_allowance_gb = val
+        try:
+            from flextool.gui.project_utils import get_projects_dir
+            from flextool.gui.settings_io import save_global_settings
+            save_global_settings(get_projects_dir(), self._global_settings)
+        except Exception:
+            logger.warning("Could not persist swap_allowance_gb to projects.yaml", exc_info=True)
+
     # ------------------------------------------------------------------
     # Job list display
     # ------------------------------------------------------------------
@@ -305,6 +520,12 @@ class ExecutionWindow(tk.Toplevel):
     def _refresh_job_list(self) -> None:
         """Rebuild the job Treeview from the ExecutionManager's job list."""
         jobs = self._mgr.get_jobs()
+
+        try:
+            status = self._mgr.get_execution_status()
+            self._status_label.config(text=_format_status_text(status))
+        except (tk.TclError, AttributeError):
+            pass  # window may be tearing down
 
         # Remember current selection so we can restore it
         prev_selection = set(self._job_tree.selection())
@@ -337,11 +558,15 @@ class ExecutionWindow(tk.Toplevel):
                 if job.status in (JobStatus.FAILED, JobStatus.KILLED):
                     tags = ("failed",)
 
+                peak_col = f"{job.peak_rss_mb / 1024:.1f}" if job.peak_rss_mb > 0 else ""
+                if peak_col and getattr(job, 'killed_for_memory', False):
+                    peak_col += " ⚠"
+
                 self._job_tree.insert(
                     "",
                     "end",
                     iid=iid,
-                    values=(icon, source_col, name_col, ts),
+                    values=(icon, source_col, name_col, peak_col, ts),
                     tags=tags,
                 )
                 if iid in prev_selection:

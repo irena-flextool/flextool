@@ -15,3 +15,5 @@ sv-ttk
 highspy>=1.14
 matplotlib
 spinetoolbox
+psutil
+pywin32; sys_platform == 'win32'

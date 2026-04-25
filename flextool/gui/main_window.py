@@ -3281,6 +3281,7 @@ class MainWindow(tk.Tk):
             settings=self.project_settings,
             on_status_change=self._on_job_status_change,
             on_all_finished=self._on_all_jobs_finished,
+            global_settings=self.global_settings,
         )
         # Apply the persisted max-workers preference (from projects.yaml)
         # so it takes effect even before the execution window is opened.
