@@ -124,6 +124,16 @@ class ResultViewer(tk.Toplevel):
         # regen is triggered.
         self._comp_needs_regen: bool = False
 
+        # Monotonic generation counter for comparison combine requests.
+        # Each user-driven state change bumps this; background workers
+        # capture the value at submit time, and the GUI completion
+        # callback drops results whose captured gen is no longer the
+        # latest. Prevents stale data from leaking onto the plot when
+        # the user toggles checkboxes faster than combines complete.
+        # Tk callbacks run single-threaded on the main thread, so plain
+        # attribute access is safe here.
+        self._comp_request_gen: int = 0
+
         # Dispatch mode state
         self._dispatch_mappings: DispatchMappings | None = None
         self._dispatch_results: TimeSeriesResults | None = None
@@ -2611,6 +2621,10 @@ class ResultViewer(tk.Toplevel):
         """
         import json
 
+        # Bump the generation counter so any in-flight combine whose
+        # callback hasn't fired yet is recognised as stale.
+        self._comp_request_gen += 1
+
         checked = set(self._get_comparison_scenarios())
         meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
         combined: set[str] = set()
@@ -2652,21 +2666,33 @@ class ResultViewer(tk.Toplevel):
 
     def _regenerate_comparison(self, scenario_names: list[str]) -> None:
         """Regenerate comparison parquets in a background thread."""
+        # Bump the generation counter and capture the value for the
+        # worker closure. Any earlier in-flight combine becomes stale.
+        self._comp_request_gen += 1
+        gen = self._comp_request_gen
+
         self._plot_canvas.show_message("Updating comparison data...")
 
         def _do_combine() -> None:
             try:
                 combine_scenario_parquets(self._project_path, scenario_names)
-                self.after(0, self._on_comparison_ready)
+                self.after(0, lambda: self._on_comparison_ready(gen))
             except Exception as exc:
-                self.after(0, lambda: self._plot_canvas.show_message(
-                    f"Comparison update failed:\n{exc}"
-                ))
+                self.after(0, lambda: self._on_comparison_failed(gen, exc))
 
         self._executor.submit(_do_combine)
 
-    def _on_comparison_ready(self) -> None:
-        """Called on main thread when comparison parquets are ready."""
+    def _on_comparison_ready(self, gen: int) -> None:
+        """Called on main thread when comparison parquets are ready.
+
+        Drops the result if a newer state-change has been queued since
+        this combine was submitted; otherwise refreshes caches and
+        triggers a replot.
+        """
+        if gen != self._comp_request_gen:
+            # A newer request has superseded this one; ignore the stale
+            # result so the plot keeps the latest selection in flight.
+            return
         self._comp_needs_regen = False
         self._break_times_cache.clear()
         self._clear_figure_cache()
@@ -2676,6 +2702,17 @@ class ResultViewer(tk.Toplevel):
         self._populate_plot_tree()
         # Try to display current selection
         self._trigger_replot()
+
+    def _on_comparison_failed(self, gen: int, exc: BaseException) -> None:
+        """Called on main thread when a comparison combine raised.
+
+        Suppresses the error message if a newer request has superseded
+        this one — the in-flight render shouldn't be clobbered by a
+        stale failure.
+        """
+        if gen != self._comp_request_gen:
+            return
+        self._plot_canvas.show_message(f"Comparison update failed:\n{exc}")
 
     # ------------------------------------------------------------------
     # Dispatch mode
