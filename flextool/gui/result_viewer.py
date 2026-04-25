@@ -53,6 +53,7 @@ class ResultViewer(tk.Toplevel):
         project_path: Path,
         settings: ProjectSettings,
         scenario_db_map: dict[str, Path] | None = None,
+        desired_viewer_scenarios: list[str] | None = None,
     ) -> None:
         super().__init__(master)
         self.title("Result Viewer")
@@ -153,6 +154,13 @@ class ResultViewer(tk.Toplevel):
         # Tk callbacks run single-threaded on the main thread, so plain
         # attribute access is safe here.
         self._comp_request_gen: int = 0
+
+        # Viewer scenarios (NOT current scenarios) scheduled for the next
+        # comparison combine, set by :meth:`refresh_to_viewer_scenarios`
+        # so :meth:`_regenerate_comparison` knows which subdirs to fold
+        # into the combined parquets.  ``None`` means "no scheduled
+        # refresh — fall back to the legacy current-tree-based path".
+        self._scheduled_viewer_scenarios: list[str] | None = None
 
         # Dispatch mode state
         self._dispatch_mappings: DispatchMappings | None = None
@@ -261,6 +269,16 @@ class ResultViewer(tk.Toplevel):
 
         # ── Restore saved sash positions after layout is ready ───────
         self.after(50, self._restore_sash_position)
+
+        # ── Cold-open auto-refresh ───────────────────────────────────
+        # When the main window passed an explicit "desired viewer
+        # scenarios" set (Phase B contract), reconcile against
+        # ``_metadata.json`` and rebuild the combined parquets only when
+        # the two differ.  ``None`` skips the reconciliation and leaves
+        # whatever's on disk untouched.
+        if desired_viewer_scenarios is not None:
+            self.after(0, lambda d=list(desired_viewer_scenarios):
+                       self.refresh_to_viewer_scenarios(d))
 
     # ------------------------------------------------------------------
     # Layout builders
@@ -504,13 +522,6 @@ class ResultViewer(tk.Toplevel):
         # Bind changes to trigger replot
         self._start_var.trace_add("write", self._on_time_range_changed)
         self._duration_var.trace_add("write", self._on_time_range_changed)
-
-        # Col 3: Update button
-        self._update_btn = ttk.Button(
-            self._control_frame, text="Update", width=7,
-            command=self._on_update,
-        )
-        self._update_btn.grid(row=0, column=3, rowspan=2, sticky="ns", padx=(10, 0))
 
         # ── Plot canvas ──────────────────────────────────────────────
         self._plot_canvas = PlotCanvas(right)
@@ -1649,11 +1660,15 @@ class ResultViewer(tk.Toplevel):
         self._viewer_settings.last_mode = mode
 
         if mode == "comparison":
-            # Show comparison checkboxes, hide scenario listbox
+            # Show comparison checkboxes, hide scenario listbox.
+            # Phase B: do NOT auto-rebuild based on the live tick state —
+            # rebuilding the combined parquets is exclusively driven by
+            # ``refresh_to_viewer_scenarios`` (i.e. the main window's
+            # "Update view scenarios" button or cold-open reconciliation).
+            # Mode switches inside the viewer are pure view changes.
             self._scenario_listbox.grid_remove()
             self._comp_outer_frame.grid()
             self._populate_comparison_checkboxes()
-            self._check_comparison_freshness()
             self._populate_plot_tree()
             self._show_variant_panel()
         else:
@@ -2002,11 +2017,81 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _on_update(self) -> None:
-        """Re-scan scenarios, regenerate comparison if needed, reload everything."""
-        self.config(cursor="watch")
-        self.update_idletasks()
+        """Backward-compatible alias for :meth:`refresh_to_viewer_scenarios`.
 
-        # Clear all caches first
+        The Phase B contract is that the main window's
+        "Update view scenarios" button is the only path that rebuilds the
+        combined comparison parquets, and the main window now calls
+        :meth:`refresh_to_viewer_scenarios` directly with an explicit
+        desired set.  This shim remains so any older call sites or
+        diagnostic tools that still reference ``_on_update`` keep working
+        — it derives ``desired`` from the persisted main-window-checked
+        list.
+        """
+        from flextool.gui.scenario_key import (
+            parse_key, resolve_subdir_for_read,
+        )
+        bare_owners = self._settings.bare_output_owners
+        desired: list[str] = []
+        for entry in self._settings.checked_executed_scenarios:
+            try:
+                src_num, scen_name = parse_key(entry)
+            except ValueError:
+                continue
+            desired.append(
+                resolve_subdir_for_read(bare_owners, src_num, scen_name)
+            )
+        self.refresh_to_viewer_scenarios(desired)
+
+    def _read_metadata_scenarios(self) -> list[str]:
+        """Return the scenario list recorded in ``_metadata.json``.
+
+        Empty list when the file is missing, unreadable, or doesn't
+        contain a ``scenarios`` array.  This is the canonical record of
+        the *viewer scenarios* set (the scenarios materialised into the
+        combined comparison parquets).
+        """
+        import json as _json
+        meta_path = (
+            self._project_path
+            / "output_parquet_comparison"
+            / "_metadata.json"
+        )
+        if not meta_path.is_file():
+            return []
+        try:
+            with open(meta_path) as f:
+                payload = _json.load(f)
+        except (OSError, _json.JSONDecodeError):
+            return []
+        scenarios = payload.get("scenarios")
+        if not isinstance(scenarios, list):
+            return []
+        return [str(s) for s in scenarios if isinstance(s, str)]
+
+    def refresh_to_viewer_scenarios(self, desired: list[str]) -> None:
+        """Reconcile the on-disk viewer-scenarios set with *desired*.
+
+        Phase B entry point invoked by the main window's
+        "Update view scenarios" button (and the cold-open path inside
+        :meth:`__init__`).  Compares *desired* against the scenarios
+        recorded in ``output_parquet_comparison/_metadata.json``:
+
+        * **Differs:** schedule *desired* as the next combine target and
+          kick off :meth:`_regenerate_comparison`.  When that finishes,
+          ``_metadata.json`` is rewritten and the comparison tree
+          repopulates so the viewer reflects the new viewer scenarios.
+        * **Matches:** no rebuild needed; just refresh the plot
+          tree + figure so any stale availability is recomputed.
+        """
+        self.config(cursor="watch")
+        try:
+            self.update_idletasks()
+        except tk.TclError:
+            pass
+
+        # Clear caches that depend on scenario contents — both the
+        # rebuild-and-no-rebuild paths benefit from a fresh slate.
         self._yaml_cache.clear()
         self._break_times_cache.clear()
         self._current_availability = set()
@@ -2022,9 +2107,7 @@ class ResultViewer(tk.Toplevel):
         self._parquet_cache_key = ("", "")
         self._parquet_cache_df = None
         # Force the shared axis-bounds manifest to reload on the next
-        # render — a batch run may have just rewritten it.  Setting the
-        # cached mtime to 0.0 guarantees the file's stat wins the
-        # comparison inside ``_get_axis_manifest``.
+        # render — a batch run may have just rewritten it.
         self._axis_manifest = None
         self._axis_manifest_mtime = 0.0
 
@@ -2032,52 +2115,25 @@ class ResultViewer(tk.Toplevel):
         if self._mode.get() == "comparison":
             self._populate_comparison_checkboxes()
 
-        # Always check if comparison parquets need regenerating:
-        # scenarios may have been re-run or the checked list may have changed.
-        self._ensure_comparison_fresh()
-
-        self._comp_needs_regen = False
-        self._on_mode_changed()
-        self.config(cursor="")
-
-    def _ensure_comparison_fresh(self) -> None:
-        """Regenerate comparison parquets if stale or missing.
-
-        Stale means: scenarios_changed flag is set (execution finished),
-        checked scenario list differs from ``_metadata.json``, or the
-        combined parquets don't exist yet.
-        """
-        checked = self._get_comparison_scenarios()
-        if not checked:
-            checked = self._scan_scenarios()
-            if not checked:
-                return
-            # Reflect the fallback selection in the tree so the user sees
-            # what will be regenerated.
-            for name in self._comp_tree.get_children():
-                self._set_comp_check(name, name in checked)
-            self._save_comparison_check_state()
-
-        needs_regen = self._settings.scenarios_changed
-
-        if not needs_regen:
-            meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
-            if not meta_path.exists():
-                needs_regen = True
-            else:
-                import json
-                try:
-                    with open(meta_path) as f:
-                        existing = set(json.load(f).get("scenarios", []))
-                    if set(checked) != existing:
-                        needs_regen = True
-                except (json.JSONDecodeError, OSError):
-                    needs_regen = True
-
-        if needs_regen:
+        current_meta = set(self._read_metadata_scenarios())
+        desired_set = set(desired)
+        if current_meta != desired_set:
+            # Schedule the rebuild for *exactly* the desired set, then
+            # kick off the combine.  ``_on_comparison_ready`` will
+            # repopulate the plot tree once the parquets land.
+            self._scheduled_viewer_scenarios = list(desired)
             self._settings.scenarios_changed = False
-            self._regenerate_comparison(checked)
-        self._comp_needs_regen = False
+            self._comp_needs_regen = True
+            self._regenerate_comparison(list(desired))
+        else:
+            # Sets match — no rebuild, just refresh availability + plot.
+            self._comp_needs_regen = False
+            self._on_mode_changed()
+
+        try:
+            self.config(cursor="")
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------------
     # Tab focus cycling
@@ -2874,8 +2930,13 @@ class ResultViewer(tk.Toplevel):
         self._comp_tree.set(name, "check", glyph)
 
     def _on_comp_tree_toggled(self, _changed: list[str]) -> None:
-        """CheckTreeController callback: persist + replot after a toggle."""
-        self._save_comparison_check_state()
+        """CheckTreeController callback: filter-only replot after a toggle.
+
+        Phase B: persisting the tick set + replotting is delegated to
+        :meth:`_on_comp_check_state_changed` (which saves once).  We no
+        longer regenerate the combined parquets from this path — that's
+        the main-window button's job.
+        """
         self._on_comp_check_state_changed()
 
     def _on_comp_tree_ctrl_a(self, _event: tk.Event) -> str:
@@ -2933,56 +2994,35 @@ class ResultViewer(tk.Toplevel):
     def _on_comp_check_state_changed(self) -> None:
         """Handle a user-driven comparison check-state change.
 
-        Replaces the old Checkbutton ``command`` callback. Decides whether
-        a regeneration is needed or only a filter/replot.
+        Phase B contract: toggling a row in the viewer's Scenarios tree
+        is purely a *current scenarios* filter — it never triggers a
+        rebuild of the combined parquets and never widens or narrows the
+        axis-bounds set (the latter is frozen by Phase A's manifest
+        scoping).  The figure simply hides or reveals the toggled
+        scenario's lines/bars/area and the persisted state is saved so
+        the next session reopens with the same ticks.
         """
-        import json
-
-        # Bump the generation counter so any in-flight combine whose
-        # callback hasn't fired yet is recognised as stale.
-        self._comp_request_gen += 1
-
-        checked = set(self._get_comparison_scenarios())
-        meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
-        combined: set[str] = set()
-        if meta_path.exists():
-            try:
-                with open(meta_path) as f:
-                    combined = set(json.load(f).get("scenarios", []))
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        if checked - combined:
-            # New scenarios not yet combined — regen.
-            self._comp_needs_regen = True
-            self._regenerate_comparison(list(checked))
-        else:
-            self._comp_needs_regen = False
-            self._clear_figure_cache()
-            self._trigger_replot()
-
-    def _check_comparison_freshness(self) -> None:
-        """Check if comparison parquets match the checkbox selection, regenerate if not."""
-        checked = self._get_comparison_scenarios()
-        if not checked:
-            return
-
-        import json
-        meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
-        if meta_path.exists():
-            try:
-                with open(meta_path) as f:
-                    existing = set(json.load(f).get("scenarios", []))
-                if set(checked) == existing:
-                    return  # already up to date
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        # Need regeneration
-        self._regenerate_comparison(checked)
+        # Persist the new tick set.  ``_save_comparison_check_state``
+        # writes it to ``settings.comp_viewer_scenarios``, which is now
+        # exclusively the *current scenarios* record (the viewer
+        # scenarios live in ``_metadata.json``).
+        self._save_comparison_check_state()
+        # The cached plan is keyed on the checked tuple; clear so the
+        # next replot rebuilds against the filtered DataFrame.
+        self._clear_figure_cache()
+        self._trigger_replot()
 
     def _regenerate_comparison(self, scenario_names: list[str]) -> None:
-        """Regenerate comparison parquets in a background thread."""
+        """Rebuild combined comparison parquets for *scenario_names*.
+
+        The list passed in here is the **viewer scenarios** set — the
+        scenarios that should be materialised into
+        ``output_parquet_comparison/`` and recorded in
+        ``_metadata.json``.  Phase B's only legitimate caller is
+        :meth:`refresh_to_viewer_scenarios`, which derives the set from
+        the main window's checked executed-scenarios tree.  Tree toggles
+        inside the viewer never reach this function.
+        """
         # Bump the generation counter and capture the value for the
         # worker closure. Any earlier in-flight combine becomes stale.
         self._comp_request_gen += 1
@@ -2990,9 +3030,13 @@ class ResultViewer(tk.Toplevel):
 
         self._plot_canvas.show_message("Updating comparison data...")
 
+        scenarios_snapshot = list(scenario_names)
+
         def _do_combine() -> None:
             try:
-                combine_scenario_parquets(self._project_path, scenario_names)
+                combine_scenario_parquets(
+                    self._project_path, scenarios_snapshot,
+                )
                 self.after(0, lambda: self._on_comparison_ready(gen))
             except Exception as exc:
                 self.after(0, lambda: self._on_comparison_failed(gen, exc))
@@ -3003,7 +3047,8 @@ class ResultViewer(tk.Toplevel):
         """Called on main thread when comparison parquets are ready.
 
         Drops the result if a newer state-change has been queued since
-        this combine was submitted; otherwise refreshes caches and
+        this combine was submitted; otherwise refreshes caches, refreshes
+        the comparison tree (to reflect the new viewer scenarios), and
         triggers a replot.
         """
         if gen != self._comp_request_gen:
@@ -3011,11 +3056,16 @@ class ResultViewer(tk.Toplevel):
             # result so the plot keeps the latest selection in flight.
             return
         self._comp_needs_regen = False
+        self._scheduled_viewer_scenarios = None
         self._break_times_cache.clear()
         self._clear_figure_cache()
         self._current_availability = set()
         if hasattr(self, '_dispatch_metadata_cache'):
             del self._dispatch_metadata_cache
+        # The viewer scenarios set just changed on disk — re-render the
+        # comparison tree so its rows match ``_metadata.json`` again.
+        if self._mode.get() == "comparison":
+            self._populate_comparison_checkboxes()
         self._populate_plot_tree()
         # Try to display current selection
         self._trigger_replot()
@@ -3029,6 +3079,7 @@ class ResultViewer(tk.Toplevel):
         """
         if gen != self._comp_request_gen:
             return
+        self._scheduled_viewer_scenarios = None
         self._plot_canvas.show_message(f"Comparison update failed:\n{exc}")
 
     # ------------------------------------------------------------------

@@ -3212,18 +3212,27 @@ class MainWindow(tk.Tk):
     def _open_or_raise_result_viewer(self) -> None:
         """Open a new ResultViewer or raise an existing one.
 
-        If the viewer is already open, refreshes its scenario data
-        from the current checked executed scenarios.
+        Phase B contract: pressing the "Update view scenarios" / "Results
+        viewer" button is the single source of truth for the viewer
+        scenarios set.  We collect whatever is currently checked in the
+        executed-scenarios tree, translate it to on-disk subdir names, and
+        hand the resulting list to the viewer.  The viewer compares it
+        against the scenarios recorded in
+        ``output_parquet_comparison/_metadata.json`` and rebuilds the
+        combined parquets only when the two sets differ — toggling
+        scenarios *inside* the viewer never triggers a rebuild.
         """
+        # Sync the persisted checked state with the live tree first so the
+        # subdir derivation below sees the latest user edits.
+        self._collect_checked_executed_scenarios()
+        desired = self._main_window_checked_executed_subdirs()
+
         if (
             self._result_viewer is not None
             and self._result_viewer.winfo_exists()
         ):
-            # Sync the current checked state and DB map before updating the viewer
-            self._collect_checked_executed_scenarios()
             self._result_viewer._scenario_db_map = self._get_scenario_db_map()
-            # Update the viewer's scenario data before raising
-            self._result_viewer._on_update()
+            self._result_viewer.refresh_to_viewer_scenarios(desired)
             self._result_viewer.deiconify()
             self._result_viewer.lift()
             self._result_viewer.attributes("-topmost", True)
@@ -3239,10 +3248,36 @@ class MainWindow(tk.Tk):
             project_path=project_path,
             settings=self.project_settings,
             scenario_db_map=self._get_scenario_db_map(),
+            desired_viewer_scenarios=desired,
         )
         self._update_view_results_btn()
         # When the viewer closes, revert button text
         self._result_viewer.bind("<Destroy>", lambda e: self._update_view_results_btn())
+
+    def _main_window_checked_executed_subdirs(self) -> list[str]:
+        """Return on-disk subdir names for currently-checked executed rows.
+
+        Reads the executed scenarios tree, picks the rows whose check
+        glyph is on, resolves each ``(source_number, scenario_name)`` pair
+        through :func:`resolve_subdir_for_read`, and returns the list in
+        tree order.  Used to derive the *desired viewer scenarios* set
+        passed to :class:`ResultViewer` on cold-open or refresh.
+        """
+        from flextool.gui.scenario_key import resolve_subdir_for_read
+        bare_owners = self.project_settings.bare_output_owners
+        result: list[str] = []
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if not values or values[0] != CHECK_ON:
+                continue
+            try:
+                src_num = int(values[1])
+            except (ValueError, IndexError):
+                continue
+            scen_name = values[2]
+            subdir = resolve_subdir_for_read(bare_owners, src_num, scen_name)
+            result.append(subdir)
+        return result
 
     def _update_view_results_btn(self) -> None:
         """Update the Results viewer button text and style based on viewer and scenario state."""
