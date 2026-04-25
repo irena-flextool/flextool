@@ -16,6 +16,7 @@ import pandas as pd
 import yaml
 
 from flextool.lean_parquet import read_lean_parquet
+from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.data_models import ProjectSettings
 from flextool.gui.network_graph import build_network_figure
 from flextool.gui.plot_canvas import PlotCanvas
@@ -312,10 +313,15 @@ class ResultViewer(tk.Toplevel):
         comp_scroll.grid(row=0, column=1, sticky="ns")
         self._comp_tree.configure(yscrollcommand=comp_scroll.set)
 
-        self._comp_tree.bind("<Button-1>", self._on_comp_tree_click)
-        self._comp_tree.bind("<space>", self._on_comp_tree_space)
         self._comp_tree.bind("<Control-a>", self._on_comp_tree_ctrl_a)
         self._comp_tree.bind("<Control-A>", self._on_comp_tree_ctrl_a)
+        self._comp_check_ctrl = CheckTreeController(
+            self._comp_tree,
+            check_column="check",
+            checked_glyph=self._COMP_CHECK_ON,
+            unchecked_glyph=self._COMP_CHECK_OFF,
+            on_toggle=self._on_comp_tree_toggled,
+        )
 
         # ── Plot tree + variant canvas ───────────────────────────────
         plots_label = ttk.Label(left, text=" Plots [P] ", font=_lf_font)
@@ -2584,53 +2590,10 @@ class ResultViewer(tk.Toplevel):
         glyph = self._COMP_CHECK_ON if checked else self._COMP_CHECK_OFF
         self._comp_tree.set(name, "check", glyph)
 
-    def _on_comp_tree_click(self, event: tk.Event) -> str | None:
-        """Click on the check column toggles just that row.
-
-        Clicks elsewhere fall through to the Treeview's default selection
-        behaviour (single / Shift / Ctrl).
-        """
-        region = self._comp_tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return None
-        column = self._comp_tree.identify_column(event.x)
-        if column != "#1":  # not the check column
-            return None
-        iid = self._comp_tree.identify_row(event.y)
-        if not iid:
-            return None
-        values = self._comp_tree.item(iid, "values")
-        if not values:
-            return None
-        new_checked = values[0] != self._COMP_CHECK_ON
-        self._set_comp_check(iid, new_checked)
+    def _on_comp_tree_toggled(self, _changed: list[str]) -> None:
+        """CheckTreeController callback: persist + replot after a toggle."""
         self._save_comparison_check_state()
         self._on_comp_check_state_changed()
-        return "break"
-
-    def _on_comp_tree_space(self, _event: tk.Event) -> str:
-        """Space smart-toggles check state across the selected rows.
-
-        If any selected row is unchecked → check all of them.
-        If every selected row is already checked → uncheck all of them.
-        When nothing is selected, operate on every row (so Space after a
-        fresh focus still behaves usefully).
-        """
-        iids = list(self._comp_tree.selection())
-        if not iids:
-            iids = list(self._comp_tree.get_children())
-        if not iids:
-            return "break"
-        any_unchecked = any(
-            self._comp_tree.item(i, "values")[0] != self._COMP_CHECK_ON
-            for i in iids
-        )
-        new_checked = any_unchecked  # check all if any unchecked, else uncheck
-        for i in iids:
-            self._set_comp_check(i, new_checked)
-        self._save_comparison_check_state()
-        self._on_comp_check_state_changed()
-        return "break"
 
     def _on_comp_tree_ctrl_a(self, _event: tk.Event) -> str:
         """Ctrl-A selects every row (does not alter check state)."""

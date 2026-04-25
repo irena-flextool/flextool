@@ -24,6 +24,7 @@ from flextool.gui.settings_io import (
     save_global_settings,
     save_project_settings,
 )
+from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.input_sources import InputSourceManager
 from flextool.gui.scenario_lists import AvailableScenarioManager, ExecutedScenarioManager
@@ -314,8 +315,14 @@ class MainWindow(tk.Tk):
         input_scroll.grid(row=0, column=1, sticky="ns")
         self._setup_autohide_scrollbar(self.input_sources_tree, input_scroll)
 
-        # Bind click for checkbox toggling (filtering) and selection change (button state)
-        self.input_sources_tree.bind("<Button-1>", self._on_input_source_click)
+        # Checkbox click + space handled by shared CheckTreeController.
+        self._input_sources_check_ctrl = CheckTreeController(
+            self.input_sources_tree,
+            check_column="check",
+            checked_glyph=CHECK_ON,
+            unchecked_glyph=CHECK_OFF,
+            on_toggle=self._on_input_sources_toggled,
+        )
         self.input_sources_tree.bind("<Double-1>", self._on_input_source_dblclick)
         self.input_sources_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.input_sources_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_input_button_states())
@@ -562,9 +569,14 @@ class MainWindow(tk.Tk):
         avail_scroll.grid(row=0, column=1, sticky="ns")
         self._setup_autohide_scrollbar(self.available_tree, avail_scroll)
 
-        self.available_tree.bind("<Button-1>", self._on_available_click)
+        self._available_check_ctrl = CheckTreeController(
+            self.available_tree,
+            check_column="check",
+            checked_glyph=CHECK_ON,
+            unchecked_glyph=CHECK_OFF,
+            on_toggle=self._on_available_toggled,
+        )
         self.available_tree.bind("<B1-Motion>", self._on_tree_drag_select)
-        self.available_tree.bind("<space>", self._on_available_space)
         self.available_tree.bind("<Button-3>", self._on_available_right_click)
         self.available_tree.bind("<Shift-Up>", self._on_shift_arrow_up)
         self.available_tree.bind("<Shift-Down>", self._on_shift_arrow_down)
@@ -613,7 +625,16 @@ class MainWindow(tk.Tk):
 
         self.executed_tree.bind("<Button-1>", self._on_executed_click)
         self.executed_tree.bind("<B1-Motion>", self._on_tree_drag_select)
-        self.executed_tree.bind("<space>", self._on_executed_space)
+        # CheckTreeController bound after the legacy click handler so the
+        # legacy handler's "view" column branch still runs first; the
+        # controller's <Button-1> early-returns on non-check columns.
+        self._executed_check_ctrl = CheckTreeController(
+            self.executed_tree,
+            check_column="check",
+            checked_glyph=CHECK_ON,
+            unchecked_glyph=CHECK_OFF,
+            on_toggle=self._on_executed_toggled,
+        )
         self.executed_tree.bind("<<TreeviewSelect>>", self._on_executed_selection_changed)
         self.executed_tree.bind("<Button-3>", self._on_executed_right_click)
         self.executed_tree.bind("<Shift-Up>", self._on_shift_arrow_up)
@@ -1217,18 +1238,10 @@ class MainWindow(tk.Tk):
         for idx, (_vals, iid) in enumerate(items):
             tree.move(iid, "", idx)
 
-    def _on_input_source_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        tree = self.input_sources_tree
-        region = tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-        column = tree.identify_column(event.x)
-        if column == "#1":  # "check" column
-            item = tree.identify_row(event.y)
-            if item:
-                self._toggle_check(tree, item, "check")
-                self._update_available_scenarios()
-                self._save_checked_input_sources()
+    def _on_input_sources_toggled(self, _changed: list[str]) -> None:
+        """CheckTreeController callback for input_sources_tree."""
+        self._update_available_scenarios()
+        self._save_checked_input_sources()
 
     def _on_input_source_dblclick(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Double-click on an input source row opens it for editing."""
@@ -1238,32 +1251,24 @@ class MainWindow(tk.Tk):
             self.input_sources_tree.selection_set(item)
             self._on_edit_source()
 
-    def _on_available_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        tree = self.available_tree
-        region = tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-        column = tree.identify_column(event.x)
-        if column == "#1":  # "check" column
-            item = tree.identify_row(event.y)
-            if item:
-                self._toggle_check(tree, item, "check")
-                self._update_add_to_execution_style()
-                self._save_checked_available_scenarios()
+    def _on_available_toggled(self, _changed: list[str]) -> None:
+        """CheckTreeController callback for available_tree."""
+        self._update_add_to_execution_style()
+        self._save_checked_available_scenarios()
+
+    def _on_executed_toggled(self, _changed: list[str]) -> None:
+        """CheckTreeController callback for executed_tree."""
+        self._update_output_status()
+        self._save_checked_executed_scenarios()
 
     def _on_executed_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Handle the "view" column on click; check column is owned by the controller."""
         tree = self.executed_tree
         region = tree.identify_region(event.x, event.y)
         if region != "cell":
             return
         column = tree.identify_column(event.x)
-        if column == "#1":  # "check" column
-            item = tree.identify_row(event.y)
-            if item:
-                self._toggle_check(tree, item, "check")
-                self._update_output_status()
-                self._save_checked_executed_scenarios()
-        elif column == "#4":  # "view" column
+        if column == "#4":  # "view" column
             item = tree.identify_row(event.y)
             if item:
                 values = tree.item(item, "values")
@@ -1411,10 +1416,7 @@ class MainWindow(tk.Tk):
 
     def _on_executed_space_from_menu(self) -> None:
         """Toggle checkboxes for selected items in executed_tree (from context menu)."""
-        for item in self.executed_tree.selection():
-            self._toggle_check(self.executed_tree, item, "check")
-        self._update_output_status()
-        self._save_checked_executed_scenarios()
+        self._executed_check_ctrl.toggle_selected()
 
     # ── Input source management ──────────────────────────────────────
 
@@ -2721,39 +2723,24 @@ class MainWindow(tk.Tk):
     # ── Space key handlers for checkbox toggling ──────────────────
 
     def _on_check_selected(self) -> None:
-        """Toggle checkboxes for all selected (highlighted) items in available_tree."""
-        for item in self.available_tree.selection():
-            self._toggle_check(self.available_tree, item, "check")
-        self._update_add_to_execution_style()
-        self._save_checked_available_scenarios()
+        """Toggle checkboxes for all selected (highlighted) items in available_tree.
 
-    def _on_available_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
-        """Toggle checkboxes for all selected (highlighted) items in available_tree."""
-        for item in self.available_tree.selection():
-            self._toggle_check(self.available_tree, item, "check")
-        self._update_add_to_execution_style()
-        self._save_checked_available_scenarios()
-
-    def _on_executed_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
-        """Toggle checkboxes for all selected (highlighted) items in executed_tree."""
-        for item in self.executed_tree.selection():
-            self._toggle_check(self.executed_tree, item, "check")
-        self._update_output_status()
-        self._save_checked_executed_scenarios()
+        Applies the shared selection-based rule via ``CheckTreeController``:
+        all checked -> uncheck all; else -> check all.
+        """
+        self._available_check_ctrl.toggle_selected()
 
     def _on_check_executed(self) -> None:
-        """Check all executed scenarios if any are unchecked, otherwise uncheck all."""
+        """Check/uncheck *all* executed scenarios via the shared rule.
+
+        Selects every row first so the controller's selection-aware rule
+        applies to the whole list (matching the button label "all").
+        """
         children = self.executed_tree.get_children()
-        all_checked = all(
-            self.executed_tree.item(item, "values")[0] == CHECK_ON
-            for item in children
-            if self.executed_tree.item(item, "values")
-        )
-        new_state = CHECK_OFF if all_checked else CHECK_ON
-        for item in children:
-            self.executed_tree.set(item, "check", new_state)
-        self._update_output_status()
-        self._save_checked_executed_scenarios()
+        if not children:
+            return
+        self.executed_tree.selection_set(children)
+        self._executed_check_ctrl.toggle_selected()
 
     def _on_key_e(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
         """Toggle checkboxes on selected executed scenarios on 'e' press."""

@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 
 import yaml
 
+from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.config_parser import parse_plot_configs
 from flextool.gui.dialogs.file_picker import FilePickerDialog
 from flextool.gui.data_models import PlotSettings, ProjectSettings
@@ -151,8 +152,12 @@ class _PlotSection:
         config_scroll.grid(row=0, column=1, sticky="ns")
         self._config_tree.configure(yscrollcommand=config_scroll.set)
 
-        self._config_tree.bind("<Button-1>", self._on_config_click)
-        self._config_tree.bind("<space>", self._on_config_space)
+        self._config_check_ctrl = CheckTreeController(
+            self._config_tree,
+            check_column="check",
+            checked_glyph=self._CHECK_ON,
+            unchecked_glyph=self._CHECK_OFF,
+        )
 
         self._populate_configs()
 
@@ -204,26 +209,6 @@ class _PlotSection:
             else:
                 check = self._CHECK_ON
             self._config_tree.insert("", "end", values=(check, name))
-
-    def _on_config_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        """Toggle checkbox on click in the check column."""
-        region = self._config_tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-        column = self._config_tree.identify_column(event.x)
-        if column == "#1":  # check column
-            item = self._config_tree.identify_row(event.y)
-            if item:
-                current = self._config_tree.set(item, "check")
-                new_val = self._CHECK_OFF if current == self._CHECK_ON else self._CHECK_ON
-                self._config_tree.set(item, "check", new_val)
-
-    def _on_config_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
-        """Toggle checkboxes for selected items on space."""
-        for item in self._config_tree.selection():
-            current = self._config_tree.set(item, "check")
-            new_val = self._CHECK_OFF if current == self._CHECK_ON else self._CHECK_ON
-            self._config_tree.set(item, "check", new_val)
 
     def _on_edit_dispatch_config(self) -> None:
         """Open the dispatch plot config.yaml in a text editor dialog."""
