@@ -35,7 +35,7 @@ from flextool.scenario_comparison.dispatch_data import prepare_dispatch_data
 from flextool.scenario_comparison.dispatch_mappings import load_dispatch_mappings
 from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
 from flextool.scenario_comparison.plan_union import (
-    is_scenario_pivot_config, union_plan_data,
+    normalize_config_for_plan_union, union_plan_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -2869,23 +2869,13 @@ class ResultViewer(tk.Toplevel):
     def _display_comparison(self, entry: PlotEntry, variant: PlotVariant) -> None:
         """Render comparison plot via lazy per-scenario plan-parquet union.
 
-        Phase E flow:
-
-        1.  Load the plot config first — pivot detection drives routing.
-        2.  Non-pivot config: union the per-scenario plan parquets for
-            the *viewer scenarios* set, filter to *checked scenarios*,
-            and build a live plan.  No cross-scenario combined parquet
-            is read or written.
-        3.  Pivot config (config declares ``s`` in its
-            ``map_dimensions_for_plots``): plan parquets aren't viable
-            because the per-scenario compute step strips the scenario
-            level.  Fall back to ``output_parquet_comparison/<rk>.parquet``
-            if it happens to exist (e.g. a previous CLI run); otherwise
-            surface the "no data" message.  Hitting this path is logged
-            so we know which configs still rely on the slow combine.
+        Phase E (refined): every comparison config is served from the
+        union path.  ``normalize_config_for_plan_union`` adjusts the
+        config's ``map_dimensions_for_plots`` for the unioned shape
+        (currently only the 4 ``sdt_*`` configs need adjustment — see
+        :mod:`flextool.scenario_comparison.plan_union`).  No legacy
+        combined-parquet fallback runs from the GUI render path.
         """
-        comp_dir = self._project_path / "output_parquet_comparison"
-
         config = self._load_plot_config(variant.result_key, variant.sub_config)
         if config is None:
             self._plot_canvas.show_message(f"No config for {variant.result_key}")
@@ -2894,33 +2884,16 @@ class ResultViewer(tk.Toplevel):
         viewer_scenarios = self._get_comparison_viewer_scenarios()
         checked = set(self._get_comparison_scenarios())
 
-        if is_scenario_pivot_config(config):
-            # Scenario-as-pivot configs need the scenario level inside the
-            # dataframe; plan-parquet union can't satisfy that.  Fall
-            # through to the legacy combined-parquet path if present.
-            logger.warning(
-                "Comparison plot %s/%s uses scenario as a dimension; "
-                "falling back to legacy combined-parquet path.",
-                variant.result_key, variant.sub_config,
+        df = self._load_unioned_plan_df(
+            variant.result_key, variant.sub_config,
+            viewer_scenarios, checked,
+        )
+        if df is None:
+            self._plot_canvas.show_message(
+                f"No per-scenario plan data for {variant.result_key}\n"
+                f"in viewer scenarios."
             )
-            df = self._load_legacy_combined_df(variant.result_key, checked)
-            if df is None:
-                self._plot_canvas.show_message(
-                    f"No comparison data found for {variant.result_key}\n"
-                    f"Run 'Scenario comparison' (CLI) first."
-                )
-                return
-        else:
-            df = self._load_unioned_plan_df(
-                variant.result_key, variant.sub_config,
-                viewer_scenarios, checked,
-            )
-            if df is None:
-                self._plot_canvas.show_message(
-                    f"No per-scenario plan data for {variant.result_key}\n"
-                    f"in viewer scenarios."
-                )
-                return
+            return
 
         if df.empty:
             self._plot_canvas.show_message(f"Empty data for {variant.result_key}")
@@ -2929,17 +2902,20 @@ class ResultViewer(tk.Toplevel):
         break_times = self._load_comparison_break_times(viewer_scenarios)
         plot_name = config.plot_name or variant.full_name
 
-        # Live plan (cached) for instant rendering.  Phase E: the disk
-        # plan path under ``output_parquet_comparison/plot_plans/`` is
-        # only checked for scenario-pivot configs that hit the legacy
-        # combined-parquet fallback — the union path always builds a
-        # fresh live plan from the (cached) unioned DataFrame, since
-        # the per-scenario plan parquets were computed against the
-        # single-mode config and need re-rule under the comparison
-        # config.
+        # Adjust the comparison config to match the unioned shape.  For
+        # most configs this is a no-op; for ``sdt_*`` (Node prices,
+        # Reserve prices) it strips the ``solve`` row dim that the
+        # per-scenario plan compute step already collapsed.
+        plan_config = normalize_config_for_plan_union(config)
+
+        # Live plan (cached) for instant rendering.  The union path
+        # always builds a fresh live plan from the (cached) unioned
+        # DataFrame, since the per-scenario plan parquets were computed
+        # under the single-mode config and need re-rule under the
+        # comparison config (plus the union normalisation above).
         try:
             from flextool.plot_outputs.plan import (
-                load_plot_plan, build_figure_from_plan, compute_live_plan,
+                build_figure_from_plan, compute_live_plan,
             )
             plan_key = (
                 "_comparison", variant.result_key, variant.sub_config,
@@ -2948,26 +2924,7 @@ class ResultViewer(tk.Toplevel):
             if self._live_plan_key == plan_key and self._live_plan is not None:
                 plan = self._live_plan
             else:
-                plan = None
-                if is_scenario_pivot_config(config):
-                    plan_dir = comp_dir / "plot_plans"
-                    plan = load_plot_plan(
-                        plan_dir, variant.result_key, variant.sub_config,
-                    )
-                    if plan is not None and checked:
-                        plan_scenarios: set[str] = set()
-                        if (
-                            isinstance(plan.processed_df.columns, pd.MultiIndex)
-                            and 'scenario' in plan.processed_df.columns.names
-                        ):
-                            plan_scenarios = set(
-                                plan.processed_df.columns
-                                .get_level_values('scenario').unique()
-                            )
-                        if plan_scenarios != checked:
-                            plan = None
-                if plan is None:
-                    plan = compute_live_plan(df, config, plot_name, break_times)
+                plan = compute_live_plan(df, plan_config, plot_name, break_times)
                 self._live_plan = plan
                 self._live_plan_key = plan_key
 
@@ -3000,13 +2957,15 @@ class ResultViewer(tk.Toplevel):
         except Exception:
             logger.warning("Plan path failed for comparison %s", variant.result_key, exc_info=True)
 
-        # Fallback: full prepare_plot_data pipeline
+        # Fallback: full prepare_plot_data pipeline.  Use the same
+        # normalised config as the live-plan path above so the rules
+        # length matches the unioned frame's level count.
         self._update_time_range(len(df))
         start = self._start_var.get()
         duration = self._duration_var.get()
         plot_rows = (start, start + duration)
         figures, total_count = prepare_plot_data(
-            df, config, plot_name, plot_rows, break_times,
+            df, plan_config, plot_name, plot_rows, break_times,
             only_file_index=self._file_index,
         )
 

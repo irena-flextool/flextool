@@ -15,17 +15,38 @@ Per-scenario plan files live at::
 ``_plan`` suffix is part of the layout — kept for compatibility with
 existing scenario-runs.
 
-Some plot configs declare ``scenario`` as one of their input dimensions
-(``s`` in the first half of ``map_dimensions_for_plots``) and therefore
-need scenario as a level *inside* the dataframe — not as a top
-column-MultiIndex level. ``compute_all_plot_plans`` strips the
-scenario level when generating per-scenario plans, so those configs
-can't be served from the union path; the viewer routes them through
-the legacy combined-parquet pipeline instead.
-:func:`is_scenario_pivot_config` flags such configs.
+Every comparison plot config can be served from the union path.  The
+unioned DataFrame has ``scenario`` as the **top** column-MultiIndex
+level, with whatever per-scenario columns the dimension-rule pass
+produced nested underneath — structurally what
+``_apply_dimension_rules`` would compute on a combined raw frame for
+any role that names ``scenario`` (line / subplot / stack / grouped-bar
+/ expand-axis).  The column index simply needs ``scenario`` at the
+position the comparison config expects (always level 0 in the
+``index_types`` column part — verified across every shipped config in
+``templates/default_comparison_plots.yaml``).
+
+Two subtleties — both handled by :func:`normalize_config_for_plan_union`:
+
+1. The dim-rule character ``s`` is overloaded in
+   ``map_dimensions_for_plots[0]``: in the **column** part it means
+   ``scenario``; in the **row** part it means ``solve`` (the FlexTool
+   solve dimension).  The per-scenario plan compute step already
+   collapses ``solve`` (rule ``m`` / ``y`` / ``z`` in the row part), so
+   the unioned plan parquet has no ``solve`` row level.  The
+   comparison config's ``s`` row entry must therefore be stripped out
+   before we re-run the dim rules on the unioned frame; otherwise the
+   length check in ``_apply_dimension_rules`` fails (rules count
+   exceeds level count by one).
+2. Nothing else needs reordering.  ``pd.concat(axis=1,
+   keys=found_scenarios, names=['scenario'])`` already places
+   ``scenario`` as level 0 of the column MultiIndex, matching every
+   shipped config's expected ``s`` position in its column-part
+   ``index_types``.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from pathlib import Path
@@ -140,89 +161,121 @@ def union_plan_data(
 
 
 # ---------------------------------------------------------------------------
-#  Scenario-pivot detection
+#  Config normalisation for the plan-union path
 # ---------------------------------------------------------------------------
 
-# Roles that, when populated with "scenario", indicate the plot pivots on
-# scenario as a *dataframe* dimension (not a top column level appended at
-# render time).  Per-scenario plan parquets have the scenario level
-# stripped at compute time; configs that pivot on scenario therefore
-# can't be served from the union path.
-_SCENARIO_ROLE_KEYS = (
-    "stack",
-    "stack_levels",
-    "stack_level_names",
-    "expand_axis_levels",
-    "expand_axis_level_names",
-    "grouped_bar_levels",
-    "grouped_bar_level_names",
-    "subplot",
-    "subplot_levels",
-    "sub_levels",
-    "item_level_names",
-)
+# Row-part rules that mean "collapse this row level entirely".  When the
+# row-part of ``index_types`` carries ``s`` (the FlexTool ``solve``
+# dimension, *not* ``scenario``) and the matching rule is one of these,
+# the per-scenario plan compute step already collapsed ``solve`` away.
+# The unioned plan parquet therefore has no ``solve`` row level and the
+# comparison config's row-part ``s`` + collapsing rule must be stripped
+# before re-running ``_apply_dimension_rules`` on the union — otherwise
+# the rule-length vs level-count check fails by one.
+_ROW_COLLAPSE_RULES = frozenset({"m", "y", "z"})
 
 
-def _has_scenario_role(value: Any) -> bool:
-    """Return True if *value* is a list/tuple/string containing 'scenario'."""
-    if isinstance(value, str):
-        return value == "scenario"
-    if isinstance(value, (list, tuple)):
-        return any(
-            (isinstance(v, str) and v == "scenario") or _has_scenario_role(v)
-            for v in value
+def _strip_row_solve_dim(map_dims: Any) -> tuple[str, str] | None:
+    """If row-part has a leading collapsing ``s``, return adjusted (idx, rules).
+
+    Returns ``None`` when no adjustment is needed.  The function is
+    deliberately conservative: it only strips when the **first** row
+    dimension is ``s`` AND the matching rule collapses (sum / weighted
+    sum / weighted average).  Any other shape is left untouched so this
+    helper is a no-op for the 110/114 shipped configs that have no
+    row-part ``s`` at all.
+    """
+    if not isinstance(map_dims, (list, tuple)) or len(map_dims) < 2:
+        return None
+    idx, rules = map_dims[0], map_dims[1]
+    if not (isinstance(idx, str) and isinstance(rules, str)):
+        return None
+    if "_" not in idx:
+        return None
+    row_idx, col_idx = idx.split("_", 1)
+    # Rules string carries an underscore separating row/col rules in the
+    # YAML; ``_apply_dimension_rules`` strips it.  We mirror that here so
+    # we can reason positionally about row-rule chars.
+    rules_no_us = rules.replace("_", "")
+    if not row_idx or not row_idx.startswith("s"):
+        return None
+    if len(rules_no_us) < len(row_idx) + len(col_idx):
+        return None
+    row_rule_for_s = rules_no_us[0]
+    if row_rule_for_s not in _ROW_COLLAPSE_RULES:
+        return None
+    new_row_idx = row_idx[1:]
+    # Drop the first row-rule char and rebuild the rules string with the
+    # original underscore position (between row and col rules).
+    new_row_rules = rules_no_us[1: len(row_idx)]
+    new_col_rules = rules_no_us[len(row_idx):]
+    new_idx = f"{new_row_idx}_{col_idx}"
+    new_rules = f"{new_row_rules}_{new_col_rules}"
+    return new_idx, new_rules
+
+
+def normalize_config_for_plan_union(config: Any) -> Any:
+    """Return a config adjusted for re-applying dim rules to a unioned plan.
+
+    The unioned plan parquet shape is ``(per-scenario plan rows) ×
+    (scenario, per-scenario plan cols)`` — i.e. the per-scenario row
+    dims are unchanged but ``scenario`` has been added as the outermost
+    column level.
+
+    For most configs (110/114 shipped comparison configs), the
+    comparison ``map_dimensions_for_plots`` already matches that shape
+    1:1, so this returns *config* unchanged.
+
+    For the ``sdt_*`` configs (4 shipped: ``Node prices``, ``Reserve
+    price in NodeGroups``), the comparison config still names the
+    FlexTool ``solve`` row dim (``s`` in row-part of ``index_types``)
+    even though the per-scenario plan compute step already collapsed
+    it.  We strip the row-part ``s`` + matching collapse rule so the
+    rules length matches the unioned frame's level count.
+
+    Accepts ``PlotConfig`` dataclass instances or plain dicts.  Returns
+    a new instance / dict; never mutates *config* in place.
+    """
+    if config is None:
+        return config
+
+    if hasattr(config, "__dataclass_fields__"):
+        map_dims = getattr(config, "map_dimensions_for_plots", None)
+        adjusted = _strip_row_solve_dim(map_dims)
+        if adjusted is None:
+            return config
+        new_idx, new_rules = adjusted
+        return dataclasses.replace(
+            config, map_dimensions_for_plots=[new_idx, new_rules],
         )
-    return False
+
+    if isinstance(config, dict):
+        map_dims = config.get("map_dimensions_for_plots")
+        adjusted = _strip_row_solve_dim(map_dims)
+        if adjusted is None:
+            return config
+        new_idx, new_rules = adjusted
+        new_cfg = dict(config)
+        new_cfg["map_dimensions_for_plots"] = [new_idx, new_rules]
+        return new_cfg
+
+    return config
 
 
 def is_scenario_pivot_config(config: Any) -> bool:
-    """Return True if a plot config pivots on the ``scenario`` dimension.
+    """Pure no-op kept for forward compatibility — always returns ``False``.
 
-    A "scenario pivot" plot needs ``scenario`` as one of its
-    *input-dataframe* levels (not as a top column-MultiIndex level
-    appended at render time).  Per-scenario plan parquets strip the
-    scenario level, so the union path can't satisfy these configs —
-    callers should fall through to the legacy combined-parquet
-    pipeline.
+    Phase E originally routed configs whose ``map_dimensions_for_plots``
+    contained ``s`` to a legacy combined-parquet fallback.  That routing
+    was overconservative: ``s`` in the column part of ``index_types``
+    means ``scenario`` (which the union path handles natively), and
+    ``s`` in the row part means ``solve`` (which the per-scenario plan
+    compute step has already collapsed — see
+    :func:`normalize_config_for_plan_union`).  Every shipped comparison
+    config is therefore servable from the union path.
 
-    Two signals are checked:
-
-    1. The PlotConfig-style raw-YAML signal: the first element of
-       ``map_dimensions_for_plots`` is an ``index_types`` string
-       (e.g. ``"dt_seeg"``) that includes ``s`` as a dimension.  This is
-       what real-world FlexTool comparison configs use.
-    2. A more general dict-shape signal where role keys
-       (``stack``, ``subplot``, ``expand_axis_levels``,
-       ``grouped_bar_levels``, ...) are populated with the literal
-       string ``"scenario"`` — useful for tests and callers that pass
-       resolved level-role data.
-
-    Returns ``False`` for ``None`` or non-dict / non-PlotConfig
-    arguments.
+    The function is kept (returning ``False`` for any input) so older
+    callers that import it don't break; new code should use
+    :func:`normalize_config_for_plan_union` instead.
     """
-    if config is None:
-        return False
-    # PlotConfig dataclass instance — pull its dict-friendly attrs.
-    cfg_dict: dict[str, Any]
-    if hasattr(config, "__dataclass_fields__"):
-        cfg_dict = {
-            name: getattr(config, name)
-            for name in config.__dataclass_fields__
-        }
-    elif isinstance(config, dict):
-        cfg_dict = config
-    else:
-        return False
-
-    # Signal 1: map_dimensions_for_plots string contains 's' (scenario)
-    map_dims = cfg_dict.get("map_dimensions_for_plots")
-    if isinstance(map_dims, (list, tuple)) and len(map_dims) >= 1:
-        index_types = map_dims[0]
-        if isinstance(index_types, str) and "s" in index_types:
-            return True
-
-    # Signal 2: any role key carries the literal string "scenario".
-    for key in _SCENARIO_ROLE_KEYS:
-        if key in cfg_dict and _has_scenario_role(cfg_dict[key]):
-            return True
     return False
