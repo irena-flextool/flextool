@@ -722,6 +722,54 @@ class ResultViewer(tk.Toplevel):
         except (json.JSONDecodeError, OSError):
             return set()
 
+    def _resolve_comparison_availability(self) -> set[tuple[str, str]]:
+        """Return the (result_key, sub_config) availability for comparison mode.
+
+        Resolution order (Phase C):
+
+        1. If ``output_parquet_comparison/plot_plans/_availability.json``
+           exists AND ``output_parquet_comparison/_metadata.json`` records
+           the same viewer-scenarios set as
+           :meth:`_get_comparison_viewer_scenarios`, use the combined
+           availability file (authoritative for the actual combined plan
+           parquets).
+        2. Else compute the **union** of each viewer scenario's per-scenario
+           ``output_parquet/<scenario>/plot_plans/_availability.json``.
+           This makes grey-out state accurate immediately after a "Update
+           view scenarios" press, before the slow combine has finished
+           rewriting the comparison availability file.
+        3. Else return an empty set (everything greys out, no plans known).
+
+        A per-scenario file missing for one of the viewer scenarios is
+        treated as "no contribution" — the union proceeds with whatever
+        files are present.  This silently drops coverage for that scenario
+        until its per-scenario run finishes; that's deliberate so the user
+        sees the most accurate available picture without erroring out.
+        """
+        comparison_plan_dir = (
+            self._project_path / "output_parquet_comparison" / "plot_plans"
+        )
+        comparison_avail_path = comparison_plan_dir / "_availability.json"
+
+        viewer_scenarios = self._get_comparison_viewer_scenarios()
+        viewer_set = {str(s) for s in viewer_scenarios}
+
+        if comparison_avail_path.exists():
+            metadata_scenarios = set(self._read_metadata_scenarios())
+            if metadata_scenarios == viewer_set and viewer_set:
+                return self._load_availability_from_dir(comparison_plan_dir)
+
+        if not viewer_set:
+            return set()
+
+        union: set[tuple[str, str]] = set()
+        for scenario in viewer_scenarios:
+            plan_dir = (
+                self._project_path / "output_parquet" / scenario / "plot_plans"
+            )
+            union |= self._load_availability_from_dir(plan_dir)
+        return union
+
     def _update_tree_availability(self) -> None:
         """Grey out entries that have no matching parquet/plan data for selected scenario(s).
 
@@ -732,8 +780,7 @@ class ResultViewer(tk.Toplevel):
         mode = self._mode.get()
 
         if mode == "comparison":
-            plan_dir = self._project_path / "output_parquet_comparison" / "plot_plans"
-            available_pairs = self._load_availability_from_dir(plan_dir)
+            available_pairs = self._resolve_comparison_availability()
         else:
             scenarios = self._get_selected_scenarios()
             if not scenarios:
