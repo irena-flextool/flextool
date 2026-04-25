@@ -150,15 +150,19 @@ class MainWindow(tk.Tk):
         # Make LabelFrame titles the same font size as everything else
         style.configure("TLabelframe.Label", font=tkfont.nametofont("TkDefaultFont"))
 
-        # Make selected rows clearly blue in the focused tree. sv_ttk's
-        # dark theme will dim this to a grey when the tree loses focus;
-        # that's acceptable standard behaviour and is the safer default
-        # than any "!focus" override which sv_ttk can shadow into an
-        # invisible dark tone.
+        # Selected rows stay blue regardless of which tree currently
+        # holds focus. The "selected !focus" mapping is listed first so
+        # it shadows sv_ttk's dark-grey unfocused-selection default.
         style.map(
             "Treeview",
-            background=[("selected", "#3874c8")],
-            foreground=[("selected", "#ffffff")],
+            background=[
+                ("selected !focus", "#3874c8"),
+                ("selected", "#3874c8"),
+            ],
+            foreground=[
+                ("selected !focus", "#ffffff"),
+                ("selected", "#ffffff"),
+            ],
         )
 
         # ── Custom button styles for visual highlighting ──────────
