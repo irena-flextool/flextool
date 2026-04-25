@@ -231,6 +231,78 @@ def plot_dispatch_area(
     plt.close(fig)
 
 
+def compute_dispatch_metadata_for_scenario(
+    results: TimeSeriesResults,
+    mappings: DispatchMappings,
+    scenario: str,
+    timeline: tuple[int, int] = (0, 168),
+) -> dict:
+    """Compute dispatch ylims + column order for ONE scenario.
+
+    Returns a dict suitable for JSON serialization::
+
+        {
+            "nodeGroups": {
+                "GroupName": {
+                    "ylim": [ymin, ymax],
+                    "columns": ["col1", "col2", ...]
+                },
+                ...
+            }
+        }
+
+    No margin is applied here; downstream union code adds it. Call sites
+    persist this to ``<project>/output_parquet/<scenario>/_dispatch_metadata.json``.
+    """
+    dispatch_groups_df = mappings.dispatch_groups
+    node_groups: list[str] = []
+    if dispatch_groups_df is not None and not dispatch_groups_df.empty:
+        node_groups = list(dispatch_groups_df['group'].unique())
+
+    meta: dict = {"nodeGroups": {}}
+    for ng in node_groups:
+        df_dispatch, inflow = prepare_dispatch_data(
+            results, mappings, scenario, ng,
+        )
+        if df_dispatch is not None and not df_dispatch.empty:
+            ymin, ymax = _compute_ylim(df_dispatch, timeline, inflow)
+            meta["nodeGroups"][ng] = {
+                "ylim": [float(ymin), float(ymax)],
+                "columns": [str(c) for c in df_dispatch.columns],
+            }
+    return meta
+
+
+def _fold_per_scenario_metadata(
+    per_scen_meta: dict,
+    ng_ylims: dict[str, tuple[float, float]],
+    ng_columns: dict[str, list[str]],
+) -> None:
+    """Fold a per-scenario metadata dict into running ylims/columns dicts.
+
+    Mutates *ng_ylims* and *ng_columns* in place with the union (min/max
+    ylim, columns extended in first-seen order).  No margin is applied
+    here — callers add the margin once after folding all scenarios.
+    """
+    for ng, entry in per_scen_meta.get("nodeGroups", {}).items():
+        ylim = entry.get("ylim")
+        columns = entry.get("columns") or []
+        if not ylim or len(ylim) < 2:
+            continue
+        ymin, ymax = float(ylim[0]), float(ylim[1])
+        if ng in ng_ylims:
+            ng_ylims[ng] = (
+                min(ng_ylims[ng][0], ymin),
+                max(ng_ylims[ng][1], ymax),
+            )
+            for col in columns:
+                if col not in ng_columns[ng]:
+                    ng_columns[ng].append(col)
+        else:
+            ng_ylims[ng] = (ymin, ymax)
+            ng_columns[ng] = list(columns)
+
+
 def compute_dispatch_metadata(
     results: TimeSeriesResults,
     mappings: DispatchMappings,
@@ -251,29 +323,14 @@ def compute_dispatch_metadata(
             }
         }
     """
-    dispatch_groups_df = mappings.dispatch_groups
-    node_groups: list[str] = []
-    if dispatch_groups_df is not None and not dispatch_groups_df.empty:
-        node_groups = list(dispatch_groups_df['group'].unique())
-
     ng_ylims: dict[str, tuple[float, float]] = {}
     ng_columns: dict[str, list[str]] = {}
 
     for scenario in scenarios:
-        for ng in node_groups:
-            df_dispatch, inflow = prepare_dispatch_data(
-                results, mappings, scenario, ng,
-            )
-            if df_dispatch is not None and not df_dispatch.empty:
-                ymin, ymax = _compute_ylim(df_dispatch, timeline, inflow)
-                if ng in ng_ylims:
-                    ng_ylims[ng] = (min(ng_ylims[ng][0], ymin), max(ng_ylims[ng][1], ymax))
-                    for col in df_dispatch.columns:
-                        if col not in ng_columns[ng]:
-                            ng_columns[ng].append(col)
-                else:
-                    ng_ylims[ng] = (ymin, ymax)
-                    ng_columns[ng] = list(df_dispatch.columns)
+        per_scen = compute_dispatch_metadata_for_scenario(
+            results, mappings, scenario, timeline,
+        )
+        _fold_per_scenario_metadata(per_scen, ng_ylims, ng_columns)
 
     # Add margin
     for key, (ymin, ymax) in ng_ylims.items():
@@ -281,12 +338,62 @@ def compute_dispatch_metadata(
         ng_ylims[key] = (ymin - margin, ymax + margin)
 
     meta: dict = {"nodeGroups": {}}
-    for ng in node_groups:
-        if ng in ng_ylims:
-            meta["nodeGroups"][ng] = {
-                "ylim": list(ng_ylims[ng]),
-                "columns": ng_columns.get(ng, []),
-            }
+    for ng, ylim in ng_ylims.items():
+        meta["nodeGroups"][ng] = {
+            "ylim": list(ylim),
+            "columns": ng_columns.get(ng, []),
+        }
+    return meta
+
+
+def union_dispatch_metadata(
+    project_path: Path,
+    scenarios: list[str],
+    margin_fraction: float = 0.05,
+) -> dict:
+    """Union per-scenario _dispatch_metadata.json files into a single
+    cross-scenario manifest.
+
+    Reads ``<project>/output_parquet/<scenario>/_dispatch_metadata.json``
+    for each scenario in *scenarios*; missing files contribute nothing
+    (silently skipped, like Phase C's availability union).
+
+    Returns a dict matching the same schema as ``compute_dispatch_metadata``
+    (with the 5% ylim margin applied at the union level), or
+    ``{"nodeGroups": {}}`` if no per-scenario files exist.
+    """
+    import json as _json
+
+    project_path = Path(project_path)
+    ng_ylims: dict[str, tuple[float, float]] = {}
+    ng_columns: dict[str, list[str]] = {}
+
+    for scenario in scenarios:
+        meta_path = (
+            project_path / "output_parquet" / scenario / "_dispatch_metadata.json"
+        )
+        if not meta_path.is_file():
+            continue
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                per_scen = _json.load(f)
+        except (OSError, _json.JSONDecodeError):
+            continue
+        if not isinstance(per_scen, dict):
+            continue
+        _fold_per_scenario_metadata(per_scen, ng_ylims, ng_columns)
+
+    # Add margin at the union level
+    for key, (ymin, ymax) in ng_ylims.items():
+        margin = (ymax - ymin) * margin_fraction
+        ng_ylims[key] = (ymin - margin, ymax + margin)
+
+    meta: dict = {"nodeGroups": {}}
+    for ng, ylim in ng_ylims.items():
+        meta["nodeGroups"][ng] = {
+            "ylim": list(ylim),
+            "columns": ng_columns.get(ng, []),
+        }
     return meta
 
 

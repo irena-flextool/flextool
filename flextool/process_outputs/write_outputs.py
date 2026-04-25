@@ -528,6 +528,60 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         except Exception as exc:
             logging.warning("Plot plan computation failed (non-fatal): %s", exc)
 
+        # Phase D: write per-scenario dispatch metadata so the viewer can
+        # union ylims across scenarios on demand (without waiting for the
+        # cross-scenario combine).  Loads the just-written parquets back
+        # via the existing readers, restricted to this single scenario.
+        try:
+            import json as _json
+            from flextool.scenario_comparison.db_reader import (
+                build_scenario_folders_from_dir,
+                collect_parquet_files,
+                combine_parquet_files,
+            )
+            from flextool.scenario_comparison.dispatch_mappings import (
+                combine_dispatch_mappings,
+            )
+            from flextool.scenario_comparison.data_models import TimeSeriesResults
+            from flextool.scenario_comparison.dispatch_plots import (
+                compute_dispatch_metadata_for_scenario,
+            )
+
+            # parquet_dir == <output_location>/output_parquet/<scenario>/
+            scenario_pq_dir = os.path.dirname(parquet_dir) if subdir else parquet_dir
+            scenario_name_for_meta = subdir or scenario_name
+
+            sc_folders = build_scenario_folders_from_dir(
+                scenario_pq_dir, [scenario_name_for_meta],
+            )
+            if sc_folders:
+                files_by_name = collect_parquet_files(sc_folders, output_subdir="")
+                combined = combine_parquet_files(files_by_name, num_scenarios=1)
+                ts_results = TimeSeriesResults.from_dict(combined)
+                dispatch_mappings = combine_dispatch_mappings(sc_folders, "")
+
+                if plot_rows and len(plot_rows) >= 2:
+                    meta_timeline = (int(plot_rows[0]), int(plot_rows[1]) + 1)
+                else:
+                    meta_timeline = (0, 168)
+
+                disp_meta = compute_dispatch_metadata_for_scenario(
+                    ts_results, dispatch_mappings,
+                    scenario_name_for_meta, meta_timeline,
+                )
+            else:
+                disp_meta = {"nodeGroups": {}}
+
+            meta_path = os.path.join(parquet_dir, "_dispatch_metadata.json")
+            with open(meta_path, "w", encoding="utf-8") as f:
+                _json.dump(disp_meta, f, indent=2)
+            start = log_time("Wrote dispatch metadata", start)
+        except Exception as exc:
+            logging.warning(
+                "Per-scenario dispatch metadata computation failed (non-fatal): %s",
+                exc,
+            )
+
     # Plot results
     if 'plot' in write_methods:
         os.makedirs(plot_dir, exist_ok=True)

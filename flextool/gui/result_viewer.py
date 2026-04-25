@@ -3219,21 +3219,64 @@ class ResultViewer(tk.Toplevel):
         return True
 
     def _load_dispatch_metadata(self) -> dict | None:
-        """Load cross-scenario dispatch metadata (ylims, columns) if available."""
+        """Load cross-scenario dispatch metadata (ylims, columns) if available.
+
+        Resolution order (Phase D):
+
+        1. If ``output_parquet_comparison/_dispatch_metadata.json`` exists
+           AND ``output_parquet_comparison/_metadata.json`` records the
+           same viewer-scenarios set as
+           :meth:`_get_comparison_viewer_scenarios`, use the combined
+           file (authoritative for the locked-in viewer set).
+        2. Else compute via
+           :func:`union_dispatch_metadata` over the per-scenario
+           ``output_parquet/<scenario>/_dispatch_metadata.json`` files.
+           Missing per-scenario files contribute nothing (silently
+           skipped, like Phase C's availability union).
+        3. Else ``None``.
+        """
         if hasattr(self, '_dispatch_metadata_cache'):
             return self._dispatch_metadata_cache
+
         import json
-        meta_path = self._project_path / "output_parquet_comparison" / "_dispatch_metadata.json"
-        if not meta_path.exists():
-            self._dispatch_metadata_cache = None
-            return None
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                self._dispatch_metadata_cache = json.load(f)
-            return self._dispatch_metadata_cache
-        except (json.JSONDecodeError, OSError):
-            self._dispatch_metadata_cache = None
-            return None
+        from flextool.scenario_comparison.dispatch_plots import (
+            union_dispatch_metadata,
+        )
+
+        viewer_scenarios = self._get_comparison_viewer_scenarios()
+        viewer_set = {str(s) for s in viewer_scenarios}
+
+        combined_path = (
+            self._project_path
+            / "output_parquet_comparison"
+            / "_dispatch_metadata.json"
+        )
+        if combined_path.exists():
+            metadata_scenarios = set(self._read_metadata_scenarios())
+            if metadata_scenarios == viewer_set and viewer_set:
+                try:
+                    with open(combined_path, "r", encoding="utf-8") as f:
+                        self._dispatch_metadata_cache = json.load(f)
+                    return self._dispatch_metadata_cache
+                except (json.JSONDecodeError, OSError):
+                    pass  # fall through to union
+
+        if viewer_scenarios:
+            try:
+                meta = union_dispatch_metadata(
+                    self._project_path, list(viewer_scenarios),
+                )
+                if meta.get("nodeGroups"):
+                    self._dispatch_metadata_cache = meta
+                    return self._dispatch_metadata_cache
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to union per-scenario dispatch metadata",
+                    exc_info=True,
+                )
+
+        self._dispatch_metadata_cache = None
+        return None
 
     def _render_first_dispatch_figure(self) -> None:
         """Render the first dispatch nodeGroup for the selected scenario.
