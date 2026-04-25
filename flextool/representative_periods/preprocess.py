@@ -347,7 +347,7 @@ def preprocess_representative_periods(
     # 4. Run clustering
     # ------------------------------------------------------------------
     print(f"Running greedy convex hull clustering (selecting {n_rp} from {n_base_periods} periods)...")
-    rep_indices = greedy_convex_hull_clustering(C, n_rp)
+    rep_indices = sorted(greedy_convex_hull_clustering(C, n_rp))
     print(f"Selected representative period indices: {rep_indices}")
 
     # ------------------------------------------------------------------
