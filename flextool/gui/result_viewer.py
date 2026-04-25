@@ -345,12 +345,23 @@ class ResultViewer(tk.Toplevel):
 
         self._comp_tree.bind("<Control-a>", self._on_comp_tree_ctrl_a)
         self._comp_tree.bind("<Control-A>", self._on_comp_tree_ctrl_a)
+        self._comp_tree.bind("<Alt-Up>", self._on_comp_tree_alt_up)
+        self._comp_tree.bind("<Alt-Down>", self._on_comp_tree_alt_down)
         self._comp_check_ctrl = CheckTreeController(
             self._comp_tree,
             check_column="check",
             checked_glyph=self._COMP_CHECK_ON,
             unchecked_glyph=self._COMP_CHECK_OFF,
             on_toggle=self._on_comp_tree_toggled,
+        )
+        from flextool.gui.tree_reorder import DragReorderController
+        self._comp_drag = DragReorderController(
+            self._comp_tree,
+            check_column="check",
+            on_reorder=self._on_comp_tree_reordered,
+        )
+        attach_tooltip(
+            self._comp_tree, "Drag to reorder, or Alt+Up/Down",
         )
 
         # ── Plot tree + variant canvas ───────────────────────────────
@@ -544,23 +555,47 @@ class ResultViewer(tk.Toplevel):
         — we translate between the two forms here using the
         bare-ownership map so the viewer's internal identifier remains
         the on-disk subdir.
+
+        Order is taken from ``settings.executed_scenario_order``: saved
+        names that still exist on disk come first (in saved order),
+        followed by any newly-seen names in alphabetical order. The
+        settings list is rewritten to match (drops missing names, appends
+        new ones) and persisted via the debounced save path.
         """
         from flextool.gui.scenario_key import resolve_source_number, format_key
         parquet_dir = self._project_path / "output_parquet"
         if not parquet_dir.is_dir():
             return []
-        available = sorted(
+        on_disk = sorted(
             d.name for d in parquet_dir.iterdir()
             if d.is_dir() and not d.name.startswith("_")
         )
         checked_keys = set(self._settings.checked_executed_scenarios)
         if checked_keys:
             bare_owners = self._settings.bare_output_owners
-            available = [
-                s for s in available
+            on_disk = [
+                s for s in on_disk
                 if format_key(*resolve_source_number(s, bare_owners)) in checked_keys
             ]
-        return available
+
+        saved_order = list(self._settings.executed_scenario_order)
+        on_disk_set = set(on_disk)
+        ordered: list[str] = [s for s in saved_order if s in on_disk_set]
+        ordered_set = set(ordered)
+        new_names = [s for s in on_disk if s not in ordered_set]
+        resolved = ordered + new_names
+
+        if saved_order != resolved:
+            self._settings.executed_scenario_order = list(resolved)
+            try:
+                self._schedule_settings_save()
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to schedule executed_scenario_order save",
+                    exc_info=True,
+                )
+
+        return resolved
 
     def _populate_scenarios(self) -> None:
         """Populate the scenario listbox."""
@@ -2754,6 +2789,50 @@ class ResultViewer(tk.Toplevel):
         if children:
             self._comp_tree.selection_set(children)
             self._comp_tree.focus(children[0])
+        return "break"
+
+    def _on_comp_tree_reordered(self, new_order: list[str]) -> None:
+        """Persist a new tree order and refresh comparison figures."""
+        self._settings.executed_scenario_order = list(new_order)
+        self._schedule_settings_save()
+        # Re-render so the figures reflect the new order. The comparison
+        # combine itself doesn't need to re-run (data is unchanged); the
+        # figure-side ordering is driven by ``_get_comparison_scenarios``.
+        self._clear_figure_cache()
+        self._trigger_replot()
+
+    def _on_comp_tree_alt_up(self, _event: tk.Event) -> str:
+        sel = list(self._comp_tree.selection())
+        if not sel:
+            return "break"
+        children = list(self._comp_tree.get_children())
+        try:
+            indices = sorted(children.index(iid) for iid in sel)
+        except ValueError:
+            return "break"
+        if indices[0] == 0:
+            return "break"
+        for idx in indices:
+            self._comp_tree.move(children[idx], "", idx - 1)
+        self._on_comp_tree_reordered(list(self._comp_tree.get_children()))
+        return "break"
+
+    def _on_comp_tree_alt_down(self, _event: tk.Event) -> str:
+        sel = list(self._comp_tree.selection())
+        if not sel:
+            return "break"
+        children = list(self._comp_tree.get_children())
+        try:
+            indices = sorted(
+                (children.index(iid) for iid in sel), reverse=True,
+            )
+        except ValueError:
+            return "break"
+        if indices[0] >= len(children) - 1:
+            return "break"
+        for idx in indices:
+            self._comp_tree.move(children[idx], "", idx + 1)
+        self._on_comp_tree_reordered(list(self._comp_tree.get_children()))
         return "break"
 
     def _on_comp_check_state_changed(self) -> None:

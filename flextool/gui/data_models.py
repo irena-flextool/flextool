@@ -74,6 +74,12 @@ class ProjectSettings:
     # Ordered list of scenario names for execution
     scenario_order: list[str] = field(default_factory=list)
 
+    # User-ordered list of executed-scenario names for the result viewer
+    # tree (drag/Alt+Up/Down reordering). New scenarios are appended at the
+    # end of this list when first seen. Names that no longer exist on disk
+    # are pruned at next scan.
+    executed_scenario_order: list[str] = field(default_factory=list)
+
     # Scenarios used for the last comparison outputs
     comp_plots_scenarios: list[str] = field(default_factory=list)
     comp_excel_scenarios: list[str] = field(default_factory=list)

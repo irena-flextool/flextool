@@ -60,6 +60,9 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
         "bare_output_owners", settings.bare_output_owners
     )
     settings.scenario_order = data.get("scenario_order", settings.scenario_order)
+    settings.executed_scenario_order = data.get(
+        "executed_scenario_order", settings.executed_scenario_order
+    )
     settings.comp_plots_scenarios = data.get("comp_plots_scenarios", [])
     settings.comp_excel_scenarios = data.get("comp_excel_scenarios", [])
     settings.comp_viewer_scenarios = data.get("comp_viewer_scenarios", [])
