@@ -30,11 +30,13 @@ from flextool.plot_outputs.orchestrator import prepare_plot_data
 from flextool.scenario_comparison.data_models import DispatchMappings, TimeSeriesResults
 from flextool.scenario_comparison.db_reader import (
     build_scenario_folders_from_dir, collect_parquet_files, combine_parquet_files,
-    combine_scenario_parquets,
 )
 from flextool.scenario_comparison.dispatch_data import prepare_dispatch_data
 from flextool.scenario_comparison.dispatch_mappings import load_dispatch_mappings
 from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
+from flextool.scenario_comparison.plan_union import (
+    is_scenario_pivot_config, union_plan_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +111,24 @@ class ResultViewer(tk.Toplevel):
         # save is currently scheduled.
         self._duration_save_after_id: str | None = None
 
-        # Caches for parquet pipeline
+        # Caches for parquet pipeline.
+        #
+        # Phase E generalises ``_parquet_cache_key`` from a fixed
+        # ``(scenario, result_key)`` tuple to a free-form tuple so
+        # both single-scenario reads and the comparison-mode lazy
+        # plan-parquet union can share the slot.  Concretely:
+        #
+        # * single mode key:    ``(scenario, result_key)``
+        # * comparison-union:   ``("_comparison_union", result_key,
+        #                         sub_config, viewer_scenarios_tuple)``
+        #
+        # ``_parquet_cache_df`` holds the unioned DataFrame so repeated
+        # renders for the same plot don't re-read the per-scenario plan
+        # parquets.  The key prefix disambiguates the two flavours so
+        # cache lookups never alias.
         self._yaml_cache: dict[Path, dict] = {}
         self._break_times_cache: dict[str, set[str] | None] = {}
-        self._parquet_cache_key: tuple[str, str] = ("", "")
+        self._parquet_cache_key: tuple = ("", "")
         self._parquet_cache_df: pd.DataFrame | None = None
 
         # Live plan cache: PlotPlan computed from full data, reused across
@@ -2491,6 +2507,102 @@ class ResultViewer(tk.Toplevel):
         self._parquet_cache_df = df
         return df
 
+    def _load_unioned_plan_df(
+        self,
+        result_key: str,
+        sub_config: str,
+        viewer_scenarios: list[str],
+        checked: set[str],
+    ) -> pd.DataFrame | None:
+        """Lazy-union per-scenario plan parquets for a comparison plot.
+
+        Phase E entry point.  Reads each viewer scenario's plan parquet
+        for ``(result_key, sub_config)`` from ``output_parquet/<scen>
+        /plot_plans/<rk>__<sc>_plan.parquet`` and concats them with
+        ``scenario`` as the top column-MultiIndex level.  The unioned
+        DataFrame is cached in ``_parquet_cache_df`` keyed by
+        ``("_comparison_union", result_key, sub_config,
+        viewer_scenarios_tuple)`` so repeated renders for the same
+        plot don't re-read the parquets.
+
+        Filtering to *checked* (the comparison-tree ticks) happens
+        *after* the cached union — toggling individual scenarios in
+        the comparison tree therefore reuses the cached union and
+        only pays the column-mask cost.
+
+        Returns ``None`` when no plan parquets exist for any of
+        *viewer_scenarios* — the legacy fallback / "no data" message
+        is left to the caller.
+        """
+        viewer_tuple = tuple(viewer_scenarios)
+        cache_key = (
+            "_comparison_union", result_key, sub_config, viewer_tuple,
+        )
+        if (
+            cache_key == self._parquet_cache_key
+            and self._parquet_cache_df is not None
+        ):
+            df_full = self._parquet_cache_df
+        else:
+            df_full = union_plan_data(
+                self._project_path, list(viewer_scenarios),
+                result_key, sub_config,
+            )
+            if df_full is None:
+                return None
+            self._parquet_cache_key = cache_key
+            self._parquet_cache_df = df_full
+
+        # Filter to the currently-ticked scenarios.  The viewer tree
+        # toggles are pure visibility; the cached union stays scoped to
+        # the viewer-scenarios set.
+        if (
+            checked
+            and isinstance(df_full.columns, pd.MultiIndex)
+            and 'scenario' in df_full.columns.names
+        ):
+            scenario_level = df_full.columns.get_level_values('scenario')
+            mask = scenario_level.isin(checked)
+            df = df_full.loc[:, mask]
+            return df
+        return df_full
+
+    def _load_legacy_combined_df(
+        self, result_key: str, checked: set[str],
+    ) -> pd.DataFrame | None:
+        """Read the (legacy) combined comparison parquet, if present.
+
+        Phase E doesn't write these from the GUI rebuild path, but the
+        CLI ``scenario_comparison/orchestrator.run`` still does.  When
+        a comparison plot pivots on the ``scenario`` dimension the
+        union path can't satisfy it; we fall back to the combined
+        parquet here.  Returns ``None`` when the file is missing or
+        unreadable.
+        """
+        path = (
+            self._project_path
+            / "output_parquet_comparison"
+            / f"{result_key}.parquet"
+        )
+        if not path.exists():
+            return None
+        try:
+            df = read_lean_parquet(path)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to read legacy combined parquet %s", path,
+                exc_info=True,
+            )
+            return None
+        if (
+            checked
+            and isinstance(df.columns, pd.MultiIndex)
+            and 'scenario' in df.columns.names
+        ):
+            scenario_level = df.columns.get_level_values('scenario')
+            df = df.loc[:, scenario_level.isin(checked)]
+        return df
+
     def _load_break_times(self, scenario: str) -> set[str] | None:
         """Load timeline break times from parquet, cached per scenario."""
         if scenario in self._break_times_cache:
@@ -2755,45 +2867,76 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _display_comparison(self, entry: PlotEntry, variant: PlotVariant) -> None:
-        """Render comparison plot from pre-combined parquets."""
+        """Render comparison plot via lazy per-scenario plan-parquet union.
+
+        Phase E flow:
+
+        1.  Load the plot config first — pivot detection drives routing.
+        2.  Non-pivot config: union the per-scenario plan parquets for
+            the *viewer scenarios* set, filter to *checked scenarios*,
+            and build a live plan.  No cross-scenario combined parquet
+            is read or written.
+        3.  Pivot config (config declares ``s`` in its
+            ``map_dimensions_for_plots``): plan parquets aren't viable
+            because the per-scenario compute step strips the scenario
+            level.  Fall back to ``output_parquet_comparison/<rk>.parquet``
+            if it happens to exist (e.g. a previous CLI run); otherwise
+            surface the "no data" message.  Hitting this path is logged
+            so we know which configs still rely on the slow combine.
+        """
         comp_dir = self._project_path / "output_parquet_comparison"
-        parquet_path = comp_dir / f"{variant.result_key}.parquet"
-
-        if not parquet_path.exists():
-            self._plot_canvas.show_message(
-                f"No comparison data found for {variant.result_key}\n"
-                f"Run 'Scenario comparison' first."
-            )
-            return
-
-        df = read_lean_parquet(parquet_path)
-        if df.empty:
-            self._plot_canvas.show_message(f"Empty data for {variant.result_key}")
-            return
-
-        # Filter to only checked scenarios
-        checked = set(self._get_comparison_scenarios())
-        if checked and isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
-            scenario_level = df.columns.get_level_values('scenario')
-            mask = scenario_level.isin(checked)
-            df = df.loc[:, mask]
-            if df.empty:
-                self._plot_canvas.show_message("No data for selected scenarios")
-                return
 
         config = self._load_plot_config(variant.result_key, variant.sub_config)
         if config is None:
             self._plot_canvas.show_message(f"No config for {variant.result_key}")
             return
 
-        break_times = self._load_comparison_break_times()
+        viewer_scenarios = self._get_comparison_viewer_scenarios()
+        checked = set(self._get_comparison_scenarios())
+
+        if is_scenario_pivot_config(config):
+            # Scenario-as-pivot configs need the scenario level inside the
+            # dataframe; plan-parquet union can't satisfy that.  Fall
+            # through to the legacy combined-parquet path if present.
+            logger.warning(
+                "Comparison plot %s/%s uses scenario as a dimension; "
+                "falling back to legacy combined-parquet path.",
+                variant.result_key, variant.sub_config,
+            )
+            df = self._load_legacy_combined_df(variant.result_key, checked)
+            if df is None:
+                self._plot_canvas.show_message(
+                    f"No comparison data found for {variant.result_key}\n"
+                    f"Run 'Scenario comparison' (CLI) first."
+                )
+                return
+        else:
+            df = self._load_unioned_plan_df(
+                variant.result_key, variant.sub_config,
+                viewer_scenarios, checked,
+            )
+            if df is None:
+                self._plot_canvas.show_message(
+                    f"No per-scenario plan data for {variant.result_key}\n"
+                    f"in viewer scenarios."
+                )
+                return
+
+        if df.empty:
+            self._plot_canvas.show_message(f"Empty data for {variant.result_key}")
+            return
+
+        break_times = self._load_comparison_break_times(viewer_scenarios)
         plot_name = config.plot_name or variant.full_name
 
-        # Try live plan (cached) or disk plan for instant rendering.
-        # A pre-built plan on disk reflects the *regen* scenario set; if
-        # the user has since unchecked some of those scenarios we can't
-        # reuse it, or the figure will still show the full set. Compute
-        # a live plan from the already-filtered df in that case.
+        # Live plan (cached) for instant rendering.  Phase E: the disk
+        # plan path under ``output_parquet_comparison/plot_plans/`` is
+        # only checked for scenario-pivot configs that hit the legacy
+        # combined-parquet fallback — the union path always builds a
+        # fresh live plan from the (cached) unioned DataFrame, since
+        # the per-scenario plan parquets were computed against the
+        # single-mode config and need re-rule under the comparison
+        # config.
         try:
             from flextool.plot_outputs.plan import (
                 load_plot_plan, build_figure_from_plan, compute_live_plan,
@@ -2805,21 +2948,24 @@ class ResultViewer(tk.Toplevel):
             if self._live_plan_key == plan_key and self._live_plan is not None:
                 plan = self._live_plan
             else:
-                plan_dir = comp_dir / "plot_plans"
-                plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
-                if plan is not None and checked:
-                    # Validate that the disk plan was built for exactly
-                    # the checked set; otherwise discard and rebuild.
-                    plan_scenarios: set[str] = set()
-                    if (
-                        isinstance(plan.processed_df.columns, pd.MultiIndex)
-                        and 'scenario' in plan.processed_df.columns.names
-                    ):
-                        plan_scenarios = set(
-                            plan.processed_df.columns.get_level_values('scenario').unique()
-                        )
-                    if plan_scenarios != checked:
-                        plan = None
+                plan = None
+                if is_scenario_pivot_config(config):
+                    plan_dir = comp_dir / "plot_plans"
+                    plan = load_plot_plan(
+                        plan_dir, variant.result_key, variant.sub_config,
+                    )
+                    if plan is not None and checked:
+                        plan_scenarios: set[str] = set()
+                        if (
+                            isinstance(plan.processed_df.columns, pd.MultiIndex)
+                            and 'scenario' in plan.processed_df.columns.names
+                        ):
+                            plan_scenarios = set(
+                                plan.processed_df.columns
+                                .get_level_values('scenario').unique()
+                            )
+                        if plan_scenarios != checked:
+                            plan = None
                 if plan is None:
                     plan = compute_live_plan(df, config, plot_name, break_times)
                 self._live_plan = plan
@@ -2874,20 +3020,63 @@ class ResultViewer(tk.Toplevel):
         else:
             self._plot_canvas.show_message(f"No plottable data for {variant.full_name}")
 
-    def _load_comparison_break_times(self) -> set[str] | None:
-        """Load break times from comparison parquet directory."""
+    def _load_comparison_break_times(
+        self, viewer_scenarios: list[str] | None = None,
+    ) -> set[str] | None:
+        """Return the union of timeline-break times across viewer scenarios.
+
+        Phase E: ``_regenerate_comparison`` no longer writes a combined
+        ``output_parquet_comparison/timeline_breaks.parquet``, so we
+        union the per-scenario ``output_parquet/<scen>/timeline_breaks
+        .parquet`` files at view time instead.  Falls back to the
+        legacy combined file when no viewer scenarios are passed and
+        the combined file happens to exist (e.g. CLI run).
+
+        Cached under the ``"_comparison"`` slot so repeat callers
+        don't re-read the per-scenario files.
+        """
         if "_comparison" in self._break_times_cache:
             return self._break_times_cache["_comparison"]
 
-        path = self._project_path / "output_parquet_comparison" / "timeline_breaks.parquet"
+        scenarios = list(viewer_scenarios or [])
+        if scenarios:
+            union: set[str] = set()
+            any_present = False
+            for scen in scenarios:
+                p = (
+                    self._project_path
+                    / "output_parquet" / scen / "timeline_breaks.parquet"
+                )
+                if not p.exists():
+                    continue
+                any_present = True
+                try:
+                    df = read_lean_parquet(p)
+                    if not df.empty:
+                        union.update(df.iloc[:, 0].astype(str))
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to read timeline breaks for %s", scen,
+                        exc_info=True,
+                    )
+            result: set[str] | None = union if any_present else None
+            self._break_times_cache["_comparison"] = result
+            return result
+
+        # Legacy fallback (no viewer scenarios passed and / or CLI-built
+        # combined file is around): read the combined parquet.
+        path = (
+            self._project_path
+            / "output_parquet_comparison"
+            / "timeline_breaks.parquet"
+        )
         if not path.exists():
             self._break_times_cache["_comparison"] = None
             return None
-
         try:
             df = read_lean_parquet(path)
             if df.empty:
-                result: set[str] | None = None
+                result = None
             else:
                 result = set(df.iloc[:, 0].astype(str))
             self._break_times_cache["_comparison"] = result
@@ -3060,35 +3249,74 @@ class ResultViewer(tk.Toplevel):
         self._trigger_replot()
 
     def _regenerate_comparison(self, scenario_names: list[str]) -> None:
-        """Rebuild combined comparison parquets for *scenario_names*.
+        """Update the comparison-mode metadata and refresh the viewer.
 
-        The list passed in here is the **viewer scenarios** set — the
-        scenarios that should be materialised into
-        ``output_parquet_comparison/`` and recorded in
-        ``_metadata.json``.  Phase B's only legitimate caller is
-        :meth:`refresh_to_viewer_scenarios`, which derives the set from
-        the main window's checked executed-scenarios tree.  Tree toggles
-        inside the viewer never reach this function.
+        Phase E (lazy plan-parquet union) collapses this from a multi-GB
+        cross-scenario raw-data combine to a metadata-only operation:
+
+        1. Write ``output_parquet_comparison/_metadata.json`` with the
+           viewer scenarios.
+        2. Drop in-memory caches that depend on the viewer-scenarios
+           set (figure cache, axis manifest, dispatch metadata, the
+           unioned plan-parquet cache).
+        3. Hand off to :meth:`_on_comparison_ready` to repopulate the
+           comparison tree and the plot tree.
+
+        The unit-of-work moves entirely to render time: when the user
+        opens a plot, :meth:`_load_unioned_plan_df` reads each viewer
+        scenario's plot-shaped plan parquet and concatenates with
+        ``scenario`` as the top column-MultiIndex level.
+
+        ``_comp_request_gen`` is still bumped so any in-flight async
+        work from earlier rebuilds doesn't clobber the current state
+        on completion — kept for forward-compatibility if async work
+        is reintroduced here.
         """
-        # Bump the generation counter and capture the value for the
-        # worker closure. Any earlier in-flight combine becomes stale.
+        # Bump the generation counter — current state-change supersedes
+        # any earlier in-flight async render that hasn't completed yet.
         self._comp_request_gen += 1
         gen = self._comp_request_gen
 
         self._plot_canvas.show_message("Updating comparison data...")
 
-        scenarios_snapshot = list(scenario_names)
+        try:
+            self._write_comparison_metadata(list(scenario_names))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to write comparison metadata: %s", exc, exc_info=True,
+            )
+            self._on_comparison_failed(gen, exc)
+            return
 
-        def _do_combine() -> None:
-            try:
-                combine_scenario_parquets(
-                    self._project_path, scenarios_snapshot,
-                )
-                self.after(0, lambda: self._on_comparison_ready(gen))
-            except Exception as exc:
-                self.after(0, lambda: self._on_comparison_failed(gen, exc))
+        self._on_comparison_ready(gen)
 
-        self._executor.submit(_do_combine)
+    def _write_comparison_metadata(self, scenario_names: list[str]) -> None:
+        """Atomically write ``output_parquet_comparison/_metadata.json``.
+
+        The metadata file is the canonical record of the viewer-scenarios
+        set; downstream callers (Phase A axis manifest filtering,
+        Phase D dispatch metadata, and Phase E's union path) read it to
+        decide which per-scenario subdirs to consult.
+        """
+        import json
+        import tempfile
+
+        comp_dir = self._project_path / "output_parquet_comparison"
+        comp_dir.mkdir(parents=True, exist_ok=True)
+        meta_path = comp_dir / "_metadata.json"
+        payload = {"scenarios": list(scenario_names)}
+
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(comp_dir), prefix="_metadata_", suffix=".tmp",
+        )
+        tmp_path = Path(tmp_name)
+        try:
+            with open(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            tmp_path.replace(meta_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     def _on_comparison_ready(self, gen: int) -> None:
         """Called on main thread when comparison parquets are ready.
@@ -3107,6 +3335,16 @@ class ResultViewer(tk.Toplevel):
         self._break_times_cache.clear()
         self._clear_figure_cache()
         self._current_availability = set()
+        # Phase E: drop the unioned plan-parquet cache; the viewer
+        # scenarios set just changed so the cached union no longer
+        # matches.
+        self._parquet_cache_key = ("", "")
+        self._parquet_cache_df = None
+        # Phase A axis manifest is keyed on disk; ``_get_axis_manifest``
+        # picks up file rewrites by mtime, but invalidating the cached
+        # view here forces a fresh read on the next render.
+        self._axis_manifest = None
+        self._axis_manifest_mtime = 0.0
         if hasattr(self, '_dispatch_metadata_cache'):
             del self._dispatch_metadata_cache
         # The viewer scenarios set just changed on disk — re-render the
