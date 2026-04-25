@@ -161,7 +161,16 @@ class PlotCanvas(ttk.Frame):
             fig.set_dpi(self._system_dpi)
 
     def _on_mousewheel(self, event: tk.Event) -> None:
-        # Linux uses Button-4/5, Windows/Mac uses MouseWheel
+        # Linux uses Button-4/5, Windows/Mac uses MouseWheel.
+        # Skip scrolling when the content already fits the viewport —
+        # otherwise the figure visibly drifts under the wheel even
+        # though no scrollbar is shown.
+        try:
+            top, bottom = self._scroll_canvas.yview()
+        except tk.TclError:
+            return
+        if top <= 0.0 and bottom >= 1.0:
+            return
         if event.num == 4:
             self._scroll_canvas.yview_scroll(-3, "units")
         elif event.num == 5:
