@@ -347,7 +347,7 @@ def apply_manifest_to_plan(
     manifest: dict | None,
     result_key: str,
     sub_config: str,
-    active_scenarios: set[str] | None = None,
+    scenarios: set[str] | list[str] | None = None,
 ) -> bool:
     """Override ``plan.subplot_y_ranges`` with values from *manifest*.
 
@@ -355,13 +355,16 @@ def apply_manifest_to_plan(
     range was replaced, ``False`` when nothing changed (missing manifest,
     bar plan, no matching entry, filtered-out scenarios, etc.).
 
-    *active_scenarios* controls which scenarios contribute to the union:
+    *scenarios* controls which scenarios contribute to the union:
 
     - ``None`` — union over *all* scenarios present in the manifest (the
-      full cross-scenario fallback).
-    - A non-empty ``set`` — union only over the scenarios in the set.
-    - An empty ``set`` — no scenarios to union from; the call becomes a
-      no-op (the plan's per-scenario y-ranges remain in effect).
+      full cross-scenario fallback).  Use this only when the caller has
+      no explicit scope; in the result viewer's comparison mode the
+      caller should always pass the **viewer scenarios** set so the y-axis
+      stays frozen while the user toggles individual scenarios.
+    - A non-empty ``set``/``list`` — union only over the named scenarios.
+    - An empty ``set``/``list`` — no scenarios to union from; the call
+      becomes a no-op (the plan's per-scenario y-ranges remain in effect).
 
     Subplot keying: for each ``(title, _)`` in
     ``plan.effective_plot_specs``, if the manifest has a per-scenario map
@@ -381,8 +384,14 @@ def apply_manifest_to_plan(
         return False
     if not plan.effective_plot_specs:
         return False
-    if active_scenarios is not None and len(active_scenarios) == 0:
-        return False
+    # Normalise scenarios into a set (or None) for fast membership checks.
+    scenarios_set: set[str] | None
+    if scenarios is None:
+        scenarios_set = None
+    else:
+        scenarios_set = set(scenarios)
+        if not scenarios_set:
+            return False
     sub_entry = manifest.get(result_key)
     if not isinstance(sub_entry, dict):
         return False
@@ -406,7 +415,7 @@ def apply_manifest_to_plan(
         if not isinstance(scen_map, dict) or not scen_map:
             # Missing, legacy (list/tuple), or empty — no override.
             continue
-        new_range = _union_scenarios(scen_map, active_scenarios)
+        new_range = _union_scenarios(scen_map, scenarios_set)
         if new_range is None:
             continue
         if ranges[i] != new_range:
@@ -419,16 +428,16 @@ def apply_manifest_to_plan(
 
 
 def _union_scenarios(
-    scen_map: dict, active_scenarios: set[str] | None,
+    scen_map: dict, scenarios: set[str] | None,
 ) -> tuple[float, float] | None:
-    """Union per-scenario bounds, filtering to *active_scenarios*.
+    """Union per-scenario bounds, filtering to *scenarios*.
 
     Returns ``None`` when no valid bounds remain after filtering.
     """
     los: list[float] = []
     his: list[float] = []
     for scenario_name, bounds in scen_map.items():
-        if active_scenarios is not None and scenario_name not in active_scenarios:
+        if scenarios is not None and scenario_name not in scenarios:
             continue
         if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
             continue

@@ -609,7 +609,7 @@ class TestApplyManifestToPlan:
             B={"s1": [-2.0, 2.0]},
         )
         changed = apply_manifest_to_plan(
-            plan, manifest, "rk", "cfg", active_scenarios=None,
+            plan, manifest, "rk", "cfg", scenarios=None,
         )
         assert changed is True
         # A unions s1+s2: min(-5,0)=-5, max(5,10)=10.  B: s1 only.
@@ -621,7 +621,7 @@ class TestApplyManifestToPlan:
             A={"s1": [-5.0, 5.0], "s2": [0.0, 10.0], "s3": [-100.0, 100.0]},
         )
         changed = apply_manifest_to_plan(
-            plan, manifest, "rk", "cfg", active_scenarios={"s1", "s2"},
+            plan, manifest, "rk", "cfg", scenarios={"s1", "s2"},
         )
         assert changed is True
         # Only s1 and s2 contribute: min(-5,0)=-5, max(5,10)=10.  s3 is excluded.
@@ -633,7 +633,7 @@ class TestApplyManifestToPlan:
             A={"a": [-5.0, 5.0], "b": [-100.0, 100.0]},
         )
         changed = apply_manifest_to_plan(
-            plan, manifest, "rk", "cfg", active_scenarios={"a"},
+            plan, manifest, "rk", "cfg", scenarios={"a"},
         )
         assert changed is True
         assert plan.subplot_y_ranges == [(-5.0, 5.0)]
@@ -642,7 +642,7 @@ class TestApplyManifestToPlan:
         plan = _make_time_plan([("A", (0.0, 1.0))])
         manifest = self._manifest(A={"s1": [-5.0, 5.0]})
         changed = apply_manifest_to_plan(
-            plan, manifest, "rk", "cfg", active_scenarios=set(),
+            plan, manifest, "rk", "cfg", scenarios=set(),
         )
         assert changed is False
         assert plan.subplot_y_ranges == [(0.0, 1.0)]
@@ -651,10 +651,52 @@ class TestApplyManifestToPlan:
         plan = _make_time_plan([("A", (0.0, 1.0))])
         manifest = self._manifest(A={"s1": [-5.0, 5.0]})
         changed = apply_manifest_to_plan(
-            plan, manifest, "rk", "cfg", active_scenarios={"unknown"},
+            plan, manifest, "rk", "cfg", scenarios={"unknown"},
         )
         assert changed is False
         assert plan.subplot_y_ranges == [(0.0, 1.0)]
+
+    def test_scenarios_accepts_list_in_addition_to_set(self):
+        """Callers that have an ordered list of viewer scenarios shouldn't
+        need to wrap it in a set just to filter the manifest."""
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        manifest = self._manifest(
+            A={"s1": [-5.0, 5.0], "s2": [0.0, 10.0], "s3": [-100.0, 100.0]},
+        )
+        changed = apply_manifest_to_plan(
+            plan, manifest, "rk", "cfg", scenarios=["s1", "s2"],
+        )
+        assert changed is True
+        assert plan.subplot_y_ranges == [(-5.0, 10.0)]
+
+    def test_scenarios_default_none_preserves_legacy_callers(self):
+        """Callers that don't pass ``scenarios=`` keep the
+        union-over-everything behaviour, so the new parameter is purely
+        additive for any pre-existing call site."""
+        plan = _make_time_plan([("A", (0.0, 1.0))])
+        manifest = self._manifest(
+            A={"s1": [-5.0, 5.0], "s2": [0.0, 10.0]},
+        )
+        changed = apply_manifest_to_plan(plan, manifest, "rk", "cfg")
+        assert changed is True
+        # No scenarios kwarg → union over both s1 and s2.
+        assert plan.subplot_y_ranges == [(-5.0, 10.0)]
+
+    def test_filtering_by_explicit_scenarios(self):
+        """Spec example: ``scenarios={'s1', 's2'}`` excludes s3's wider
+        bound from the aggregated subplot range."""
+        manifest = {
+            'result1': {'sub1': {'subA': {
+                's1': [0, 10], 's2': [5, 20], 's3': [-5, 30],
+            }}},
+        }
+        plan = _make_time_plan([('subA', (0.0, 0.0))])
+        changed = apply_manifest_to_plan(
+            plan, manifest, 'result1', 'sub1', scenarios={'s1', 's2'},
+        )
+        assert changed is True
+        # max excludes s3's [-5, 30]: union over s1+s2 = [0, 20].
+        assert plan.subplot_y_ranges == [(0.0, 20.0)]
 
     def test_missing_manifest_is_noop(self):
         plan = _make_time_plan([("A", (0.0, 1.0))])
@@ -786,13 +828,13 @@ class TestApplyManifestToPlan:
     # should shrink the union, not leave the previous wide union in place.
     # This catches the class of bug "uncheck a scenario but y-axis doesn't
     # shrink" — i.e. that the filter doesn't silently degrade to
-    # ``active_scenarios=None`` (union over all) when a caller passes a
-    # real subset.
+    # ``scenarios=None`` (union over all) when a caller passes a real
+    # subset.
     # ------------------------------------------------------------------
 
     def test_successive_applies_narrow_as_active_set_shrinks(self):
         """Plan is mutated in place by each call.  The second call with a
-        narrower *active_scenarios* must recompute the union from scratch
+        narrower *scenarios* set must recompute the union from scratch
         (not build on the prior wide result) so the y-range contracts."""
         plan = _make_time_plan([("A", (0.0, 10.0))])
         manifest = self._manifest(A={
@@ -804,14 +846,14 @@ class TestApplyManifestToPlan:
         # All three scenarios active — wide union.
         apply_manifest_to_plan(
             plan, manifest, "rk", "cfg",
-            active_scenarios={"s1", "s2", "s3"},
+            scenarios={"s1", "s2", "s3"},
         )
         assert plan.subplot_y_ranges == [(-100.0, 100.0)]
 
         # Drop s3 — union must shrink to s1+s2 (not stay at s3's wide range).
         apply_manifest_to_plan(
             plan, manifest, "rk", "cfg",
-            active_scenarios={"s1", "s2"},
+            scenarios={"s1", "s2"},
         )
         assert plan.subplot_y_ranges == [(-5.0, 10.0)], (
             "Expected y-range to shrink when s3 is removed from the active "
@@ -822,7 +864,7 @@ class TestApplyManifestToPlan:
         # Drop s2 too — s1 alone.
         apply_manifest_to_plan(
             plan, manifest, "rk", "cfg",
-            active_scenarios={"s1"},
+            scenarios={"s1"},
         )
         assert plan.subplot_y_ranges == [(-5.0, 5.0)]
 
@@ -843,7 +885,7 @@ class TestApplyManifestToPlan:
 
         # Full union includes the wide scenario.
         apply_manifest_to_plan(
-            plan, manifest, "rk", "cfg", active_scenarios=None,
+            plan, manifest, "rk", "cfg", scenarios=None,
         )
         full_union = plan.subplot_y_ranges[0]
         assert full_union == (-1000.0, 1000.0)
@@ -852,7 +894,7 @@ class TestApplyManifestToPlan:
         plan.subplot_y_ranges = [(0.0, 0.0)]
         apply_manifest_to_plan(
             plan, manifest, "rk", "cfg",
-            active_scenarios={"narrow_a", "narrow_b"},
+            scenarios={"narrow_a", "narrow_b"},
         )
         subset_union = plan.subplot_y_ranges[0]
 
@@ -924,6 +966,9 @@ class TestViewerActiveScenarioWiring:
         )
         shim._get_axis_active_scenarios = (
             ResultViewer._get_axis_active_scenarios.__get__(shim)
+        )
+        shim._get_comparison_viewer_scenarios = (
+            ResultViewer._get_comparison_viewer_scenarios.__get__(shim)
         )
         shim._apply_axis_manifest = (
             ResultViewer._apply_axis_manifest.__get__(shim)
@@ -1051,49 +1096,78 @@ class TestViewerActiveScenarioWiring:
             "the filter treats the new active set as if nothing changed."
         )
 
-    def test_comparison_mode_returns_none_for_active(self, tmp_path: Path):
-        """In comparison mode the viewer returns ``None`` from
-        ``_get_axis_active_scenarios`` — we don't want it to silently
-        start returning a bare set derived from ``_scan_scenarios`` and
-        accidentally filter the comparison-mode plan (whose ranges are
-        already the combined df's ranges)."""
+    def test_comparison_mode_returns_viewer_scenarios_for_active(
+        self, tmp_path: Path,
+    ):
+        """In comparison mode the viewer returns the **viewer scenarios**
+        set (the scenarios locked in at the last "Update view scenarios"
+        press) — not the currently-ticked subset in ``_comp_tree`` and
+        not ``None``.  The viewer-scenarios set is read from
+        ``output_parquet_comparison/_metadata.json``.
+        """
+        import json as _json
+        (tmp_path / "output_parquet" / "s1").mkdir(parents=True)
+        comp_meta_dir = tmp_path / "output_parquet_comparison"
+        comp_meta_dir.mkdir(parents=True)
+        (comp_meta_dir / "_metadata.json").write_text(
+            _json.dumps({"scenarios": ["s1", "s2"]}),
+        )
+        shim = self._make_viewer_shim(
+            tmp_path, mode="comparison", checked_subdirs=["s1"],
+        )
+        assert shim._get_axis_active_scenarios() == {"s1", "s2"}
+
+    def test_comparison_mode_falls_back_to_settings_without_metadata(
+        self, tmp_path: Path,
+    ):
+        """When the comparison ``_metadata.json`` is missing, the viewer
+        falls back to ``settings.comp_viewer_scenarios`` so a cold-open
+        still has a reasonable scope."""
         (tmp_path / "output_parquet" / "s1").mkdir(parents=True)
         shim = self._make_viewer_shim(
             tmp_path, mode="comparison", checked_subdirs=["s1"],
         )
-        assert shim._get_axis_active_scenarios() is None
+        shim._settings.comp_viewer_scenarios = ["a", "b"]
+        assert shim._get_axis_active_scenarios() == {"a", "b"}
 
-    def test_apply_axis_manifest_skips_when_active_is_none(
+    def test_comparison_axis_frozen_against_current_ticks(
         self, tmp_path: Path,
     ):
-        """When ``_get_axis_active_scenarios`` returns ``None`` (comparison
-        mode or an internal error), ``_apply_axis_manifest`` must NOT
-        forward ``None`` to :func:`apply_manifest_to_plan` — that would
-        union over every scenario in the manifest and defeat the
-        checked-subset filter for any accidental cross-mode call.
-
-        The defensive path is an explicit early return; we verify by
-        preparing a manifest that *would* widen the plan if the filter
-        were bypassed, and asserting the plan is left untouched.
+        """The viewer-scenarios set drives axis aggregation, not the
+        currently-ticked subset.  Toggling individual scenarios in the
+        comparison tree therefore must NOT change the manifest filter —
+        that's the freeze-on-toggle contract Phase A is delivering.
         """
-        for name in ("s1", "s2"):
+        import json as _json
+        for name in ("s1", "s2", "s3"):
             (tmp_path / "output_parquet" / name).mkdir(parents=True)
 
         acc = ManifestAccumulator(tmp_path)
-        acc.add_plan("rk", "cfg", _make_time_plan([("A", (-999.0, 999.0))]), "s1")
-        acc.add_plan("rk", "cfg", _make_time_plan([("A", (0.0, 1.0))]), "s2")
+        acc.add_plan("rk", "cfg", _make_time_plan([("A", (-5.0, 5.0))]), "s1")
+        acc.add_plan("rk", "cfg", _make_time_plan([("A", (0.0, 10.0))]), "s2")
+        acc.add_plan("rk", "cfg", _make_time_plan([("A", (-1000.0, 1000.0))]), "s3")
         acc.write()
 
-        # Comparison mode → active is None → should skip.
-        shim = self._make_viewer_shim(
-            tmp_path, mode="comparison", checked_subdirs=["s1", "s2"],
+        # Viewer scenarios = {s1, s2} (locked at last "Update").
+        comp_meta_dir = tmp_path / "output_parquet_comparison"
+        comp_meta_dir.mkdir(parents=True)
+        (comp_meta_dir / "_metadata.json").write_text(
+            _json.dumps({"scenarios": ["s1", "s2"]}),
         )
+
+        # Currently-ticked tree state (which the comparison mode does NOT
+        # consult for axes): user toggles to just s1.
+        shim = self._make_viewer_shim(
+            tmp_path, mode="comparison", checked_subdirs=["s1"],
+        )
+
         plan = _make_time_plan([("A", (0.0, 0.0))])
         shim._apply_axis_manifest(plan, "rk", "cfg")
-
-        # Plan untouched — not unioned over everyone.
-        assert plan.subplot_y_ranges == [(0.0, 0.0)], (
-            "_apply_axis_manifest unexpectedly forwarded None to "
-            "apply_manifest_to_plan, which unioned over every manifest "
-            "scenario and widened the plan."
+        # Aggregate over viewer scenarios {s1, s2} — NOT over only {s1}
+        # (which would give [-5, 5]) and NOT over the universe {s1, s2, s3}
+        # (which would give [-1000, 1000]).
+        assert plan.subplot_y_ranges == [(-5.0, 10.0)], (
+            "Comparison-mode axis aggregation didn't use the viewer "
+            "scenarios set; got "
+            f"{plan.subplot_y_ranges}."
         )

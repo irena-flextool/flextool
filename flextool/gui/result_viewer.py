@@ -2236,26 +2236,80 @@ class ResultViewer(tk.Toplevel):
           relevant for comparison, so it's the natural filter for the
           shared axis — and it updates the moment a checkbox is toggled,
           without needing any file rewrite.
-        - In *comparison* mode the per-plan ranges already reflect the
-          cross-scenario combined data, so we return ``None`` to signal
-          "don't apply the shared-manifest override".  (The caller uses
-          ``None`` as a special value meaning "skip"; we rely on the fact
-          that ``_apply_axis_manifest`` is only invoked from the single /
-          live-plan path today, but we return ``None`` defensively.)
+        - In *comparison* mode we return the **viewer scenarios** set —
+          the scenarios locked in at the last "Update view scenarios"
+          press (i.e. the union currently materialised into the combined
+          parquets).  Using this set rather than the currently-ticked
+          subset in ``_comp_tree`` is what *freezes* the y-axis as the
+          user toggles individual scenarios on/off.  See
+          :meth:`_get_comparison_viewer_scenarios`.
         - In *network* / *dispatch* modes the override is not applicable;
           the caller skips it entirely so the return value is irrelevant.
+
+        Returns ``None`` in unsupported modes / on internal errors so the
+        caller can early-out rather than forwarding ``None`` to
+        :func:`apply_manifest_to_plan` (which would silently union over
+        every scenario in the manifest).
         """
-        if self._mode.get() != "single":
-            return None
-        try:
-            scenarios = self._scan_scenarios()
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "Failed to collect active scenarios for axis manifest",
-                exc_info=True,
-            )
-            return None
-        return set(scenarios)
+        mode = self._mode.get()
+        if mode == "single":
+            try:
+                scenarios = self._scan_scenarios()
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to collect active scenarios for axis manifest",
+                    exc_info=True,
+                )
+                return None
+            return set(scenarios)
+        if mode == "comparison":
+            try:
+                return set(self._get_comparison_viewer_scenarios())
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to collect viewer scenarios for axis manifest",
+                    exc_info=True,
+                )
+                return None
+        return None
+
+    def _get_comparison_viewer_scenarios(self) -> list[str]:
+        """Return the *viewer scenarios* set for comparison mode.
+
+        These are the scenarios locked in at the last "Update view
+        scenarios" press — i.e. the set whose results are currently
+        materialised into ``output_parquet_comparison/*.parquet``.  The
+        canonical record is the ``scenarios`` list in
+        ``output_parquet_comparison/_metadata.json``; we fall back to
+        ``settings.comp_viewer_scenarios`` (which tracks the live tree
+        state) only when the metadata is missing or unreadable, since
+        that's the closest available approximation on a cold open.
+
+        This set is **not** the currently-ticked subset in ``_comp_tree``
+        — that's the *current scenarios*, which the caller toggles freely
+        without changing the axis scope.
+        """
+        import json as _json
+
+        meta_path = (
+            self._project_path
+            / "output_parquet_comparison"
+            / "_metadata.json"
+        )
+        if meta_path.is_file():
+            try:
+                with open(meta_path) as f:
+                    payload = _json.load(f)
+                scenarios = payload.get("scenarios")
+                if isinstance(scenarios, list):
+                    return [str(s) for s in scenarios if isinstance(s, str)]
+            except (OSError, _json.JSONDecodeError):
+                logger.warning(
+                    "Could not read comparison metadata at %s",
+                    meta_path, exc_info=True,
+                )
+        # Fall back to the persisted viewer-tree state.
+        return list(self._settings.comp_viewer_scenarios)
 
     def _apply_axis_manifest(
         self, plan, result_key: str, sub_config: str,
@@ -2268,16 +2322,23 @@ class ResultViewer(tk.Toplevel):
         ``build_figure_from_plan`` so the call site doesn't need a new
         parameter.
 
-        In single mode the override is filtered to the set of currently
+        In *single* mode the override is filtered to the set of currently
         checked executed scenarios: as the user toggles checkboxes the
         next render naturally picks up a new union.
 
-        If :meth:`_get_axis_active_scenarios` returns ``None`` (a signal
-        from non-single modes, or an exception caught inside that
-        helper) we skip the override entirely rather than forwarding
-        ``None`` to :func:`apply_manifest_to_plan` — the latter treats
-        ``None`` as "union over every scenario in the manifest", which
-        would silently defeat the checked-subset filter.
+        In *comparison* mode the override is filtered to the **viewer
+        scenarios** set (the scenarios locked in at the last "Update view
+        scenarios" press — see :meth:`_get_comparison_viewer_scenarios`).
+        That keeps the y-axis frozen while the user toggles individual
+        scenarios on/off in the comparison tree: ticking changes
+        visibility only, never axes.
+
+        If :meth:`_get_axis_active_scenarios` returns ``None`` (network /
+        dispatch mode, or an exception inside the helper) we skip the
+        override entirely rather than forwarding ``None`` to
+        :func:`apply_manifest_to_plan` — the latter treats ``None`` as
+        "union over every scenario in the manifest", which would silently
+        defeat the scoped filter.
         """
         if plan is None:
             return
@@ -2286,10 +2347,10 @@ class ResultViewer(tk.Toplevel):
             return
         active = self._get_axis_active_scenarios()
         if active is None:
-            # Non-single mode (or active-set lookup failed): the caller
-            # shouldn't be using the shared-manifest override at all.
-            # See the docstring above for why we can't pass ``None`` on
-            # through.
+            # Non-supported mode (or active-set lookup failed): the
+            # caller shouldn't be using the shared-manifest override at
+            # all.  See the docstring above for why we can't pass
+            # ``None`` on through.
             return
         try:
             from flextool.plot_outputs.shared_manifest import (
@@ -2297,7 +2358,7 @@ class ResultViewer(tk.Toplevel):
             )
             apply_manifest_to_plan(
                 plan, manifest, result_key, sub_config,
-                active_scenarios=active,
+                scenarios=active,
             )
         except Exception:  # noqa: BLE001
             # Never let manifest application break the viewer — the
@@ -2662,6 +2723,16 @@ class ResultViewer(tk.Toplevel):
                 self._live_plan_key = plan_key
 
             if plan is not None:
+                # Apply the cross-scenario axis override scoped to the
+                # *viewer scenarios* set — the scenarios locked in at the
+                # last "Update view scenarios" press.  This is what
+                # freezes the y-axis as the user toggles individual
+                # scenarios in ``_comp_tree``: ticking changes visibility
+                # only, never axes.  See ``_apply_axis_manifest`` and
+                # ``_get_comparison_viewer_scenarios`` for the wiring.
+                self._apply_axis_manifest(
+                    plan, variant.result_key, variant.sub_config,
+                )
                 self._update_time_range(len(plan.processed_df))
                 start = self._start_var.get()
                 duration = self._duration_var.get()
