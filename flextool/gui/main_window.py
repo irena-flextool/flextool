@@ -611,13 +611,12 @@ class MainWindow(tk.Tk):
         )
         self.executed_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.executed_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
-        self.executed_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
-        self.executed_tree.column("view", width=cw * 7, minwidth=cw * 6, stretch=False, anchor="center")
-        self.executed_tree.column("timestamp", width=cw * 16, minwidth=cw * 16, stretch=False)
+        self.executed_tree.column("scenario_name", width=cw * 29, minwidth=cw * 12, stretch=True)
+        self.executed_tree.column("view", width=cw * 3, minwidth=cw * 3, stretch=False, anchor="center")
+        self.executed_tree.column("timestamp", width=cw * 13, minwidth=cw * 13, stretch=False)
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
 
         # No row-level tag for View — Treeview tags color the entire row.
-        # The ▶ View text is visually distinct on its own.
 
         exec_scroll = ttk.Scrollbar(exec_frame, orient="vertical", command=self.executed_tree.yview)
         exec_scroll.grid(row=0, column=1, sticky="ns")
@@ -2887,18 +2886,10 @@ class MainWindow(tk.Tk):
             for k in self.project_settings.checked_executed_scenarios:
                 previously_checked.add(parse_key(k))
 
-        from flextool.gui.scenario_key import resolve_subdir_for_read
         for info in executed:
             key = (info.source_number, info.name)
             check_char = CHECK_ON if key in previously_checked else CHECK_OFF
-            subdir = resolve_subdir_for_read(
-                self.project_settings.bare_output_owners,
-                info.source_number,
-                info.name,
-            )
-            plot_dir = self.exec_scenario_mgr.project_path / "output_plots" / subdir
-            has_plots = plot_dir.is_dir() and any(plot_dir.iterdir())
-            view_text = "\u25b6 View" if has_plots else ""
+            view_text = "\u25b6"
             self.executed_tree.insert(
                 "",
                 "end",
@@ -3183,7 +3174,9 @@ class MainWindow(tk.Tk):
             # Update the viewer's scenario data before raising
             self._result_viewer._on_update()
             self._result_viewer.deiconify()
+            self._result_viewer.lift()
             self._result_viewer.attributes("-topmost", True)
+            self._result_viewer.update_idletasks()
             self._result_viewer.attributes("-topmost", False)
             self._result_viewer.focus_force()
             self._update_view_results_btn()
@@ -3735,7 +3728,7 @@ class MainWindow(tk.Tk):
     # ── View scenario plots (from executed_tree view column) ──────
 
     def _view_scenario_plots(self, scenario_name: str, source_number: int | None = None) -> None:
-        """Open the ResultViewer for the given scenario.
+        """Open the ResultViewer in single mode focused on *scenario_name*.
 
         When *source_number* is given, matches on ``(source_number, scenario_name)``
         so same-named scenarios from different sources don't alias.
@@ -3758,6 +3751,8 @@ class MainWindow(tk.Tk):
             break
         self._save_checked_executed_scenarios()
         self._open_or_raise_result_viewer()
+        if self._result_viewer is not None and self._result_viewer.winfo_exists():
+            self._result_viewer.show_scenario_in_single_mode(scenario_name)
 
     # ── Checkbox state persistence helpers ────────────────────────
 

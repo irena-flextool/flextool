@@ -617,6 +617,30 @@ class ResultViewer(tk.Toplevel):
         self._scenario_listbox.see(idx)
         self._scenario_listbox.event_generate("<<ListboxSelect>>")
 
+    def show_scenario_in_single_mode(self, scenario_name: str) -> None:
+        """Switch to single mode and select *scenario_name* in the list.
+
+        Used by the main window's "view" button so a click on one
+        executed scenario lands the user on its single-mode view. The
+        plot entry/variant restoration that follows is driven by the
+        viewer's existing last-entry/last-variant tracking, which is
+        intentionally not scenario-specific.
+        """
+        if self._mode.get() != "single":
+            self._mode.set("single")
+            self._on_mode_changed()
+        try:
+            entries = list(self._scenario_listbox.get(0, "end"))
+        except tk.TclError:
+            return
+        if scenario_name not in entries:
+            return
+        idx = entries.index(scenario_name)
+        self._scenario_listbox.selection_clear(0, "end")
+        self._scenario_listbox.selection_set(idx)
+        self._scenario_listbox.see(idx)
+        self._scenario_listbox.event_generate("<<ListboxSelect>>")
+
     # ------------------------------------------------------------------
     # Plot tree population
     # ------------------------------------------------------------------
