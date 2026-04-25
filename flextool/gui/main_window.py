@@ -27,7 +27,11 @@ from flextool.gui.settings_io import (
 from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.input_sources import InputSourceManager
-from flextool.gui.scenario_lists import AvailableScenarioManager, ExecutedScenarioManager
+from flextool.gui.scenario_lists import (
+    AvailableScenarioManager,
+    ExecutedScenarioManager,
+    prune_dangling_scenario_state,
+)
 from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
 from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
@@ -912,6 +916,15 @@ class MainWindow(tk.Tk):
         self._clear_all_lists()
         self._refresh_input_sources()
         self._refresh_executed_scenarios()
+
+        # One-shot cleanup: drop scenario references from settings.yaml
+        # that no longer correspond to either an available input scenario
+        # or an on-disk output folder. This handles drift from prior
+        # sessions where sources were removed without a follow-up sweep.
+        if self._prune_dangling_scenario_state():
+            self._save_current_settings()
+            # Re-render lists to drop any pruned entries from view.
+            self._refresh_executed_scenarios()
 
         # Start periodic lock file checking
         self._start_lock_check_timer()
@@ -2670,6 +2683,13 @@ class MainWindow(tk.Tk):
 
         self._refresh_input_sources()
 
+        # Source removal can leave scenarios in settings.yaml whose only
+        # backing was the removed source's scenario list. Sweep them now
+        # so they don't haunt the UI on the next session.
+        if self._prune_dangling_scenario_state():
+            self._save_current_settings()
+            self._refresh_executed_scenarios()
+
     # ── Ctrl-A select all ────────────────────────────────────────
 
     def _on_ctrl_a(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
@@ -3367,6 +3387,11 @@ class MainWindow(tk.Tk):
         self.exec_scenario_mgr.delete_results(selected_ids)
         # Ownership of bare names may have been released → persist.
         self._save_current_settings()
+        # Sweep dangling scenario references from settings.yaml. The
+        # delete may have removed the last on-disk backing for scenarios
+        # whose source has also already been removed.
+        if self._prune_dangling_scenario_state():
+            self._save_current_settings()
         self._refresh_executed_scenarios()
 
     # ── Output status indicator updates ──────────────────────────
@@ -3481,6 +3506,44 @@ class MainWindow(tk.Tk):
         if self.current_project:
             project_path = get_projects_dir() / self.current_project
             save_project_settings(project_path, self.project_settings)
+
+    def _prune_dangling_scenario_state(self) -> bool:
+        """Drop scenario references from settings that no longer have a backing.
+
+        A scenario stays in settings.yaml as long as it is EITHER an
+        available scenario in some loaded input source OR has on-disk
+        results under ``output_parquet/``. This method computes those two
+        sets and delegates to :func:`prune_dangling_scenario_state`.
+
+        Returns True if anything was pruned (the caller should then
+        persist settings).
+        """
+        if not self.current_project:
+            return False
+
+        # available_keys: (source_number, scenario_name) for every
+        # scenario surfaced by any loaded input source.
+        available_keys: set[tuple[int, str]] = set()
+        if self.input_source_mgr is not None:
+            for source in self.input_source_mgr._sources:
+                if source.status != "ok":
+                    continue
+                for scen_name in source.scenarios:
+                    available_keys.add((source.number, scen_name))
+
+        # executed_subdirs: direct children of output_parquet/, skipping
+        # underscore-prefixed manifest entries.
+        executed_subdirs: set[str] = set()
+        project_path = get_projects_dir() / self.current_project
+        parquet_root = project_path / "output_parquet"
+        if parquet_root.is_dir():
+            for entry in parquet_root.iterdir():
+                if entry.is_dir() and not entry.name.startswith("_"):
+                    executed_subdirs.add(entry.name)
+
+        return prune_dangling_scenario_state(
+            self.project_settings, available_keys, executed_subdirs
+        )
 
     def _get_checked_executed_names(self) -> list[str]:
         """Return scenario names that are checked in the executed_tree."""
