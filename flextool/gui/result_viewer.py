@@ -549,7 +549,10 @@ class ResultViewer(tk.Toplevel):
         parquet_dir = self._project_path / "output_parquet"
         if not parquet_dir.is_dir():
             return []
-        available = sorted(d.name for d in parquet_dir.iterdir() if d.is_dir())
+        available = sorted(
+            d.name for d in parquet_dir.iterdir()
+            if d.is_dir() and not d.name.startswith("_")
+        )
         checked_keys = set(self._settings.checked_executed_scenarios)
         if checked_keys:
             bare_owners = self._settings.bare_output_owners
@@ -2133,8 +2136,7 @@ class ResultViewer(tk.Toplevel):
         manifest_path = (
             self._project_path
             / "output_parquet"
-            / "_shared"
-            / "axis_bounds.json"
+            / "_axis_bounds.json"
         )
         try:
             mtime = manifest_path.stat().st_mtime if manifest_path.is_file() else 0.0

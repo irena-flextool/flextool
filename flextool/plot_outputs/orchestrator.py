@@ -938,7 +938,7 @@ def compute_all_plot_plans(
     For per-scenario runs (``output_dir`` sits inside
     ``<project>/output_parquet/<scenario>/``) the function also folds the
     resulting subplot y-ranges into a cross-scenario axis-bounds manifest
-    at ``<project>/output_parquet/_shared/axis_bounds.json`` so the viewer
+    at ``<project>/output_parquet/_axis_bounds.json`` so the viewer
     can keep the y-axis stable when switching scenarios.  Comparison /
     cross-scenario output dirs (which don't live under ``output_parquet/``)
     don't need the shared manifest and skip this step.

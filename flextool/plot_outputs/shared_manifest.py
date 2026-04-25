@@ -9,7 +9,7 @@ single-viewer mode loads a different plan whose y-ranges are computed
 from that scenario alone, so the axis can still jump.
 
 This module produces a side-car manifest, written once per batch run at
-``<project_path>/output_parquet/_shared/axis_bounds.json``, that stores
+``<project_path>/output_parquet/_axis_bounds.json``, that stores
 each scenario's per-subplot y-ranges.  The viewer takes the union at
 read time, filtered to the scenarios the user has currently selected —
 so checking/unchecking scenarios in the executed list naturally adjusts
@@ -87,14 +87,15 @@ class ManifestAccumulator:
     scenarios' entries.
 
     The target path is
-    ``<project_path>/output_parquet/_shared/axis_bounds.json``.  The
-    ``_shared`` directory is created on :meth:`write`.
+    ``<project_path>/output_parquet/_axis_bounds.json``.  The
+    ``output_parquet`` directory is created on :meth:`write` if missing.
     """
 
     def __init__(self, project_path: Path):
         self.project_path = Path(project_path)
-        self._shared_dir = self.project_path / "output_parquet" / "_shared"
-        self._manifest_path = self._shared_dir / "axis_bounds.json"
+        self._manifest_path = (
+            self.project_path / "output_parquet" / "_axis_bounds.json"
+        )
         # Four-level nested dict:
         #   result_key -> sub_config -> subplot_key -> scenario_name -> [lo, hi]
         self._data: dict[str, dict[str, dict[str, dict[str, list[float]]]]] = {}
@@ -193,14 +194,14 @@ class ManifestAccumulator:
     def write(self) -> None:
         """Atomically write the accumulated manifest to disk.
 
-        Creates the ``_shared`` directory if missing.  Writes to a temp
-        file in the same directory, then ``os.replace``-renames it into
-        place so concurrent readers never see a partial document.
+        Creates the ``output_parquet`` directory if missing.  Writes to a
+        temp file in the same directory, then ``os.replace``-renames it
+        into place so concurrent readers never see a partial document.
         """
         if not self._data:
             # Nothing to write — don't create an empty file.
             return
-        _atomic_write_manifest(self._shared_dir, self._manifest_path, self._data)
+        _atomic_write_manifest(self._manifest_path, self._data)
 
     # ------------------------------------------------------------------
     # Introspection helpers (primarily for tests)
@@ -316,10 +317,10 @@ def load_axis_bounds_manifest(project_path: Path) -> dict | None:
     per-plan y-ranges.
 
     The expected manifest path is
-    ``<project_path>/output_parquet/_shared/axis_bounds.json``.
+    ``<project_path>/output_parquet/_axis_bounds.json``.
     """
     manifest_path = (
-        Path(project_path) / "output_parquet" / "_shared" / "axis_bounds.json"
+        Path(project_path) / "output_parquet" / "_axis_bounds.json"
     )
     if not manifest_path.is_file():
         return None
@@ -452,7 +453,7 @@ def remove_scenario_from_manifest(
 ) -> bool:
     """Strip all entries for *scenario_name* from the on-disk manifest.
 
-    Atomically rewrites ``<project_path>/output_parquet/_shared/axis_bounds.json``
+    Atomically rewrites ``<project_path>/output_parquet/_axis_bounds.json``
     with the scenario's slice removed.  Empty subplot / sub_config /
     result_key entries are pruned.  Returns ``True`` if the file was
     modified (including being deleted when empty), ``False`` when the
@@ -464,8 +465,9 @@ def remove_scenario_from_manifest(
     """
     if not scenario_name:
         return False
-    shared_dir = Path(project_path) / "output_parquet" / "_shared"
-    manifest_path = shared_dir / "axis_bounds.json"
+    manifest_path = (
+        Path(project_path) / "output_parquet" / "_axis_bounds.json"
+    )
     if not manifest_path.is_file():
         return False
 
@@ -512,7 +514,7 @@ def remove_scenario_from_manifest(
             return False
         return True
 
-    _atomic_write_manifest(shared_dir, manifest_path, loaded)
+    _atomic_write_manifest(manifest_path, loaded)
     return True
 
 
@@ -520,20 +522,21 @@ def remove_scenario_from_manifest(
 # Shared atomic writer
 # ---------------------------------------------------------------------------
 
-def _atomic_write_manifest(shared_dir: Path, manifest_path: Path, data: dict) -> None:
+def _atomic_write_manifest(manifest_path: Path, data: dict) -> None:
     """Temp-file + rename write shared by the accumulator and remove helper."""
+    parent_dir = manifest_path.parent
     try:
-        shared_dir.mkdir(parents=True, exist_ok=True)
+        parent_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         logger.warning(
-            "Failed to create shared manifest directory %s: %s",
-            shared_dir, exc,
+            "Failed to create manifest parent directory %s: %s",
+            parent_dir, exc,
         )
         return
 
     try:
         fd, tmp_path = tempfile.mkstemp(
-            dir=str(shared_dir),
+            dir=str(parent_dir),
             prefix="axis_bounds_",
             suffix=".tmp",
         )

@@ -110,9 +110,9 @@ def _make_bar_plan() -> PlotPlan:
 # ---------------------------------------------------------------------------
 
 class TestManifestAccumulator:
-    def test_path_points_into_output_parquet_shared(self, tmp_path: Path):
+    def test_path_points_into_output_parquet(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
-        assert acc.manifest_path == tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
+        assert acc.manifest_path == tmp_path / "output_parquet" / "_axis_bounds.json"
 
     def test_add_single_plan_stores_ranges_by_scenario(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
@@ -273,13 +273,17 @@ class TestManifestAccumulator:
 
 
 class TestWrite:
-    def test_write_creates_shared_directory_and_json(self, tmp_path: Path):
+    def test_write_creates_axis_bounds_json(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
         acc.add_plan("rk", "cfg", _make_time_plan([("A", (0.0, 10.0))]), "s1")
         acc.write()
 
-        manifest_path = tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
+        manifest_path = tmp_path / "output_parquet" / "_axis_bounds.json"
         assert manifest_path.is_file()
+        # The manifest lives directly under output_parquet/, not in a
+        # ``_shared`` subfolder.
+        assert manifest_path.parent == tmp_path / "output_parquet"
+        assert not (tmp_path / "output_parquet" / "_shared").exists()
 
         data = json.loads(manifest_path.read_text())
         assert data == {"rk": {"cfg": {"A": {"s1": [0.0, 10.0]}}}}
@@ -297,22 +301,22 @@ class TestWrite:
         def spy_replace(src, dst):
             seen_tmp_paths.append(str(src))
             assert Path(src).is_file()
-            assert "axis_bounds.json" in str(dst)
+            assert "_axis_bounds.json" in str(dst)
             real_replace(src, dst)
 
         monkeypatch.setattr(_os, "replace", spy_replace)
         acc.write()
 
         assert len(seen_tmp_paths) == 1
-        shared = tmp_path / "output_parquet" / "_shared"
-        leftover = list(shared.glob("axis_bounds_*.tmp"))
+        parquet = tmp_path / "output_parquet"
+        leftover = list(parquet.glob("axis_bounds_*.tmp"))
         assert leftover == []
 
     def test_empty_accumulator_does_not_create_file(self, tmp_path: Path):
         acc = ManifestAccumulator(tmp_path)
         acc.write()
-        shared = tmp_path / "output_parquet" / "_shared"
-        assert not (shared / "axis_bounds.json").exists()
+        parquet = tmp_path / "output_parquet"
+        assert not (parquet / "_axis_bounds.json").exists()
 
     def test_round_trip_preserves_other_scenarios(self, tmp_path: Path):
         """Scenario 1 writes; a fresh batch re-running scenario 2 keeps
@@ -333,7 +337,7 @@ class TestWrite:
         )
         acc2.write()
 
-        manifest_path = tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
+        manifest_path = tmp_path / "output_parquet" / "_axis_bounds.json"
         data = json.loads(manifest_path.read_text())
         assert data == {
             "rk": {
@@ -352,16 +356,16 @@ class TestSeedingFromDisk:
         assert acc.data == {}
 
     def test_corrupt_json_does_not_raise(self, tmp_path: Path, caplog):
-        shared = tmp_path / "output_parquet" / "_shared"
-        shared.mkdir(parents=True)
-        (shared / "axis_bounds.json").write_text("{{ not json")
+        parquet = tmp_path / "output_parquet"
+        parquet.mkdir(parents=True)
+        (parquet / "_axis_bounds.json").write_text("{{ not json")
         with caplog.at_level("WARNING", logger="flextool.plot_outputs.shared_manifest"):
             acc = ManifestAccumulator(tmp_path)
         assert acc.data == {}
 
     def test_wrong_shape_entries_are_dropped(self, tmp_path: Path):
-        shared = tmp_path / "output_parquet" / "_shared"
-        shared.mkdir(parents=True)
+        parquet = tmp_path / "output_parquet"
+        parquet.mkdir(parents=True)
         payload = {
             "rk": {
                 "cfg": {
@@ -375,7 +379,7 @@ class TestSeedingFromDisk:
             },
             "not_a_dict": 7,
         }
-        (shared / "axis_bounds.json").write_text(json.dumps(payload))
+        (parquet / "_axis_bounds.json").write_text(json.dumps(payload))
 
         acc = ManifestAccumulator(tmp_path)
         # Only the well-formed entry survives.  JSON coerces int keys to
@@ -396,8 +400,8 @@ class TestSeedingFromDisk:
         """Old-format manifest (value is a 2-tuple/list instead of a dict)
         should be treated as missing — the next write rewrites it in the
         new schema."""
-        shared = tmp_path / "output_parquet" / "_shared"
-        shared.mkdir(parents=True)
+        parquet = tmp_path / "output_parquet"
+        parquet.mkdir(parents=True)
         payload = {
             "rk": {
                 "cfg": {
@@ -406,7 +410,7 @@ class TestSeedingFromDisk:
                 },
             },
         }
-        (shared / "axis_bounds.json").write_text(json.dumps(payload))
+        (parquet / "_axis_bounds.json").write_text(json.dumps(payload))
 
         with caplog.at_level(
             "WARNING", logger="flextool.plot_outputs.shared_manifest",
@@ -480,7 +484,7 @@ class TestRemoveScenarioFromManifest:
         )
         acc.write()
 
-        manifest_path = tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
+        manifest_path = tmp_path / "output_parquet" / "_axis_bounds.json"
         assert manifest_path.is_file()
 
         assert remove_scenario_from_manifest(tmp_path, "s1") is True
@@ -524,7 +528,7 @@ class TestIntegrationWithComputeAllPlotPlans:
             plot_rows=(0, 4),
         )
 
-        manifest_path = tmp_path / "output_parquet" / "_shared" / "axis_bounds.json"
+        manifest_path = tmp_path / "output_parquet" / "_axis_bounds.json"
         if manifest_path.exists():
             data = json.loads(manifest_path.read_text())
             # The scenario key should be the folder name.
@@ -546,7 +550,9 @@ class TestIntegrationWithComputeAllPlotPlans:
         )
         compute_all_plot_plans({"rk": df}, {}, comp_dir)
 
-        assert not (tmp_path / "output_parquet" / "_shared").exists()
+        assert not (
+            tmp_path / "output_parquet" / "_axis_bounds.json"
+        ).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -558,18 +564,18 @@ class TestLoadAxisBoundsManifest:
         assert load_axis_bounds_manifest(tmp_path) is None
 
     def test_valid_file_parses(self, tmp_path: Path):
-        shared = tmp_path / "output_parquet" / "_shared"
-        shared.mkdir(parents=True)
+        parquet = tmp_path / "output_parquet"
+        parquet.mkdir(parents=True)
         payload = {"rk": {"cfg": {"A": {"s1": [0.0, 10.0]}}}}
-        (shared / "axis_bounds.json").write_text(json.dumps(payload))
+        (parquet / "_axis_bounds.json").write_text(json.dumps(payload))
 
         data = load_axis_bounds_manifest(tmp_path)
         assert data == payload
 
     def test_malformed_json_returns_none(self, tmp_path: Path, caplog):
-        shared = tmp_path / "output_parquet" / "_shared"
-        shared.mkdir(parents=True)
-        (shared / "axis_bounds.json").write_text("not json { ")
+        parquet = tmp_path / "output_parquet"
+        parquet.mkdir(parents=True)
+        (parquet / "_axis_bounds.json").write_text("not json { ")
         with caplog.at_level(
             "WARNING", logger="flextool.plot_outputs.shared_manifest",
         ):
@@ -577,15 +583,15 @@ class TestLoadAxisBoundsManifest:
         assert data is None
 
     def test_non_object_top_level_returns_none(self, tmp_path: Path):
-        shared = tmp_path / "output_parquet" / "_shared"
-        shared.mkdir(parents=True)
-        (shared / "axis_bounds.json").write_text(json.dumps([1, 2, 3]))
+        parquet = tmp_path / "output_parquet"
+        parquet.mkdir(parents=True)
+        (parquet / "_axis_bounds.json").write_text(json.dumps([1, 2, 3]))
         assert load_axis_bounds_manifest(tmp_path) is None
 
     def test_accepts_str_path(self, tmp_path: Path):
-        shared = tmp_path / "output_parquet" / "_shared"
-        shared.mkdir(parents=True)
-        (shared / "axis_bounds.json").write_text("{}")
+        parquet = tmp_path / "output_parquet"
+        parquet.mkdir(parents=True)
+        (parquet / "_axis_bounds.json").write_text("{}")
         assert load_axis_bounds_manifest(str(tmp_path)) == {}
 
 

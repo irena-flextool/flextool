@@ -120,6 +120,9 @@ class ExecutedScenarioManager:
         for entry in sorted(parquet_dir.iterdir()):
             if not entry.is_dir():
                 continue
+            if entry.name.startswith("_"):
+                # Skip manifest files/directories (e.g. _axis_bounds.json).
+                continue
             try:
                 file_mtimes = [
                     f.stat().st_mtime
@@ -222,7 +225,7 @@ class ExecutedScenarioManager:
         claim the bare name later.
 
         Also strips the deleted scenario from the shared axis-bounds
-        manifest (``output_parquet/_shared/axis_bounds.json``) so it
+        manifest (``output_parquet/_axis_bounds.json``) so it
         doesn't continue to influence y-axis ranges in the viewer.
         """
         for source_number, name in scenario_ids:
