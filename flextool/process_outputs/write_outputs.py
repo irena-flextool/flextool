@@ -57,6 +57,185 @@ def _read_outputs(output_dir):
     return p, s, v
 
 
+def _resolve_comparison_config_path(output_config_path):
+    """Resolve the comparison plot config path for write_outputs.
+
+    Mirrors the GUI's resolution order (see ``result_viewer._resolve_config_path``
+    and ``scenario_comparison.orchestrator``): if the single-mode config
+    sits beside a ``default_comparison_plots.yaml`` (i.e. the user has
+    overridden both in a project-local ``templates/``), use that.
+    Otherwise fall back to ``templates/default_comparison_plots.yaml``
+    in the flextool root.
+    """
+    candidate_dir = os.path.dirname(output_config_path) if output_config_path else None
+    if candidate_dir:
+        candidate = os.path.join(candidate_dir, 'default_comparison_plots.yaml')
+        if os.path.isfile(candidate):
+            return candidate
+    _flextool_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(_flextool_root, 'templates', 'default_comparison_plots.yaml')
+
+
+def _snapshot_plan_dir(plan_dir):
+    """Capture all files currently in ``plan_dir`` as ``{name: bytes}``.
+
+    Used to overlay the single-config plans back after the comparison
+    pass wipes the directory.  Returns ``{}`` if the dir doesn't exist.
+    """
+    if not os.path.isdir(plan_dir):
+        return {}
+    snapshot: dict[str, bytes] = {}
+    for name in os.listdir(plan_dir):
+        path = os.path.join(plan_dir, name)
+        if os.path.isfile(path):
+            try:
+                with open(path, 'rb') as f:
+                    snapshot[name] = f.read()
+            except OSError:
+                continue
+    return snapshot
+
+
+def _restore_plan_files(plan_dir, snapshot, prefer_existing_files=None):
+    """Write *snapshot* files back into ``plan_dir``.
+
+    Files in *prefer_existing_files* (a set of basenames) are skipped —
+    used for the single ``_availability.json`` we synthesise as a union
+    of both passes' availability lists.
+    """
+    if not snapshot:
+        return
+    os.makedirs(plan_dir, exist_ok=True)
+    skip = prefer_existing_files or set()
+    for name, blob in snapshot.items():
+        if name in skip:
+            continue
+        try:
+            with open(os.path.join(plan_dir, name), 'wb') as f:
+                f.write(blob)
+        except OSError as exc:
+            logging.warning(
+                "Failed to restore plan file %s: %s", name, exc,
+            )
+
+
+def _merge_availability_manifests(plan_dir, snapshot):
+    """Merge the snapshot's ``_availability.json`` with the current one.
+
+    The current file (just written by the comparison pass) lists
+    comparison-only ``(result_key, sub_config)`` pairs.  The snapshot's
+    file (from the single pass) lists single-config pairs.  We union
+    them and rewrite ``_availability.json`` so the viewer's manifest
+    reflects every plan that survives on disk.
+    """
+    import json as _json
+    avail_name = "_availability.json"
+    current_pairs: list[list[str]] = []
+    avail_path = os.path.join(plan_dir, avail_name)
+    try:
+        if os.path.isfile(avail_path):
+            with open(avail_path, "r", encoding="utf-8") as f:
+                current_pairs = list(_json.load(f).get("available", []))
+    except (OSError, ValueError) as exc:
+        logging.warning(
+            "Failed to read current availability manifest %s: %s",
+            avail_path, exc,
+        )
+        current_pairs = []
+    snapshot_pairs: list[list[str]] = []
+    if avail_name in snapshot:
+        try:
+            snapshot_pairs = list(_json.loads(snapshot[avail_name]).get("available", []))
+        except ValueError as exc:
+            logging.warning(
+                "Failed to parse snapshot availability manifest: %s", exc,
+            )
+    # Union, preserving order: snapshot (single) first, then comparison-only.
+    seen: set[tuple[str, str]] = set()
+    merged: list[list[str]] = []
+    for pair in list(snapshot_pairs) + list(current_pairs):
+        if not isinstance(pair, list) or len(pair) != 2:
+            continue
+        key = (str(pair[0]), str(pair[1]))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append([key[0], key[1]])
+    try:
+        with open(avail_path, "w", encoding="utf-8") as f:
+            _json.dump({"available": merged}, f)
+    except OSError as exc:
+        logging.warning(
+            "Failed to write merged availability manifest %s: %s",
+            avail_path, exc,
+        )
+
+
+def _compute_comparison_only_plot_plans(
+    *, plan_results, single_plot_settings, parquet_dir,
+    output_config_path, active_configs, plot_rows, plan_break_times,
+):
+    """Compute per-scenario plans for comparison-only result_keys.
+
+    Strategy:
+      1. Snapshot the existing ``plot_plans/`` dir (single-config plans).
+      2. Call ``compute_all_plot_plans`` with the comparison config —
+         this wipes the dir and writes plans for whatever result_keys
+         the comparison config can resolve.
+      3. Overlay the snapshot back, so single-config plans win on
+         overlapping ``(result_key, sub_config)`` pairs.
+      4. Merge the two ``_availability.json`` files into a union.
+
+    Logs WARNING for comparison-only result_keys we expected to fill
+    but had no in-memory data for.
+    """
+    from flextool.plot_outputs.orchestrator import compute_all_plot_plans
+    from flextool.plot_outputs.config import flatten_new_format
+
+    comparison_config_path = _resolve_comparison_config_path(output_config_path)
+    if not os.path.isfile(comparison_config_path):
+        logging.debug(
+            "Comparison config not found at %s — skipping second-pass plan compute.",
+            comparison_config_path,
+        )
+        return
+
+    with open(comparison_config_path, 'r', encoding='utf-8') as f:
+        comparison_settings = yaml.safe_load(f) or {}
+    comparison_plot_settings = comparison_settings.get('plots', {}) or {}
+
+    # Find result_keys present in comparison but NOT in single (so we
+    # can warn if they have no in-memory data).
+    single_keys = set(flatten_new_format(single_plot_settings).keys())
+    comparison_keys = set(flatten_new_format(comparison_plot_settings).keys())
+    comparison_only = comparison_keys - single_keys
+    missing_data = [k for k in comparison_only if k not in plan_results or plan_results[k].empty]
+    if missing_data:
+        logging.warning(
+            "Comparison-only plot result_keys with no available data "
+            "(plans will be missing for these in the viewer): %s",
+            sorted(missing_data),
+        )
+
+    plan_dir = os.path.join(parquet_dir, "plot_plans")
+    snapshot = _snapshot_plan_dir(plan_dir)
+    avail_name = "_availability.json"
+
+    # Run the comparison-config pass.  This wipes plan_dir and writes
+    # only what the comparison config resolves.
+    compute_all_plot_plans(
+        plan_results, comparison_plot_settings, parquet_dir,
+        active_settings=active_configs, plot_rows=plot_rows,
+        break_times=plan_break_times,
+    )
+
+    # Restore single-config plan files (parquet + json) over the
+    # comparison-pass output.  Skip _availability.json — that gets
+    # merged separately so the union of pairs is preserved.
+    _restore_plan_files(plan_dir, snapshot, prefer_existing_files={avail_name})
+    _merge_availability_manifests(plan_dir, snapshot)
+
+
 def log_time(log_string, start):
     print(f"---{log_string}: {time.perf_counter() - start:.4f} seconds")
     os.makedirs('output', exist_ok=True)
@@ -519,14 +698,46 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             from flextool.plot_outputs.format_helpers import load_timeline_breaks
             plan_break_times = load_timeline_breaks(parquet_dir)
             plan_results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
+            single_plot_settings = settings.get('plots', {})
             compute_all_plot_plans(
-                plan_results, settings.get('plots', {}), parquet_dir,
+                plan_results, single_plot_settings, parquet_dir,
                 active_settings=active_configs, plot_rows=plot_rows,
                 break_times=plan_break_times,
             )
             start = log_time("Computed plot plans", start)
         except Exception as exc:
             logging.warning("Plot plan computation failed (non-fatal): %s", exc)
+
+        # Also compute per-scenario plans for any result_keys that only
+        # appear in the comparison config (e.g. ``costs_discounted_p_``,
+        # which is referenced from default_comparison_plots.yaml but not
+        # from default_plots.yaml).  Without this second pass the
+        # comparison view's lazy plan-union path fails for those keys
+        # ("No per-scenario plan for <rk> in viewer scenarios").
+        #
+        # ``compute_all_plot_plans`` wipes its plan_dir at entry, so
+        # we snapshot the single-config plans first and overlay them
+        # back afterwards; on overlapping (result_key, sub_config)
+        # pairs the *single* config's layout wins (it's the
+        # authoritative one for single-mode rendering, and the
+        # comparison view tolerates the same parquet shape).
+        if 'parquet' in write_methods or read_parquet_dir:
+            try:
+                _compute_comparison_only_plot_plans(
+                    plan_results=plan_results,
+                    single_plot_settings=single_plot_settings,
+                    parquet_dir=parquet_dir,
+                    output_config_path=output_config_path,
+                    active_configs=active_configs,
+                    plot_rows=plot_rows,
+                    plan_break_times=plan_break_times,
+                )
+                start = log_time("Computed comparison-only plot plans", start)
+            except Exception as exc:
+                logging.warning(
+                    "Comparison-only plot plan computation failed (non-fatal): %s",
+                    exc,
+                )
 
         # Phase D: write per-scenario dispatch metadata so the viewer can
         # union ylims across scenarios on demand (without waiting for the

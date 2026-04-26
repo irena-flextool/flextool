@@ -138,6 +138,17 @@ def union_plan_data(
     *scenarios*.  Missing files for a subset are silently skipped — the
     union proceeds with whatever is present (matches Phase C/D
     fail-open behaviour).
+
+    Defensive index dedup: some result_keys (rolling-window /
+    solve-aware variants in particular) can produce per-scenario plan
+    parquets with duplicate row entries.  ``pd.concat(..., axis=1,
+    keys=...)`` reindexes each piece against the union of indices and
+    fails with ``InvalidIndexError`` on duplicates.  We dedupe each
+    piece via groupby-first (preserves the first row's value, the
+    safest aggregation when we don't know the data semantics) and log a
+    warning so the underlying producer can be fixed later.  Column
+    indices are checked too in case a future producer emits duplicates
+    there.
     """
     pieces: list[pd.DataFrame] = []
     found_scenarios: list[str] = []
@@ -152,6 +163,28 @@ def union_plan_data(
                 "plan_union: failed to read %s: %s", path, exc,
             )
             continue
+        # Row-index dedupe (defensive — see docstring).
+        if not df.index.is_unique:
+            dup_count = int(df.index.duplicated().sum())
+            logger.warning(
+                "plan_union: scenario=%s result_key=%s sub_config=%s has "
+                "%d duplicate row index entries — deduping with "
+                "groupby-first.",
+                s, result_key, sub_config, dup_count,
+            )
+            df = df.groupby(level=list(range(df.index.nlevels))).first()
+        # Column-index dedupe (defensive — concat keys=... also reindexes
+        # along columns when sharing them across pieces, but per-piece
+        # columns are kept distinct via the scenario level so this is
+        # mostly belt-and-braces).
+        if not df.columns.is_unique:
+            dup_count = int(df.columns.duplicated().sum())
+            logger.warning(
+                "plan_union: scenario=%s result_key=%s sub_config=%s has "
+                "%d duplicate column index entries — keeping first.",
+                s, result_key, sub_config, dup_count,
+            )
+            df = df.loc[:, ~df.columns.duplicated(keep="first")]
         pieces.append(df)
         found_scenarios.append(s)
     if not pieces:

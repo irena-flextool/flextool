@@ -275,6 +275,41 @@ def test_union_path_e2e_bar_config(tmp_path: pathlib.Path):
     plt.close(fig)
 
 
+def test_union_plan_data_dedupes_duplicate_row_index(tmp_path: pathlib.Path):
+    """Plan parquets with duplicate row entries shouldn't crash the union.
+
+    ``pd.concat(..., axis=1, keys=...)`` reindexes each piece against
+    the union of indices and raises ``InvalidIndexError`` when a piece
+    has a non-unique index.  ``union_plan_data`` defensively dedupes
+    via groupby-first and logs a warning.  Verify the function returns
+    a sane combined frame instead of raising.
+    """
+    rng = np.random.default_rng(seed=42)
+    rk, sub = "rk", "sc"
+
+    # Scenario A: clean, unique index.
+    df_a = pd.DataFrame({"x": [1.0, 2.0, 3.0]}, index=pd.Index([0, 1, 2], name="row"))
+    _write_per_scenario_plan(tmp_path, "A", rk, sub, df_a)
+
+    # Scenario B: duplicate index entries (row 0 appears twice).
+    df_b = pd.DataFrame(
+        {"x": [10.0, 20.0, 30.0]},
+        index=pd.Index([0, 0, 1], name="row"),
+    )
+    _write_per_scenario_plan(tmp_path, "B", rk, sub, df_b)
+
+    combined = union_plan_data(tmp_path, ["A", "B"], rk, sub)
+    assert combined is not None
+    # Combined index must be unique (groupby-first deduped scenario B).
+    assert combined.index.is_unique, combined.index.tolist()
+    # Both scenarios appear as the top column-MultiIndex level.
+    assert set(combined.columns.get_level_values("scenario")) == {"A", "B"}
+    # B's first occurrence at index 0 was kept (value 10.0), not summed
+    # to 30.0 — confirms .first() semantics.
+    val_b_at_0 = combined.loc[0, ("B", "x")]
+    assert val_b_at_0 == 10.0
+
+
 def test_union_path_e2e_normalises_sdt_config(tmp_path: pathlib.Path):
     """``sdt_se / mtt_lu`` (Node prices) — normaliser strips the solve dim.
 

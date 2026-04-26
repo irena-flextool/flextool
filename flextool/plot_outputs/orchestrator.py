@@ -223,7 +223,15 @@ def _apply_dimension_rules(
         valid_levels = [i for i in weight_row_levels if df.index.names[i] == 'period']
         invalid = [i for i in weight_row_levels if i not in valid_levels]
         for i in invalid:
-            logger.warning(
+            # Benign: 'y'/'z' weight by years_represented[period] — when
+            # the row level being collapsed isn't actually 'period' (e.g.
+            # the data has already been aggregated to a single row named
+            # 'sum', or the producer emitted a different row label), the
+            # function falls back to an unweighted sum, which is the
+            # right behaviour for non-period dimensions anyway.  Logged
+            # at DEBUG to keep the user-facing output quiet — the
+            # fallback is correct, not an error.
+            logger.debug(
                 "Plot config '%s': rule '%s' only applies to the 'period' "
                 "row level, got '%s' — falling back to unweighted.",
                 cfg.plot_name, rules[i], df.index.names[i],
