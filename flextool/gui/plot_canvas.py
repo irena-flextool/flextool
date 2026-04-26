@@ -150,15 +150,36 @@ class PlotCanvas(ttk.Frame):
                 pass
         return matplotlib.rcParams.get("figure.dpi", 100)
 
-    def _apply_system_dpi(self, fig: Figure) -> None:
-        """Set the figure DPI to the system DPI.
+    # X11 pixmaps are limited to 32767 px per side (signed 16-bit). At
+    # high DPI on tall figures (many subplots × long timeline) we can
+    # easily blow past that, causing a BadValue on X_CreatePixmap.
+    # Stay safely under the limit.
+    _MAX_PIXMAP_PX = 32000
 
-        This rescales the rendering so that point-sized fonts (9pt, 10pt,
-        etc.) appear at the correct physical size on high-DPI screens.
-        The figure size in inches is preserved; only the pixel count changes.
+    def _apply_system_dpi(self, fig: Figure) -> None:
+        """Set the figure DPI to the system DPI, capped to keep the
+        rendered pixmap under X11's 32767-px-per-side limit.
+
+        Rescales rendering so point-sized fonts appear at correct
+        physical size on high-DPI screens. For oversized figures
+        (typically many-subplot single-scenario plots with a long
+        timeline) the DPI is reduced just enough to avoid the X
+        server's BadValue on CreatePixmap.
         """
-        if self._system_dpi and fig.get_dpi() != self._system_dpi:
-            fig.set_dpi(self._system_dpi)
+        if not self._system_dpi:
+            return
+        target_dpi = float(self._system_dpi)
+        try:
+            w_in, h_in = fig.get_size_inches()
+        except Exception:
+            w_in = h_in = 0.0
+        if w_in and w_in * target_dpi > self._MAX_PIXMAP_PX:
+            target_dpi = min(target_dpi, self._MAX_PIXMAP_PX / w_in)
+        if h_in and h_in * target_dpi > self._MAX_PIXMAP_PX:
+            target_dpi = min(target_dpi, self._MAX_PIXMAP_PX / h_in)
+        target_dpi = max(50.0, target_dpi)
+        if fig.get_dpi() != target_dpi:
+            fig.set_dpi(target_dpi)
 
     def _on_mousewheel(self, event: tk.Event) -> None:
         # Linux uses Button-4/5, Windows/Mac uses MouseWheel.
