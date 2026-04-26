@@ -295,6 +295,130 @@ def normalize_config_for_plan_union(config: Any) -> Any:
     return config
 
 
+def _strip_col_scenario_dim(map_dims: Any) -> tuple[str, str] | None:
+    """If column-part has a leading ``s`` (scenario), return adjusted (idx, rules).
+
+    Mirror image of :func:`_strip_row_solve_dim` for the column part.
+    The unioned plan parquet places ``scenario`` as the **outermost**
+    column-MultiIndex level (``pd.concat(axis=1, keys=found_scenarios,
+    names=['scenario'])`` in :func:`union_plan_data`), and every shipped
+    comparison config places the ``s`` (scenario) character at position
+    0 of the column part of ``index_types``.
+
+    At single-scenario-run time the per-scenario data has no ``scenario``
+    column level — it's added later by ``union_plan_data`` at view time.
+    To compute per-scenario plans for comparison configs, we strip the
+    column-part ``s`` + its matching column-rule character so the rule
+    string length matches the actual single-scenario column count.
+
+    Returns ``None`` when no adjustment is needed:
+
+    - The column part has no ``s`` at all (no scenario dim — config is
+      already single-scenario-shaped, no normalisation needed).
+    - The column part has ``s`` but consists only of ``s`` (i.e.
+      column-only-scenario config like ``[d_s, s_b]``); stripping would
+      leave an empty column part with no plotted dimension. Caller
+      should skip such configs entirely — there is no meaningful
+      single-scenario plan for a chart whose only column dim is
+      ``scenario``.
+    - The column part doesn't start with ``s`` (defensive — currently
+      no shipped config has ``s`` anywhere except position 0 of the
+      column part, but this keeps the helper conservative).
+    """
+    if not isinstance(map_dims, (list, tuple)) or len(map_dims) < 2:
+        return None
+    idx, rules = map_dims[0], map_dims[1]
+    if not (isinstance(idx, str) and isinstance(rules, str)):
+        return None
+    if "_" not in idx:
+        return None
+    row_idx, col_idx = idx.split("_", 1)
+    if not col_idx or not col_idx.startswith("s"):
+        return None
+    # Defensive: a column-only-``s`` config (e.g. ``[d_s, s_b]``) has no
+    # other column dim to plot once scenario is stripped — caller skips.
+    if col_idx == "s":
+        return None
+    rules_no_us = rules.replace("_", "")
+    if len(rules_no_us) < len(row_idx) + len(col_idx):
+        return None
+    new_col_idx = col_idx[1:]
+    # Drop the column-rule char at position 0 (matching the leading ``s``
+    # in the column part).  Rebuild the rules string with the original
+    # underscore position (between row and col rules).
+    col_rule_start = len(row_idx)
+    new_row_rules = rules_no_us[:col_rule_start]
+    new_col_rules = rules_no_us[col_rule_start + 1:]
+    new_idx = f"{row_idx}_{new_col_idx}"
+    new_rules = f"{new_row_rules}_{new_col_rules}"
+    return new_idx, new_rules
+
+
+def normalize_config_for_per_scenario_compute(config: Any) -> Any:
+    """Strip the column-part scenario (``s``) rule from a comparison config.
+
+    At single-scenario-run time the per-scenario DataFrame has no
+    ``scenario`` column level — that level only appears after
+    :func:`union_plan_data` concats the per-scenario plan parquets at
+    view time.  Comparison configs were written for the unioned shape
+    and carry an ``s`` character + matching rule for the scenario dim
+    in the column part of ``map_dimensions_for_plots``.  Feeding such a
+    config to ``compute_all_plot_plans`` against single-scenario data
+    triggers the "column part has N levels but DataFrame has N-1 column
+    levels" warning and skips the config.
+
+    This function returns a copy of *config* with the leading column-
+    part ``s`` and its matching rule character removed, so the resulting
+    config matches the per-scenario data's actual shape.  The view-time
+    union step recovers the scenario dim and its rule remains compatible
+    via :func:`normalize_config_for_plan_union` (which strips the row-
+    part ``s`` separately, for a different — solve-dimension — reason).
+
+    Returns ``None`` for configs whose column part is *only* ``s`` (no
+    other plotted column dim once scenario is removed) — caller should
+    skip those configs entirely.  Returns *config* unchanged when no
+    adjustment is needed (no column-part ``s``).
+
+    Accepts ``PlotConfig`` dataclass instances or plain dicts.  Never
+    mutates *config* in place.
+    """
+    if config is None:
+        return config
+
+    if hasattr(config, "__dataclass_fields__"):
+        map_dims = getattr(config, "map_dimensions_for_plots", None)
+        # Defensive skip for column-only-``s`` configs.
+        if (isinstance(map_dims, (list, tuple)) and len(map_dims) >= 2
+                and isinstance(map_dims[0], str) and "_" in map_dims[0]):
+            _, col_idx = map_dims[0].split("_", 1)
+            if col_idx == "s":
+                return None
+        adjusted = _strip_col_scenario_dim(map_dims)
+        if adjusted is None:
+            return config
+        new_idx, new_rules = adjusted
+        return dataclasses.replace(
+            config, map_dimensions_for_plots=[new_idx, new_rules],
+        )
+
+    if isinstance(config, dict):
+        map_dims = config.get("map_dimensions_for_plots")
+        if (isinstance(map_dims, (list, tuple)) and len(map_dims) >= 2
+                and isinstance(map_dims[0], str) and "_" in map_dims[0]):
+            _, col_idx = map_dims[0].split("_", 1)
+            if col_idx == "s":
+                return None
+        adjusted = _strip_col_scenario_dim(map_dims)
+        if adjusted is None:
+            return config
+        new_idx, new_rules = adjusted
+        new_cfg = dict(config)
+        new_cfg["map_dimensions_for_plots"] = [new_idx, new_rules]
+        return new_cfg
+
+    return config
+
+
 def is_scenario_pivot_config(config: Any) -> bool:
     """Pure no-op kept for forward compatibility — always returns ``False``.
 

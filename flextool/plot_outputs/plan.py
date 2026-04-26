@@ -441,8 +441,14 @@ def build_figure_from_plan(
     time_vals = plan.time_index_values
     period_labels = plan.period_labels
     use_global_y_ranges = False
+    # *expected_x_length* pins the time-axis xlim to (start, end) regardless
+    # of how short the underlying data turns out to be — keeps the time
+    # axis stable when scenarios with different model horizons are compared
+    # side by side.  Only meaningful for time-series charts.
+    expected_x_length: int | None = None
     if plot_rows is not None and plan.chart_type != 'bar':
         start, end = plot_rows
+        expected_x_length = max(0, end - start)
         actually_slicing = start > 0 or end < len(processed_df)
         if actually_slicing:
             processed_df = processed_df.iloc[start:end]
@@ -510,6 +516,7 @@ def build_figure_from_plan(
             plan.always_include_zero_in_axis,
             layout, plan.shared_color_map,
             period_labels=period_labels,
+            expected_x_length=expected_x_length,
         )
     elif plan.chart_type == 'stack':
         from flextool.plot_outputs.plot_lines import _build_stack_figure
@@ -522,6 +529,7 @@ def build_figure_from_plan(
             plan.always_include_zero_in_axis,
             layout, plan.shared_color_map,
             period_labels=period_labels,
+            expected_x_length=expected_x_length,
         )
     elif plan.chart_type == 'bar':
         from flextool.plot_outputs.plot_bars import _build_bar_figure

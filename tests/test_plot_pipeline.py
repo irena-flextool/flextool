@@ -787,3 +787,111 @@ class TestResolveSharedAxisBounds:
             df, explicit, stack_levels=[1], subplot_levels=[2],
             always_include_zero=True,
         ) is explicit
+
+
+# ---------------------------------------------------------------------------
+# Issue B: x-axis pinned to requested duration regardless of data length
+# ---------------------------------------------------------------------------
+
+class TestXLimPinnedToDuration:
+    """Renderer keeps the x-axis at the requested duration even when the
+    underlying data is shorter — switching scenarios with different model
+    horizons should not change the visible time window.
+    """
+
+    def _make_short_time_df(self, n_rows: int = 50) -> pd.DataFrame:
+        """Time-series DataFrame with `n_rows` rows (single-level index)."""
+        index = pd.Index([f"t{i:03d}" for i in range(n_rows)], name="time")
+        columns = pd.MultiIndex.from_arrays(
+            [["nodeA", "nodeB"]], names=["node"],
+        )
+        rng = np.random.default_rng(0)
+        return pd.DataFrame(
+            rng.random((n_rows, 2)) * 10.0, index=index, columns=columns,
+        )
+
+    def test_build_lines_figure_pins_xlim_to_expected_length(self):
+        """Direct call to _build_lines_figure with expected_x_length=100."""
+        from flextool.plot_outputs.plot_lines import (
+            _build_lines_figure, _compute_line_layout,
+        )
+        df = self._make_short_time_df(50)
+        time_index = df.index.astype(str)
+        effective_plots = [(None, df)]
+        layout = _compute_line_layout(
+            effective_plots, ["node"], "right", 1, 6.0, 4.0, "1,.0f",
+        )
+        fig = _build_lines_figure(
+            effective_plots, "test", [], ["node"], time_index,
+            subplots_per_row=1, legend_position="right",
+            xlabel=None, ylabel=None,
+            axis_bounds=None, axis_tick_format="1,.0f",
+            always_include_zero_in_axis=True,
+            layout=layout,
+            shared_color_map=None,
+            period_labels=None,
+            expected_x_length=100,
+        )
+        ax = fig.axes[0]
+        lo, hi = ax.get_xlim()
+        # Half-step pad on either side of integer positions 0..99.
+        assert abs(lo - (-0.5)) < 1e-6, f"xlim lower={lo}"
+        assert abs(hi - 99.5) < 1e-6, f"xlim upper={hi}"
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+
+    def test_build_lines_figure_no_pin_when_expected_length_none(self):
+        """Without expected_x_length, matplotlib's default auto-scale wins."""
+        from flextool.plot_outputs.plot_lines import (
+            _build_lines_figure, _compute_line_layout,
+        )
+        df = self._make_short_time_df(50)
+        time_index = df.index.astype(str)
+        effective_plots = [(None, df)]
+        layout = _compute_line_layout(
+            effective_plots, ["node"], "right", 1, 6.0, 4.0, "1,.0f",
+        )
+        fig = _build_lines_figure(
+            effective_plots, "test", [], ["node"], time_index,
+            subplots_per_row=1, legend_position="right",
+            xlabel=None, ylabel=None,
+            axis_bounds=None, axis_tick_format="1,.0f",
+            always_include_zero_in_axis=True,
+            layout=layout,
+            shared_color_map=None,
+            period_labels=None,
+            expected_x_length=None,
+        )
+        ax = fig.axes[0]
+        lo, hi = ax.get_xlim()
+        # Auto-scale: stretches to data length 50 with matplotlib's small pad.
+        # Specifically, hi should not approach 100 (the duration we'd pass when
+        # the pin is active).
+        assert hi < 60, f"unexpectedly wide xlim hi={hi}"
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+
+    def test_build_figure_from_plan_pins_xlim_via_plot_rows(self):
+        """Plan-based render path: passing plot_rows=(0, 100) against 50-row
+        data sets xlim to (-0.5, 99.5) — the renderer-side fix for the
+        viewer's duration setting.
+        """
+        from flextool.plot_outputs.plan import (
+            compute_live_plan, build_figure_from_plan,
+        )
+        df = self._make_short_time_df(50)
+        cfg = PlotConfig(
+            plot_name="duration-pin",
+            map_dimensions_for_plots=["t_e", "t_l"],
+            legend="right",
+        )
+        plan = compute_live_plan(df, cfg, "duration-pin")
+        assert plan is not None
+        # Request a duration much wider than the 50-row data we built.
+        fig = build_figure_from_plan(plan, file_index=0, plot_rows=(0, 100))
+        assert fig is not None
+        ax = fig.axes[0]
+        lo, hi = ax.get_xlim()
+        assert abs(hi - 99.5) < 1e-6, f"xlim hi={hi} not pinned to duration"
+        import matplotlib.pyplot as plt
+        plt.close(fig)

@@ -286,8 +286,18 @@ def _build_lines_figure(
     layout: LineLayoutParams,
     shared_color_map: dict[str, tuple] | None = None,
     period_labels: list[str] | None = None,
+    expected_x_length: int | None = None,
 ) -> plt.Figure:
-    """Build a line-plot Figure and return it (without saving or closing)."""
+    """Build a line-plot Figure and return it (without saving or closing).
+
+    *expected_x_length* — when set, overrides the matplotlib auto-scaling
+    of the time axis so the visible x range spans exactly that many
+    integer x-positions regardless of how short ``time_index`` is.  This
+    keeps the time axis stable across scenarios with different model
+    horizons (Issue B): if the user picks duration=8760 and the current
+    scenario only has 168 hours of data, the x-axis still spans 0..8760
+    and the line simply stops drawing where data stops.
+    """
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
@@ -408,6 +418,13 @@ def _build_lines_figure(
 
         ax_width_inches = layout.base_width
         set_smart_xticks(ax, time_index, ax_width_inches, period_labels=period_labels)
+
+        # Pin x-axis to the requested duration so switching between
+        # scenarios with different data lengths doesn't change the
+        # visible time window.  Half-step pad on either side matches
+        # matplotlib's default categorical/integer axis convention.
+        if expected_x_length is not None and expected_x_length > 0:
+            ax.set_xlim(-0.5, expected_x_length - 0.5)
 
     # ── Shared legend (one per file, anchored to top-right subplot) ──
     if legend_position == 'shared' and shared_color_map:
@@ -540,6 +557,10 @@ def build_line_figures(
     total_file_count = len(file_batches)
     batches_to_build = file_batches[:1] if only_first_file else file_batches
     n_total = len(file_batches)
+    # Time-axis length the user requested (== rows[1] - rows[0]); pinned
+    # via _build_lines_figure's expected_x_length so the visible window
+    # stays stable when data is shorter than the requested duration.
+    expected_x_length = max(0, rows[1] - rows[0]) if rows else None
     result: list[tuple[str, plt.Figure]] = []
     for batch_idx, (batch, _batch_filepath) in enumerate(batches_to_build, start=1):
         if only_file_index is not None and (batch_idx - 1) != only_file_index:
@@ -552,6 +573,7 @@ def build_line_figures(
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             layout, shared_color_map,
             period_labels=period_labels,
+            expected_x_length=expected_x_length,
         )
         result.append((batch_title, fig))
     return result, total_file_count
@@ -571,8 +593,12 @@ def _build_stack_figure(
     layout: LineLayoutParams,
     shared_color_map: dict[str, tuple] | None = None,
     period_labels: list[str] | None = None,
+    expected_x_length: int | None = None,
 ) -> plt.Figure:
-    """Build a stacked-area Figure and return it (without saving or closing)."""
+    """Build a stacked-area Figure and return it (without saving or closing).
+
+    *expected_x_length* — see :func:`_build_lines_figure` for semantics.
+    """
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
@@ -736,6 +762,13 @@ def _build_stack_figure(
         ax_width_inches = layout.base_width
         set_smart_xticks(ax, time_index, ax_width_inches, period_labels=period_labels)
 
+        # Pin x-axis to the requested duration (see _build_lines_figure
+        # for rationale).  Stack plots use the categorical-style index
+        # via df.plot.area which already places points at integer
+        # positions 0..N-1; the half-step pad on either side matches.
+        if expected_x_length is not None and expected_x_length > 0:
+            ax.set_xlim(-0.5, expected_x_length - 0.5)
+
     # ── Shared legend (one per file, anchored to top-right subplot) ──
     # Reversed so top-of-stack = top-of-legend
     if legend_position == 'shared' and shared_color_map:
@@ -865,6 +898,8 @@ def build_stack_figures(
     total_file_count = len(file_batches)
     batches_to_build = file_batches[:1] if only_first_file else file_batches
     n_total = len(file_batches)
+    # See build_line_figures for rationale.
+    expected_x_length = max(0, rows[1] - rows[0]) if rows else None
     result: list[tuple[str, plt.Figure]] = []
     for batch_idx, (batch, _batch_filepath) in enumerate(batches_to_build, start=1):
         if only_file_index is not None and (batch_idx - 1) != only_file_index:
@@ -877,6 +912,7 @@ def build_stack_figures(
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             layout, shared_color_map,
             period_labels=period_labels,
+            expected_x_length=expected_x_length,
         )
         result.append((batch_title, fig))
     return result, total_file_count

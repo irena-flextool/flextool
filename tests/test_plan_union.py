@@ -41,6 +41,7 @@ from flextool.plot_outputs.plan import (
 )
 from flextool.scenario_comparison.plan_union import (
     is_scenario_pivot_config,
+    normalize_config_for_per_scenario_compute,
     normalize_config_for_plan_union,
     per_scenario_plan_path,
     union_plan_data,
@@ -162,6 +163,144 @@ def test_normalize_passes_plotconfig_through_unchanged():
     )
     out = normalize_config_for_plan_union(cfg)
     assert out is cfg
+
+
+# ---------------------------------------------------------------------------
+# normalize_config_for_per_scenario_compute  (Issue A: comparison-only plans)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "map_dims, expected",
+    [
+        # Common time-series shapes — strip leading col-part ``s`` + its rule.
+        (["dt_se", "tt_lu"], ["dt_e", "tt_u"]),
+        (["dt_see", "tt_luu"], ["dt_ee", "tt_uu"]),
+        (["dt_seeg", "tt_luuu"], ["dt_eeg", "tt_uuu"]),
+        # Bar configs — same mechanic on a non-time row.
+        (["d_se", "b_ge"], ["d_e", "b_e"]),
+        (["d_see", "b_gee"], ["d_ee", "b_ee"]),
+        (["d_see", "y_gbb"], ["d_ee", "y_bb"]),
+        # Complex bar with multiple col rules — leading col-part ``s`` and
+        # its matching col-rule char (the *first* col-rule char) are
+        # both stripped.  Row rules are preserved.  ``y_gxbxe``: row="y",
+        # col rules="gxbxe" → drop col-rule[0]="g" → col rules="xbxe".
+        (["d_seeee", "y_gxbxe"], ["d_eeee", "y_xbxe"]),
+        # Row-part also has ``s`` (sdt_*); unaffected — we only strip col-part.
+        (["sdt_se", "mtt_lu"], ["sdt_e", "mtt_u"]),
+        (["sdt_sppg", "mtt_gllu"], ["sdt_ppg", "mtt_llu"]),
+    ],
+)
+def test_normalize_per_scenario_strips_col_scenario_dim(map_dims, expected):
+    """Leading column-part ``s`` and its matching col-rule char are stripped."""
+    cfg_dict = {"map_dimensions_for_plots": list(map_dims)}
+    out = normalize_config_for_per_scenario_compute(cfg_dict)
+    assert out is not None
+    assert out is not cfg_dict
+    assert out["map_dimensions_for_plots"] == expected
+    # Original dict not mutated.
+    assert cfg_dict["map_dimensions_for_plots"] == list(map_dims)
+
+
+@pytest.mark.parametrize(
+    "map_dims",
+    [
+        # No column-part ``s`` at all (post-normalisation shape) — pass-through.
+        ["dt_e", "tt_u"],
+        ["d_eg", "b_ge"],
+        ["_e", "x_x"],
+    ],
+)
+def test_normalize_per_scenario_passthrough_when_no_col_scenario(map_dims):
+    """Configs with no column-part ``s`` are returned unchanged."""
+    cfg = {"map_dimensions_for_plots": list(map_dims)}
+    out = normalize_config_for_per_scenario_compute(cfg)
+    assert out is cfg  # exact identity — no copy made
+
+
+def test_normalize_per_scenario_skips_column_only_scenario_config():
+    """``[d_s, s_b]`` has no plotted column dim left after stripping ``s``.
+
+    The function returns ``None`` so the caller can skip the config
+    entirely — there is no meaningful single-scenario plan for a chart
+    whose only column dim is scenario.
+    """
+    cfg = {"map_dimensions_for_plots": ["d_s", "s_b"]}
+    out = normalize_config_for_per_scenario_compute(cfg)
+    assert out is None
+
+
+def test_normalize_per_scenario_handles_plotconfig_dataclass():
+    """``PlotConfig`` dataclass instances also normalise via dataclasses.replace."""
+    cfg = PlotConfig(
+        plot_name="test",
+        map_dimensions_for_plots=["dt_se", "tt_lu"],
+    )
+    out = normalize_config_for_per_scenario_compute(cfg)
+    assert out is not None
+    assert out is not cfg
+    assert out.plot_name == "test"  # other fields preserved
+    assert out.map_dimensions_for_plots == ["dt_e", "tt_u"]
+    # Original unchanged.
+    assert cfg.map_dimensions_for_plots == ["dt_se", "tt_lu"]
+
+
+def test_normalize_per_scenario_passes_clean_plotconfig_through():
+    """A PlotConfig with no col-part ``s`` is returned identity-equal."""
+    cfg = PlotConfig(
+        plot_name="test",
+        map_dimensions_for_plots=["dt_e", "tt_u"],
+    )
+    out = normalize_config_for_per_scenario_compute(cfg)
+    assert out is cfg
+
+
+def test_normalize_per_scenario_real_yaml_sweep():
+    """Sweep every shipped comparison config — none should crash, results sane.
+
+    Asserts: every leaf config either yields a normalised result whose
+    column part has no leading ``s``, or returns ``None`` (column-only
+    scenario configs).  This is a smoke test against the full YAML
+    catalogue.
+    """
+    yaml_path = (
+        pathlib.Path(__file__).parent.parent
+        / "templates" / "default_comparison_plots.yaml"
+    )
+    with open(yaml_path, "r", encoding="utf-8") as f:
+        cfg_yaml = yaml.safe_load(f)
+    plots = cfg_yaml.get("plots", {}) or {}
+    sweep_count = 0
+    for entry in plots.values():
+        if not isinstance(entry, dict):
+            continue
+        for rk, sub in entry.items():
+            if not isinstance(sub, dict) or rk in ("group", "order"):
+                continue
+            for scfg in sub.values():
+                if not isinstance(scfg, dict):
+                    continue
+                map_dims = scfg.get("map_dimensions_for_plots")
+                if not isinstance(map_dims, list) or len(map_dims) < 2:
+                    continue
+                sweep_count += 1
+                out = normalize_config_for_per_scenario_compute(scfg)
+                if out is None:
+                    # Verify column part really was column-only-``s``.
+                    idx_str = map_dims[0]
+                    assert "_" in idx_str
+                    _, col_idx = idx_str.split("_", 1)
+                    assert col_idx == "s"
+                    continue
+                # Returned a normalised (or unchanged) config — col part
+                # must not start with ``s`` after the call.
+                new_idx = out["map_dimensions_for_plots"][0]
+                if "_" in new_idx:
+                    _, new_col = new_idx.split("_", 1)
+                    assert not new_col.startswith("s"), (
+                        f"col part still begins with s after normalisation: "
+                        f"{map_dims} -> {out['map_dimensions_for_plots']}"
+                    )
+    assert sweep_count > 50, f"only {sweep_count} configs swept — YAML changed?"
 
 
 # ---------------------------------------------------------------------------

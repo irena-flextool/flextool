@@ -171,6 +171,83 @@ def _merge_availability_manifests(plan_dir, snapshot):
         )
 
 
+def _normalize_comparison_settings_for_per_scenario(
+    plot_settings: dict, normalize_fn,
+) -> dict:
+    """Walk a comparison plots-settings dict and normalise every leaf config.
+
+    Comparison settings can be in either layout:
+
+    - **New format** (entry-name grouping): ``entry_name -> {group, order,
+      result_key -> {sub_name -> setting_dict}}``.
+    - **Flat format**: ``result_key -> {sub_name -> setting_dict}`` or
+      ``result_key -> setting_dict`` (single-config shortcut).
+
+    For each leaf ``setting_dict`` we call ``normalize_fn``; ``None``
+    returned by the normaliser indicates a config that should be skipped
+    entirely (e.g. column-only-scenario configs with no per-scenario
+    plot dim left after stripping).  The original ``plot_settings`` is
+    not mutated; a new dict is built.
+    """
+    out: dict = {}
+    for entry_key, entry_val in plot_settings.items():
+        if not isinstance(entry_val, dict):
+            out[entry_key] = entry_val
+            continue
+        # Detect entry-name format vs flat result_key format.
+        # Entry-name format has 'group' and 'order' keys.
+        is_entry = 'group' in entry_val and 'order' in entry_val
+        if is_entry:
+            new_entry = {k: v for k, v in entry_val.items() if k in ('group', 'order')}
+            for rk, rk_val in entry_val.items():
+                if rk in ('group', 'order'):
+                    continue
+                new_entry[rk] = _normalize_result_key_dict(rk_val, normalize_fn)
+            out[entry_key] = new_entry
+        else:
+            out[entry_key] = _normalize_result_key_dict(entry_val, normalize_fn)
+    return out
+
+
+def _normalize_result_key_dict(rk_val, normalize_fn):
+    """Apply ``normalize_fn`` to each sub-config under a result_key.
+
+    Handles both the dict-of-sub-configs layout
+    (``{sub_name -> setting_dict}``) and the single-config shortcut
+    (``{plot_field -> value, ...}``) — the latter is detected by the
+    presence of any ``PLOT_FIELD_NAMES`` key directly in the dict.
+    Configs for which ``normalize_fn`` returns ``None`` are dropped.
+    """
+    from flextool.plot_outputs.config import PLOT_FIELD_NAMES
+    if not isinstance(rk_val, dict):
+        return rk_val
+    # Single-config shortcut: keys are plot field names directly.
+    if any(k in PLOT_FIELD_NAMES for k in rk_val):
+        normalized = normalize_fn(rk_val)
+        if normalized is None:
+            logging.debug(
+                "Skipping comparison config (column-only-scenario, no "
+                "per-scenario plot dim after normalisation)",
+            )
+            return {}
+        return normalized
+    # Dict of sub-configs.
+    new_sub: dict = {}
+    for sub_name, setting in rk_val.items():
+        if not isinstance(setting, dict):
+            new_sub[sub_name] = setting
+            continue
+        normalized = normalize_fn(setting)
+        if normalized is None:
+            logging.debug(
+                "Skipping comparison sub-config '%s' (column-only-scenario)",
+                sub_name,
+            )
+            continue
+        new_sub[sub_name] = normalized
+    return new_sub
+
+
 def _compute_comparison_only_plot_plans(
     *, plan_results, single_plot_settings, parquet_dir,
     output_config_path, active_configs, plot_rows, plan_break_times,
@@ -191,6 +268,9 @@ def _compute_comparison_only_plot_plans(
     """
     from flextool.plot_outputs.orchestrator import compute_all_plot_plans
     from flextool.plot_outputs.config import flatten_new_format
+    from flextool.scenario_comparison.plan_union import (
+        normalize_config_for_per_scenario_compute,
+    )
 
     comparison_config_path = _resolve_comparison_config_path(output_config_path)
     if not os.path.isfile(comparison_config_path):
@@ -203,6 +283,16 @@ def _compute_comparison_only_plot_plans(
     with open(comparison_config_path, 'r', encoding='utf-8') as f:
         comparison_settings = yaml.safe_load(f) or {}
     comparison_plot_settings = comparison_settings.get('plots', {}) or {}
+
+    # Comparison configs were written for unioned data with ``scenario`` as
+    # the outermost column-MultiIndex level.  At single-scenario-run time
+    # (this code path), the per-scenario DataFrame has no scenario level,
+    # so we strip the column-part ``s`` rule from every config before
+    # feeding to ``compute_all_plot_plans``.  The viewer's union path
+    # recovers the scenario dim at view time.
+    comparison_plot_settings = _normalize_comparison_settings_for_per_scenario(
+        comparison_plot_settings, normalize_config_for_per_scenario_compute,
+    )
 
     # Find result_keys present in comparison but NOT in single (so we
     # can warn if they have no in-memory data).
