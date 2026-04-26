@@ -125,6 +125,43 @@ def test_extract_single_col_with_time() -> None:
     assert list(df.columns) == ["nA"]
 
 
+def test_extract_iso8601_timestamp_strips_glpsol_quotes(tmp_path: Path) -> None:
+    """ISO 8601 timestamps contain colons, which trigger GLPSOL/MPS auto-quoting:
+    ``v_state[ARG_NH3,y2050,'2050-01-01T00:00:00']``.  HiGHS preserves the
+    apostrophes in ``allVariableNames()``, while the canonical row order
+    (``solve_data/p_step_duration.csv`` or a realized-dispatch CSV) carries
+    bare timestamps.  Without stripping, every time-indexed lookup misses
+    and the parquet ends up filled with zeros — see h2-imo project regression.
+    """
+    realized = tmp_path / "realized_dispatch.csv"
+    realized.write_text(
+        "period,step\n"
+        "y2050,2050-01-01T00:00:00\n"
+        "y2050,2050-01-01T01:00:00\n"
+    )
+    h = _fake_highs(
+        variable_names=[
+            "v_state[ARG_NH3,y2050,'2050-01-01T00:00:00']",
+            "v_state[ARG_NH3,y2050,'2050-01-01T01:00:00']",
+        ],
+        col_values=[0.192, 0.154],
+    )
+    df = extract_variable(
+        h, "v_state", ("node",),
+        solve_name="solve_test_6h",
+        realized_dispatch_csv=realized,
+    )
+    # Row index must use the bare timestamp form — apostrophes stripped.
+    assert list(df.index) == [
+        ("solve_test_6h", "y2050", "2050-01-01T00:00:00"),
+        ("solve_test_6h", "y2050", "2050-01-01T01:00:00"),
+    ]
+    # And the values must land in the correct cells, not get silently
+    # dropped because the quoted row_key missed the canonical lookup.
+    assert df.loc[("solve_test_6h", "y2050", "2050-01-01T00:00:00"), "ARG_NH3"] == 0.192
+    assert df.loc[("solve_test_6h", "y2050", "2050-01-01T01:00:00"), "ARG_NH3"] == 0.154
+
+
 def test_extract_single_col_no_time() -> None:
     h = _fake_highs(
         variable_names=["v_invest[e1,d1]", "v_invest[e2,d1]"],

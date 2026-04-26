@@ -696,7 +696,15 @@ def extract_variable(
         if not m:
             _logger.warning("Unrecognised %s name: %s", name, item_name)
             continue
-        parts = m.group(1).split(",")
+        # GLPSOL/MPS quoting: any symbolic name containing a colon (e.g.
+        # ISO 8601 timestamps like ``2050-01-01T00:00:00``) is wrapped in
+        # single quotes when written to the .mps and HiGHS preserves
+        # those quotes verbatim in ``allVariableNames()``.  The canonical
+        # row order (read from ``solve_data/p_step_duration.csv``) has
+        # bare timestamps, so without stripping here every time-indexed
+        # row_key would silently miss the canonical lookup at line ~773
+        # and the resulting parquet would be filled with zeros.
+        parts = [p.strip("'") for p in m.group(1).split(",")]
         if len(parts) != expected_arity:
             _logger.warning(
                 "Unexpected %s arity (%d, expected %d): %s",
