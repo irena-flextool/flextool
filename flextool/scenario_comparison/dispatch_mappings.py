@@ -34,8 +34,14 @@ def load_dispatch_mappings(parquet_dir: Path) -> dict[str, pd.DataFrame | None]:
 
     # File mapping: key -> (filename, required)
     # node_inflow is excluded — it's already in combined_dfs as 'node_inflow__dt'
+    # ``dispatch_groups`` lists the groups that have on-disk dispatch tables.
+    # The model has two separate sets — nodeGroupIndicators (summary
+    # indicators) and nodeGroupDispatch (dispatch table output) — and a
+    # project may flag either independently. We use nodeGroupDispatch
+    # because that's the set that gates the actual time-series files
+    # the dispatch view consumes.
     file_mapping = {
-        'dispatch_groups': ('nodeGroupIndicators.parquet', True),
+        'dispatch_groups': ('nodeGroupDispatch.parquet', True),
         'group_node': ('group_node.parquet', True),
         'group_process_node': ('group_process_node.parquet', False),
         # ProcessGroup aggregation files

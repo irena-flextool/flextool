@@ -3345,8 +3345,11 @@ class ResultViewer(tk.Toplevel):
         if not parquet_dir.is_dir():
             return
 
-        # Load dispatch groups (groups flagged for dispatch output)
-        dispatch_groups_path = parquet_dir / "nodeGroupIndicators.parquet"
+        # Load dispatch groups (groups flagged for dispatch table output).
+        # The model's nodeGroupDispatch set is the source of truth; the
+        # similarly-named nodeGroupIndicators is for summary indicators
+        # and a project may flag either independently.
+        dispatch_groups_path = parquet_dir / "nodeGroupDispatch.parquet"
         if not dispatch_groups_path.exists():
             return
 
