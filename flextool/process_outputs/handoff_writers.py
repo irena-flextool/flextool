@@ -743,16 +743,19 @@ def write_fix_storage_usage(
 
 
 def _load_entity_class_set(work_folder: Path, set_name: str) -> list[str]:
-    """Return the ordered list of entities in ``input/<set_name>.csv``.
+    """Return the ordered list of entities in ``solve_data/<set_name>.csv``.
 
     Column order in the dump file must match the order phase 3 would
-    use, which is the order entities appear in this set file.
+    use, which is the order entities appear in this set file.  The
+    resolved-set CSVs (``entity.csv``, ``process_unit.csv``,
+    ``process_connection.csv``) are written by ``flextool.mod``'s
+    ``printf`` blocks during phase 1.
 
-    Special case: ``set_nodeState`` is no longer dumped by the mod —
+    Special case: ``nodeState`` is no longer dumped by the mod —
     it's derived from ``input/p_node_type.csv`` (rows with
     ``p_node_type == 'storage'``), preserving the original node order.
     """
-    if set_name == "set_nodeState":
+    if set_name == "nodeState":
         path = work_folder / "input" / "p_node_type.csv"
         if not path.exists():
             return []
@@ -760,7 +763,7 @@ def _load_entity_class_set(work_folder: Path, set_name: str) -> list[str]:
         if df.empty or "p_node_type" not in df.columns:
             return []
         return df.loc[df["p_node_type"].astype(str) == "storage", "node"].astype(str).tolist()
-    path = work_folder / "input" / f"{set_name}.csv"
+    path = work_folder / "solve_data" / f"{set_name}.csv"
     if not path.exists():
         return []
     df = pd.read_csv(path)
@@ -1060,7 +1063,7 @@ def write_unit_capacity(
     phase-3 unit-capacity block in ``flextool.mod``."""
     return _write_capacity_per_period(
         h, solve_name=solve_name, work_folder=work_folder,
-        entity_class_set="set_process_unit",
+        entity_class_set="process_unit",
         first_header_col="unit",
         csv_filename="unit_capacity__period.csv",
     )
@@ -1072,7 +1075,7 @@ def write_connection_capacity(
     """Write ``solve_data/connection_capacity__period.csv``."""
     return _write_capacity_per_period(
         h, solve_name=solve_name, work_folder=work_folder,
-        entity_class_set="set_process_connection",
+        entity_class_set="process_connection",
         first_header_col="connection",
         csv_filename="connection_capacity__period.csv",
     )
@@ -1085,7 +1088,7 @@ def write_node_capacity(
     ``nodeState`` set, not ``node``."""
     return _write_capacity_per_period(
         h, solve_name=solve_name, work_folder=work_folder,
-        entity_class_set="set_nodeState",
+        entity_class_set="nodeState",
         first_header_col="node",
         csv_filename="node_capacity__period.csv",
     )
@@ -1108,7 +1111,7 @@ def write_entity_all_capacity(
     out_path = work_folder / "output_raw" / "entity_all_capacity.csv"
     roll = _actual_solve_name(work_folder, solve_name)
 
-    entities = _load_entity_class_set(work_folder, "set_entity")
+    entities = _load_entity_class_set(work_folder, "entity")
     unitsize = _load_unitsize_map(work_folder)
     existing = _load_p_entity_all_existing(work_folder, roll)
     edd_invest = _load_edd_invest(work_folder, roll)
