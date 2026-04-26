@@ -1971,25 +1971,24 @@ class ResultViewer(tk.Toplevel):
                 self._start_var.set(saved_start)
             self._last_slider_variant = current
 
-            # ── Clamp duration FOR DISPLAY only — do NOT overwrite intent ──
+            # The user's chosen duration is preserved as-is regardless
+            # of how short the current scenario's data is — the renderer
+            # simply leaves empty space on the right when data ends
+            # before the chosen duration. This keeps the time axis
+            # stable when the user toggles between scenarios with
+            # different model horizons.
             duration = self._duration_var.get()
-            if duration > data_length and data_length > 0:
-                self._suppress_duration_save = True
-                try:
-                    self._duration_var.set(data_length)
-                finally:
-                    self._suppress_duration_save = False
-                duration = data_length
 
-            # ── Update duration step list (always include data_length) ──
-            valid = [v for v in self._duration_steps if v <= data_length]
-            if data_length not in valid:
-                valid.append(data_length)
-            valid.sort()
-            self._duration_spin.configure(values=tuple(valid), state="normal")
+            # Spinbox values include the standard steps (always; we no
+            # longer trim to <= data_length so the user can dial up to
+            # whatever they want).
+            self._duration_spin.configure(
+                values=tuple(self._duration_steps), state="normal",
+            )
 
-            # ── Update start slider ──
-            max_start = max(0, data_length - duration)
+            # Start slider ranges over the full data_length so the user
+            # can scroll through the actual data window.
+            max_start = max(0, data_length - 1)
             self._start_scale.configure(to=max(max_start, 1))
             if max_start <= 0:
                 self._start_var.set(0)

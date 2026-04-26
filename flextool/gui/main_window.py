@@ -3235,9 +3235,6 @@ class MainWindow(tk.Tk):
             self._result_viewer.refresh_to_viewer_scenarios(desired)
             self._result_viewer.deiconify()
             self._result_viewer.lift()
-            self._result_viewer.attributes("-topmost", True)
-            self._result_viewer.update_idletasks()
-            self._result_viewer.attributes("-topmost", False)
             self._result_viewer.focus_force()
             self._update_view_results_btn()
             return
@@ -3365,8 +3362,7 @@ class MainWindow(tk.Tk):
             and self.execution_window.winfo_exists()
         ):
             self.execution_window.deiconify()
-            self.execution_window.attributes("-topmost", True)
-            self.execution_window.attributes("-topmost", False)
+            self.execution_window.lift()
             self.execution_window.focus_force()
             self._update_execution_menu_style()
             return
@@ -3917,9 +3913,6 @@ class MainWindow(tk.Tk):
         ):
             self._result_viewer.deiconify()
             self._result_viewer.lift()
-            self._result_viewer.attributes("-topmost", True)
-            self._result_viewer.update_idletasks()
-            self._result_viewer.attributes("-topmost", False)
             self._result_viewer.focus_force()
             self._update_view_results_btn()
             return
