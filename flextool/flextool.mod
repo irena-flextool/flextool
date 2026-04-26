@@ -5423,115 +5423,115 @@ if p_model['solveFirst'] then {
 
   # Sets needed for entity_all_capacity
   # entity - all entities (ordered)
-  printf "entity\n" > "input/set_entity.csv";
+  printf "entity\n" > "solve_data/entity.csv";
   for {e in entity} {
-      printf "%s\n", e >> "input/set_entity.csv";
+      printf "%s\n", e >> "solve_data/entity.csv";
   }
 
   # period - all periods (ordered)
-  if p_model["solveFirst"] == 1 then printf "solve,period\n" > "input/set_period.csv";
+  if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/period.csv";
   for {s in solve_current, d in period} {
-      printf "%s,%s\n", s, d >> "input/set_period.csv";
+      printf "%s,%s\n", s, d >> "solve_data/period.csv";
   }
 
   # entityInvest - entities that can invest
-  printf "entity\n" > "input/set_entityInvest.csv";
+  printf "entity\n" > "solve_data/entityInvest.csv";
   for {e in entityInvest} {
-      printf "%s\n", e >> "input/set_entityInvest.csv";
+      printf "%s\n", e >> "solve_data/entityInvest.csv";
   }
 
   # entityDivest - entities that can divest
-  printf "entity\n" > "input/set_entityDivest.csv";
+  printf "entity\n" > "solve_data/entityDivest.csv";
   for {e in entityDivest} {
-      printf "%s\n", e >> "input/set_entityDivest.csv";
+      printf "%s\n", e >> "solve_data/entityDivest.csv";
   }
 
 
   # Sets for online methods
   # process_online - processes with online variables
-  printf "process\n" > "input/set_process_online.csv";
+  printf "process\n" > "solve_data/process_online.csv";
   for {p in process_online} {
-      printf "%s\n", p >> "input/set_process_online.csv";
+      printf "%s\n", p >> "solve_data/process_online.csv";
   }
 
   # process_online_linear - processes with linear online variables
-  printf "process\n" > "input/set_process_online_linear.csv";
+  printf "process\n" > "solve_data/process_online_linear.csv";
   for {p in process_online_linear} {
-      printf "%s\n", p >> "input/set_process_online_linear.csv";
+      printf "%s\n", p >> "solve_data/process_online_linear.csv";
   }
 
   # process_online_integer - processes with integer online variables
-  printf "process\n" > "input/set_process_online_integer.csv";
+  printf "process\n" > "solve_data/process_online_integer.csv";
   for {p in process_online_integer} {
-      printf "%s\n", p >> "input/set_process_online_integer.csv";
+      printf "%s\n", p >> "solve_data/process_online_integer.csv";
   }
 
   # Sets needed for flow calculations
   # Process topology sets
-  printf "process,source,sink\n" > "input/set_process_source_sink.csv";
+  printf "process,source,sink\n" > "solve_data/process_source_sink.csv";
   for {(p, source, sink) in process_source_sink} {
-      printf "%s,%s,%s\n", p, source, sink >> "input/set_process_source_sink.csv";
+      printf "%s,%s,%s\n", p, source, sink >> "solve_data/process_source_sink.csv";
   }
 
   # process_source_sink_noEff / _eff splits — used by the Python CO2
   # rolling-accumulator writer to classify flows into "no-eff" and
   # "simple-eff" branches (matches the mod's co2_max_total LHS split).
-  printf "process,source,sink\n" > "input/set_process_source_sink_noEff.csv";
+  printf "process,source,sink\n" > "solve_data/process_source_sink_noEff.csv";
   for {(p, source, sink) in process_source_sink_noEff} {
-      printf "%s,%s,%s\n", p, source, sink >> "input/set_process_source_sink_noEff.csv";
+      printf "%s,%s,%s\n", p, source, sink >> "solve_data/process_source_sink_noEff.csv";
   }
-  printf "process,source,sink\n" > "input/set_process_source_sink_eff.csv";
+  printf "process,source,sink\n" > "solve_data/process_source_sink_eff.csv";
   for {(p, source, sink) in process_source_sink_eff} {
-      printf "%s,%s,%s\n", p, source, sink >> "input/set_process_source_sink_eff.csv";
+      printf "%s,%s,%s\n", p, source, sink >> "solve_data/process_source_sink_eff.csv";
   }
 
-  printf "process,method,orig_source,orig_sink,always_source,always_sink\n" > "input/set_process_method_sources_sinks.csv";
+  printf "process,method,orig_source,orig_sink,always_source,always_sink\n" > "solve_data/process_method_sources_sinks.csv";
   for {(p, m, orig_source, orig_sink, always_source, always_sink) in process_method_sources_sinks} {
-      printf "%s,%s,%s,%s,%s,%s\n", p, m, orig_source, orig_sink, always_source, always_sink >> "input/set_process_method_sources_sinks.csv";
+      printf "%s,%s,%s,%s,%s,%s\n", p, m, orig_source, orig_sink, always_source, always_sink >> "solve_data/process_method_sources_sinks.csv";
   }
 
   # Process profile set
-  printf "process\n" > "input/set_process_profile.csv";
+  printf "process\n" > "solve_data/process_profile.csv";
   for {p in process_profile} {
-      printf "%s\n", p >> "input/set_process_profile.csv";
+      printf "%s\n", p >> "solve_data/process_profile.csv";
   }
 
   # Process process__node__profile__profile_method set
-  printf "process,node,profile,profile_method\n" > "input/set_process__node__profile__profile_method.csv";
+  printf "process,node,profile,profile_method\n" > "solve_data/process__node__profile__profile_method.csv";
   for {(p, n, prof, m) in process__node__profile__profile_method} {
-      printf "%s,%s,%s,%s\n", p, n, prof, m >> "input/set_process__node__profile__profile_method.csv";
+      printf "%s,%s,%s,%s\n", p, n, prof, m >> "solve_data/process__node__profile__profile_method.csv";
   }
 
   # Process method sets
-  printf "process,method\n" > "input/set_process_method.csv";
+  printf "process,method\n" > "solve_data/process_method.csv";
   for {(p, m) in process_method} {
-      printf "%s,%s\n", p, m >> "input/set_process_method.csv";
+      printf "%s,%s\n", p, m >> "solve_data/process_method.csv";
   }
 
-  printf "process,method\n" > "input/set_process__ct_method.csv";
+  printf "process,method\n" > "solve_data/process__ct_method.csv";
   for {(p, m) in process__ct_method} {
-      printf "%s,%s\n", p, m >> "input/set_process__ct_method.csv";
+      printf "%s,%s\n", p, m >> "solve_data/process__ct_method.csv";
   }
 
   # Process unit and connection sets
-  printf "process\n" > "input/set_process_unit.csv";
+  printf "process\n" > "solve_data/process_unit.csv";
   for {p in process_unit} {
-      printf "%s\n", p >> "input/set_process_unit.csv";
+      printf "%s\n", p >> "solve_data/process_unit.csv";
   }
-  printf "process\n" > "input/set_process_connection.csv";
+  printf "process\n" > "solve_data/process_connection.csv";
   for {p in process_connection} {
-      printf "%s\n", p >> "input/set_process_connection.csv";
+      printf "%s\n", p >> "solve_data/process_connection.csv";
   }
 
   # Method type sets
-  printf "method\n" > "input/set_method_1var_per_way.csv";
+  printf "method\n" > "solve_data/method_1var_per_way.csv";
   for {m in method_1var_per_way} {
-      printf "%s\n", m >> "input/set_method_1var_per_way.csv";
+      printf "%s\n", m >> "solve_data/method_1var_per_way.csv";
   }
 
-  printf "method\n" > "input/set_method_nvar.csv";
+  printf "method\n" > "solve_data/method_nvar.csv";
   for {m in method_nvar} {
-      printf "%s\n", m >> "input/set_method_nvar.csv";
+      printf "%s\n", m >> "solve_data/method_nvar.csv";
   }
 
   # Node-related sets — the three membership files
@@ -5539,232 +5539,232 @@ if p_model['solveFirst'] then {
   # written from the mod.  read_sets.py derives all three from
   # input/p_node_type.csv directly.
 
-  printf "node\n" > "input/set_nodeSelfDischarge.csv";
+  printf "node\n" > "solve_data/nodeSelfDischarge.csv";
   for {n in nodeSelfDischarge} {
-      printf "%s\n", n >> "input/set_nodeSelfDischarge.csv";
+      printf "%s\n", n >> "solve_data/nodeSelfDischarge.csv";
   }
 
-  printf "node,method\n" > "input/set_node__storage_binding_method.csv";
+  printf "node,method\n" > "solve_data/node__storage_binding_method.csv";
   for {(n, m) in node__storage_binding_method} {
-      printf "%s,%s\n", n, m >> "input/set_node__storage_binding_method.csv";
+      printf "%s,%s\n", n, m >> "solve_data/node__storage_binding_method.csv";
   }
 
-  printf "node,method\n" > "input/set_node__storage_start_end_method.csv";
+  printf "node,method\n" > "solve_data/node__storage_start_end_method.csv";
   for {(n, m) in node__storage_start_end_method} {
-      printf "%s,%s\n", n, m >> "input/set_node__storage_start_end_method.csv";
+      printf "%s,%s\n", n, m >> "solve_data/node__storage_start_end_method.csv";
   }
 
-  printf "node,method\n" > "input/set_node__inflow_method.csv";
+  printf "node,method\n" > "solve_data/node__inflow_method.csv";
   for {(n, m) in node__inflow_method} {
-      printf "%s,%s\n", n, m >> "input/set_node__inflow_method.csv";
+      printf "%s,%s\n", n, m >> "solve_data/node__inflow_method.csv";
   }
 
-  printf "node,method\n" > "input/set_node__storage_nested_fix_method.csv";
+  printf "node,method\n" > "solve_data/node__storage_nested_fix_method.csv";
   for {(n, m) in node__storage_nested_fix_method} {
-      printf "%s,%s\n", n, m >> "input/set_node__storage_nested_fix_method.csv";
+      printf "%s,%s\n", n, m >> "solve_data/node__storage_nested_fix_method.csv";
   }
 
   # Process-related sets
-  printf "process\n" > "input/set_process.csv";
+  printf "process\n" > "solve_data/process.csv";
   for {p in process} {
-      printf "%s\n", p >> "input/set_process.csv";
+      printf "%s\n", p >> "solve_data/process.csv";
   }
 
-  printf "node\n" > "input/set_node.csv";
+  printf "node\n" > "solve_data/node.csv";
   for {n in node} {
-      printf "%s\n", n >> "input/set_node.csv";
+      printf "%s\n", n >> "solve_data/node.csv";
   }
 
-  printf "process\n" > "input/set_process_connection.csv";
+  printf "process\n" > "solve_data/process_connection.csv";
   for {c in process_connection} {
-      printf "%s\n", c >> "input/set_process_connection.csv";
+      printf "%s\n", c >> "solve_data/process_connection.csv";
   }
 
-  printf "process,source\n" > "input/set_process_source.csv";
+  printf "process,source\n" > "solve_data/process_source.csv";
   for {(p, source) in process_source} {
-      printf "%s,%s\n", p, source >> "input/set_process_source.csv";
+      printf "%s,%s\n", p, source >> "solve_data/process_source.csv";
   }
 
-  printf "process,sink\n" > "input/set_process_sink.csv";
+  printf "process,sink\n" > "solve_data/process_sink.csv";
   for {(p, sink) in process_sink} {
-      printf "%s,%s\n", p, sink >> "input/set_process_sink.csv";
+      printf "%s,%s\n", p, sink >> "solve_data/process_sink.csv";
   }
 
-  printf "process,node\n" > "input/set_process_VRE.csv";
+  printf "process,node\n" > "solve_data/process_VRE.csv";
   for {(p, n) in process_sink : p in process_VRE} {
-      printf "%s,%s\n", p, n >> "input/set_process_VRE.csv";
+      printf "%s,%s\n", p, n >> "solve_data/process_VRE.csv";
   }
 
-  printf "process,source,sink,profile,method\n" > "input/set_process__source__sink__profile__profile_method.csv";
+  printf "process,source,sink,profile,method\n" > "solve_data/process__source__sink__profile__profile_method.csv";
   for {(p, source, sink, f, m) in process__source__sink__profile__profile_method} {
-      printf "%s,%s,%s,%s,%s\n", p, source, sink, f, m >> "input/set_process__source__sink__profile__profile_method.csv";
+      printf "%s,%s,%s,%s,%s\n", p, source, sink, f, m >> "solve_data/process__source__sink__profile__profile_method.csv";
   }
 
   # Commodity-related sets
-  printf "commodity,node\n" > "input/set_commodity_node.csv";
+  printf "commodity,node\n" > "solve_data/commodity_node.csv";
   for {(c, n) in commodity_node} {
-      printf "%s,%s\n", c, n >> "input/set_commodity_node.csv";
+      printf "%s,%s\n", c, n >> "solve_data/commodity_node.csv";
   }
 
-  printf "commodity,node\n" > "input/set_commodity_node_co2.csv";
+  printf "commodity,node\n" > "solve_data/commodity_node_co2.csv";
   for {(c, n) in commodity_node_co2} {
-      printf "%s,%s\n", c, n >> "input/set_commodity_node_co2.csv";
+      printf "%s,%s\n", c, n >> "solve_data/commodity_node_co2.csv";
   }
 
-  printf "process,commodity,node\n" > "input/set_process__commodity__node.csv";
+  printf "process,commodity,node\n" > "solve_data/process__commodity__node.csv";
   for {(p, c, n) in process__commodity__node} {
-      printf "%s,%s,%s\n", p, c, n >> "input/set_process__commodity__node.csv";
+      printf "%s,%s,%s\n", p, c, n >> "solve_data/process__commodity__node.csv";
   }
 
-  printf "process,commodity,node\n" > "input/set_process__commodity__node_co2.csv";
+  printf "process,commodity,node\n" > "solve_data/process__commodity__node_co2.csv";
   for {(p, c, n) in process__commodity__node_co2} {
-      printf "%s,%s,%s\n", p, c, n >> "input/set_process__commodity__node_co2.csv";
+      printf "%s,%s,%s\n", p, c, n >> "solve_data/process__commodity__node_co2.csv";
   }
 
   # Group-related sets
-  printf "group\n" > "input/set_group_co2_price.csv";
+  printf "group\n" > "solve_data/group_co2_price.csv";
   for {g in group_co2_price} {
-      printf "%s\n", g >> "input/set_group_co2_price.csv";
+      printf "%s\n", g >> "solve_data/group_co2_price.csv";
   }
 
-  printf "group\n" > "input/set_group_co2_limit.csv";
+  printf "group\n" > "solve_data/group_co2_limit.csv";
   for {g in group_co2_max_period union group_co2_max_total} {
-      printf "%s\n", g >> "input/set_group_co2_limit.csv";
+      printf "%s\n", g >> "solve_data/group_co2_limit.csv";
   }
 
-  printf "group\n" > "input/set_groupInertia.csv";
+  printf "group\n" > "solve_data/groupInertia.csv";
   for {g in groupInertia} {
-      printf "%s\n", g >> "input/set_groupInertia.csv";
+      printf "%s\n", g >> "solve_data/groupInertia.csv";
   }
 
-  printf "group\n" > "input/set_groupNonSync.csv";
+  printf "group\n" > "solve_data/groupNonSync.csv";
   for {g in groupNonSync} {
-      printf "%s\n", g >> "input/set_groupNonSync.csv";
+      printf "%s\n", g >> "solve_data/groupNonSync.csv";
   }
 
-  printf "group\n" > "input/set_groupCapacityMargin.csv";
+  printf "group\n" > "solve_data/groupCapacityMargin.csv";
   for {g in groupCapacityMargin} {
-      printf "%s\n", g >> "input/set_groupCapacityMargin.csv";
+      printf "%s\n", g >> "solve_data/groupCapacityMargin.csv";
   }
 
-  printf "group\n" > "input/set_nodeGroupDispatch.csv";
+  printf "group\n" > "solve_data/nodeGroupDispatch.csv";
   for {g in nodeGroupDispatch} {
-      printf "%s\n", g >> "input/set_nodeGroupDispatch.csv";
+      printf "%s\n", g >> "solve_data/nodeGroupDispatch.csv";
   }
 
-  printf "group\n" > "input/set_nodeGroupIndicators.csv";
+  printf "group\n" > "solve_data/nodeGroupIndicators.csv";
   for {g in nodeGroupIndicators} {
-      printf "%s\n", g >> "input/set_nodeGroupIndicators.csv";
+      printf "%s\n", g >> "solve_data/nodeGroupIndicators.csv";
   }
 
-  printf "group\n" > "input/set_flowGroupIndicators.csv";
+  printf "group\n" > "solve_data/flowGroupIndicators.csv";
   for {g in flowGroupIndicators} {
-      printf "%s\n", g >> "input/set_flowGroupIndicators.csv";
+      printf "%s\n", g >> "solve_data/flowGroupIndicators.csv";
   }
 
-  printf "group,connection\n" > "input/set_nodeGroupDispatch__connection_Not_in_aggregate.csv";
+  printf "group,connection\n" > "solve_data/nodeGroupDispatch__connection_Not_in_aggregate.csv";
   for {(g, c) in nodeGroupDispatch__connection_Not_in_aggregate} {
-      printf "%s,%s\n", g, c >> "input/set_nodeGroupDispatch__connection_Not_in_aggregate.csv";
+      printf "%s,%s\n", g, c >> "solve_data/nodeGroupDispatch__connection_Not_in_aggregate.csv";
   }
 
-  printf "group,process,connection,node\n" > "input/set_nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
+  printf "group,process,connection,node\n" > "solve_data/nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
   for {(g, c, c2, n) in nodeGroupDispatch__process__connection__to_node_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, c2, n >> "input/set_nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
+      printf "%s,%s,%s,%s\n", g, c, c2, n >> "solve_data/nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
   }
 
-  printf "group,process,node,connection\n" > "input/set_nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
+  printf "group,process,node,connection\n" > "solve_data/nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
   for {(g, c, n, c2) in nodeGroupDispatch__process__node__to_connection_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, n, c2 >> "input/set_nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
+      printf "%s,%s,%s,%s\n", g, c, n, c2 >> "solve_data/nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
   }
 
-  printf "group,process,unit,node\n" > "input/set_nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
+  printf "group,process,unit,node\n" > "solve_data/nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
   for {(g, p, p2, n) in nodeGroupDispatch__process__unit__to_node_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, p, p2, n >> "input/set_nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
+      printf "%s,%s,%s,%s\n", g, p, p2, n >> "solve_data/nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
   }
 
-  printf "group,process,node,unit\n" > "input/set_nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
+  printf "group,process,node,unit\n" > "solve_data/nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
   for {(g, p, n, p2) in nodeGroupDispatch__process__node__to_unit_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, p, n, p2 >> "input/set_nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
+      printf "%s,%s,%s,%s\n", g, p, n, p2 >> "solve_data/nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
   }
 
-  printf "group,group_aggregate\n" > "input/set_nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
+  printf "group,group_aggregate\n" > "solve_data/nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
   for {(g, ga) in nodeGroupDispatch__group_aggregate_Unit_to_group} {
-      printf "%s,%s\n", g, ga >> "input/set_nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
+      printf "%s,%s\n", g, ga >> "solve_data/nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
   }
 
-  printf "group,group_aggregate,unit,source,sink\n" > "input/set_nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
+  printf "group,group_aggregate,unit,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
   for {(g, ga, u, source, sink) in nodeGroupDispatch__group_aggregate__process__unit__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "input/set_nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
+      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
   }
 
-  printf "group,group_aggregate\n" > "input/set_nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
+  printf "group,group_aggregate\n" > "solve_data/nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
   for {(g, ga) in nodeGroupDispatch__group_aggregate_Group_to_unit} {
-      printf "%s,%s\n", g, ga >> "input/set_nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
+      printf "%s,%s\n", g, ga >> "solve_data/nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
   }
 
-  printf "group,group_aggregate,unit,source,sink\n" > "input/set_nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
+  printf "group,group_aggregate,unit,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
   for {(g, ga, u, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_unit} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "input/set_nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
+      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
   }
 
-  printf "group,group_aggregate\n" > "input/set_nodeGroupDispatch__group_aggregate_Connection.csv";
+  printf "group,group_aggregate\n" > "solve_data/nodeGroupDispatch__group_aggregate_Connection.csv";
   for {(g, ga) in nodeGroupDispatch__group_aggregate_Connection} {
-      printf "%s,%s\n", g, ga >> "input/set_nodeGroupDispatch__group_aggregate_Connection.csv";
+      printf "%s,%s\n", g, ga >> "solve_data/nodeGroupDispatch__group_aggregate_Connection.csv";
   }
 
-  printf "group,group_aggregate,connection,source,sink\n" > "input/set_nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
+  printf "group,group_aggregate,connection,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
   for {(g, ga, c, source, sink) in nodeGroupDispatch__group_aggregate__process__connection__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "input/set_nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
+      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
   }
 
-  printf "group,group_aggregate,connection,source,sink\n" > "input/set_nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
+  printf "group,group_aggregate,connection,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
   for {(g, ga, c, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_connection} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "input/set_nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
+      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
   }
 
-  printf "group,process\n" > "input/set_group_process.csv";
+  printf "group,process\n" > "solve_data/group_process.csv";
   for {(g, p) in group_process} {
-      printf "%s,%s\n", g, p >> "input/set_group_process.csv";
+      printf "%s,%s\n", g, p >> "solve_data/group_process.csv";
   }
 
-  printf "group,process\n" > "input/set_nodeGroupDispatch__process_fully_inside.csv";
+  printf "group,process\n" > "solve_data/nodeGroupDispatch__process_fully_inside.csv";
   for {(g, p) in nodeGroupDispatch__process_fully_inside} {
-      printf "%s,%s\n", g, p >> "input/set_nodeGroupDispatch__process_fully_inside.csv";
+      printf "%s,%s\n", g, p >> "solve_data/nodeGroupDispatch__process_fully_inside.csv";
   }
 
-  printf "group,node\n" > "input/set_group_node.csv";
+  printf "group,node\n" > "solve_data/group_node.csv";
   for {(g, n) in group_node} {
-      printf "%s,%s\n", g, n >> "input/set_group_node.csv";
+      printf "%s,%s\n", g, n >> "solve_data/group_node.csv";
   }
 
-  printf "group,process,node\n" > "input/set_group_process_node.csv";
+  printf "group,process,node\n" > "solve_data/group_process_node.csv";
   for {(g, p, n) in group_process_node} {
-      printf "%s,%s,%s\n", g, p, n >> "input/set_group_process_node.csv";
+      printf "%s,%s,%s\n", g, p, n >> "solve_data/group_process_node.csv";
   }
 
   # upDown set
-  printf "updown\n" > "input/set_upDown.csv";
+  printf "updown\n" > "solve_data/upDown.csv";
   for {ud in upDown} {
-      printf "%s\n", ud >> "input/set_upDown.csv";
+      printf "%s\n", ud >> "solve_data/upDown.csv";
   }
 
   # Optional output flag
-  printf "flag\n" > "input/set_enable_optional_outputs.csv";
+  printf "flag\n" > "solve_data/enable_optional_outputs.csv";
   for {flag in enable_optional_outputs} {
-      printf "%s\n", flag >> "input/set_enable_optional_outputs.csv";
+      printf "%s\n", flag >> "solve_data/enable_optional_outputs.csv";
   }
 }
 
 # Sets with period and/or time dimensions
 # period_invest - periods where investment can occur
-if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/set_d_realize_dispatch_or_invest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/d_realize_dispatch_or_invest.csv";
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
-    printf "%s,%s\n", s, d >> "solve_data/set_d_realize_dispatch_or_invest.csv";
+    printf "%s,%s\n", s, d >> "solve_data/d_realize_dispatch_or_invest.csv";
 }
 
-if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/set_d_realize_invest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/d_realize_invest.csv";
 for {s in solve_current, d in d_realize_invest} {
-    printf "%s,%s\n", s, d >> "solve_data/set_d_realize_invest.csv";
+    printf "%s,%s\n", s, d >> "solve_data/d_realize_invest.csv";
 }
 
 # Timeline breaks: timesteps where the timeline has a discontinuity.
@@ -5777,21 +5777,21 @@ for {s in solve_current, (d, t) in dt_realize_dispatch: dt_jump[d, t] != 1 && (d
 }
 
 # ed_invest - (entity, period) pairs where investment occurs
-if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/set_ed_invest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/ed_invest.csv";
 for {s in solve_current, (e, d) in ed_invest : d in d_realize_invest} {
-    printf "%s,%s,%s\n", s, e, d >> "solve_data/set_ed_invest.csv";
+    printf "%s,%s,%s\n", s, e, d >> "solve_data/ed_invest.csv";
 }
 
 # ed_divest - (entity, period) pairs where divestment occurs
-if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/set_ed_divest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/ed_divest.csv";
 for {s in solve_current, (e, d) in ed_divest} {
-    printf "%s,%s,%s\n", s, e, d >> "solve_data/set_ed_divest.csv";
+    printf "%s,%s,%s\n", s, e, d >> "solve_data/ed_divest.csv";
 }
 
 # edd_invest - (entity, d_invest, d) triplets showing which investments apply to which periods
-if p_model["solveFirst"] == 1 then printf "solve,entity,d_invest,d\n" > "solve_data/set_edd_invest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,entity,d_invest,d\n" > "solve_data/edd_invest.csv";
 for {s in solve_current, (e, d_invest, d) in edd_invest} {
-    printf "%s,%s,%s,%s\n", s, e, d_invest, d >> "solve_data/set_edd_invest.csv";
+    printf "%s,%s,%s,%s\n", s, e, d_invest, d >> "solve_data/edd_invest.csv";
 }
 
 # Write p_nested_model (solveFirst)
@@ -5801,50 +5801,50 @@ for {s in solve_current, param_name in {"solveFirst"}} {
 }
 
 # d_realized_period - subset of periods
-if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/set_d_realized_period.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/d_realized_period.csv";
 for {s in solve_current, d in d_realized_period} {
-    printf "%s,%s\n", s, d >> "solve_data/set_d_realized_period.csv";
+    printf "%s,%s\n", s, d >> "solve_data/d_realized_period.csv";
 }
 
 # dt_realize_dispatch - (period, time) pairs
-if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "solve_data/set_dt_realize_dispatch.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "solve_data/dt_realize_dispatch.csv";
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "%s,%s,%s\n", s, d, t >> "solve_data/set_dt_realize_dispatch.csv";
+    printf "%s,%s,%s\n", s, d, t >> "solve_data/dt_realize_dispatch.csv";
 }
 
-if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "solve_data/set_dt.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "solve_data/dt.csv";
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "%s,%s,%s\n", s, d, t >> "solve_data/set_dt.csv";
+    printf "%s,%s,%s\n", s, d, t >> "solve_data/dt.csv";
 }
 
-if p_model["solveFirst"] == 1 then printf "solve,period,time,t_previous\n" > "solve_data/set_dtt.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period,time,t_previous\n" > "solve_data/dtt.csv";
 for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch} {
-    printf "%s,%s,%s,%s\n", s, d, t, t_previous >> "solve_data/set_dtt.csv";
+    printf "%s,%s,%s,%s\n", s, d, t, t_previous >> "solve_data/dtt.csv";
 }
 
-if p_model["solveFirst"] == 1 then printf "solve,period,time,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve\n" > "solve_data/set_dtttdt.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period,time,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve\n" > "solve_data/dtttdt.csv";
 for {s in solve_current, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch} {
-    printf "%s,%s,%s,%s,%s,%s,%s\n", s, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve >> "solve_data/set_dtttdt.csv";
+    printf "%s,%s,%s,%s,%s,%s,%s\n", s, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve >> "solve_data/dtttdt.csv";
 }
 
-if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "solve_data/set_period__time_first.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "solve_data/period__time_first.csv";
 for {s in solve_current, (d, t) in period__time_first} {
-    printf "%s,%s,%s\n", s, d, t >> "solve_data/set_period__time_first.csv";
+    printf "%s,%s,%s\n", s, d, t >> "solve_data/period__time_first.csv";
 }
 
-if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/set_period_first_of_solve.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/period_first_of_solve.csv";
 for {s in solve_current, d in period_first_of_solve} {
-    printf "%s,%s\n", s, d >> "solve_data/set_period_first_of_solve.csv";
+    printf "%s,%s\n", s, d >> "solve_data/period_first_of_solve.csv";
 }
 
-if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/set_period_in_use.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/period_in_use.csv";
 for {s in solve_current, d in period_in_use} {
-    printf "%s,%s\n", s, d >> "solve_data/set_period_in_use.csv";
+    printf "%s,%s\n", s, d >> "solve_data/period_in_use.csv";
 }
 
-if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "solve_data/set_dt_fix_storage_timesteps.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "solve_data/dt_fix_storage_timesteps.csv";
 for {s in solve_current, (d, t) in dt_fix_storage_timesteps} {
-    printf "%s,%s,%s\n", s, d, t >> "solve_data/set_dt_fix_storage_timesteps.csv";
+    printf "%s,%s,%s\n", s, d, t >> "solve_data/dt_fix_storage_timesteps.csv";
 }
 
 # Group-entity mapping for investment groups (needed by Python post-processing)

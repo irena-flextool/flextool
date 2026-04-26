@@ -325,12 +325,12 @@ def _load_commodity_co2_content(work_folder: Path) -> dict[str, float]:
 
 
 def _load_commodity_node_co2(work_folder: Path) -> set[tuple[str, str]]:
-    """Return ``{(commodity, node)}`` from ``input/set_commodity_node_co2.csv``.
+    """Return ``{(commodity, node)}`` from ``solve_data/commodity_node_co2.csv``.
 
     These are the (c, n) pairs that contribute to CO2 caps.  Only
     process flows into/out of these nodes are aggregated by the writer.
     """
-    path = work_folder / "input" / "set_commodity_node_co2.csv"
+    path = work_folder / "solve_data" / "commodity_node_co2.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)
@@ -343,13 +343,13 @@ def _load_commodity_node_co2(work_folder: Path) -> set[tuple[str, str]]:
 
 
 def _load_group_node(work_folder: Path) -> dict[str, set[str]]:
-    """Return ``{group: {node, ...}}`` from ``input/set_group_node.csv``.
+    """Return ``{group: {node, ...}}`` from ``solve_data/group_node.csv``.
 
     Missing file → empty dict; callers fall back to "attribute to every
     CO2 group" (conservative over-count when multiple groups share a
     node).
     """
-    path = work_folder / "input" / "set_group_node.csv"
+    path = work_folder / "solve_data" / "group_node.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path)
@@ -367,13 +367,13 @@ def _load_process_source_sink_partition(
     """Return ``(noEff, eff)`` sets of ``(process, source, sink)``.
 
     Both dumps come from phase-1 printfs next to
-    ``set_process_source_sink.csv``.  Absent files → empty sets (older
+    ``process_source_sink.csv``.  Absent files → empty sets (older
     workdirs pre-dating the dump — writer then conservatively
     under-reports emissions for that branch).
     """
     noeff: set[tuple[str, str, str]] = set()
     eff: set[tuple[str, str, str]] = set()
-    ne_path = work_folder / "input" / "set_process_source_sink_noEff.csv"
+    ne_path = work_folder / "solve_data" / "process_source_sink_noEff.csv"
     if ne_path.exists():
         df = pd.read_csv(ne_path)
         if not df.empty and {"process", "source", "sink"}.issubset(df.columns):
@@ -381,7 +381,7 @@ def _load_process_source_sink_partition(
                 (str(r["process"]), str(r["source"]), str(r["sink"]))
                 for _, r in df.iterrows()
             }
-    eff_path = work_folder / "input" / "set_process_source_sink_eff.csv"
+    eff_path = work_folder / "solve_data" / "process_source_sink_eff.csv"
     if eff_path.exists():
         df = pd.read_csv(eff_path)
         if not df.empty and {"process", "source", "sink"}.issubset(df.columns):
@@ -496,12 +496,12 @@ def _load_process_flow_coefficient_wide(
 
 
 def _load_process_unit_set(work_folder: Path) -> set[str]:
-    """Return ``{process}`` from ``input/set_process_unit.csv``.
+    """Return ``{process}`` from ``solve_data/process_unit.csv``.
 
     Matches the mod's ``if p in process_unit then ... else 1`` guard in
     the ``_eff`` branch of the CO2 LHS.
     """
-    path = work_folder / "input" / "set_process_unit.csv"
+    path = work_folder / "solve_data" / "process_unit.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)
@@ -513,12 +513,12 @@ def _load_process_unit_set(work_folder: Path) -> set[str]:
 def _load_process_min_load_eff_set(work_folder: Path) -> set[str]:
     """Return processes using ``min_load_efficiency`` (deferred branch).
 
-    Reads ``input/set_process__ct_method.csv``.  When a process in this
+    Reads ``solve_data/process__ct_method.csv``.  When a process in this
     set appears as a CO2 source in the current model, the writer emits
     a warning and under-reports tonnes for the min-load-section part —
     conservative (LP cap slightly over-enforces).
     """
-    path = work_folder / "input" / "set_process__ct_method.csv"
+    path = work_folder / "solve_data" / "process__ct_method.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)

@@ -91,7 +91,7 @@ def _write_commodity_co2_content(work: Path, content: dict[str, float]) -> None:
 def _write_set_commodity_node_co2(
     work: Path, pairs: list[tuple[str, str]],
 ) -> None:
-    with open(work / "input" / "set_commodity_node_co2.csv", "w", newline="") as f:
+    with open(work / "solve_data" / "commodity_node_co2.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["commodity", "node"])
         for c, n in pairs:
@@ -101,7 +101,7 @@ def _write_set_commodity_node_co2(
 def _write_set_group_node(
     work: Path, pairs: list[tuple[str, str]],
 ) -> None:
-    with open(work / "input" / "set_group_node.csv", "w", newline="") as f:
+    with open(work / "solve_data" / "group_node.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["group", "node"])
         for g, n in pairs:
@@ -115,14 +115,14 @@ def _write_process_source_sink_partition(
     eff: list[tuple[str, str, str]] | None = None,
 ) -> None:
     with open(
-        work / "input" / "set_process_source_sink_noEff.csv", "w", newline="",
+        work / "solve_data" / "process_source_sink_noEff.csv", "w", newline="",
     ) as f:
         w = csv.writer(f)
         w.writerow(["process", "source", "sink"])
         for r in noeff:
             w.writerow(r)
     with open(
-        work / "input" / "set_process_source_sink_eff.csv", "w", newline="",
+        work / "solve_data" / "process_source_sink_eff.csv", "w", newline="",
     ) as f:
         w = csv.writer(f)
         w.writerow(["process", "source", "sink"])
@@ -216,8 +216,8 @@ def _standard_co2_setup(
             (solve, d, t, 1.0) for d, t, _dur in (horizon_pairs or [])
         ]
     _write_rp_cost_weight(work, rp_weights)
-    # Minimal set_process_unit.csv (empty — no process_unit correction).
-    with open(work / "input" / "set_process_unit.csv", "w", newline="") as f:
+    # Minimal process_unit.csv (empty — no process_unit correction).
+    with open(work / "solve_data" / "process_unit.csv", "w", newline="") as f:
         csv.writer(f).writerow(["process"])
 
 
@@ -303,7 +303,7 @@ def test_load_entity_unitsize_round_trip(tmp_path: Path) -> None:
 
 def test_load_process_unit_set_round_trip(tmp_path: Path) -> None:
     work = _make_workfolder(tmp_path)
-    with open(work / "input" / "set_process_unit.csv", "w", newline="") as f:
+    with open(work / "solve_data" / "process_unit.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["process"])
         w.writerow(["coal_plant"])

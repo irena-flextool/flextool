@@ -373,39 +373,11 @@ def _build_column_specs() -> dict[str, list[tuple[int, str]]]:
     ):
         specs[name] = [(0, "process"), (1, "node")]
 
-    # set_process_source_sink.csv has process, source, sink
-    specs["set_process_source_sink.csv"] = [
-        (0, "process"), (1, "node"), (2, "node"),
-    ]
-    specs["set_process_source_sink_eff.csv"] = [
-        (0, "process"), (1, "node"), (2, "node"),
-    ]
-    specs["set_process_source_sink_noEff.csv"] = [
-        (0, "process"), (1, "node"), (2, "node"),
-    ]
-
-    # set_process_source.csv / set_process_sink.csv (per input_writer specs)
-    specs["set_process_source.csv"] = [(0, "process"), (1, "node")]
-    specs["set_process_sink.csv"] = [(0, "process"), (1, "node")]
-
-    # set_process_unit.csv / set_process_connection.csv
-    specs["set_process_unit.csv"] = [(0, "unit")]
-    specs["set_process_connection.csv"] = [(0, "connection")]
-    specs["set_process.csv"] = [(0, "process")]
-
-    # Process-method (method, orig_source, orig_sink, always_source,
-    # always_sink) - col 0 is process, others are nodes (optional; may
-    # be blank for 2-dim methods).
-    specs["set_process_method.csv"] = [(0, "process")]
-    specs["set_process_method_sources_sinks.csv"] = [(0, "process")]
-    specs["set_process__ct_method.csv"] = [(0, "process")]
-    specs["set_process_online.csv"] = [(0, "process")]
-    specs["set_process_online_integer.csv"] = [(0, "process")]
-    specs["set_process_online_linear.csv"] = [(0, "process")]
-    specs["set_process_profile.csv"] = [(0, "process")]
-    specs["set_process_VRE.csv"] = [(0, "process")]
-    specs["set_process__commodity__node.csv"] = [(0, "process"), (2, "node")]
-    specs["set_process__commodity__node_co2.csv"] = [(0, "process"), (2, "node")]
+    # process_method.csv (user-input, derived by input_writer): col 0 is
+    # process.  Other process-keyed sets (process_online*, process_profile,
+    # process_VRE, process__commodity__node*) are now written to
+    # solve_data/ by flextool.mod and never seen by the region filter.
+    specs["process_method.csv"] = [(0, "process")]
 
     # Group-related: col 0 group, col 1 node/process.
     specs["group__node.csv"] = [(1, "node")]  # keep group; filter node
@@ -588,17 +560,15 @@ def _virtual_rows(
 
     Only a small number of files need virtual entries:
 
-    * ``node.csv``                    — add virtual nodes
-    * ``entity.csv``                  — add virtual nodes + virtual connections
-    * ``process.csv``                 — add virtual connections
-    * ``process_connection.csv``      — add virtual connections
-    * ``set_process.csv``             — mirror of ``process.csv``
-    * ``set_process_connection.csv``  — mirror of ``process_connection.csv``
-    * ``p_node_type.csv``             — declare virtual nodes as commodity
-    * ``process__source.csv``         — for each half-flow, (conn, source_node)
-    * ``process__sink.csv``           — for each half-flow, (conn, sink_node)
-    * ``set_process_source_sink.csv`` — (conn, source, sink)
-    * ``set_process_source_sink_noEff.csv`` — default no-loss transfer
+    * ``node.csv``                — add virtual nodes
+    * ``entity.csv``              — add virtual nodes + virtual connections
+    * ``process.csv``             — add virtual connections
+    * ``process_connection.csv``  — add virtual connections
+    * ``p_node_type.csv``         — declare virtual nodes as commodity
+    * ``process__source.csv``     — for each half-flow, (conn, source_node)
+    * ``process__sink.csv``       — for each half-flow, (conn, sink_node)
+    * ``process__ct_method.csv``  — virtual connection is no-loss
+    * ``process_method.csv``      — virtual connection enters process_method set
 
     We keep it simple: virtual connections inherit the existing
     ``transfer_method = no_losses_no_variable_cost`` (method_2way_1var_off)
@@ -630,13 +600,7 @@ def _virtual_rows(
     elif filename == "process_connection.csv":
         for hf in half_flows:
             rows.append([hf.virtual_connection])
-    elif filename == "set_process.csv":
-        for hf in half_flows:
-            rows.append([hf.virtual_connection])
-    elif filename == "set_process_connection.csv":
-        for hf in half_flows:
-            rows.append([hf.virtual_connection])
-    elif filename == "set_process_unit.csv":
+    elif filename == "process_unit.csv":
         pass  # virtual entities are connections, not units
     elif filename == "p_node_type.csv":
         # node,p_node_type
@@ -650,31 +614,9 @@ def _virtual_rows(
         for hf in half_flows:
             _, snk = _src_sink(hf)
             rows.append([hf.virtual_connection, snk])
-    elif filename == "set_process_source_sink.csv":
-        for hf in half_flows:
-            src, snk = _src_sink(hf)
-            rows.append([hf.virtual_connection, src, snk])
-    elif filename == "set_process_source_sink_noEff.csv":
-        for hf in half_flows:
-            src, snk = _src_sink(hf)
-            rows.append([hf.virtual_connection, src, snk])
-    elif filename == "set_process_source.csv":
-        for hf in half_flows:
-            src, _ = _src_sink(hf)
-            rows.append([hf.virtual_connection, src])
-    elif filename == "set_process_sink.csv":
-        for hf in half_flows:
-            _, snk = _src_sink(hf)
-            rows.append([hf.virtual_connection, snk])
     elif filename == "process__ct_method.csv":
         for hf in half_flows:
             rows.append([hf.virtual_connection, "no_losses_no_variable_cost"])
-    elif filename == "set_process__ct_method.csv":
-        for hf in half_flows:
-            rows.append([hf.virtual_connection, "no_losses_no_variable_cost"])
-    elif filename == "set_process_method.csv":
-        for hf in half_flows:
-            rows.append([hf.virtual_connection, "method_2way_1var_off"])
     elif filename == "process_method.csv":
         # flextool.mod reads ``input/process_method.csv`` directly into
         # the ``process_method`` set; without this row the virtual

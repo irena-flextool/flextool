@@ -79,13 +79,13 @@ def _write_unitsize(work: Path, unitsize: dict[str, float]) -> None:
 
 
 def _write_entity_set(work: Path, entities: list[str]) -> None:
-    (work / "input" / "set_entity.csv").write_text(
+    (work / "solve_data" / "entity.csv").write_text(
         "entity\n" + "\n".join(entities) + "\n"
     )
 
 
 def _write_entity_divest_set(work: Path, entities: list[str]) -> None:
-    (work / "input" / "set_entityDivest.csv").write_text(
+    (work / "solve_data" / "entityDivest.csv").write_text(
         "entity\n" + "\n".join(entities) + "\n"
     )
 
@@ -254,7 +254,7 @@ def test_p_entity_period_existing_capacity_first_solve(tmp_path: Path) -> None:
     )
     (work / "solve_data" / "period_first.csv").write_text("period\np2020\n")
     # ed_invest covers (battery, p2020) only — wind_plant has no invest.
-    (work / "solve_data" / "set_ed_invest.csv").write_text(
+    (work / "solve_data" / "ed_invest.csv").write_text(
         "solve,entity,period\ns1,battery,p2020\n"
     )
     h = _fake_highs(

@@ -192,8 +192,8 @@ def _load_node_state(work_folder: Path) -> set[str]:
 
 
 def _load_entity(work_folder: Path) -> set[str]:
-    """Return the full ``entity`` set from ``input/set_entity.csv``."""
-    path = work_folder / "input" / "set_entity.csv"
+    """Return the full ``entity`` set from ``solve_data/entity.csv``."""
+    path = work_folder / "solve_data" / "entity.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)
@@ -205,11 +205,11 @@ def _load_entity(work_folder: Path) -> set[str]:
 def _load_entity_divest(work_folder: Path) -> set[str]:
     """Return ``entityDivest`` — entities allowed to divest.
 
-    Sourced from ``input/set_entityDivest.csv`` (phase 1 dump);
+    Sourced from ``solve_data/entityDivest.csv`` (phase 1 dump);
     matches the ``setof {(e,m) in entity__invest_method : m not in
     divest_method_not_allowed} (e)`` derivation in the model.
     """
-    path = work_folder / "input" / "set_entityDivest.csv"
+    path = work_folder / "solve_data" / "entityDivest.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)
@@ -446,7 +446,7 @@ def write_p_entity_period_existing_capacity(
                  + ((e,d) in ed_invest & d in d_realize_invest → v_invest[e,d] * unitsize[e])
 
     The ``ed_history_realized`` set is read from
-    ``solve_data/set_ed_invest.csv`` (entity, period) for the
+    ``solve_data/ed_invest.csv`` (entity, period) for the
     "(e,d) in ed_invest" predicate, plus the prior history file's keys.
     """
     out_path = work_folder / "solve_data" / "p_entity_period_existing_capacity.csv"
@@ -497,7 +497,7 @@ def write_p_entity_period_existing_capacity(
     # ed_invest set (entity, period) — phase-1 dump.  CSV layout is
     # ``solve, entity, period`` (3 columns); we drop the solve column.
     ed_invest: set[tuple[str, str]] = set()
-    ei_path = work_folder / "solve_data" / "set_ed_invest.csv"
+    ei_path = work_folder / "solve_data" / "ed_invest.csv"
     if ei_path.exists():
         ei_df = pd.read_csv(ei_path)
         if not ei_df.empty and {"entity", "period"}.issubset(ei_df.columns):
@@ -798,7 +798,7 @@ def _load_edd_invest(
     work_folder: Path, roll: str,
 ) -> list[tuple[str, str, str]]:
     """Return ``[(entity, d_invest, d), ...]`` for this roll."""
-    path = work_folder / "solve_data" / "set_edd_invest.csv"
+    path = work_folder / "solve_data" / "edd_invest.csv"
     if not path.exists():
         return []
     df = pd.read_csv(path, dtype=str)
@@ -846,7 +846,7 @@ def _load_period_capacity(work_folder: Path) -> set[str]:
 def _load_drdi(work_folder: Path, roll: str) -> list[str]:
     """Periods in this roll's ``d_realize_dispatch_or_invest`` set, in
     file order."""
-    path = work_folder / "solve_data" / "set_d_realize_dispatch_or_invest.csv"
+    path = work_folder / "solve_data" / "d_realize_dispatch_or_invest.csv"
     if not path.exists():
         return []
     df = pd.read_csv(path, dtype=str)
@@ -996,8 +996,8 @@ def _write_capacity_per_period(
 
     unitsize = _load_unitsize_map(work_folder)
     existing = _load_p_entity_all_existing(work_folder, roll)
-    pd_invest = _load_pd_map(work_folder, "set_ed_invest.csv", roll)
-    pd_divest = _load_pd_map(work_folder, "set_ed_divest.csv", roll)
+    pd_invest = _load_pd_map(work_folder, "ed_invest.csv", roll)
+    pd_divest = _load_pd_map(work_folder, "ed_divest.csv", roll)
     edd_invest = _load_edd_invest(work_folder, roll)
     years_map = _load_years_map(work_folder, roll)
 
@@ -1112,7 +1112,7 @@ def write_entity_all_capacity(
     unitsize = _load_unitsize_map(work_folder)
     existing = _load_p_entity_all_existing(work_folder, roll)
     edd_invest = _load_edd_invest(work_folder, roll)
-    ed_divest_set = _load_pd_map(work_folder, "set_ed_divest.csv", roll)
+    ed_divest_set = _load_pd_map(work_folder, "ed_divest.csv", roll)
     years_map = _load_years_map(work_folder, roll)
     drdi = _load_drdi(work_folder, roll)
 
