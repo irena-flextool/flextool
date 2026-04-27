@@ -203,12 +203,14 @@ class ExecutionWindow(tk.Toplevel):
         self._min_free_spin.bind("<FocusOut>", lambda e: self._on_min_free_changed())
 
         _min_free_tip = (
-            "Floor for system free memory. When the watchdog detects free\n"
-            "RAM dropping below this threshold, it kills whichever running\n"
-            "job is most over its memory budget.\n"
+            "Floor for system free memory. The watchdog only acts when\n"
+            "BOTH this floor is breached AND the swap allowance is\n"
+            "exhausted. As long as free RAM stays above this threshold,\n"
+            "no job is killed.\n"
             "\n"
-            "This prevents FlexTool from triggering a system-wide OOM that\n"
-            "would also take down other applications (browser, editor, etc.)."
+            "Together with the swap allowance, this keeps FlexTool from\n"
+            "triggering a system-wide OOM that would take down other\n"
+            "applications (browser, editor, etc.)."
         )
         attach_tooltip(min_free_label, _min_free_tip)
         attach_tooltip(self._min_free_spin, _min_free_tip)
@@ -233,15 +235,20 @@ class ExecutionWindow(tk.Toplevel):
         self._swap_allow_spin.bind("<FocusOut>", lambda e: self._on_swap_allow_changed())
 
         _swap_tip = (
-            "How much swap usage to tolerate, measured as growth since\n"
-            "FlexTool started (pre-existing system swap is ignored).\n"
+            "How much swap growth to tolerate while free RAM is below\n"
+            "the reserve. Measured as growth since FlexTool started\n"
+            "(pre-existing system swap is ignored).\n"
             "\n"
-            "0 = forbid swap entirely. Allowing swap (>0) lets large models\n"
-            "complete when they wouldn't otherwise fit, but they will run\n"
-            "much slower because pages move between RAM and disk.\n"
+            "Plenty of free RAM ⇒ swap growth is harmless and never\n"
+            "triggers a kill. Only when BOTH free RAM dips below the\n"
+            "reserve AND swap growth has reached this allowance does\n"
+            "the watchdog kill the most-over-budget running job.\n"
             "\n"
-            "When swap growth exceeds this allowance, the most-over-budget\n"
-            "running job is killed."
+            "0 = no swap headroom: kill as soon as free RAM dips\n"
+            "below the reserve. Allowing swap (>0) gives the system\n"
+            "room to absorb pressure while large models complete, but\n"
+            "they will run much slower because pages move between\n"
+            "RAM and disk."
         )
         attach_tooltip(swap_label, _swap_tip)
         attach_tooltip(self._swap_allow_spin, _swap_tip)

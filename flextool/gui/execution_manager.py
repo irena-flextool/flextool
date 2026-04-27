@@ -122,18 +122,21 @@ class MemoryWatchdog:
             except Exception:
                 continue
 
+            # Both thresholds are safety nets, not independent triggers.
+            # We only kill when BOTH are exhausted: the system is short
+            # on free RAM AND swap growth has reached the allowance.
+            # Plenty of free RAM ⇒ never kill, regardless of swap growth
+            # (Linux's kswapd may proactively swap inactive pages even
+            # when RAM is plentiful, which is harmless).
             reason = ""
             if vm.available < reserve_bytes:
-                reason = (
-                    f"global memory pressure: {vm.available / 1024**3:.1f} GB free, "
-                    f"reserve is {limits.system_reserve_gb:.1f} GB"
-                )
-            else:
                 swap_growth = max(0, sm.used - self._baseline_swap_used)
                 if swap_growth > swap_allow_bytes:
                     reason = (
-                        f"global swap pressure: swap grew {swap_growth / 1024**3:.1f} GB "
-                        f"since FlexTool started > allowance {limits.swap_allowance_gb:.1f} GB"
+                        f"system out of memory: {vm.available / 1024**3:.1f} GB free "
+                        f"(reserve {limits.system_reserve_gb:.1f} GB) and swap grew "
+                        f"{swap_growth / 1024**3:.1f} GB since FlexTool started "
+                        f"> allowance {limits.swap_allowance_gb:.1f} GB"
                     )
 
             if not reason:
