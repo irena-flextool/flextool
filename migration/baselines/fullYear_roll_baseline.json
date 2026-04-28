@@ -1,0 +1,11 @@
+{
+  "name": "flextool",
+  "objsense": "MIN",
+  "n_rows": 41,
+  "n_cols": 32,
+  "n_coefficients": 92,
+  "n_rhs": 24,
+  "n_ranges": 0,
+  "n_bounds": 16,
+  "hash": "9f1057dcbafb4d7f8ff869583377f1fd8482cde5737857f22fb935159a45df40"
+}
