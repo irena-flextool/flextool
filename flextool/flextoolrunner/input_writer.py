@@ -1903,6 +1903,30 @@ def write_input(
         union_sets.write_group_entity(input_dir, solve_data_dir)
         union_sets.write_process_delayed__duration(input_dir, solve_data_dir)
         entity_total_caps.write_entity_total_caps(input_dir, solve_data_dir)
+        # L0 Batch 4: bulk simple/method-driven sets — process_*_to_*
+        # family, profile-method joins, reserve-method partitions,
+        # structural filters, and the remaining trivial setof projections.
+        # All upstream sources live in input/ so these run at write_input
+        # time alongside the earlier batches.
+        from flextool.flextoolrunner.preprocessing import (
+            process_method_sets,
+            reserve_method_partitions,
+            structural_filters,
+        )
+        process_method_sets.write_process_method_projections(input_dir, solve_data_dir)
+        process_method_sets.write_process_VRE(input_dir, solve_data_dir)
+        process_method_sets.write_process_arc_method_joins(input_dir, solve_data_dir)
+        process_method_sets.write_process_profile_method_joins(input_dir, solve_data_dir)
+        reserve_method_partitions.write_reserve_partitions(input_dir, solve_data_dir)
+        structural_filters.write_connection_param(input_dir, solve_data_dir)
+        structural_filters.write_nodegroup_dispatch_node(input_dir, solve_data_dir)
+        structural_filters.write_commodity_node_co2(input_dir, solve_data_dir)
+        structural_filters.write_process__commodity__node(input_dir, solve_data_dir)
+        structural_filters.write_process_coeff_zero_sets(input_dir, solve_data_dir)
+        simple_projections.write_def_optional_yes(input_dir, solve_data_dir)
+        simple_projections.write_process_delayed(input_dir, solve_data_dir)
+        simple_projections.write_process_side(solve_data_dir)
+        simple_projections.write_simple_setof_projections(input_dir, solve_data_dir)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}
