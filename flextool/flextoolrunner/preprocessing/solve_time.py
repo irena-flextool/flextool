@@ -6,17 +6,20 @@ Called from ``orchestration.run_model``'s solve loop, after
 
 Two responsibilities:
 
-1. Refresh write_input-scope preprocessing outputs that mod's
-   ``if p_model['solveFirst']`` printfs overwrite (they only run on the
-   first solve, so subsequent solves would see corrupted CSVs without
-   this re-write). The cost is small — these functions read input/
-   files and project columns; sub-second on any realistic scenario.
+1. Refresh ALL Python-driven CSVs in ``solve_data/`` whose contents
+   mod's ``if p_model['solveFirst']`` printf blocks may have overwritten
+   on a previous solve. Refreshes are pure functions of the (immutable
+   across solves) ``input/`` CSVs, so they're idempotent and safe to
+   re-run every solve. Without this every multi-solve / rolling
+   scenario would read stale or wrong-schema CSVs after solve 1.
 
 2. Compute and write the per-solve-specific sets (``per_solve_sets.py``)
    whose inputs come from per-solve CSVs.
 
-This is the single hook the migration relies on for solve-loop
-correctness; all per-set families dispatch from here.
+Note: ``commodity_ladder_sets`` and ``entity_total_caps`` aren't
+refreshed here — they need the DB (closed by the time we get here)
+and their outputs aren't overwritten by any mod printf. Their
+write_input-time pass is sufficient.
 """
 from __future__ import annotations
 
@@ -28,28 +31,69 @@ from flextool.flextoolrunner.runner_state import RunnerState
 def run(state: RunnerState, solve_name: str) -> None:
     """Execute per-solve preprocessing for ``solve_name``.
 
-    The function is idempotent: calling it twice with the same
-    ``solve_name`` produces the same outputs.
+    Idempotent: calling twice with the same ``solve_name`` produces
+    the same outputs.
     """
     wf = state.paths.work_folder
     input_dir = wf / "input"
     solve_data_dir = wf / "solve_data"
 
-    # Per-solve-only sets: inputs in solve_data/, written above by
-    # orchestration / solve_writers / blocks before this hook.
-    from flextool.flextoolrunner.preprocessing import per_solve_sets
-    per_solve_sets.write_per_solve_sets(solve_data_dir)
-
-    # Re-run write_input-scope preprocessing whose output CSV is
-    # overwritten by mod's `if p_model['solveFirst']` printfs (which
-    # fire after MPS gen on solve 1). Without this refresh, multi-solve
-    # scenarios would read the post-printf state of these files on
-    # solve 2 and find the wrong header columns.
-    #
-    # Safe to call any number of times — each function is a pure
-    # function of input/ CSVs, which don't change between solves.
+    # Refresh write_input-scope outputs that don't depend on the DB.
+    # All input/ CSVs are immutable across solves, so re-running these
+    # is pure recomputation. The output CSVs may have been overwritten
+    # by mod's printf blocks on a previous solve.
     from flextool.flextoolrunner.preprocessing import (
+        period_param_sets,
+        invest_method_sets,
+        co2_method_sets,
+        simple_projections,
+        node_type_sets,
         method_with_fallback_sets,
+        nonsync_sets,
+        union_sets,
+        process_method_sets,
+        reserve_method_partitions,
+        structural_filters,
+        dc_angle_bounds,
+        per_solve_sets,
     )
+    period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
+    invest_method_sets.write_invest_method_sets(input_dir, solve_data_dir)
+    co2_method_sets.write_co2_method_sets(input_dir, solve_data_dir)
+    simple_projections.write_optional_yes(input_dir, solve_data_dir)
+    simple_projections.write_reserve_upDown_group(input_dir, solve_data_dir)
+    simple_projections.write_group_loss_share(input_dir, solve_data_dir)
+    node_type_sets.write_node_type_sets(input_dir, solve_data_dir)
+    method_with_fallback_sets.write_entity_lifetime_method(input_dir, solve_data_dir)
+    method_with_fallback_sets.write_process_ct_method(input_dir, solve_data_dir)
+    method_with_fallback_sets.write_process_startup_method(input_dir, solve_data_dir)
     method_with_fallback_sets.write_node_inflow_method(input_dir, solve_data_dir)
     method_with_fallback_sets.write_node_storage_binding_method(input_dir, solve_data_dir)
+    nonsync_sets.write_process_group_inside_group_nonsync(input_dir, solve_data_dir)
+    nonsync_sets.write_process__sink_nonSync(input_dir, solve_data_dir)
+    union_sets.write_group_entity(input_dir, solve_data_dir)
+    union_sets.write_process_delayed__duration(input_dir, solve_data_dir)
+    process_method_sets.write_process_method_projections(input_dir, solve_data_dir)
+    process_method_sets.write_process_VRE(input_dir, solve_data_dir)
+    process_method_sets.write_process_arc_method_joins(input_dir, solve_data_dir)
+    process_method_sets.write_process_profile_method_joins(input_dir, solve_data_dir)
+    reserve_method_partitions.write_reserve_partitions(input_dir, solve_data_dir)
+    structural_filters.write_connection_param(input_dir, solve_data_dir)
+    structural_filters.write_nodegroup_dispatch_node(input_dir, solve_data_dir)
+    structural_filters.write_commodity_node_co2(input_dir, solve_data_dir)
+    structural_filters.write_process__commodity__node(input_dir, solve_data_dir)
+    structural_filters.write_process_coeff_zero_sets(input_dir, solve_data_dir)
+    simple_projections.write_def_optional_yes(input_dir, solve_data_dir)
+    simple_projections.write_process_delayed(input_dir, solve_data_dir)
+    simple_projections.write_process_side(solve_data_dir)
+    simple_projections.write_simple_setof_projections(input_dir, solve_data_dir)
+    simple_projections.write_period_solve(solve_data_dir)
+    simple_projections.write_time_set(input_dir, solve_data_dir)
+    simple_projections.write_enable_optional_outputs(solve_data_dir)
+    simple_projections.write_node_state_subsets(solve_data_dir)
+    simple_projections.write_commodity_tier_sets(input_dir, solve_data_dir)
+    dc_angle_bounds.write_dc_angle_bounds(input_dir, solve_data_dir)
+
+    # Per-solve-only sets: inputs in solve_data/ written above by
+    # orchestration / solve_writers / blocks before this hook fires.
+    per_solve_sets.write_per_solve_sets(solve_data_dir)
