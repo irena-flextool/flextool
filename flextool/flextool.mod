@@ -28,7 +28,7 @@ set period__time_last within period_time;
 set solve_period_timeset '(solve, d, tb) - All solve, period, timeset combinations in the model instance' dimen 3;
 set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' dimen 2;  # Migrated to Python (preprocessing/simple_projections.py).
 set period_capacity;  # Periods for which capacities have been already been output
-set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
+set period_solve 'picking up periods from solve_period';  # Migrated to Python (preprocessing/simple_projections.py).
 set solve_current 'current solve name' dimen 1;
 set period_from_model dimen 1;
 set period_from_period_time := setof {(d, t) in period_time} (d);
@@ -42,7 +42,7 @@ set branch := setof{(d,b) in period__branch}(b);
 set period__year dimen 2;
 set year 'y - Years for discount calculations' := setof{(d, y) in period__year}(y);
 set timeline__timestep__duration dimen 3;
-set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline__timestep__duration} (t);
+set time 't - Time steps in the current timelines';  # Migrated to Python (preprocessing/simple_projections.py).
 set timeset__timeline dimen 2;
 set timeline;  # Migrated to Python (preprocessing/simple_projections.py).
 set period__timeline := {d in period, tl in timeline : sum{(s, d, tb) in solve_period_timeset : s in solve_current && (tb, tl) in timeset__timeline} 1};
@@ -106,7 +106,7 @@ set def_optional_outputs dimen 2;
 set optional_outputs dimen 2;
 set optional_yes;  # Migrated to Python (preprocessing/simple_projections.py); loaded via table data IN below.
 set def_optional_yes;  # Migrated to Python (preprocessing/simple_projections.py).
-set enable_optional_outputs := optional_yes union def_optional_yes;
+set enable_optional_outputs;  # Migrated to Python (preprocessing/simple_projections.py).
 
 set reserve__upDown__group__method dimen 4;
 set reserve__upDown__group dimen 3;  # Migrated to Python (preprocessing/simple_projections.py); loaded via table data IN below.
@@ -221,7 +221,7 @@ set rp_block_first 'first timestep of each RP block (period, step)' dimen 2;
 set rp_block_last 'last timestep of each RP block (period, step)' dimen 2;
 set rp_base_period := setof{(b, r) in rp_base__rep}(b);
 set rp_rep_period := setof{(b, r) in rp_base__rep}(r);
-set nodeState_rp := {n in nodeState : (n, 'bind_using_blended_weights') in node__storage_binding_method};
+set nodeState_rp;  # Migrated to Python (preprocessing/simple_projections.py::write_node_state_subsets).
 
 # Intraperiod-blocks sets (bind_intraperiod_blocks storage binding method).
 # Block = maximal contiguous run of active timesteps in the timeline. The Python
@@ -231,7 +231,7 @@ set nodeState_rp := {n in nodeState : (n, 'bind_using_blended_weights') in node_
 set period_block_time 'active timestep tagged with its block (period, block_first, step)' dimen 3;
 set period_block_succ 'cyclic block successor within a period (period, block_first, block_first_next)' dimen 3;
 set period_block := setof {(d, b, t) in period_block_time} (d, b);
-set nodeStateBlock := {n in nodeState : (n, 'bind_intraperiod_blocks') in node__storage_binding_method};
+set nodeStateBlock;  # Migrated to Python (preprocessing/simple_projections.py::write_node_state_subsets).
 
 # Temporal-resolution block abstraction (Agents 1.1/1.2): per-entity resolution
 # classes.  A node's balance equation is emitted at the node's block; a
@@ -345,8 +345,8 @@ set commodity__tier_cum dimen 2;
 # a "duplicate tuple" error.
 set commodity__tier__period_ann dimen 3;
 set commodity__tier_ann dimen 2;  # Migrated to Python (preprocessing/simple_projections.py::write_simple_setof_projections).
-set commodity__tier := commodity__tier_cum union commodity__tier_ann;
-set tier := setof {(c, i) in commodity__tier} (i);
+set commodity__tier dimen 2;  # Migrated to Python (preprocessing/simple_projections.py::write_commodity_tier_sets).
+set tier;                     # Migrated to Python (preprocessing/simple_projections.py::write_commodity_tier_sets).
 
 set dt dimen 2 within period_time;
 param dt_jump {(d, t) in dt};
@@ -956,6 +956,14 @@ table data IN 'CSV' 'solve_data/timeline_steps.csv' : timeline_steps <- [timelin
 # L0 batch 5 — node-method fallbacks (declarations precede this block).
 table data IN 'CSV' 'solve_data/node__inflow_method.csv' : node__inflow_method <- [node, inflow_method];
 table data IN 'CSV' 'solve_data/node__storage_binding_method.csv' : node__storage_binding_method <- [node, storage_binding_method];
+# L0 batch 6 — final write_input-scope sets.
+table data IN 'CSV' 'solve_data/period_solve.csv' : period_solve <- [period];
+table data IN 'CSV' 'solve_data/time.csv' : time <- [time];
+table data IN 'CSV' 'solve_data/enable_optional_outputs.csv' : enable_optional_outputs <- [output];
+table data IN 'CSV' 'solve_data/nodeState_rp.csv' : nodeState_rp <- [node];
+table data IN 'CSV' 'solve_data/nodeStateBlock.csv' : nodeStateBlock <- [node];
+table data IN 'CSV' 'solve_data/commodity__tier.csv' : commodity__tier <- [commodity, tier];
+table data IN 'CSV' 'solve_data/tier.csv' : tier <- [tier];
 
 #check
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};

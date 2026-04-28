@@ -1930,6 +1930,13 @@ def write_input(
         simple_projections.write_process_delayed(input_dir, solve_data_dir)
         simple_projections.write_process_side(solve_data_dir)
         simple_projections.write_simple_setof_projections(input_dir, solve_data_dir)
+        # L0 batch 6: late projections that depend on already-Python-driven
+        # solve_data CSVs (must run AFTER the calls above).
+        simple_projections.write_period_solve(solve_data_dir)
+        simple_projections.write_time_set(input_dir, solve_data_dir)
+        simple_projections.write_enable_optional_outputs(solve_data_dir)
+        simple_projections.write_node_state_subsets(solve_data_dir)
+        simple_projections.write_commodity_tier_sets(input_dir, solve_data_dir)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}

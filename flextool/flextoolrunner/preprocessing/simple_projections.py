@@ -107,6 +107,99 @@ def write_process_side(solve_data_dir: Path) -> None:
     )
 
 
+def write_period_solve(solve_data_dir: Path) -> None:
+    """flextool.mod:31 — period_solve = setof d from solve_period (Python).
+
+    Reads solve_data/solve_period.csv (already written by
+    write_simple_setof_projections in this same module) and projects
+    the period column.
+    """
+    rows = _read_csv(solve_data_dir / "solve_period.csv")
+    seen: dict[str, None] = {}
+    for r in rows:
+        if len(r) >= 2 and r[1]:
+            seen.setdefault(r[1], None)
+    (solve_data_dir / "period_solve.csv").write_text(
+        "period\n" + "".join(p + "\n" for p in seen.keys())
+    )
+
+
+def write_time_set(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod:45 — time = setof t from timeline__timestep__duration."""
+    rows = _read_csv(input_dir / "timeline.csv")
+    seen: dict[str, None] = {}
+    for r in rows:
+        if len(r) >= 2 and r[1]:
+            seen.setdefault(r[1], None)
+    (solve_data_dir / "time.csv").write_text(
+        "time\n" + "".join(t + "\n" for t in seen.keys())
+    )
+
+
+def write_enable_optional_outputs(solve_data_dir: Path) -> None:
+    """flextool.mod:109 — optional_yes ∪ def_optional_yes."""
+    a = _read_csv(solve_data_dir / "optional_yes.csv")
+    b = _read_csv(solve_data_dir / "def_optional_yes.csv")
+    seen: dict[str, None] = {}
+    for r in a + b:
+        if r and r[0]:
+            seen.setdefault(r[0], None)
+    (solve_data_dir / "enable_optional_outputs.csv").write_text(
+        "output\n" + "".join(o + "\n" for o in seen.keys())
+    )
+
+
+def write_node_state_subsets(solve_data_dir: Path) -> None:
+    """flextool.mod:224, 234 — nodeState_rp / nodeStateBlock.
+
+    Both filter nodeState by a specific binding method:
+      nodeState_rp:    bind_using_blended_weights
+      nodeStateBlock:  bind_intraperiod_blocks
+    """
+    state = _read_csv(solve_data_dir / "nodeState.csv")
+    binding = _read_csv(solve_data_dir / "node__storage_binding_method.csv")
+    binding_pairs = frozenset(
+        (r[0], r[1]) for r in binding if len(r) >= 2 and r[0] and r[1]
+    )
+    state_nodes = [r[0] for r in state if r and r[0]]
+
+    rp = [n for n in state_nodes if (n, "bind_using_blended_weights") in binding_pairs]
+    block = [n for n in state_nodes if (n, "bind_intraperiod_blocks") in binding_pairs]
+
+    (solve_data_dir / "nodeState_rp.csv").write_text(
+        "node\n" + "".join(n + "\n" for n in rp)
+    )
+    (solve_data_dir / "nodeStateBlock.csv").write_text(
+        "node\n" + "".join(n + "\n" for n in block)
+    )
+
+
+def write_commodity_tier_sets(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod:348-349.
+
+    commodity__tier := commodity__tier_cum (input) ∪ commodity__tier_ann (Python).
+    tier            := setof i from commodity__tier.
+    """
+    cum_rows = _read_csv(input_dir / "commodity_ladder_cumulative.csv")
+    ann_rows = _read_csv(solve_data_dir / "commodity__tier_ann.csv")
+    seen: dict[tuple[str, str], None] = {}
+    for r in cum_rows:
+        if len(r) >= 2 and r[0] and r[1]:
+            seen.setdefault((r[0], r[1]), None)
+    for r in ann_rows:
+        if len(r) >= 2 and r[0] and r[1]:
+            seen.setdefault((r[0], r[1]), None)
+    (solve_data_dir / "commodity__tier.csv").write_text(
+        "commodity,tier\n" + "".join(f"{c},{t}\n" for c, t in seen.keys())
+    )
+    tier_seen: dict[str, None] = {}
+    for c, t in seen.keys():
+        tier_seen.setdefault(t, None)
+    (solve_data_dir / "tier.csv").write_text(
+        "tier\n" + "".join(t + "\n" for t in tier_seen.keys())
+    )
+
+
 def write_simple_setof_projections(input_dir: Path, solve_data_dir: Path) -> None:
     """Trivial single-key setof projections from already-loaded CSVs.
 
