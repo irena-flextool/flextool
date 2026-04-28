@@ -1895,7 +1895,10 @@ def write_input(
         method_with_fallback_sets.write_entity_lifetime_method(input_dir, solve_data_dir)
         method_with_fallback_sets.write_process_ct_method(input_dir, solve_data_dir)
         method_with_fallback_sets.write_process_startup_method(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_node_inflow_method(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_node_storage_binding_method(input_dir, solve_data_dir)
         nonsync_sets.write_process_group_inside_group_nonsync(input_dir, solve_data_dir)
+        nonsync_sets.write_process__sink_nonSync(input_dir, solve_data_dir)
         # L0 Batch 3: union sets + first calculated-param migration.
         from flextool.flextoolrunner.preprocessing import (
             union_sets, entity_total_caps,

@@ -294,6 +294,19 @@ def write_process_arc_method_joins(input_dir: Path, solve_data_dir: Path) -> Non
                    ("process", "source", "process_aux"),
                    list(dict.fromkeys(rows_source_toProcess_noConv)))
 
+    # ---- process_process_toSource_direct (mod L1006) ----
+    # p in process, p2 in process, source in node :
+    #   p == p2 AND (p, source) in process_source AND has 2way_2var
+    # Yields (p, p, source) for each (p, source) ∈ process_source with method.
+    rows_process_toSource_direct: list[tuple[str, str, str]] = [
+        (p, p, source)
+        for p, source in sources
+        if p in p_with_2way_2var
+    ]
+    _write_triples(solve_data_dir / "process_process_toSource_direct.csv",
+                   ("process_outer", "process", "source"),
+                   list(dict.fromkeys(rows_process_toSource_direct)))
+
 
 # ---------------------------------------------------------------------------
 # Profile-method process joins
