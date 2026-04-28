@@ -465,9 +465,11 @@ param p_co2_cum_realized_tonnes {g in group, d in periodAll} default 0;
 # Commodity-ladder derived sets (used by v_trade and the ladder constraints).
 # 'price' is the default scalar-price behaviour; the two ladder methods route
 # into v_trade / tier caps and replace the pdtCommodity price objective term.
-set commodity_with_ladder            := {c in commodity : p_commodity_price_method[c] != 'price'};
-set commodity_with_ladder_annual     := {c in commodity : p_commodity_price_method[c] == 'price_ladder_annual'};
-set commodity_with_ladder_cumulative := {c in commodity : p_commodity_price_method[c] == 'price_ladder_cumulative'};
+# Computed in Python (flextool/flextoolrunner/preprocessing/commodity_ladder_sets.py)
+# and loaded via table data IN below — see solve_data/commodity_with_ladder*.csv.
+set commodity_with_ladder;
+set commodity_with_ladder_annual;
+set commodity_with_ladder_cumulative;
 
 param p_node {node, nodeParam} default 0;
 param pd_node {node, nodePeriodParam, periodAll} default 0;
@@ -905,6 +907,12 @@ table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity
 table data IN 'CSV' 'solve_data/costs_discounted.csv' : [param_costs], costs_discounted;
 table data IN 'CSV' 'solve_data/co2.csv' : [param_co2], model_co2~model_wide;
 table data IN 'CSV' 'solve_data/period_capacity.csv' : period_capacity <- [period];
+
+# Migrated commodity-ladder filtered subsets (see flextool.mod:468-470 origin
+# and flextool/flextoolrunner/preprocessing/commodity_ladder_sets.py).
+table data IN 'CSV' 'solve_data/commodity_with_ladder.csv' : commodity_with_ladder <- [commodity];
+table data IN 'CSV' 'solve_data/commodity_with_ladder_annual.csv' : commodity_with_ladder_annual <- [commodity];
+table data IN 'CSV' 'solve_data/commodity_with_ladder_cumulative.csv' : commodity_with_ladder_cumulative <- [commodity];
 
 #check
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
