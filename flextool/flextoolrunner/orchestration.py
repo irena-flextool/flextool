@@ -11,6 +11,7 @@ import time
 from collections import defaultdict
 
 from flextool.flextoolrunner.blocks import write_block_data_for_solve
+from flextool.flextoolrunner.preprocessing import solve_time as preprocessing_solve_time
 from flextool.flextoolrunner.minimum_time import write_minimum_time_data
 from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigError, FlexToolSolveError, SolveResult
 from flextool.flextoolrunner.solver_runner import SolverRunner
@@ -481,6 +482,10 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         # ``analyze_solve`` a few hundred lines up); ``complete_solve[solve]``
         # is the parent-solve name that gets passed to ``solver.run``.
         state.current_scale_solve_name = solve
+        # Migration hook (Option A): refresh / compute per-solve
+        # preprocessing CSVs after solve_writers + blocks have written
+        # their per-solve inputs, but before glpsol reads them.
+        preprocessing_solve_time.run(state, complete_solve[solve])
         exit_status = solver.run(complete_solve[solve])
         state.current_scale_solve_name = None
         if exit_status == 0:

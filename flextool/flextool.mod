@@ -31,16 +31,16 @@ set period_capacity;  # Periods for which capacities have been already been outp
 set period_solve 'picking up periods from solve_period';  # Migrated to Python (preprocessing/simple_projections.py).
 set solve_current 'current solve name' dimen 1;
 set period_from_model dimen 1;
-set period_from_period_time := setof {(d, t) in period_time} (d);
+set period_from_period_time;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period 'd - Time periods in the current solve' := period_from_model union period_from_period_time;
 set period_first dimen 1 within period;
 set period_last dimen 1 within period;
 set branch_all dimen 1;
 set time_branch_all dimen 1;
 set period__branch dimen 2 within {period, period};
-set branch := setof{(d,b) in period__branch}(b);
+set branch;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period__year dimen 2;
-set year 'y - Years for discount calculations' := setof{(d, y) in period__year}(y);
+set year 'y - Years for discount calculations';  # Migrated to Python (preprocessing/per_solve_sets.py).
 set timeline__timestep__duration dimen 3;
 set time 't - Time steps in the current timelines';  # Migrated to Python (preprocessing/simple_projections.py).
 set timeset__timeline dimen 2;
@@ -219,8 +219,8 @@ set rp_base_first 'first base period start timestep' dimen 1;
 set rp_base_last 'last base period start timestep' dimen 1;
 set rp_block_first 'first timestep of each RP block (period, step)' dimen 2;
 set rp_block_last 'last timestep of each RP block (period, step)' dimen 2;
-set rp_base_period := setof{(b, r) in rp_base__rep}(b);
-set rp_rep_period := setof{(b, r) in rp_base__rep}(r);
+set rp_base_period;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set rp_rep_period;   # Migrated to Python (preprocessing/per_solve_sets.py).
 set nodeState_rp;  # Migrated to Python (preprocessing/simple_projections.py::write_node_state_subsets).
 
 # Intraperiod-blocks sets (bind_intraperiod_blocks storage binding method).
@@ -230,7 +230,7 @@ set nodeState_rp;  # Migrated to Python (preprocessing/simple_projections.py::wr
 # within its period).
 set period_block_time 'active timestep tagged with its block (period, block_first, step)' dimen 3;
 set period_block_succ 'cyclic block successor within a period (period, block_first, block_first_next)' dimen 3;
-set period_block := setof {(d, b, t) in period_block_time} (d, b);
+set period_block dimen 2;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set nodeStateBlock;  # Migrated to Python (preprocessing/simple_projections.py::write_node_state_subsets).
 
 # Temporal-resolution block abstraction (Agents 1.1/1.2): per-entity resolution
@@ -351,13 +351,13 @@ set tier;                     # Migrated to Python (preprocessing/simple_project
 set dt dimen 2 within period_time;
 param dt_jump {(d, t) in dt};
 set dtttdt dimen 6;
-set dtt := setof {(d, t, t_previous, previous_within_timeset, previous_period, previous_within_solve) in dtttdt} (d, t, t_previous);
+set dtt dimen 3;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period_invest dimen 1 within period;
 set d_realize_invest dimen 1 within period;
 set period_with_history dimen 1 within periodAll;
 param p_period_from_solve{period_with_history};
-set time_in_use := setof {(d, t) in dt} (t);
-set period_in_use := setof {(d, t) in dt} (d);
+set time_in_use;    # Migrated to Python (preprocessing/per_solve_sets.py).
+set period_in_use;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period_first_of_solve dimen 1 within period;
 
 set dt_realize_dispatch_input dimen 2 within period_time;
@@ -367,20 +367,20 @@ set realized_period__time_last dimen 2 within period_time;
 set d_realize_dispatch_or_invest := d_realized_period union d_realize_invest;
 #dt_complete is the timesteps of the whole rolling_window set, not just single roll. For single_solve it is the same as dt
 set dt_complete dimen 2 within period_time;
-set complete_time_in_use := setof {(d, t) in dt_complete} (t);
+set complete_time_in_use;  # Migrated to Python (preprocessing/per_solve_sets.py).
 param complete_step_duration{(d, t) in dt_complete};
 set timeline_steps dimen 2;  # Migrated to Python (preprocessing/simple_projections.py).
 param p_timeline_step_duration{timeline_steps};
 param p_timeline_duration_in_years{tl in timeline}:= sum{(tl,t) in timeline_steps} p_timeline_step_duration[tl,t] /8760;
 
 set dt_fix_storage_timesteps dimen 2 within period_time;
-set d_fix_storage_period := setof {(d, t) in dt_fix_storage_timesteps} (d);
+set d_fix_storage_period;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set ndt_fix_storage_price dimen 3 within  {node, period_solve, time};
 set ndt_fix_storage_quantity dimen 3 within  {node, period_solve, time};
 set ndt_fix_storage_usage dimen 3 within  {node, period_solve, time};
-set n_fix_storage_quantity := setof{(n,d,t) in ndt_fix_storage_quantity}(n);
-set n_fix_storage_price := setof{(n,d,t) in ndt_fix_storage_price}(n);
-set n_fix_storage_usage := setof{(n,d,t) in ndt_fix_storage_usage}(n);
+set n_fix_storage_quantity;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set n_fix_storage_price;     # Migrated to Python (preprocessing/per_solve_sets.py).
+set n_fix_storage_usage;     # Migrated to Python (preprocessing/per_solve_sets.py).
 set dtt_timeline_matching dimen 3 within {period,time,time};
 
 param p_fix_storage_price {node, period_solve, time};
@@ -964,6 +964,24 @@ table data IN 'CSV' 'solve_data/nodeState_rp.csv' : nodeState_rp <- [node];
 table data IN 'CSV' 'solve_data/nodeStateBlock.csv' : nodeStateBlock <- [node];
 table data IN 'CSV' 'solve_data/commodity__tier.csv' : commodity__tier <- [commodity, tier];
 table data IN 'CSV' 'solve_data/tier.csv' : tier <- [tier];
+# Per-solve preprocessing (preprocessing/per_solve_sets.py via the
+# orchestration hook). Filenames use a `_set` suffix to avoid clashing
+# with mod's `if p_model['solveFirst']` printf-to-CSV blocks for the
+# same-named files (which write a different schema for output use).
+table data IN 'CSV' 'solve_data/branch_set.csv' : branch <- [branch];
+table data IN 'CSV' 'solve_data/year_set.csv' : year <- [year];
+table data IN 'CSV' 'solve_data/period_from_period_time_set.csv' : period_from_period_time <- [period];
+table data IN 'CSV' 'solve_data/period_in_use_set.csv' : period_in_use <- [period];
+table data IN 'CSV' 'solve_data/time_in_use_set.csv' : time_in_use <- [time];
+table data IN 'CSV' 'solve_data/complete_time_in_use_set.csv' : complete_time_in_use <- [time];
+table data IN 'CSV' 'solve_data/rp_base_period_set.csv' : rp_base_period <- [period];
+table data IN 'CSV' 'solve_data/rp_rep_period_set.csv' : rp_rep_period <- [period];
+table data IN 'CSV' 'solve_data/period_block_set.csv' : period_block <- [period, block_first];
+table data IN 'CSV' 'solve_data/dtt_set.csv' : dtt <- [period, time, time_previous];
+table data IN 'CSV' 'solve_data/d_fix_storage_period_set.csv' : d_fix_storage_period <- [period];
+table data IN 'CSV' 'solve_data/n_fix_storage_quantity_set.csv' : n_fix_storage_quantity <- [node];
+table data IN 'CSV' 'solve_data/n_fix_storage_price_set.csv' : n_fix_storage_price <- [node];
+table data IN 'CSV' 'solve_data/n_fix_storage_usage_set.csv' : n_fix_storage_usage <- [node];
 
 #check
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
