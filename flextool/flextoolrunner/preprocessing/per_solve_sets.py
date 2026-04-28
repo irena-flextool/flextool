@@ -146,6 +146,157 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
         "period",
         _project_column(rows, 0),
     )
+    # period ← period_from_model (input) ∪ period_from_period_time (this module)
+    pfm = _read_csv_columns(solve_data_dir.parent / "input" / "periods_available.csv")
+    pfpt = _read_csv_columns(solve_data_dir / "period_from_period_time_set.csv")
+    seen: dict[str, None] = {}
+    for r in pfm + pfpt:
+        if r and r[0]:
+            seen.setdefault(r[0], None)
+    _write_singles(solve_data_dir / "period_set.csv", "period",
+                   list(seen.keys()))
+
+    # periodAll = period_group ∪ period_node ∪ period_commodity ∪
+    #             period_process ∪ period_solve ∪ branch
+    seen = {}
+    for fname in (
+        "period_group.csv", "period_node.csv", "period_commodity.csv",
+        "period_process.csv", "period_solve.csv",
+    ):
+        for r in _read_csv_columns(solve_data_dir / fname):
+            if r and r[0]:
+                seen.setdefault(r[0], None)
+    for r in _read_csv_columns(solve_data_dir / "branch_set.csv"):
+        if r and r[0]:
+            seen.setdefault(r[0], None)
+    _write_singles(solve_data_dir / "periodAll_set.csv", "period",
+                   list(seen.keys()))
+
+    # block = ⋃ b across node__block, process__side__block, process__block,
+    #         block__period__step, overlap (twice — coarse + fine)
+    seen = {}
+    # entity_block.csv: (entity, block) — col 1
+    for r in _read_csv_columns(solve_data_dir / "entity_block.csv"):
+        if len(r) >= 2 and r[1]:
+            seen.setdefault(r[1], None)
+    # process_side_block.csv: (process, side, block) — col 2
+    for r in _read_csv_columns(solve_data_dir / "process_side_block.csv"):
+        if len(r) >= 3 and r[2]:
+            seen.setdefault(r[2], None)
+    # process_block.csv: (process, block) — col 1
+    for r in _read_csv_columns(solve_data_dir / "process_block.csv"):
+        if len(r) >= 2 and r[1]:
+            seen.setdefault(r[1], None)
+    # block_step_duration.csv: (block, period, step, ...) — col 0
+    for r in _read_csv_columns(solve_data_dir / "block_step_duration.csv"):
+        if r and r[0]:
+            seen.setdefault(r[0], None)
+    # overlap_set.csv: (period, b_coarse, t_coarse, b_fine, t_fine, fraction)
+    # Both coarse (col 1) and fine (col 3).
+    for r in _read_csv_columns(solve_data_dir / "overlap_set.csv"):
+        if len(r) >= 4:
+            if r[1]:
+                seen.setdefault(r[1], None)
+            if r[3]:
+                seen.setdefault(r[3], None)
+    _write_singles(solve_data_dir / "block_set.csv", "block",
+                   list(seen.keys()))
+
+    # period__timeline = {(d, tl) : ∃ (s, d, tb) in solve_period_timeset
+    #     where s in solve_current AND (tb, tl) in timeset__timeline}
+    spt = _read_csv_columns(solve_data_dir.parent / "input" / "timesets_in_use.csv")
+    cur_solve = _read_csv_columns(solve_data_dir / "solve_current.csv")
+    cur_solve_set = frozenset(r[0] for r in cur_solve if r and r[0])
+    tt = _read_csv_columns(solve_data_dir.parent / "input" / "timesets__timeline.csv")
+    # tb → list of tl
+    tb_to_tl: dict[str, list[str]] = {}
+    for r in tt:
+        if len(r) >= 2 and r[0] and r[1]:
+            tb_to_tl.setdefault(r[0], []).append(r[1])
+    pt_seen: dict[tuple[str, str], None] = {}
+    for r in spt:
+        if len(r) >= 3 and r[0] in cur_solve_set:
+            d = r[1]
+            tb = r[2]
+            for tl in tb_to_tl.get(tb, ()):
+                pt_seen.setdefault((d, tl), None)
+    _write_tuples(solve_data_dir / "period__timeline_set.csv",
+                  ("period", "timeline"),
+                  list(pt_seen.keys()))
+
+    # dt_realize_dispatch = if 'output_horizon' in enable_optional_outputs
+    #                       then dt else dt_realize_dispatch_input
+    enable = _read_csv_columns(solve_data_dir / "enable_optional_outputs.csv")
+    enable_set = frozenset(r[0] for r in enable if r and r[0])
+    if "output_horizon" in enable_set:
+        # dt has columns (period, time) from steps_in_use.csv
+        rows = _read_csv_columns(solve_data_dir / "steps_in_use.csv")
+    else:
+        # dt_realize_dispatch_input ← solve_data/realized_dispatch.csv (period, time)
+        rows = _read_csv_columns(solve_data_dir / "realized_dispatch.csv")
+    drd_pairs = _project_columns(rows, (0, 1))
+    _write_tuples(
+        solve_data_dir / "dt_realize_dispatch_set.csv",
+        ("period", "time"), drd_pairs,
+    )
+    # d_realized_period = setof d from dt_realize_dispatch
+    drp_seen: dict[str, None] = {}
+    for d, _t in drd_pairs:
+        drp_seen.setdefault(d, None)
+    _write_singles(solve_data_dir / "d_realized_period_set.csv", "period",
+                   list(drp_seen.keys()))
+    # d_realize_dispatch_or_invest = d_realized_period ∪ d_realize_invest.
+    # d_realize_invest is loaded by mod from
+    # solve_data/realized_invest_periods_of_current_solve.csv (single
+    # `period` column). The differently-named solve_data/d_realize_invest.csv
+    # also exists but it's a (solve, period) two-column file that's unrelated
+    # — column 0 there is the solve name, not a period; reading it would
+    # poison this set with a solve name.
+    drealize = _read_csv_columns(
+        solve_data_dir / "realized_invest_periods_of_current_solve.csv"
+    )
+    union_seen: dict[str, None] = dict(drp_seen)
+    for r in drealize:
+        if r and r[0]:
+            union_seen.setdefault(r[0], None)
+    _write_singles(
+        solve_data_dir / "d_realize_dispatch_or_invest_set.csv", "period",
+        list(union_seen.keys()),
+    )
+
+    # dt_non_anticipativity = dt_realize_dispatch_input ∪ dt_fix_storage_timesteps
+    a = _read_csv_columns(solve_data_dir / "realized_dispatch.csv")
+    b = _read_csv_columns(solve_data_dir / "fix_storage_timesteps.csv")
+    dtna_seen: dict[tuple[str, str], None] = {}
+    for r in a + b:
+        if len(r) >= 2 and r[0] and r[1]:
+            dtna_seen.setdefault((r[0], r[1]), None)
+    _write_tuples(solve_data_dir / "dt_non_anticipativity_set.csv",
+                  ("period", "time"),
+                  list(dtna_seen.keys()))
+
+    # pdt_uptime / pdt_downtime = setof (p, d, t) from uptime_lookback /
+    # downtime_lookback. Both have (process, period, time, period_back,
+    # time_back) — project (process, period, time).
+    for src, dst in (
+        ("uptime_lookback.csv", "pdt_uptime_set.csv"),
+        ("downtime_lookback.csv", "pdt_downtime_set.csv"),
+    ):
+        rows = _read_csv_columns(solve_data_dir / src)
+        triples = _project_columns(rows, (0, 1, 2))
+        _write_tuples(solve_data_dir / dst,
+                      ("process", "period", "time"), triples)
+
+    # dtdt_next = setof (d_prev, t_prev_solve, d, t) from dtttdt (step_previous.csv)
+    # dtttdt cols: period, time, t_previous, t_previous_within_timeset,
+    #             period_previous, t_previous_within_solve
+    # → project (period_previous, t_previous_within_solve, period, time)
+    rows = _read_csv_columns(solve_data_dir / "step_previous.csv")
+    quads = _project_columns(rows, (4, 5, 0, 1))
+    _write_tuples(solve_data_dir / "dtdt_next_set.csv",
+                  ("period_prev", "time_prev_solve", "period", "time"),
+                  quads)
+
     # n_fix_storage_* ← ndt_fix_storage_* loaded from fix_storage_*.csv
     # Header layout: (period, step, node, value) per the writer in
     # solve_writers.py (note the swapped node/period order — the file
