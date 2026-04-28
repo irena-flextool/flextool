@@ -3123,9 +3123,8 @@ s.t. conversion_indirect {(p, m) in process__method_indirect,
     (p, 'source', b_in) in process__side__block,
     (p, 'sink', b_out) in process__side__block,
     (b_out, d, t) in block__period__step} :
-  + sum {source in entity, (d, b_c, tc, b_fn, t_f) in overlap
-         : (p, source) in process_source_undelayed
-           and b_c = b_out and tc = t and b_fn = b_in}
+  + sum {(p, source) in process_source_undelayed,
+         (d, b_out, t, b_in, t_f) in overlap}
     ( + p_overlap[d, b_out, t, b_in, t_f]
         * v_flow[p, source, p, d, t_f] * p_entity_unitsize[p]
   	      * p_process_source_flow_coefficient[p, source]
