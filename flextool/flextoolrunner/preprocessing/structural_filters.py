@@ -132,9 +132,12 @@ def write_process__commodity__node(input_dir: Path, solve_data_dir: Path) -> Non
     cn = _read_pairs(input_dir / "commodity__node.csv")
     sources = _read_pairs(input_dir / "process__source.csv")
     sinks = _read_pairs(input_dir / "process__sink.csv")
-    arc_endpoints: dict[str, frozenset[str]] = {}
+    _ep_acc: dict[str, dict[str, None]] = {}
     for p, n in sources + sinks:
-        arc_endpoints[p] = (arc_endpoints.get(p, frozenset()) | {n})
+        _ep_acc.setdefault(p, {})[n] = None
+    arc_endpoints: dict[str, frozenset[str]] = {
+        p: frozenset(d.keys()) for p, d in _ep_acc.items()
+    }
     rows: list[tuple[str, str, str]] = []
     for p in processes:
         nodes_for_p = arc_endpoints.get(p, frozenset())
