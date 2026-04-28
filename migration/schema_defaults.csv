@@ -1,0 +1,299 @@
+source,entity_class,param_name,default_value,default_type,parameter_value_list,mod_line,description
+mod,,_scale_obj_from_csv,0,,,597,
+mod,,_scale_state_from_csv,0,,,599,
+mod,,costs_discounted,0,,,608,
+mod,,d_flow,0,,,2232,
+mod,,d_flowInvest,0,,,2234,
+mod,,d_flow_1_or_2_variable,0,,,2233,
+mod,,d_obj,0,,,2231,
+mod,,d_reserve_upDown_node,0,,,2235,
+mod,,dq_reserve,0,,,2236,
+mod,,model_co2,0,,,610,
+mod,,p_branch_weight_input,1,,,561,
+mod,,p_co2_cum_realized_tonnes,0,,,462,
+mod,,p_commodity,0,,,417,
+mod,,p_commodity_price_method,'price',,,420,
+mod,,p_commodity_unitsize,1.0,,,421,
+mod,,p_constraint_constant,0,,,503,
+mod,,p_discount_years,0,,,536,
+mod,,p_group,0,,,131,
+mod,,p_hole_multiplier,1,,,521,
+mod,,p_inflation_offset_investment,0,,,538,
+mod,,p_inflation_offset_operations,0.5,,,539,
+mod,,p_inflation_rate,0,,,537,
+mod,,p_ladder_ann_price,0,,,434,
+mod,,p_ladder_ann_quantity,1e30,,,435,
+mod,,p_ladder_cum_price,0,,,428,
+mod,,p_ladder_cum_quantity,1e30,,,429,
+mod,,p_ladder_cum_realized_mwh,0,,,453,
+mod,,p_ladder_cum_sim_hours,0,,,454,
+mod,,p_max_flow_for_unconstrained_variables,1000000,,,540,
+mod,,p_node,0,,,471,
+mod,,p_node_type,'balance',,,188,
+mod,,p_overlap,0,,,520,
+mod,,p_process,0,,,498,
+mod,,p_process_reserve_upDown_node,reserveParam_defaults[rp],,,496,
+mod,,p_process_sink,0,,,479,
+mod,,p_process_sink_flow_coefficient,1,,,484,
+mod,,p_process_sink_max_capacity_coefficient,1,,,486,
+mod,,p_process_sink_min_capacity_coefficient,1,,,488,
+mod,,p_process_source,0,,,476,
+mod,,p_process_source_flow_coefficient,1,,,483,
+mod,,p_process_source_max_capacity_coefficient,1,,,485,
+mod,,p_process_source_min_capacity_coefficient,1,,,487,
+mod,,p_reserve_upDown_group,reserveParam_defaults[rp],,,494,
+mod,,p_rp_cost_weight,1,,,532,
+mod,,p_rp_weight,0,,,530,
+mod,,p_use_row_scaling,0,,,527,
+mod,,p_years_from_solve,0,,,535,
+mod,,p_years_represented,1,,,534,
+mod,,pbt_node,0,,,580,
+mod,,pbt_node_inflow,0,,,581,
+mod,,pbt_process,0,,,586,
+mod,,pbt_process_sink,0,,,583,
+mod,,pbt_process_source,0,,,582,
+mod,,pbt_profile,0,,,584,
+mod,,pbt_reserve_upDown_group,0,,,585,
+mod,,pd_commodity,0,,,418,
+mod,,pd_group,0,,,132,
+mod,,pd_node,0,,,472,
+mod,,pd_process,0,,,499,
+mod,,pd_process_sink,0,,,481,
+mod,,pd_process_source,0,,,478,
+mod,,pt_commodity,0,,,419,
+mod,,pt_group,0,,,133,
+mod,,pt_node,0,,,473,
+mod,,pt_node_inflow,0,,,474,
+mod,,pt_process,0,,,500,
+mod,,pt_process_sink,0,,,480,
+mod,,pt_process_source,0,,,477,
+schema,commodity,co2_content,,,emission,,[CO2 ton per MWh] Constant.
+schema,commodity,price,,,basics,,"[CUR/MWh or other unit] Price of the commodity. Constant, period or time."
+schema,commodity,price_ladder_annual,,,basics,,"Stepped supply curve for price_method='price_ladder_annual'.  Two forms accepted: 2d map with rows 'tier,price,quantity' applies the same per-year limit every period; 3d map with rows 'period,tier,price,quantity' varies the limit per period.  1-based integer tier.  quantity=inf marks an unbounded tail tier."
+schema,commodity,price_ladder_cumulative,,,basics,,"Stepped supply curve for price_method='price_ladder_cumulative'.  2d map with rows 'tier,price,quantity' — one row per tier, giving the tier's unit price and its cumulative quantity cap.  1-based integer tier index.  quantity=inf marks an unbounded tail tier.  Period-agnostic — the cap is a single total across the full model horizon."
+schema,commodity,price_method,price,price_method,basics,,How the commodity's price enters the LP.  'price' = scalar or time-series price x flow (current behaviour); 'price_ladder_annual' = stepped supply curve with a per-year quantity cap per tier; 'price_ladder_cumulative' = stepped supply curve with a total-model quantity cap per tier (handoff-carried across rolling solves).
+schema,commodity,unitsize,1.0,,basics,,Numeric scaling for the v_trade variable column (analogous to virtual_unitsize on process/node entities).  The variable is in user-MWh divided by this value.  Pick so the largest tier sits at O(10) in the scaled LP.
+schema,connection,availability,1.0,,basics,,[e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time.
+schema,connection,constraint_cumulative_pre_built_capacity_coefficient,,,constraint,,"A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
+schema,connection,constraint_invested_capacity_coefficient,,,constraint,,"A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize."
+schema,connection,cumulative_max_capacity,,,investment,,"[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+schema,connection,cumulative_min_capacity,,,investment,,"[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+schema,connection,delay,,,tech_advanced,,"[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences."
+schema,connection,discount_rate,0.05,,investment,,"[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period."
+schema,connection,efficiency,1.0,,basics,,"[factor, typically between 0-1] Efficiency of a connection. Constant or time."
+schema,connection,existing,,,basics,,[MW] Existing capacity. Constant or Period
+schema,connection,fixed_cost,,,investment,,[CUR/kW] Annual fixed cost. Constant or period.
+schema,connection,invest_cost,,,investment,,[CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.
+schema,connection,invest_max_period,,,investment,,[MW] Maximum investment. Period.
+schema,connection,invest_max_total,,,investment,,[MW] Maximum investment over all solves. Constant.
+schema,connection,invest_method,not_allowed,invest_methods,investment,,"Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total."
+schema,connection,invest_min_period,,,investment,,[MW] Minimum investment. Period.
+schema,connection,invest_min_total,,,investment,,[MW] Minimum investment over all solves. Constant.
+schema,connection,is_DC,,is_DC,network,,A flag whether the connection is DC (the flow will not be counted as synchronous if there is a non_synchronous_limit). Default false.
+schema,connection,lifetime,,,investment,,[years] Used to calculate annuity together with interest rate. Constant or period.
+schema,connection,lifetime_method,reinvest_automatic,lifetime_methods,investment,,Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.
+schema,connection,other_operational_cost,,,basics,,"[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time."
+schema,connection,reactance,,,network,,[p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the connection is within a nodeGroup that has transfer_method set to dc_power_flow_with_angles. The susceptance used in the flow equation is base_MVA / reactance.
+schema,connection,retire_max_period,,,retirement,,[MW] Maximum retired capacity. Period.
+schema,connection,retire_max_total,,,retirement,,[MW] Maximum retired capacity over all solves. Constant.
+schema,connection,retire_min_period,,,retirement,,[MW] Maximum retired capacity. Period.
+schema,connection,retire_min_total,,,retirement,,[MW] Minimum retired capacity over all solves. Constant.
+schema,connection,salvage_value,,,retirement,,[CUR/kW] Salvage value for retiring capacity. Constant or period.
+schema,connection,startup_cost,,,tech_advanced,,[CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant.
+schema,connection,startup_method,no_startup,startup_methods,tech_advanced,,Choice of startup method
+schema,connection,transfer_method,regular,transfer_methods,basics,,"Choice of transfer method. Options: regular (default), no_losses_no_variable_cost, variable_cost_only, exact, unidirectional. 'unidirectional' restricts flow to source → sink only (single non-negative variable); 'regular'/'exact'/'variable_cost_only' are bidirectional two-variable variants; 'no_losses_no_variable_cost' is a single signed variable with no losses and no VOM."
+schema,connection,virtual_unitsize,,,basics,,[MW] Size of single connection - used for integer (lumped) investments.
+schema,connection__node,constraint_flow_coefficient,,,constraint,,"A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow from the connection to a node in user-defined constraints. [flow x coefficient] will be on the left side of the equation."
+schema,connection__profile,profile_method,,profile_methods,basics,,"Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.
+"
+schema,constraint,constant,0.0,,constraint,,A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.
+schema,constraint,sense,equal,senses,constraint,,"The sense of the constraint ('greater_than', 'less_than' or 'equal')."
+schema,group,base_MVA,,,network,,[MVA] Base power for the per-unit system used in DC power flow. Default 100. susceptance = base_MVA / reactance_pu.
+schema,group,candidate_precapacity_to_avoid_big_m,,,network,,[MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This avoids the need for big-M / MIP constraints by ensuring the angle constraint is always active. Default 0.1 MW. The value should be small enough to not affect results but large enough for numerical stability.
+schema,group,capacity_margin,,,investment,,[MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.
+schema,group,co2_max_period,,,emission,,[tCO2] Annualized maximum limit for emitted CO2 in each period.
+schema,group,co2_max_total,,,emission,,[tCO2] Maximum limit for emitted CO2 in the whole solve.
+schema,group,co2_method,no_method,co2_methods,emission,,"Choice of the CO2 method: no_method, price, period, total, price_period, price_total, period_total, price_period_total"
+schema,group,co2_price,,,emission,,"[CUR/ton] CO2 price for a group of nodes. Constant, period or time."
+schema,group,cumulative_max_capacity,,,investment,,"[MW or MWh] Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period."
+schema,group,cumulative_min_capacity,,,investment,,"[MW or MWh] Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period."
+schema,group,decomposition_method,none,decomposition_methods,solve_advanced,,"Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'lagrangian_region' (group is solved as an independent region with shared-commodity coupling)."
+schema,group,flow_aggregator,,yes_no,output,,Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from output_aggregate_flows.
+schema,group,has_capacity_margin,,has_capacity_margin,investment,,A flag whether the group of nodes has a capacity margin constraint in the investment mode.
+schema,group,has_inertia,,has_inertia,network,,"A flag whether the group of nodes has an inertia constraint active.
+"
+schema,group,has_non_synchronous,,has_non_synchronous,network,,A flag whether the group of nodes has the non-synchronous share constraint active.
+schema,group,include_stochastics,no,yes_no,model,,Includes the stochastic branches to be used for the nodes/units/connections in this group
+schema,group,inertia_limit,,,network,,[MWs] Minimum for synchronous inertia in the group of nodes. Constant or period.
+schema,group,invest_max_period,,,investment,,[MW or MWh] Maximum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period.
+schema,group,invest_max_total,,,investment,,[MW or MWh] Maximum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. Constant.
+schema,group,invest_method,not_allowed,invest_methods,investment,,"Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total.
+"
+schema,group,invest_min_period,,,investment,,[MW or MWh] Minimum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period.
+schema,group,invest_min_total,,,investment,,[MW or MWh] Minimum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. Constant.
+schema,group,max_cumulative_flow,,,flow_limit,,"[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period."
+schema,group,max_instant_flow,,,flow_limit,,[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.
+schema,group,min_cumulative_flow,,,flow_limit,,"[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period."
+schema,group,min_instant_flow,,,flow_limit,,[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.
+schema,group,new_stepduration,,,timeline,,Hours. Members of this group operate at this step duration. Overrides the solve-level new_stepduration for these entities. Used for multi-resolution models where some nodes (e.g. fuel markets) need coarser dispatch resolution than others (e.g. power systems).
+schema,group,non_synchronous_limit,,,network,,"[share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period."
+schema,group,output_flowGroup_indicators,,yes_no,output,,Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).
+schema,group,output_nodeGroup_dispatch,,yes_no,output,,Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.
+schema,group,output_nodeGroup_indicators,,yes_no,output,,Flag to output node-group indicator results for groups whose members are nodes (group__node).
+schema,group,penalty_capacity_margin,5000.0,,investment,,"[CUR/kW] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so the value is not directly comparable to annualized investment costs. Constant or period."
+schema,group,penalty_inertia,5000.0,,network,,[CUR/MWs] Penalty for violating the inertia constraint. Cost scales with the duration of the violation. Constant or period.
+schema,group,penalty_non_synchronous,5000.0,,network,,[CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.
+schema,group,reference_node,,,network,,"Name of the reference bus node (angle fixed to zero) for DC power flow. Optional — if not specified, automatically selected as the node with the largest existing capacity in each connected component of the DC power flow network."
+schema,group,share_loss_of_load,no,load_share_type,flow_limit,,Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted
+schema,group,transfer_method,use_connection_transfer_methods,transfer_methods_group,network,,"Override transfer_method for all connections within this nodeGroup. Options: use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, variable_cost_only, unidirectional, dc_power_flow_with_angles. Setting 'unidirectional' gates every member connection to one-way flow (source → sink only). Setting 'dc_power_flow_with_angles' uses B-theta DC power flow (requires reactance on connections)."
+schema,model,debug,,,output,,Instruction set for performing model debugging and testing.
+schema,model,exclude_entity_outputs,yes,optional_output,output,,"Excludes results on node, unit and connection level, but preserves group level results"
+schema,model,inflation_offset_investment,1.0,,model,,[years] Offset for when investment costs occur within a year. Default 0 (beginning of year).
+schema,model,inflation_offset_operations,0.5,,model,,[years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).
+schema,model,inflation_rate,,,model,,"[e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0. When inputs are in nominal terms, set to expected inflation. Default: 0 (real inputs)."
+schema,model,max_flow_for_unconstrained_variables,1000000.0,,model,,"[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose max_capacity_coefficient is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000)."
+schema,model,output_connection__node__node_flow_t,yes,optional_output,output,, The flows between the nodes for each timestep.
+schema,model,output_connection_flow_separate,no,optional_output,output,,Produces the connection flows separately for both directions.
+schema,model,output_horizon,no,yes_no,output,,Outputs the flows in the horizons. Used for testing the model.
+schema,model,output_node_balance_t,yes,optional_output,output,,Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model.
+schema,model,output_ramp_envelope,no,optional_output,output,,Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node).
+schema,model,output_unit__node_flow_t,yes,optional_output,output,,The flows from units to the nodes for each timestep.
+schema,model,output_unit__node_ramp_t,no,optional_output,output,,Produces the ramps of individual units for all timesteps.
+schema,model,periods_available,,,model,,"(Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset."
+schema,model,solves,,,model,,Sequence of solves in the model. Array.
+schema,model,version,51.0,,model,,Contains database version information.
+schema,node,annual_flow,,,basics,,"[MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Inflow time series can be scaled to match annual flow. By default, there is no scaling of inflow. Constant or period."
+schema,node,availability,1.0,,basics,,[e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.
+schema,node,constraint_cumulative_pre_built_capacity_coefficient,,,constraint,,"A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
+schema,node,constraint_invested_capacity_coefficient,,,constraint,,"A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize."
+schema,node,constraint_state_coefficient,,,constraint,,"A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined constraints. [state x coefficient] will be on the left side of the equation."
+schema,node,cumulative_max_capacity,,,investment,,"[MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+schema,node,cumulative_min_capacity,,,investment,,"[MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+schema,node,discount_rate,0.05,,investment,,"[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period."
+schema,node,existing,,,basics,,[MWh] Existing storage capacity. Constant or Period
+schema,node,fixed_cost,,,investment,,[CUR/kWh] Annual fixed cost for storage. Constant or period.
+schema,node,inflow,,,basics,,[MWh] Inflow into the node (negative is outflow). Constant or time.
+schema,node,inflow_method,use_original,inflow_methods,basics,,"Choice how to treat inflow time series. Empty defaults to 'use_original', which does not scale the time series. 'no_inflow' ignores the inflow time series. 'scale_to_annual_flow' will scale the time series to match the 'annual_flow' so that the sum of inflow is multiplied by 8760/'hours_in_solve'. 'scale_in_proprotion' calculates a scaling factor by dividing 'annual_flow' with the sum of time series inflow (after it has been annualized using 'timeline_duration_in_years'). 'scale_to_annual_and_peak_flow' scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'."
+schema,node,invest_cost,,,investment,,[CUR/kWh] Investment cost for new storage capacity. Constant or period.
+schema,node,invest_forced,,,investment,,
+schema,node,invest_max_period,,,investment,,[MWh] Maximum storage investment. Period.
+schema,node,invest_max_total,,,investment,,[MWh] Maximum investment over all solves. Constant.
+schema,node,invest_method,not_allowed,invest_methods,investment,,"Choice of investment method: either not_allowed or then a combination of 1) investment or retirement and 2) investment limits per period, all periods (total) or no_limits."
+schema,node,invest_min_period,,,investment,,[MWh] Minimum storage investment. Period.
+schema,node,invest_min_total,,,investment,,[MWh] Minimum investment over all solves. Constant.
+schema,node,lifetime,,,investment,,[years] Used to calculate annuity together with interest rate. Constant or period.
+schema,node,lifetime_method,reinvest_automatic,lifetime_methods,investment,,Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.
+schema,node,node_type,balance,node_type,basics,,"Role of this node in the LP.  'commodity' = price-exposed source/sink with no balance constraint (e.g. fuel imports, no storage); 'balance' = energy balance maintained every timestep (default); 'storage' = balance plus a state variable (battery, reservoir); 'balance_within_period' = balance aggregated over the whole period (e.g. an annual gas budget)."
+schema,node,peak_inflow,,,basics,,[MWh] Highest flow for scaling the inflow. Used only with inflow_method scale_to_annual_and_peak_flow. Constant or period.
+schema,node,penalty_down,10000.0,,basics,,"[CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, Period or Time."
+schema,node,penalty_up,10000.0,,basics,,"[CUR/MWh] Penalty cost for decreasing consumption in the node (energy not served). Constant, Period or Time."
+schema,node,retire_max_period,,,retirement,,[MWh] Maximum retired storage capacity. Period.
+schema,node,retire_max_total,,,retirement,,[MWh] Maximum retired storage capacity over all solves. Constant.
+schema,node,retire_min_period,,,retirement,,[MWh] Minimum retired storage capacity. Period.
+schema,node,retire_min_total,,,retirement,,[MWh] Minimum retired storage capacity over all solves. Constant.
+schema,node,salvage_value,,,retirement,,[CUR/kWh] Salvage value of the storage. Constant or period.
+schema,node,self_discharge_loss,,,storage,,[e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
+schema,node,storage_binding_method,bind_forward_only,storage_binding_methods,storage,,"Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timesets' will bind the storage end state at the end of the timeset to the beginning of the timeset. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0."
+schema,node,storage_nested_fix_method,fix_nothing,storage_nested_fix_method,storage,,"Used in nested solve sequences. Set this storage as a long term storage, which end state is passed to the lower level solves as a target. *Fix_price* requires `storage_state_reference_price`"
+schema,node,storage_solve_horizon_method,free,storage_solve_horizon_methods,storage,,Choice how to treat storage state at the end of time horizon of each solve. 'free' lets the model choose the end state. 'use_reference_value' forces the end state to the specific value set in 'storage_state_reference_value'. 'use_reference_price' gives the storage state a price in the objective function based on the 'storage_state_reference_price'. 
+schema,node,storage_start_end_method,fix_start,storage_start_end_methods,storage,,"Choice whether the start and end states of storage are fixed in the beginning and end of the whole model timeline (not between solves). Uses 'storage_state_start' and 'storage_state_end'. Options: 'fix_nothing', 'fix_start', 'fix_end', 'fix_start_end'. By default, storage start state is bound to 0 to avoid creation of free energy."
+schema,node,storage_state_end,,,storage,,[0-1] Relative state of storage at the end of the last model solve (overrides 'storage_state_end_reference'). Constant.
+schema,node,storage_state_reference_price,,,storage,,[CUR/MWh] Price for the stored energy at the end of the solve horizon. Requires 'use_reference_price' in 'storage_solve_horizon_method'. Constant or period.
+schema,node,storage_state_reference_value,,,storage,,[0-1] Relative state of storage at then end of each solve (can be overwritten in the next solve).  Requires 'use_reference_value' in 'storage_solve_horizon_method'. Constant.
+schema,node,storage_state_start,0.0,,storage,,[0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant.
+schema,node,virtual_unitsize,,,basics,,"[MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity."
+schema,node__profile,profile_method,,profile_methods,basics,,"Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.
+"
+schema,profile,profile,,,basics,,"[factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time."
+schema,reserve__upDown__connection__node,increase_reserve_ratio,,,reserve,,[factor] The reserve requirement is increased by the flow from the connection to the node multiplied by this ratio. Constant.
+schema,reserve__upDown__connection__node,large_failure_ratio,,,reserve,,[factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.
+schema,reserve__upDown__connection__node,max_share,0.0,,reserve,,[factor] Maximum ratio for the transfer of reserve to this node. Constant.
+schema,reserve__upDown__connection__node,reliability,1.0,,reserve,,[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
+schema,reserve__upDown__group,increase_reserve_ratio,,,reserve,,[factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.
+schema,reserve__upDown__group,penalty_reserve,5000.0,,reserve,,[CUR/MW] Penalty for violating a reserve constraint. Constant.
+schema,reserve__upDown__group,reservation,,,reserve,,[MW] Amount of reserve to be reserved. Constant or time.
+schema,reserve__upDown__group,reserve_method,no_reserve,reserve_methods,reserve,,"Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only, timeseries_and_dynamic, timeseries_and_large_failure, dynamic_and_large_failure, all"
+schema,reserve__upDown__unit__node,increase_reserve_ratio,,,reserve,,[factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant.
+schema,reserve__upDown__unit__node,large_failure_ratio,,,reserve,,[factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.
+schema,reserve__upDown__unit__node,max_share,,,reserve,,[factor] Maximum ratio for the transfer of reserve to this node. Constant.
+schema,reserve__upDown__unit__node,reliability,1.0,,reserve,,[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
+schema,solve,contains_solves,,,solve_advanced,,Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences
+schema,solve,fix_storage_periods,,,solve_advanced,,Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set
+schema,solve,highs_method,choose,highs_method,solve_advanced,,"HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work."
+schema,solve,highs_parallel,off,highs_parallel,solve_advanced,,HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
+schema,solve,highs_presolve,on,highs_presolve,solve_advanced,,HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.
+schema,solve,invest_periods,,,solve_basics,,Array of periods where investments are allowed.
+schema,solve,new_stepduration,,,timeline,,Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.
+schema,solve,period_timeset,,,solve_basics,,"Map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name."
+schema,solve,realized_invest_periods,,,solve_advanced,,Array of the periods that will realize the investment decisions. If not used when the invest_periods exist. The realized_periods are used to realize invests as well
+schema,solve,realized_periods,,,solve_basics,,Array of periods that will be realized in the solve.
+schema,solve,rolling_duration,,,solve_advanced,,"Hours (Optional). Duration of rolling, if not stated, assumed to be the whole timeline of the solve"
+schema,solve,rolling_solve_horizon,,,solve_advanced,,Hours (Required if rolling_window solve). How long into the future the roll sees
+schema,solve,rolling_solve_jump,,,solve_advanced,,"Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Should be smaller than the horizon"
+schema,solve,solve_mode,single_solve,solve_mode,solve_basics,,A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence.
+schema,solve,solver,highs,solver,solve_basics,,Choice of solver. HIGHs used as default. GLPSOL is another open source option. Out of commercial solvers CPLEX has been tested.
+schema,solve,solver_arguments,,,solve_advanced,,Array of text commands for passing command line arguments to a solver. Can be used to set additional solver parameters.
+schema,solve,solver_precommand,,,solve_advanced,,Additional command to execute before calling the solver. Can be used to e.g. reserve a floating license for a commercial solver.
+schema,solve,stochastic_branches,,,solve_advanced,,"[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time"
+schema,solve,use_row_scaling,no,yes_no,solve_advanced,,Enable automatic row scaling (experimental): derive node_capacity_for_scaling / group_capacity_for_scaling from connected-unit unitsizes (rounded to nearest power of 10) so HiGHS sees matrix coefficients on a narrower range. Default 'no' preserves pre-scaling behaviour exactly. See flextool/SLACK_CONVENTION.md.
+schema,solve,years_represented,,,solve_basics,,"Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years."
+schema,timeline,timestep_duration,,,timeline,,"Map of time steps in the timeline. Index: time step name, value: time step duration in hours."
+schema,timeset,timeline,,,timeline,,The name of the timeline that the timeset uses. (String)
+schema,timeset,timeset_duration,,,timeline,,"Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps"
+schema,timeset,timeset_weights,,,timeline,,"Per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year (e.g. seasonal yearsplit on a coarse timeslice structure). Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so that uniform input reproduces the default (weight = 1 per step). Must not be combined with representative_period_weights on the same timeset."
+schema,unit,availability,1.0,,basics,,"[e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time."
+schema,unit,constraint_cumulative_pre_built_capacity_coefficient,,,constraint,,"A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
+schema,unit,constraint_invested_capacity_coefficient,,,constraint,,"A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize."
+schema,unit,conversion_method,constant_efficiency,conversion_methods,basics,,Choice of conversion method.
+schema,unit,cumulative_max_capacity,,,investment,,"[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+schema,unit,cumulative_min_capacity,,,investment,,"[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+schema,unit,delay,,,tech_advanced,,"[hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences."
+schema,unit,discount_rate,0.05,,investment,,"[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period."
+schema,unit,efficiency,1.0,,basics,,[factor] Efficiency of a unit. Constant or time.
+schema,unit,efficiency_at_min_load,,,basics,,[e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant.
+schema,unit,existing,,,basics,,[MW] Existing capacity. Constant or Period
+schema,unit,fixed_cost,,,investment,,[CUR/kW] Annual fixed cost. Constant or period.
+schema,unit,invest_cost,,,investment,,[CUR/kW] Investment cost of the unit. Constant or period.
+schema,unit,invest_max_period,,,investment,,[MW] Maximum investment. Period.
+schema,unit,invest_max_total,,,investment,,[MW] Maximum investment over all solves. Constant.
+schema,unit,invest_method,not_allowed,invest_methods,investment,,"Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total."
+schema,unit,invest_min_period,,,investment,,[MW] Minimum investment. Period.
+schema,unit,invest_min_total,,,investment,,[MW] Minimum investment over all solves. Constant.
+schema,unit,lifetime,,,investment,,[years] Used to calculate annuity together with interest rate. Constant or period.
+schema,unit,lifetime_method,reinvest_automatic,lifetime_methods,investment,,Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.
+schema,unit,min_downtime,,,tech_advanced,,[hours] Minimum time the unit must stay offline after shutting down. Requires minimum_time_method set to 'min_downtime' or 'both'. Constant.
+schema,unit,min_load,,,basics,,"[0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time."
+schema,unit,min_uptime,,,tech_advanced,,[hours] Minimum time the unit must stay online after starting up. Requires minimum_time_method set to 'min_uptime' or 'both'. Constant.
+schema,unit,minimum_time_method,,minimum_time_methods,tech_advanced,,"Choice between minimum up- and downtimes (none, min_downtime, min_uptime, both). Setting this to anything other than 'none' will activate online variables (at least linear) for the unit. Default: none (no minimum time constraints)."
+schema,unit,retire_max_period,,,retirement,,[MW] Maximum retired capacity. Period.
+schema,unit,retire_max_total,,,retirement,,[MW] Maximum retired capacity over all solves. Constant.
+schema,unit,retire_min_period,,,retirement,,[MW] Minimum retired capacity. Period.
+schema,unit,retire_min_total,,,retirement,,[MW] Minimum retired capacity over all solves. Constant.
+schema,unit,salvage_value,,,retirement,,[CUR/kW] Salvage value of the unit. Constant or period.
+schema,unit,startup_cost,,,tech_advanced,,[CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant.
+schema,unit,startup_method,no_startup,startup_methods,tech_advanced,,"Choice of startup method. Linear startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. Binary startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups."
+schema,unit,virtual_unitsize,,,basics,,"[MW] Size of a single unit - used for integer investments (lumped investments), minimum loads and start-up costs. If not given, assumed from the existing unit capacity."
+schema,unit__inputNode,constraint_flow_coefficient,,,constraint,,"A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation."
+schema,unit__inputNode,flow_coefficient,1.0,,basics,,[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from capacity / ramp / min-load constraints entirely (hydro-pass-through pattern).
+schema,unit__inputNode,inertia_constant,,,network,,[MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
+schema,unit__inputNode,is_non_synchronous,,is_non_synchronous,network,,Chooses whether the unit is synchronously connected to this node.
+schema,unit__inputNode,max_capacity_coefficient,1.0,,basics,,"[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops."
+schema,unit__inputNode,min_capacity_coefficient,1.0,,basics,,"[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode)."
+schema,unit__inputNode,other_operational_cost,,,basics,,"[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time."
+schema,unit__inputNode,ramp_cost,,,tech_advanced,,[CUR/MW] Cost of ramping the unit. Constant.
+schema,unit__inputNode,ramp_method,,ramp_methods,tech_advanced,,Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).
+schema,unit__inputNode,ramp_speed_down,,,tech_advanced,,[per unit / minute] Maximum ramp down speed. Constant.
+schema,unit__inputNode,ramp_speed_up,,,tech_advanced,,[per unit / minute] Maximum ramp up speed. Constant.
+schema,unit__node__profile,profile_method,,profile_methods,basics,,"Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.
+"
+schema,unit__outputNode,constraint_flow_coefficient,,,constraint,,"A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation."
+schema,unit__outputNode,flow_coefficient,1.0,,basics,,[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from capacity / ramp / min-load constraints entirely (hydro-pass-through pattern).
+schema,unit__outputNode,inertia_constant,,,network,,[MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
+schema,unit__outputNode,is_non_synchronous,,is_non_synchronous,network,,Chooses whether the unit is synchronously connected to this node.
+schema,unit__outputNode,max_capacity_coefficient,1.0,,basics,,"[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops."
+schema,unit__outputNode,min_capacity_coefficient,1.0,,basics,,"[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode)."
+schema,unit__outputNode,other_operational_cost,,,basics,,"[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time."
+schema,unit__outputNode,ramp_cost,,,tech_advanced,,[CUR/MW] Cost of ramping the unit. Constant.
+schema,unit__outputNode,ramp_method,,ramp_methods,tech_advanced,,Choice of ramp methods.
+schema,unit__outputNode,ramp_speed_down,,,tech_advanced,,[per unit  / minute] Maximum ramp down speed. Constant.
+schema,unit__outputNode,ramp_speed_up,,,tech_advanced,,[per unit  / minute] Maximum ramp up speed. Constant.
