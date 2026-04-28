@@ -178,8 +178,7 @@ set entity__invest_method 'the investment method applied to an entity' dimen 2 w
 set entityDivest;  # Migrated to Python (preprocessing/invest_method_sets.py).
 set entityInvest;  # Migrated to Python (preprocessing/invest_method_sets.py).
 set entity__lifetime_method_read dimen 2 within {entity, lifetime_method};
-set entity__lifetime_method 'the lifetime method applied to an entity' :=
-    {e in entity, m in lifetime_method : (e, m) in entity__lifetime_method_read || (sum{(e, m2) in entity__lifetime_method_read} 1 = 0 && m in lifetime_method_default)};
+set entity__lifetime_method 'the lifetime method applied to an entity' dimen 2;  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 param investableEntities := sum{e in entityInvest} 1;
 set group__invest_method 'the investment method applied to a group' dimen 2 within {group, invest_method};
 set group_invest;  # Migrated to Python (preprocessing/invest_method_sets.py).
@@ -190,10 +189,14 @@ set group_co2_max_period;  # Migrated to Python (preprocessing/co2_method_sets.p
 set group_co2_max_total;   # Migrated to Python (preprocessing/co2_method_sets.py).
 set node_type 'enum universe of node_type values';
 param p_node_type {n in node} symbolic in node_type, default 'balance';
-set nodeCommodity      := {n in node : p_node_type[n] = 'commodity'};
-set nodeBalance        := {n in node : p_node_type[n] = 'balance' || p_node_type[n] = 'storage'};
-set nodeState          := {n in node : p_node_type[n] = 'storage'};
-set nodeBalancePeriod  := {n in node : p_node_type[n] = 'balance_within_period'};
+# node-type partitions migrated to Python (preprocessing/node_type_sets.py).
+# Default 'balance' on p_node_type is materialized in Python — every node
+# in input/node.csv is assigned its explicit type or 'balance' before the
+# four sets below are written to solve_data/.
+set nodeCommodity;
+set nodeBalance;
+set nodeState;
+set nodeBalancePeriod;
 set inflow_method 'method for scaling the inflow';
 set inflow_method_default within inflow_method;
 set node__inflow_method_read 'method for scaling the inflow applied to a node' within {node, inflow_method};
@@ -298,14 +301,9 @@ set group_loss_share 'group that share the loss of load (upward penalty)';  # Mi
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
 set process__ct_method_read dimen 2 within {process, ct_method};
-set process__ct_method dimen 2 within {process, ct_method} :=
-    {p in process, m in ct_method
-	   : (p, m) in process__ct_method_read
-	   || (sum{(p, m2) in process__ct_method_read} 1 = 0 && p in process_connection && m in ct_method_regular)
-	   || (sum{(p, m2) in process__ct_method_read} 1 = 0 && p in process_unit && m in ct_method_constant)};
+set process__ct_method dimen 2 within {process, ct_method};  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 set process__startup_method_read dimen 2 within {process, startup_method} default {p in process, 'no_startup'} ;
-set process__startup_method dimen 2 within {process, startup_method}:=
-    {p in process, m in startup_method : (p, m) in process__startup_method_read || (sum{(p, m2) in process__startup_method_read} 1 = 0 && m in startup_method_no)};
+set process__startup_method dimen 2 within {process, startup_method};  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 set process_node_ramp_method dimen 3 within {process, node, ramp_method};
 set methods dimen 4;
 set process__profile__profile_method dimen 3 within {process, profile, profile_method};
@@ -315,6 +313,10 @@ set process_sink dimen 2 within {process, entity};
 
 set process__sink_nonSync_unit dimen 2 within {process, node};
 set process_nonSync_connection dimen 1 within {process};
+# Migrated to Python (preprocessing/nonsync_sets.py); original derivation
+# replaced with this forward declaration so it precedes its table data IN
+# reader. See flextool.mod:2017+ comment for the original mod logic.
+set process__group_inside_group_nonSync dimen 2;
 
 set node_dc_power_flow 'nodes participating in DC power flow' within node;
 set connection_dc_power_flow 'connections with DC power flow angle constraints' within process_connection;
@@ -931,6 +933,15 @@ table data IN 'CSV' 'solve_data/group_co2_max_total.csv' : group_co2_max_total <
 table data IN 'CSV' 'solve_data/optional_yes.csv' : optional_yes <- [output];
 table data IN 'CSV' 'solve_data/reserve__upDown__group.csv' : reserve__upDown__group <- [reserve, upDown, group];
 table data IN 'CSV' 'solve_data/group_loss_share.csv' : group_loss_share <- [group];
+# L0 batch 2 — node_type_sets, method_with_fallback_sets, nonsync_sets
+table data IN 'CSV' 'solve_data/nodeCommodity.csv' : nodeCommodity <- [node];
+table data IN 'CSV' 'solve_data/nodeBalance.csv' : nodeBalance <- [node];
+table data IN 'CSV' 'solve_data/nodeState.csv' : nodeState <- [node];
+table data IN 'CSV' 'solve_data/nodeBalancePeriod.csv' : nodeBalancePeriod <- [node];
+table data IN 'CSV' 'solve_data/entity__lifetime_method.csv' : entity__lifetime_method <- [entity, lifetime_method];
+table data IN 'CSV' 'solve_data/process__ct_method.csv' : process__ct_method <- [process, ct_method];
+table data IN 'CSV' 'solve_data/process__startup_method.csv' : process__startup_method <- [process, startup_method];
+table data IN 'CSV' 'solve_data/process__group_inside_group_nonSync.csv' : process__group_inside_group_nonSync <- [process, group];
 
 #check
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
@@ -2014,14 +2025,9 @@ set process__sink_nonSync :=
 			|| ( (p, sink) in process_source && p in process_nonSync_connection )
 	    };
 
-set process__group_inside_group_nonSync :=
-  {p in process, g in groupNonSync:
-  sum{source in node, sink in node:
-  (p,source) in process_source && (g, source) in group_node
-  && (p,sink) in process_sink && (g,sink) in group_node
-  && source != sink } 1
-  };
   #|| sum{(p,m) in process_method: m in method_2way_1var} 1
+  # Declaration moved to the top of the model alongside other process-related
+  # sets so it precedes its `table data IN` reader.
 
 set nodeGroupDispatch__process_fully_inside :=
   {g in nodeGroupDispatch, p in process

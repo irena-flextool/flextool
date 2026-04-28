@@ -1870,6 +1870,9 @@ def write_input(
             invest_method_sets,
             co2_method_sets,
             simple_projections,
+            node_type_sets,
+            method_with_fallback_sets,
+            nonsync_sets,
         )
         input_dir = wf / "input"
         solve_data_dir = wf / "solve_data"
@@ -1886,6 +1889,13 @@ def write_input(
         simple_projections.write_optional_yes(input_dir, solve_data_dir)
         simple_projections.write_reserve_upDown_group(input_dir, solve_data_dir)
         simple_projections.write_group_loss_share(input_dir, solve_data_dir)
+        # L0 Batch 2: harder operation types — defaults flow, joining
+        # with global-empty fallback, quadratic-style joining.
+        node_type_sets.write_node_type_sets(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_entity_lifetime_method(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_process_ct_method(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_process_startup_method(input_dir, solve_data_dir)
+        nonsync_sets.write_process_group_inside_group_nonsync(input_dir, solve_data_dir)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}
