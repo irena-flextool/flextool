@@ -1864,11 +1864,28 @@ def write_input(
         # filtered subsets used to be derived inside MathProg via setof
         # filters on p_commodity_price_method. Computed in Python for
         # cheaper matrix generation; loaded back via table data IN.
-        from flextool.flextoolrunner.preprocessing import commodity_ladder_sets
-        commodity_ladder_sets.write_commodity_ladder_sets(
-            _get_commodity_price_methods(db),
-            wf / "solve_data",
+        from flextool.flextoolrunner.preprocessing import (
+            commodity_ladder_sets,
+            period_param_sets,
+            invest_method_sets,
+            co2_method_sets,
+            simple_projections,
         )
+        input_dir = wf / "input"
+        solve_data_dir = wf / "solve_data"
+        commodity_ladder_sets.write_commodity_ladder_sets(
+            _get_commodity_price_methods(db), solve_data_dir,
+        )
+        # L0 Batch 1: simple projections / filters of already-written
+        # input/*.csv tables. Each function reads a CSV that the spec-
+        # driven write_parameter loop above produced and writes a
+        # solve_data/*.csv that flextool.mod loads via table data IN.
+        period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
+        invest_method_sets.write_invest_method_sets(input_dir, solve_data_dir)
+        co2_method_sets.write_co2_method_sets(input_dir, solve_data_dir)
+        simple_projections.write_optional_yes(input_dir, solve_data_dir)
+        simple_projections.write_reserve_upDown_group(input_dir, solve_data_dir)
+        simple_projections.write_group_loss_share(input_dir, solve_data_dir)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}

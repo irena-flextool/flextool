@@ -104,12 +104,12 @@ set groupTimeParam within groupParam;
 set exclude_entity_outputs;
 set def_optional_outputs dimen 2;
 set optional_outputs dimen 2;
-set optional_yes:= setof{(output,value) in optional_outputs: value == 'yes'}(output);
+set optional_yes;  # Migrated to Python (preprocessing/simple_projections.py); loaded via table data IN below.
 set def_optional_yes := setof{(output,value) in def_optional_outputs: value == 'yes' && (output,'no') not in optional_outputs}(output);
 set enable_optional_outputs := optional_yes union def_optional_yes;
 
 set reserve__upDown__group__method dimen 4;
-set reserve__upDown__group := setof {(r, ud, g, m) in reserve__upDown__group__method : m <> 'no_reserve'} (r, ud, g);
+set reserve__upDown__group dimen 3;  # Migrated to Python (preprocessing/simple_projections.py); loaded via table data IN below.
 set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng, r_m) in reserve__upDown__group__method} (r);
 set reserve__upDown__group__reserveParam__time dimen 5 within {reserve, upDown, group, reserveTimeParam, time};
 
@@ -121,10 +121,13 @@ set commodity__param__period dimen 3; # within {commodity, commodityPeriodParam,
 set commodity__param__time dimen 3; # within {commodity, commodityTimeParam, time};
 set process__param__period dimen 3; # within {process, processPeriodParam, periodAll};
 
-set period_group 'picking up periods from group data' := setof {(n, param, d) in group__param__period} (d);
-set period_node 'picking up periods from node data' := setof {(n, param, d) in node__param__period} (d);
-set period_commodity 'picking up periods from commodity data' := setof {(n, param, d) in commodity__param__period} (d);
-set period_process 'picking up periods from process data' := setof {(n, param, d) in process__param__period} (d);
+# period_* sets migrated to Python (preprocessing/period_param_sets.py).
+# Each is the projection of the period column out of the corresponding
+# pd_<class>.csv file written by input_writer.write_parameter.
+set period_group 'picking up periods from group data';
+set period_node 'picking up periods from node data';
+set period_commodity 'picking up periods from commodity data';
+set period_process 'picking up periods from process data';
 
 set periodAll 'd - Time periods in data (including those currently in use)' := period_group union period_node union period_commodity union period_process union period_solve union branch;
 
@@ -172,19 +175,19 @@ set co2_max_period_method within co2_method;
 set co2_max_total_method within co2_method;
 set price_method 'methods available for commodity price/ladder';
 set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
-set entityDivest := setof {(e, m) in entity__invest_method : m not in divest_method_not_allowed} (e);
-set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
+set entityDivest;  # Migrated to Python (preprocessing/invest_method_sets.py).
+set entityInvest;  # Migrated to Python (preprocessing/invest_method_sets.py).
 set entity__lifetime_method_read dimen 2 within {entity, lifetime_method};
 set entity__lifetime_method 'the lifetime method applied to an entity' :=
     {e in entity, m in lifetime_method : (e, m) in entity__lifetime_method_read || (sum{(e, m2) in entity__lifetime_method_read} 1 = 0 && m in lifetime_method_default)};
 param investableEntities := sum{e in entityInvest} 1;
 set group__invest_method 'the investment method applied to a group' dimen 2 within {group, invest_method};
-set group_invest := setof {(g, m) in group__invest_method : m not in invest_method_not_allowed} (g);
-set group_divest := setof {(g, m) in group__invest_method : m not in divest_method_not_allowed} (g);
+set group_invest;  # Migrated to Python (preprocessing/invest_method_sets.py).
+set group_divest;  # Migrated to Python (preprocessing/invest_method_sets.py).
 set group__co2_method 'the investment method applied to a group' dimen 2 within {group, co2_method};
-set group_co2_price := setof {(g, m) in group__co2_method : m in co2_price_method} (g);
-set group_co2_max_period := setof {(g, m) in group__co2_method : m in co2_max_period_method} (g);
-set group_co2_max_total := setof {(g, m) in group__co2_method : m in co2_max_total_method} (g);
+set group_co2_price;       # Migrated to Python (preprocessing/co2_method_sets.py).
+set group_co2_max_period;  # Migrated to Python (preprocessing/co2_method_sets.py).
+set group_co2_max_total;   # Migrated to Python (preprocessing/co2_method_sets.py).
 set node_type 'enum universe of node_type values';
 param p_node_type {n in node} symbolic in node_type, default 'balance';
 set nodeCommodity      := {n in node : p_node_type[n] = 'commodity'};
@@ -290,7 +293,7 @@ set nodeGroupDispatch_node 'dispatch groups with node members' :=
 set flowAggregator 'groups that aggregate flows into a node-group dispatch' within group;
 
 set group__loss_share_type dimen 2;
-set group_loss_share 'group that share the loss of load (upward penalty)' := setof {(g, loss_share_type) in group__loss_share_type} (g);
+set group_loss_share 'group that share the loss of load (upward penalty)';  # Migrated to Python (preprocessing/simple_projections.py).
 
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
@@ -908,11 +911,26 @@ table data IN 'CSV' 'solve_data/costs_discounted.csv' : [param_costs], costs_dis
 table data IN 'CSV' 'solve_data/co2.csv' : [param_co2], model_co2~model_wide;
 table data IN 'CSV' 'solve_data/period_capacity.csv' : period_capacity <- [period];
 
-# Migrated commodity-ladder filtered subsets (see flextool.mod:468-470 origin
-# and flextool/flextoolrunner/preprocessing/commodity_ladder_sets.py).
+# Migrated derived sets (Python preprocessing — see
+# flextool/flextoolrunner/preprocessing/<module>.py for each family).
 table data IN 'CSV' 'solve_data/commodity_with_ladder.csv' : commodity_with_ladder <- [commodity];
 table data IN 'CSV' 'solve_data/commodity_with_ladder_annual.csv' : commodity_with_ladder_annual <- [commodity];
 table data IN 'CSV' 'solve_data/commodity_with_ladder_cumulative.csv' : commodity_with_ladder_cumulative <- [commodity];
+# L0 batch 1 — period_param_sets, invest_method_sets, co2_method_sets, simple_projections
+table data IN 'CSV' 'solve_data/period_group.csv' : period_group <- [period];
+table data IN 'CSV' 'solve_data/period_node.csv' : period_node <- [period];
+table data IN 'CSV' 'solve_data/period_commodity.csv' : period_commodity <- [period];
+table data IN 'CSV' 'solve_data/period_process.csv' : period_process <- [period];
+table data IN 'CSV' 'solve_data/entityInvest.csv' : entityInvest <- [entity];
+table data IN 'CSV' 'solve_data/entityDivest.csv' : entityDivest <- [entity];
+table data IN 'CSV' 'solve_data/group_invest.csv' : group_invest <- [group];
+table data IN 'CSV' 'solve_data/group_divest.csv' : group_divest <- [group];
+table data IN 'CSV' 'solve_data/group_co2_price.csv' : group_co2_price <- [group];
+table data IN 'CSV' 'solve_data/group_co2_max_period.csv' : group_co2_max_period <- [group];
+table data IN 'CSV' 'solve_data/group_co2_max_total.csv' : group_co2_max_total <- [group];
+table data IN 'CSV' 'solve_data/optional_yes.csv' : optional_yes <- [output];
+table data IN 'CSV' 'solve_data/reserve__upDown__group.csv' : reserve__upDown__group <- [reserve, upDown, group];
+table data IN 'CSV' 'solve_data/group_loss_share.csv' : group_loss_share <- [group];
 
 #check
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
