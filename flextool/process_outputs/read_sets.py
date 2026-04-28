@@ -67,7 +67,7 @@ def read_sets(output_dir):
     s.dtt = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dtt.csv'))
     s.dtttdt = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dtttdt.csv'))
     s.period__time_first = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'period__time_first.csv'))
-    s.period_first_of_solve = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'period_first_of_solve.csv'))
+    s.period_first_of_solve = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__period_first.csv'))
     s.period_in_use = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'period_in_use.csv'))
     s.dt_fix_storage_timesteps = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dt_fix_storage_timesteps.csv'))
 

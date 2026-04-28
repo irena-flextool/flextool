@@ -5832,9 +5832,9 @@ for {s in solve_current, (d, t) in period__time_first} {
     printf "%s,%s,%s\n", s, d, t >> "solve_data/period__time_first.csv";
 }
 
-if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/period_first_of_solve.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/solve__period_first.csv";
 for {s in solve_current, d in period_first_of_solve} {
-    printf "%s,%s\n", s, d >> "solve_data/period_first_of_solve.csv";
+    printf "%s,%s\n", s, d >> "solve_data/solve__period_first.csv";
 }
 
 if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/period_in_use.csv";
