@@ -19,7 +19,8 @@ migration completes.
 | `order.txt` | Layered migration order — one item per line, blank lines between layers. |
 | `schema_defaults_audit.py` | Schema vs. `.mod` `default ...` clause cross-reference. |
 | `schema_defaults.csv` | 225 schema params + 68 mod-side defaults. |
-| `baselines/mps_baseline.json` | Reference MPS hash on the H2 trade `scenario_test_6h_no_carrier_storage` fixture. |
+| `baselines/h2_trade_baseline.json` | Reference MPS hash on the H2 trade `scenario_test_6h_no_carrier_storage` fixture (commodity ladder + indirect conversion; ~2.3k rows). |
+| `baselines/test_a_lot_baseline.json` | Complementary reference MPS hash on `tests/fixtures/tests.sqlite::test_a_lot` (UC/online_linear, reserves, capacity margin, inertia, co2 limit, profile_state, storage_state_start_binding, min_load; ~5.3k rows). |
 
 The lint that bans bare `set()` in preprocessing modules lives at
 `tests/test_preprocessing_ordered_set_lint.py` — it is a no-op until
@@ -39,12 +40,19 @@ For each item in `order.txt` (strict sequential, layer by layer):
 3. Replace the `:= setof {...}` body in `flextool.mod` with a
    data-loaded declaration (`set X dimen N;` or `param X{...};`) and
    add a `table data IN` reader matching the new CSV.
-4. Run validation gate:
+4. Run validation gate (against BOTH baselines — H2 trade alone misses
+   reserves, online/UC, ramps, capacity margin, inertia, intraperiod
+   blocks, etc.; `test_a_lot` covers most of those):
    ```bash
-   python -m flextool.cli.cmd_run_flextool <fixture> --glpsol-timing
-   python -m migration.mps_parity check <work>/flextool.mps
+   python -m flextool.cli.cmd_run_flextool <h2_fixture>
+   python -m migration.mps_parity check <h2_work>/flextool.mps \
+       --baseline migration/baselines/h2_trade_baseline.json
+
+   python -m flextool.cli.cmd_run_flextool <test_a_lot_fixture>
+   python -m migration.mps_parity check <test_a_lot_work>/flextool.mps \
+       --baseline migration/baselines/test_a_lot_baseline.json
    ```
-   Must report `OK: MPS structurally identical to baseline`.
+   Both must report `OK: MPS structurally identical to baseline`.
 5. Commit on `python-preprocessing` with a message of the form
    `migration L<N>: <set-name> → Python` and include the per-constraint
    timing delta (if any) in the body.
@@ -56,8 +64,20 @@ After each layer (L0 → L11) completes:
 - Full `tests/test_scenarios.py` (5 min)
 - Full `tests/test_blocks.py` + `test_bind_intraperiod_blocks.py` +
   `test_lh2_three_region.py` + `test_co2_rolling_handoff.py` (~3 min)
-- MPS parity on the H2 trade fixture and at least one additional
-  scenario from a different complexity class (multi-block, rolling).
+- MPS parity on BOTH the H2 trade fixture (`h2_trade_baseline.json`)
+  and the `test_a_lot` fixture (`test_a_lot_baseline.json`). Together
+  these cover commodity-ladder/indirect-conversion and
+  UC/reserves/capacity-margin/inertia/co2/profile_state/min_load
+  families. Still uncovered (so still potential blind spots after
+  layer gates): `nodeBalanceBlock_eq` / `stateConstantWithinBlock_eq`
+  (intraperiod blocks), integer UC variants
+  (`online__startup_integer` / `online__shutdown_integer` /
+  `non_anticipativity_online_integer`), `minimum_uptime` /
+  `minimum_downtime`, ramp constraints
+  (`ramp_sink_up_constraint` / `ramp_up_variable`), divest. Spot-check
+  one of `5weeks_battery_intraperiod_blocks`,
+  `coal_wind_min_uptime_MIP`, `coal_ramp_limit`, or `fullYear_roll`
+  per layer if its sets/params plausibly affect those families.
 
 A failed gate halts the migration until investigated.
 
