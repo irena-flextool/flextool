@@ -284,7 +284,7 @@ set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
 set group_process_node 'process__nodes of a particular group' dimen 3 within {group, process, node};
-set group_entity := group_process union group_node;
+set group_entity dimen 2;  # Migrated to Python (preprocessing/union_sets.py).
 set groupInertia 'node groups with an inertia constraint' within group;
 set groupNonSync 'node groups with a non-synchronous constraint' within group;
 set groupCapacityMargin 'node groups with a capacity margin' within group;
@@ -942,12 +942,17 @@ table data IN 'CSV' 'solve_data/entity__lifetime_method.csv' : entity__lifetime_
 table data IN 'CSV' 'solve_data/process__ct_method.csv' : process__ct_method <- [process, ct_method];
 table data IN 'CSV' 'solve_data/process__startup_method.csv' : process__startup_method <- [process, startup_method];
 table data IN 'CSV' 'solve_data/process__group_inside_group_nonSync.csv' : process__group_inside_group_nonSync <- [process, group];
+# L0 batch 3 — union_sets, entity_total_caps. group_entity is declared at L287
+# so its reader belongs here; process_delayed__duration and e_*_total are
+# declared later (L950, L1825+) so their readers live alongside the declarations.
+table data IN 'CSV' 'solve_data/group_entity.csv' : group_entity <- [group, entity];
 
 #check
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
-set process_delayed__duration := process_delay_weighted__delay_duration union process_delay_single__delay_duration;
+set process_delayed__duration dimen 2;  # Migrated to Python (preprocessing/union_sets.py).
+table data IN 'CSV' 'solve_data/process_delayed__duration.csv' : process_delayed__duration <- [process, delay_duration];
 set process_delayed := setof {(p, td) in process_delayed__duration} (p);
 
 # process_method is now resolved in Python (input_writer.py) and read from CSV
@@ -1822,25 +1827,18 @@ set ed_invest_forbidden_no_investment := {(e, d) in ed_invest :
     (e, 'no_investment') in entity__lifetime_method
     && p_years_d[d] >= sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first])};
 
-param e_invest_max_total{e in entityInvest} :=
-  + (if e in process then p_process[e, 'invest_max_total'])
-  + (if e in node then p_node[e, 'invest_max_total'])
-;
-
-param e_divest_max_total{e in entityDivest} :=
-  + (if e in process then p_process[e, 'retire_max_total'])
-  + (if e in node then p_node[e, 'retire_max_total'])
-;
-
-param e_invest_min_total{e in entityInvest} :=
-  + (if e in process then p_process[e, 'invest_min_total'])
-  + (if e in node then p_node[e, 'invest_min_total'])
-;
-
-param e_divest_min_total{e in entityDivest} :=
-  + (if e in process then p_process[e, 'retire_min_total'])
-  + (if e in node then p_node[e, 'retire_min_total'])
-;
+# e_*_total params migrated to Python (preprocessing/entity_total_caps.py).
+# Each is the sum of p_process[e, paramName] + p_node[e, paramName] (one
+# of the two contributes per entity since process/node are disjoint).
+# Computed during write_input and loaded back via table data IN below.
+param e_invest_max_total{e in entityInvest};
+param e_divest_max_total{e in entityDivest};
+param e_invest_min_total{e in entityInvest};
+param e_divest_min_total{e in entityDivest};
+table data IN 'CSV' 'solve_data/e_invest_max_total.csv' : [entity], e_invest_max_total~value;
+table data IN 'CSV' 'solve_data/e_divest_max_total.csv' : [entity], e_divest_max_total~value;
+table data IN 'CSV' 'solve_data/e_invest_min_total.csv' : [entity], e_invest_min_total~value;
+table data IN 'CSV' 'solve_data/e_divest_min_total.csv' : [entity], e_divest_min_total~value;
 
 param ed_invest_max_period{(e, d) in ed_invest} :=
   + (if e in process then pdProcess[e, 'invest_max_period', d])

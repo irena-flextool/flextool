@@ -1896,6 +1896,13 @@ def write_input(
         method_with_fallback_sets.write_process_ct_method(input_dir, solve_data_dir)
         method_with_fallback_sets.write_process_startup_method(input_dir, solve_data_dir)
         nonsync_sets.write_process_group_inside_group_nonsync(input_dir, solve_data_dir)
+        # L0 Batch 3: union sets + first calculated-param migration.
+        from flextool.flextoolrunner.preprocessing import (
+            union_sets, entity_total_caps,
+        )
+        union_sets.write_group_entity(input_dir, solve_data_dir)
+        union_sets.write_process_delayed__duration(input_dir, solve_data_dir)
+        entity_total_caps.write_entity_total_caps(input_dir, solve_data_dir)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}
