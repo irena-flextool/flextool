@@ -32,7 +32,7 @@ set period_solve 'picking up periods from solve_period';  # Migrated to Python (
 set solve_current 'current solve name' dimen 1;
 set period_from_model dimen 1;
 set period_from_period_time;  # Migrated to Python (preprocessing/per_solve_sets.py).
-set period 'd - Time periods in the current solve' := period_from_model union period_from_period_time;
+set period 'd - Time periods in the current solve';  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period_first dimen 1 within period;
 set period_last dimen 1 within period;
 set branch_all dimen 1;
@@ -45,7 +45,7 @@ set timeline__timestep__duration dimen 3;
 set time 't - Time steps in the current timelines';  # Migrated to Python (preprocessing/simple_projections.py).
 set timeset__timeline dimen 2;
 set timeline;  # Migrated to Python (preprocessing/simple_projections.py).
-set period__timeline := {d in period, tl in timeline : sum{(s, d, tb) in solve_period_timeset : s in solve_current && (tb, tl) in timeset__timeline} 1};
+set period__timeline dimen 2;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
 set ct_method;
@@ -129,7 +129,7 @@ set period_node 'picking up periods from node data';
 set period_commodity 'picking up periods from commodity data';
 set period_process 'picking up periods from process data';
 
-set periodAll 'd - Time periods in data (including those currently in use)' := period_group union period_node union period_commodity union period_process union period_solve union branch;
+set periodAll 'd - Time periods in data (including those currently in use)';  # Migrated to Python (preprocessing/per_solve_sets.py).
 
 
 param p_group {g in group, groupParam} default 0;
@@ -270,13 +270,7 @@ set block_dtttdt 'per-block predecessor relations' dimen 7;
 set block__period__time_first 'per-block period first step' dimen 3;
 set block__period__time_last 'per-block period last step' dimen 3;
 # Block set derived from the union of blocks referenced in the four CSVs.
-set block 'temporal-resolution classes for nodes and processes'
-    := setof {(n, b) in node__block} (b)
-       union setof {(p, s, b) in process__side__block} (b)
-       union setof {(p, b) in process__block} (b)
-       union setof {(b, d, t) in block__period__step} (b)
-       union setof {(d, bc, tc, bf, tf) in overlap} (bc)
-       union setof {(d, bc, tc, bf, tf) in overlap} (bf);
+set block 'temporal-resolution classes for nodes and processes';  # Migrated to Python (preprocessing/per_solve_sets.py).
 
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
@@ -361,10 +355,10 @@ set period_in_use;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period_first_of_solve dimen 1 within period;
 
 set dt_realize_dispatch_input dimen 2 within period_time;
-set dt_realize_dispatch := if 'output_horizon' in enable_optional_outputs then dt else dt_realize_dispatch_input;
-set d_realized_period := setof {(d, t) in dt_realize_dispatch} (d);
+set dt_realize_dispatch dimen 2;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set d_realized_period;            # Migrated to Python (preprocessing/per_solve_sets.py).
 set realized_period__time_last dimen 2 within period_time;
-set d_realize_dispatch_or_invest := d_realized_period union d_realize_invest;
+set d_realize_dispatch_or_invest;  # Migrated to Python (preprocessing/per_solve_sets.py).
 #dt_complete is the timesteps of the whole rolling_window set, not just single roll. For single_solve it is the same as dt
 set dt_complete dimen 2 within period_time;
 set complete_time_in_use;  # Migrated to Python (preprocessing/per_solve_sets.py).
@@ -571,7 +565,7 @@ p_branch_weight_input[d] /(sum{(d2,b) in period__branch, (b, ts) in period__time
 param pdt_branch_weight {(d,t) in dt} :=
 p_branch_weight_input[d] /(sum{(d2,b) in period__branch: (b,t) in dt && (d2,d) in period__branch} p_branch_weight_input[b]);
 
-set dt_non_anticipativity := dt_realize_dispatch_input union dt_fix_storage_timesteps;
+set dt_non_anticipativity dimen 2;  # Migrated to Python (preprocessing/per_solve_sets.py).
 
 #stochastic versions of timeseries
 set process__param__branch__time dimen 5 within {process, processTimeParam, time_branch_all, time, time};
@@ -982,6 +976,17 @@ table data IN 'CSV' 'solve_data/d_fix_storage_period_set.csv' : d_fix_storage_pe
 table data IN 'CSV' 'solve_data/n_fix_storage_quantity_set.csv' : n_fix_storage_quantity <- [node];
 table data IN 'CSV' 'solve_data/n_fix_storage_price_set.csv' : n_fix_storage_price <- [node];
 table data IN 'CSV' 'solve_data/n_fix_storage_usage_set.csv' : n_fix_storage_usage <- [node];
+# L0 batch 8 — additional per-solve sets (block, periodAll, conditional/union variants).
+table data IN 'CSV' 'solve_data/period_set.csv' : period <- [period];
+table data IN 'CSV' 'solve_data/period__timeline_set.csv' : period__timeline <- [period, timeline];
+table data IN 'CSV' 'solve_data/periodAll_set.csv' : periodAll <- [period];
+table data IN 'CSV' 'solve_data/block_set.csv' : block <- [block];
+table data IN 'CSV' 'solve_data/dt_realize_dispatch_set.csv' : dt_realize_dispatch <- [period, time];
+table data IN 'CSV' 'solve_data/d_realized_period_set.csv' : d_realized_period <- [period];
+table data IN 'CSV' 'solve_data/d_realize_dispatch_or_invest_set.csv' : d_realize_dispatch_or_invest <- [period];
+table data IN 'CSV' 'solve_data/dt_non_anticipativity_set.csv' : dt_non_anticipativity <- [period, time];
+# pdt_uptime, pdt_downtime, dtdt_next are declared at L1124+ — readers
+# co-located with the declarations below to avoid forward-reference.
 
 #check
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
@@ -1115,11 +1120,14 @@ table data IN 'CSV' 'solve_data/process_online_integer.csv' : process_online_int
 set process_online := process_online_linear union process_online_integer;
 
 # Timestep sets that have at least one lookback entry (for min up/downtime constraint indexing)
-set pdt_uptime := setof{(p, d, t, d2, t2) in uptime_lookback} (p, d, t);
-set pdt_downtime := setof{(p, d, t, d2, t2) in downtime_lookback} (p, d, t);
+set pdt_uptime dimen 3;    # Migrated to Python (preprocessing/per_solve_sets.py).
+set pdt_downtime dimen 3;  # Migrated to Python (preprocessing/per_solve_sets.py).
+table data IN 'CSV' 'solve_data/pdt_uptime_set.csv' : pdt_uptime <- [process, period, time];
+table data IN 'CSV' 'solve_data/pdt_downtime_set.csv' : pdt_downtime <- [process, period, time];
 
 # Next-timestep mapping (inverse of dtttdt) for shutdown tightening
-set dtdt_next := setof{(d, t, t_prev, t_prev_ws, d_prev, t_prev_solve) in dtttdt} (d_prev, t_prev_solve, d, t);
+set dtdt_next dimen 4;  # Migrated to Python (preprocessing/per_solve_sets.py).
+table data IN 'CSV' 'solve_data/dtdt_next_set.csv' : dtdt_next <- [period_prev, time_prev_solve, period, time];
 
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 
