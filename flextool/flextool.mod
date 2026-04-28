@@ -26,7 +26,7 @@ set period_time '(d, t) - Time steps in the time periods of the whole timeline' 
 set period__time_first within period_time;
 set period__time_last within period_time;
 set solve_period_timeset '(solve, d, tb) - All solve, period, timeset combinations in the model instance' dimen 3;
-set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeset} (s, d);
+set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' dimen 2;  # Migrated to Python (preprocessing/simple_projections.py).
 set period_capacity;  # Periods for which capacities have been already been output
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
@@ -44,7 +44,7 @@ set year 'y - Years for discount calculations' := setof{(d, y) in period__year}(
 set timeline__timestep__duration dimen 3;
 set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline__timestep__duration} (t);
 set timeset__timeline dimen 2;
-set timeline := setof{(tb, tl) in timeset__timeline} (tl);
+set timeline;  # Migrated to Python (preprocessing/simple_projections.py).
 set period__timeline := {d in period, tl in timeline : sum{(s, d, tb) in solve_period_timeset : s in solve_current && (tb, tl) in timeset__timeline} 1};
 set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
@@ -105,12 +105,12 @@ set exclude_entity_outputs;
 set def_optional_outputs dimen 2;
 set optional_outputs dimen 2;
 set optional_yes;  # Migrated to Python (preprocessing/simple_projections.py); loaded via table data IN below.
-set def_optional_yes := setof{(output,value) in def_optional_outputs: value == 'yes' && (output,'no') not in optional_outputs}(output);
+set def_optional_yes;  # Migrated to Python (preprocessing/simple_projections.py).
 set enable_optional_outputs := optional_yes union def_optional_yes;
 
 set reserve__upDown__group__method dimen 4;
 set reserve__upDown__group dimen 3;  # Migrated to Python (preprocessing/simple_projections.py); loaded via table data IN below.
-set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng, r_m) in reserve__upDown__group__method} (r);
+set reserve 'r - Categories for the reservation of capacity_existing';  # Migrated to Python (preprocessing/reserve_method_partitions.py).
 set reserve__upDown__group__reserveParam__time dimen 5 within {reserve, upDown, group, reserveTimeParam, time};
 
 set group__param dimen 2 within {group, groupParam};
@@ -242,7 +242,7 @@ set nodeStateBlock := {n in nodeState : (n, 'bind_intraperiod_blocks') in node__
 # case (no group has new_stepduration set) everything maps to block "default".
 # Declarations are inert in this agent — Agents 1.3+ consume them.
 set node__block 'per-node block assignment' dimen 2;
-set process_side 'source/sink side label' := {'source', 'sink'};
+set process_side 'source/sink side label';  # Migrated to Python (preprocessing/simple_projections.py).
 set process__side__block 'per-process per-side block assignment' dimen 3;
 # Agent 1.6: per-process unified block used by UC (online/startup/shutdown),
 # ramp and profile constraints.  Equals the process's explicit resolution-
@@ -291,8 +291,7 @@ set groupCapacityMargin 'node groups with a capacity margin' within group;
 set nodeGroupIndicators 'groups that output node-group indicators' within group;
 set flowGroupIndicators 'groups that output flow-group indicators' within group;
 set nodeGroupDispatch 'groups that will output the node-group dispatch table' within group;
-set nodeGroupDispatch_node 'dispatch groups with node members' :=
-    {g in nodeGroupDispatch : sum{(g, n) in group_node} 1 };
+set nodeGroupDispatch_node 'dispatch groups with node members';  # Migrated to Python (preprocessing/structural_filters.py).
 set flowAggregator 'groups that aggregate flows into a node-group dispatch' within group;
 
 set group__loss_share_type dimen 2;
@@ -347,7 +346,7 @@ set commodity__tier_cum dimen 2;
 # reader can safely emit multiple rows per (c, tier) without triggering
 # a "duplicate tuple" error.
 set commodity__tier__period_ann dimen 3;
-set commodity__tier_ann := setof {(c, i, d) in commodity__tier__period_ann} (c, i);
+set commodity__tier_ann dimen 2;  # Migrated to Python (preprocessing/simple_projections.py::write_simple_setof_projections).
 set commodity__tier := commodity__tier_cum union commodity__tier_ann;
 set tier := setof {(c, i) in commodity__tier} (i);
 
@@ -372,7 +371,7 @@ set d_realize_dispatch_or_invest := d_realized_period union d_realize_invest;
 set dt_complete dimen 2 within period_time;
 set complete_time_in_use := setof {(d, t) in dt_complete} (t);
 param complete_step_duration{(d, t) in dt_complete};
-set timeline_steps := setof{(tl, t, duration) in timeline__timestep__duration}(tl, t);
+set timeline_steps dimen 2;  # Migrated to Python (preprocessing/simple_projections.py).
 param p_timeline_step_duration{timeline_steps};
 param p_timeline_duration_in_years{tl in timeline}:= sum{(tl,t) in timeline_steps} p_timeline_step_duration[tl,t] /8760;
 
@@ -402,7 +401,7 @@ set process__param_t := setof {(p, param, t) in process__param__time} (p, param)
 set profile_param dimen 1 within {profile};
 set profile_param__time dimen 2 within {profile, time};
 
-set connection__param := {(p, param) in process__param : p in process_connection};
+set connection__param dimen 2;  # Migrated to Python (preprocessing/structural_filters.py).
 set connection__param__time := { (p, param, t) in process__param__time : (p in process_connection)};
 set connection__param_t := setof {(connection, param, t) in connection__param__time} (connection, param);
 set process__source__param dimen 3 within {process_source, sourceSinkParam};
@@ -946,6 +945,16 @@ table data IN 'CSV' 'solve_data/process__group_inside_group_nonSync.csv' : proce
 # so its reader belongs here; process_delayed__duration and e_*_total are
 # declared later (L950, L1825+) so their readers live alongside the declarations.
 table data IN 'CSV' 'solve_data/group_entity.csv' : group_entity <- [group, entity];
+# L0 batch 4 — readers for sets whose declarations precede this block.
+table data IN 'CSV' 'solve_data/def_optional_yes.csv' : def_optional_yes <- [output];
+table data IN 'CSV' 'solve_data/reserve.csv' : reserve <- [reserve];
+table data IN 'CSV' 'solve_data/process_side.csv' : process_side <- [side];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch_node.csv' : nodeGroupDispatch_node <- [group];
+table data IN 'CSV' 'solve_data/commodity__tier_ann.csv' : commodity__tier_ann <- [commodity, tier];
+table data IN 'CSV' 'solve_data/connection__param.csv' : connection__param <- [process, processParam];
+table data IN 'CSV' 'solve_data/solve_period.csv' : solve_period <- [solve, period];
+table data IN 'CSV' 'solve_data/timeline.csv' : timeline <- [timeline];
+table data IN 'CSV' 'solve_data/timeline_steps.csv' : timeline_steps <- [timeline, step];
 
 #check
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
@@ -953,25 +962,17 @@ set ed_history_realized := ed_history_realized_read union ed_history_realized_fi
 
 set process_delayed__duration dimen 2;  # Migrated to Python (preprocessing/union_sets.py).
 table data IN 'CSV' 'solve_data/process_delayed__duration.csv' : process_delayed__duration <- [process, delay_duration];
-set process_delayed := setof {(p, td) in process_delayed__duration} (p);
+set process_delayed;  # Migrated to Python (preprocessing/simple_projections.py).
+table data IN 'CSV' 'solve_data/process_delayed.csv' : process_delayed <- [process];
 
 # process_method is now resolved in Python (input_writer.py) and read from CSV
 set process_method dimen 2 within {process, method};
 table data IN 'CSV' 'input/process_method.csv' : process_method <- [process,method];
-set process__profileProcess__toSink__profile__profile_method :=
-    { p in process, (p2, sink, f, fm) in process__node__profile__profile_method
-	    :  p = p2
-		&& (p, sink) in process_sink
-	    && (sum{(p, m) in process_method : m in method_indirect} 1
-		    || sum{(p, source) in process_source} 1 < 1)
-	};
+set process__profileProcess__toSink__profile__profile_method dimen 5;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process__profileProcess__toSink__profile__profile_method.csv' : process__profileProcess__toSink__profile__profile_method <- [process_outer, process, sink, profile, profile_method];
 set process__profileProcess__toSink := setof {(p, p2, sink, f, m) in process__profileProcess__toSink__profile__profile_method} (p, p2, sink);
-set process__source__toProfileProcess__profile__profile_method :=
-    { (p, source) in process_source, (p2, source, f, fm) in process__node__profile__profile_method
-	    :  p = p2
-	    && (sum{(p, m) in process_method : m in method_indirect} 1
-		    || sum{(p, sink) in process_sink} 1 < 1)
-	};
+set process__source__toProfileProcess__profile__profile_method dimen 5;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process__source__toProfileProcess__profile__profile_method.csv' : process__source__toProfileProcess__profile__profile_method <- [process, source, process_aux, profile, profile_method];
 set process__source__toProfileProcess := setof {(p, source, p2, f, m) in process__source__toProfileProcess__profile__profile_method} (p, source, p2);
 set process_profile := setof {(p, source, p2) in process__source__toProfileProcess} (p) union setof {(p, p2, sink) in process__profileProcess__toSink} (p);
 set process_source_toProcess :=
@@ -990,52 +991,26 @@ set process_process_toSink :=
 		     || ( sum{(p, m) in process_method : m in method_direct} 1 && sum{(p, source) in process_source} 1 < 1 && not (p, p2, sink) in process__profileProcess__toSink )
 		   )
 	};
-set process_sink_toProcess :=
-	{ (p, sink) in process_sink, p2 in process
-	    :  p = p2
-	    && (p, sink) in process_sink
-	    && sum{(p, m) in process_method : m in method_2way_nvar} 1
-	};
-set process_process_toSource :=
-    { p in process, (p2, source) in process_source
-	    :  p = p2
-	    && (p, source) in process_source
-	    && sum{(p, m) in process_method : m in method_2way_nvar} 1
-	};
-set process_source_toSink :=
-    { (p, source) in process_source, sink in node
-	    :  (p, sink) in process_sink
-        && sum{(p, m) in process_method : m in method_direct} 1
-	};
-set process_source_toProcess_direct :=
-    { (p, source) in process_source, p2 in process
-	    :  p = p2
-        && sum{(p, m) in process_method : m in method_direct} 1
-	};
-set process_process_toSink_direct :=
-    { p in process, p2 in process, sink in node
-	    :  p = p2
-		&& (p, sink) in process_sink
-        && sum{(p, m) in process_method : m in method_direct} 1
-	};
-set process_sink_toProcess_direct :=
-	{ (p, sink) in process_sink, p2 in process
-	    :  p = p2
-		&& (p, sink) in process_sink
-	    && sum{(p, m) in process_method : m in method_2way_2var} 1
-	};
+set process_sink_toProcess dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_sink_toProcess.csv' : process_sink_toProcess <- [process, sink, process_aux];
+set process_process_toSource dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_process_toSource.csv' : process_process_toSource <- [process_outer, process, source];
+set process_source_toSink dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_source_toSink.csv' : process_source_toSink <- [process, source, sink];
+set process_source_toProcess_direct dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_source_toProcess_direct.csv' : process_source_toProcess_direct <- [process, source, process_aux];
+set process_process_toSink_direct dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_process_toSink_direct.csv' : process_process_toSink_direct <- [process_outer, process, sink];
+set process_sink_toProcess_direct dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_sink_toProcess_direct.csv' : process_sink_toProcess_direct <- [process, sink, process_aux];
 set process_process_toSource_direct :=
 	{ p in process, p2 in process, source in node
 	    :  p = p2
 		&& (p, source) in process_source
 	    && sum{(p, m) in process_method : m in method_2way_2var} 1
 	};
-set process_sink_toSource :=
-	{ (p, sink) in process_sink, source in node
-	    :  (p, source) in process_source
-	    && (p, sink) in process_sink
-	    && sum{(p, m) in process_method : m in method_2way_2var} 1
-	};
+set process_sink_toSource dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_sink_toSource.csv' : process_sink_toSource <- [process, sink, source];
 set process__source__sink__profile__profile_method_direct :=
     { (p, source, sink) in process_source_toSink, f in profile, fm in profile_method
 	    :  sum{(p, m) in process_method : m in method_direct} 1
@@ -1043,18 +1018,10 @@ set process__source__sink__profile__profile_method_direct :=
 		     || (p, sink, f, fm) in process__node__profile__profile_method
 		   )
 	};
-set process_process_toSink_noConversion :=
-    { p in process, (p2, sink) in process_sink
-	    :  p = p2
-	    && (p, sink) in process_sink
-	    && sum{(p, m) in process_method : m in method_1way_1var && not sum{(p, source) in process_source} 1} 1
-	};
-set process_source_toProcess_noConversion :=
-    { (p, source) in process_source, p2 in process
-	    :  p = p2
-	    && (p2, source) in process_source
-	    && sum{(p, m) in process_method : m in method_1way_1var && not sum{(p, sink) in process_sink} 1} 1
-	};
+set process_process_toSink_noConversion dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_process_toSink_noConversion.csv' : process_process_toSink_noConversion <- [process_outer, process, sink];
+set process_source_toProcess_noConversion dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_source_toProcess_noConversion.csv' : process_source_toProcess_noConversion <- [process, source, process_aux];
 
 set process_source_sink :=
     process_source_toSink union    # Direct 1-variable
@@ -1118,8 +1085,10 @@ set process__source__sink__profile__profile_method :=
 
 set process__source__sinkIsNode := {(p, source, sink) in process_source_sink : (p, sink) in process_sink};
 
-set process_online_linear 'processes with an online status using linear variable' := setof {(p, m) in process_method : m in method_LP} p;
-set process_online_integer 'processes with an online status using integer variable' := setof {(p, m) in process_method : m in method_MIP} p;
+set process_online_linear 'processes with an online status using linear variable';  # Migrated to Python (preprocessing/process_method_sets.py).
+set process_online_integer 'processes with an online status using integer variable';  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_online_linear.csv' : process_online_linear <- [process];
+table data IN 'CSV' 'solve_data/process_online_integer.csv' : process_online_integer <- [process];
 set process_online := process_online_linear union process_online_integer;
 
 # Timestep sets that have at least one lookback entry (for min up/downtime constraint indexing)
@@ -1175,23 +1144,16 @@ param pdtGroup {g in group, param in groupTimeParam, (d, t) in dt} :=
 		     then p_group[g, param]
         else 0;
 
-set reserve__upDown__group__method_timeseries := {(r, ud, ng, r_m) in reserve__upDown__group__method
-                                                       : r_m = 'timeseries_only'
-													   || r_m = 'timeseries_and_dynamic'
-													   || r_m = 'timeseries_and_large_failure'
-													   || r_m = 'all'};
-set reserve__upDown__group__method_dynamic := {(r, ud, ng, r_m) in reserve__upDown__group__method
-                                                       : r_m = 'dynamic_only'
-													   || r_m = 'timeseries_and_dynamic'
-													   || r_m = 'dynamic_and_large_failure'
-													   || r_m = 'all'};
-set reserve__upDown__group__method_n_1 := {(r, ud, ng, r_m) in reserve__upDown__group__method
-                                                       : r_m = 'large_failure_only'
-													   || r_m = 'timeseries_and_large_failure'
-													   || r_m = 'dynamic_and_large_failure'
-													   || r_m = 'all'};
+# Reserve method partitions migrated to Python (preprocessing/reserve_method_partitions.py).
+set reserve__upDown__group__method_timeseries dimen 4;
+set reserve__upDown__group__method_dynamic dimen 4;
+set reserve__upDown__group__method_n_1 dimen 4;
+table data IN 'CSV' 'solve_data/reserve__upDown__group__method_timeseries.csv' : reserve__upDown__group__method_timeseries <- [reserve, upDown, group, method];
+table data IN 'CSV' 'solve_data/reserve__upDown__group__method_dynamic.csv' : reserve__upDown__group__method_dynamic <- [reserve, upDown, group, method];
+table data IN 'CSV' 'solve_data/reserve__upDown__group__method_n_1.csv' : reserve__upDown__group__method_n_1 <- [reserve, upDown, group, method];
 
-set process__method_indirect := {(p, m) in process_method : m in method_indirect};
+set process__method_indirect dimen 2;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process__method_indirect.csv' : process__method_indirect <- [process, method];
 
 set process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source := {(p, source, sink) in process_source_sink
 										   : sum{(p,m) in process_method : m in method_1way} 1
@@ -2006,12 +1968,11 @@ set cndi_ladder_ann dimen 4
 set cndi_ladder dimen 4 := cndi_ladder_cum union cndi_ladder_ann;
 set ci_ladder_cumulative := {(c, i) in commodity__tier_cum : c in commodity_with_ladder_cumulative};
 
-set process__commodity__node := {p in process, (c, n) in commodity_node : (p, n) in process_source || (p, n) in process_sink};
+set process__commodity__node dimen 3;  # Migrated to Python (preprocessing/structural_filters.py).
+table data IN 'CSV' 'solve_data/process__commodity__node.csv' : process__commodity__node <- [process, commodity, node];
 
-set commodity_node_co2 :=
-        {(c, n) in commodity_node :
-			p_commodity[c, 'co2_content']
-		};
+set commodity_node_co2 dimen 2;  # Migrated to Python (preprocessing/structural_filters.py).
+table data IN 'CSV' 'solve_data/commodity_node_co2.csv' : commodity_node_co2 <- [commodity, node];
 
 set process__commodity__node_co2 := {p in process, (c, n) in commodity_node_co2 : (p, n) in process_source || (p, n) in process_sink};
 set process_co2 := setof{(p, c, n) in process__commodity__node_co2} p;
@@ -2216,8 +2177,10 @@ param p_entity_dispatch_capacity_max {e in entity, d in period_in_use} :=
   + (if e in entityInvest then p_entity_invest_cumulative_max[e, d] else 0)
 ;
 
-set process_source_coeff_zero := {(p, source) in process_source: not p_process_source_max_capacity_coefficient[p, source]};
-set process_sink_coeff_zero := {(p, sink) in process_sink: not p_process_sink_max_capacity_coefficient[p, sink]};
+set process_source_coeff_zero dimen 2;  # Migrated to Python (preprocessing/structural_filters.py).
+set process_sink_coeff_zero dimen 2;    # Migrated to Python (preprocessing/structural_filters.py).
+table data IN 'CSV' 'solve_data/process_source_coeff_zero.csv' : process_source_coeff_zero <- [process, source];
+table data IN 'CSV' 'solve_data/process_sink_coeff_zero.csv' : process_sink_coeff_zero <- [process, sink];
 set process_source_sink_coeff_zero := {(p, source, sink) in process_source_sink: (p,source) in process_source_coeff_zero || (p,sink) in process_sink_coeff_zero};
 
 param p_flow_max{(p, source, sink, d, t) in peedt} :=
@@ -2245,8 +2208,8 @@ param p_flow_min{(p, source, sink, d, t) in peedt} :=
   else 0
 ;
 
-set process_VRE := {p in process_unit : sum{(p, source) in process_source} 1 == 0
-                                        && (sum{(p, n, prof, m) in process__node__profile__profile_method : m = 'upper_limit'} 1)};
+set process_VRE;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_VRE.csv' : process_VRE <- [process];
 
 param p_state_slack_share{(g,n) in group_node, (d,t) in dt: g in group_loss_share} :=
   if (g,'inflow_weighted') in group__loss_share_type then pdtNodeInflow[n,d,t] / (sum{(g,ng) in group_node} pdtNodeInflow[ng,d,t])

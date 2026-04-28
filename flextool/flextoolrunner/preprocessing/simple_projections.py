@@ -59,3 +59,94 @@ def write_group_loss_share(input_dir: Path, solve_data_dir: Path) -> None:
     (solve_data_dir / "group_loss_share.csv").write_text(
         "group\n" + "".join(g + "\n" for g in seen.keys())
     )
+
+
+def write_def_optional_yes(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod:108
+        set def_optional_yes := setof{(output, value) in def_optional_outputs
+            : value == 'yes' && (output, 'no') not in optional_outputs} (output);
+    """
+    explicit = _read_csv(input_dir / "optional_outputs.csv")
+    explicit_no = frozenset(r[0] for r in explicit if len(r) >= 2 and r[1] == "no")
+    defaults = _read_csv(input_dir / "def_optional_outputs.csv")
+    seen: dict[str, None] = {}
+    for r in defaults:
+        if len(r) >= 2 and r[1] == "yes" and r[0] not in explicit_no:
+            seen.setdefault(r[0], None)
+    (solve_data_dir / "def_optional_yes.csv").write_text(
+        "output\n" + "".join(o + "\n" for o in seen.keys())
+    )
+
+
+def write_process_delayed(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L956
+        set process_delayed := setof {(p, td) in process_delayed__duration} (p);
+
+    Reads the (already-Python-driven) process_delayed__duration set from
+    solve_data — projection writes early-stage compatibility.
+    """
+    # The upstream is in solve_data (we wrote it in batch 3).
+    rows = _read_csv(solve_data_dir / "process_delayed__duration.csv")
+    seen: dict[str, None] = {}
+    for r in rows:
+        if r and r[0]:
+            seen.setdefault(r[0], None)
+    (solve_data_dir / "process_delayed.csv").write_text(
+        "process\n" + "".join(p + "\n" for p in seen.keys())
+    )
+
+
+def write_process_side(solve_data_dir: Path) -> None:
+    """flextool.mod:245  set process_side := {'source', 'sink'};
+
+    A literal 2-element constant. We write it as a CSV for the migration's
+    universal "everything passes through CSV" rule.
+    """
+    (solve_data_dir / "process_side.csv").write_text(
+        "side\nsource\nsink\n"
+    )
+
+
+def write_simple_setof_projections(input_dir: Path, solve_data_dir: Path) -> None:
+    """Trivial single-key setof projections from already-loaded CSVs.
+
+    Each projects a single column out of an N-column input CSV,
+    deduplicating in row order. Bundled here because each is one line
+    of code and the modules would otherwise be too granular.
+    """
+    # solve_period (s, d) from solve_period_timeset (s, d, tb)
+    rows = _read_csv(input_dir / "timesets_in_use.csv")
+    seen: dict[tuple[str, str], None] = {}
+    for r in rows:
+        if len(r) >= 2 and r[0] and r[1]:
+            seen.setdefault((r[0], r[1]), None)
+    (solve_data_dir / "solve_period.csv").write_text(
+        "solve,period\n" + "".join(",".join(t) + "\n" for t in seen.keys())
+    )
+    # timeline (tl) from timeset__timeline (tb, tl)
+    rows = _read_csv(input_dir / "timesets__timeline.csv")
+    seen2: dict[str, None] = {}
+    for r in rows:
+        if len(r) >= 2 and r[1]:
+            seen2.setdefault(r[1], None)
+    (solve_data_dir / "timeline.csv").write_text(
+        "timeline\n" + "".join(t + "\n" for t in seen2.keys())
+    )
+    # timeline_steps (tl, t) from timeline__timestep__duration (tl, t, d)
+    rows = _read_csv(input_dir / "timeline.csv")
+    seen3: dict[tuple[str, str], None] = {}
+    for r in rows:
+        if len(r) >= 2 and r[0] and r[1]:
+            seen3.setdefault((r[0], r[1]), None)
+    (solve_data_dir / "timeline_steps.csv").write_text(
+        "timeline,step\n" + "".join(",".join(t) + "\n" for t in seen3.keys())
+    )
+    # commodity__tier_ann (c, i) from commodity__tier__period_ann (c, i, d)
+    rows = _read_csv(input_dir / "commodity_ladder_annual.csv")
+    seen4: dict[tuple[str, str], None] = {}
+    for r in rows:
+        if len(r) >= 2 and r[0] and r[1]:
+            seen4.setdefault((r[0], r[1]), None)
+    (solve_data_dir / "commodity__tier_ann.csv").write_text(
+        "commodity,tier\n" + "".join(",".join(t) + "\n" for t in seen4.keys())
+    )
