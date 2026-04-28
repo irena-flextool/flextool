@@ -2767,8 +2767,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (n, bn) in node__bloc
   # node-block b_n (degenerate: single identity row at t_f = t, fraction 1.0).
   + sum {(p, source, n) in process_source_sink, (n, b_n) in node__block,
          (p, 'sink', b_f) in process__side__block,
-         (d, b_c, tc, b_fn, t_f) in overlap
-         : b_c = b_n and tc = t and b_fn = b_f} (
+         (d, b_n, t, b_f, t_f) in overlap} (
       + p_overlap[d, b_n, t, b_f, t_f]
         * v_flow[p, source, n, d, t_f] * p_entity_unitsize[p]
         * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
@@ -2783,8 +2782,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (n, bn) in node__bloc
   # n is source (with efficiency conversion) — block-aware.
   - sum {(p, n, sink) in process_source_sink_eff, (n, b_n) in node__block,
          (p, 'source', b_f) in process__side__block,
-         (d, b_c, tc, b_fn, t_f) in overlap
-         : b_c = b_n and tc = t and b_fn = b_f} (
+         (d, b_n, t, b_f, t_f) in overlap} (
       ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
             * pdtProcess_slope[p, d, t_f]
             * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
@@ -2801,8 +2799,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (n, bn) in node__bloc
   # n is source (no efficiency) — block-aware.
   - sum {(p, n, sink) in process_source_sink_noEff, (n, b_n) in node__block,
          (p, 'source', b_f) in process__side__block,
-         (d, b_c, tc, b_fn, t_f) in overlap
-         : b_c = b_n and tc = t and b_fn = b_f}
+         (d, b_n, t, b_f, t_f) in overlap}
     ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
         * p_overlap[d, b_n, t, b_f, t_f]
         * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
@@ -2814,8 +2811,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (n, bn) in node__bloc
   # 'default') overlap carries a single identity row (t_f = t, fraction
   # 1.0) so the sum reduces to the original single term.
   + (if (n, 'no_inflow') not in node__inflow_method then
-      sum {(d, b_c, tc, b_f, t_f) in overlap
-           : b_c = bn and tc = t and b_f = 'default'}
+      sum {(d, bn, t, 'default', t_f) in overlap}
         p_overlap[d, bn, t, 'default', t_f]
           * pdtNodeInflow[n, d, t_f] * inv_node_cap[n, d])
   # Self-discharge at the node's block — block_step_duration[bn, d, t]
@@ -2844,8 +2840,7 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
   # n is sink — aggregate across every coarse-row × fine-row overlap in d.
   + sum {(p, source, n) in process_source_sink, (n, b_n) in node__block,
          (p, 'sink', b_f) in process__side__block,
-         (d, b_c, tc, b_fn, t_f) in overlap
-         : b_c = b_n and b_fn = b_f} (
+         (d, b_n, tc, b_f, t_f) in overlap} (
       + p_overlap[d, b_n, tc, b_f, t_f]
         * v_flow[p, source, n, d, t_f] * p_entity_unitsize[p]
         * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
@@ -2853,8 +2848,7 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
   # n is source (with efficiency conversion).
   - sum {(p, n, sink) in process_source_sink_eff, (n, b_n) in node__block,
          (p, 'source', b_f) in process__side__block,
-         (d, b_c, tc, b_fn, t_f) in overlap
-         : b_c = b_n and b_fn = b_f} (
+         (d, b_n, tc, b_f, t_f) in overlap} (
       ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
             * pdtProcess_slope[p, d, t_f]
             * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
@@ -2871,8 +2865,7 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
   # n is source (no efficiency).
   - sum {(p, n, sink) in process_source_sink_noEff, (n, b_n) in node__block,
          (p, 'source', b_f) in process__side__block,
-         (d, b_c, tc, b_fn, t_f) in overlap
-         : b_c = b_n and b_fn = b_f}
+         (d, b_n, tc, b_f, t_f) in overlap}
     ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
         * p_overlap[d, b_n, tc, b_f, t_f]
         * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
@@ -2920,8 +2913,7 @@ s.t. nodeBalanceBlock_eq {c in solve_current, n in nodeStateBlock,
   + sum {(p, source, n) in process_source_sink, (n, b_n) in node__block,
          (p, 'sink', b_f) in process__side__block,
          (d, b_first, t) in period_block_time,
-         (d, b_c, tc, b_fn, t_f) in overlap
-         : b_c = b_n and tc = t and b_fn = b_f} (
+         (d, b_n, t, b_f, t_f) in overlap} (
       + p_overlap[d, b_n, t, b_f, t_f]
         * v_flow[p, source, n, d, t_f] * p_entity_unitsize[p]
         * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
@@ -2930,8 +2922,7 @@ s.t. nodeBalanceBlock_eq {c in solve_current, n in nodeStateBlock,
   - sum {(p, n, sink) in process_source_sink_eff, (n, b_n) in node__block,
          (p, 'source', b_f) in process__side__block,
          (d, b_first, t) in period_block_time,
-         (d, b_c, tc, b_fn, t_f) in overlap
-         : b_c = b_n and tc = t and b_fn = b_f} (
+         (d, b_n, t, b_f, t_f) in overlap} (
       ( + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
             * pdtProcess_slope[p, d, t_f]
             * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
@@ -2948,8 +2939,7 @@ s.t. nodeBalanceBlock_eq {c in solve_current, n in nodeStateBlock,
   - sum {(p, n, sink) in process_source_sink_noEff, (n, b_n) in node__block,
          (p, 'source', b_f) in process__side__block,
          (d, b_first, t) in period_block_time,
-         (d, b_c, tc, b_fn, t_f) in overlap
-         : b_c = b_n and tc = t and b_fn = b_f} (
+         (d, b_n, t, b_f, t_f) in overlap} (
       + v_flow[p, n, sink, d, t_f] * p_entity_unitsize[p]
         * p_overlap[d, b_n, t, b_f, t_f]
         * block_step_duration[b_f, d, t_f] * inv_node_cap[n, d]
