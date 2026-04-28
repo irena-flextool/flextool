@@ -28,7 +28,7 @@ class FlexToolRunner:
     See ``flextool.flextoolrunner.__init__`` docstring for a full module navigation guide.
     """
 
-    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False, highs_threads=None, auto_scale=False, relax_feasibility=None, use_ipm=False):
+    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False, highs_threads=None, auto_scale=False, relax_feasibility=None, use_ipm=False, glpsol_timing=False):
         try:
             logger = logging.getLogger(__name__)
             # Resolve work_folder: default to cwd for backward compatibility
@@ -98,6 +98,11 @@ class FlexToolRunner:
             # ``--relax-feasibility`` / ``--ipm`` (or env vars).
             self.state.relax_feasibility = relax_feasibility
             self.state.use_ipm = use_ipm
+            self.state.glpsol_timing = glpsol_timing
+            if glpsol_timing:
+                stale_timing = resolved_work_folder / "solve_data" / "glpsol_constraint_timing.csv"
+                if stale_timing.exists():
+                    stale_timing.unlink()
         except FlexToolError:
             sys.exit(-1)
 

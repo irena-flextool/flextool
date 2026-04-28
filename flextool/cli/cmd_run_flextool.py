@@ -154,6 +154,13 @@ def main():
                         help='Tail-averaged imbalance threshold (primal '
                              'units) for declaring Lagrangian convergence '
                              '(default 1.0).')
+    parser.add_argument('--glpsol-timing', action='store_true', default=False,
+                        help='Record per-constraint matrix-generation time '
+                             'from glpsol stdout. Writes '
+                             'solve_data/glpsol_constraint_timing.csv with '
+                             'columns solve,phase,constraint,elapsed_s. Use '
+                             'to identify which constraint families dominate '
+                             'MPS generation cost. Diagnostic only.')
     parser.add_argument('--auto-scale', action='store_true', default=False,
                         help='Apply the per-solve ScaleAnalyzer recommendation '
                              'for use_row_scaling (Agent 8, LP-scaling).  Without '
@@ -281,7 +288,7 @@ def main():
         sys.exit(0 if result.converged else 1)
 
     if scenario_name:
-        runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm)
+        runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm, glpsol_timing=args.glpsol_timing)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
         with open(wf / "solve_data/solve_progress.csv", "w") as solve_progress:
@@ -294,7 +301,7 @@ def main():
             solve_progress.write('Write input time,' + str(round(timer[0] - timer[1],4)) + '\n')
 
     else:
-        runner = FlexToolRunner(input_db_url, output_path, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm)
+        runner = FlexToolRunner(input_db_url, output_path, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm, glpsol_timing=args.glpsol_timing)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
         with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:

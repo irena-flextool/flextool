@@ -138,8 +138,8 @@ class SolverRunner:
 
         if solver == "glpsol":
             returncode = self._run_glpsol_solver(
-                glpsol_file, flextool_model_file, flextool_base_data_file,
-                glp_solution_file, timer_in_model_run,
+                current_solve, glpsol_file, flextool_model_file,
+                flextool_base_data_file, glp_solution_file, timer_in_model_run,
             )
         elif solver in ("highs", "cplex"):
             returncode = self._run_highs_or_cplex(
@@ -208,6 +208,7 @@ class SolverRunner:
 
     def _run_glpsol_solver(
         self,
+        current_solve: str,
         glpsol_file: str,
         flextool_model_file: str,
         flextool_base_data_file: str,
@@ -224,7 +225,7 @@ class SolverRunner:
             '-d', flextool_base_data_file, '--cbg', '-w', glp_solution_file,
         ]
         try:
-            returncode = self._run_glpsol(only_glpsol)
+            returncode = self._run_glpsol(only_glpsol, solve_name=current_solve, phase="glpsol_solve")
             if returncode != 0:
                 raise FlexToolSolveError(f"glpsol failed with exit code: {returncode}")
         except FlexToolSolveError:
@@ -278,7 +279,7 @@ class SolverRunner:
             glpsol_file, '--check', '--model', flextool_model_file,
             '-d', flextool_base_data_file, '--wfreemps', mps_file,
         ]
-        returncode = self._run_glpsol(highs_step1)
+        returncode = self._run_glpsol(highs_step1, solve_name=current_solve, phase="matrix_gen")
         if returncode != 0:
             raise FlexToolSolveError(f"glpsol MPS generation failed with exit code: {returncode}")
 
@@ -327,8 +328,9 @@ class SolverRunner:
         returncode = 0
         if self.state.use_old_raw_csv:
             returncode = self._run_phase_3(
-                glpsol_file, flextool_model_file, flextool_base_data_file,
-                flextool_sol_file, wf, timer_in_model_run,
+                current_solve, glpsol_file, flextool_model_file,
+                flextool_base_data_file, flextool_sol_file, wf,
+                timer_in_model_run,
             )
             if returncode != 0:
                 raise FlexToolSolveError(
@@ -384,6 +386,7 @@ class SolverRunner:
 
     def _run_phase_3(
         self,
+        current_solve: str,
         glpsol_file: str,
         flextool_model_file: str,
         flextool_base_data_file: str,
@@ -406,7 +409,7 @@ class SolverRunner:
             glpsol_file, '--model', flextool_model_file,
             '-d', flextool_base_data_file, '-r', flextool_sol_file,
         ]
-        returncode = self._run_glpsol(highs_step3)
+        returncode = self._run_glpsol(highs_step3, solve_name=current_solve, phase="output_write")
 
         timing = time.perf_counter() - timer_in_model_run
         self.logger.info(f"--- GLPSOL wrote outputs: {timing:.4f} seconds ---")
@@ -653,8 +656,13 @@ class SolverRunner:
     # GLPSOL subprocess with filtered output
     # ------------------------------------------------------------------
 
-    def _run_glpsol(self, command_args: list[str]) -> int:
-        """Run glpsol with filtered output and return the process exit code."""
+    def _run_glpsol(self, command_args: list[str], solve_name: str = "", phase: str = "") -> int:
+        """Run glpsol with filtered output and return the process exit code.
+
+        When ``state.glpsol_timing`` is set and both ``solve_name`` and
+        ``phase`` are non-empty, per-constraint generation elapsed times
+        are appended to ``solve_data/glpsol_constraint_timing.csv``.
+        """
         process = subprocess.Popen(
             command_args, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, bufsize=1,
@@ -666,12 +674,29 @@ class SolverRunner:
         counter = 0
         already_stripped_end_of_line = True
 
+        timing_enabled = (
+            bool(getattr(self.state, 'glpsol_timing', False))
+            and bool(solve_name) and bool(phase)
+        )
+        active_name: str | None = None
+        active_t0: float = 0.0
+        timing_rows: list[tuple[str, float]] = []
+
+        def _close_active() -> None:
+            nonlocal active_name
+            if active_name is None:
+                return
+            timing_rows.append((active_name, time.perf_counter() - active_t0))
+            active_name = None
+
         for line in process.stdout:
             if line.startswith('Reading data...'):
                 continue
 
             # Take note if Generating has been followed by Display statement
             if line.startswith('Timer - '):
+                if timing_enabled:
+                    _close_active()
                 if already_stripped_end_of_line:
                     print(line.rstrip(), end='  ')
                 else:
@@ -680,6 +705,11 @@ class SolverRunner:
                 continue
 
             if line.startswith('Generating ') or line.startswith('Write '):
+                if timing_enabled:
+                    _close_active()
+                    if line.startswith('Generating '):
+                        active_name = line[len('Generating '):].strip().rstrip('.').strip()
+                        active_t0 = time.perf_counter()
                 previous = 'generate'
                 counter += 1
                 already_stripped_end_of_line = False
@@ -715,6 +745,17 @@ class SolverRunner:
                 print(line, end='')
 
         process.wait()
+
+        if timing_enabled:
+            _close_active()
+            if timing_rows:
+                timing_path = self.state.paths.work_folder / "solve_data" / "glpsol_constraint_timing.csv"
+                need_header = not timing_path.exists() or timing_path.stat().st_size == 0
+                with open(timing_path, "a") as f:
+                    if need_header:
+                        f.write("solve,phase,constraint,elapsed_s\n")
+                    for name, elapsed in timing_rows:
+                        f.write(f"{solve_name},{phase},{name},{elapsed:.6f}\n")
 
         if process.returncode != 0 and self.logger:
             self.logger.error(f'glpsol failed with exit code: {process.returncode}')
