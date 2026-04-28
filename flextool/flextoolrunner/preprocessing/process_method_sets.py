@@ -321,12 +321,19 @@ def write_process_profile_method_joins(
     p_with_indirect = _processes_with_any_method_in(pm, METHOD_INDIRECT)
     has_sources = frozenset(p for p, _ in sources)
     has_sinks = frozenset(p for p, _ in sinks)
-    sinks_by_process: dict[str, frozenset[str]] = {}
+    # Accumulate via ordered dict-of-dict (lint bans bare set literals).
+    _sinks_acc: dict[str, dict[str, None]] = {}
     for p, sink in sinks:
-        sinks_by_process[p] = (sinks_by_process.get(p, frozenset()) | {sink})
-    sources_by_process: dict[str, frozenset[str]] = {}
+        _sinks_acc.setdefault(p, {})[sink] = None
+    sinks_by_process: dict[str, frozenset[str]] = {
+        p: frozenset(d.keys()) for p, d in _sinks_acc.items()
+    }
+    _sources_acc: dict[str, dict[str, None]] = {}
     for p, source in sources:
-        sources_by_process[p] = (sources_by_process.get(p, frozenset()) | {source})
+        _sources_acc.setdefault(p, {})[source] = None
+    sources_by_process: dict[str, frozenset[str]] = {
+        p: frozenset(d.keys()) for p, d in _sources_acc.items()
+    }
 
     # process__profileProcess__toSink__profile__profile_method
     # { p in process, (p2, sink, f, fm) in process__node__profile__profile_method
