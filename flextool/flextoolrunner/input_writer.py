@@ -1860,6 +1860,15 @@ def write_input(
         _validate_ladder_methods(db, logger)
         _write_commodity_ladder_cumulative(db, wf, logger)
         _write_commodity_ladder_annual(db, wf, logger)
+        # Migrated from flextool.mod:468-470 — commodity_with_ladder*
+        # filtered subsets used to be derived inside MathProg via setof
+        # filters on p_commodity_price_method. Computed in Python for
+        # cheaper matrix generation; loaded back via table data IN.
+        from flextool.flextoolrunner.preprocessing import commodity_ladder_sets
+        commodity_ladder_sets.write_commodity_ladder_sets(
+            _get_commodity_price_methods(db),
+            wf / "solve_data",
+        )
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}
