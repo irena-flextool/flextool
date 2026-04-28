@@ -2259,8 +2259,10 @@ param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, d, t) in peedt} >= p_flow_min[p, source, sink, d, t], <= p_flow_max[p, source, sink, d, t];
-param p_angle_lower{n in node_dc_power_flow} := if n in node_reference_angle then 0 else -3.14159265;
-param p_angle_upper{n in node_dc_power_flow} := if n in node_reference_angle then 0 else 3.14159265;
+param p_angle_lower{n in node_dc_power_flow};  # Migrated to Python (preprocessing/dc_angle_bounds.py).
+param p_angle_upper{n in node_dc_power_flow};  # Migrated to Python (preprocessing/dc_angle_bounds.py).
+table data IN 'CSV' 'solve_data/p_angle_lower.csv' : [node], p_angle_lower~value;
+table data IN 'CSV' 'solve_data/p_angle_upper.csv' : [node], p_angle_upper~value;
 var v_angle {n in node_dc_power_flow, (d, t) in dt} >= p_angle_lower[n], <= p_angle_upper[n];
 var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} >= -p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p], <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
 var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
