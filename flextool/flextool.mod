@@ -200,13 +200,11 @@ set nodeBalancePeriod;
 set inflow_method 'method for scaling the inflow';
 set inflow_method_default within inflow_method;
 set node__inflow_method_read 'method for scaling the inflow applied to a node' within {node, inflow_method};
-set node__inflow_method dimen 2 within {node, inflow_method} :=
-    {n in node, m in inflow_method : (n, m) in node__inflow_method_read || (sum{(n, m2) in node__inflow_method_read} 1 = 0 && m in inflow_method_default)};
+set node__inflow_method dimen 2 within {node, inflow_method};  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 set storage_binding_method 'methods for binding storage state between periods';
 set storage_binding_method_default within storage_binding_method;
 set node__storage_binding_method_read within {node, storage_binding_method};
-set node__storage_binding_method dimen 2 within {node, storage_binding_method} :=
-    {n in node, m in storage_binding_method : (n, m) in node__storage_binding_method_read || (sum{(n, m2) in node__storage_binding_method_read} 1 = 0 && m in storage_binding_method_default)};
+set node__storage_binding_method dimen 2 within {node, storage_binding_method};  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 set storage_start_end_method 'method to fix start and/or end value of storage in a model run';
 set node__storage_start_end_method within {node, storage_start_end_method};
 set storage_solve_horizon_method 'methods to set reference value or price for the end of horizon storage state';
@@ -955,6 +953,9 @@ table data IN 'CSV' 'solve_data/connection__param.csv' : connection__param <- [p
 table data IN 'CSV' 'solve_data/solve_period.csv' : solve_period <- [solve, period];
 table data IN 'CSV' 'solve_data/timeline.csv' : timeline <- [timeline];
 table data IN 'CSV' 'solve_data/timeline_steps.csv' : timeline_steps <- [timeline, step];
+# L0 batch 5 — node-method fallbacks (declarations precede this block).
+table data IN 'CSV' 'solve_data/node__inflow_method.csv' : node__inflow_method <- [node, inflow_method];
+table data IN 'CSV' 'solve_data/node__storage_binding_method.csv' : node__storage_binding_method <- [node, storage_binding_method];
 
 #check
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
@@ -1003,12 +1004,8 @@ set process_process_toSink_direct dimen 3;  # Migrated to Python (preprocessing/
 table data IN 'CSV' 'solve_data/process_process_toSink_direct.csv' : process_process_toSink_direct <- [process_outer, process, sink];
 set process_sink_toProcess_direct dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process_sink_toProcess_direct.csv' : process_sink_toProcess_direct <- [process, sink, process_aux];
-set process_process_toSource_direct :=
-	{ p in process, p2 in process, source in node
-	    :  p = p2
-		&& (p, source) in process_source
-	    && sum{(p, m) in process_method : m in method_2way_2var} 1
-	};
+set process_process_toSource_direct dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_process_toSource_direct.csv' : process_process_toSource_direct <- [process_outer, process, source];
 set process_sink_toSource dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process_sink_toSource.csv' : process_sink_toSource <- [process, sink, source];
 set process__source__sink__profile__profile_method_direct :=
@@ -1977,12 +1974,8 @@ table data IN 'CSV' 'solve_data/commodity_node_co2.csv' : commodity_node_co2 <- 
 set process__commodity__node_co2 := {p in process, (c, n) in commodity_node_co2 : (p, n) in process_source || (p, n) in process_sink};
 set process_co2 := setof{(p, c, n) in process__commodity__node_co2} p;
 
-set process__sink_nonSync :=
-        {p in process, sink in node :
-		       ( (p, sink) in process_sink && (p, sink) in process__sink_nonSync_unit )
-			|| ( (p, sink) in process_sink && p in process_nonSync_connection )
-			|| ( (p, sink) in process_source && p in process_nonSync_connection )
-	    };
+set process__sink_nonSync dimen 2;  # Migrated to Python (preprocessing/nonsync_sets.py).
+table data IN 'CSV' 'solve_data/process__sink_nonSync.csv' : process__sink_nonSync <- [process, sink];
 
   #|| sum{(p,m) in process_method: m in method_2way_1var} 1
   # Declaration moved to the top of the model alongside other process-related

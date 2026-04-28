@@ -50,6 +50,43 @@ def _read_single_col(path: Path) -> list[str]:
         return [r[0] for r in reader if r and r[0]]
 
 
+def write_process__sink_nonSync(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod:1980-1985 — 3-way OR over process_sink / process_source
+    membership and process__sink_nonSync_unit / process_nonSync_connection.
+
+    Result: 2-tuple (process, sink) where any of the three branches match.
+    """
+    sinks = _read_two_col_pairs(input_dir / "process__sink.csv")
+    sources = _read_two_col_pairs(input_dir / "process__source.csv")
+    sink_nonSync_unit = _read_two_col_pairs(
+        input_dir / "process__sink_nonSync_unit.csv"
+    )
+    nonSync_connections = frozenset(
+        _read_single_col(input_dir / "process_nonSync_connection.csv")
+    )
+    sink_pairs = frozenset(sinks)
+    source_pairs = frozenset(sources)
+    sink_nonSync_unit_pairs = frozenset(sink_nonSync_unit)
+
+    out: dict[tuple[str, str], None] = {}
+    # branch 1: (p, sink) in process_sink AND (p, sink) in process__sink_nonSync_unit
+    # branch 2: (p, sink) in process_sink AND p in process_nonSync_connection
+    for p, n in sinks:
+        if (p, n) in sink_nonSync_unit_pairs:
+            out.setdefault((p, n), None)
+        elif p in nonSync_connections:
+            out.setdefault((p, n), None)
+    # branch 3: (p, sink) in process_source AND p in process_nonSync_connection
+    # — note the iterator name is "sink" but the membership is process_source.
+    for p, n in sources:
+        if p in nonSync_connections:
+            out.setdefault((p, n), None)
+    rows = list(out.keys())
+    (solve_data_dir / "process__sink_nonSync.csv").write_text(
+        "process,sink\n" + "".join(f"{p},{n}\n" for p, n in rows)
+    )
+
+
 def write_process_group_inside_group_nonsync(
     input_dir: Path, solve_data_dir: Path
 ) -> None:

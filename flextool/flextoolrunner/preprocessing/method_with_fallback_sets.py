@@ -40,6 +40,10 @@ _CT_METHOD_CONSTANT: tuple[str, ...] = ("constant_efficiency",)
 # Mirror flextool/flextool_base.dat:26 — single-element constant
 _STARTUP_METHOD_NO: tuple[str, ...] = ("no_startup",)
 
+# Mirror flextool/flextool_base.dat — single-element defaults
+_INFLOW_METHOD_DEFAULT: tuple[str, ...] = ("use_original",)
+_STORAGE_BINDING_METHOD_DEFAULT: tuple[str, ...] = ("bind_forward_only",)
+
 
 def _read_two_col_csv(path: Path) -> list[tuple[str, str]]:
     if not path.exists():
@@ -71,14 +75,42 @@ def _write_two_col(path: Path, header: tuple[str, str],
     )
 
 
+def _per_entity_fallback(
+    explicit: list[tuple[str, str]],
+    entities: list[str],
+    default_method_for,
+) -> list[tuple[str, str]]:
+    """Mod's idiom: emit explicit rows AND default rows for entities lacking
+    any explicit row. The mod check ``sum{(e, m2) in _read} 1 = 0`` is a
+    PER-ENTITY count (e is bound from outer iterator, m2 is summed) — NOT
+    a global emptiness check. Fallback fires per-entity.
+
+    ``default_method_for(entity)`` returns an iterable of methods to assign
+    when the entity has no explicit rows; return () to omit the entity
+    (e.g. process__ct_method skips processes that are neither connection
+    nor unit).
+    """
+    explicit_by_entity: dict[str, list[str]] = {}
+    for e, m in explicit:
+        explicit_by_entity.setdefault(e, []).append(m)
+    rows: list[tuple[str, str]] = []
+    for e in entities:
+        if e in explicit_by_entity:
+            for m in explicit_by_entity[e]:
+                rows.append((e, m))
+        else:
+            for m in default_method_for(e):
+                rows.append((e, m))
+    return rows
+
+
 def write_entity_lifetime_method(input_dir: Path, solve_data_dir: Path) -> None:
-    """flextool.mod:178-179."""
+    """flextool.mod:178-179 — per-entity fallback to ``lifetime_method_default``."""
     explicit = _read_two_col_csv(input_dir / "entity__lifetime_method.csv")
     entities = _read_single_col_csv(input_dir / "entity.csv")
-    if explicit:
-        rows = explicit
-    else:
-        rows = [(e, m) for e in entities for m in _LIFETIME_METHOD_DEFAULT]
+    rows = _per_entity_fallback(
+        explicit, entities, lambda _e: _LIFETIME_METHOD_DEFAULT,
+    )
     _write_two_col(
         solve_data_dir / "entity__lifetime_method.csv",
         ("entity", "lifetime_method"),
@@ -87,22 +119,25 @@ def write_entity_lifetime_method(input_dir: Path, solve_data_dir: Path) -> None:
 
 
 def write_process_ct_method(input_dir: Path, solve_data_dir: Path) -> None:
-    """flextool.mod:298-302 — two-class fallback (connection vs unit).
+    """flextool.mod:298-302 — per-process two-class fallback.
 
-    process_connection / process_unit are loaded as 1-col input CSVs
-    by the mod's ``set process_connection within process;`` declaration
-    backed by input/process_connection.csv (and similarly process_unit).
+    Processes without explicit rows get ct_method_regular (if
+    process_connection) or ct_method_constant (if process_unit), no
+    fallback otherwise.
     """
     explicit = _read_two_col_csv(input_dir / "process__ct_method.csv")
-    if explicit:
-        rows = explicit
-    else:
-        connections = _read_single_col_csv(input_dir / "process_connection.csv")
-        units = _read_single_col_csv(input_dir / "process_unit.csv")
-        rows = (
-            [(p, m) for p in connections for m in _CT_METHOD_REGULAR]
-            + [(p, m) for p in units for m in _CT_METHOD_CONSTANT]
-        )
+    processes = _read_single_col_csv(input_dir / "process.csv")
+    connections = frozenset(_read_single_col_csv(input_dir / "process_connection.csv"))
+    units = frozenset(_read_single_col_csv(input_dir / "process_unit.csv"))
+
+    def _ct_default_for(p: str) -> tuple[str, ...]:
+        if p in connections:
+            return _CT_METHOD_REGULAR
+        if p in units:
+            return _CT_METHOD_CONSTANT
+        return ()
+
+    rows = _per_entity_fallback(explicit, processes, _ct_default_for)
     _write_two_col(
         solve_data_dir / "process__ct_method.csv",
         ("process", "ct_method"),
@@ -110,19 +145,48 @@ def write_process_ct_method(input_dir: Path, solve_data_dir: Path) -> None:
     )
 
 
-def write_process_startup_method(input_dir: Path, solve_data_dir: Path) -> None:
-    """flextool.mod:303-305.
+def write_node_inflow_method(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod:203-204 — per-node fallback to ``inflow_method_default``."""
+    explicit = _read_two_col_csv(input_dir / "node__inflow_method.csv")
+    nodes = _read_single_col_csv(input_dir / "node.csv")
+    rows = _per_entity_fallback(
+        explicit, nodes, lambda _n: _INFLOW_METHOD_DEFAULT,
+    )
+    _write_two_col(
+        solve_data_dir / "node__inflow_method.csv",
+        ("node", "inflow_method"),
+        rows,
+    )
 
-    The _read source set has its OWN default in mod (``default {p in process,
-    'no_startup'}`` at L303) — when the CSV is empty mod auto-fills it. We
-    replicate that: empty CSV → emit (p, 'no_startup') for every process.
+
+def write_node_storage_binding_method(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod:208-209 — per-node fallback to ``storage_binding_method_default``."""
+    explicit = _read_two_col_csv(input_dir / "node__storage_binding_method.csv")
+    nodes = _read_single_col_csv(input_dir / "node.csv")
+    rows = _per_entity_fallback(
+        explicit, nodes, lambda _n: _STORAGE_BINDING_METHOD_DEFAULT,
+    )
+    _write_two_col(
+        solve_data_dir / "node__storage_binding_method.csv",
+        ("node", "storage_binding_method"),
+        rows,
+    )
+
+
+def write_process_startup_method(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod:303-305 — per-process fallback to ``startup_method_no``.
+
+    The _read source set has its own ``default {p in process, 'no_startup'}``
+    set-default in mod (L303). For our purposes that set-default fires only
+    when _read is GLOBALLY empty; otherwise _read = literal CSV contents.
+    The DERIVED set's filter is per-process: include explicit rows plus
+    (p, 'no_startup') for processes lacking an explicit row.
     """
     explicit = _read_two_col_csv(input_dir / "process__startup_method.csv")
-    if explicit:
-        rows = explicit
-    else:
-        processes = _read_single_col_csv(input_dir / "process.csv")
-        rows = [(p, m) for p in processes for m in _STARTUP_METHOD_NO]
+    processes = _read_single_col_csv(input_dir / "process.csv")
+    rows = _per_entity_fallback(
+        explicit, processes, lambda _p: _STARTUP_METHOD_NO,
+    )
     _write_two_col(
         solve_data_dir / "process__startup_method.csv",
         ("process", "startup_method"),
