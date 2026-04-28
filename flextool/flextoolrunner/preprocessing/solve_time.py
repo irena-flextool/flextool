@@ -55,6 +55,7 @@ def run(state: RunnerState, solve_name: str) -> None:
         reserve_method_partitions,
         structural_filters,
         dc_angle_bounds,
+        invest_total_sets,
         per_solve_sets,
     )
     period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
@@ -93,6 +94,8 @@ def run(state: RunnerState, solve_name: str) -> None:
     simple_projections.write_node_state_subsets(solve_data_dir)
     simple_projections.write_commodity_tier_sets(input_dir, solve_data_dir)
     dc_angle_bounds.write_dc_angle_bounds(input_dir, solve_data_dir)
+    invest_total_sets.write_invest_total_sets(input_dir, solve_data_dir)
+    invest_total_sets.write_ci_ladder_cumulative(input_dir, solve_data_dir)
 
     # Per-solve-only sets: inputs in solve_data/ written above by
     # orchestration / solve_writers / blocks before this hook fires.

@@ -287,6 +287,73 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
         _write_tuples(solve_data_dir / dst,
                       ("process", "period", "time"), triples)
 
+    # cnd_ladder family — uses period_in_use (per-solve) crossed with
+    # commodity_node × commodity_with_ladder*.
+    cn_rows = _read_csv_columns(solve_data_dir.parent / "input" / "commodity__node.csv")
+    cn_pairs = [(r[0], r[1]) for r in cn_rows if len(r) >= 2 and r[0] and r[1]]
+    pin_use = [r[0] for r in _read_csv_columns(solve_data_dir / "period_in_use_set.csv")
+               if r and r[0]]
+    with_ladder = frozenset(
+        r[0] for r in _read_csv_columns(solve_data_dir / "commodity_with_ladder.csv")
+        if r and r[0]
+    )
+    with_ladder_cum = frozenset(
+        r[0] for r in _read_csv_columns(solve_data_dir / "commodity_with_ladder_cumulative.csv")
+        if r and r[0]
+    )
+    with_ladder_ann = frozenset(
+        r[0] for r in _read_csv_columns(solve_data_dir / "commodity_with_ladder_annual.csv")
+        if r and r[0]
+    )
+    cum_tiers = _read_csv_columns(solve_data_dir.parent / "input" / "commodity_ladder_cumulative.csv")
+    ann_tiers = _read_csv_columns(solve_data_dir / "commodity__tier_ann.csv")
+    tiers_for_cum: dict[str, list[str]] = {}
+    for r in cum_tiers:
+        if len(r) >= 2 and r[0] and r[1]:
+            tiers_for_cum.setdefault(r[0], []).append(r[1])
+    tiers_for_ann: dict[str, list[str]] = {}
+    for r in ann_tiers:
+        if len(r) >= 2 and r[0] and r[1]:
+            tiers_for_ann.setdefault(r[0], []).append(r[1])
+    # cnd_ladder: (c, n, d) where c ∈ commodity_with_ladder
+    cnd_rows = [
+        (c, n, d) for (c, n) in cn_pairs for d in pin_use
+        if c in with_ladder
+    ]
+    _write_tuples(solve_data_dir / "cnd_ladder_set.csv",
+                  ("commodity", "node", "period"),
+                  list(dict.fromkeys(cnd_rows)))
+    # cndi_ladder_cum: (c, n, d, i) where c ∈ ladder_cumulative AND (c, i) ∈ tier_cum
+    cum_rows_out: list[tuple[str, str, str, str]] = []
+    for (c, n) in cn_pairs:
+        if c not in with_ladder_cum:
+            continue
+        tiers = tiers_for_cum.get(c, ())
+        for d in pin_use:
+            for i in tiers:
+                cum_rows_out.append((c, n, d, i))
+    _write_tuples(solve_data_dir / "cndi_ladder_cum_set.csv",
+                  ("commodity", "node", "period", "tier"),
+                  list(dict.fromkeys(cum_rows_out)))
+    ann_rows_out: list[tuple[str, str, str, str]] = []
+    for (c, n) in cn_pairs:
+        if c not in with_ladder_ann:
+            continue
+        tiers = tiers_for_ann.get(c, ())
+        for d in pin_use:
+            for i in tiers:
+                ann_rows_out.append((c, n, d, i))
+    _write_tuples(solve_data_dir / "cndi_ladder_ann_set.csv",
+                  ("commodity", "node", "period", "tier"),
+                  list(dict.fromkeys(ann_rows_out)))
+    # cndi_ladder = cum ∪ ann
+    union: dict[tuple[str, str, str, str], None] = {}
+    for r in cum_rows_out + ann_rows_out:
+        union.setdefault(r, None)
+    _write_tuples(solve_data_dir / "cndi_ladder_set.csv",
+                  ("commodity", "node", "period", "tier"),
+                  list(union.keys()))
+
     # dtdt_next = setof (d_prev, t_prev_solve, d, t) from dtttdt (step_previous.csv)
     # dtttdt cols: period, time, t_previous, t_previous_within_timeset,
     #             period_previous, t_previous_within_solve

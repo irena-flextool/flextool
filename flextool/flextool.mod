@@ -1779,8 +1779,7 @@ set pssdt_varCost_eff_connection := {(p, source, sink) in process_source_sink_ef
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || exists{(e, c) in process_capacity_constraint_invested} 1 || exists{(e, c) in node_capacity_constraint_invested} 1 || exists{(e, c) in process_capacity_constraint_prebuilt} 1 || exists{(e, c) in node_capacity_constraint_prebuilt} 1 };
 set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method
                                                || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set e_invest_total := {e in entityInvest : (e, 'invest_total') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method
-                                               || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
+set e_invest_total;  # Migrated to Python (preprocessing/invest_total_sets.py).
 set ed_invest_cumulative := {(e, d) in ed_invest : (e, 'cumulative_limits') in entity__invest_method};
 set edd_history_choice := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_choice') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + edEntity_lifetime[e, d_history]};
 set edd_history_automatic := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
@@ -1794,22 +1793,24 @@ set nd_invest := {(n, d) in ed_invest : n in node};
 set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || exists{(e, c) in process_capacity_constraint_invested} 1 || exists{(e, c) in node_capacity_constraint_invested} 1 || exists{(e, c) in process_capacity_constraint_prebuilt} 1 || exists{(e, c) in node_capacity_constraint_prebuilt} 1 };
 set ed_divest_period := {(e, d) in ed_invest : (e, 'retire_period') in entity__invest_method || (e, 'retire_period_total') in entity__invest_method
                                                || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set e_divest_total := {e in entityDivest : (e, 'retire_total') in entity__invest_method || (e, 'retire_period_total') in entity__invest_method
-                                               || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
+set e_divest_total;  # Migrated to Python (preprocessing/invest_total_sets.py).
 set pd_divest := {(p, d) in ed_divest : p in process};
 set nd_divest := {(n, d) in ed_divest : n in node};
 
 set gd_invest := {g in group_invest, d in period_invest : sum{(g, e) in group_entity : (e, d) in ed_invest} 1};
 set gd_invest_period := {(g, d) in gd_invest : (g, 'invest_period') in group__invest_method || (g, 'invest_period_total') in group__invest_method
                                                || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
-set g_invest_total := {g in group_invest : (g, 'invest_total') in group__invest_method || (g, 'invest_period_total') in group__invest_method
-                                               || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
+set g_invest_total;  # Migrated to Python (preprocessing/invest_total_sets.py).
 set gd_divest := {g in group_invest, d in period_invest : sum{(g, e) in group_entity : (e, d) in ed_invest} 1};
 set gd_divest_period := {(g, d) in gd_invest : (g, 'retire_period') in group__invest_method || (g, 'retire_period_total') in group__invest_method
                                                || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
-set g_divest_total := {g in group_divest : (g, 'retire_total') in group__invest_method || (g, 'retire_period_total') in group__invest_method
-                                               || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
-set g_invest_cumulative := {g in group_invest : (g, 'cumulative_limits') in group__invest_method};
+set g_divest_total;       # Migrated to Python (preprocessing/invest_total_sets.py).
+set g_invest_cumulative;  # Migrated to Python (preprocessing/invest_total_sets.py).
+table data IN 'CSV' 'solve_data/e_invest_total.csv' : e_invest_total <- [entity];
+table data IN 'CSV' 'solve_data/e_divest_total.csv' : e_divest_total <- [entity];
+table data IN 'CSV' 'solve_data/g_invest_total.csv' : g_invest_total <- [group];
+table data IN 'CSV' 'solve_data/g_divest_total.csv' : g_divest_total <- [group];
+table data IN 'CSV' 'solve_data/g_invest_cumulative.csv' : g_invest_cumulative <- [group];
 
 # For entities with lifetime_method = 'no_investment', v_invest is allowed
 # only within the first-period lifetime window. After p_years_d[period_first]
@@ -1989,15 +1990,16 @@ set group_commodity_node_period_co2_total :=
 # tier index, split per ladder method so each reads from its own tier set.
 # cndi_ladder is the union used for v_trade declaration and the
 # per-(c, n, d) balance row.
-set cnd_ladder dimen 3 := {(c, n) in commodity_node, d in period_in_use : c in commodity_with_ladder};
-set cndi_ladder_cum dimen 4
-    := {(c, n) in commodity_node, d in period_in_use, i in tier
-        : c in commodity_with_ladder_cumulative && (c, i) in commodity__tier_cum};
-set cndi_ladder_ann dimen 4
-    := {(c, n) in commodity_node, d in period_in_use, i in tier
-        : c in commodity_with_ladder_annual && (c, i) in commodity__tier_ann};
-set cndi_ladder dimen 4 := cndi_ladder_cum union cndi_ladder_ann;
-set ci_ladder_cumulative := {(c, i) in commodity__tier_cum : c in commodity_with_ladder_cumulative};
+set cnd_ladder dimen 3;       # Migrated to Python (preprocessing/per_solve_sets.py).
+set cndi_ladder_cum dimen 4;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set cndi_ladder_ann dimen 4;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set cndi_ladder dimen 4;      # Migrated to Python (preprocessing/per_solve_sets.py).
+table data IN 'CSV' 'solve_data/cnd_ladder_set.csv' : cnd_ladder <- [commodity, node, period];
+table data IN 'CSV' 'solve_data/cndi_ladder_cum_set.csv' : cndi_ladder_cum <- [commodity, node, period, tier];
+table data IN 'CSV' 'solve_data/cndi_ladder_ann_set.csv' : cndi_ladder_ann <- [commodity, node, period, tier];
+table data IN 'CSV' 'solve_data/cndi_ladder_set.csv' : cndi_ladder <- [commodity, node, period, tier];
+set ci_ladder_cumulative dimen 2;  # Migrated to Python (preprocessing/invest_total_sets.py).
+table data IN 'CSV' 'solve_data/ci_ladder_cumulative.csv' : ci_ladder_cumulative <- [commodity, tier];
 
 set process__commodity__node dimen 3;  # Migrated to Python (preprocessing/structural_filters.py).
 table data IN 'CSV' 'solve_data/process__commodity__node.csv' : process__commodity__node <- [process, commodity, node];
