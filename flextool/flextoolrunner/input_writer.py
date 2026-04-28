@@ -1937,6 +1937,9 @@ def write_input(
         simple_projections.write_enable_optional_outputs(solve_data_dir)
         simple_projections.write_node_state_subsets(solve_data_dir)
         simple_projections.write_commodity_tier_sets(input_dir, solve_data_dir)
+        # L0 batch 9: DC angle bounds (calculated per-DC-node param).
+        from flextool.flextoolrunner.preprocessing import dc_angle_bounds
+        dc_angle_bounds.write_dc_angle_bounds(input_dir, solve_data_dir)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}
