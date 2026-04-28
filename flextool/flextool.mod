@@ -3133,14 +3133,14 @@ s.t. conversion_indirect {(p, m) in process__method_indirect,
   # Delayed-source contribution: kept at the anchor timeline t.  Block-
   # aware support for delays is out of scope for V1; in the degenerate
   # case (b_in = b_out = 'default') this reproduces the pre-v51 form.
-  + sum {source in entity : (p, source) in process_source_delayed}
+  + sum {(p, source) in process_source_delayed}
       + sum {(d, t_, t, td) in dtt__delay_duration : (p, td) in process_delayed__duration}
         ( + v_flow[p, source, p, d, t_] * p_entity_unitsize[p]
   	          * p_process_source_flow_coefficient[p, source]
   	          * p_process_delay_weight[p, td]
 	    )
   =
-  + sum {sink in entity : (p, sink) in process_sink && p_process_sink_flow_coefficient[p,sink] != 0}
+  + sum {(p, sink) in process_sink : p_process_sink_flow_coefficient[p,sink] != 0}
     ( + v_flow[p, p, sink, d, t] * p_entity_unitsize[p]
           * p_process_sink_flow_coefficient[p, sink]
     )
