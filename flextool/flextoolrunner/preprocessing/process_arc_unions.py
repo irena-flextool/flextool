@@ -1181,3 +1181,23 @@ def write_process_source_sink_delayed_partition(
                ("process", "source", "sink"), delayed_rows)
     _write_csv(solve_data_dir / "process_source_sink_undelayed.csv",
                ("process", "source", "sink"), undelayed_rows)
+
+
+def write_peedt(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1084 — peedt is the cross-product of arcs × timesteps.
+
+        set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
+
+    Used as the index set for v_flow / p_flow_max / p_flow_min / d_flow*.
+    On full-year hourly fixtures this produces hundreds of thousands of rows,
+    so the writer streams output in chunks rather than building the full
+    list in memory.
+    """
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+    dt_pairs = _read_n_col(solve_data_dir / "steps_in_use.csv", 2)
+    out_path = solve_data_dir / "peedt.csv"
+    with out_path.open("w") as fh:
+        fh.write("process,source,sink,period,time\n")
+        for p, src, snk in triples:
+            for d, t in dt_pairs:
+                fh.write(f"{p},{src},{snk},{d},{t}\n")

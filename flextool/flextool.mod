@@ -1081,7 +1081,8 @@ table data IN 'CSV' 'solve_data/pdt_downtime_set.csv' : pdt_downtime <- [process
 set dtdt_next dimen 4;  # Migrated to Python (preprocessing/per_solve_sets.py).
 table data IN 'CSV' 'solve_data/dtdt_next_set.csv' : dtdt_next <- [period_prev, time_prev_solve, period, time];
 
-set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
+set peedt dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/peedt.csv' : peedt <- [process, source, sink, period, time];
 
 set process_source_undelayed dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
 set process_source_delayed   dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).

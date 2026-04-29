@@ -173,3 +173,6 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_ed_history_realized_first(input_dir, solve_data_dir)
     # L4 batch 40: process_method_sources_sinks (3-way join, 6-tuple output).
     process_arc_unions.write_process_method_sources_sinks(input_dir, solve_data_dir)
+    # L4 batch 41: peedt — cross-product of process_source_sink × dt.
+    # Indexes v_flow and p_flow_max/_min / d_flow* in the mod.
+    process_arc_unions.write_peedt(input_dir, solve_data_dir)
