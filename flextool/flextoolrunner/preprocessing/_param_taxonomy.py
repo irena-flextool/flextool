@@ -83,3 +83,14 @@ NODE_PERIOD_PARAM_INVEST: frozenset[str] = frozenset((
     "retire_forced", "retire_max_period", "retire_min_period",
     "virtual_unitsize",
 ))
+
+# flextool_base.dat:178
+NODE_TIME_PARAM: frozenset[str] = frozenset((
+    "inflow", "penalty_down", "penalty_up", "self_discharge_loss",
+    "availability", "storage_state_reference_value",
+))
+
+# flextool_base.dat:179
+NODE_TIME_PARAM_REQUIRED: frozenset[str] = frozenset((
+    "inflow", "penalty_down", "penalty_up",
+))

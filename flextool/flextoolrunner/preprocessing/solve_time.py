@@ -131,3 +131,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_ed_period_params(input_dir, solve_data_dir)
     # L2 batch 21: process_source partitioned by process_delayed.
     process_arc_unions.write_process_source_delayed_partition(input_dir, solve_data_dir)
+    # L2 batch 22: node__TimeParam_in_use.
+    process_arc_unions.write_node_time_param_in_use(input_dir, solve_data_dir)
