@@ -1002,27 +1002,18 @@ set process_method dimen 2 within {process, method};
 table data IN 'CSV' 'input/process_method.csv' : process_method <- [process,method];
 set process__profileProcess__toSink__profile__profile_method dimen 5;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process__profileProcess__toSink__profile__profile_method.csv' : process__profileProcess__toSink__profile__profile_method <- [process_outer, process, sink, profile, profile_method];
-set process__profileProcess__toSink := setof {(p, p2, sink, f, m) in process__profileProcess__toSink__profile__profile_method} (p, p2, sink);
+set process__profileProcess__toSink dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__profileProcess__toSink.csv' : process__profileProcess__toSink <- [process_outer, process, sink];
 set process__source__toProfileProcess__profile__profile_method dimen 5;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process__source__toProfileProcess__profile__profile_method.csv' : process__source__toProfileProcess__profile__profile_method <- [process, source, process_aux, profile, profile_method];
-set process__source__toProfileProcess := setof {(p, source, p2, f, m) in process__source__toProfileProcess__profile__profile_method} (p, source, p2);
-set process_profile := setof {(p, source, p2) in process__source__toProfileProcess} (p) union setof {(p, p2, sink) in process__profileProcess__toSink} (p);
-set process_source_toProcess :=
-    { (p, source) in process_source, p2 in process
-	    :  p = p2
-	    && (p2, source) in process_source
-	    && (    ( sum{(p, m) in process_method : m in method_indirect} 1 )
-		     || ( sum{(p, m) in process_method : m in method_direct} 1 && sum{(p, sink) in process_sink} 1 < 1 && not (p, source, p2) in process__source__toProfileProcess )
-		   )
-	};
-set process_process_toSink :=
-    { p in process, (p2, sink) in process_sink
-	    :  p = p2
-	    && (p, sink) in process_sink
-	    && (    ( sum{(p, m) in process_method : m in method_indirect} 1 )
-		     || ( sum{(p, m) in process_method : m in method_direct} 1 && sum{(p, source) in process_source} 1 < 1 && not (p, p2, sink) in process__profileProcess__toSink )
-		   )
-	};
+set process__source__toProfileProcess dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__toProfileProcess.csv' : process__source__toProfileProcess <- [process, source, process_aux];
+set process_profile;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_profile.csv' : process_profile <- [process];
+set process_source_toProcess dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_process_toSink dimen 3;    # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_toProcess.csv' : process_source_toProcess <- [process, source, process_aux];
+table data IN 'CSV' 'solve_data/process_process_toSink.csv' : process_process_toSink <- [process_outer, process, sink];
 set process_sink_toProcess dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process_sink_toProcess.csv' : process_sink_toProcess <- [process, sink, process_aux];
 set process_process_toSource dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
@@ -1039,43 +1030,17 @@ set process_process_toSource_direct dimen 3;  # Migrated to Python (preprocessin
 table data IN 'CSV' 'solve_data/process_process_toSource_direct.csv' : process_process_toSource_direct <- [process_outer, process, source];
 set process_sink_toSource dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process_sink_toSource.csv' : process_sink_toSource <- [process, sink, source];
-set process__source__sink__profile__profile_method_direct :=
-    { (p, source, sink) in process_source_toSink, f in profile, fm in profile_method
-	    :  sum{(p, m) in process_method : m in method_direct} 1
-		&& ( (p, source, f, fm) in process__node__profile__profile_method
-		     || (p, sink, f, fm) in process__node__profile__profile_method
-		   )
-	};
+set process__source__sink__profile__profile_method_direct dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__profile__profile_method_direct.csv' : process__source__sink__profile__profile_method_direct <- [process, source, sink, profile, profile_method];
 set process_process_toSink_noConversion dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process_process_toSink_noConversion.csv' : process_process_toSink_noConversion <- [process_outer, process, sink];
 set process_source_toProcess_noConversion dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process_source_toProcess_noConversion.csv' : process_source_toProcess_noConversion <- [process, source, process_aux];
 
-set process_source_sink :=
-    process_source_toSink union    # Direct 1-variable
-	process_sink_toSource union    # Direct 1-variable, but the other way
-	process_source_toProcess union # First step for indirect (from source to process)
-	process_process_toSink union   # Second step for indirect (from process to sink)
-	process_sink_toProcess union   # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process_process_toSource union # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process__profileProcess__toSink union   # Add profile based inputs to process
-	process__source__toProfileProcess union # Add profile based inputs to process
-	process_process_toSink_noConversion union  # Add other operational cost only units
-    process_source_toProcess_noConversion;     # Add other operational cost only units
-
-set process_source_sink_alwaysProcess :=
-    process_source_toProcess_direct union  # Direct 1-variable, but showing the process in between
-	process_process_toSink_direct union
-	process_sink_toProcess_direct union
-	process_process_toSource_direct union
-	process_source_toProcess union # First step for indirect (from source to process)
-	process_process_toSink union   # Second step for indirect (from process to sink)
-	process_sink_toProcess union   # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process_process_toSource union # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process__profileProcess__toSink union   # Add profile based inputs to process
-	process__source__toProfileProcess union # Add profile based inputs to process
-	process_process_toSink_noConversion union  # Add other operational cost only units
-    process_source_toProcess_noConversion;     # Add other operational cost only units
+set process_source_sink dimen 3;                # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_alwaysProcess dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink.csv' : process_source_sink <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_alwaysProcess.csv' : process_source_sink_alwaysProcess <- [process, source, sink];
 
 set process_method_sources_sinks :=
     setof {(p, always_src, always_snk) in process_source_sink_alwaysProcess,
@@ -1086,19 +1051,10 @@ set process_method_sources_sinks :=
              && not (always_src = p && always_snk = p)}
         (p, m, orig_src, orig_snk, always_src, always_snk);
 
-set process_source_sink_noEff :=
-	process_source_toProcess union # First step for indirect (from source to process)
-	process_process_toSink union   # Second step for indirect (from process to sink)
-	process_sink_toProcess union   # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process_process_toSource union # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process__profileProcess__toSink union   # Add profile based inputs to process
-	process__source__toProfileProcess union # Add profile based inputs to process
-	process_process_toSink_noConversion union  # Add other operational cost only units
-    process_source_toProcess_noConversion;     # Add other operational cost only units
-
-set process_source_sink_eff :=
-    process_source_toSink union    # Direct 1-variable
-	process_sink_toSource;         # Direct 1-variable, but the other way
+set process_source_sink_noEff dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_eff dimen 3;    # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_noEff.csv' : process_source_sink_noEff <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_eff.csv' : process_source_sink_eff <- [process, source, sink];
 
 set process__source__sink__profile__profile_method_connection :=
     { (p, sink, source) in process_source_sink, f in profile, m in profile_method
@@ -1117,7 +1073,8 @@ set process_online_linear 'processes with an online status using linear variable
 set process_online_integer 'processes with an online status using integer variable';  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process_online_linear.csv' : process_online_linear <- [process];
 table data IN 'CSV' 'solve_data/process_online_integer.csv' : process_online_integer <- [process];
-set process_online := process_online_linear union process_online_integer;
+set process_online;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_online.csv' : process_online <- [process];
 
 # Timestep sets that have at least one lookback entry (for min up/downtime constraint indexing)
 set pdt_uptime dimen 3;    # Migrated to Python (preprocessing/per_solve_sets.py).
@@ -1740,7 +1697,8 @@ param ed_lifetime_fixed_cost_divest{e in entityDivest, d in period_invest} :=
 ;
 
 
-set process_minload := {p in process : (p, 'min_load_efficiency') in process__ct_method};
+set process_minload;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_minload.csv' : process_minload <- [process];
 
 param pdtConversion_rate{p in process, (d, t) in dt} := round(1 / pdtProcess[p, 'efficiency', d, t], 6);
 
@@ -1978,12 +1936,8 @@ set group_commodity_node_period_co2_period :=
 			&& g in group_co2_max_period
 		};
 
-set group_commodity_node_period_co2_total :=
-        {g in group, (c, n) in commodity_node :
-		    (g, n) in group_node
-			&& p_commodity[c, 'co2_content']
-			&& g in group_co2_max_total
-		};
+set group_commodity_node_period_co2_total dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/group_commodity_node_period_co2_total.csv' : group_commodity_node_period_co2_total <- [group, commodity, node];
 
 # Commodity-ladder index sets.  cnd_ladder lists (commodity, node, period)
 # triples that need period-level v_trade variables; cndi_ladder_* adds the
@@ -2007,8 +1961,10 @@ table data IN 'CSV' 'solve_data/process__commodity__node.csv' : process__commodi
 set commodity_node_co2 dimen 2;  # Migrated to Python (preprocessing/structural_filters.py).
 table data IN 'CSV' 'solve_data/commodity_node_co2.csv' : commodity_node_co2 <- [commodity, node];
 
-set process__commodity__node_co2 := {p in process, (c, n) in commodity_node_co2 : (p, n) in process_source || (p, n) in process_sink};
-set process_co2 := setof{(p, c, n) in process__commodity__node_co2} p;
+set process__commodity__node_co2 dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_co2;                           # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__commodity__node_co2.csv' : process__commodity__node_co2 <- [process, commodity, node];
+table data IN 'CSV' 'solve_data/process_co2.csv' : process_co2 <- [process];
 
 set process__sink_nonSync dimen 2;  # Migrated to Python (preprocessing/nonsync_sets.py).
 table data IN 'CSV' 'solve_data/process__sink_nonSync.csv' : process__sink_nonSync <- [process, sink];
