@@ -6259,8 +6259,9 @@ param w_raw := gmtime();
 printf "Timer - Write raw output: %ss\n", w_raw - r_solution;
 printf ',%s', w_raw - r_solution >> solve_progress;
 
-param hours_in_realized_period{d in d_realized_period} := sum {(d, t) in dt_realize_dispatch} (step_duration[d, t]);
-param realized_period_share_of_year{d in d_realized_period}:= hours_in_realized_period[d] / 8760;
+# hours_in_realized_period and realized_period_share_of_year removed —
+# unused in mod (no readers); the Python post-processor recomputes both
+# directly from step_duration in process_outputs/calc_capacity_flows.py.
 
 param entity_all_capacity{e in entity, d in period} :=
   + p_entity_all_existing[e, d]
