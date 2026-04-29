@@ -299,3 +299,63 @@ def write_invest_divest_sets(input_dir: Path, solve_data_dir: Path) -> None:
             if methods_for_g.get(g, frozenset()) & _DIVEST_PERIOD_METHODS]
     _write_pairs(solve_data_dir / "gd_divest_period.csv",
                  ("group", "period"), rows)
+
+
+def write_ed_invest_forbidden_no_investment(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1627-1629 — ed_invest filtered to entities where the
+    no_investment method's lifetime window has already ended at d.
+
+        { (e, d) in ed_invest :
+          (e, 'no_investment') in entity__lifetime_method
+          && p_years_d[d] >= sum_{d_first in period_first}
+                              (p_years_d[d_first] + edEntity_lifetime[e, d_first])
+        }
+
+    Used in fix_v_invest_no_investment_eq (mod L3930) to pin v_invest = 0
+    after the lifetime expires.
+    """
+    ed_invest_pairs = _read_pairs(solve_data_dir / "ed_invest.csv")
+    elm = _read_pairs(solve_data_dir / "entity__lifetime_method.csv")
+    no_invest_set = frozenset(e for e, m in elm if m == "no_investment")
+    p_years_d: dict[str, float] = {}
+    for r in _read_pairs(solve_data_dir / "p_years_d.csv"):
+        try:
+            p_years_d[r[0]] = float(r[1])
+        except ValueError:
+            continue
+    ed_lifetime: dict[tuple[str, str], float] = {}
+    elf = solve_data_dir / "edEntity_lifetime.csv"
+    if elf.exists():
+        with elf.open() as fh:
+            import csv as _csv
+            reader = _csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        ed_lifetime[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    period_first = _read_singles(solve_data_dir / "period_first.csv")
+
+    def _life_sum(e: str) -> float:
+        return sum(
+            p_years_d.get(d_first, 0.0) + ed_lifetime.get((e, d_first), 0.0)
+            for d_first in period_first
+        )
+
+    rows: list[tuple[str, str]] = []
+    cached_sum: dict[str, float] = {}
+    for e, d in ed_invest_pairs:
+        if e not in no_invest_set:
+            continue
+        s = cached_sum.get(e)
+        if s is None:
+            s = _life_sum(e)
+            cached_sum[e] = s
+        if p_years_d.get(d, 0.0) >= s:
+            rows.append((e, d))
+    _write_pairs(solve_data_dir / "ed_invest_forbidden_no_investment.csv",
+                 ("entity", "period"), rows)
