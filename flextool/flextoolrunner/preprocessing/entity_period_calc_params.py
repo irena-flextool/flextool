@@ -663,6 +663,182 @@ def write_pProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
             fh.write(f"{p},{src},{snk},{param},{repr(v)}\n")
 
 
+def _read_p_2(path: Path) -> dict[tuple[str, str], float]:
+    out: dict[tuple[str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 3 and row[0] and row[1]:
+                try:
+                    out[(row[0], row[1])] = float(row[2])
+                except ValueError:
+                    continue
+    return out
+
+
+def _read_pd_2(path: Path) -> dict[tuple[str, str, str], float]:
+    out: dict[tuple[str, str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 4 and all(row[i] for i in range(3)):
+                try:
+                    out[(row[0], row[1], row[2])] = float(row[3])
+                except ValueError:
+                    continue
+    return out
+
+
+def _read_pt_2(path: Path) -> dict[tuple[str, str, str], float]:
+    return _read_pd_2(path)  # same shape: (e, param, t/d, value)
+
+
+# flextool_base.dat L196-L201, L204-L209, L210
+GROUP_PARAM = frozenset((
+    "has_capacity_margin", "capacity_margin", "has_inertia", "inertia_limit",
+    "invest_max_total", "invest_min_total", "invest_max_period", "invest_min_period",
+    "retire_max_total", "retire_min_total", "retire_max_period", "retire_min_period",
+    "non_synchronous_limit", "co2_price", "co2_max_period", "co2_max_total",
+    "penalty_inertia", "penalty_non_synchronous", "max_cumulative_flow", "min_cumulative_flow",
+    "max_instant_flow", "min_instant_flow", "output_nodeGroup_indicators",
+    "output_flowGroup_indicators", "penalty_capacity_margin",
+    "cumulative_max_capacity", "cumulative_min_capacity", "new_stepduration",
+))
+GROUP_PERIOD_PARAM = frozenset((
+    "capacity_margin", "co2_price", "co2_max_period", "co2_max_total",
+    "inertia_limit", "invest_max_period", "invest_min_period",
+    "max_cumulative_flow", "min_cumulative_flow", "non_synchronous_limit",
+    "penalty_inertia", "penalty_non_synchronous",
+    "max_instant_flow", "min_instant_flow", "penalty_capacity_margin",
+    "retire_max_period", "retire_min_period",
+    "cumulative_max_capacity", "cumulative_min_capacity",
+))
+GROUP_TIME_PARAM = frozenset(("co2_price", "max_instant_flow", "min_instant_flow"))
+# pdGroup specific: param-specific 5000 default (mod L1122-1123)
+GROUP_PARAM_DEFAULT_5000 = frozenset((
+    "penalty_inertia", "penalty_capacity_margin", "penalty_non_synchronous",
+))
+
+
+def write_pdGroup(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1115 — pdGroup: 5-branch fallback.
+
+        if (g, param, d) in group__param__period: pd_group[g, param, d]
+        else if exists fold via period__branch: sum pd_group[g, param, db]
+        else if (g, param) in group__param: p_group[g, param]
+        else if param in {penalty_inertia, penalty_capacity_margin,
+                          penalty_non_synchronous}: 5000
+        else 0;
+    """
+    pd_g = _read_pd_2(input_dir / "pd_group.csv")
+    p_g = _read_p_2(input_dir / "p_group.csv")
+    branches_for_d: dict[str, list[str]] = {}
+    pb_path = solve_data_dir / "period__branch.csv"
+    if pb_path.exists():
+        with pb_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    branches_for_d.setdefault(row[1], []).append(row[0])
+    groups = _read_singles(input_dir / "group.csv")
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+
+    out_path = solve_data_dir / "pdGroup.csv"
+    with out_path.open("w") as fh:
+        fh.write("group,param,period,value\n")
+        for g in groups:
+            for param in GROUP_PERIOD_PARAM:
+                for d in period_in_use:
+                    if (g, param, d) in pd_g:
+                        v = pd_g[(g, param, d)]
+                    else:
+                        branched_vals = [
+                            pd_g[(g, param, db)] for db in branches_for_d.get(d, ())
+                            if (g, param, db) in pd_g
+                        ]
+                        if branched_vals:
+                            v = sum(branched_vals)
+                        elif (g, param) in p_g:
+                            v = p_g[(g, param)]
+                        elif param in GROUP_PARAM_DEFAULT_5000:
+                            v = 5000.0
+                        else:
+                            v = 0.0
+                    fh.write(f"{g},{param},{d},{repr(v)}\n")
+
+
+def write_pdtGroup(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1126 — pdtGroup: 4-branch fallback (pt → pd → p → 0)."""
+    pt_g = _read_pt_2(input_dir / "pt_group.csv")
+    pd_g = _read_pd_2(input_dir / "pd_group.csv")
+    p_g = _read_p_2(input_dir / "p_group.csv")
+    groups = _read_singles(input_dir / "group.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    out_path = solve_data_dir / "pdtGroup.csv"
+    with out_path.open("w") as fh:
+        fh.write("group,param,period,time,value\n")
+        for g in groups:
+            for param in GROUP_TIME_PARAM:
+                for (d, t) in dt:
+                    if (g, param, t) in pt_g:
+                        v = pt_g[(g, param, t)]
+                    elif (g, param, d) in pd_g:
+                        v = pd_g[(g, param, d)]
+                    elif (g, param) in p_g:
+                        v = p_g[(g, param)]
+                    else:
+                        v = 0.0
+                    fh.write(f"{g},{param},{d},{t},{repr(v)}\n")
+
+
+def write_pdCommodity(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1101 — pdCommodity: 3-branch fallback (pd →
+    period__branch fold → p_commodity[c,param]).
+
+    Note: mod has no else 0; p_commodity has table default 0.
+    """
+    pd_c = _read_pd_2(input_dir / "pd_commodity.csv")
+    p_c = _read_p_2(input_dir / "p_commodity.csv")
+    branches_for_d: dict[str, list[str]] = {}
+    pb_path = solve_data_dir / "period__branch.csv"
+    if pb_path.exists():
+        with pb_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    branches_for_d.setdefault(row[1], []).append(row[0])
+    commodities = _read_singles(input_dir / "commodity.csv")
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+
+    out_path = solve_data_dir / "pdCommodity.csv"
+    with out_path.open("w") as fh:
+        fh.write("commodity,param,period,value\n")
+        for c in commodities:
+            for param in ("price",):  # commodityPeriodParam = {price}
+                for d in period_in_use:
+                    if (c, param, d) in pd_c:
+                        v = pd_c[(c, param, d)]
+                    else:
+                        branched_vals = [
+                            pd_c[(c, param, db)] for db in branches_for_d.get(d, ())
+                            if (c, param, db) in pd_c
+                        ]
+                        if branched_vals:
+                            v = sum(branched_vals)
+                        else:
+                            v = p_c.get((c, param), 0.0)
+                    fh.write(f"{c},{param},{d},{repr(v)}\n")
+
+
 def write_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> None:
     """flextool.mod L1108 — pdtCommodity: 3-branch fallback (pt → pd → p → 0).
 
