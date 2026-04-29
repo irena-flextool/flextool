@@ -145,3 +145,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     invest_divest_sets.write_ed_invest_forbidden_no_investment(input_dir, solve_data_dir)
     # L4 batch 28: process_source_sink partitioned by process_delayed.
     process_arc_unions.write_process_source_sink_delayed_partition(input_dir, solve_data_dir)
+    # L4 batch 29: process__source__sinkIsNode + 3 method-bucket partitions.
+    process_arc_unions.write_process_source_sink_is_node_family(input_dir, solve_data_dir)

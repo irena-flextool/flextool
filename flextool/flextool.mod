@@ -1068,7 +1068,8 @@ set process__source__sink__profile__profile_method :=
 	process__source__sink__profile__profile_method_direct
 ;
 
-set process__source__sinkIsNode := {(p, source, sink) in process_source_sink : (p, sink) in process_sink};
+set process__source__sinkIsNode dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sinkIsNode.csv' : process__source__sinkIsNode <- [process, source, sink];
 
 set process_online_linear 'processes with an online status using linear variable';  # Migrated to Python (preprocessing/process_method_sets.py).
 set process_online_integer 'processes with an online status using integer variable';  # Migrated to Python (preprocessing/process_method_sets.py).
@@ -1152,13 +1153,13 @@ set process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source := {(p, source, sin
 										   : sum{(p,m) in process_method : m in method_1way} 1
 										   && (p, source) in process_source
 										   && ( sum{(p, sink2) in process_sink} 1 = 0 || ( sum{(p, source2) in process_source} 1 >= 2) )};
-set process__source__sinkIsNode_not2way1var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink
-	                                       && sum{(p,m) in process_method : m not in method_2way_1var} 1};
-set process__source__sinkIsNode_2way1var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink
-	                                       && sum{(p,m) in process_method : m in method_2way_1var} 1};
+set process__source__sinkIsNode_not2way1var dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process__source__sinkIsNode_2way1var    dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sinkIsNode_not2way1var.csv' : process__source__sinkIsNode_not2way1var <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process__source__sinkIsNode_2way1var.csv'    : process__source__sinkIsNode_2way1var    <- [process, source, sink];
 set process_sinkIsNode_2way1var := setof {(p, source, sink) in process__source__sinkIsNode_2way1var} p;
-set process__source__sinkIsNode_2way2var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink
-	                                       && sum{(p,m) in process_method : m in method_2way_2var } 1};
+set process__source__sinkIsNode_2way2var dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sinkIsNode_2way2var.csv' : process__source__sinkIsNode_2way2var <- [process, source, sink];
 
 set gdt_maxInstantFlow := {g in group, (d, t) in dt : pdtGroup[g, 'max_instant_flow', d, t]};
 set gdt_minInstantFlow := {g in group, (d, t) in dt : pdtGroup[g, 'min_instant_flow', d, t]};
