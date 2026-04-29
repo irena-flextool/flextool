@@ -561,6 +561,55 @@ def write_process_source_delayed_partition(
                ("process", "source"), undelayed_rows)
 
 
+def write_node_group_dispatch_process_fully_inside(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1789-1794 — for each (g, p) where g is a dispatch
+    nodeGroup and p is a process, include if BOTH source and sink nodes
+    of p are members of g, AND p isn't a self-loop (e.g. a battery
+    storage with source==sink).
+
+        { g in nodeGroupDispatch, p in process :
+          sum {(p, src) in process_source : (g, src) in group_node} 1
+          AND sum {(p, snk) in process_sink : (g, snk) in group_node} 1
+          AND NOT sum {(p, src, snk) in process_source_sink : src == snk} 1 }
+    """
+    ngd = _read_singles(input_dir / "nodeGroupDispatch.csv")
+    procs = _read_singles(input_dir / "process.csv")
+    process_source_pairs = _read_pairs(input_dir / "process__source.csv")
+    process_sink_pairs = _read_pairs(input_dir / "process__sink.csv")
+    gn = _read_pairs(input_dir / "group__node.csv")
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+
+    nodes_in_g: dict[str, set[str]] = {}
+    for g, n in gn:
+        nodes_in_g.setdefault(g, set()).add(n)
+    sources_of_p: dict[str, set[str]] = {}
+    for p, src in process_source_pairs:
+        sources_of_p.setdefault(p, set()).add(src)
+    sinks_of_p: dict[str, set[str]] = {}
+    for p, snk in process_sink_pairs:
+        sinks_of_p.setdefault(p, set()).add(snk)
+    self_loop_processes = frozenset(
+        p for p, src, snk in triples if src == snk
+    )
+
+    rows: list[tuple[str, str]] = []
+    for g in ngd:
+        gnodes = nodes_in_g.get(g, set())
+        if not gnodes:
+            continue
+        for p in procs:
+            if p in self_loop_processes:
+                continue
+            srcs = sources_of_p.get(p, set())
+            snks = sinks_of_p.get(p, set())
+            if (srcs & gnodes) and (snks & gnodes):
+                rows.append((g, p))
+    _write_csv(solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv",
+               ("group", "process"), rows)
+
+
 def write_process_source_sink_ramp_method(
     input_dir: Path, solve_data_dir: Path
 ) -> None:

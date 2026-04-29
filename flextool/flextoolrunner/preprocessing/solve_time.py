@@ -154,3 +154,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_process_source_sink_coeff_zero(input_dir, solve_data_dir)
     # L4 batch 32: process__source__sink__ramp_method (4-tuple, per-side).
     process_arc_unions.write_process_source_sink_ramp_method(input_dir, solve_data_dir)
+    # L4 batch 33: nodeGroupDispatch__process_fully_inside.
+    process_arc_unions.write_node_group_dispatch_process_fully_inside(input_dir, solve_data_dir)
