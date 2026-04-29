@@ -57,6 +57,7 @@ def run(state: RunnerState, solve_name: str) -> None:
         dc_angle_bounds,
         invest_total_sets,
         process_arc_unions,
+        period_calculated_params,
         per_solve_sets,
     )
     period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
@@ -103,4 +104,10 @@ def run(state: RunnerState, solve_name: str) -> None:
 
     # Per-solve-only sets: inputs in solve_data/ written above by
     # orchestration / solve_writers / blocks before this hook fires.
+    # Must run BEFORE period_calculated_params, which depends on
+    # period_in_use_set.csv etc. produced here.
     per_solve_sets.write_per_solve_sets(solve_data_dir)
+
+    # L1 batch 13: per-period calculated params (per-solve scope).
+    # Reads period_in_use_set.csv etc. that per_solve_sets just wrote.
+    period_calculated_params.write_period_calculated_params(input_dir, solve_data_dir)
