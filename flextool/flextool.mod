@@ -1093,8 +1093,10 @@ set process_source_undelayed dimen 2;  # Migrated to Python (preprocessing/proce
 set process_source_delayed   dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process_source_undelayed.csv' : process_source_undelayed <- [process, source];
 table data IN 'CSV' 'solve_data/process_source_delayed.csv'   : process_source_delayed   <- [process, source];
-set process_source_sink_undelayed := {(p, source, sink) in process_source_sink : p not in process_delayed};
-set process_source_sink_delayed := {(p, source, sink) in process_source_sink : p in process_delayed};
+set process_source_sink_undelayed dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_delayed   dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_undelayed.csv' : process_source_sink_undelayed <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_delayed.csv'   : process_source_sink_delayed   <- [process, source, sink];
 
 param p_process_delay_weight {(p, td) in process_delayed__duration} :=
   + if (p, td) in process_delay_single__delay_duration
