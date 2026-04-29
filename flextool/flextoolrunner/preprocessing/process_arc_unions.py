@@ -1499,6 +1499,235 @@ def write_node_group_dispatch_sets(
                ("group", "group_aggregate"), list(seen12.keys()))
 
 
+def write_p_flow_min(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1680-1684 — p_flow_min{(p,source,sink,d,t) in peedt}.
+
+        if (p, source, sink) in process__source__sinkIsNode_2way1var
+        then -(p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
+        else 0
+
+    Mod's bare-decl gets `default 0` so we only emit non-zero rows.
+    Reads p_entity_dispatch_capacity_max + p_entity_unitsize +
+    process__source__sinkIsNode_2way1var (all already in solve_data).
+
+    Path-collision: mod's `if solveFirst` printf at L4290-4304 writes
+    a WIDE-format ``solve_data/p_flow_min.csv`` that read_parameters.py
+    consumes via `pd.read_csv(..., header=[0,1,2], index_col=[0,1,2])`.
+    The migration retargets that printf to ``solve__p_flow_min.csv``
+    (and read_parameters.py to match), leaving the ``p_flow_min.csv``
+    path for the LONG-format Python output that mod's table-data-IN
+    loads.
+    """
+    sinkIsNode = frozenset(_read_n_col(
+        solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3
+    ))
+    if not sinkIsNode:
+        # All values are 0; default 0 in mod handles it.
+        _write_csv(solve_data_dir / "p_flow_min.csv",
+                   ("process", "source", "sink", "period", "time", "value"),
+                   [])
+        return
+
+    dcm: dict[tuple[str, str], float] = {}
+    pdcm_path = solve_data_dir / "p_entity_dispatch_capacity_max.csv"
+    if pdcm_path.exists():
+        with pdcm_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        dcm[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    unitsize: dict[str, float] = {}
+    pus_path = solve_data_dir / "p_entity_unitsize.csv"
+    if pus_path.exists():
+        with pus_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        unitsize[r[0]] = float(r[1])
+                    except ValueError:
+                        continue
+
+    peedt = _read_n_col(solve_data_dir / "peedt.csv", 5)
+    rows: list[tuple[str, ...]] = []
+    for p, src, sink, d, t in peedt:
+        if (p, src, sink) not in sinkIsNode:
+            continue
+        us = unitsize.get(p, 1.0)
+        if us == 0.0:
+            continue
+        v = -dcm.get((p, d), 0.0) / us
+        rows.append((p, src, sink, d, t, repr(v)))
+    _write_csv(solve_data_dir / "p_flow_min.csv",
+               ("process", "source", "sink", "period", "time", "value"),
+               rows)
+
+
+def write_p_flow_max(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1661-1677 — p_flow_max{(p,source,sink,d,t) in peedt}.
+
+        if (p, source, sink) in process_source_sink_coeff_zero
+        then p_unconstrained_flow_cap
+        else
+          (
+            if exists{(p,m) in process__method_indirect} 1
+               AND (p, source) in process_source
+            then ( if (p, 'min_load_efficiency') in process__ct_method
+                   then pdtProcess_slope[p,d,t] + pdtProcess_section[p,d,t]
+                   else pdtProcess_slope[p,d,t]
+                 )
+                 * (p_entity_dispatch_capacity_max[p,d] / p_entity_unitsize[p])
+                 / p_process_source_max_capacity_coefficient[p, source]
+            else
+                 (p_entity_dispatch_capacity_max[p,d] / p_entity_unitsize[p])
+          )
+          * (if (p, sink) in process_sink
+             then p_process_sink_max_capacity_coefficient[p, sink] else 1)
+
+    Mod's bare-decl gets NO default — every peedt row gets a value.
+    Path-collision pattern same as p_flow_min: mod's WIDE-format printf
+    at L4306-4319 retargeted to ``solve__p_flow_max.csv``, Python
+    writes LONG-format ``p_flow_max.csv`` for table-data-IN load.
+    """
+    coeff_zero = frozenset(_read_n_col(
+        solve_data_dir / "process_source_sink_coeff_zero.csv", 3
+    ))
+    has_indirect = frozenset(
+        p for p, _m in _read_pairs(
+            solve_data_dir / "process__method_indirect.csv"
+        )
+    )
+    process_source = frozenset(_read_pairs(input_dir / "process__source.csv"))
+    process_sink = frozenset(_read_pairs(input_dir / "process__sink.csv"))
+    has_min_load = frozenset(
+        p for p, m in _read_pairs(solve_data_dir / "process__ct_method.csv")
+        if m == "min_load_efficiency"
+    )
+
+    dcm: dict[tuple[str, str], float] = {}
+    pdcm_path = solve_data_dir / "p_entity_dispatch_capacity_max.csv"
+    if pdcm_path.exists():
+        with pdcm_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        dcm[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    unitsize: dict[str, float] = {}
+    pus_path = solve_data_dir / "p_entity_unitsize.csv"
+    if pus_path.exists():
+        with pus_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        unitsize[r[0]] = float(r[1])
+                    except ValueError:
+                        continue
+
+    slope: dict[tuple[str, str, str], float] = {}
+    section: dict[tuple[str, str, str], float] = {}
+    for fname, target in (
+        ("pdtProcess_slope.csv", slope),
+        ("pdtProcess_section.csv", section),
+    ):
+        path = solve_data_dir / fname
+        if path.exists():
+            with path.open() as fh:
+                reader = csv.reader(fh)
+                next(reader, None)
+                for r in reader:
+                    if len(r) >= 4 and r[0] and r[1] and r[2]:
+                        try:
+                            target[(r[0], r[1], r[2])] = float(r[3])
+                        except ValueError:
+                            continue
+
+    src_max_coef: dict[tuple[str, str], float] = {}
+    pms_path = input_dir / "p_process_source_max_capacity_coefficient.csv"
+    if pms_path.exists():
+        with pms_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        src_max_coef[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    sink_max_coef: dict[tuple[str, str], float] = {}
+    pmk_path = input_dir / "p_process_sink_max_capacity_coefficient.csv"
+    if pmk_path.exists():
+        with pmk_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        sink_max_coef[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+
+    # p_unconstrained_flow_cap = max over models of
+    # p_max_flow_for_unconstrained_variables[m]; default 1e6 if no models.
+    p_uflow = 1_000_000.0
+    pmfu_path = input_dir / "p_max_flow_for_unconstrained_variables.csv"
+    if pmfu_path.exists():
+        max_v: float | None = None
+        with pmfu_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        v = float(r[1])
+                    except ValueError:
+                        continue
+                    if max_v is None or v > max_v:
+                        max_v = v
+        if max_v is not None:
+            p_uflow = max_v
+
+    peedt = _read_n_col(solve_data_dir / "peedt.csv", 5)
+    rows: list[tuple[str, ...]] = []
+    for p, src, sink, d, t in peedt:
+        if (p, src, sink) in coeff_zero:
+            value = p_uflow
+        else:
+            us = unitsize.get(p, 1.0)
+            dcm_v = dcm.get((p, d), 0.0)
+            if p in has_indirect and (p, src) in process_source:
+                if p in has_min_load:
+                    eff_term = (slope.get((p, d, t), 0.0)
+                                + section.get((p, d, t), 0.0))
+                else:
+                    eff_term = slope.get((p, d, t), 0.0)
+                src_coef = src_max_coef.get((p, src), 1.0)
+                base = eff_term * (dcm_v / us) / src_coef
+            else:
+                base = dcm_v / us
+            sink_coef = (sink_max_coef.get((p, sink), 1.0)
+                         if (p, sink) in process_sink else 1.0)
+            value = base * sink_coef
+        rows.append((p, src, sink, d, t, repr(value)))
+    _write_csv(solve_data_dir / "p_flow_max.csv",
+               ("process", "source", "sink", "period", "time", "value"),
+               rows)
+
+
 def write_p_state_slack_share(
     input_dir: Path, solve_data_dir: Path
 ) -> None:

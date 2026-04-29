@@ -40,8 +40,8 @@ def read_parameters(output_dir):
     # Per-solve parameters — written by phase 1 on every solve.
     p.step_duration = pd.read_csv(solve_data_path / 'p_step_duration.csv', index_col=[0, 1, 2])['value'].astype(float)
     p.rp_cost_weight = pd.read_csv(solve_data_path / 'p_rp_cost_weight.csv', index_col=[0, 1, 2])['value'].astype(float)
-    p.flow_min = pd.read_csv(solve_data_path / 'p_flow_min.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
-    p.flow_max = pd.read_csv(solve_data_path / 'p_flow_max.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
+    p.flow_min = pd.read_csv(solve_data_path / 'solve__p_flow_min.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
+    p.flow_max = pd.read_csv(solve_data_path / 'solve__p_flow_max.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
     p.process_source = pd.read_csv(solve_data_path / 'p_process_source.csv', header=[0, 1], index_col=[0]).astype(float)
     p.process_sink = pd.read_csv(solve_data_path / 'p_process_sink.csv', header=[0, 1], index_col=0).astype(float)
     p.process_slope = pd.read_csv(solve_data_path / 'solve__pdtProcess_slope.csv', index_col=[0, 1, 2]).astype(float)
