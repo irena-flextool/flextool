@@ -270,3 +270,16 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_process_source_sink_ramp_unions(
         input_dir, solve_data_dir
     )
+    # L0/L1 batch 63: branch weights and odds (5 items).
+    # pd_branch_weight + pdt_branch_weight: per-period and per-(d,t)
+    # normalization of solve_branch_weight by sibling-branch sum.
+    period_calculated_params.write_branch_weights(input_dir, solve_data_dir)
+    # p_process_delay_weight: 1 if (p, td) in process_delay_single,
+    # else p_process_delay_weighted[p, td].
+    process_arc_unions.write_p_process_delay_weight(input_dir, solve_data_dir)
+    # gcndt_co2_price (5-tuple set, hourly co2 price gate) and
+    # group_commodity_node_period_co2_period (4-tuple, max-period gate).
+    process_arc_unions.write_gcndt_co2_price(input_dir, solve_data_dir)
+    process_arc_unions.write_group_commodity_node_period_co2_period(
+        input_dir, solve_data_dir
+    )
