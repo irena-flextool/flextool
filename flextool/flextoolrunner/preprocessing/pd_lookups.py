@@ -1,6 +1,7 @@
-"""4-branch pd-style param lookups (pdProcess / pdNode / pdtCommodity-period).
+"""4- and 7-branch pd-style param lookups (pdProcess / pdNode / pdtCommodity-period
++ pdtProcess / pdtNode / pdtReserve_upDown_group).
 
-Reusable helper for the calc-param migrations. The mod pattern at
+Reusable helper for the calc-param migrations. The 4-branch mod pattern at
 flextool.mod:1216 (pdNode) and L1252 (pdProcess) is:
 
     param pdX {(e, param) in <class>__PeriodParam_in_use, d in period_with_history} :=
@@ -16,6 +17,10 @@ flextool.mod:1216 (pdNode) and L1252 (pdProcess) is:
     Branch 2: any (e, param, db) where db has d as a branch — sum those.
     Branch 3: per-class fall-back from input/p_<class>.csv.
     Branch 4: 0.
+
+The 7-branch ``pdtX`` pattern at flextool.mod L1227 (pdtProcess) extends
+the 4-branch pattern with a time-axis fallback and two stochastic
+branch-folding contributions (see :class:`PdtLookup` for details).
 """
 from __future__ import annotations
 
@@ -106,3 +111,191 @@ class PdLookup:
         if (e, param) in self._p:
             return self._p[(e, param)]
         return 0.0
+
+
+def _read_pbt(path: Path) -> dict[tuple[str, str, str, str, str], float]:
+    """6-col CSV: (entity, param, branch, time_start, time, value)."""
+    out: dict[tuple[str, str, str, str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 6 and row[0] and row[1] and row[2] and row[3] and row[4]:
+                try:
+                    out[(row[0], row[1], row[2], row[3], row[4])] = float(row[5])
+                except ValueError:
+                    continue
+    return out
+
+
+def _read_pt(path: Path) -> dict[tuple[str, str, str], float]:
+    """4-col CSV: (entity, param, time, value)."""
+    out: dict[tuple[str, str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 4 and row[0] and row[1] and row[2]:
+                try:
+                    out[(row[0], row[1], row[2])] = float(row[3])
+                except ValueError:
+                    continue
+    return out
+
+
+def _read_pairs_to_dict(path: Path, key_col: int) -> dict[str, list[str]]:
+    """Generic two-col CSV read into ``key_col → list[other_col]``."""
+    out: dict[str, list[str]] = {}
+    if not path.exists():
+        return out
+    other_col = 1 - key_col
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 2 and row[0] and row[1]:
+                out.setdefault(row[key_col], []).append(row[other_col])
+    return out
+
+
+def _read_singles(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        return [r[0] for r in reader if r and r[0]]
+
+
+class PdtLookup:
+    """Replicates mod's 7-branch ``pdtProcess`` / ``pdtNode`` /
+    ``pdtReserve_upDown_group`` resolution.
+
+    Mod pattern (flextool.mod L1227, pdtProcess) — outer ``(p, param, d, t)``::
+
+        if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch:
+                  (p, param, tb, ts, t) in process__param__branch__time} 1
+              && exists{(g,p) in group_process: g in groupStochastic} 1
+            then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch}
+                       pbt_process[p, param, tb, ts, t]
+        else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first:
+                       (pe,d) in period__branch
+                       && (p, param, tb, ts, t) in process__param__branch__time} 1
+            then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first:
+                     (pe,d) in period__branch}
+                       pbt_process[p, param, tb, ts, t]
+        else if (p, param, d) in process__param__period then pd_process[p, param, d]
+        else if (p, param, t) in process__param__time   then pt_process[p, param, t]
+        else if (p, param)    in process__param         then  p_process[p, param]
+        else if param in processParam_def1              then 1
+        else 0;
+
+    GMPL semantics — outer indices ``(p, param, d, t)`` are pre-bound by
+    the param's domain. Inside ``{(d, ts) in period__time_first}`` the
+    first column ``d`` matches the outer ``d`` (filter); ``ts`` is a
+    fresh local. Same for ``(d, tb) in solve_branch__time_branch`` and
+    ``(pe, d) in period__branch`` (``pe`` fresh, ``d`` outer).
+
+    Branch 1 (stochastic-process fold-in): fires when ``e`` belongs to
+    any group flagged in ``groupStochastic``. Iterates ``ts`` over
+    ``period__time_first[d]`` and ``tb`` over ``solve_branch[d]`` and
+    sums any pbt entries at ``(e, param, tb, ts, t)``.
+
+    Branch 2 (parent-period branch fold-in): for each parent period ``pe``
+    of ``d`` (via ``period__branch``), iterate ``tb`` over
+    ``solve_branch[pe]`` and ``ts`` over ``period__time_first[d]``, sum
+    matching pbt rows. NB: branches come from the parent ``pe``, not
+    ``d``.
+
+    Branches 3-7: standard pd / pt / p / def1 / 0 fallback.
+    """
+
+    def __init__(
+        self,
+        pbt_csv: Path,                # input/pbt_<class>.csv (e, param, branch, ts, t, value)
+        pd_csv: Path,                 # input/pd_<class>.csv  (e, param, period, value)
+        pt_csv: Path,                 # input/pt_<class>.csv  (e, param, time, value)
+        p_csv: Path,                  # input/p_<class>.csv   (e, param, value)
+        period_time_first_csv: Path,  # solve_data/first_timesteps.csv [period, step]
+        solve_branch_csv: Path,       # solve_data/solve_branch__time_branch.csv [period, branch]
+        period_branch_csv: Path,      # solve_data/period__branch.csv [period, branch]
+        group_entity_csv: Path,       # solve_data/group_<class>.csv [group, entity]
+        group_stochastic_csv: Path,   # input/groupIncludeStochastics.csv [group]
+        param_def1: frozenset[str],
+    ) -> None:
+        self._pbt = _read_pbt(pbt_csv)
+        self._pd = _read_pd(pd_csv)
+        self._pt = _read_pt(pt_csv)
+        self._p = _read_p(p_csv)
+        # d → list[ts] of first-timesteps of period d
+        self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0)
+        # d → list[tb] of branches associated with period d
+        self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0)
+        # d → list[pe] of parent periods (rows where col1 == d)
+        self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1)
+        # entity → True if any of its groups is in groupStochastic
+        groups_stoch = frozenset(_read_singles(group_stochastic_csv))
+        self._stoch_entity: set[str] = set()
+        if group_entity_csv.exists():
+            with group_entity_csv.open() as fh:
+                reader = csv.reader(fh)
+                next(reader, None)
+                for row in reader:
+                    if len(row) >= 2 and row[0] in groups_stoch and row[1]:
+                        self._stoch_entity.add(row[1])
+        self._param_def1 = param_def1
+
+    def get(self, e: str, param: str, d: str, t: str) -> float:
+        # Branch 1: stochastic + outer-d's ts and tb
+        if e in self._stoch_entity:
+            ts_list = self._ts_for_d.get(d, ())
+            tb_list = self._tb_for_d.get(d, ())
+            total = 0.0
+            hit = False
+            for tb in tb_list:
+                for ts in ts_list:
+                    v = self._pbt.get((e, param, tb, ts, t))
+                    if v is not None:
+                        total += v
+                        hit = True
+            if hit:
+                return total
+        # Branch 2: parent period pe of d, tb from solve_branch[pe], ts from period__time_first[d]
+        ts_list = self._ts_for_d.get(d, ())
+        pe_list = self._pe_for_d.get(d, ())
+        if pe_list and ts_list:
+            total = 0.0
+            hit = False
+            for pe in pe_list:
+                for tb in self._tb_for_d.get(pe, ()):
+                    for ts in ts_list:
+                        v = self._pbt.get((e, param, tb, ts, t))
+                        if v is not None:
+                            total += v
+                            hit = True
+            if hit:
+                return total
+        # Branch 3: period axis
+        v = self._pd.get((e, param, d))
+        if v is not None:
+            return v
+        # Branch 4: time axis
+        v = self._pt.get((e, param, t))
+        if v is not None:
+            return v
+        # Branch 5: scalar
+        v = self._p.get((e, param))
+        if v is not None:
+            return v
+        # Branch 6: default 1
+        if param in self._param_def1:
+            return 1.0
+        # Branch 7: default 0
+        return 0.0
+
+
+PROCESS_PARAM_DEF1 = frozenset({"efficiency", "availability"})  # flextool_base.dat L154

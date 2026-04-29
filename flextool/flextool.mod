@@ -1224,21 +1224,8 @@ table data IN 'CSV' 'solve_data/process_TimeParam_in_use.csv' : process_TimePara
 
 param pdProcess {(p, param) in process__PeriodParam_in_use, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdProcess.csv' : [process, param, period], pdProcess~value;
-param pdtProcess {(p, param) in process_TimeParam_in_use, (d,t) in dt} :=
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, param, tb, ts, t) in process__param__branch__time} 1
-	       && exists{(g,p) in group_process: g in groupStochastic} 1
-             then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process[p, param, tb, ts, t]
-        else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, param, tb, ts, t) in process__param__branch__time} 1
-             then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process[p, param, tb, ts, t]
-        else if (p, param, d) in process__param__period
-		     then pd_process[p, param, d]
-		else if (p, param, t) in process__param__time
-		     then pt_process[p, param, t]
-	    else if (p, param) in process__param
-		     then p_process[p, param]
-        else if param in processParam_def1
-             then 1
-	    else 0;
+param pdtProcess {(p, param) in process_TimeParam_in_use, (d,t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtProcess.csv' : [process, param, period, time], pdtProcess~value;
 param pdtProfile {p in profile, (d,t) in dt} :=
       + if (exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, tb, ts, t) in profile__branch__time} 1
       && ((exists{(pc, p, m) in process__profile__profile_method, (g, pc) in group_process: g in groupStochastic} 1 )

@@ -22,7 +22,11 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from flextool.flextoolrunner.preprocessing.pd_lookups import PdLookup
+from flextool.flextoolrunner.preprocessing.pd_lookups import (
+    PdLookup,
+    PdtLookup,
+    PROCESS_PARAM_DEF1,
+)
 
 
 def _read_singles(path: Path) -> list[str]:
@@ -483,3 +487,34 @@ def _read_ed_pairs(path: Path) -> list[tuple[str, str]]:
             if len(row) >= 2 and row[0] and row[1]:
                 out.append((row[0], row[1]))
     return out
+
+
+def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1227 — pdtProcess: 7-branch fallback over pbt/pd/pt/p
+    + processParam_def1 default-1 + 0.
+
+    Output: ``solve_data/pdtProcess.csv`` indexed by (process, param, period, time).
+    Domain: ``process_TimeParam_in_use × dt``.
+    """
+    lookup = PdtLookup(
+        pbt_csv=input_dir / "pbt_process.csv",
+        pd_csv=input_dir / "pd_process.csv",
+        pt_csv=input_dir / "pt_process.csv",
+        p_csv=input_dir / "p_process.csv",
+        period_time_first_csv=solve_data_dir / "first_timesteps.csv",
+        solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+        group_entity_csv=solve_data_dir / "group_process.csv",
+        group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+        param_def1=PROCESS_PARAM_DEF1,
+    )
+    domain = _read_pairs(solve_data_dir / "process_TimeParam_in_use.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    out_path = solve_data_dir / "pdtProcess.csv"
+    with out_path.open("w") as fh:
+        fh.write("process,param,period,time,value\n")
+        for (p, param) in domain:
+            for (d, t) in dt:
+                v = lookup.get(p, param, d, t)
+                fh.write(f"{p},{param},{d},{t},{repr(v)}\n")
+
