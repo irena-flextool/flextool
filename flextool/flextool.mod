@@ -1498,15 +1498,11 @@ table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_source_down.csv' 
 table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_sink_down.csv'   : process_source_sink_ramp_limit_sink_down   <- [process, source, sink];
 table data IN 'CSV' 'solve_data/process_source_sink_ramp_cost.csv'              : process_source_sink_ramp_cost              <- [process, source, sink];
 set process_source_sink_ramp dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
-set process_source_sink_dtttdt_ramp_limit_source_up   dimen 9;  # Migrated to Python (preprocessing/process_arc_unions.py).
-set process_source_sink_dtttdt_ramp_limit_sink_up     dimen 9;  # Migrated to Python (preprocessing/process_arc_unions.py).
-set process_source_sink_dtttdt_ramp_limit_source_down dimen 9;  # Migrated to Python (preprocessing/process_arc_unions.py).
-set process_source_sink_dtttdt_ramp_limit_sink_down   dimen 9;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process_source_sink_ramp.csv' : process_source_sink_ramp <- [process, source, sink];
-table data IN 'CSV' 'solve_data/process_source_sink_dtttdt_ramp_limit_source_up.csv'   : process_source_sink_dtttdt_ramp_limit_source_up   <- [process, source, sink, period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
-table data IN 'CSV' 'solve_data/process_source_sink_dtttdt_ramp_limit_sink_up.csv'     : process_source_sink_dtttdt_ramp_limit_sink_up     <- [process, source, sink, period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
-table data IN 'CSV' 'solve_data/process_source_sink_dtttdt_ramp_limit_source_down.csv' : process_source_sink_dtttdt_ramp_limit_source_down <- [process, source, sink, period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
-table data IN 'CSV' 'solve_data/process_source_sink_dtttdt_ramp_limit_sink_down.csv'   : process_source_sink_dtttdt_ramp_limit_sink_down   <- [process, source, sink, period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
+# The 4 process_source_sink_dtttdt_ramp_limit_*_{up,down} sets that
+# used to live here were unused (the ramp_*_constraint families at
+# L3468-3543 inline the same filter on block_dtttdt) — removed in the
+# batch 68 cleanup along with their CSV writers and table-data-IN.
 
 param p_process_reserve_upDown_node_reliability {(p, r, ud, n) in process_reserve_upDown_node_active};  # Migrated to Python (preprocessing/reserve_calc_params.py).
 table data IN 'CSV' 'solve_data/p_process_reserve_upDown_node_reliability.csv' : [process, reserve, upDown, node], p_process_reserve_upDown_node_reliability~value;
@@ -5116,74 +5112,16 @@ if p_model['solveFirst'] then {
       printf "%s\n", g >> "solve_data/flowGroupIndicators.csv";
   }
 
-  printf "group,connection\n" > "solve_data/nodeGroupDispatch__connection_Not_in_aggregate.csv";
-  for {(g, c) in nodeGroupDispatch__connection_Not_in_aggregate} {
-      printf "%s,%s\n", g, c >> "solve_data/nodeGroupDispatch__connection_Not_in_aggregate.csv";
-  }
-
-  printf "group,process,connection,node\n" > "solve_data/nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
-  for {(g, c, c2, n) in nodeGroupDispatch__process__connection__to_node_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, c2, n >> "solve_data/nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
-  }
-
-  printf "group,process,node,connection\n" > "solve_data/nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
-  for {(g, c, n, c2) in nodeGroupDispatch__process__node__to_connection_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, n, c2 >> "solve_data/nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
-  }
-
-  printf "group,process,unit,node\n" > "solve_data/nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
-  for {(g, p, p2, n) in nodeGroupDispatch__process__unit__to_node_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, p, p2, n >> "solve_data/nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
-  }
-
-  printf "group,process,node,unit\n" > "solve_data/nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
-  for {(g, p, n, p2) in nodeGroupDispatch__process__node__to_unit_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, p, n, p2 >> "solve_data/nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
-  }
-
-  printf "group,group_aggregate\n" > "solve_data/nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
-  for {(g, ga) in nodeGroupDispatch__group_aggregate_Unit_to_group} {
-      printf "%s,%s\n", g, ga >> "solve_data/nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
-  }
-
-  printf "group,group_aggregate,unit,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
-  for {(g, ga, u, source, sink) in nodeGroupDispatch__group_aggregate__process__unit__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
-  }
-
-  printf "group,group_aggregate\n" > "solve_data/nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
-  for {(g, ga) in nodeGroupDispatch__group_aggregate_Group_to_unit} {
-      printf "%s,%s\n", g, ga >> "solve_data/nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
-  }
-
-  printf "group,group_aggregate,unit,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
-  for {(g, ga, u, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_unit} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
-  }
-
-  printf "group,group_aggregate\n" > "solve_data/nodeGroupDispatch__group_aggregate_Connection.csv";
-  for {(g, ga) in nodeGroupDispatch__group_aggregate_Connection} {
-      printf "%s,%s\n", g, ga >> "solve_data/nodeGroupDispatch__group_aggregate_Connection.csv";
-  }
-
-  printf "group,group_aggregate,connection,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
-  for {(g, ga, c, source, sink) in nodeGroupDispatch__group_aggregate__process__connection__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
-  }
-
-  printf "group,group_aggregate,connection,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
-  for {(g, ga, c, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_connection} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
-  }
+  # The 12 nodeGroupDispatch__* derived-set printfs that used to live
+  # here (mod batch 62) and the nodeGroupDispatch__process_fully_inside
+  # printf (batch 33) were redundant — Python preprocessing
+  # (preprocessing/process_arc_unions.py) writes the same files via
+  # write_node_group_dispatch_sets/_fully_inside before mod runs.
+  # Removed in batch 68.
 
   printf "group,process\n" > "solve_data/group_process.csv";
   for {(g, p) in group_process} {
       printf "%s,%s\n", g, p >> "solve_data/group_process.csv";
-  }
-
-  printf "group,process\n" > "solve_data/nodeGroupDispatch__process_fully_inside.csv";
-  for {(g, p) in nodeGroupDispatch__process_fully_inside} {
-      printf "%s,%s\n", g, p >> "solve_data/nodeGroupDispatch__process_fully_inside.csv";
   }
 
   printf "group,node\n" > "solve_data/group_node.csv";
