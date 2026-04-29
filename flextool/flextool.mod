@@ -1057,10 +1057,8 @@ set process_source_sink_eff dimen 3;    # Migrated to Python (preprocessing/proc
 table data IN 'CSV' 'solve_data/process_source_sink_noEff.csv' : process_source_sink_noEff <- [process, source, sink];
 table data IN 'CSV' 'solve_data/process_source_sink_eff.csv' : process_source_sink_eff <- [process, source, sink];
 
-set process__source__sink__profile__profile_method_connection :=
-    { (p, sink, source) in process_source_sink, f in profile, m in profile_method
-	    : (p, f, m) in process__profile__profile_method
-	};
+set process__source__sink__profile__profile_method_connection dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__profile__profile_method_connection.csv' : process__source__sink__profile__profile_method_connection <- [process, source, sink, profile, profile_method];
 set process__source__sink__profile__profile_method :=
     process__profileProcess__toSink__profile__profile_method union
 	process__source__toProfileProcess__profile__profile_method union

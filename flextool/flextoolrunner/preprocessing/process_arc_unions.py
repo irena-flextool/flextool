@@ -623,6 +623,41 @@ def write_process_source_sink_param(
                ("process", "source", "sink", "param"), rows)
 
 
+def write_process_source_sink_profile_method_connection(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1060-1063 — process_source_sink × profile ×
+    profile_method, filtered by (p, profile, method) membership in
+    process__profile__profile_method.
+
+        { (p, src, sink) in process_source_sink, f in profile, m in profile_method :
+          (p, f, m) in process__profile__profile_method }
+
+    Mod's iteration uses misleading var names `(p, sink, source)` —
+    MathProg binds positionally, so the OUTPUT tuple is still
+    [process, source, sink, profile, profile_method] matching the
+    direct counterpart that's unioned with this set at L1064-1068.
+
+    process__profile__profile_method ← input/process__profile__profile_method.csv
+        (3-col loader at mod L697).
+    """
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+    pp_pm = _read_n_col(input_dir / "process__profile__profile_method.csv", 3)
+    # Group profile_methods by process for O(N + M) join.
+    fm_for_p: dict[str, list[tuple[str, str]]] = {}
+    for p, f, m in pp_pm:
+        fm_for_p.setdefault(p, []).append((f, m))
+    rows: list[tuple[str, str, str, str, str]] = []
+    for p, src, sink in triples:
+        for f, m in fm_for_p.get(p, ()):
+            rows.append((p, src, sink, f, m))
+    _write_csv(
+        solve_data_dir / "process__source__sink__profile__profile_method_connection.csv",
+        ("process", "source", "sink", "profile", "profile_method"),
+        rows,
+    )
+
+
 def write_process_source_sink_param_with_time(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
