@@ -340,6 +340,93 @@ def write_p_entity_pre_existing(
                    ("entity", "period", "value"), rows)
 
 
+def write_p_entity_divest_cumulative_max(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1920-1933 — cumulative ceiling on v_divest summed
+    by dispatch period d.
+
+    Three-branch sum (only one fires per (e, d) given the e_divest_total
+    membership / cardinality split):
+
+        if e ∉ e_divest_total:
+            sum_{(e, d_div) in ed_divest_period, p_years_d[d_div] ≤ p_years_d[d]}
+                ed_divest_max_period[e, d_div]
+        elif e ∈ e_divest_total AND ed_divest_period has no rows for e:
+            e_divest_max_total[e]
+        else:  # e ∈ e_divest_total AND ed_divest_period has ≥1 row for e
+            max(period_sum, e_divest_max_total[e])
+
+    Domain: entityDivest × period_in_use. Reads ed_divest_period.csv
+    and ed_divest_max_period.csv that batches 19/20 produce.
+    """
+    entityDivest = _read_singles(solve_data_dir / "entityDivest.csv")
+    e_divest_total = frozenset(
+        _read_singles(solve_data_dir / "e_divest_total.csv")
+    )
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+
+    ed_divest_period = _read_pairs(solve_data_dir / "ed_divest_period.csv")
+    div_periods_for_e: dict[str, list[str]] = {}
+    for e_, d_ in ed_divest_period:
+        div_periods_for_e.setdefault(e_, []).append(d_)
+
+    p_years_d: dict[str, float] = {}
+    for r in _read_pairs(solve_data_dir / "p_years_d.csv"):
+        try:
+            p_years_d[r[0]] = float(r[1])
+        except ValueError:
+            continue
+
+    ed_divest_max: dict[tuple[str, str], float] = {}
+    edmp = solve_data_dir / "ed_divest_max_period.csv"
+    if edmp.exists():
+        with edmp.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        ed_divest_max[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+
+    e_divest_max_total: dict[str, float] = {}
+    edmt = solve_data_dir / "e_divest_max_total.csv"
+    if edmt.exists():
+        with edmt.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        e_divest_max_total[r[0]] = float(r[1])
+                    except ValueError:
+                        continue
+
+    rows: list[tuple[str, str, float]] = []
+    for e in entityDivest:
+        in_total = e in e_divest_total
+        e_div_periods = div_periods_for_e.get(e, [])
+        e_total_max = e_divest_max_total.get(e, 0.0)
+        for d in period_in_use:
+            d_years = p_years_d.get(d, 0.0)
+            period_sum = sum(
+                ed_divest_max.get((e, d_div), 0.0)
+                for d_div in e_div_periods
+                if p_years_d.get(d_div, 0.0) <= d_years
+            )
+            if not in_total:
+                v = period_sum
+            elif not e_div_periods:
+                v = e_total_max
+            else:
+                v = max(period_sum, e_total_max)
+            rows.append((e, d, v))
+    _write_keyed_2(solve_data_dir / "p_entity_divest_cumulative_max.csv",
+                   ("entity", "period", "value"), rows)
+
+
 def write_ed_period_params(input_dir: Path, solve_data_dir: Path) -> None:
     """ed_*_period / ed_cumulative_* family — keyed on ed_invest / ed_divest.
 
