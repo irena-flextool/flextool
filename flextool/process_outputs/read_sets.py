@@ -43,9 +43,9 @@ def read_sets(output_dir):
     s.dt_realize_dispatch = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dt_realize_dispatch.csv'))
     s.d_realize_dispatch_or_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'd_realize_dispatch_or_invest.csv'))
     s.dt = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dt.csv'))
-    s.ed_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'ed_invest.csv'))
-    s.ed_divest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'ed_divest.csv'))
-    s.edd_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'edd_invest.csv'))
+    s.ed_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__ed_invest.csv'))
+    s.ed_divest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__ed_divest.csv'))
+    s.edd_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__edd_invest.csv'))
     s.process__node__profile__profile_method = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'process__node__profile__profile_method.csv'))
 
     # Process topology sets (write-once)

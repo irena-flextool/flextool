@@ -4792,13 +4792,13 @@ for {s in solve_current, d in d_realize_dispatch_or_invest} {
 
 # Write p_entity_pre_existing
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/p_entity_pre_existing.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/p_entity_pre_existing.csv";}
+  printf "solve,period" > "solve_data/solve__p_entity_pre_existing.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__p_entity_pre_existing.csv";}
 }
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/p_entity_pre_existing.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__p_entity_pre_existing.csv";
     for {e in entity} {
-        printf ",%.8g", p_entity_pre_existing[e, d] >> "solve_data/p_entity_pre_existing.csv";
+        printf ",%.8g", p_entity_pre_existing[e, d] >> "solve_data/solve__p_entity_pre_existing.csv";
     }
 }
 
@@ -4816,43 +4816,43 @@ for {s in solve_current, d in d_realized_period} {
 
 # Write fixed costs
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_fixed_cost.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/ed_fixed_cost.csv";}
+  printf "solve,period" > "solve_data/solve__ed_fixed_cost.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__ed_fixed_cost.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_fixed_cost.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_fixed_cost.csv";
     for {e in entity} {
-        printf ",%.8g", ed_fixed_cost[e, d] >> "solve_data/ed_fixed_cost.csv";
+        printf ",%.8g", ed_fixed_cost[e, d] >> "solve_data/solve__ed_fixed_cost.csv";
     }
 }
 
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_lifetime_fixed_cost.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/ed_lifetime_fixed_cost.csv";}
+  printf "solve,period" > "solve_data/solve__ed_lifetime_fixed_cost.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__ed_lifetime_fixed_cost.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_lifetime_fixed_cost.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_lifetime_fixed_cost.csv";
     # Header has all entities (see line above); write 0 for entities not in
     # ed_invest so the column alignment matches the header.
     for {e in entity} {
         printf ",%.8g",
             (if (e, d) in ed_invest then ed_lifetime_fixed_cost[e, d] else 0)
-            >> "solve_data/ed_lifetime_fixed_cost.csv";
+            >> "solve_data/solve__ed_lifetime_fixed_cost.csv";
     }
 }
 
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_lifetime_fixed_cost_divest.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/ed_lifetime_fixed_cost_divest.csv";}
+  printf "solve,period" > "solve_data/solve__ed_lifetime_fixed_cost_divest.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__ed_lifetime_fixed_cost_divest.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_lifetime_fixed_cost_divest.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_lifetime_fixed_cost_divest.csv";
     # Header has all entities; write 0 for entities not in ed_divest so the
     # column alignment matches the header.
     for {e in entity} {
         printf ",%.8g",
             (if (e, d) in ed_divest then ed_lifetime_fixed_cost_divest[e, d] else 0)
-            >> "solve_data/ed_lifetime_fixed_cost_divest.csv";
+            >> "solve_data/solve__ed_lifetime_fixed_cost_divest.csv";
     }
 }
 
@@ -4938,65 +4938,65 @@ for {s in solve_current, d in d_realize_invest} {
 
 # Write ed_entity_annual_discounted
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_entity_annual_discounted.csv";
-  for {e in entityInvest} {printf ",%s", e >> "solve_data/ed_entity_annual_discounted.csv";}
+  printf "solve,period" > "solve_data/solve__ed_entity_annual_discounted.csv";
+  for {e in entityInvest} {printf ",%s", e >> "solve_data/solve__ed_entity_annual_discounted.csv";}
 }
 for {s in solve_current, d in d_realize_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_entity_annual_discounted.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_entity_annual_discounted.csv";
     for {e in entityInvest} {
-        printf ",%.8g", (if (e, d) in ed_invest then ed_entity_annual_discounted[e, d] else 0) >> "solve_data/ed_entity_annual_discounted.csv";
+        printf ",%.8g", (if (e, d) in ed_invest then ed_entity_annual_discounted[e, d] else 0) >> "solve_data/solve__ed_entity_annual_discounted.csv";
     }
 }
 
 # Write ed_entity_annual_divest_discounted
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_entity_annual_divest_discounted.csv";
-  for {e in entityDivest} {printf ",%s", e >> "solve_data/ed_entity_annual_divest_discounted.csv";}
+  printf "solve,period" > "solve_data/solve__ed_entity_annual_divest_discounted.csv";
+  for {e in entityDivest} {printf ",%s", e >> "solve_data/solve__ed_entity_annual_divest_discounted.csv";}
 }
 for {s in solve_current, d in d_realize_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_entity_annual_divest_discounted.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_entity_annual_divest_discounted.csv";
     for {e in entityDivest} {
-        printf ",%.8g", (if (e, d) in ed_divest then ed_entity_annual_divest_discounted[e, d] else 0) >> "solve_data/ed_entity_annual_divest_discounted.csv";
+        printf ",%.8g", (if (e, d) in ed_divest then ed_entity_annual_divest_discounted[e, d] else 0) >> "solve_data/solve__ed_entity_annual_divest_discounted.csv";
     }
 }
 
 # Write p_inflation_factor_operations_yearly
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,value" > "solve_data/p_inflation_factor_operations_yearly.csv";
+  printf "solve,period,value" > "solve_data/solve__p_inflation_factor_operations_yearly.csv";
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s,%.12g", s, d, p_inflation_factor_operations_yearly[d] >> "solve_data/p_inflation_factor_operations_yearly.csv";
+    printf "\n%s,%s,%.12g", s, d, p_inflation_factor_operations_yearly[d] >> "solve_data/solve__p_inflation_factor_operations_yearly.csv";
 }
 
 # Write p_inflation_factor_investment_yearly
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,value" > "solve_data/p_inflation_factor_investment_yearly.csv";
+  printf "solve,period,value" > "solve_data/solve__p_inflation_factor_investment_yearly.csv";
 }
 for {s in solve_current, d in d_realize_invest} {
-    printf "\n%s,%s,%.12g", s, d, p_inflation_factor_investment_yearly[d] >> "solve_data/p_inflation_factor_investment_yearly.csv";
+    printf "\n%s,%s,%.12g", s, d, p_inflation_factor_investment_yearly[d] >> "solve_data/solve__p_inflation_factor_investment_yearly.csv";
 }
 
 # Write node_capacity_for_scaling
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/node_capacity_for_scaling.csv";
-  for {n in node} {printf ",%s", n >> "solve_data/node_capacity_for_scaling.csv";}
+  printf "solve,period" > "solve_data/solve__node_capacity_for_scaling.csv";
+  for {n in node} {printf ",%s", n >> "solve_data/solve__node_capacity_for_scaling.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/node_capacity_for_scaling.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__node_capacity_for_scaling.csv";
     for {n in node} {
-        printf ",%.12g", node_capacity_for_scaling[n, d] >> "solve_data/node_capacity_for_scaling.csv";
+        printf ",%.12g", node_capacity_for_scaling[n, d] >> "solve_data/solve__node_capacity_for_scaling.csv";
     }
 }
 
 # Write group_capacity_for_scaling
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/group_capacity_for_scaling.csv";
-  for {g in group} {printf ",%s", g >> "solve_data/group_capacity_for_scaling.csv";}
+  printf "solve,period" > "solve_data/solve__group_capacity_for_scaling.csv";
+  for {g in group} {printf ",%s", g >> "solve_data/solve__group_capacity_for_scaling.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/group_capacity_for_scaling.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__group_capacity_for_scaling.csv";
     for {g in group} {
-        printf ",%.12g", group_capacity_for_scaling[g, d] >> "solve_data/group_capacity_for_scaling.csv";
+        printf ",%.12g", group_capacity_for_scaling[g, d] >> "solve_data/solve__group_capacity_for_scaling.csv";
     }
 }
 
@@ -5511,21 +5511,21 @@ for {s in solve_current, (d, t) in dt_realize_dispatch: dt_jump[d, t] != 1 && (d
 }
 
 # ed_invest - (entity, period) pairs where investment occurs
-if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/ed_invest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/solve__ed_invest.csv";
 for {s in solve_current, (e, d) in ed_invest : d in d_realize_invest} {
-    printf "%s,%s,%s\n", s, e, d >> "solve_data/ed_invest.csv";
+    printf "%s,%s,%s\n", s, e, d >> "solve_data/solve__ed_invest.csv";
 }
 
 # ed_divest - (entity, period) pairs where divestment occurs
-if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/ed_divest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/solve__ed_divest.csv";
 for {s in solve_current, (e, d) in ed_divest} {
-    printf "%s,%s,%s\n", s, e, d >> "solve_data/ed_divest.csv";
+    printf "%s,%s,%s\n", s, e, d >> "solve_data/solve__ed_divest.csv";
 }
 
 # edd_invest - (entity, d_invest, d) triplets showing which investments apply to which periods
-if p_model["solveFirst"] == 1 then printf "solve,entity,d_invest,d\n" > "solve_data/edd_invest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,entity,d_invest,d\n" > "solve_data/solve__edd_invest.csv";
 for {s in solve_current, (e, d_invest, d) in edd_invest} {
-    printf "%s,%s,%s,%s\n", s, e, d_invest, d >> "solve_data/edd_invest.csv";
+    printf "%s,%s,%s,%s\n", s, e, d_invest, d >> "solve_data/solve__edd_invest.csv";
 }
 
 # Write p_nested_model (solveFirst)

@@ -246,7 +246,7 @@ def test_p_entity_period_existing_capacity_first_solve(tmp_path: Path) -> None:
     _write_unitsize(work, {"battery": 1.0, "wind_plant": 1000.0})
     _write_entity_set(work, ["battery", "wind_plant"])
     # pre_existing layout: solve, period, entity1, entity2, ...
-    (work / "solve_data" / "p_entity_pre_existing.csv").write_text(
+    (work / "solve_data" / "solve__p_entity_pre_existing.csv").write_text(
         "solve,period,battery,wind_plant\ns1,p2020,50,1000\n"
     )
     (work / "solve_data" / "realized_invest_periods_of_current_solve.csv").write_text(
@@ -254,7 +254,7 @@ def test_p_entity_period_existing_capacity_first_solve(tmp_path: Path) -> None:
     )
     (work / "solve_data" / "period_first.csv").write_text("period\np2020\n")
     # ed_invest covers (battery, p2020) only — wind_plant has no invest.
-    (work / "solve_data" / "ed_invest.csv").write_text(
+    (work / "solve_data" / "solve__ed_invest.csv").write_text(
         "solve,entity,period\ns1,battery,p2020\n"
     )
     h = _fake_highs(
