@@ -1207,13 +1207,8 @@ set process__source__sink__ramp_method :=
 set node__PeriodParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/node__PeriodParam_in_use.csv' : node__PeriodParam_in_use <- [node, param];
 
-set node__TimeParam_in_use :=
-  { n in node, param in nodeTimeParam:
-    (n in nodeBalance && param in nodeTimeParamRequired)
-	|| (n in nodeBalancePeriod && param in nodeTimeParamRequired)
-    || ((n in nodeState) && (param == 'self_discharge_loss' || param == 'availability'))
-    || ((n, 'use_reference_value') in node__storage_solve_horizon_method && param == 'storage_state_reference_value')
-  };
+set node__TimeParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/node__TimeParam_in_use.csv' : node__TimeParam_in_use <- [node, param];
 
 param pdNode {(n, param) in node__PeriodParam_in_use, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdNode.csv' : [node, param, period], pdNode~value;

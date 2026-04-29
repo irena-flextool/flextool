@@ -463,6 +463,49 @@ def write_group_commodity_node_period_co2_total(
                list(dict.fromkeys(rows)))
 
 
+def write_node_time_param_in_use(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1208-1214 — node × nodeTimeParam filtered.
+
+        set node__TimeParam_in_use :=
+          { n in node, param in nodeTimeParam:
+            (n in nodeBalance && param in nodeTimeParamRequired)
+            || (n in nodeBalancePeriod && param in nodeTimeParamRequired)
+            || (n in nodeState && param in {self_discharge_loss, availability})
+            || ((n, 'use_reference_value') in node__storage_solve_horizon_method
+                 && param == 'storage_state_reference_value')
+          };
+    """
+    from flextool.flextoolrunner.preprocessing._param_taxonomy import (
+        NODE_TIME_PARAM, NODE_TIME_PARAM_REQUIRED,
+    )
+    nodes = _read_singles(input_dir / "node.csv")
+    n_balance = frozenset(_read_singles(solve_data_dir / "nodeBalance.csv"))
+    n_balance_period = frozenset(_read_singles(solve_data_dir / "nodeBalancePeriod.csv"))
+    n_state = frozenset(_read_singles(solve_data_dir / "nodeState.csv"))
+    n_storage_use_ref = frozenset(
+        n for n, m in _read_pairs(input_dir / "node__storage_solve_horizon_method.csv")
+        if m == "use_reference_value"
+    )
+    rows: list[tuple[str, str]] = []
+    for n in nodes:
+        is_bal = n in n_balance
+        is_bal_period = n in n_balance_period
+        is_state = n in n_state
+        is_use_ref = n in n_storage_use_ref
+        for param in NODE_TIME_PARAM:
+            if (is_bal or is_bal_period) and param in NODE_TIME_PARAM_REQUIRED:
+                rows.append((n, param))
+            elif is_state and param in ("self_discharge_loss", "availability"):
+                rows.append((n, param))
+            elif is_use_ref and param == "storage_state_reference_value":
+                rows.append((n, param))
+    _write_csv(solve_data_dir / "node__TimeParam_in_use.csv",
+               ("node", "param"),
+               list(dict.fromkeys(rows)))
+
+
 def write_process_source_delayed_partition(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
