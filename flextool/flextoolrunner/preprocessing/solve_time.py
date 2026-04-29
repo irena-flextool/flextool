@@ -176,3 +176,6 @@ def run(state: RunnerState, solve_name: str) -> None:
     # L4 batch 41: peedt — cross-product of process_source_sink × dt.
     # Indexes v_flow and p_flow_max/_min / d_flow* in the mod.
     process_arc_unions.write_peedt(input_dir, solve_data_dir)
+    # L0 batch 42: pdtProcess — 7-branch hourly process param resolution.
+    # Unblocks pdtProcess_section + pssdt_varCost_eff_* + 4 downstream sets.
+    entity_period_calc_params.write_pdtProcess(input_dir, solve_data_dir)
