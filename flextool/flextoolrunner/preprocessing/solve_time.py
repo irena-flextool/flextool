@@ -229,3 +229,11 @@ def run(state: RunnerState, solve_name: str) -> None:
     # L1 batch 56: pdtProcess_source_sink — 11-branch combined source+sink
     # fallback with connection-only pt_process / p_process branches.
     entity_period_calc_params.write_pdtProcess_source_sink(input_dir, solve_data_dir)
+    # L1/L2/L3 batch 57: pdtConversion_rate + pdtProcess_section + pdtProcess_slope.
+    # Cascade: conversion_rate = 1/efficiency, section uses min_load + eff_at_min,
+    # slope = conversion_rate - (section if p in process_minload else 0).
+    # Mod's wide-format printfs for slope+section are retargeted to
+    # solve__pdtProcess_{slope,section}.csv to break the dual-writer collision.
+    entity_period_calc_params.write_pdtConversion_rate_section_slope(
+        input_dir, solve_data_dir
+    )

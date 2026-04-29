@@ -1202,6 +1202,104 @@ def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
                 fh.write(f"{p},{src},{snk},{param},{d},{t},0.0\n")
 
 
+def write_pdtConversion_rate_section_slope(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1390-L1400 — three cascading derived params:
+
+      * ``pdtConversion_rate{p in process, (d, t) in dt}``
+            ``= round(1 / pdtProcess[p, 'efficiency', d, t], 6)``
+      * ``pdtProcess_section{p in process_minload, (d, t) in dt}``
+            ``= conversion - round((conversion - min_load * 1/eff_at_min) /
+                                  (1 - min_load), 6)``
+      * ``pdtProcess_slope{p in process, (d, t) in dt}``
+            ``= conversion - (section if p in process_minload else 0)``
+
+    Reads ``solve_data/pdtProcess.csv`` for efficiency / min_load /
+    efficiency_at_min_load — pdtProcess is migrated in batch 42, written
+    earlier in the per-solve preprocessing pass.
+
+    Path-collision: mod also writes wide-format pdtProcess_slope.csv and
+    pdtProcess_section.csv post-solve; those are retargeted to
+    solve__pdtProcess_{slope,section}.csv (read by read_parameters.py
+    and cumulative_handoffs.py).
+    """
+    processes = _read_singles(input_dir / "process.csv")
+    process_minload = frozenset(_read_singles(solve_data_dir / "process_minload.csv"))
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    # ---- Load pdtProcess values for the 3 params we need --------------
+    eff: dict[tuple[str, str, str], float] = {}
+    min_load: dict[tuple[str, str, str], float] = {}
+    eff_min: dict[tuple[str, str, str], float] = {}
+    pdt_path = solve_data_dir / "pdtProcess.csv"
+    if pdt_path.exists():
+        with pdt_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) < 5 or not row[0]:
+                    continue
+                try:
+                    v = float(row[4])
+                except ValueError:
+                    continue
+                key = (row[0], row[2], row[3])  # (process, period, time)
+                if row[1] == "efficiency":
+                    eff[key] = v
+                elif row[1] == "min_load":
+                    min_load[key] = v
+                elif row[1] == "efficiency_at_min_load":
+                    eff_min[key] = v
+
+    # ---- pdtConversion_rate -------------------------------------------
+    conv_path = solve_data_dir / "pdtConversion_rate.csv"
+    conv_rate: dict[tuple[str, str, str], float] = {}
+    with conv_path.open("w") as fh:
+        fh.write("process,period,time,value\n")
+        for p in processes:
+            for (d, t) in dt:
+                e = eff.get((p, d, t), 0.0)
+                # GMPL `1 / 0` would error; pdtProcess returns 0 when not
+                # in domain, but 'efficiency' is REQUIRED for all
+                # processes (always returns at least 1 via processParam_def1).
+                v = round(1.0 / e, 6) if e else 0.0
+                conv_rate[(p, d, t)] = v
+                fh.write(f"{p},{d},{t},{repr(v)}\n")
+
+    # ---- pdtProcess_section (process_minload only) --------------------
+    sec_path = solve_data_dir / "pdtProcess_section.csv"
+    section: dict[tuple[str, str, str], float] = {}
+    with sec_path.open("w") as fh:
+        fh.write("process,period,time,value\n")
+        for p in processes:
+            if p not in process_minload:
+                continue
+            for (d, t) in dt:
+                cr = conv_rate.get((p, d, t), 0.0)
+                ml = min_load.get((p, d, t), 0.0)
+                em = eff_min.get((p, d, t), 0.0)
+                # Match mod: round((cr - ml * (1/em)) / (1 - ml), 6)
+                inv_em = (1.0 / em) if em else 0.0
+                denom = 1.0 - ml
+                rounded = round((cr - ml * inv_em) / denom, 6) if denom else 0.0
+                v = cr - rounded
+                section[(p, d, t)] = v
+                fh.write(f"{p},{d},{t},{repr(v)}\n")
+
+    # ---- pdtProcess_slope ---------------------------------------------
+    slope_path = solve_data_dir / "pdtProcess_slope.csv"
+    with slope_path.open("w") as fh:
+        fh.write("process,period,time,value\n")
+        for p in processes:
+            in_min = p in process_minload
+            for (d, t) in dt:
+                cr = conv_rate.get((p, d, t), 0.0)
+                sec = section.get((p, d, t), 0.0) if in_min else 0.0
+                v = cr - sec
+                fh.write(f"{p},{d},{t},{repr(v)}\n")
+
+
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
     if not path.exists():
         return []

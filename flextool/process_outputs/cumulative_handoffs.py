@@ -444,9 +444,9 @@ def _load_pdtProcess_slope(
     work_folder: Path,
 ) -> dict[tuple[str, str], dict[str, float]]:
     """Return ``{(period, time): {process: slope}}`` from
-    ``solve_data/pdtProcess_slope.csv``.  Wide format: cols after
+    ``solve_data/solve__pdtProcess_slope.csv``.  Wide format: cols after
     (solve, period, time) are process names.  Missing → empty."""
-    path = work_folder / "solve_data" / "pdtProcess_slope.csv"
+    path = work_folder / "solve_data" / "solve__pdtProcess_slope.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path)
