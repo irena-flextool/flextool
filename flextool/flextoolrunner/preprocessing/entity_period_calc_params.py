@@ -561,6 +561,205 @@ def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
                 fh.write(f"{n},{param},{d},{t},{repr(v)}\n")
 
 
+def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1325 — pdtNodeInflow: stochastic / parent-branch fold-in
+    OR additive sum over the 4 inflow scaling methods.
+
+    Domain: {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}.
+
+    Branch 1 (stochastic): when n belongs to a stochastic group, fold pbt
+    inflow rows over (tb in solve_branch[d], ts in period_time_first[d]).
+
+    Branch 2 (parent-period): for each parent period pe of d, fold pbt
+    inflow rows over (tb in solve_branch[pe], ts in period_time_first[d]).
+
+    Branch 3 (deterministic): sum of contributions from whichever of the 4
+    nodeBalance(∪Period)-gated methods are active for n:
+      * scale_to_annual_flow      → period_flow_annual_multiplier[n,d] * ptNode_inflow[n,t]
+      * scale_in_proportion       → period_flow_proportional_multiplier[n,d] * ptNode_inflow[n,t]
+      * scale_to_annual_and_peak_flow → new_old_slope[n,d] * ptNode_inflow[n,t] - new_old_section[n,d]
+      * use_original              → ptNode_inflow[n,t]
+    """
+    nodes = _read_singles(input_dir / "node.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    # node__inflow_method (canonical, post-fallback) — set of (node, method)
+    inflow_method_pairs = frozenset(
+        _read_pairs(solve_data_dir / "node__inflow_method.csv")
+    )
+    n_balance = frozenset(_read_singles(solve_data_dir / "nodeBalance.csv"))
+    n_balance_period = frozenset(_read_singles(solve_data_dir / "nodeBalancePeriod.csv"))
+    balance_union = n_balance | n_balance_period
+
+    # Stochastic gate (n via group_node × groupIncludeStochastics)
+    groups_stoch = frozenset(_read_singles(input_dir / "groupIncludeStochastics.csv"))
+    stoch_node: set[str] = set()
+    gn_path = solve_data_dir / "group_node.csv"
+    if gn_path.exists():
+        with gn_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] in groups_stoch and row[1]:
+                    stoch_node.add(row[1])
+
+    # Branch indices (same shape as PdtLookup)
+    ts_for_d: dict[str, list[str]] = {}
+    fts_path = solve_data_dir / "first_timesteps.csv"
+    if fts_path.exists():
+        with fts_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    ts_for_d.setdefault(row[0], []).append(row[1])
+    tb_for_d: dict[str, list[str]] = {}
+    sb_path = solve_data_dir / "solve_branch__time_branch.csv"
+    if sb_path.exists():
+        with sb_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    tb_for_d.setdefault(row[0], []).append(row[1])
+    pe_for_d: dict[str, list[str]] = {}
+    pb_path = solve_data_dir / "period__branch.csv"
+    if pb_path.exists():
+        with pb_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    pe_for_d.setdefault(row[1], []).append(row[0])
+
+    # pbt_node_inflow{(n, branch, ts, t) → value}
+    pbt_inflow: dict[tuple[str, str, str, str], float] = {}
+    pbt_path = input_dir / "pbt_node_inflow.csv"
+    if pbt_path.exists():
+        with pbt_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 5 and row[0] and row[1] and row[2] and row[3]:
+                    try:
+                        pbt_inflow[(row[0], row[1], row[2], row[3])] = float(row[4])
+                    except ValueError:
+                        continue
+
+    # ptNode_inflow{(n, t) → value}
+    pt_inflow: dict[tuple[str, str], float] = {}
+    pti_path = solve_data_dir / "ptNode_inflow.csv"
+    if pti_path.exists():
+        with pti_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        pt_inflow[(row[0], row[1])] = float(row[2])
+                    except ValueError:
+                        continue
+
+    # pdNode lookup limited to (annual_flow, peak_inflow) — keyed by (n, param) → {d: value}
+    pdNode_af: dict[tuple[str, str], float] = {}
+    pdNode_pk: dict[tuple[str, str], float] = {}
+    pdn_path = solve_data_dir / "pdNode.csv"
+    if pdn_path.exists():
+        with pdn_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and row[0]:
+                    try:
+                        v = float(row[3])
+                    except ValueError:
+                        continue
+                    if row[1] == "annual_flow":
+                        pdNode_af[(row[0], row[2])] = v
+                    elif row[1] == "peak_inflow":
+                        pdNode_pk[(row[0], row[2])] = v
+
+    def _read_2_keyed_value(path: Path) -> dict[tuple[str, str], float]:
+        out: dict[tuple[str, str], float] = {}
+        if not path.exists():
+            return out
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        out[(row[0], row[1])] = float(row[2])
+                    except ValueError:
+                        continue
+        return out
+
+    pfa = _read_2_keyed_value(solve_data_dir / "period_flow_annual_multiplier.csv")
+    pfp = _read_2_keyed_value(solve_data_dir / "period_flow_proportional_multiplier.csv")
+    nos_slope = _read_2_keyed_value(solve_data_dir / "new_old_slope.csv")
+    nos_section = _read_2_keyed_value(solve_data_dir / "new_old_section.csv")
+
+    # Domain filter — skip nodes with 'no_inflow' method
+    eligible_nodes = [n for n in nodes if (n, "no_inflow") not in inflow_method_pairs]
+
+    out_path = solve_data_dir / "pdtNodeInflow.csv"
+    with out_path.open("w") as fh:
+        fh.write("node,period,time,value\n")
+        for n in eligible_nodes:
+            is_stoch = n in stoch_node
+            in_balance = n in balance_union
+            has_scale_annual = (n, "scale_to_annual_flow") in inflow_method_pairs
+            has_scale_proportion = (n, "scale_in_proportion") in inflow_method_pairs
+            has_scale_peak = (n, "scale_to_annual_and_peak_flow") in inflow_method_pairs
+            has_use_original = (n, "use_original") in inflow_method_pairs
+            for (d, t) in dt:
+                # Branch 1: stochastic fold-in
+                if is_stoch:
+                    total = 0.0
+                    hit = False
+                    for tb in tb_for_d.get(d, ()):
+                        for ts in ts_for_d.get(d, ()):
+                            v = pbt_inflow.get((n, tb, ts, t))
+                            if v is not None:
+                                total += v
+                                hit = True
+                    if hit:
+                        fh.write(f"{n},{d},{t},{repr(total)}\n")
+                        continue
+                # Branch 2: parent-period fold-in
+                pe_list = pe_for_d.get(d, ())
+                ts_list = ts_for_d.get(d, ())
+                if pe_list and ts_list:
+                    total = 0.0
+                    hit = False
+                    for pe in pe_list:
+                        for tb in tb_for_d.get(pe, ()):
+                            for ts in ts_list:
+                                v = pbt_inflow.get((n, tb, ts, t))
+                                if v is not None:
+                                    total += v
+                                    hit = True
+                    if hit:
+                        fh.write(f"{n},{d},{t},{repr(total)}\n")
+                        continue
+                # Branch 3: deterministic additive sum
+                value = 0.0
+                if in_balance:
+                    pti = pt_inflow.get((n, t), 0.0)
+                    if has_scale_annual and pdNode_af.get((n, d), 0.0):
+                        value += pfa.get((n, d), 0.0) * pti
+                    if has_scale_proportion and pdNode_af.get((n, d), 0.0):
+                        value += pfp.get((n, d), 0.0) * pti
+                    if has_scale_peak \
+                            and pdNode_af.get((n, d), 0.0) \
+                            and pdNode_pk.get((n, d), 0.0):
+                        value += nos_slope.get((n, d), 0.0) * pti \
+                                 - nos_section.get((n, d), 0.0)
+                    if has_use_original:
+                        value += pti
+                fh.write(f"{n},{d},{t},{repr(value)}\n")
+
+
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
     if not path.exists():
         return []

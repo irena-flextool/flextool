@@ -51,7 +51,7 @@ def read_parameters(output_dir):
     p.node_self_discharge_loss = pd.read_csv(solve_data_path / 'pdtNode_self_discharge_loss.csv', index_col=[0, 1, 2]).astype(float)
     p.node_penalty_up = pd.read_csv(solve_data_path / 'pdtNode_penalty_up.csv', index_col=[0, 1, 2]).astype(float)
     p.node_penalty_down = pd.read_csv(solve_data_path / 'pdtNode_penalty_down.csv', index_col=[0, 1, 2]).astype(float)
-    p.node_inflow = pd.read_csv(solve_data_path / 'pdtNodeInflow.csv', index_col=[0, 1, 2]).astype(float)
+    p.node_inflow = pd.read_csv(solve_data_path / 'solve__pdtNodeInflow.csv', index_col=[0, 1, 2]).astype(float)
     p.commodity_price = pd.read_csv(solve_data_path / 'pdtCommodity_price.csv', index_col=[0, 1, 2]).astype(float)
     p.group_co2_price = pd.read_csv(solve_data_path / 'pdtGroup_co2_price.csv', index_col=[0, 1, 2]).astype(float)
     p.reserve_upDown_group_reservation = pd.read_csv(solve_data_path / 'pdtReserve_upDown_group_reservation.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
