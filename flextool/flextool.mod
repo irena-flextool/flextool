@@ -179,7 +179,6 @@ set entityDivest;  # Migrated to Python (preprocessing/invest_method_sets.py).
 set entityInvest;  # Migrated to Python (preprocessing/invest_method_sets.py).
 set entity__lifetime_method_read dimen 2 within {entity, lifetime_method};
 set entity__lifetime_method 'the lifetime method applied to an entity' dimen 2;  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
-param investableEntities := sum{e in entityInvest} 1;
 set group__invest_method 'the investment method applied to a group' dimen 2 within {group, invest_method};
 set group_invest;  # Migrated to Python (preprocessing/invest_method_sets.py).
 set group_divest;  # Migrated to Python (preprocessing/invest_method_sets.py).
@@ -385,7 +384,6 @@ param p_roll_continue_state {node};
 
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
-param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startNext} 1;
 set modelParam;
 
 set process__param dimen 2 within {process, processParam};
@@ -599,14 +597,13 @@ param pbt_process {process, processTimeParam, time_branch_all, time, time} defau
 # CSV is empty / absent (e.g. AMPL invoked outside the Python harness).
 set _scale_obj_keys dimen 1 default {};
 param _scale_obj_from_csv {_scale_obj_keys} default 0;
-set _scale_state_keys dimen 1 default {};
-param _scale_state_from_csv {_scale_state_keys} default 0;
 param scale_the_objective := (if card(_scale_obj_keys) > 0
     then sum {k in _scale_obj_keys} _scale_obj_from_csv[k]
     else 1e-6);
-param scale_the_state := (if card(_scale_state_keys) > 0
-    then sum {k in _scale_state_keys} _scale_state_from_csv[k]
-    else 1);
+# scale_the_state was an unused twin of scale_the_objective —
+# declared, written by Python in solve_data/scale_the_state.csv,
+# but no constraint or other expression ever read its value.
+# Removed in batch 69 along with its _scale_state_* helper sets.
 
 set param_costs dimen 1;
 param costs_discounted {param_costs} default 0;
@@ -781,7 +778,6 @@ table data IN 'CSV' 'solve_data/p_use_row_scaling.csv' : [solve], p_use_row_scal
 # from the Agent-8 ScaleTable analyser.  The default 1e-6 / 1 clauses on
 # the param declarations apply only if the CSVs are empty or absent.
 table data IN 'CSV' 'solve_data/scale_the_objective.csv' : _scale_obj_keys <- [key], _scale_obj_from_csv~value;
-table data IN 'CSV' 'solve_data/scale_the_state.csv' : _scale_state_keys <- [key], _scale_state_from_csv~value;
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step], step_duration~step_duration;
 table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
 table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
@@ -1225,10 +1221,8 @@ table data IN 'CSV' 'solve_data/pdt_online_integer.csv' : pdt_online_integer <- 
 
 param hours_in_period{d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
 table data IN 'CSV' 'solve_data/hours_in_period.csv' : [period], hours_in_period~value;
-param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
 param period_share_of_year{d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
 table data IN 'CSV' 'solve_data/period_share_of_year.csv' : [period], period_share_of_year~value;
-param solve_share_of_year := hours_in_solve / 8760;
 param p_years_d{d in period_with_history};            # Migrated to Python (preprocessing/period_calculated_params.py).
 param p_years_represented_d{d in periodAll};          # Migrated to Python (preprocessing/period_calculated_params.py).
 table data IN 'CSV' 'solve_data/p_years_d.csv' : [period], p_years_d~value;
@@ -1323,9 +1317,15 @@ param inv_node_cap{n in node, d in period_in_use};   # Migrated to Python.
 param inv_group_cap{g in group, d in period_in_use}; # Migrated to Python.
 table data IN 'CSV' 'solve_data/inv_node_cap.csv' : [node, period], inv_node_cap~value;
 table data IN 'CSV' 'solve_data/inv_group_cap.csv' : [group, period], inv_group_cap~value;
-param p_inflation := (if sum{m in model} 1 then max{m in model} p_inflation_rate[m] else 0);
-param p_infl_offset_investment := (if sum{m in model} 1 then max{m in model} p_inflation_offset_investment[m] else 0);
-param p_infl_offset_operations := (if sum{m in model} 1 then max{m in model} p_inflation_offset_operations[m] else 0.5);
+# p_inflation, p_infl_offset_investment, p_infl_offset_operations
+# were dead scalars — declared from input/p_inflation_rate.csv etc.
+# but never used in any constraint. Inflation factors that the LP
+# actually consumes are computed in Python preprocessing
+# (period_calculated_params.py:read_p_inflation_factors). Removed
+# in batch 69. The model-indexed source params at L542-544 remain
+# loaded but are now also unreferenced — left in place for
+# documentation; deletable in a future cleanup if the `set model`
+# loader (L757) is repointed to p_max_flow_for_unconstrained_variables.csv.
 param p_unconstrained_flow_cap := (if sum{m in model} 1 then max{m in model} p_max_flow_for_unconstrained_variables[m] else 1000000);
 # Inflation offsets are fractions of the represented window p_years_represented[d, y]:
 #   0   = beginning of the window
