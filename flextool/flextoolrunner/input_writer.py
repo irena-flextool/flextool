@@ -1947,6 +1947,8 @@ def write_input(
         from flextool.flextoolrunner.preprocessing import process_arc_unions
         process_arc_unions.write_process_arc_unions(input_dir, solve_data_dir)
         process_arc_unions.write_group_commodity_node_period_co2_total(input_dir, solve_data_dir)
+        # L1 batch 12: *_in_use sets driven by per-class param taxonomy.
+        process_arc_unions.write_param_in_use_sets(input_dir, solve_data_dir)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}

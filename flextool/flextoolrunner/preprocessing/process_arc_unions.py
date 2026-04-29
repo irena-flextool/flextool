@@ -293,6 +293,133 @@ def write_process_arc_unions(input_dir: Path, solve_data_dir: Path) -> None:
     )
 
 
+def write_param_in_use_sets(input_dir: Path, solve_data_dir: Path) -> None:
+    """node__PeriodParam_in_use, process__PeriodParam_in_use, process_TimeParam_in_use,
+    plus the four sourceSink*_in_use partner sets.
+
+    Each filters the universe of (entity, param) pairs by membership in
+    the Required / Invest enum subsets in flextool_base.dat. We use
+    Python constants from `_param_taxonomy.py` to mirror those
+    invariants — no ``input/<ParamName>.csv`` exists in the runtime
+    layout.
+    """
+    from flextool.flextoolrunner.preprocessing._param_taxonomy import (
+        PROCESS_PERIOD_PARAM, PROCESS_PERIOD_PARAM_REQUIRED, PROCESS_PERIOD_PARAM_INVEST,
+        PROCESS_TIME_PARAM, PROCESS_TIME_PARAM_REQUIRED,
+        NODE_PERIOD_PARAM, NODE_PERIOD_PARAM_REQUIRED, NODE_PERIOD_PARAM_INVEST,
+        SOURCE_SINK_TIME_PARAM, SOURCE_SINK_TIME_PARAM_REQUIRED,
+        SOURCE_SINK_PERIOD_PARAM, SOURCE_SINK_PERIOD_PARAM_REQUIRED,
+    )
+    nodes = _read_singles(input_dir / "node.csv")
+    processes = _read_singles(input_dir / "process.csv")
+    invest_set = frozenset(_read_singles(solve_data_dir / "entityInvest.csv"))
+    divest_set = frozenset(_read_singles(solve_data_dir / "entityDivest.csv"))
+    ctm = _read_pairs(solve_data_dir / "process__ct_method.csv")
+    p_with_min_load = frozenset(p for p, m in ctm if m == "min_load_efficiency")
+    sources = _read_pairs(input_dir / "process__source.csv")
+    sinks = _read_pairs(input_dir / "process__sink.csv")
+
+    # node__PeriodParam_in_use — flextool.mod L1247
+    rows: list[tuple[str, str]] = []
+    for n in nodes:
+        is_invest = n in invest_set or n in divest_set
+        for param in NODE_PERIOD_PARAM:
+            if param in NODE_PERIOD_PARAM_REQUIRED:
+                rows.append((n, param))
+            elif is_invest and param in NODE_PERIOD_PARAM_INVEST:
+                rows.append((n, param))
+    _write_csv(solve_data_dir / "node__PeriodParam_in_use.csv",
+               ("node", "param"),
+               list(dict.fromkeys(rows)))
+
+    # process__PeriodParam_in_use — has a third clause for online processes:
+    #   || (p in process_online && param == 'startup_cost')
+    process_online = frozenset(_read_singles(solve_data_dir / "process_online.csv"))
+    rows = []
+    for p in processes:
+        is_invest = p in invest_set or p in divest_set
+        is_online = p in process_online
+        for param in PROCESS_PERIOD_PARAM:
+            if param in PROCESS_PERIOD_PARAM_REQUIRED:
+                rows.append((p, param))
+            elif is_invest and param in PROCESS_PERIOD_PARAM_INVEST:
+                rows.append((p, param))
+            elif is_online and param == "startup_cost":
+                rows.append((p, param))
+    _write_csv(solve_data_dir / "process__PeriodParam_in_use.csv",
+               ("process", "param"),
+               list(dict.fromkeys(rows)))
+
+    # process_TimeParam_in_use
+    rows = []
+    for p in processes:
+        for param in PROCESS_TIME_PARAM:
+            if param in PROCESS_TIME_PARAM_REQUIRED:
+                rows.append((p, param))
+            elif (p in p_with_min_load
+                  and param in ("min_load", "efficiency_at_min_load")):
+                rows.append((p, param))
+    _write_csv(solve_data_dir / "process_TimeParam_in_use.csv",
+               ("process", "param"),
+               list(dict.fromkeys(rows)))
+
+    # process_source_sourceSinkTimeParam_in_use — flextool.mod L1369
+    # { (p, source) in process_source, param in sourceSinkTimeParam :
+    #     param in sourceSinkTimeParamRequired
+    #     OR ((p, 'min_load_efficiency') in process__ct_method AND param in {min_load, efficiency_at_min_load})
+    # }
+    rows3: list[tuple[str, str, str]] = []
+    for p, source in sources:
+        for param in SOURCE_SINK_TIME_PARAM:
+            if param in SOURCE_SINK_TIME_PARAM_REQUIRED:
+                rows3.append((p, source, param))
+            elif (p in p_with_min_load
+                  and param in ("min_load", "efficiency_at_min_load")):
+                rows3.append((p, source, param))
+    _write_csv(solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv",
+               ("process", "source", "param"),
+               list(dict.fromkeys(rows3)))
+
+    # process_sink_sourceSinkTimeParam_in_use
+    rows3 = []
+    for p, sink in sinks:
+        for param in SOURCE_SINK_TIME_PARAM:
+            if param in SOURCE_SINK_TIME_PARAM_REQUIRED:
+                rows3.append((p, sink, param))
+            elif (p in p_with_min_load
+                  and param in ("min_load", "efficiency_at_min_load")):
+                rows3.append((p, sink, param))
+    _write_csv(solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv",
+               ("process", "sink", "param"),
+               list(dict.fromkeys(rows3)))
+
+    # process_source_sourceSinkPeriodParam_in_use — same shape, period axis
+    rows3 = []
+    for p, source in sources:
+        for param in SOURCE_SINK_PERIOD_PARAM:
+            if param in SOURCE_SINK_PERIOD_PARAM_REQUIRED:
+                rows3.append((p, source, param))
+            elif (p in p_with_min_load
+                  and param in ("min_load", "efficiency_at_min_load")):
+                rows3.append((p, source, param))
+    _write_csv(solve_data_dir / "process_source_sourceSinkPeriodParam_in_use.csv",
+               ("process", "source", "param"),
+               list(dict.fromkeys(rows3)))
+
+    # process_sink_sourceSinkPeriodParam_in_use
+    rows3 = []
+    for p, sink in sinks:
+        for param in SOURCE_SINK_PERIOD_PARAM:
+            if param in SOURCE_SINK_PERIOD_PARAM_REQUIRED:
+                rows3.append((p, sink, param))
+            elif (p in p_with_min_load
+                  and param in ("min_load", "efficiency_at_min_load")):
+                rows3.append((p, sink, param))
+    _write_csv(solve_data_dir / "process_sink_sourceSinkPeriodParam_in_use.csv",
+               ("process", "sink", "param"),
+               list(dict.fromkeys(rows3)))
+
+
 def write_group_commodity_node_period_co2_total(
     input_dir: Path, solve_data_dir: Path
 ) -> None:

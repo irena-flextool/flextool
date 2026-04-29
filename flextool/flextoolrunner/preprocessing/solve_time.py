@@ -99,6 +99,7 @@ def run(state: RunnerState, solve_name: str) -> None:
     invest_total_sets.write_ci_ladder_cumulative(input_dir, solve_data_dir)
     process_arc_unions.write_process_arc_unions(input_dir, solve_data_dir)
     process_arc_unions.write_group_commodity_node_period_co2_total(input_dir, solve_data_dir)
+    process_arc_unions.write_param_in_use_sets(input_dir, solve_data_dir)
 
     # Per-solve-only sets: inputs in solve_data/ written above by
     # orchestration / solve_writers / blocks before this hook fires.
