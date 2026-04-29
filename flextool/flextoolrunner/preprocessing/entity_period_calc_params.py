@@ -607,6 +607,122 @@ def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
     return out
 
 
+def write_pProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1249 — pProcess_source_sink: prefer p_process_source,
+    fall back to p_process_sink, then 0.
+
+    Domain: process__source__sink__param.
+    """
+    p_src: dict[tuple[str, str, str], float] = {}
+    src_path = input_dir / "p_process_source.csv"
+    if src_path.exists():
+        with src_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and all(row[i] for i in range(3)):
+                    try:
+                        p_src[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+    p_snk: dict[tuple[str, str, str], float] = {}
+    snk_path = input_dir / "p_process_sink.csv"
+    if snk_path.exists():
+        with snk_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and all(row[i] for i in range(3)):
+                    try:
+                        p_snk[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+    proc_src_keys = frozenset(p_src.keys())
+    proc_snk_keys = frozenset(p_snk.keys())
+
+    domain: list[tuple[str, str, str, str]] = []
+    pssp = solve_data_dir / "process__source__sink__param.csv"
+    if pssp.exists():
+        with pssp.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and all(row[i] for i in range(4)):
+                    domain.append((row[0], row[1], row[2], row[3]))
+
+    out_path = solve_data_dir / "pProcess_source_sink.csv"
+    with out_path.open("w") as fh:
+        fh.write("process,source,sink,param,value\n")
+        for (p, src, snk, param) in domain:
+            if (p, src, param) in proc_src_keys:
+                v = p_src[(p, src, param)]
+            elif (p, snk, param) in proc_snk_keys:
+                v = p_snk[(p, snk, param)]
+            else:
+                v = 0.0
+            fh.write(f"{p},{src},{snk},{param},{repr(v)}\n")
+
+
+def write_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1108 — pdtCommodity: 3-branch fallback (pt → pd → p → 0).
+
+    Domain: commodity × commodityTimeParam × dt.
+    commodityTimeParam = {price} (flextool_base.dat L134).
+    """
+    pt: dict[tuple[str, str, str], float] = {}
+    pt_path = input_dir / "pt_commodity.csv"
+    if pt_path.exists():
+        with pt_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and all(row[i] for i in range(3)):
+                    try:
+                        pt[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+    pd_: dict[tuple[str, str, str], float] = {}
+    pd_path = input_dir / "pd_commodity.csv"
+    if pd_path.exists():
+        with pd_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and all(row[i] for i in range(3)):
+                    try:
+                        pd_[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+    p: dict[tuple[str, str], float] = {}
+    p_path = input_dir / "p_commodity.csv"
+    if p_path.exists():
+        with p_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        p[(row[0], row[1])] = float(row[2])
+                    except ValueError:
+                        continue
+
+    commodities = _read_singles(input_dir / "commodity.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    out_path = solve_data_dir / "pdtCommodity.csv"
+    with out_path.open("w") as fh:
+        fh.write("commodity,param,period,time,value\n")
+        for c in commodities:
+            for param in ("price",):  # commodityTimeParam
+                for (d, t) in dt:
+                    v = pt.get((c, param, t))
+                    if v is None:
+                        v = pd_.get((c, param, d))
+                    if v is None:
+                        v = p.get((c, param), 0.0)
+                    fh.write(f"{c},{param},{d},{t},{repr(v)}\n")
+
+
 def write_cap_reduction_params(input_dir: Path, solve_data_dir: Path) -> None:
     """flextool.mod L1637-1663 — Morales-Espana startup/shutdown capacity
     reduction params (4 calc params, 1 per side × startup/shutdown).

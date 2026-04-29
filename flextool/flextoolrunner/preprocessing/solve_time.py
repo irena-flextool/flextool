@@ -207,3 +207,6 @@ def run(state: RunnerState, solve_name: str) -> None:
     )
     # L0 batch 50: p_*_cap_reduction_*  (4 Morales-Espana cap reduction params).
     entity_period_calc_params.write_cap_reduction_params(input_dir, solve_data_dir)
+    # L0 batch 51: pProcess_source_sink + pdtCommodity (simple fallback params).
+    entity_period_calc_params.write_pProcess_source_sink(input_dir, solve_data_dir)
+    entity_period_calc_params.write_pdtCommodity(input_dir, solve_data_dir)

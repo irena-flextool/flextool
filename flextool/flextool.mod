@@ -1105,12 +1105,8 @@ param pdCommodity {c in commodity, param in commodityPeriodParam, d in period_in
       then sum{(db, d) in period__branch} pd_commodity[c, param, db]
       else p_commodity[c, param];
 
-param pdtCommodity {c in commodity, param in commodityTimeParam, (d, t) in dt} :=
-        + if (c, param, t) in commodity__param__time
-		     then pt_commodity[c, param, t]
-        else if (c, param, d) in commodity__param__period
-		     then pd_commodity[c, param, d]
-	      else p_commodity[c, param];
+param pdtCommodity {c in commodity, param in commodityTimeParam, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtCommodity.csv' : [commodity, param, period, time], pdtCommodity~value;
 
 param pdGroup {g in group, param in groupPeriodParam, d in period_in_use} :=
         + if (g, param, d) in group__param__period
@@ -1246,12 +1242,8 @@ table data IN 'CSV' 'solve_data/p_entity_unitsize.csv' : [entity], p_entity_unit
 param edEntity_lifetime {e in entity, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/edEntity_lifetime.csv' : [entity, period], edEntity_lifetime~value;
 
-param pProcess_source_sink {(p, source, sink, param) in process__source__sink__param} :=
-		+ if (p, source, param) in process__source__param
-		  then p_process_source[p, source, param]
-		  else if (p, sink, param) in process__sink__param
-		  then p_process_sink[p, sink, param]
-		  else 0;
+param pProcess_source_sink {(p, source, sink, param) in process__source__sink__param};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pProcess_source_sink.csv' : [process, source, sink, param], pProcess_source_sink~value;
 
 set process_source_sourceSinkTimeParam_in_use dimen 3;  # Migrated to Python.
 set process_sink_sourceSinkTimeParam_in_use dimen 3;    # Migrated to Python.
