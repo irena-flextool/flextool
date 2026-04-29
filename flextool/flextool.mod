@@ -1089,8 +1089,10 @@ table data IN 'CSV' 'solve_data/dtdt_next_set.csv' : dtdt_next <- [period_prev, 
 
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 
-set process_source_undelayed := {(p, e) in process_source : p not in process_delayed};
-set process_source_delayed := {(p, e) in process_source : p in process_delayed};
+set process_source_undelayed dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_delayed   dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_undelayed.csv' : process_source_undelayed <- [process, source];
+table data IN 'CSV' 'solve_data/process_source_delayed.csv'   : process_source_delayed   <- [process, source];
 set process_source_sink_undelayed := {(p, source, sink) in process_source_sink : p not in process_delayed};
 set process_source_sink_delayed := {(p, source, sink) in process_source_sink : p in process_delayed};
 

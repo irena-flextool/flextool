@@ -461,3 +461,21 @@ def write_group_commodity_node_period_co2_total(
     _write_csv(solve_data_dir / "group_commodity_node_period_co2_total.csv",
                ("group", "commodity", "node"),
                list(dict.fromkeys(rows)))
+
+
+def write_process_source_delayed_partition(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1092-1093 — partition process_source by process_delayed.
+
+        set process_source_undelayed := {(p, e) in process_source : p not in process_delayed};
+        set process_source_delayed   := {(p, e) in process_source : p in process_delayed};
+    """
+    pairs = _read_pairs(input_dir / "process__source.csv")
+    delayed = frozenset(_read_singles(solve_data_dir / "process_delayed.csv"))
+    delayed_rows = [(p, src) for p, src in pairs if p in delayed]
+    undelayed_rows = [(p, src) for p, src in pairs if p not in delayed]
+    _write_csv(solve_data_dir / "process_source_delayed.csv",
+               ("process", "source"), delayed_rows)
+    _write_csv(solve_data_dir / "process_source_undelayed.csv",
+               ("process", "source"), undelayed_rows)
