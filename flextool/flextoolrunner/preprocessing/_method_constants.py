@@ -77,6 +77,9 @@ METHOD_1WAY_1VAR: frozenset[str] = frozenset((
     "method_1way_1var_MIP",
 ))
 
+# flextool_base.dat:28-31 — universe of ramp methods
+RAMP_METHOD: frozenset[str] = frozenset(("ramp_limit", "ramp_cost", "both"))
+
 # flextool_base.dat:42 — `set ramp_limit_method := ramp_limit, both;`
 RAMP_LIMIT_METHOD: frozenset[str] = frozenset(("ramp_limit", "both"))
 

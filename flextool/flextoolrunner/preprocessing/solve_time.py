@@ -152,3 +152,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_process_source_sink_ramp_family(input_dir, solve_data_dir)
     # L4 batch 31: process_source_sink_coeff_zero (OR of side-coeff-zero sets).
     process_arc_unions.write_process_source_sink_coeff_zero(input_dir, solve_data_dir)
+    # L4 batch 32: process__source__sink__ramp_method (4-tuple, per-side).
+    process_arc_unions.write_process_source_sink_ramp_method(input_dir, solve_data_dir)

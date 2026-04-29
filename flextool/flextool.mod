@@ -1202,11 +1202,8 @@ set process__source__sink__param_t :=
 set process_source_sink_param_t dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process_source_sink_param_t.csv' : process_source_sink_param_t <- [process, source, sink, param];
 
-set process__source__sink__ramp_method :=
-    { (p, source, sink) in process_source_sink, m in ramp_method
-	    :  (p, source, m) in process_node_ramp_method
-		|| (p, sink, m) in process_node_ramp_method
-	};
+set process__source__sink__ramp_method dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__ramp_method.csv' : process__source__sink__ramp_method <- [process, source, sink, ramp_method];
 
 set node__PeriodParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/node__PeriodParam_in_use.csv' : node__PeriodParam_in_use <- [node, param];
