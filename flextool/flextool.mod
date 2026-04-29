@@ -1387,17 +1387,14 @@ table data IN 'CSV' 'solve_data/ed_lifetime_fixed_cost_divest.csv' : [entity, pe
 set process_minload;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process_minload.csv' : process_minload <- [process];
 
-param pdtConversion_rate{p in process, (d, t) in dt} := round(1 / pdtProcess[p, 'efficiency', d, t], 6);
+param pdtConversion_rate{p in process, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtConversion_rate.csv' : [process, period, time], pdtConversion_rate~value;
 
-param pdtProcess_section{p in process_minload, (d, t) in dt} :=
-        + pdtConversion_rate[p, d, t]
-    	- round(
-    	    ( pdtConversion_rate[p, d, t] - pdtProcess[p, 'min_load', d, t] * (1 / pdtProcess[p, 'efficiency_at_min_load', d, t]) )
-			    / (1 - pdtProcess[p, 'min_load', d, t]), 6);
+param pdtProcess_section{p in process_minload, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtProcess_section.csv' : [process, period, time], pdtProcess_section~value;
 
-param pdtProcess_slope{p in process, (d, t) in dt} :=
-        + pdtConversion_rate[p, d, t]
-		- (if p in process_minload then pdtProcess_section[p, d, t] else 0);
+param pdtProcess_slope{p in process, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtProcess_slope.csv' : [process, period, time], pdtProcess_slope~value;
 
 param pdtProcess__source__sink__dt_varCost {(p, source, sink) in process_source_sink, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdtProcess__source__sink__dt_varCost.csv' : [process, source, sink, period, time], pdtProcess__source__sink__dt_varCost~value;
@@ -4441,27 +4438,33 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     }
 }
 
-# Write pdtProcess_slope
+# Write pdtProcess_slope (post-solve realized values, wide format).
+# Mod's input now reads solve_data/pdtProcess_slope.csv (long) written by
+# Python preprocessing, so this output goes to solve__pdtProcess_slope.csv
+# (read_parameters.py:47 + cumulative_handoffs.py:449 read here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/pdtProcess_slope.csv";
-  for {p in process} {printf ",%s", p >> "solve_data/pdtProcess_slope.csv";}
+  printf "solve,period,time" > "solve_data/solve__pdtProcess_slope.csv";
+  for {p in process} {printf ",%s", p >> "solve_data/solve__pdtProcess_slope.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/pdtProcess_slope.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__pdtProcess_slope.csv";
     for {p in process} {
-        printf ",%.8g", pdtProcess_slope[p, d, t] >> "solve_data/pdtProcess_slope.csv";
+        printf ",%.8g", pdtProcess_slope[p, d, t] >> "solve_data/solve__pdtProcess_slope.csv";
     }
 }
 
-# Write pdtProcess_section
+# Write pdtProcess_section (post-solve realized values, wide format).
+# Mod's input now reads solve_data/pdtProcess_section.csv (long) written by
+# Python preprocessing, so this output goes to solve__pdtProcess_section.csv
+# (read_parameters.py:48 reads here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/pdtProcess_section.csv";
-  for {p in process_minload} {printf ",%s", p >> "solve_data/pdtProcess_section.csv";}
+  printf "solve,period,time" > "solve_data/solve__pdtProcess_section.csv";
+  for {p in process_minload} {printf ",%s", p >> "solve_data/solve__pdtProcess_section.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/pdtProcess_section.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__pdtProcess_section.csv";
     for {p in process_minload} {
-        printf ",%.8g", pdtProcess_section[p, d, t] >> "solve_data/pdtProcess_section.csv";
+        printf ",%.8g", pdtProcess_section[p, d, t] >> "solve_data/solve__pdtProcess_section.csv";
     }
 }
 
