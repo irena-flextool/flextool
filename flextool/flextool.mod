@@ -1593,68 +1593,30 @@ table data IN 'CSV' 'solve_data/process__sink_nonSync.csv' : process__sink_nonSy
 
 set nodeGroupDispatch__process_fully_inside dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/nodeGroupDispatch__process_fully_inside.csv' : nodeGroupDispatch__process_fully_inside <- [group, process];
-set nodeGroupDispatch__process__unit__to_node_Not_in_aggregate :=
-    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_unit
-								 && (g, sink) in group_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside
-								 && not sum{(ga, p, sink) in group_process_node : ga in flowAggregator} 1};
-set nodeGroupDispatch__process__node__to_unit_Not_in_aggregate :=
-    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_unit
-								 && (g, source) in group_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside
-								 && not sum{(ga, p, source) in group_process_node : ga in flowAggregator} 1};
-set nodeGroupDispatch__group_aggregate__process__unit__to_node :=
-    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_unit
-								 && (g, sink) in group_node
-								 && (ga, p, sink) in group_process_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside};
-set nodeGroupDispatch__group_aggregate__process__node__to_unit :=
-    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_unit
-								 && (g, source) in group_node
-								 && (ga, p, source) in group_process_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside};
-set nodeGroupDispatch__process__node__to_connection_Not_in_aggregate :=
-    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_connection
-								 && (g, source) in group_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside
-								 && not sum{(ga, p, source) in group_process_node : ga in flowAggregator} 1};
-set nodeGroupDispatch__process__connection__to_node_Not_in_aggregate :=
-    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_connection
-								 && (g, sink) in group_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside
-								 && not sum{(ga, p, sink) in group_process_node : ga in flowAggregator} 1};
-set nodeGroupDispatch__connection_Not_in_aggregate :=
-    setof {(g, p, source, sink) in
-	          nodeGroupDispatch__process__connection__to_node_Not_in_aggregate
-	          union nodeGroupDispatch__process__node__to_connection_Not_in_aggregate} (g, p);
-set nodeGroupDispatch__group_aggregate__process__connection__to_node :=
-    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_connection
-								 && (g, sink) in group_node
-								 && (ga, p, sink) in group_process_node
-								 && not (g, p) in nodeGroupDispatch__process_fully_inside};
-set nodeGroupDispatch__group_aggregate__process__node__to_connection :=
-    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_connection
-								 && (g, source) in group_node
-								 && (ga, p, source) in group_process_node
-								 && not (g, p) in nodeGroupDispatch__process_fully_inside};
-set nodeGroupDispatch__group_aggregate_Connection :=
-    setof {(g, ga, p, source, sink) in
-	          nodeGroupDispatch__group_aggregate__process__connection__to_node
-	          union nodeGroupDispatch__group_aggregate__process__node__to_connection} (g, ga);
-
-set nodeGroupDispatch__group_aggregate_Unit_to_group :=
-    setof {(g, ga, p, source, sink) in nodeGroupDispatch__group_aggregate__process__unit__to_node} (g, ga);
-
-set nodeGroupDispatch__group_aggregate_Group_to_unit :=
-    setof {(g, ga, p, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_unit} (g, ga);
+set nodeGroupDispatch__process__unit__to_node_Not_in_aggregate         dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__process__node__to_unit_Not_in_aggregate         dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate__process__unit__to_node         dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate__process__node__to_unit         dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__process__node__to_connection_Not_in_aggregate   dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__process__connection__to_node_Not_in_aggregate   dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__connection_Not_in_aggregate                     dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate__process__connection__to_node   dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate__process__node__to_connection   dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate_Connection                      dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate_Unit_to_group                   dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate_Group_to_unit                   dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv'         : nodeGroupDispatch__process__unit__to_node_Not_in_aggregate         <- [group, process, unit, node];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv'         : nodeGroupDispatch__process__node__to_unit_Not_in_aggregate         <- [group, process, node, unit];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate__process__unit__to_node.csv'         : nodeGroupDispatch__group_aggregate__process__unit__to_node         <- [group, group_aggregate, unit, source, sink];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate__process__node__to_unit.csv'         : nodeGroupDispatch__group_aggregate__process__node__to_unit         <- [group, group_aggregate, unit, source, sink];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv'   : nodeGroupDispatch__process__node__to_connection_Not_in_aggregate   <- [group, process, node, connection];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv'   : nodeGroupDispatch__process__connection__to_node_Not_in_aggregate   <- [group, process, connection, node];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__connection_Not_in_aggregate.csv'                     : nodeGroupDispatch__connection_Not_in_aggregate                     <- [group, connection];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate__process__connection__to_node.csv'   : nodeGroupDispatch__group_aggregate__process__connection__to_node   <- [group, group_aggregate, connection, source, sink];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate__process__node__to_connection.csv'   : nodeGroupDispatch__group_aggregate__process__node__to_connection   <- [group, group_aggregate, connection, source, sink];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate_Connection.csv'                      : nodeGroupDispatch__group_aggregate_Connection                      <- [group, group_aggregate];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate_Unit_to_group.csv'                   : nodeGroupDispatch__group_aggregate_Unit_to_group                   <- [group, group_aggregate];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate_Group_to_unit.csv'                   : nodeGroupDispatch__group_aggregate_Group_to_unit                   <- [group, group_aggregate];
 
 param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__inflow_method};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/p_positive_inflow.csv' : [node, period, time], p_positive_inflow~value;

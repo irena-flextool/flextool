@@ -1318,6 +1318,187 @@ def write_process_source_sink_delayed_partition(
                ("process", "source", "sink"), undelayed_rows)
 
 
+def write_node_group_dispatch_sets(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1596-1657 — 12 nodeGroupDispatch sets joining
+    process_source_sink_alwaysProcess with nodeGroupDispatch + group_node
+    + group_process_node + flowAggregator + process_unit/connection.
+
+    Eight 'base' sets partition the (g, p, source, sink) space by
+    side (which leg of the arc is in the group), process kind
+    (unit vs connection) and aggregation (with vs without flow
+    aggregator). Four 'projection' sets project pairs (g, p) or
+    (g, ga) from the relevant base sets.
+
+    All sets share a common prefilter:
+        (g, p) not in nodeGroupDispatch__process_fully_inside
+
+    Mod's printfs at L5181-5253 (inside the `if solveFirst` block)
+    write the same files but only on the first solve. They're
+    redundant after migration but harmless — mod will load the
+    Python-written CSV via table-data-IN, then iterate it back out.
+    Row order in the output may differ between mod's printf and
+    Python's emission, but `read_sets.py` reads via pandas with
+    `set_index(...).index` so row order doesn't matter downstream.
+    """
+    ngd = _read_singles(input_dir / "nodeGroupDispatch.csv")
+    fag = frozenset(_read_singles(input_dir / "flowAggregator.csv"))
+    p_unit = frozenset(_read_singles(input_dir / "process_unit.csv"))
+    p_conn = frozenset(_read_singles(input_dir / "process_connection.csv"))
+
+    g_nodes_acc: dict[str, dict[str, None]] = {}
+    for g, n in _read_pairs(input_dir / "group__node.csv"):
+        g_nodes_acc.setdefault(g, {})[n] = None
+    g_nodes: dict[str, frozenset[str]] = {
+        g: frozenset(d.keys()) for g, d in g_nodes_acc.items()
+    }
+
+    # group_process_node restricted to flowAggregator groups: (p, n) -> [ga, ...]
+    pn_to_aggregators: dict[tuple[str, str], list[str]] = {}
+    for g, p, n in _read_n_col(input_dir / "group__process__node.csv", 3):
+        if g in fag:
+            pn_to_aggregators.setdefault((p, n), []).append(g)
+
+    pss_always = _read_n_col(
+        solve_data_dir / "process_source_sink_alwaysProcess.csv", 3
+    )
+    fully_inside = frozenset(_read_pairs(
+        solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv"
+    ))
+
+    def _emit_4tuple(*, kind: frozenset[str], side: str,
+                     not_aggregated: bool) -> list[tuple[str, ...]]:
+        """side ∈ {'sink', 'source'} — which leg must be in group_node."""
+        out: list[tuple[str, ...]] = []
+        for g in ngd:
+            gnodes = g_nodes.get(g, frozenset())
+            if not gnodes:
+                continue
+            for p, src, sink in pss_always:
+                if p not in kind:
+                    continue
+                if (g, p) in fully_inside:
+                    continue
+                n = sink if side == "sink" else src
+                if n not in gnodes:
+                    continue
+                if not_aggregated:
+                    if (p, n) in pn_to_aggregators:
+                        continue
+                out.append((g, p, src, sink))
+        return out
+
+    def _emit_5tuple(*, kind: frozenset[str], side: str
+                     ) -> list[tuple[str, ...]]:
+        """5-tuple variant: include each ga ∈ flowAggregator with
+        (ga, p, n_side) ∈ group_process_node."""
+        out: list[tuple[str, ...]] = []
+        for g in ngd:
+            gnodes = g_nodes.get(g, frozenset())
+            if not gnodes:
+                continue
+            for p, src, sink in pss_always:
+                if p not in kind:
+                    continue
+                if (g, p) in fully_inside:
+                    continue
+                n = sink if side == "sink" else src
+                if n not in gnodes:
+                    continue
+                for ga in pn_to_aggregators.get((p, n), ()):
+                    out.append((g, ga, p, src, sink))
+        return out
+
+    # Set 1: process__unit__to_node_Not_in_aggregate — sink ∈ group, no ga
+    rows1 = _emit_4tuple(kind=p_unit, side="sink", not_aggregated=True)
+    _write_csv(
+        solve_data_dir / "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv",
+        ("group", "process", "unit", "node"), rows1,
+    )
+
+    # Set 2: process__node__to_unit_Not_in_aggregate — source ∈ group, no ga
+    rows2 = _emit_4tuple(kind=p_unit, side="source", not_aggregated=True)
+    _write_csv(
+        solve_data_dir / "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv",
+        ("group", "process", "node", "unit"), rows2,
+    )
+
+    # Set 3: group_aggregate__process__unit__to_node — sink ∈ group, ga
+    rows3 = _emit_5tuple(kind=p_unit, side="sink")
+    _write_csv(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__unit__to_node.csv",
+        ("group", "group_aggregate", "unit", "source", "sink"), rows3,
+    )
+
+    # Set 4: group_aggregate__process__node__to_unit — source ∈ group, ga
+    rows4 = _emit_5tuple(kind=p_unit, side="source")
+    _write_csv(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__node__to_unit.csv",
+        ("group", "group_aggregate", "unit", "source", "sink"), rows4,
+    )
+
+    # Set 5: process__node__to_connection_Not_in_aggregate — source ∈ group, no ga
+    rows5 = _emit_4tuple(kind=p_conn, side="source", not_aggregated=True)
+    _write_csv(
+        solve_data_dir / "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv",
+        ("group", "process", "node", "connection"), rows5,
+    )
+
+    # Set 6: process__connection__to_node_Not_in_aggregate — sink ∈ group, no ga
+    rows6 = _emit_4tuple(kind=p_conn, side="sink", not_aggregated=True)
+    _write_csv(
+        solve_data_dir / "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv",
+        ("group", "process", "connection", "node"), rows6,
+    )
+
+    # Set 7: connection_Not_in_aggregate (g, p) — projection of 5 ∪ 6
+    seen7: dict[tuple[str, str], None] = {}
+    for g, p, _, _ in rows5:
+        seen7.setdefault((g, p), None)
+    for g, p, _, _ in rows6:
+        seen7.setdefault((g, p), None)
+    _write_csv(solve_data_dir / "nodeGroupDispatch__connection_Not_in_aggregate.csv",
+               ("group", "connection"), list(seen7.keys()))
+
+    # Set 8: group_aggregate__process__connection__to_node — sink ∈ group, ga
+    rows8 = _emit_5tuple(kind=p_conn, side="sink")
+    _write_csv(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__connection__to_node.csv",
+        ("group", "group_aggregate", "connection", "source", "sink"), rows8,
+    )
+
+    # Set 9: group_aggregate__process__node__to_connection — source ∈ group, ga
+    rows9 = _emit_5tuple(kind=p_conn, side="source")
+    _write_csv(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__node__to_connection.csv",
+        ("group", "group_aggregate", "connection", "source", "sink"), rows9,
+    )
+
+    # Set 10: group_aggregate_Connection (g, ga) — projection of 8 ∪ 9
+    seen10: dict[tuple[str, str], None] = {}
+    for g, ga, _, _, _ in rows8:
+        seen10.setdefault((g, ga), None)
+    for g, ga, _, _, _ in rows9:
+        seen10.setdefault((g, ga), None)
+    _write_csv(solve_data_dir / "nodeGroupDispatch__group_aggregate_Connection.csv",
+               ("group", "group_aggregate"), list(seen10.keys()))
+
+    # Set 11: group_aggregate_Unit_to_group (g, ga) — projection of 3
+    seen11: dict[tuple[str, str], None] = {}
+    for g, ga, _, _, _ in rows3:
+        seen11.setdefault((g, ga), None)
+    _write_csv(solve_data_dir / "nodeGroupDispatch__group_aggregate_Unit_to_group.csv",
+               ("group", "group_aggregate"), list(seen11.keys()))
+
+    # Set 12: group_aggregate_Group_to_unit (g, ga) — projection of 4
+    seen12: dict[tuple[str, str], None] = {}
+    for g, ga, _, _, _ in rows4:
+        seen12.setdefault((g, ga), None)
+    _write_csv(solve_data_dir / "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
+               ("group", "group_aggregate"), list(seen12.keys()))
+
+
 def write_peedt(input_dir: Path, solve_data_dir: Path) -> None:
     """flextool.mod L1084 — peedt is the cross-product of arcs × timesteps.
 
