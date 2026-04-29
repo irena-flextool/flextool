@@ -157,6 +157,13 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_process_source_sink_ramp_method(input_dir, solve_data_dir)
     # L4 batch 33: nodeGroupDispatch__process_fully_inside.
     process_arc_unions.write_node_group_dispatch_process_fully_inside(input_dir, solve_data_dir)
+    # L5/L6 batch 62: 12 remaining nodeGroupDispatch sets — 8 base
+    # 4-/5-tuple partitions × {unit/connection, source/sink-in-group,
+    # with/without flowAggregator} + 4 (g,p)/(g,ga) projections.
+    # Depends on process_source_sink_alwaysProcess (write_process_arc_unions
+    # above) and nodeGroupDispatch__process_fully_inside (batch 33 just
+    # written above).
+    process_arc_unions.write_node_group_dispatch_sets(input_dir, solve_data_dir)
     # L4 batch 34: process__source__sink__param.
     process_arc_unions.write_process_source_sink_param(input_dir, solve_data_dir)
     # L4 batch 35: process__source__sink__param_t (double-underscore mod
