@@ -1216,30 +1216,8 @@ table data IN 'CSV' 'solve_data/pdtProcess_source.csv' : [process, source, param
 param pdtProcess_sink {(p, sink, param) in process_sink_sourceSinkTimeParam_in_use, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdtProcess_sink.csv' : [process, sink, param, period, time], pdtProcess_sink~value;
 
-param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, (d, t) in dt} := #  : sum{d in period : (d, t) in dt} 1
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
-      && exists{(g,p) in group_process: g in groupStochastic} 1
-      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
-      else if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
-      && exists{(g,p) in group_process: g in groupStochastic} 1
-      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
-      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch &&(p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
-      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_sink[p, sink, param, tb, ts, t]
-      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
-      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_source[p, source, param, tb, ts, t]
-      else if (p, sink, param, t) in process__sink__param__time
-		  then pt_process_sink[p, sink, param, t]
-      else if (p, source, param, t) in process__source__param__time
-		  then pt_process_source[p, source, param, t]
-		  else if (p, param, t) in connection__param__time
-		  then pt_process[p, param, t]
-		  else if (p, source, param) in process__source__param
-		  then p_process_source[p, source, param]
-		  else if (p, sink, param) in process__sink__param
-		  then p_process_sink[p, sink, param]
-		  else if (p, param) in connection__param
-		  then p_process[p, param]
-		  else 0;
+param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtProcess_source_sink.csv' : [process, source, sink, param, period, time], pdtProcess_source_sink~value;
 
 
 param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt};  # Migrated to Python (preprocessing/reserve_calc_params.py).

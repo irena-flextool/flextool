@@ -226,3 +226,6 @@ def run(state: RunnerState, solve_name: str) -> None:
     # 3-way UNION stochastic gate (process_profile / node_profile /
     # process_node_profile groups).
     entity_period_calc_params.write_pdtProfile(input_dir, solve_data_dir)
+    # L1 batch 56: pdtProcess_source_sink — 11-branch combined source+sink
+    # fallback with connection-only pt_process / p_process branches.
+    entity_period_calc_params.write_pdtProcess_source_sink(input_dir, solve_data_dir)

@@ -943,6 +943,265 @@ def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
                 fh.write(f"{p},{d},{t},0.0\n")
 
 
+def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1219 — pdtProcess_source_sink: 11-branch fallback combining
+    source+sink time-axis fallbacks with a connection-only ``pt_process``
+    branch.
+
+    Outer indices: ``(p, source, sink, param) in process__source__sink__param_t,
+    (d, t) in dt``.
+
+    Branch order (mirrors mod's else-if chain):
+      1. sink stochastic pbt fold-in    (group_process stochastic + pbt_sink hit)
+      2. source stochastic pbt fold-in
+      3. sink parent-period pbt fold-in
+      4. source parent-period pbt fold-in
+      5. pt_process_sink[p, sink, param, t]
+      6. pt_process_source[p, source, param, t]
+      7. pt_process[p, param, t]            (only when p in process_connection)
+      8. p_process_source[p, source, param]
+      9. p_process_sink[p, sink, param]
+     10. p_process[p, param]                (only when p in process_connection)
+     11. 0
+
+    No mod-side post-solve printf for pdtProcess_source_sink, so no path
+    collision (unlike pdtNodeInflow / pdtProfile).
+    """
+    # Domain
+    domain: list[tuple[str, str, str, str]] = []
+    pst_path = solve_data_dir / "process__source__sink__param_t.csv"
+    if pst_path.exists():
+        with pst_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and all(row[i] for i in range(4)):
+                    domain.append((row[0], row[1], row[2], row[3]))
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    # ---- pbt loaders (per-side) ----------------------------------------
+    def _load_pbt_per_side(path: Path) -> dict[tuple[str, str, str, str, str, str], float]:
+        out: dict[tuple[str, str, str, str, str, str], float] = {}
+        if not path.exists():
+            return out
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 7 and all(row[i] for i in range(6)):
+                    try:
+                        out[(row[0], row[1], row[2], row[3], row[4], row[5])] = float(row[6])
+                    except ValueError:
+                        continue
+        return out
+
+    pbt_sink = _load_pbt_per_side(input_dir / "pbt_process_sink.csv")
+    pbt_source = _load_pbt_per_side(input_dir / "pbt_process_source.csv")
+
+    # ---- pt loaders ----------------------------------------------------
+    def _load_pt_per_side(path: Path) -> dict[tuple[str, str, str, str], float]:
+        out: dict[tuple[str, str, str, str], float] = {}
+        if not path.exists():
+            return out
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 5 and all(row[i] for i in range(4)):
+                    try:
+                        out[(row[0], row[1], row[2], row[3])] = float(row[4])
+                    except ValueError:
+                        continue
+        return out
+
+    pt_sink = _load_pt_per_side(input_dir / "pt_process_sink.csv")
+    pt_source = _load_pt_per_side(input_dir / "pt_process_source.csv")
+
+    pt_process: dict[tuple[str, str, str], float] = {}
+    ptp_path = input_dir / "pt_process.csv"
+    if ptp_path.exists():
+        with ptp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and row[0] and row[1] and row[2]:
+                    try:
+                        pt_process[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+
+    # ---- p loaders -----------------------------------------------------
+    def _load_p_per_side(path: Path) -> dict[tuple[str, str, str], float]:
+        out: dict[tuple[str, str, str], float] = {}
+        if not path.exists():
+            return out
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and all(row[i] for i in range(3)):
+                    try:
+                        out[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+        return out
+
+    p_source = _load_p_per_side(input_dir / "p_process_source.csv")
+    p_sink = _load_p_per_side(input_dir / "p_process_sink.csv")
+
+    p_process: dict[tuple[str, str], float] = {}
+    pp_path = input_dir / "p_process.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        p_process[(row[0], row[1])] = float(row[2])
+                    except ValueError:
+                        continue
+
+    process_connection = frozenset(_read_singles(input_dir / "process_connection.csv"))
+
+    # ---- branch indices ------------------------------------------------
+    ts_for_d: dict[str, list[str]] = {}
+    fts_path = solve_data_dir / "first_timesteps.csv"
+    if fts_path.exists():
+        with fts_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    ts_for_d.setdefault(row[0], []).append(row[1])
+    tb_for_d: dict[str, list[str]] = {}
+    sb_path = solve_data_dir / "solve_branch__time_branch.csv"
+    if sb_path.exists():
+        with sb_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    tb_for_d.setdefault(row[0], []).append(row[1])
+    pe_for_d: dict[str, list[str]] = {}
+    pb_path = solve_data_dir / "period__branch.csv"
+    if pb_path.exists():
+        with pb_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    pe_for_d.setdefault(row[1], []).append(row[0])
+
+    # ---- stochastic processes -----------------------------------------
+    groups_stoch = frozenset(_read_singles(input_dir / "groupIncludeStochastics.csv"))
+    stoch_processes: set[str] = set()
+    gp_path = solve_data_dir / "group_process.csv"
+    if gp_path.exists():
+        with gp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] in groups_stoch and row[1]:
+                    stoch_processes.add(row[1])
+
+    out_path = solve_data_dir / "pdtProcess_source_sink.csv"
+    with out_path.open("w") as fh:
+        fh.write("process,source,sink,param,period,time,value\n")
+        for (p, src, snk, param) in domain:
+            is_stoch = p in stoch_processes
+            is_conn = p in process_connection
+            for (d, t) in dt:
+                # Branch 1: sink stochastic
+                if is_stoch:
+                    total = 0.0
+                    hit = False
+                    for tb in tb_for_d.get(d, ()):
+                        for ts in ts_for_d.get(d, ()):
+                            v = pbt_sink.get((p, snk, param, tb, ts, t))
+                            if v is not None:
+                                total += v
+                                hit = True
+                    if hit:
+                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(total)}\n")
+                        continue
+                    # Branch 2: source stochastic
+                    total = 0.0
+                    hit = False
+                    for tb in tb_for_d.get(d, ()):
+                        for ts in ts_for_d.get(d, ()):
+                            v = pbt_source.get((p, src, param, tb, ts, t))
+                            if v is not None:
+                                total += v
+                                hit = True
+                    if hit:
+                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(total)}\n")
+                        continue
+                # Branch 3: sink parent-period
+                pe_list = pe_for_d.get(d, ())
+                ts_list = ts_for_d.get(d, ())
+                if pe_list and ts_list:
+                    total = 0.0
+                    hit = False
+                    for pe in pe_list:
+                        for tb in tb_for_d.get(pe, ()):
+                            for ts in ts_list:
+                                v = pbt_sink.get((p, snk, param, tb, ts, t))
+                                if v is not None:
+                                    total += v
+                                    hit = True
+                    if hit:
+                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(total)}\n")
+                        continue
+                    # Branch 4: source parent-period
+                    total = 0.0
+                    hit = False
+                    for pe in pe_list:
+                        for tb in tb_for_d.get(pe, ()):
+                            for ts in ts_list:
+                                v = pbt_source.get((p, src, param, tb, ts, t))
+                                if v is not None:
+                                    total += v
+                                    hit = True
+                    if hit:
+                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(total)}\n")
+                        continue
+                # Branch 5: pt_process_sink
+                v = pt_sink.get((p, snk, param, t))
+                if v is not None:
+                    fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
+                    continue
+                # Branch 6: pt_process_source
+                v = pt_source.get((p, src, param, t))
+                if v is not None:
+                    fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
+                    continue
+                # Branch 7: pt_process (connection only)
+                if is_conn:
+                    v = pt_process.get((p, param, t))
+                    if v is not None:
+                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
+                        continue
+                # Branch 8: p_process_source
+                v = p_source.get((p, src, param))
+                if v is not None:
+                    fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
+                    continue
+                # Branch 9: p_process_sink
+                v = p_sink.get((p, snk, param))
+                if v is not None:
+                    fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
+                    continue
+                # Branch 10: p_process (connection only)
+                if is_conn:
+                    v = p_process.get((p, param))
+                    if v is not None:
+                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
+                        continue
+                # Branch 11: 0
+                fh.write(f"{p},{src},{snk},{param},{d},{t},0.0\n")
+
+
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
     if not path.exists():
         return []
