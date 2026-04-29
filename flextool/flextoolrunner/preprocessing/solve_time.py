@@ -126,3 +126,6 @@ def run(state: RunnerState, solve_name: str) -> None:
     lp_scaling_params.write_lp_scaling_params(input_dir, solve_data_dir)
     # L2 batch 19: invest/divest entity-period sets + edd_history family.
     invest_divest_sets.write_invest_divest_sets(input_dir, solve_data_dir)
+    # L2 batch 20: ed_*_period / ed_cumulative_* family (depends on
+    # ed_invest / ed_divest written by batch 19 above).
+    entity_period_calc_params.write_ed_period_params(input_dir, solve_data_dir)

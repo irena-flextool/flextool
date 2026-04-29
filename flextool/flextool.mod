@@ -1644,35 +1644,18 @@ table data IN 'CSV' 'solve_data/e_divest_max_total.csv' : [entity], e_divest_max
 table data IN 'CSV' 'solve_data/e_invest_min_total.csv' : [entity], e_invest_min_total~value;
 table data IN 'CSV' 'solve_data/e_divest_min_total.csv' : [entity], e_divest_min_total~value;
 
-param ed_invest_max_period{(e, d) in ed_invest} :=
-  + (if e in process then pdProcess[e, 'invest_max_period', d])
-  + (if e in node then pdNode[e, 'invest_max_period', d])
-;
-
-param ed_divest_max_period{(e, d) in ed_divest} :=
-  + (if e in process then pdProcess[e, 'retire_max_period', d])
-  + (if e in node then pdNode[e, 'retire_max_period', d])
-;
-
-param ed_invest_min_period{(e, d) in ed_invest} :=
-  + (if e in process then pdProcess[e, 'invest_min_period', d])
-  + (if e in node then pdNode[e, 'invest_min_period', d])
-;
-
-param ed_divest_min_period{(e, d) in ed_divest} :=
-  + (if e in process then pdProcess[e, 'retire_min_period', d])
-  + (if e in node then pdNode[e, 'retire_min_period', d])
-;
-
-param ed_cumulative_max_capacity{(e, d) in ed_invest} :=
-  + (if e in process then pdProcess[e, 'cumulative_max_capacity', d])
-  + (if e in node then pdNode[e, 'cumulative_max_capacity', d])
-;
-
-param ed_cumulative_min_capacity{(e, d) in ed_invest} :=
-  + (if e in process then pdProcess[e, 'cumulative_min_capacity', d])
-  + (if e in node then pdNode[e, 'cumulative_min_capacity', d])
-;
+param ed_invest_max_period{(e, d) in ed_invest};         # Migrated to Python.
+param ed_divest_max_period{(e, d) in ed_divest};         # Migrated to Python.
+param ed_invest_min_period{(e, d) in ed_invest};         # Migrated to Python.
+param ed_divest_min_period{(e, d) in ed_divest};         # Migrated to Python.
+param ed_cumulative_max_capacity{(e, d) in ed_invest};   # Migrated to Python.
+param ed_cumulative_min_capacity{(e, d) in ed_invest};   # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_invest_max_period.csv' : [entity, period], ed_invest_max_period~value;
+table data IN 'CSV' 'solve_data/ed_divest_max_period.csv' : [entity, period], ed_divest_max_period~value;
+table data IN 'CSV' 'solve_data/ed_invest_min_period.csv' : [entity, period], ed_invest_min_period~value;
+table data IN 'CSV' 'solve_data/ed_divest_min_period.csv' : [entity, period], ed_divest_min_period~value;
+table data IN 'CSV' 'solve_data/ed_cumulative_max_capacity.csv' : [entity, period], ed_cumulative_max_capacity~value;
+table data IN 'CSV' 'solve_data/ed_cumulative_min_capacity.csv' : [entity, period], ed_cumulative_min_capacity~value;
 
 set process_source_sink_ramp_limit_source_up :=
     {(p, source, sink) in process_source_sink
