@@ -1621,20 +1621,15 @@ set process_source_sink_dtttdt_ramp_limit_sink_down :=
  		    p_process_sink[p, sink, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
 
-param p_process_reserve_upDown_node_reliability {(p, r, ud, n) in process_reserve_upDown_node_active} :=
-  if p_process_reserve_upDown_node[p, r, ud, n, 'reliability'] then
-    p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
-  else 1;
+param p_process_reserve_upDown_node_reliability {(p, r, ud, n) in process_reserve_upDown_node_active};  # Migrated to Python (preprocessing/reserve_calc_params.py).
+table data IN 'CSV' 'solve_data/p_process_reserve_upDown_node_reliability.csv' : [process, reserve, upDown, node], p_process_reserve_upDown_node_reliability~value;
 
-set process_reserve_upDown_node_increase_reserve_ratio :=
-        {(p, r, ud, n) in process_reserve_upDown_node_active :
-		    p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'] > 0
-		};
-set process_reserve_upDown_node_large_failure_ratio :=
-        {(p, r, ud, n) in process_reserve_upDown_node_active :
-		    p_process_reserve_upDown_node[p, r, ud, n, 'large_failure_ratio'] > 0
-		};
-set process_large_failure := setof {(p, r, ud, n) in process_reserve_upDown_node_large_failure_ratio} p;
+set process_reserve_upDown_node_increase_reserve_ratio dimen 4;  # Migrated to Python.
+table data IN 'CSV' 'solve_data/process_reserve_upDown_node_increase_reserve_ratio.csv' : process_reserve_upDown_node_increase_reserve_ratio <- [process, reserve, upDown, node];
+set process_reserve_upDown_node_large_failure_ratio dimen 4;  # Migrated to Python.
+table data IN 'CSV' 'solve_data/process_reserve_upDown_node_large_failure_ratio.csv' : process_reserve_upDown_node_large_failure_ratio <- [process, reserve, upDown, node];
+set process_large_failure;  # Migrated to Python.
+table data IN 'CSV' 'solve_data/process_large_failure.csv' : process_large_failure <- [process];
 
 # Morales-Espana startup/shutdown capacity reduction parameters
 # If ramp_speed > 0: reduction = max(0, 1 - min_load - ramp_speed * 60 * step_duration)

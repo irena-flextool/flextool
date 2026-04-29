@@ -204,6 +204,78 @@ def _read_p_reserve(path: Path) -> dict[tuple[str, str, str, str], float]:
     return out
 
 
+def write_process_reserve_filters_and_reliability(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1655, L1660-1668 — three derived sets/params keyed
+    on process_reserve_upDown_node_active and p_process_reserve_upDown_node.
+
+        param p_process_reserve_upDown_node_reliability :=
+            if p_process_reserve_upDown_node[..,'reliability'] then ..
+            else 1;
+        set process_reserve_upDown_node_increase_reserve_ratio :=
+            {.. : p_process_reserve_upDown_node[..,'increase_reserve_ratio'] > 0};
+        set process_reserve_upDown_node_large_failure_ratio :=
+            {.. : p_process_reserve_upDown_node[..,'large_failure_ratio'] > 0};
+        set process_large_failure := setof {large_failure_ratio} p;
+
+    p_process_reserve_upDown_node has default reserveParam_defaults[rp]:
+    1 for reliability, 0 for increase_reserve_ratio / large_failure_ratio.
+    """
+    p_prn: dict[tuple[str, str, str, str, str], float] = {}
+    pp_path = input_dir / "p_process__reserve__upDown__node.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 6 and all(row[i] for i in range(5)):
+                    try:
+                        p_prn[(row[0], row[1], row[2], row[3], row[4])] = float(row[5])
+                    except ValueError:
+                        continue
+    active = _read_n_col(solve_data_dir / "process_reserve_upDown_node_active.csv", 4)
+
+    # p_process_reserve_upDown_node_reliability
+    out_rel = solve_data_dir / "p_process_reserve_upDown_node_reliability.csv"
+    with out_rel.open("w") as fh:
+        fh.write("process,reserve,upDown,node,value\n")
+        for (p, r, ud, n) in active:
+            v = p_prn.get((p, r, ud, n, "reliability"), 1.0)  # default 1
+            if v == 0.0:
+                v = 1.0  # mod's else-1 branch
+            fh.write(f"{p},{r},{ud},{n},{repr(v)}\n")
+
+    # process_reserve_upDown_node_increase_reserve_ratio
+    incr_rows: list[tuple[str, str, str, str]] = []
+    for (p, r, ud, n) in active:
+        if p_prn.get((p, r, ud, n, "increase_reserve_ratio"), 0.0) > 0:
+            incr_rows.append((p, r, ud, n))
+    out_incr = solve_data_dir / "process_reserve_upDown_node_increase_reserve_ratio.csv"
+    with out_incr.open("w") as fh:
+        fh.write("process,reserve,upDown,node\n")
+        for row in incr_rows:
+            fh.write(",".join(row) + "\n")
+
+    # process_reserve_upDown_node_large_failure_ratio + process_large_failure
+    lf_rows: list[tuple[str, str, str, str]] = []
+    for (p, r, ud, n) in active:
+        if p_prn.get((p, r, ud, n, "large_failure_ratio"), 0.0) > 0:
+            lf_rows.append((p, r, ud, n))
+    out_lf = solve_data_dir / "process_reserve_upDown_node_large_failure_ratio.csv"
+    with out_lf.open("w") as fh:
+        fh.write("process,reserve,upDown,node\n")
+        for row in lf_rows:
+            fh.write(",".join(row) + "\n")
+    # process_large_failure: setof p from large_failure_ratio rows
+    process_lf = list(dict.fromkeys(p for (p, _, _, _) in lf_rows))
+    out_plf = solve_data_dir / "process_large_failure.csv"
+    with out_plf.open("w") as fh:
+        fh.write("process\n")
+        for p in process_lf:
+            fh.write(f"{p}\n")
+
+
 def write_process_reserve_upDown_node_active_and_prundt(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
