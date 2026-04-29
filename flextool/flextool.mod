@@ -1454,36 +1454,22 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 # fallback; if that is also zero the scaler collapses to 1.  Final
 # value is clamped to [1e-6, 1e9] so no pathological input produces a
 # nonsense scaler.
-param _node_cap_unitsize_sum {n in node, d in period_in_use} :=
-    + sum{(p, source, n) in process_source_sink} p_entity_unitsize[p]
-    + sum{(p, n, sink)   in process_source_sink} p_entity_unitsize[p];
-param _node_cap_inflow_fallback {n in node, d in period_in_use} :=
-    if card({t in time}) = 0
-    then 0
-    else max{t in time} abs(ptNode_inflow[n, t]);
-param _node_cap_raw {n in node, d in period_in_use} :=
-    if _node_cap_unitsize_sum[n, d] > 0
-    then _node_cap_unitsize_sum[n, d]
-    else if _node_cap_inflow_fallback[n, d] > 0
-    then _node_cap_inflow_fallback[n, d]
-    else 1;
-param _node_cap_pow10 {n in node, d in period_in_use} :=
-    max(1e-6, min(1e9, 10 ^ round(log10(_node_cap_raw[n, d]))));
-param node_capacity_for_scaling{n in node, d in period_in_use} :=
-    if sum{c in solve_current} p_use_row_scaling[c] < 0.5
-    then 1
-    else _node_cap_pow10[n, d];
-
-param _group_cap_raw {g in group, d in period_in_use} :=
-    sum{(g, n) in group_node} node_capacity_for_scaling[n, d];
-param _group_cap_pow10 {g in group, d in period_in_use} :=
-    if _group_cap_raw[g, d] > 0
-    then max(1e-6, min(1e9, 10 ^ round(log10(_group_cap_raw[g, d]))))
-    else 1;
-param group_capacity_for_scaling{g in group, d in period_in_use} :=
-    if sum{c in solve_current} p_use_row_scaling[c] < 0.5
-    then 1
-    else _group_cap_pow10[g, d];
+param _node_cap_unitsize_sum {n in node, d in period_in_use};       # Migrated to Python.
+param _node_cap_inflow_fallback {n in node, d in period_in_use};     # Migrated to Python (preprocessing/node_inflow_scaling_params.py).
+param _node_cap_raw {n in node, d in period_in_use};                # Migrated to Python.
+param _node_cap_pow10 {n in node, d in period_in_use};              # Migrated to Python.
+param node_capacity_for_scaling{n in node, d in period_in_use};     # Migrated to Python.
+param _group_cap_raw {g in group, d in period_in_use};              # Migrated to Python.
+param _group_cap_pow10 {g in group, d in period_in_use};            # Migrated to Python.
+param group_capacity_for_scaling{g in group, d in period_in_use};   # Migrated to Python.
+table data IN 'CSV' 'solve_data/_node_cap_unitsize_sum.csv' : [node, period], _node_cap_unitsize_sum~value;
+table data IN 'CSV' 'solve_data/_node_cap_inflow_fallback.csv' : [node, period], _node_cap_inflow_fallback~value;
+table data IN 'CSV' 'solve_data/_node_cap_raw.csv' : [node, period], _node_cap_raw~value;
+table data IN 'CSV' 'solve_data/_node_cap_pow10.csv' : [node, period], _node_cap_pow10~value;
+table data IN 'CSV' 'solve_data/node_capacity_for_scaling.csv' : [node, period], node_capacity_for_scaling~value;
+table data IN 'CSV' 'solve_data/_group_cap_raw.csv' : [group, period], _group_cap_raw~value;
+table data IN 'CSV' 'solve_data/_group_cap_pow10.csv' : [group, period], _group_cap_pow10~value;
+table data IN 'CSV' 'solve_data/group_capacity_for_scaling.csv' : [group, period], group_capacity_for_scaling~value;
 # Agent 5c (LP-scaling): precomputed reciprocals of the row scalers
 # above.  Multiplying every term of a balance or group-aggregation
 # constraint by the reciprocal divides the whole row by its scaler,
@@ -1491,10 +1477,10 @@ param group_capacity_for_scaling{g in group, d in period_in_use} :=
 # Mode A (flag = 0) both scalers are 1, so these reciprocals are 1 and
 # every `* inv_*_cap[.]` factor in the constraints collapses to a
 # no-op at AMPL parse time.
-param inv_node_cap{n in node, d in period_in_use} :=
-    1 / node_capacity_for_scaling[n, d];
-param inv_group_cap{g in group, d in period_in_use} :=
-    1 / group_capacity_for_scaling[g, d];
+param inv_node_cap{n in node, d in period_in_use};   # Migrated to Python.
+param inv_group_cap{g in group, d in period_in_use}; # Migrated to Python.
+table data IN 'CSV' 'solve_data/inv_node_cap.csv' : [node, period], inv_node_cap~value;
+table data IN 'CSV' 'solve_data/inv_group_cap.csv' : [group, period], inv_group_cap~value;
 param p_inflation := (if sum{m in model} 1 then max{m in model} p_inflation_rate[m] else 0);
 param p_infl_offset_investment := (if sum{m in model} 1 then max{m in model} p_inflation_offset_investment[m] else 0);
 param p_infl_offset_operations := (if sum{m in model} 1 then max{m in model} p_inflation_offset_operations[m] else 0.5);
