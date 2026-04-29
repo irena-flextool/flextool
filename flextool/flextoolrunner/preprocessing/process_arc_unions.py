@@ -1499,6 +1499,182 @@ def write_node_group_dispatch_sets(
                ("group", "group_aggregate"), list(seen12.keys()))
 
 
+def write_p_state_slack_share(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1689-1691 — p_state_slack_share.
+
+        param p_state_slack_share{(g,n) in group_node, (d,t) in dt
+                                  : g in group_loss_share} :=
+          if (g,'inflow_weighted') in group__loss_share_type
+            then pdtNodeInflow[n,d,t]
+                 / sum{(g,ng) in group_node} pdtNodeInflow[ng,d,t]
+          else if (g,'equal') in group__loss_share_type
+            then 1 / sum{(g,ng) in group_node} 1
+          else 0;
+
+    Empty for the 5 parity baselines (group_loss_share is empty), but
+    migrated faithfully to remove the inline `:=`.
+
+    Reads:
+    - solve_data/group_loss_share.csv (already migrated)
+    - input/group__loss_share_type.csv (group, type)
+    - input/group__node.csv (group, node)
+    - solve_data/pdtNodeInflow.csv (node, period, time, value)
+    - solve_data/steps_in_use.csv (period, time, duration)
+    """
+    g_loss = frozenset(
+        _read_singles(solve_data_dir / "group_loss_share.csv")
+    )
+    g_type: dict[str, str] = {}
+    for g, t in _read_pairs(input_dir / "group__loss_share_type.csv"):
+        g_type[g] = t
+    nodes_in_g: dict[str, list[str]] = {}
+    for g, n in _read_pairs(input_dir / "group__node.csv"):
+        nodes_in_g.setdefault(g, []).append(n)
+    inflow: dict[tuple[str, str, str], float] = {}
+    pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
+    if pdtni_path.exists():
+        with pdtni_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] and r[2]:
+                    try:
+                        inflow[(r[0], r[1], r[2])] = float(r[3])
+                    except ValueError:
+                        continue
+    dt_pairs = _read_n_col(solve_data_dir / "steps_in_use.csv", 2)
+
+    rows: list[tuple[str, str, str, str, str]] = []
+    for g in g_loss:
+        ngs = nodes_in_g.get(g, [])
+        if not ngs:
+            continue
+        share_type = g_type.get(g)
+        n_count = len(ngs)
+        for n in ngs:
+            for d, t in dt_pairs:
+                if share_type == "inflow_weighted":
+                    total = sum(inflow.get((ng, d, t), 0.0) for ng in ngs)
+                    v = (inflow.get((n, d, t), 0.0) / total
+                         if total != 0.0 else 0.0)
+                elif share_type == "equal":
+                    v = 1.0 / n_count
+                else:
+                    v = 0.0
+                rows.append((g, n, d, t, repr(v)))
+    _write_csv(solve_data_dir / "p_state_slack_share.csv",
+               ("group", "node", "period", "time", "value"), rows)
+
+
+def write_p_storage_state_reference_price(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1693-1698 — p_storage_state_reference_price.
+
+        param p_storage_state_reference_price{n in nodeState,
+                                              d in period_in_use} :=
+          if exists{(n,d2,t2) in ndt_fix_storage_price,
+                    (d,t) in period__time_last
+                    : (d2,d) in period__branch
+                      AND (d, t, t2) in dtt_timeline_matching} 1
+          then sum{(d2,d) in period__branch,
+                   (d,t) in period__time_last,
+                   (d, t, t2) in dtt_timeline_matching}
+                 p_fix_storage_price[n,d2,t2]
+          else (if (n, 'use_reference_price') in node__storage_solve_horizon_method
+                then pdNode[n, 'storage_state_reference_price', d]
+                else 0);
+
+    Empty for the 5 parity baselines (ndt_fix_storage_price is empty)
+    but the else branch may still produce non-zero values per-node.
+
+    Reads:
+    - solve_data/nodeState.csv, period_in_use_set.csv
+    - solve_data/fix_storage_price.csv (period, step, node, p_fix_storage_price)
+    - solve_data/last_timesteps.csv (period, step) → period__time_last
+    - solve_data/period__branch.csv (period, branch)
+    - solve_data/timeline_matching_map.csv (period, step, upper_step)
+    - input/node__storage_solve_horizon_method.csv (node, method)
+    - solve_data/pdNode.csv (node, param, period, value)
+    """
+    # fix_storage_price.csv: cols [period, step, node, p_fix_storage_price]
+    fix_price: dict[tuple[str, str, str], float] = {}  # (n, d2, t2) -> value
+    fsp_path = solve_data_dir / "fix_storage_price.csv"
+    if fsp_path.exists():
+        with fsp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] and r[2]:
+                    try:
+                        fix_price[(r[2], r[0], r[1])] = float(r[3])
+                    except ValueError:
+                        continue
+
+    ptl = _read_pairs(solve_data_dir / "last_timesteps.csv")  # (d, t)
+    ptl_for_d: dict[str, list[str]] = {}
+    for d, t in ptl:
+        ptl_for_d.setdefault(d, []).append(t)
+    pb_d2_for_d: dict[str, list[str]] = {}  # d -> list of d2 with (d2, d) ∈ pb
+    for d2, d in _read_pairs(solve_data_dir / "period__branch.csv"):
+        pb_d2_for_d.setdefault(d, []).append(d2)
+    dtt_for_dt: dict[tuple[str, str], list[str]] = {}  # (d, t) -> list of t2
+    for d, t, t2 in _read_n_col(
+        solve_data_dir / "timeline_matching_map.csv", 3
+    ):
+        dtt_for_dt.setdefault((d, t), []).append(t2)
+
+    use_ref = frozenset(
+        n for n, m in _read_pairs(
+            input_dir / "node__storage_solve_horizon_method.csv"
+        ) if m == "use_reference_price"
+    )
+
+    pd_ref_price: dict[tuple[str, str], float] = {}
+    pdn_path = solve_data_dir / "pdNode.csv"
+    if pdn_path.exists():
+        with pdn_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if (len(r) >= 4 and r[0]
+                        and r[1] == "storage_state_reference_price"
+                        and r[2]):
+                    try:
+                        pd_ref_price[(r[0], r[2])] = float(r[3])
+                    except ValueError:
+                        continue
+
+    nodes_state = _read_singles(solve_data_dir / "nodeState.csv")
+    period_in_use = _read_singles(
+        solve_data_dir / "period_in_use_set.csv"
+    )
+
+    rows: list[tuple[str, str, str]] = []
+    for n in nodes_state:
+        for d in period_in_use:
+            sum_v = 0.0
+            has_match = False
+            for d2 in pb_d2_for_d.get(d, []):
+                for t in ptl_for_d.get(d, []):
+                    for t2 in dtt_for_dt.get((d, t), []):
+                        v = fix_price.get((n, d2, t2))
+                        if v is not None:
+                            has_match = True
+                            sum_v += v
+            if has_match:
+                value = sum_v
+            elif n in use_ref:
+                value = pd_ref_price.get((n, d), 0.0)
+            else:
+                value = 0.0
+            rows.append((n, d, repr(value)))
+    _write_csv(solve_data_dir / "p_storage_state_reference_price.csv",
+               ("node", "period", "value"), rows)
+
+
 def write_small_set_derivations(
     input_dir: Path, solve_data_dir: Path
 ) -> None:

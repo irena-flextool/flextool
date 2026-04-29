@@ -298,3 +298,10 @@ def run(state: RunnerState, solve_name: str) -> None:
     # pdt_online_linear/integer). Depends on: pdtNode, pdProcess,
     # ed_history_realized_first, process__source__sinkIsNode_2way1var.
     process_arc_unions.write_small_set_derivations(input_dir, solve_data_dir)
+    # L1 batch 66: p_state_slack_share + p_storage_state_reference_price.
+    # Both have empty domains for the 5 parity baselines, but migrated
+    # faithfully (mod's `:= ...` removed, table-data-IN added).
+    process_arc_unions.write_p_state_slack_share(input_dir, solve_data_dir)
+    process_arc_unions.write_p_storage_state_reference_price(
+        input_dir, solve_data_dir
+    )
