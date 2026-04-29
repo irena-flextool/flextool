@@ -1624,9 +1624,9 @@ table data IN 'CSV' 'solve_data/g_invest_cumulative.csv' : g_invest_cumulative <
 # + lifetime the asset retires once and the model is forbidden from
 # rebuilding — the fix_v_invest_no_investment_eq constraint below pins
 # v_invest[e, d] = 0 for these (e, d).
-set ed_invest_forbidden_no_investment := {(e, d) in ed_invest :
-    (e, 'no_investment') in entity__lifetime_method
-    && p_years_d[d] >= sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first])};
+set ed_invest_forbidden_no_investment dimen 2;  # Migrated to Python (preprocessing/invest_divest_sets.py).
+table data IN 'CSV' 'solve_data/ed_invest_forbidden_no_investment.csv'
+    : ed_invest_forbidden_no_investment <- [entity, period];
 
 # e_*_total params migrated to Python (preprocessing/entity_total_caps.py).
 # Each is the sum of p_process[e, paramName] + p_node[e, paramName] (one

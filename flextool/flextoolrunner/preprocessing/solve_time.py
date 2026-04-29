@@ -139,3 +139,7 @@ def run(state: RunnerState, solve_name: str) -> None:
     # × entity-kind × virtual-unitsize gate). Reads pdProcess, pdNode,
     # edEntity_lifetime written by write_entity_period_calc_params above.
     entity_period_calc_params.write_p_entity_pre_existing(input_dir, solve_data_dir)
+    # L3 batch 27: ed_invest_forbidden_no_investment (ed_invest filtered
+    # by no_investment method + expired lifetime). Reads ed_invest from
+    # batch 19 and edEntity_lifetime from entity_period_calc_params.
+    invest_divest_sets.write_ed_invest_forbidden_no_investment(input_dir, solve_data_dir)
