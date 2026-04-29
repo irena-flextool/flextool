@@ -990,7 +990,8 @@ table data IN 'CSV' 'solve_data/dt_non_anticipativity_set.csv' : dt_non_anticipa
 # co-located with the declarations below to avoid forward-reference.
 
 #check
-set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
+set ed_history_realized_first dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/ed_history_realized_first.csv' : ed_history_realized_first <- [entity, period];
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
 set process_delayed__duration dimen 2;  # Migrated to Python (preprocessing/union_sets.py).
