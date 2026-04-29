@@ -623,6 +623,108 @@ def write_process_source_sink_param(
                ("process", "source", "sink", "param"), rows)
 
 
+def write_process_source_sink_param_with_time(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1187-1195 — process_source_sink × sourceSinkTimeParam
+    filtered by EITHER static or time-variant param membership on either
+    side, or via process_connection.
+
+    Distinct from `write_process_source_sink_param_t` (batch 25) which
+    handles a different mod set: `process_source_sink_param_t`
+    (single-underscore name) gates by the simpler condition
+    `(p, param) in process__param_t`. This function handles
+    `process__source__sink__param_t` (double-underscore name).
+
+        { (p, src, sink) in process_source_sink, param in SOURCE_SINK_TIME_PARAM :
+          (p, src,  param) in process__source__param
+          OR (p, src,  param) in process__source__param_t
+          OR (p, sink, param) in process__sink__param
+          OR (p, sink, param) in process__sink__param_t
+          OR ((p, param) in process__param   AND p in process_connection)
+          OR ((p, param) in process__param_t AND p in process_connection) }
+
+    The _t projections come from solve_data/pt_process*.csv (already
+    written by solve_writers.py before this preprocessing hook).
+    """
+    from flextool.flextoolrunner.preprocessing._param_taxonomy import (
+        SOURCE_SINK_TIME_PARAM,
+    )
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+
+    src_param: set[tuple[str, str, str]] = set()
+    pps_path = input_dir / "p_process_source.csv"
+    if pps_path.exists():
+        with pps_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    src_param.add((r[0], r[1], r[2]))
+    sink_param: set[tuple[str, str, str]] = set()
+    ppk_path = input_dir / "p_process_sink.csv"
+    if ppk_path.exists():
+        with ppk_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    sink_param.add((r[0], r[1], r[2]))
+    proc_param: set[tuple[str, str]] = set()
+    pp_path = input_dir / "p_process.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0] and r[1]:
+                    proc_param.add((r[0], r[1]))
+    proc_conn = frozenset(_read_singles(input_dir / "process_connection.csv"))
+
+    # _t variants from solve_data/pt_process*.csv (process__source__param_t
+    # = setof {(p, src, param, t)} (p, src, param), etc.)
+    src_param_t: set[tuple[str, str, str]] = set()
+    pts_path = solve_data_dir / "pt_process_source.csv"
+    if pts_path.exists():
+        with pts_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    src_param_t.add((r[0], r[1], r[2]))
+    sink_param_t: set[tuple[str, str, str]] = set()
+    ptk_path = solve_data_dir / "pt_process_sink.csv"
+    if ptk_path.exists():
+        with ptk_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    sink_param_t.add((r[0], r[1], r[2]))
+    proc_param_t: set[tuple[str, str]] = set()
+    pt_path = solve_data_dir / "pt_process.csv"
+    if pt_path.exists():
+        with pt_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0] and r[1]:
+                    proc_param_t.add((r[0], r[1]))
+
+    rows: list[tuple[str, str, str, str]] = []
+    for p, src, sink in triples:
+        for param in SOURCE_SINK_TIME_PARAM:
+            if ((p, src, param) in src_param
+                    or (p, src, param) in src_param_t
+                    or (p, sink, param) in sink_param
+                    or (p, sink, param) in sink_param_t
+                    or ((p, param) in proc_param and p in proc_conn)
+                    or ((p, param) in proc_param_t and p in proc_conn)):
+                rows.append((p, src, sink, param))
+    _write_csv(solve_data_dir / "process__source__sink__param_t.csv",
+               ("process", "source", "sink", "param"), rows)
+
+
 def write_node_group_dispatch_process_fully_inside(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
