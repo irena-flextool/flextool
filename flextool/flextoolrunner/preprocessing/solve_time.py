@@ -214,3 +214,7 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_pdGroup(input_dir, solve_data_dir)
     entity_period_calc_params.write_pdtGroup(input_dir, solve_data_dir)
     entity_period_calc_params.write_pdCommodity(input_dir, solve_data_dir)
+    # L0 batch 53: pdtNode — 9-branch hourly node param resolution.
+    # Same shape as pdtProcess but time-first axis priority and extra
+    # class_paramName_default fallback (input/default_values.csv).
+    entity_period_calc_params.write_pdtNode(input_dir, solve_data_dir)

@@ -226,6 +226,8 @@ class PdtLookup:
         group_entity_csv: Path,       # solve_data/group_<class>.csv [group, entity]
         group_stochastic_csv: Path,   # input/groupIncludeStochastics.csv [group]
         param_def1: frozenset[str],
+        time_first_priority: bool = False,
+        class_default_values: dict[str, float] | None = None,
     ) -> None:
         self._pbt = _read_pbt(pbt_csv)
         self._pd = _read_pd(pd_csv)
@@ -248,6 +250,12 @@ class PdtLookup:
                     if len(row) >= 2 and row[0] in groups_stoch and row[1]:
                         self._stoch_entity.add(row[1])
         self._param_def1 = param_def1
+        # pdtNode prefers time over period (mod L1182-1185); pdtProcess
+        # prefers period over time (mod L1232-1233).
+        self._time_first = time_first_priority
+        # Class-level default fallback (mod L1190 for pdtNode:
+        # ('node', param) in class_paramName_default → default_value['node', param]).
+        self._class_defaults: dict[str, float] = class_default_values or {}
 
     def get(self, e: str, param: str, d: str, t: str) -> float:
         # Branch 1: stochastic + outer-d's ts and tb
@@ -279,14 +287,20 @@ class PdtLookup:
                             hit = True
             if hit:
                 return total
-        # Branch 3: period axis
-        v = self._pd.get((e, param, d))
-        if v is not None:
-            return v
-        # Branch 4: time axis
-        v = self._pt.get((e, param, t))
-        if v is not None:
-            return v
+        if self._time_first:
+            v = self._pt.get((e, param, t))
+            if v is not None:
+                return v
+            v = self._pd.get((e, param, d))
+            if v is not None:
+                return v
+        else:
+            v = self._pd.get((e, param, d))
+            if v is not None:
+                return v
+            v = self._pt.get((e, param, t))
+            if v is not None:
+                return v
         # Branch 5: scalar
         v = self._p.get((e, param))
         if v is not None:
@@ -294,11 +308,33 @@ class PdtLookup:
         # Branch 6: default 1
         if param in self._param_def1:
             return 1.0
-        # Branch 7: default 0
+        # Branch 7: class-default fallback (pdtNode only)
+        if param in self._class_defaults:
+            return self._class_defaults[param]
+        # Branch 8: default 0
         return 0.0
 
 
 PROCESS_PARAM_DEF1 = frozenset({"efficiency", "availability"})  # flextool_base.dat L154
+NODE_PARAM_DEF1 = frozenset({"availability"})  # flextool_base.dat L180
+
+
+def read_class_defaults(path: Path, class_name: str) -> dict[str, float]:
+    """Read input/default_values.csv (class, paramName, default_value) and
+    return ``{paramName → value}`` filtered to ``class_name``."""
+    out: dict[str, float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 3 and row[0] == class_name and row[1]:
+                try:
+                    out[row[1]] = float(row[2])
+                except ValueError:
+                    continue
+    return out
 
 
 def _read_pbt_3(path: Path) -> dict[tuple[str, str, str, str, str, str], float]:
