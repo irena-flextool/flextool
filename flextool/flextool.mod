@@ -1554,112 +1554,25 @@ check {e in (entityInvest union entityDivest), d in period_invest : e in process
 # to the check above; the check is authoritative for investing/divesting
 # entities.
 
-param ed_entity_annual{e in entityInvest, d in period_invest} :=
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
-          ( + ( pdNode[e, 'invest_cost', d] * 1000
-		        * ( (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05)
-			        / (1 - (1 / (1 + (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05))^(if pdNode[e, 'lifetime', d] > 0 then pdNode[e, 'lifetime', d] else 20) ) )
-				  )
-		       )
-		  )
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m not in invest_method_not_allowed}
-		  (
-            + (pdProcess[e, 'invest_cost', d] * 1000 * ( (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05)
-			  / (1 - (1 / (1 + (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05))^(if pdProcess[e, 'lifetime', d] > 0 then pdProcess[e, 'lifetime', d] else 20) ) ) ))
-		  )
-;
+param ed_entity_annual{e in entityInvest, d in period_invest};  # Migrated to Python (preprocessing/entity_annual_calc_params.py).
+table data IN 'CSV' 'solve_data/ed_entity_annual.csv' : [entity, period], ed_entity_annual~value;
 
-param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice' || m = 'no_investment'}
-          ( + ed_entity_annual[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-					  && p_discount_years[d_all] < p_discount_years[d] + edEntity_lifetime[e, d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_automatic'}
-		  (
-            + ed_entity_annual[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-;
+param ed_entity_annual_discounted{e in entityInvest, d in period_invest};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_entity_annual_discounted.csv' : [entity, period], ed_entity_annual_discounted~value;
 
-param ed_entity_annual_divest{e in entityDivest, d in period_invest} :=
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in divest_method_not_allowed}
-          ( + (pdNode[e, 'salvage_value', d] * 1000 * ( (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05)
-			  / (1 - (1 / (1 + (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05))^(if pdNode[e, 'lifetime', d] > 0 then pdNode[e, 'lifetime', d] else 20) ) ) ))
-		  )
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m not in divest_method_not_allowed}
-		  (
-            + (pdProcess[e, 'salvage_value', d] * 1000 * ( (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05)
-			  / (1 - (1 / (1 + (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05))^(if pdProcess[e, 'lifetime', d] > 0 then pdProcess[e, 'lifetime', d] else 20) ) ) ))
-		  )
-;
-param ed_entity_annual_divest_discounted{e in entityDivest, d in period_invest} :=
-        if (e in node) then
-          ( + ed_entity_annual_divest[e, d]
-			    * sum{d_all in period_in_use
-				   :    p_discount_years[d_all] >= p_discount_years[d]
-				     && p_discount_years[d_all] < p_discount_years[d] + pdNode[e, 'lifetime', d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-		else if (e in process) then
-		  (
-            + ed_entity_annual_divest[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-					  && p_discount_years[d_all] < p_discount_years[d] + pdProcess[e, 'lifetime', d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-;
+param ed_entity_annual_divest{e in entityDivest, d in period_invest};            # Migrated to Python.
+param ed_entity_annual_divest_discounted{e in entityDivest, d in period_invest};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_entity_annual_divest.csv' : [entity, period], ed_entity_annual_divest~value;
+table data IN 'CSV' 'solve_data/ed_entity_annual_divest_discounted.csv' : [entity, period], ed_entity_annual_divest_discounted~value;
 
 param ed_fixed_cost{e in entity, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/ed_fixed_cost.csv' : [entity, period], ed_fixed_cost~value;
 
-param ed_lifetime_fixed_cost{e in entity, d in period_with_history} :=
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice' || m = 'no_investment'}
-          ( + ed_fixed_cost[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-					  && p_discount_years[d_all] < p_discount_years[d] + edEntity_lifetime[e, d]
-				  }
-				    ( p_inflation_factor_operations_yearly[d_all] )
-		  )
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_automatic'}
-		  (
-            + ed_fixed_cost[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-				  }
-				    ( p_inflation_factor_operations_yearly[d_all] )
-		  )
-;
+param ed_lifetime_fixed_cost{e in entity, d in period_with_history};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_lifetime_fixed_cost.csv' : [entity, period], ed_lifetime_fixed_cost~value;
 
-param ed_lifetime_fixed_cost_divest{e in entityDivest, d in period_invest} :=
-        if (e in node) then
-          ( + ed_fixed_cost[e, d]
-			    * sum{d_all in period_in_use
-				   :    p_discount_years[d_all] >= p_discount_years[d]
-				     && p_discount_years[d_all] < p_discount_years[d] + pdNode[e, 'lifetime', d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-		else if (e in process) then
-		  (
-            + ed_fixed_cost[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-					  && p_discount_years[d_all] < p_discount_years[d] + pdProcess[e, 'lifetime', d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-;
+param ed_lifetime_fixed_cost_divest{e in entityDivest, d in period_invest};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_lifetime_fixed_cost_divest.csv' : [entity, period], ed_lifetime_fixed_cost_divest~value;
 
 
 set process_minload;  # Migrated to Python (preprocessing/process_arc_unions.py).
