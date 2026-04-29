@@ -145,13 +145,6 @@ def write_entity_period_calc_params(input_dir: Path, solve_data_dir: Path) -> No
     _write_keyed_2(solve_data_dir / "ed_fixed_cost.csv",
                    ("entity", "period", "value"), rows)
 
-    # ed_*_period and ed_cumulative_* deferred until ed_invest / ed_divest
-    # are themselves Python-driven. Their mod domain is
-    # ``{(e, d) in ed_invest}`` and writing extra rows with
-    # ``table data IN [entity, period]`` may not be silently tolerated by
-    # MathProg's loader. Once ed_invest moves to Python (later batch
-    # after ed_entity_annual lands), these can follow.
-
     # ---- p_entity_unitsize{e in entity} (write_input scope) ------------
     # mod L1279: process branch prefers virtual_unitsize, then existing,
     # then 1000. Same for nodes.
@@ -196,3 +189,61 @@ def write_entity_period_calc_params(input_dir: Path, solve_data_dir: Path) -> No
         "entity,value\n"
         + "".join(f"{e},{repr(v)}\n" for e, v in unitsize_rows)
     )
+
+
+def write_ed_period_params(input_dir: Path, solve_data_dir: Path) -> None:
+    """ed_*_period / ed_cumulative_* family — keyed on ed_invest / ed_divest.
+
+    Must run AFTER invest_divest_sets has produced solve_data/ed_invest.csv
+    and ed_divest.csv. Mod's `if e in process then pdProcess[e, P, d]` and
+    similar for node; processes and nodes are disjoint so exactly one
+    branch fires.
+    """
+    pp = PdLookup(
+        pd_csv=input_dir / "pd_process.csv",
+        p_csv=input_dir / "p_process.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+    )
+    pn = PdLookup(
+        pd_csv=input_dir / "pd_node.csv",
+        p_csv=input_dir / "p_node.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+    )
+    process_set = frozenset(_read_singles(input_dir / "process.csv"))
+    node_set = frozenset(_read_singles(input_dir / "node.csv"))
+
+    ed_invest_pairs = _read_ed_pairs(solve_data_dir / "ed_invest.csv")
+    ed_divest_pairs = _read_ed_pairs(solve_data_dir / "ed_divest.csv")
+
+    for fname, src_pairs, mod_param in (
+        ("ed_invest_max_period.csv",     ed_invest_pairs, "invest_max_period"),
+        ("ed_invest_min_period.csv",     ed_invest_pairs, "invest_min_period"),
+        ("ed_divest_max_period.csv",     ed_divest_pairs, "retire_max_period"),
+        ("ed_divest_min_period.csv",     ed_divest_pairs, "retire_min_period"),
+        ("ed_cumulative_max_capacity.csv", ed_invest_pairs, "cumulative_max_capacity"),
+        ("ed_cumulative_min_capacity.csv", ed_invest_pairs, "cumulative_min_capacity"),
+    ):
+        rows: list[tuple[str, str, float]] = []
+        for e, d in src_pairs:
+            if e in process_set:
+                v = pp.get(e, mod_param, d)
+            elif e in node_set:
+                v = pn.get(e, mod_param, d)
+            else:
+                v = 0.0
+            rows.append((e, d, v))
+        _write_keyed_2(solve_data_dir / fname,
+                       ("entity", "period", "value"), rows)
+
+
+def _read_ed_pairs(path: Path) -> list[tuple[str, str]]:
+    if not path.exists():
+        return []
+    out: list[tuple[str, str]] = []
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 2 and row[0] and row[1]:
+                out.append((row[0], row[1]))
+    return out
