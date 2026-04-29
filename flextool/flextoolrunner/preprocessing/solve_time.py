@@ -62,6 +62,7 @@ def run(state: RunnerState, solve_name: str) -> None:
         entity_annual_calc_params,
         node_inflow_scaling_params,
         lp_scaling_params,
+        invest_divest_sets,
         per_solve_sets,
     )
     period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
@@ -123,3 +124,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     node_inflow_scaling_params.write_node_inflow_scaling_params(input_dir, solve_data_dir)
     # L1 batch 18: LP-scaling row scalers (node + group capacities).
     lp_scaling_params.write_lp_scaling_params(input_dir, solve_data_dir)
+    # L2 batch 19: invest/divest entity-period sets + edd_history family.
+    invest_divest_sets.write_invest_divest_sets(input_dir, solve_data_dir)
