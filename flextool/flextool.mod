@@ -1383,9 +1383,8 @@ table data IN 'CSV' 'solve_data/complete_period_share_of_year_calc.csv' : [perio
 # one representative year (share_of_year * 8760).  On a single solve
 # covering all of period d this is exactly 1.0 so the rolling caps reduce
 # to their pre-refactor form bit-for-bit.
-param f_d_k {d in period_in_use} :=
-  (p_ladder_cum_sim_hours[d] + sum {(d, t) in dt} step_duration[d, t])
-  / (complete_period_share_of_year[d] * 8760);
+param f_d_k {d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/f_d_k.csv' : [period], f_d_k~value;
 
 param period_share_of_annual_flow {n in node, d in period_in_use};   # Migrated to Python.
 param period_flow_annual_multiplier {n in node, d in period_in_use};  # Migrated to Python.

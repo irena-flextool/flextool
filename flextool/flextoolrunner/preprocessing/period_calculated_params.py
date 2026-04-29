@@ -321,6 +321,28 @@ def write_period_calculated_params(input_dir: Path, solve_data_dir: Path) -> Non
     _write_keyed(solve_data_dir / "p_inflation_factor_operations_yearly.csv",
                  ("period", "value"), ops_yearly)
 
+    # f_d_k[d] = (p_ladder_cum_sim_hours[d] + sum_t step_duration[d,t])
+    #            / (complete_period_share_of_year[d] * 8760)
+    # mod L1386. Domain: period_in_use. p_ladder_cum_sim_hours has
+    # default 0 (mod L452) so missing rows imply zero. Division-by-zero
+    # would only occur if complete_period_share_of_year[d] == 0, which
+    # mod's reciprocal would already crash on — so we mirror that.
+    p_ladder_cum: dict[str, float] = {}
+    for r in _read_csv_columns(solve_data_dir / "ladder_cum_sim_hours.csv"):
+        if len(r) >= 2 and r[0] and r[1]:
+            try:
+                p_ladder_cum[r[0]] = float(r[1])
+            except ValueError:
+                continue
+    complete_share_lookup = dict(complete_share)
+    f_d_k_rows: list[tuple[str, float]] = []
+    for d in period_in_use:
+        num = p_ladder_cum.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0)
+        denom = complete_share_lookup.get(d, 0.0) * 8760.0
+        f_d_k_rows.append((d, num / denom))
+    _write_keyed(solve_data_dir / "f_d_k.csv",
+                 ("period", "value"), f_d_k_rows)
+
     # ---- pdtConversion_rate ---------------------------------------------
     # mod L1686: round(1 / pdtProcess[p, 'efficiency', d, t], 6)
     # pdtProcess is itself a calc param that derives from per-solve sources.
