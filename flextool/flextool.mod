@@ -1573,34 +1573,47 @@ set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, 
 set pssdt_varCost_eff_unit_source := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && pdtProcess_source[p, source, 'other_operational_cost', d, t]};
 set pssdt_varCost_eff_unit_sink := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && pdtProcess_sink[p, sink, 'other_operational_cost', d, t]};
 set pssdt_varCost_eff_connection := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : pdtProcess[p,'other_operational_cost', d, t]};
-set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || exists{(e, c) in process_capacity_constraint_invested} 1 || exists{(e, c) in node_capacity_constraint_invested} 1 || exists{(e, c) in process_capacity_constraint_prebuilt} 1 || exists{(e, c) in node_capacity_constraint_prebuilt} 1 };
-set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method
-                                               || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set e_invest_total;  # Migrated to Python (preprocessing/invest_total_sets.py).
-set ed_invest_cumulative := {(e, d) in ed_invest : (e, 'cumulative_limits') in entity__invest_method};
-set edd_history_choice := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_choice') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + edEntity_lifetime[e, d_history]};
-set edd_history_automatic := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
-set edd_history_no_investment := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'no_investment') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + edEntity_lifetime[e, d_history]};
-set edd_history := edd_history_choice union edd_history_automatic union edd_history_no_investment;
-set edd_history_invest := {(e, d_invest, d) in edd_history : e in entityInvest};
-set edd_invest := {(e, d_invest, d) in edd_history_invest : (e, d_invest) in ed_invest};
-
-set pd_invest := {(p, d) in ed_invest : p in process};
-set nd_invest := {(n, d) in ed_invest : n in node};
-set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || exists{(e, c) in process_capacity_constraint_invested} 1 || exists{(e, c) in node_capacity_constraint_invested} 1 || exists{(e, c) in process_capacity_constraint_prebuilt} 1 || exists{(e, c) in node_capacity_constraint_prebuilt} 1 };
-set ed_divest_period := {(e, d) in ed_invest : (e, 'retire_period') in entity__invest_method || (e, 'retire_period_total') in entity__invest_method
-                                               || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set e_divest_total;  # Migrated to Python (preprocessing/invest_total_sets.py).
-set pd_divest := {(p, d) in ed_divest : p in process};
-set nd_divest := {(n, d) in ed_divest : n in node};
-
-set gd_invest := {g in group_invest, d in period_invest : sum{(g, e) in group_entity : (e, d) in ed_invest} 1};
-set gd_invest_period := {(g, d) in gd_invest : (g, 'invest_period') in group__invest_method || (g, 'invest_period_total') in group__invest_method
-                                               || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
-set g_invest_total;  # Migrated to Python (preprocessing/invest_total_sets.py).
-set gd_divest := {g in group_invest, d in period_invest : sum{(g, e) in group_entity : (e, d) in ed_invest} 1};
-set gd_divest_period := {(g, d) in gd_invest : (g, 'retire_period') in group__invest_method || (g, 'retire_period_total') in group__invest_method
-                                               || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
+set ed_invest dimen 2;            # Migrated to Python (preprocessing/invest_divest_sets.py).
+set ed_invest_period dimen 2;     # Migrated to Python.
+set e_invest_total;               # Migrated to Python (preprocessing/invest_total_sets.py).
+set ed_invest_cumulative dimen 2; # Migrated to Python.
+set edd_history_choice dimen 3;   # Migrated to Python.
+set edd_history_automatic dimen 3;# Migrated to Python.
+set edd_history_no_investment dimen 3;  # Migrated to Python.
+set edd_history dimen 3;          # Migrated to Python.
+set edd_history_invest dimen 3;   # Migrated to Python.
+set edd_invest dimen 3;           # Migrated to Python.
+set pd_invest dimen 2;            # Migrated to Python.
+set nd_invest dimen 2;            # Migrated to Python.
+set ed_divest dimen 2;            # Migrated to Python.
+set ed_divest_period dimen 2;     # Migrated to Python.
+set e_divest_total;               # Migrated to Python (preprocessing/invest_total_sets.py).
+set pd_divest dimen 2;            # Migrated to Python.
+set nd_divest dimen 2;            # Migrated to Python.
+set gd_invest dimen 2;            # Migrated to Python.
+set gd_invest_period dimen 2;     # Migrated to Python.
+set g_invest_total;               # Migrated to Python (preprocessing/invest_total_sets.py).
+set gd_divest dimen 2;            # Migrated to Python.
+set gd_divest_period dimen 2;     # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_invest.csv' : ed_invest <- [entity, period];
+table data IN 'CSV' 'solve_data/ed_invest_period.csv' : ed_invest_period <- [entity, period];
+table data IN 'CSV' 'solve_data/ed_invest_cumulative.csv' : ed_invest_cumulative <- [entity, period];
+table data IN 'CSV' 'solve_data/edd_history_choice.csv' : edd_history_choice <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_history_automatic.csv' : edd_history_automatic <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_history_no_investment.csv' : edd_history_no_investment <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_history.csv' : edd_history <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_history_invest.csv' : edd_history_invest <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_invest.csv' : edd_invest <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/pd_invest.csv' : pd_invest <- [process, period];
+table data IN 'CSV' 'solve_data/nd_invest.csv' : nd_invest <- [node, period];
+table data IN 'CSV' 'solve_data/ed_divest.csv' : ed_divest <- [entity, period];
+table data IN 'CSV' 'solve_data/ed_divest_period.csv' : ed_divest_period <- [entity, period];
+table data IN 'CSV' 'solve_data/pd_divest.csv' : pd_divest <- [process, period];
+table data IN 'CSV' 'solve_data/nd_divest.csv' : nd_divest <- [node, period];
+table data IN 'CSV' 'solve_data/gd_invest.csv' : gd_invest <- [group, period];
+table data IN 'CSV' 'solve_data/gd_invest_period.csv' : gd_invest_period <- [group, period];
+table data IN 'CSV' 'solve_data/gd_divest.csv' : gd_divest <- [group, period];
+table data IN 'CSV' 'solve_data/gd_divest_period.csv' : gd_divest_period <- [group, period];
 set g_divest_total;       # Migrated to Python (preprocessing/invest_total_sets.py).
 set g_invest_cumulative;  # Migrated to Python (preprocessing/invest_total_sets.py).
 table data IN 'CSV' 'solve_data/e_invest_total.csv' : e_invest_total <- [entity];
