@@ -64,6 +64,7 @@ def run(state: RunnerState, solve_name: str) -> None:
         lp_scaling_params,
         invest_divest_sets,
         per_solve_sets,
+        reserve_calc_params,
     )
     period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
     invest_method_sets.write_invest_method_sets(input_dir, solve_data_dir)
@@ -179,3 +180,6 @@ def run(state: RunnerState, solve_name: str) -> None:
     # L0 batch 42: pdtProcess — 7-branch hourly process param resolution.
     # Unblocks pdtProcess_section + pssdt_varCost_eff_* + 4 downstream sets.
     entity_period_calc_params.write_pdtProcess(input_dir, solve_data_dir)
+    # L0 batch 43: pdtReserve_upDown_group — 4-branch hourly reserve param.
+    # Unblocks process_reserve_upDown_node_active + prundt + reserve ratio sets.
+    reserve_calc_params.write_pdtReserve_upDown_group(input_dir, solve_data_dir)
