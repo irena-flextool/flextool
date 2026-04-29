@@ -56,9 +56,29 @@ class CanonicalMPS:
     bounds: tuple[tuple[str, str, str], ...]             # (col, type, value_hex)
 
 
+_SIGNIFICANT_DIGITS = 7
+
+
 def _f64_hex(value: float) -> str:
-    """Bit-exact 16-char hex of a float64."""
-    return struct.pack("<d", float(value)).hex()
+    """Hex of float64 quantized to ``_SIGNIFICANT_DIGITS`` significant digits.
+
+    Bit-exact comparison was the original semantics; the migration relaxed
+    to 7-sig-fig precision (Juha 2026-04-30) so float computations done in
+    Python preprocessing don't have to bit-match the same expression
+    evaluated by MathProg/glpsol — that's a stricter bar than LP
+    precision needs and would force re-implementing every formula's
+    operation order.
+
+    Quantization via ``f"{v:.7g}"`` rounds to 7 significant digits and
+    re-parses, producing a canonical float; two values within the
+    rounding tolerance hash identically.
+    """
+    if value == 0.0:
+        # ``-0.0`` and ``0.0`` should hash the same; ``f"{-0.0:.7g}"`` →
+        # ``-0`` which round-trips to ``-0.0`` — pin it explicitly.
+        value = 0.0
+    quantized = float(f"{value:.{_SIGNIFICANT_DIGITS}g}")
+    return struct.pack("<d", quantized).hex()
 
 
 def parse_mps(path: str | Path) -> CanonicalMPS:
