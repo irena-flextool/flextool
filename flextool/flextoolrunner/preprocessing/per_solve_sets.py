@@ -380,3 +380,37 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
             "node",
             _project_column(rows, 2),
         )
+
+    # p_online_dt — flextool.mod L2084-2087:
+    #   {p in process_online, (d, t) in dt :
+    #        exists {(p, b) in process__block : (b, d, t) in block__period__step}}
+    # process__block (process, block); block__period__step keys come from
+    # block_step_duration.csv (block, period, step). dt = (period, step) from
+    # steps_in_use.csv. We restrict to keys present in dt.
+    proc_online = frozenset(_project_column(
+        _read_csv_columns(solve_data_dir / "process_online.csv"), 0,
+    ))
+    proc_blocks: dict[str, list[str]] = {}
+    for r in _read_csv_columns(solve_data_dir / "process_block.csv"):
+        if len(r) >= 2 and r[0] and r[1]:
+            proc_blocks.setdefault(r[0], []).append(r[1])
+    block_dt: dict[str, set[tuple[str, str]]] = {}
+    for r in _read_csv_columns(solve_data_dir / "block_step_duration.csv"):
+        if len(r) >= 3 and r[0] and r[1] and r[2]:
+            block_dt.setdefault(r[0], set()).add((r[1], r[2]))
+    dt_set = frozenset(
+        (r[0], r[1])
+        for r in _read_csv_columns(solve_data_dir / "steps_in_use.csv")
+        if len(r) >= 2 and r[0] and r[1]
+    )
+    rows: list[tuple[str, str, str]] = []
+    for p in proc_online:
+        seen: set[tuple[str, str]] = set()
+        for b in proc_blocks.get(p, ()):
+            for d, t in block_dt.get(b, ()):
+                if (d, t) in dt_set and (d, t) not in seen:
+                    seen.add((d, t))
+                    rows.append((p, d, t))
+    _write_tuples(solve_data_dir / "p_online_dt_set.csv",
+                  ("process", "period", "step"),
+                  rows)

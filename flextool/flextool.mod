@@ -2079,8 +2079,8 @@ var v_state_rp_start {n in nodeState_rp, (d, t) in rp_block_first} >= 0, <= p_en
 # valid 1-to-1 without overlap aggregation.
 set p_online_dt
     'UC variable indexing: (process, period, step) at the process''s block'
-    := {p in process_online, (d, t) in dt :
-           exists {(p, b) in process__block : (b, d, t) in block__period__step} 1};
+    dimen 3;  # Migrated to Python (preprocessing/per_solve_sets.py).
+table data IN 'CSV' 'solve_data/p_online_dt_set.csv' : p_online_dt <- [process, period, step];
 var v_online_linear {(p, d, t) in p_online_dt : p in process_online_linear}
     >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
 var v_startup_linear {(p, d, t) in p_online_dt : p in process_online_linear}
