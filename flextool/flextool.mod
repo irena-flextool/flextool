@@ -1692,54 +1692,14 @@ table data IN 'CSV' 'solve_data/p_entity_existing_integer_count.csv' : [entity, 
 param p_entity_previously_invested_capacity {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/p_entity_previously_invested_capacity.csv' : [entity, period], p_entity_previously_invested_capacity~value;
 
-param p_entity_max_capacity {e in entity, d in period_in_use} :=
-  + if (e, d) in ed_invest_cumulative
-    then ed_cumulative_max_capacity[e, d]
-	else
-      + p_entity_all_existing[e, d]
-      + if (e, d) in ed_invest_period && e not in e_invest_total then ed_invest_max_period[e, d] else 0
-      + if e in e_invest_total && (e, d) not in ed_invest_period then e_invest_max_total[e] else 0
-      + if (e, d) in ed_invest_period && e in e_invest_total then max(ed_invest_max_period[e, d], e_invest_max_total[e]) else 0
-      + if (e, 'invest_no_limit') in entity__invest_method then p_unconstrained_flow_cap else 0    # Configured via model.max_flow_for_unconstrained_variables (default 1e6).
-;
+param p_entity_max_capacity {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_max_capacity.csv' : [entity, period], p_entity_max_capacity~value;
 
-param p_entity_max_units {e in entity, d in period} :=
-  + p_entity_max_capacity[e, d]
-    / p_entity_unitsize[e]
-;
+param p_entity_max_units {e in entity, d in period};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_max_units.csv' : [entity, period], p_entity_max_units~value;
 
-# Cumulative upper bound on v_invest summed over lifetime-alive tranches at
-# dispatch period d (excluding pre-existing capacity).  Sums each alive
-# tranche's own per-period cap so the bound on a dispatch variable
-# reflects capacity from tranches invested at earlier periods that are
-# still within their lifetime.  For cumulative_limits the ceiling minus
-# existing; for invest_no_limit a Big-M; for invest_total / invest_period_total
-# the looser of per-period sum and horizon total (mirrors the max()
-# convention in p_entity_max_capacity).
-param p_entity_invest_cumulative_max {e in entityInvest, d in period_in_use} :=
-  + if (e, d) in ed_invest_cumulative
-    then max(0, ed_cumulative_max_capacity[e, d] - p_entity_all_existing[e, d])
-    else if sum{(e, m) in entity__invest_method : m = 'invest_no_limit'} 1
-    then p_unconstrained_flow_cap
-    else
-      + (if (e, d) in ed_invest_period && e not in e_invest_total
-         then sum{(e, d_invest, d) in edd_invest
-                  : (e, d_invest) in ed_invest_period
-                 && (e, d_invest) not in ed_invest_forbidden_no_investment}
-                 ed_invest_max_period[e, d_invest]
-         else 0)
-      + (if e in e_invest_total && (e, d) not in ed_invest_period
-         then e_invest_max_total[e]
-         else 0)
-      + (if (e, d) in ed_invest_period && e in e_invest_total
-         then max(
-                sum{(e, d_invest, d) in edd_invest
-                    : (e, d_invest) in ed_invest_period
-                   && (e, d_invest) not in ed_invest_forbidden_no_investment}
-                  ed_invest_max_period[e, d_invest],
-                e_invest_max_total[e])
-         else 0)
-;
+param p_entity_invest_cumulative_max {e in entityInvest, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_invest_cumulative_max.csv' : [entity, period], p_entity_invest_cumulative_max~value;
 
 # Symmetric building block for divestments: cumulative upper bound on
 # v_divest summed by dispatch period d.  Currently not consumed by the
@@ -1755,10 +1715,8 @@ table data IN 'CSV' 'solve_data/p_entity_divest_cumulative_max.csv' : [entity, p
 # v_startup_*, v_shutdown_*.  v_invest / v_divest keep their own per-
 # invest-period scalar UB on p_entity_max_units — that is the correct
 # per-tranche cap for those decision variables.
-param p_entity_dispatch_capacity_max {e in entity, d in period_in_use} :=
-  + p_entity_all_existing[e, d]
-  + (if e in entityInvest then p_entity_invest_cumulative_max[e, d] else 0)
-;
+param p_entity_dispatch_capacity_max {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_dispatch_capacity_max.csv' : [entity, period], p_entity_dispatch_capacity_max~value;
 
 set process_source_coeff_zero dimen 2;  # Migrated to Python (preprocessing/structural_filters.py).
 set process_sink_coeff_zero dimen 2;    # Migrated to Python (preprocessing/structural_filters.py).
@@ -4612,15 +4570,18 @@ for {s in solve_current, d in d_realize_dispatch_or_invest} {
     printf "\n%s,%s,%.8g", s, d, p_years_represented_d[d] >> "solve_data/p_years_represented_d.csv";
 }
 
-# Write p_entity_max_units
+# Write p_entity_max_units (post-solve realized values, wide format).
+# Mod's input now reads solve_data/p_entity_max_units.csv (long) written by
+# Python preprocessing, so this output goes to solve__p_entity_max_units.csv
+# (read_parameters.py:61 reads here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/p_entity_max_units.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/p_entity_max_units.csv";}
+  printf "solve,period" > "solve_data/solve__p_entity_max_units.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__p_entity_max_units.csv";}
 }
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/p_entity_max_units.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__p_entity_max_units.csv";
     for {e in entity} {
-        printf ",%.8g", p_entity_max_units[e, d] >> "solve_data/p_entity_max_units.csv";
+        printf ",%.8g", p_entity_max_units[e, d] >> "solve_data/solve__p_entity_max_units.csv";
     }
 }
 

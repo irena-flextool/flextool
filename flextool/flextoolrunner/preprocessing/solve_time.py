@@ -249,3 +249,10 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_p_entity_existing_chain(
         input_dir, solve_data_dir
     )
+    # L9/L10 batch 60: capacity max chain (4 params).
+    # p_entity_max_capacity, p_entity_max_units, p_entity_invest_cumulative_max,
+    # p_entity_dispatch_capacity_max — all depend on p_entity_all_existing
+    # (batch 59). Path-collision: p_entity_max_units.csv retargeted.
+    entity_period_calc_params.write_p_entity_capacity_max_chain(
+        input_dir, solve_data_dir
+    )
