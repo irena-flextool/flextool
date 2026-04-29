@@ -760,6 +760,62 @@ def write_process_source_sink_param_with_time(
                ("process", "source", "sink", "param"), rows)
 
 
+def write_process_method_sources_sinks(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1046-1053 — 3-way join across process_source_sink_alwaysProcess,
+    process_source_sink, and process_method, filtered by per-side source/sink
+    aliasing (alias to the orig leg or to p itself, but not both = p).
+
+        setof { (p, always_src, always_snk) in process_source_sink_alwaysProcess,
+                (p, orig_src,   orig_snk)   in process_source_sink,
+                (p, m)                       in process_method
+              : (always_src == orig_src OR always_src == p)
+                AND (always_snk == orig_snk OR always_snk == p)
+                AND NOT (always_src == p AND always_snk == p) }
+            (p, m, orig_src, orig_snk, always_src, always_snk)
+
+    Output column order matches mod's setof projection.
+    """
+    always = _read_n_col(solve_data_dir / "process_source_sink_alwaysProcess.csv", 3)
+    pss = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+    pm = _read_pairs(input_dir / "process_method.csv")
+
+    # Group rows of each input by process for O(N + M + K) join.
+    always_for_p: dict[str, list[tuple[str, str]]] = {}
+    for p, asrc, asnk in always:
+        always_for_p.setdefault(p, []).append((asrc, asnk))
+    pss_for_p: dict[str, list[tuple[str, str]]] = {}
+    for p, osrc, osnk in pss:
+        pss_for_p.setdefault(p, []).append((osrc, osnk))
+    methods_for_p: dict[str, list[str]] = {}
+    for p, m in pm:
+        methods_for_p.setdefault(p, []).append(m)
+
+    seen: dict[tuple[str, str, str, str, str, str], None] = {}
+    for p, alist in always_for_p.items():
+        olist = pss_for_p.get(p, ())
+        mlist = methods_for_p.get(p, ())
+        if not olist or not mlist:
+            continue
+        for asrc, asnk in alist:
+            if asrc == p and asnk == p:
+                continue
+            for osrc, osnk in olist:
+                if not (asrc == osrc or asrc == p):
+                    continue
+                if not (asnk == osnk or asnk == p):
+                    continue
+                for m in mlist:
+                    seen.setdefault((p, m, osrc, osnk, asrc, asnk), None)
+    _write_csv(
+        solve_data_dir / "process_method_sources_sinks.csv",
+        ("process", "method", "orig_source", "orig_sink",
+         "always_source", "always_sink"),
+        list(seen.keys()),
+    )
+
+
 def write_ed_history_realized_first(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
