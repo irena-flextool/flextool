@@ -147,3 +147,6 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_process_source_sink_delayed_partition(input_dir, solve_data_dir)
     # L4 batch 29: process__source__sinkIsNode + 3 method-bucket partitions.
     process_arc_unions.write_process_source_sink_is_node_family(input_dir, solve_data_dir)
+    # L4 batch 30: process_source_sink_ramp_limit_*/cost (5 sets — ramp method
+    # gate + per-side ramp_speed gate from p_process_source/sink).
+    process_arc_unions.write_process_source_sink_ramp_family(input_dir, solve_data_dir)
