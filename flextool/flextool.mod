@@ -1173,23 +1173,8 @@ table data IN 'CSV' 'solve_data/node__TimeParam_in_use.csv' : node__TimeParam_in
 param pdNode {(n, param) in node__PeriodParam_in_use, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdNode.csv' : [node, param, period], pdNode~value;
 
-param pdtNode {(n, param) in node__TimeParam_in_use, (d, t) in dt} :=
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, param, tb, ts, t) in node__param__branch__time} 1
-           && exists{(g,n) in group_node: g in groupStochastic} 1
-             then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_node[n, param, tb, ts, t]
-        else if exists{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, param, tb, ts, t) in node__param__branch__time} 1
-             then sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node[n, param, tb, ts, t]
-        else if (n, param, t) in node__param__time
-		     then pt_node[n, param, t]
-        else if (n, param, d) in node__param__period
-		     then pd_node[n, param, d]
-		else if (n, param) in node__param
-		     then p_node[n, param]
-        else if param in nodeParam_def1
-             then 1
-        else if ('node',param) in class_paramName_default
-            then default_value['node', param]
-        else 0;
+param pdtNode {(n, param) in node__TimeParam_in_use, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtNode.csv' : [node, param, period, time], pdtNode~value;
 
 param ptNode_inflow {n in node, t in time};  # Migrated to Python.
 table data IN 'CSV' 'solve_data/ptNode_inflow.csv' : [node, time], ptNode_inflow~value;

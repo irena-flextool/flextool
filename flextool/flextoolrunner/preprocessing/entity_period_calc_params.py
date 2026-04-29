@@ -27,6 +27,8 @@ from flextool.flextoolrunner.preprocessing.pd_lookups import (
     PdtLookup,
     PdtLookupPerSide,
     PROCESS_PARAM_DEF1,
+    NODE_PARAM_DEF1,
+    read_class_defaults,
 )
 
 
@@ -518,6 +520,45 @@ def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
             for (d, t) in dt:
                 v = lookup.get(p, param, d, t)
                 fh.write(f"{p},{param},{d},{t},{repr(v)}\n")
+
+
+def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1176 — pdtNode: 9-branch fallback over pbt/pt/pd/p
+    + nodeParam_def1 default-1 + class_paramName_default fallback + 0.
+
+    Differs from pdtProcess in two ways:
+      * time axis is checked BEFORE period axis (mod L1182-1185)
+      * extra ``('node', param) in class_paramName_default`` branch
+        before the final 0 fallback (input/default_values.csv)
+
+    Output: ``solve_data/pdtNode.csv`` indexed by (node, param, period, time).
+    Domain: ``node__TimeParam_in_use × dt``.
+    """
+    lookup = PdtLookup(
+        pbt_csv=input_dir / "pbt_node.csv",
+        pd_csv=input_dir / "pd_node.csv",
+        pt_csv=input_dir / "pt_node.csv",
+        p_csv=input_dir / "p_node.csv",
+        period_time_first_csv=solve_data_dir / "first_timesteps.csv",
+        solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+        group_entity_csv=solve_data_dir / "group_node.csv",
+        group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+        param_def1=NODE_PARAM_DEF1,
+        time_first_priority=True,
+        class_default_values=read_class_defaults(
+            input_dir / "default_values.csv", "node"
+        ),
+    )
+    domain = _read_pairs(solve_data_dir / "node__TimeParam_in_use.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    out_path = solve_data_dir / "pdtNode.csv"
+    with out_path.open("w") as fh:
+        fh.write("node,param,period,time,value\n")
+        for (n, param) in domain:
+            for (d, t) in dt:
+                v = lookup.get(n, param, d, t)
+                fh.write(f"{n},{param},{d},{t},{repr(v)}\n")
 
 
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
