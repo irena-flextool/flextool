@@ -561,6 +561,30 @@ def write_process_source_delayed_partition(
                ("process", "source"), undelayed_rows)
 
 
+def write_process_source_sink_coeff_zero(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1973 — process_source_sink filtered by zero
+    flow_coefficient on either side.
+
+        { (p, src, sink) in process_source_sink :
+          (p, src) in process_source_coeff_zero
+          OR (p, sink) in process_sink_coeff_zero }
+
+    Used downstream to skip flow-coefficient multiplications when the
+    coefficient is zero.
+    """
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+    src_zero = frozenset(_read_pairs(solve_data_dir / "process_source_coeff_zero.csv"))
+    sink_zero = frozenset(_read_pairs(solve_data_dir / "process_sink_coeff_zero.csv"))
+    rows = [
+        (p, src, sink) for p, src, sink in triples
+        if (p, src) in src_zero or (p, sink) in sink_zero
+    ]
+    _write_csv(solve_data_dir / "process_source_sink_coeff_zero.csv",
+               ("process", "source", "sink"), rows)
+
+
 def write_process_source_sink_ramp_family(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
