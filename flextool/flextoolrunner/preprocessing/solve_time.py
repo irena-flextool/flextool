@@ -292,3 +292,9 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_gdt_instant_flow_sets(
         input_dir, solve_data_dir
     )
+    # L0/L1 batch 65: 6 small set derivations (ed_history_realized,
+    # process__source__sink__profile__profile_method (4-way union),
+    # process_sinkIsNode_2way1var, nodeSelfDischarge,
+    # pdt_online_linear/integer). Depends on: pdtNode, pdProcess,
+    # ed_history_realized_first, process__source__sinkIsNode_2way1var.
+    process_arc_unions.write_small_set_derivations(input_dir, solve_data_dir)
