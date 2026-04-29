@@ -1201,11 +1201,8 @@ set process__source__sink__ramp_method :=
 		|| (p, sink, m) in process_node_ramp_method
 	};
 
-set node__PeriodParam_in_use :=
-  { n in node, param in nodePeriodParam:
-    param in nodePeriodParamRequired
-    || ((n in entityInvest || n in entityDivest) && param in nodePeriodParamInvest)
-  };
+set node__PeriodParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/node__PeriodParam_in_use.csv' : node__PeriodParam_in_use <- [node, param];
 
 set node__TimeParam_in_use :=
   { n in node, param in nodeTimeParam:
@@ -1246,18 +1243,10 @@ param ptNode_inflow {n in node, t in time} :=
 		  else p_node[n, 'inflow'];
 set nodeSelfDischarge :=  {n in nodeState : exists{(d, t) in dt : pdtNode[n, 'self_discharge_loss', d, t]} 1};
 
-set process__PeriodParam_in_use :=
-  { p in process, param in processPeriodParam:
-    param in processPeriodParamRequired
-    || ((p in entityInvest || p in entityDivest) && param in processPeriodParamInvest)
-    || (p in process_online && param == 'startup_cost')
-  };
-
-set process_TimeParam_in_use :=
-  { p in process, param in processTimeParam:
-    param in processTimeParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
+set process__PeriodParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_TimeParam_in_use dimen 2;     # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__PeriodParam_in_use.csv' : process__PeriodParam_in_use <- [process, param];
+table data IN 'CSV' 'solve_data/process_TimeParam_in_use.csv' : process_TimeParam_in_use <- [process, param];
 
 param pdProcess {(p, param) in process__PeriodParam_in_use, d in period_with_history} :=
      + if (p, param, d) in process__param__period
@@ -1323,27 +1312,14 @@ param pProcess_source_sink {(p, source, sink, param) in process__source__sink__p
 		  then p_process_sink[p, sink, param]
 		  else 0;
 
-set process_source_sourceSinkTimeParam_in_use :=
-  {(p, source) in process_source, param in sourceSinkTimeParam:
-    param in sourceSinkTimeParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
-set process_sink_sourceSinkTimeParam_in_use :=
-  { (p, sink) in process_sink, param in sourceSinkTimeParam:
-    param in sourceSinkTimeParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
-
-set process_source_sourceSinkPeriodParam_in_use :=
-  {(p, source) in process_source, param in sourceSinkPeriodParam:
-    param in sourceSinkPeriodParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
-set process_sink_sourceSinkPeriodParam_in_use :=
-  { (p, sink) in process_sink, param in sourceSinkPeriodParam:
-    param in sourceSinkPeriodParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
+set process_source_sourceSinkTimeParam_in_use dimen 3;  # Migrated to Python.
+set process_sink_sourceSinkTimeParam_in_use dimen 3;    # Migrated to Python.
+set process_source_sourceSinkPeriodParam_in_use dimen 3;  # Migrated to Python.
+set process_sink_sourceSinkPeriodParam_in_use dimen 3;    # Migrated to Python.
+table data IN 'CSV' 'solve_data/process_source_sourceSinkTimeParam_in_use.csv' : process_source_sourceSinkTimeParam_in_use <- [process, source, param];
+table data IN 'CSV' 'solve_data/process_sink_sourceSinkTimeParam_in_use.csv' : process_sink_sourceSinkTimeParam_in_use <- [process, sink, param];
+table data IN 'CSV' 'solve_data/process_source_sourceSinkPeriodParam_in_use.csv' : process_source_sourceSinkPeriodParam_in_use <- [process, source, param];
+table data IN 'CSV' 'solve_data/process_sink_sourceSinkPeriodParam_in_use.csv' : process_sink_sourceSinkPeriodParam_in_use <- [process, sink, param];
 
 param pdtProcess_source {(p, source, param) in process_source_sourceSinkTimeParam_in_use, (d, t) in dt} :=  # : sum{d in period : (d, t) in dt} 1
       + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
