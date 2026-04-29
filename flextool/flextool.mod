@@ -1189,19 +1189,8 @@ param pdProcess {(p, param) in process__PeriodParam_in_use, d in period_with_his
 table data IN 'CSV' 'solve_data/pdProcess.csv' : [process, param, period], pdProcess~value;
 param pdtProcess {(p, param) in process_TimeParam_in_use, (d,t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdtProcess.csv' : [process, param, period, time], pdtProcess~value;
-param pdtProfile {p in profile, (d,t) in dt} :=
-      + if (exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, tb, ts, t) in profile__branch__time} 1
-      && ((exists{(pc, p, m) in process__profile__profile_method, (g, pc) in group_process: g in groupStochastic} 1 )
-      || (exists{(n, p, m) in node__profile__profile_method, (g,n) in group_node: g in groupStochastic} 1)
-      || (exists{(pc, n, p, m) in process__node__profile__profile_method, (g,pc) in group_process: g in groupStochastic} 1)))
-      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_profile[p, tb, ts, t]
-      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, tb, ts, t) in profile__branch__time} 1
-      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_profile[p, tb, ts, t]
-      else if (p, t) in profile_param__time
-		  then pt_profile[p, t]
-		  else if (p) in profile_param
-		  then p_profile[p]
-		  else 0;
+param pdtProfile {p in profile, (d,t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtProfile.csv' : [profile, period, time], pdtProfile~value;
 
 param p_entity_unitsize {e in entity};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/p_entity_unitsize.csv' : [entity], p_entity_unitsize~value;
@@ -4615,15 +4604,18 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     }
 }
 
-# Write pdtProfile
+# Write pdtProfile (post-solve realized values, wide format).
+# Mod's input now reads solve_data/pdtProfile.csv (long) written by Python
+# preprocessing, so this output goes to solve__pdtProfile.csv to avoid
+# the dual-writer collision (read_parameters.py:58 reads here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/pdtProfile.csv";
-  for {f in profile} {printf ",%s", f >> "solve_data/pdtProfile.csv";}
+  printf "solve,period,time" > "solve_data/solve__pdtProfile.csv";
+  for {f in profile} {printf ",%s", f >> "solve_data/solve__pdtProfile.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/pdtProfile.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__pdtProfile.csv";
     for {f in profile} {
-        printf ",%.8g", pdtProfile[f, d, t] >> "solve_data/pdtProfile.csv";
+        printf ",%.8g", pdtProfile[f, d, t] >> "solve_data/solve__pdtProfile.csv";
     }
 }
 

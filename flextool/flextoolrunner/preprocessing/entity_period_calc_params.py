@@ -760,6 +760,189 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
                 fh.write(f"{n},{d},{t},{repr(value)}\n")
 
 
+def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1192 — pdtProfile: 5-branch fallback over pbt/pt/p/0
+    with a 3-way UNION stochastic gate.
+
+    Domain: {p in profile, (d, t) in dt}.
+
+    Branch 1 (stochastic): fires when profile p is referenced by ANY of
+      * process__profile__profile_method via stochastic group_process
+      * node__profile__profile_method via stochastic group_node
+      * process__node__profile__profile_method via stochastic group_process
+    AND pbt_profile has matching rows for the outer (d, t).
+
+    Branch 2 (parent-period): fold pbt_profile rows for parent periods of d.
+    Branches 3-5: pt_profile / p_profile / 0.
+    """
+    profiles = _read_singles(input_dir / "profile.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    # ---- pbt / pt / p loaders ------------------------------------------
+    pbt_profile: dict[tuple[str, str, str, str], float] = {}
+    pbt_path = input_dir / "pbt_profile.csv"
+    if pbt_path.exists():
+        with pbt_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 5 and row[0] and row[1] and row[2] and row[3]:
+                    try:
+                        pbt_profile[(row[0], row[1], row[2], row[3])] = float(row[4])
+                    except ValueError:
+                        continue
+    pt_profile: dict[tuple[str, str], float] = {}
+    pt_path = solve_data_dir / "pt_profile.csv"
+    if pt_path.exists():
+        with pt_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        pt_profile[(row[0], row[1])] = float(row[2])
+                    except ValueError:
+                        continue
+    p_profile: dict[str, float] = {}
+    p_path = input_dir / "p_profile.csv"
+    if p_path.exists():
+        with p_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0]:
+                    try:
+                        p_profile[row[0]] = float(row[1])
+                    except ValueError:
+                        continue
+
+    # ---- branch indices (same shape as PdtLookup) ----------------------
+    ts_for_d: dict[str, list[str]] = {}
+    fts_path = solve_data_dir / "first_timesteps.csv"
+    if fts_path.exists():
+        with fts_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    ts_for_d.setdefault(row[0], []).append(row[1])
+    tb_for_d: dict[str, list[str]] = {}
+    sb_path = solve_data_dir / "solve_branch__time_branch.csv"
+    if sb_path.exists():
+        with sb_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    tb_for_d.setdefault(row[0], []).append(row[1])
+    pe_for_d: dict[str, list[str]] = {}
+    pb_path = solve_data_dir / "period__branch.csv"
+    if pb_path.exists():
+        with pb_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    pe_for_d.setdefault(row[1], []).append(row[0])
+
+    # ---- stochastic UNION gate per profile -----------------------------
+    groups_stoch = frozenset(_read_singles(input_dir / "groupIncludeStochastics.csv"))
+    # group_process[g] / group_node[g] members
+    stoch_processes: set[str] = set()
+    gp_path = solve_data_dir / "group_process.csv"
+    if gp_path.exists():
+        with gp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] in groups_stoch and row[1]:
+                    stoch_processes.add(row[1])
+    stoch_nodes: set[str] = set()
+    gn_path = solve_data_dir / "group_node.csv"
+    if gn_path.exists():
+        with gn_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] in groups_stoch and row[1]:
+                    stoch_nodes.add(row[1])
+    stoch_profile: set[str] = set()
+    # process__profile__profile_method[p_class, profile, method] — fires
+    # when the process is stochastic.
+    pp_path = input_dir / "process__profile__profile_method.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] in stoch_processes and row[1]:
+                    stoch_profile.add(row[1])
+    np_path = input_dir / "node__profile__profile_method.csv"
+    if np_path.exists():
+        with np_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] in stoch_nodes and row[1]:
+                    stoch_profile.add(row[1])
+    pnp_path = input_dir / "process__node__profile__profile_method.csv"
+    if pnp_path.exists():
+        with pnp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] in stoch_processes and row[2]:
+                    stoch_profile.add(row[2])
+
+    out_path = solve_data_dir / "pdtProfile.csv"
+    with out_path.open("w") as fh:
+        fh.write("profile,period,time,value\n")
+        for p in profiles:
+            is_stoch = p in stoch_profile
+            for (d, t) in dt:
+                # Branch 1: stochastic + outer-d's ts and tb
+                if is_stoch:
+                    total = 0.0
+                    hit = False
+                    for tb in tb_for_d.get(d, ()):
+                        for ts in ts_for_d.get(d, ()):
+                            v = pbt_profile.get((p, tb, ts, t))
+                            if v is not None:
+                                total += v
+                                hit = True
+                    if hit:
+                        fh.write(f"{p},{d},{t},{repr(total)}\n")
+                        continue
+                # Branch 2: parent-period fold-in
+                pe_list = pe_for_d.get(d, ())
+                ts_list = ts_for_d.get(d, ())
+                if pe_list and ts_list:
+                    total = 0.0
+                    hit = False
+                    for pe in pe_list:
+                        for tb in tb_for_d.get(pe, ()):
+                            for ts in ts_list:
+                                v = pbt_profile.get((p, tb, ts, t))
+                                if v is not None:
+                                    total += v
+                                    hit = True
+                    if hit:
+                        fh.write(f"{p},{d},{t},{repr(total)}\n")
+                        continue
+                # Branch 3: time axis
+                v = pt_profile.get((p, t))
+                if v is not None:
+                    fh.write(f"{p},{d},{t},{repr(v)}\n")
+                    continue
+                # Branch 4: scalar
+                v = p_profile.get(p)
+                if v is not None:
+                    fh.write(f"{p},{d},{t},{repr(v)}\n")
+                    continue
+                # Branch 5: 0
+                fh.write(f"{p},{d},{t},0.0\n")
+
+
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
     if not path.exists():
         return []

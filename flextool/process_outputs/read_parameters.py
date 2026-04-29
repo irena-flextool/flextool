@@ -55,7 +55,7 @@ def read_parameters(output_dir):
     p.commodity_price = pd.read_csv(solve_data_path / 'pdtCommodity_price.csv', index_col=[0, 1, 2]).astype(float)
     p.group_co2_price = pd.read_csv(solve_data_path / 'pdtGroup_co2_price.csv', index_col=[0, 1, 2]).astype(float)
     p.reserve_upDown_group_reservation = pd.read_csv(solve_data_path / 'pdtReserve_upDown_group_reservation.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
-    p.profile = pd.read_csv(solve_data_path / 'pdtProfile.csv', index_col=[0, 1, 2]).astype(float)
+    p.profile = pd.read_csv(solve_data_path / 'solve__pdtProfile.csv', index_col=[0, 1, 2]).astype(float)
     p.years_from_start_d = pd.read_csv(solve_data_path / 'p_years_from_start_d.csv', index_col=[0, 1])['value'].astype(float)
     p.years_represented_d = pd.read_csv(solve_data_path / 'p_years_represented_d.csv', index_col=[0, 1])['value'].astype(float)
     p.entity_max_units = pd.read_csv(solve_data_path / 'p_entity_max_units.csv', index_col=[0, 1]).astype(float)
