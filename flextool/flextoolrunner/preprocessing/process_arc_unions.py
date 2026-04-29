@@ -760,6 +760,56 @@ def write_process_source_sink_param_with_time(
                ("process", "source", "sink", "param"), rows)
 
 
+def write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1152-1155 — process_source_sink filtered for 1way
+    processes whose source is a node, with no sink OR multiple sources.
+
+        { (p, src, sink) in process_source_sink :
+          p has any method in METHOD_1WAY
+          AND (p, src) in process_source
+          AND (no sinks for p  OR  >= 2 sources for p) }
+
+    process_method ← input/process_method.csv (canonical; mod L1003).
+    process_source / process_sink ← input/process__source.csv /
+        input/process__sink.csv (canonical; mod L686-687).
+    """
+    from flextool.flextoolrunner.preprocessing._method_constants import (
+        METHOD_1WAY,
+    )
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+    pm = _read_pairs(input_dir / "process_method.csv")
+    methods_of_p: dict[str, set[str]] = {}
+    for p, m in pm:
+        methods_of_p.setdefault(p, set()).add(m)
+    has_1way = {
+        p: bool(ms & METHOD_1WAY) for p, ms in methods_of_p.items()
+    }
+    proc_source_pairs = frozenset(_read_pairs(input_dir / "process__source.csv"))
+    sources_of_p: dict[str, int] = {}
+    for p, _ in proc_source_pairs:
+        sources_of_p[p] = sources_of_p.get(p, 0) + 1
+    sinks_of_p: dict[str, int] = {}
+    for p, _ in _read_pairs(input_dir / "process__sink.csv"):
+        sinks_of_p[p] = sinks_of_p.get(p, 0) + 1
+
+    rows: list[tuple[str, str, str]] = []
+    for p, src, sink in triples:
+        if not has_1way.get(p, False):
+            continue
+        if (p, src) not in proc_source_pairs:
+            continue
+        # no sinks OR >= 2 sources
+        if sinks_of_p.get(p, 0) == 0 or sources_of_p.get(p, 0) >= 2:
+            rows.append((p, src, sink))
+    _write_csv(
+        solve_data_dir / "process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.csv",
+        ("process", "source", "sink"),
+        rows,
+    )
+
+
 def write_node_group_dispatch_process_fully_inside(
     input_dir: Path, solve_data_dir: Path
 ) -> None:

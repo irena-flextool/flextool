@@ -164,3 +164,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_process_source_sink_param_with_time(input_dir, solve_data_dir)
     # L4 batch 36: process__source__sink__profile__profile_method_connection.
     process_arc_unions.write_process_source_sink_profile_method_connection(input_dir, solve_data_dir)
+    # L4 batch 37: process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.
+    process_arc_unions.write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(input_dir, solve_data_dir)
