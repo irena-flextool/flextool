@@ -1943,6 +1943,10 @@ def write_input(
         # L1 batch 10: invest/divest *_total filters + cumulative ladder index.
         invest_total_sets.write_invest_total_sets(input_dir, solve_data_dir)
         invest_total_sets.write_ci_ladder_cumulative(input_dir, solve_data_dir)
+        # L1 batch 11: process arc unions + co2/group set.
+        from flextool.flextoolrunner.preprocessing import process_arc_unions
+        process_arc_unions.write_process_arc_unions(input_dir, solve_data_dir)
+        process_arc_unions.write_group_commodity_node_period_co2_total(input_dir, solve_data_dir)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}
