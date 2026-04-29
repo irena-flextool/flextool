@@ -1917,21 +1917,8 @@ param p_entity_invest_cumulative_max {e in entityInvest, d in period_in_use} :=
 # dispatch UBs below (those take the max-alive case = zero optional
 # divest); kept for parity and for future tightening via forced-divest
 # floors.
-param p_entity_divest_cumulative_max {e in entityDivest, d in period_in_use} :=
-  + (if e not in e_divest_total
-     then sum{(e, d_divest) in ed_divest_period : p_years_d[d_divest] <= p_years_d[d]}
-              ed_divest_max_period[e, d_divest]
-     else 0)
-  + (if e in e_divest_total && sum{(e, d2) in ed_divest_period} 1 = 0
-     then e_divest_max_total[e]
-     else 0)
-  + (if e in e_divest_total && sum{(e, d2) in ed_divest_period} 1 > 0
-     then max(
-            sum{(e, d_divest) in ed_divest_period : p_years_d[d_divest] <= p_years_d[d]}
-              ed_divest_max_period[e, d_divest],
-            e_divest_max_total[e])
-     else 0)
-;
+param p_entity_divest_cumulative_max {e in entityDivest, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_divest_cumulative_max.csv' : [entity, period], p_entity_divest_cumulative_max~value;
 
 # Upper bound on alive capacity at dispatch period d (existing + cumulative
 # invest ceiling).  Drives dispatch variable UBs: v_flow (via p_flow_max /

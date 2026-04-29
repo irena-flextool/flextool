@@ -166,3 +166,6 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_process_source_sink_profile_method_connection(input_dir, solve_data_dir)
     # L4 batch 37: process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.
     process_arc_unions.write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(input_dir, solve_data_dir)
+    # L4 batch 38: p_entity_divest_cumulative_max — depends on
+    # ed_divest_period (batch 19) and ed_divest_max_period (batch 20).
+    entity_period_calc_params.write_p_entity_divest_cumulative_max(input_dir, solve_data_dir)
