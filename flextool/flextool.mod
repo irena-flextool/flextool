@@ -1098,35 +1098,17 @@ param p_process_delay_weight {(p, td) in process_delayed__duration} :=
     then 1
     else p_process_delay_weighted[p, td];
 
-param pdCommodity {c in commodity, param in commodityPeriodParam, d in period_in_use} :=
-        + if (c, param, d) in commodity__param__period
-		  then pd_commodity[c, param, d]
-		  else if exists{(c, param, db) in commodity__param__period: (db, d) in period__branch} 1
-      then sum{(db, d) in period__branch} pd_commodity[c, param, db]
-      else p_commodity[c, param];
+param pdCommodity {c in commodity, param in commodityPeriodParam, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdCommodity.csv' : [commodity, param, period], pdCommodity~value;
 
 param pdtCommodity {c in commodity, param in commodityTimeParam, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdtCommodity.csv' : [commodity, param, period, time], pdtCommodity~value;
 
-param pdGroup {g in group, param in groupPeriodParam, d in period_in_use} :=
-        + if (g, param, d) in group__param__period
-		  then pd_group[g, param, d]
-      else if exists{(g, param, db) in group__param__period : (db,d) in period__branch} 1
-      then sum{(db, d) in period__branch} pd_group[g, param, db]
-		  else if (g, param) in group__param
-      then p_group[g, param]
-      else if param == 'penalty_inertia' || param == 'penalty_capacity_margin' || param == 'penalty_non_synchronous'
-      then 5000
-		  else 0;
+param pdGroup {g in group, param in groupPeriodParam, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdGroup.csv' : [group, param, period], pdGroup~value;
 
-param pdtGroup {g in group, param in groupTimeParam, (d, t) in dt} :=
-        + if (g, param, t) in group__param__time
-		     then pt_group[g, param, t]
-        else if (g, param, d) in group__param__period
-		     then pd_group[g, param, d]
-	      else if (g, param) in group__param
-		     then p_group[g, param]
-        else 0;
+param pdtGroup {g in group, param in groupTimeParam, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtGroup.csv' : [group, param, period, time], pdtGroup~value;
 
 # Reserve method partitions migrated to Python (preprocessing/reserve_method_partitions.py).
 set reserve__upDown__group__method_timeseries dimen 4;
