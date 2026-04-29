@@ -199,3 +199,9 @@ def run(state: RunnerState, solve_name: str) -> None:
     )
     # L2/L5 batch 48: pssdt_varCost_eff_*/noEff (4 filter sets).
     entity_period_calc_params.write_pssdt_varCost_filters(input_dir, solve_data_dir)
+    # L0/L2 batch 49: p_process_reserve_upDown_node_reliability + 2 ratio
+    # filter sets + process_large_failure projection. Reads
+    # process_reserve_upDown_node_active (batch 44) and p_process_reserve_upDown_node.
+    reserve_calc_params.write_process_reserve_filters_and_reliability(
+        input_dir, solve_data_dir
+    )
