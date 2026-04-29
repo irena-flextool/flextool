@@ -129,3 +129,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     # L2 batch 20: ed_*_period / ed_cumulative_* family (depends on
     # ed_invest / ed_divest written by batch 19 above).
     entity_period_calc_params.write_ed_period_params(input_dir, solve_data_dir)
+    # L2 batch 21: process_source partitioned by process_delayed.
+    process_arc_unions.write_process_source_delayed_partition(input_dir, solve_data_dir)
