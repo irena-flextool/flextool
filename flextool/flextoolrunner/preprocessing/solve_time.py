@@ -171,3 +171,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_p_entity_divest_cumulative_max(input_dir, solve_data_dir)
     # L4 batch 39: ed_history_realized_first (gated on p_model['solveFirst']).
     process_arc_unions.write_ed_history_realized_first(input_dir, solve_data_dir)
+    # L4 batch 40: process_method_sources_sinks (3-way join, 6-tuple output).
+    process_arc_unions.write_process_method_sources_sinks(input_dir, solve_data_dir)

@@ -1044,14 +1044,8 @@ set process_source_sink_alwaysProcess dimen 3;  # Migrated to Python (preprocess
 table data IN 'CSV' 'solve_data/process_source_sink.csv' : process_source_sink <- [process, source, sink];
 table data IN 'CSV' 'solve_data/process_source_sink_alwaysProcess.csv' : process_source_sink_alwaysProcess <- [process, source, sink];
 
-set process_method_sources_sinks :=
-    setof {(p, always_src, always_snk) in process_source_sink_alwaysProcess,
-           (p, orig_src, orig_snk) in process_source_sink,
-           (p, m) in process_method
-           : (always_src = orig_src || always_src = p)
-             && (always_snk = orig_snk || always_snk = p)
-             && not (always_src = p && always_snk = p)}
-        (p, m, orig_src, orig_snk, always_src, always_snk);
+set process_method_sources_sinks dimen 6;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_method_sources_sinks.csv' : process_method_sources_sinks <- [process, method, orig_source, orig_sink, always_source, always_sink];
 
 set process_source_sink_noEff dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
 set process_source_sink_eff dimen 3;    # Migrated to Python (preprocessing/process_arc_unions.py).
