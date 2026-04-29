@@ -1147,10 +1147,8 @@ table data IN 'CSV' 'solve_data/reserve__upDown__group__method_n_1.csv' : reserv
 set process__method_indirect dimen 2;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process__method_indirect.csv' : process__method_indirect <- [process, method];
 
-set process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source := {(p, source, sink) in process_source_sink
-										   : sum{(p,m) in process_method : m in method_1way} 1
-										   && (p, source) in process_source
-										   && ( sum{(p, sink2) in process_sink} 1 = 0 || ( sum{(p, source2) in process_source} 1 >= 2) )};
+set process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.csv' : process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source <- [process, source, sink];
 set process__source__sinkIsNode_not2way1var dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
 set process__source__sinkIsNode_2way1var    dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process__source__sinkIsNode_not2way1var.csv' : process__source__sinkIsNode_not2way1var <- [process, source, sink];
