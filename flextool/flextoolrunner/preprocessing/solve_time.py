@@ -192,3 +192,8 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_pdtProcess_source(input_dir, solve_data_dir)
     # L0 batch 46: pdtProcess_sink — 6-branch hourly per-sink param.
     entity_period_calc_params.write_pdtProcess_sink(input_dir, solve_data_dir)
+    # L4 batch 47: pdtProcess__source__sink__dt_varCost{,_alwaysProcess} —
+    # depend on pdtProcess + pdtProcess_source + pdtProcess_sink.
+    entity_period_calc_params.write_pdtProcess__source__sink__dt_varCost_pair(
+        input_dir, solve_data_dir
+    )

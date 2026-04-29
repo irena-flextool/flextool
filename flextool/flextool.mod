@@ -1490,24 +1490,11 @@ param pdtProcess_slope{p in process, (d, t) in dt} :=
         + pdtConversion_rate[p, d, t]
 		- (if p in process_minload then pdtProcess_section[p, d, t] else 0);
 
-param pdtProcess__source__sink__dt_varCost {(p, source, sink) in process_source_sink, (d, t) in dt} :=
-  + (if (p, source) in process_source then pdtProcess_source[p, source, 'other_operational_cost', d, t])
-  + (if (p, sink) in process_sink then pdtProcess_sink[p, sink, 'other_operational_cost', d, t])
-  + (if (p, source, sink) in process_source_sink then
-      ( if pdtProcess[p, 'other_operational_cost', d, t] then pdtProcess[p, 'other_operational_cost', d, t]
-	  )
-	)
-;
+param pdtProcess__source__sink__dt_varCost {(p, source, sink) in process_source_sink, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtProcess__source__sink__dt_varCost.csv' : [process, source, sink, period, time], pdtProcess__source__sink__dt_varCost~value;
 
-param pdtProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
-  + (if (p, source) in process_source then pdtProcess_source[p, source, 'other_operational_cost', d, t])
-  + (if (p, sink) in process_sink then pdtProcess_sink[p, sink, 'other_operational_cost', d, t])
-  + (if (p, source, sink) in process_source_sink_alwaysProcess
-        && ((p, sink) in process_sink || (p, sink) in process_source)
-	 then ( if pdtProcess[p, 'other_operational_cost', d, t] then pdtProcess[p, 'other_operational_cost', d, t]
-	      )
-    )
-;
+param pdtProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtProcess__source__sink__dt_varCost_alwaysProcess.csv' : [process, source, sink, period, time], pdtProcess__source__sink__dt_varCost_alwaysProcess~value;
 set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : pdtProcess__source__sink__dt_varCost[p, source, sink, d, t]};
 set pssdt_varCost_eff_unit_source := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && pdtProcess_source[p, source, 'other_operational_cost', d, t]};
 set pssdt_varCost_eff_unit_sink := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && pdtProcess_sink[p, sink, 'other_operational_cost', d, t]};

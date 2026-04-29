@@ -586,3 +586,84 @@ def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
                 v = lookup.get(p, snk, param, d, t)
                 fh.write(f"{p},{snk},{param},{d},{t},{repr(v)}\n")
 
+
+def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
+                       key_cols: tuple[int, ...], val_col: int) -> dict[tuple, float]:
+    """Read a long-format pdtX CSV, filter rows where col[param_col] == param_value,
+    return dict[tuple(row[c] for c in key_cols)] = float(row[val_col]).
+    """
+    out: dict[tuple, float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) > max(param_col, val_col, *key_cols) and row[param_col] == param_value:
+                try:
+                    out[tuple(row[c] for c in key_cols)] = float(row[val_col])
+                except ValueError:
+                    continue
+    return out
+
+
+def write_pdtProcess__source__sink__dt_varCost_pair(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1493, L1502 — two `varCost` calc params keyed on
+    process_source_sink and process_source_sink_alwaysProcess.
+
+    Both sum: per-side ``other_operational_cost`` (gated by
+    process_source / process_sink membership) plus ``pdtProcess['OOC']``.
+    The ``_alwaysProcess`` variant additionally gates the third term on
+    ``(p, sink) in process_sink || (p, sink) in process_source``.
+    """
+    pdt = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess.csv",
+        param_col=1, param_value="other_operational_cost",
+        key_cols=(0, 2, 3), val_col=4,
+    )  # (process, period, time) → value
+    pdt_src = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_source.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+    )  # (process, source, period, time) → value
+    pdt_snk = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_sink.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+    )  # (process, sink, period, time) → value
+    proc_src = frozenset(_read_pairs(input_dir / "process__source.csv"))
+    proc_snk = frozenset(_read_pairs(input_dir / "process__sink.csv"))
+    pss = _read_triples(solve_data_dir / "process_source_sink.csv")
+    pss_always = _read_triples(solve_data_dir / "process_source_sink_alwaysProcess.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    out_basic = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
+    with out_basic.open("w") as fh:
+        fh.write("process,source,sink,period,time,value\n")
+        for (p, src, snk) in pss:
+            for (d, t) in dt:
+                v = 0.0
+                if (p, src) in proc_src:
+                    v += pdt_src.get((p, src, d, t), 0.0)
+                if (p, snk) in proc_snk:
+                    v += pdt_snk.get((p, snk, d, t), 0.0)
+                v += pdt.get((p, d, t), 0.0)
+                fh.write(f"{p},{src},{snk},{d},{t},{repr(v)}\n")
+
+    out_always = solve_data_dir / "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv"
+    with out_always.open("w") as fh:
+        fh.write("process,source,sink,period,time,value\n")
+        for (p, src, snk) in pss_always:
+            for (d, t) in dt:
+                v = 0.0
+                if (p, src) in proc_src:
+                    v += pdt_src.get((p, src, d, t), 0.0)
+                if (p, snk) in proc_snk:
+                    v += pdt_snk.get((p, snk, d, t), 0.0)
+                # mod gate: ((p, sink) in process_sink || (p, sink) in process_source)
+                if (p, snk) in proc_snk or (p, snk) in proc_src:
+                    v += pdt.get((p, d, t), 0.0)
+                fh.write(f"{p},{src},{snk},{d},{t},{repr(v)}\n")
+
