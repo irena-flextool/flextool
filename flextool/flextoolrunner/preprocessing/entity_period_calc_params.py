@@ -25,6 +25,7 @@ from pathlib import Path
 from flextool.flextoolrunner.preprocessing.pd_lookups import (
     PdLookup,
     PdtLookup,
+    PdtLookupPerSide,
     PROCESS_PARAM_DEF1,
 )
 
@@ -517,4 +518,71 @@ def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
             for (d, t) in dt:
                 v = lookup.get(p, param, d, t)
                 fh.write(f"{p},{param},{d},{t},{repr(v)}\n")
+
+
+def _read_triples(path: Path) -> list[tuple[str, str, str]]:
+    if not path.exists():
+        return []
+    out: list[tuple[str, str, str]] = []
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 3 and row[0] and row[1] and row[2]:
+                out.append((row[0], row[1], row[2]))
+    return out
+
+
+def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1265 — pdtProcess_source: 6-branch fallback (no def1).
+
+    Domain: ``process_source_sourceSinkTimeParam_in_use × dt``.
+    """
+    lookup = PdtLookupPerSide(
+        pbt_csv=input_dir / "pbt_process_source.csv",
+        pd_csv=input_dir / "pd_process_source.csv",
+        pt_csv=input_dir / "pt_process_source.csv",
+        p_csv=input_dir / "p_process_source.csv",
+        period_time_first_csv=solve_data_dir / "first_timesteps.csv",
+        solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+        group_process_csv=solve_data_dir / "group_process.csv",
+        group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+    )
+    domain = _read_triples(solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    out_path = solve_data_dir / "pdtProcess_source.csv"
+    with out_path.open("w") as fh:
+        fh.write("process,source,param,period,time,value\n")
+        for (p, src, param) in domain:
+            for (d, t) in dt:
+                v = lookup.get(p, src, param, d, t)
+                fh.write(f"{p},{src},{param},{d},{t},{repr(v)}\n")
+
+
+def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1279 — pdtProcess_sink: 6-branch fallback (no def1).
+
+    Domain: ``process_sink_sourceSinkTimeParam_in_use × dt``.
+    """
+    lookup = PdtLookupPerSide(
+        pbt_csv=input_dir / "pbt_process_sink.csv",
+        pd_csv=input_dir / "pd_process_sink.csv",
+        pt_csv=input_dir / "pt_process_sink.csv",
+        p_csv=input_dir / "p_process_sink.csv",
+        period_time_first_csv=solve_data_dir / "first_timesteps.csv",
+        solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+        group_process_csv=solve_data_dir / "group_process.csv",
+        group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+    )
+    domain = _read_triples(solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    out_path = solve_data_dir / "pdtProcess_sink.csv"
+    with out_path.open("w") as fh:
+        fh.write("process,sink,param,period,time,value\n")
+        for (p, snk, param) in domain:
+            for (d, t) in dt:
+                v = lookup.get(p, snk, param, d, t)
+                fh.write(f"{p},{snk},{param},{d},{t},{repr(v)}\n")
 

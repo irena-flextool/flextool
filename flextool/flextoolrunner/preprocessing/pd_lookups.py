@@ -299,3 +299,155 @@ class PdtLookup:
 
 
 PROCESS_PARAM_DEF1 = frozenset({"efficiency", "availability"})  # flextool_base.dat L154
+
+
+def _read_pbt_3(path: Path) -> dict[tuple[str, str, str, str, str, str], float]:
+    """7-col CSV: (e1, e2, param, branch, time_start, time, value).
+
+    Used for pdtProcess_source / pdtProcess_sink whose entity key is
+    ``(process, source)`` or ``(process, sink)``.
+    """
+    out: dict[tuple[str, str, str, str, str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 7 and all(row[i] for i in range(6)):
+                try:
+                    out[(row[0], row[1], row[2], row[3], row[4], row[5])] = float(row[6])
+                except ValueError:
+                    continue
+    return out
+
+
+def _read_pd_3(path: Path) -> dict[tuple[str, str, str, str], float]:
+    """5-col CSV: (e1, e2, param, period, value)."""
+    out: dict[tuple[str, str, str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 5 and all(row[i] for i in range(4)):
+                try:
+                    out[(row[0], row[1], row[2], row[3])] = float(row[4])
+                except ValueError:
+                    continue
+    return out
+
+
+def _read_pt_3(path: Path) -> dict[tuple[str, str, str, str], float]:
+    """5-col CSV: (e1, e2, param, time, value)."""
+    out: dict[tuple[str, str, str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 5 and all(row[i] for i in range(4)):
+                try:
+                    out[(row[0], row[1], row[2], row[3])] = float(row[4])
+                except ValueError:
+                    continue
+    return out
+
+
+def _read_p_3(path: Path) -> dict[tuple[str, str, str], float]:
+    """4-col CSV: (e1, e2, param, value)."""
+    out: dict[tuple[str, str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 4 and all(row[i] for i in range(3)):
+                try:
+                    out[(row[0], row[1], row[2])] = float(row[3])
+                except ValueError:
+                    continue
+    return out
+
+
+class PdtLookupPerSide:
+    """6-branch pdt lookup for ``pdtProcess_source`` / ``pdtProcess_sink``
+    (flextool.mod L1265, L1279).
+
+    Entity key is ``(process, side)`` where ``side`` is ``source`` or
+    ``sink``. No ``processParam_def1`` branch (just ``else 0``).
+
+    Stochastic gate is the same as ``pdtProcess``: process p must belong
+    to a group flagged in groupStochastic via group_process.
+    """
+
+    def __init__(
+        self,
+        pbt_csv: Path,                # input/pbt_process_<side>.csv
+        pd_csv: Path,                 # input/pd_process_<side>.csv
+        pt_csv: Path,                 # input/pt_process_<side>.csv
+        p_csv: Path,                  # input/p_process_<side>.csv
+        period_time_first_csv: Path,
+        solve_branch_csv: Path,
+        period_branch_csv: Path,
+        group_process_csv: Path,      # solve_data/group_process.csv [group, process]
+        group_stochastic_csv: Path,
+    ) -> None:
+        self._pbt = _read_pbt_3(pbt_csv)
+        self._pd = _read_pd_3(pd_csv)
+        self._pt = _read_pt_3(pt_csv)
+        self._p = _read_p_3(p_csv)
+        self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0)
+        self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0)
+        self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1)
+        groups_stoch = frozenset(_read_singles(group_stochastic_csv))
+        self._stoch_process: set[str] = set()
+        if group_process_csv.exists():
+            with group_process_csv.open() as fh:
+                reader = csv.reader(fh)
+                next(reader, None)
+                for row in reader:
+                    if len(row) >= 2 and row[0] in groups_stoch and row[1]:
+                        self._stoch_process.add(row[1])
+
+    def get(self, p: str, side: str, param: str, d: str, t: str) -> float:
+        if p in self._stoch_process:
+            ts_list = self._ts_for_d.get(d, ())
+            tb_list = self._tb_for_d.get(d, ())
+            total = 0.0
+            hit = False
+            for tb in tb_list:
+                for ts in ts_list:
+                    v = self._pbt.get((p, side, param, tb, ts, t))
+                    if v is not None:
+                        total += v
+                        hit = True
+            if hit:
+                return total
+        ts_list = self._ts_for_d.get(d, ())
+        pe_list = self._pe_for_d.get(d, ())
+        if pe_list and ts_list:
+            total = 0.0
+            hit = False
+            for pe in pe_list:
+                for tb in self._tb_for_d.get(pe, ()):
+                    for ts in ts_list:
+                        v = self._pbt.get((p, side, param, tb, ts, t))
+                        if v is not None:
+                            total += v
+                            hit = True
+            if hit:
+                return total
+        v = self._pd.get((p, side, param, d))
+        if v is not None:
+            return v
+        v = self._pt.get((p, side, param, t))
+        if v is not None:
+            return v
+        v = self._p.get((p, side, param))
+        if v is not None:
+            return v
+        return 0.0
