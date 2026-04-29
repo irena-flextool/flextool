@@ -1786,12 +1786,8 @@ table data IN 'CSV' 'solve_data/process__sink_nonSync.csv' : process__sink_nonSy
   # Declaration moved to the top of the model alongside other process-related
   # sets so it precedes its `table data IN` reader.
 
-set nodeGroupDispatch__process_fully_inside :=
-  {g in nodeGroupDispatch, p in process
-     : sum {(p, source) in process_source : (g, source) in group_node} 1   # source node is in the group
-       && sum {(p, sink) in process_sink : (g, sink) in group_node} 1      # sink node is in the group
-	   && not sum {(p, source, sink) in process_source_sink : source == sink} 1  # but source and sink can't be the same (rule out e.g. battery storage)
-  };
+set nodeGroupDispatch__process_fully_inside dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process_fully_inside.csv' : nodeGroupDispatch__process_fully_inside <- [group, process];
 set nodeGroupDispatch__process__unit__to_node_Not_in_aggregate :=
     {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
 	                             : p in process_unit
