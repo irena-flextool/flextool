@@ -607,6 +607,96 @@ def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
     return out
 
 
+def write_pssdt_varCost_filters(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1498-1501 — four filter sets keyed on pdt-* OOC values.
+
+        set pssdt_varCost_noEff := {process_source_sink_noEff × dt :
+                pdtProcess__source__sink__dt_varCost[p,src,snk,d,t]};
+        set pssdt_varCost_eff_unit_source := {process_source_sink_eff × dt :
+                (p,src) in process_source AND pdtProcess_source[p,src,'OOC',d,t]};
+        set pssdt_varCost_eff_unit_sink := {process_source_sink_eff × dt :
+                (p,snk) in process_sink AND pdtProcess_sink[p,snk,'OOC',d,t]};
+        set pssdt_varCost_eff_connection := {process_source_sink_eff × dt :
+                pdtProcess[p,'OOC',d,t]};
+
+    Each row is included only when the gating value is non-zero.
+    """
+    pdt = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess.csv",
+        param_col=1, param_value="other_operational_cost",
+        key_cols=(0, 2, 3), val_col=4,
+    )
+    pdt_src = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_source.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+    )
+    pdt_snk = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_sink.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+    )
+    varcost: dict[tuple[str, str, str, str, str], float] = {}
+    vp = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
+    if vp.exists():
+        with vp.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 6 and all(row[i] for i in range(5)):
+                    try:
+                        varcost[(row[0], row[1], row[2], row[3], row[4])] = float(row[5])
+                    except ValueError:
+                        continue
+
+    proc_src = frozenset(_read_pairs(input_dir / "process__source.csv"))
+    proc_snk = frozenset(_read_pairs(input_dir / "process__sink.csv"))
+    pss_noEff = _read_triples(solve_data_dir / "process_source_sink_noEff.csv")
+    pss_eff = _read_triples(solve_data_dir / "process_source_sink_eff.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    # pssdt_varCost_noEff
+    rows: list[tuple[str, str, str, str, str]] = []
+    for (p, src, snk) in pss_noEff:
+        for (d, t) in dt:
+            if varcost.get((p, src, snk, d, t), 0.0):
+                rows.append((p, src, snk, d, t))
+    _write_5col(solve_data_dir / "pssdt_varCost_noEff.csv",
+                ("process", "source", "sink", "period", "time"), rows)
+
+    # pssdt_varCost_eff_unit_source
+    rows = []
+    for (p, src, snk) in pss_eff:
+        for (d, t) in dt:
+            if (p, src) in proc_src and pdt_src.get((p, src, d, t), 0.0):
+                rows.append((p, src, snk, d, t))
+    _write_5col(solve_data_dir / "pssdt_varCost_eff_unit_source.csv",
+                ("process", "source", "sink", "period", "time"), rows)
+
+    # pssdt_varCost_eff_unit_sink
+    rows = []
+    for (p, src, snk) in pss_eff:
+        for (d, t) in dt:
+            if (p, snk) in proc_snk and pdt_snk.get((p, snk, d, t), 0.0):
+                rows.append((p, src, snk, d, t))
+    _write_5col(solve_data_dir / "pssdt_varCost_eff_unit_sink.csv",
+                ("process", "source", "sink", "period", "time"), rows)
+
+    # pssdt_varCost_eff_connection
+    rows = []
+    for (p, src, snk) in pss_eff:
+        for (d, t) in dt:
+            if pdt.get((p, d, t), 0.0):
+                rows.append((p, src, snk, d, t))
+    _write_5col(solve_data_dir / "pssdt_varCost_eff_connection.csv",
+                ("process", "source", "sink", "period", "time"), rows)
+
+
+def _write_5col(path: Path, header: tuple[str, ...], rows: list[tuple]) -> None:
+    path.write_text(",".join(header) + "\n"
+                    + "".join(",".join(r) + "\n" for r in rows))
+
+
 def write_pdtProcess__source__sink__dt_varCost_pair(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
