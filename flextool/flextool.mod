@@ -1542,20 +1542,14 @@ param p_unconstrained_flow_cap := (if sum{m in model} 1 then max{m in model} p_m
 # Defaults: investment annuity 0 (start-of-year — "paid when built"),
 # operational costs 0.5 (mid-year average).  User-provided values on the
 # model entity override the defaults via p_inflation_offset_*.
-param p_years_until_dispatch{(d, y) in period__year} :=
-    + sum{y2 in year : y2 < y} (p_years_represented[d, y2])
-    + p_years_represented[d, y] * p_infl_offset_operations;
-param p_years_until_invest{(d, y) in period__year} :=
-    + sum{y2 in year : y2 < y} (p_years_represented[d, y2])
-    + p_years_represented[d, y] * p_infl_offset_investment;
-param p_inflation_factor_investment_yearly{d in period} :=
-		if sum{y in year} p_years_represented[d, y]
-		then sum{(d, y) in period__year} p_years_represented[d, y] * ( 1/(1 + p_inflation) ^ (p_years_until_invest[d, y]) )
-		else 1;
-param p_inflation_factor_operations_yearly{d in period_in_use} :=
-		if sum{y in year} p_years_represented[d, y]
-		then sum{(d, y) in period__year} p_years_represented[d, y] * ( 1/(1 + p_inflation) ^ (p_years_until_dispatch[d, y]) )
-		else 1;
+param p_years_until_dispatch{(d, y) in period__year};  # Migrated to Python (preprocessing/period_calculated_params.py).
+param p_years_until_invest{(d, y) in period__year};    # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/p_years_until_dispatch.csv' : [period, year], p_years_until_dispatch~value;
+table data IN 'CSV' 'solve_data/p_years_until_invest.csv' : [period, year], p_years_until_invest~value;
+param p_inflation_factor_investment_yearly{d in period};        # Migrated to Python.
+param p_inflation_factor_operations_yearly{d in period_in_use};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/p_inflation_factor_investment_yearly.csv' : [period], p_inflation_factor_investment_yearly~value;
+table data IN 'CSV' 'solve_data/p_inflation_factor_operations_yearly.csv' : [period], p_inflation_factor_operations_yearly~value;
 
 # Check for division by zero
 printf 'Checking: node lifetime > 0, if the node is investing or divesting';
