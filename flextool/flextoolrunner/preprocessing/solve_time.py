@@ -222,3 +222,7 @@ def run(state: RunnerState, solve_name: str) -> None:
     # additive sum across the 4 inflow scaling methods. Reads pdNode +
     # ptNode_inflow + period_flow_*_multiplier + new_old_slope/section.
     entity_period_calc_params.write_pdtNodeInflow(input_dir, solve_data_dir)
+    # L0 batch 55: pdtProfile — 5-branch profile param resolution with
+    # 3-way UNION stochastic gate (process_profile / node_profile /
+    # process_node_profile groups).
+    entity_period_calc_params.write_pdtProfile(input_dir, solve_data_dir)
