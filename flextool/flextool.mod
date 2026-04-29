@@ -1970,7 +1970,8 @@ set process_source_coeff_zero dimen 2;  # Migrated to Python (preprocessing/stru
 set process_sink_coeff_zero dimen 2;    # Migrated to Python (preprocessing/structural_filters.py).
 table data IN 'CSV' 'solve_data/process_source_coeff_zero.csv' : process_source_coeff_zero <- [process, source];
 table data IN 'CSV' 'solve_data/process_sink_coeff_zero.csv' : process_sink_coeff_zero <- [process, sink];
-set process_source_sink_coeff_zero := {(p, source, sink) in process_source_sink: (p,source) in process_source_coeff_zero || (p,sink) in process_sink_coeff_zero};
+set process_source_sink_coeff_zero dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_coeff_zero.csv' : process_source_sink_coeff_zero <- [process, source, sink];
 
 param p_flow_max{(p, source, sink, d, t) in peedt} :=
   if (p, source, sink) in process_source_sink_coeff_zero

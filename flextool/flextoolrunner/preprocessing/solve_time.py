@@ -150,3 +150,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     # L4 batch 30: process_source_sink_ramp_limit_*/cost (5 sets — ramp method
     # gate + per-side ramp_speed gate from p_process_source/sink).
     process_arc_unions.write_process_source_sink_ramp_family(input_dir, solve_data_dir)
+    # L4 batch 31: process_source_sink_coeff_zero (OR of side-coeff-zero sets).
+    process_arc_unions.write_process_source_sink_coeff_zero(input_dir, solve_data_dir)
