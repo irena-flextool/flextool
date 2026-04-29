@@ -95,14 +95,20 @@ def write_period_calculated_params(input_dir: Path, solve_data_dir: Path) -> Non
             except ValueError:
                 continue
 
-    # solve_data/p_years_represented.csv: (period, years_from_solve, p_years_represented, p_years_from_solve)
+    # solve_data/p_years_represented.csv columns:
+    #   period, years_from_solve, p_years_from_solve, p_years_represented
+    # Mod's table data IN at flextool.mod:751 binds the param
+    # ``p_years_represented`` to the LAST column (index 3), NOT
+    # ``p_years_from_solve`` at index 2. Reading index 2 here was a
+    # bug that mismatched MPS coefficient values for any d using
+    # multiple represented-years per (d, y) pair.
     pyr = _read_csv_columns(solve_data_dir / "p_years_represented.csv")
     p_years_represented: dict[tuple[str, str], float] = {}
     years_for_period: dict[str, list[str]] = {}
     for r in pyr:
-        if len(r) >= 3 and r[0] and r[1]:
+        if len(r) >= 4 and r[0] and r[1]:
             try:
-                p_years_represented[(r[0], r[1])] = float(r[2])
+                p_years_represented[(r[0], r[1])] = float(r[3])
                 years_for_period.setdefault(r[0], []).append(r[1])
             except ValueError:
                 continue
@@ -196,3 +202,136 @@ def write_period_calculated_params(input_dir: Path, solve_data_dir: Path) -> Non
     complete_share = [(d, h / 8760.0) for d, h in complete_hours]
     _write_keyed(solve_data_dir / "complete_period_share_of_year_calc.csv",
                  ("period", "value"), complete_share)
+
+    # ---- Inflation-related params --------------------------------------
+    # Scalar lookups: max over model entries (mod L1594-1596).
+    def _scalar_max(csv_path: Path, default: float) -> float:
+        rows = _read_csv_columns(csv_path)
+        vals: list[float] = []
+        for r in rows:
+            if len(r) >= 2 and r[1]:
+                try:
+                    vals.append(float(r[1]))
+                except ValueError:
+                    continue
+        if not vals:
+            return default
+        return max(vals)
+
+    p_inflation = _scalar_max(input_dir / "p_inflation_rate.csv", 0.0)
+    p_infl_offset_investment = _scalar_max(
+        input_dir / "p_inflation_offset_investment.csv", 0.0,
+    )
+    p_infl_offset_operations = _scalar_max(
+        input_dir / "p_inflation_offset_operations.csv", 0.5,
+    )
+
+    # p_years_until_invest[(d, y)]:
+    #   mod L1545: + sum{y2 in year : y2 < y} p_years_represented[d, y2]
+    #             + p_years_represented[d, y] * p_infl_offset_investment
+    #
+    # The inner sum is over the GLOBAL `year` set (union of all y across
+    # all periods), NOT just years bound to d. ``p_years_represented`` has
+    # ``default 1`` so unbound (d, y2) pairs contribute 1.
+    # p_inflation_factor_*_yearly[d] = if any p_years_represented[d, ·] > 0
+    #   then sum_{y in years_bound_to_d} pyr[d, y] * (1+inflation)^(-until[d, y])
+    #   else 1.
+
+    # Global year universe (union of years across all periods).
+    global_years_set: dict[str, None] = {}
+    for years_list in years_for_period.values():
+        for y in years_list:
+            global_years_set.setdefault(y, None)
+    try:
+        sorted_global_years = sorted(global_years_set.keys(), key=lambda y: float(y))
+    except ValueError:
+        sorted_global_years = sorted(global_years_set.keys())
+
+    pyy_invest: list[tuple[str, str, float]] = []
+    pyy_dispatch: list[tuple[str, str, float]] = []
+    inflation_invest: dict[str, float] = {}
+    inflation_ops: dict[str, float] = {}
+    one_plus_inflation_inv = (
+        1.0 / (1.0 + p_inflation) if p_inflation != -1.0 else 1.0
+    )
+    for d in periodAll:
+        years_for_d = years_for_period.get(d, ())
+        try:
+            sorted_d_years = sorted(years_for_d, key=lambda y: float(y))
+        except ValueError:
+            sorted_d_years = sorted(years_for_d)
+        try:
+            d_years_set = frozenset(years_for_d)
+        except TypeError:
+            d_years_set = frozenset()
+
+        # For each (d, y), inner sum walks the GLOBAL year set with
+        # numerical y2 < y comparison. Cumulative state per d is built
+        # by iterating sorted_global_years.
+        cumulative = 0.0
+        global_pos: dict[str, float] = {}  # y → cumulative-up-to-y
+        for y2 in sorted_global_years:
+            global_pos[y2] = cumulative
+            cumulative += p_years_represented.get((d, y2), 1.0)
+
+        per_year: list[tuple[str, float, float]] = []
+        for y in sorted_d_years:
+            pyr = p_years_represented.get((d, y), 1.0)
+            base = global_pos.get(y, 0.0)  # sum_{y2 < y} pyr[d, y2]
+            until_invest = base + pyr * p_infl_offset_investment
+            until_dispatch = base + pyr * p_infl_offset_operations
+            pyy_invest.append((d, y, until_invest))
+            pyy_dispatch.append((d, y, until_dispatch))
+            per_year.append((y, until_invest, until_dispatch))
+
+        sum_p_years_for_d = sum(
+            p_years_represented.get((d, y), 1.0) for y in sorted_d_years
+        )
+        if sum_p_years_for_d > 0:
+            inv_factor = 0.0
+            ops_factor = 0.0
+            for y, until_inv, until_op in per_year:
+                pyr = p_years_represented.get((d, y), 1.0)
+                inv_factor += pyr * (one_plus_inflation_inv ** until_inv)
+                ops_factor += pyr * (one_plus_inflation_inv ** until_op)
+            inflation_invest[d] = inv_factor
+            inflation_ops[d] = ops_factor
+        else:
+            inflation_invest[d] = 1.0
+            inflation_ops[d] = 1.0
+
+    _write_keyed_2(solve_data_dir / "p_years_until_invest.csv",
+                   ("period", "year", "value"), pyy_invest)
+    _write_keyed_2(solve_data_dir / "p_years_until_dispatch.csv",
+                   ("period", "year", "value"), pyy_dispatch)
+
+    # p_inflation_factor_*_yearly[d] is per-period (not periodAll for ops);
+    # mod L1551 declares investment over `period`, operations over period_in_use.
+    period_universe = [r[0] for r in _read_csv_columns(
+        solve_data_dir / "period_set.csv"
+    ) if r and r[0]]
+    inv_yearly: list[tuple[str, float]] = [
+        (d, inflation_invest.get(d, 1.0)) for d in period_universe
+    ]
+    ops_yearly: list[tuple[str, float]] = [
+        (d, inflation_ops.get(d, 1.0)) for d in period_in_use
+    ]
+    _write_keyed(solve_data_dir / "p_inflation_factor_investment_yearly.csv",
+                 ("period", "value"), inv_yearly)
+    _write_keyed(solve_data_dir / "p_inflation_factor_operations_yearly.csv",
+                 ("period", "value"), ops_yearly)
+
+    # ---- pdtConversion_rate ---------------------------------------------
+    # mod L1686: round(1 / pdtProcess[p, 'efficiency', d, t], 6)
+    # pdtProcess is itself a calc param that derives from per-solve sources.
+    # For the migration step that doesn't migrate pdtProcess, we read its
+    # printf'd output (mod writes solve_data/pdtProcess_*.csv files).
+    # Simpler: read efficiency directly from the inputs that pdtProcess
+    # reads — process_param_t / process_param_period — and apply the same
+    # precedence. However mod's pdtProcess has many fallback branches, so
+    # the safest bet is to read its printed output.
+    #
+    # Postpone pdtConversion_rate to a later batch where we migrate
+    # pdtProcess itself. The L0 batch's matrix-gen impact is minimal
+    # (it's a pre-evaluated coefficient lookup, not a constraint
+    # iteration).
