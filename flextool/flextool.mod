@@ -1234,10 +1234,8 @@ param pdtNode {(n, param) in node__TimeParam_in_use, (d, t) in dt} :=
             then default_value['node', param]
         else 0;
 
-param ptNode_inflow {n in node, t in time} :=
-        + if (n, t) in node__time_inflow
-		  then pt_node_inflow[n, t]
-		  else p_node[n, 'inflow'];
+param ptNode_inflow {n in node, t in time};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ptNode_inflow.csv' : [node, time], ptNode_inflow~value;
 set nodeSelfDischarge :=  {n in nodeState : exists{(d, t) in dt : pdtNode[n, 'self_discharge_loss', d, t]} 1};
 
 set process__PeriodParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
@@ -1392,50 +1390,40 @@ param f_d_k {d in period_in_use} :=
   (p_ladder_cum_sim_hours[d] + sum {(d, t) in dt} step_duration[d, t])
   / (complete_period_share_of_year[d] * 8760);
 
-param period_share_of_annual_flow {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
-        && pdNode[n, 'annual_flow', d]} := abs(sum{(d, t) in dt_complete} (ptNode_inflow[n, t])) / pdNode[n, 'annual_flow', d];
-param period_flow_annual_multiplier {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method)
-        && pdNode[n, 'annual_flow', d]} := complete_period_share_of_year[d] / period_share_of_annual_flow[n, d];
-param orig_flow_sum {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
-        && pdNode[n, 'annual_flow', d]}  := sum{t in complete_time_in_use} ptNode_inflow[n, t];
-param period_flow_proportional_multiplier {n in node, d in period_in_use : (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]} :=
-        pdNode[n, 'annual_flow', d] / (abs(sum{t in time} (ptNode_inflow[n, t])) / sum{(d, tl) in period__timeline} p_timeline_duration_in_years[tl]);
-param new_peak_sign{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        (if pdNode[n, 'peak_inflow', d] >= 0 then 1 else -1);
-param old_peak_max{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        if sum{(n, t) in node__time_inflow : t in time} 1
-		then max{t in time} ptNode_inflow[n, t]
-		else p_node[n, 'inflow'];
-param old_peak_min{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-         if sum{(n, t) in node__time_inflow : t in time} 1
-		then min{t in time} ptNode_inflow[n, t]
-		else p_node[n, 'inflow'];
-param old_peak_sign{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-		(  if sum{(n, t) in node__time_inflow : t in time} 1
-		  then (if abs(old_peak_max[n, d]) >= abs(old_peak_min[n, d]) then 1 else -1)
-		  else (if p_node[n, 'inflow'] >= 0 then 1 else -1)
-		);
-param old_peak{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        (if old_peak_sign[n, d] >= 0 then old_peak_max[n, d] else old_peak_min[n, d]);
+param period_share_of_annual_flow {n in node, d in period_in_use};   # Migrated to Python.
+param period_flow_annual_multiplier {n in node, d in period_in_use};  # Migrated to Python.
+param orig_flow_sum {n in node, d in period_in_use};                  # Migrated to Python.
+param period_flow_proportional_multiplier {n in node, d in period_in_use};  # Migrated to Python.
+param new_peak_sign{n in node, d in period_in_use};                   # Migrated to Python.
+param old_peak_max{n in node, d in period_in_use};                    # Migrated to Python.
+param old_peak_min{n in node, d in period_in_use};                    # Migrated to Python.
+param old_peak_sign{n in node, d in period_in_use};                   # Migrated to Python.
+param old_peak{n in node, d in period_in_use};                        # Migrated to Python.
+table data IN 'CSV' 'solve_data/period_share_of_annual_flow.csv' : [node, period], period_share_of_annual_flow~value;
+table data IN 'CSV' 'solve_data/period_flow_annual_multiplier.csv' : [node, period], period_flow_annual_multiplier~value;
+table data IN 'CSV' 'solve_data/orig_flow_sum.csv' : [node, period], orig_flow_sum~value;
+table data IN 'CSV' 'solve_data/period_flow_proportional_multiplier.csv' : [node, period], period_flow_proportional_multiplier~value;
+table data IN 'CSV' 'solve_data/new_peak_sign.csv' : [node, period], new_peak_sign~value;
+table data IN 'CSV' 'solve_data/old_peak_max.csv' : [node, period], old_peak_max~value;
+table data IN 'CSV' 'solve_data/old_peak_min.csv' : [node, period], old_peak_min~value;
+table data IN 'CSV' 'solve_data/old_peak_sign.csv' : [node, period], old_peak_sign~value;
+table data IN 'CSV' 'solve_data/old_peak.csv' : [node, period], old_peak~value;
 printf ('Checking: if the sign of new peak inflow is the same as the sign ');
 printf ('of the peak inflow in the original inflow time series\n');
 check {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} new_peak_sign[n, d] = old_peak_sign[n, d];
 
-param new_peak_divided_by_old_peak {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        pdNode[n, 'peak_inflow', d] / old_peak[n, d];
-param new_peak_divide_by_old_peak_sum_inflow {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        new_peak_divided_by_old_peak[n, d] * orig_flow_sum[n, d] / complete_period_share_of_year[d];
-param new_peak_inflow_sum {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        pdNode[n, 'peak_inflow', d] * 8760;
-param new_old_multiplier {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        old_peak_sign[n, d] *
-		( old_peak_sign[n, d] * new_peak_divide_by_old_peak_sum_inflow[n, d] - pdNode[n, 'annual_flow', d]
-		)
-		/ ( new_peak_inflow_sum[n, d] - new_peak_divide_by_old_peak_sum_inflow[n, d] );
-param new_old_slope {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        new_peak_divided_by_old_peak[n, d] * ( 1 + new_old_multiplier[n, d] );
-param new_old_section {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        pdNode[n, 'peak_inflow', d] * new_old_multiplier[n, d];
+param new_peak_divided_by_old_peak {n in node, d in period_in_use};            # Migrated to Python.
+param new_peak_divide_by_old_peak_sum_inflow {n in node, d in period_in_use};  # Migrated to Python.
+param new_peak_inflow_sum {n in node, d in period_in_use};                     # Migrated to Python.
+param new_old_multiplier {n in node, d in period_in_use};                      # Migrated to Python.
+param new_old_slope {n in node, d in period_in_use};                           # Migrated to Python.
+param new_old_section {n in node, d in period_in_use};                         # Migrated to Python.
+table data IN 'CSV' 'solve_data/new_peak_divided_by_old_peak.csv' : [node, period], new_peak_divided_by_old_peak~value;
+table data IN 'CSV' 'solve_data/new_peak_divide_by_old_peak_sum_inflow.csv' : [node, period], new_peak_divide_by_old_peak_sum_inflow~value;
+table data IN 'CSV' 'solve_data/new_peak_inflow_sum.csv' : [node, period], new_peak_inflow_sum~value;
+table data IN 'CSV' 'solve_data/new_old_multiplier.csv' : [node, period], new_old_multiplier~value;
+table data IN 'CSV' 'solve_data/new_old_slope.csv' : [node, period], new_old_slope~value;
+table data IN 'CSV' 'solve_data/new_old_section.csv' : [node, period], new_old_section~value;
 param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  :=
         + (if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, tb, ts, t) in node__branch__time_inflow} 1
               && exists{(g,n) in group_node: g in groupStochastic} 1

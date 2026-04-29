@@ -60,6 +60,7 @@ def run(state: RunnerState, solve_name: str) -> None:
         period_calculated_params,
         entity_period_calc_params,
         entity_annual_calc_params,
+        node_inflow_scaling_params,
         per_solve_sets,
     )
     period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
@@ -117,3 +118,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_entity_period_calc_params(input_dir, solve_data_dir)
     # L1 batch 16: ed_entity_annual + discounted variants + ed_lifetime_fixed_cost.
     entity_annual_calc_params.write_entity_annual_calc_params(input_dir, solve_data_dir)
+    # L1 batch 17: node-inflow scaling family (ptNode_inflow + 17 calc params).
+    node_inflow_scaling_params.write_node_inflow_scaling_params(input_dir, solve_data_dir)
