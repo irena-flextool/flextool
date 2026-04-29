@@ -53,7 +53,12 @@ METHOD_INDIRECT: frozenset[str] = frozenset((
     "method_2way_nvar_off",
 ))
 
-# flextool_base.dat:81-82 — 2-way 2-variable (separate v_flow per direction)
+# flextool_base.dat:84 — 2-way 1-variable (one v_flow shared by both directions)
+METHOD_2WAY_1VAR: frozenset[str] = frozenset((
+    "method_2way_1var_off",
+))
+
+# flextool_base.dat:85 — 2-way 2-variable (separate v_flow per direction)
 METHOD_2WAY_2VAR: frozenset[str] = frozenset((
     "method_2way_2var_off",
     "method_2way_2var_exclude",

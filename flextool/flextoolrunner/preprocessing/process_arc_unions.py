@@ -561,6 +561,52 @@ def write_process_source_delayed_partition(
                ("process", "source"), undelayed_rows)
 
 
+def write_process_source_sink_is_node_family(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1071, L1153-1158 — process_source_sink filtered by
+    sink ∈ process_sink (i.e. sink is a real node-side endpoint), then
+    further partitioned by the process's method bucket.
+
+        process__source__sinkIsNode             := no method filter
+        process__source__sinkIsNode_not2way1var := process p has any method NOT in METHOD_2WAY_1VAR
+        process__source__sinkIsNode_2way1var    := process p has any method IN METHOD_2WAY_1VAR
+        process__source__sinkIsNode_2way2var    := process p has any method IN METHOD_2WAY_2VAR
+
+    The mod's `sum{(p,m) in process_method : m in S} 1` is true iff p has
+    AT LEAST ONE method in S — equivalent to set-membership on the
+    per-process method set.
+    """
+    from flextool.flextoolrunner.preprocessing._method_constants import (
+        METHOD_2WAY_1VAR, METHOD_2WAY_2VAR,
+    )
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+    sinks = frozenset(_read_pairs(input_dir / "process__sink.csv"))
+    # process_method canonical source is input/ (mod loader L1003).
+    # solve_data/process_method.csv is mod's printf copy, only exists
+    # after the first solve.
+    pm = _read_pairs(input_dir / "process_method.csv")
+    methods_of_p: dict[str, set[str]] = {}
+    for p, m in pm:
+        methods_of_p.setdefault(p, set()).add(m)
+    has_2way_1var = {p: bool(ms & METHOD_2WAY_1VAR) for p, ms in methods_of_p.items()}
+    has_not_2way_1var = {p: bool(ms - METHOD_2WAY_1VAR) for p, ms in methods_of_p.items()}
+    has_2way_2var = {p: bool(ms & METHOD_2WAY_2VAR) for p, ms in methods_of_p.items()}
+
+    base_rows = [(p, src, sink) for p, src, sink in triples if (p, sink) in sinks]
+    _write_csv(solve_data_dir / "process__source__sinkIsNode.csv",
+               ("process", "source", "sink"), base_rows)
+    _write_csv(solve_data_dir / "process__source__sinkIsNode_2way1var.csv",
+               ("process", "source", "sink"),
+               [r for r in base_rows if has_2way_1var.get(r[0], False)])
+    _write_csv(solve_data_dir / "process__source__sinkIsNode_not2way1var.csv",
+               ("process", "source", "sink"),
+               [r for r in base_rows if has_not_2way_1var.get(r[0], False)])
+    _write_csv(solve_data_dir / "process__source__sinkIsNode_2way2var.csv",
+               ("process", "source", "sink"),
+               [r for r in base_rows if has_2way_2var.get(r[0], False)])
+
+
 def write_process_source_sink_delayed_partition(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
