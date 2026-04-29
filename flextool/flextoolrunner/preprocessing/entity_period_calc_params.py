@@ -1561,6 +1561,234 @@ def write_p_entity_existing_chain(input_dir: Path, solve_data_dir: Path) -> None
                 fh.write(f"{e},{d},{repr(v)}\n")
 
 
+def write_p_entity_capacity_max_chain(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1699-1764 — four cascading entity-capacity ceiling params:
+
+      * ``p_entity_max_capacity{e, d in period_in_use}``
+            5-branch fork: cumulative-cap if ed_invest_cumulative else
+            existing + (ed_invest_period only) ed_invest_max_period
+                     + (e_invest_total only)   e_invest_max_total
+                     + (both)                  max(per-period, total)
+                     + (invest_no_limit)       p_unconstrained_flow_cap
+
+      * ``p_entity_max_units{e, d in period}``
+            = max_capacity / unitsize (0 outside period_in_use)
+
+      * ``p_entity_invest_cumulative_max{e in entityInvest, d}``
+            cumulative vs no_limit vs per-period sum from edd_invest
+
+      * ``p_entity_dispatch_capacity_max{e, d}``
+            = all_existing + (invest_cumulative_max if entityInvest else 0)
+
+    Reads p_entity_all_existing (batch 59), p_entity_unitsize (batch 18),
+    ed_invest_cumulative, ed_cumulative_max_capacity (batch 16),
+    ed_invest_period, e_invest_total, ed_invest_max_period (batch 19),
+    e_invest_max_total, ed_invest_forbidden_no_investment, edd_invest,
+    entityInvest, entity__invest_method (input/),
+    p_max_flow_for_unconstrained_variables (input/).
+
+    Path-collision: mod's wide-format printf for p_entity_max_units.csv
+    is retargeted to solve__p_entity_max_units.csv.
+    """
+    entities = _read_singles(input_dir / "entity.csv")
+    periods = _read_singles(solve_data_dir / "period_set.csv")
+    period_in_use = frozenset(_read_singles(solve_data_dir / "period_in_use_set.csv"))
+
+    # ---- helpers to load (e, d) → float CSVs --------------------------
+    def _load_ed(path: Path) -> dict[tuple[str, str], float]:
+        out: dict[tuple[str, str], float] = {}
+        if not path.exists():
+            return out
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        out[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+        return out
+
+    all_existing = _load_ed(solve_data_dir / "p_entity_all_existing.csv")
+    cum_max_cap = _load_ed(solve_data_dir / "ed_cumulative_max_capacity.csv")
+    invest_max_period = _load_ed(solve_data_dir / "ed_invest_max_period.csv")
+
+    unitsize: dict[str, float] = {}
+    us_path = solve_data_dir / "p_entity_unitsize.csv"
+    if us_path.exists():
+        with us_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        unitsize[r[0]] = float(r[1])
+                    except ValueError:
+                        continue
+
+    e_invest_max_total: dict[str, float] = {}
+    eim_path = solve_data_dir / "e_invest_max_total.csv"
+    if eim_path.exists():
+        with eim_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        e_invest_max_total[r[0]] = float(r[1])
+                    except ValueError:
+                        continue
+
+    invest_cumulative = frozenset(
+        _read_pairs(solve_data_dir / "ed_invest_cumulative.csv")
+    )
+    invest_period = frozenset(_read_pairs(solve_data_dir / "ed_invest_period.csv"))
+    invest_total = frozenset(_read_singles(solve_data_dir / "e_invest_total.csv"))
+    invest_forbidden = frozenset(
+        _read_pairs(solve_data_dir / "ed_invest_forbidden_no_investment.csv")
+    )
+    entity_invest = frozenset(_read_singles(solve_data_dir / "entityInvest.csv"))
+
+    invest_method_pairs = frozenset(
+        _read_pairs(input_dir / "entity__invest_method.csv")
+    )
+
+    # ---- p_unconstrained_flow_cap = max{m in model} p_max_flow_for_uncon...
+    # Default 1000000. Read input/p_max_flow_for_unconstrained_variables.csv.
+    p_unc = 1000000.0
+    pmaxf_path = input_dir / "p_max_flow_for_unconstrained_variables.csv"
+    if pmaxf_path.exists():
+        max_v: float | None = None
+        with pmaxf_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        v = float(r[1])
+                    except ValueError:
+                        continue
+                    if max_v is None or v > max_v:
+                        max_v = v
+        if max_v is not None:
+            p_unc = max_v
+
+    # ---- edd_invest grouped by (e, d) ---------------------------------
+    edd_invest_by_ed: dict[tuple[str, str], list[str]] = {}
+    edi_path = solve_data_dir / "edd_invest.csv"
+    if edi_path.exists():
+        with edi_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    edd_invest_by_ed.setdefault((r[0], r[2]), []).append(r[1])
+
+    # ---- compute p_entity_max_capacity --------------------------------
+    # Mod's domain is {e in entity, d in period_in_use}. Writing extra rows
+    # for d ∉ period_in_use would be filtered out at table-data-IN load,
+    # but having them present can confuse domain-strictness checks. Emit
+    # only period_in_use rows.
+    max_capacity: dict[tuple[str, str], float] = {}
+    out_max_cap = solve_data_dir / "p_entity_max_capacity.csv"
+    with out_max_cap.open("w") as fh:
+        fh.write("entity,period,value\n")
+        for e in entities:
+            in_total = e in invest_total
+            has_no_limit = (e, "invest_no_limit") in invest_method_pairs
+            for d in periods:
+                if d not in period_in_use:
+                    max_capacity[(e, d)] = 0.0
+                    continue
+                if (e, d) in invest_cumulative:
+                    v = cum_max_cap.get((e, d), 0.0)
+                else:
+                    v = all_existing.get((e, d), 0.0)
+                    in_period = (e, d) in invest_period
+                    imp = invest_max_period.get((e, d), 0.0)
+                    eim = e_invest_max_total.get(e, 0.0)
+                    if in_period and not in_total:
+                        v += imp
+                    if in_total and not in_period:
+                        v += eim
+                    if in_period and in_total:
+                        v += max(imp, eim)
+                    if has_no_limit:
+                        v += p_unc
+                max_capacity[(e, d)] = v
+                fh.write(f"{e},{d},{repr(v)}\n")
+
+    # ---- p_entity_max_units = max_capacity / unitsize -----------------
+    out_max_units = solve_data_dir / "p_entity_max_units.csv"
+    with out_max_units.open("w") as fh:
+        fh.write("entity,period,value\n")
+        for e in entities:
+            us = unitsize.get(e, 0.0)
+            for d in periods:
+                mc = max_capacity[(e, d)]
+                v = mc / us if us else 0.0
+                fh.write(f"{e},{d},{repr(v)}\n")
+
+    # ---- p_entity_invest_cumulative_max -------------------------------
+    invest_cum_max: dict[tuple[str, str], float] = {}
+    out_icm = solve_data_dir / "p_entity_invest_cumulative_max.csv"
+    with out_icm.open("w") as fh:
+        fh.write("entity,period,value\n")
+        for e in entities:
+            if e not in entity_invest:
+                continue
+            in_total = e in invest_total
+            has_no_limit_method = any(
+                (e, m) in invest_method_pairs for m in ("invest_no_limit",)
+            )
+            for d in periods:
+                if d not in period_in_use:
+                    invest_cum_max[(e, d)] = 0.0
+                    continue
+                if (e, d) in invest_cumulative:
+                    v = max(0.0, cum_max_cap.get((e, d), 0.0)
+                                 - all_existing.get((e, d), 0.0))
+                elif has_no_limit_method:
+                    v = p_unc
+                else:
+                    v = 0.0
+                    in_period = (e, d) in invest_period
+                    if in_period and not in_total:
+                        per_period_sum = sum(
+                            invest_max_period.get((e, d_inv), 0.0)
+                            for d_inv in edd_invest_by_ed.get((e, d), ())
+                            if (e, d_inv) in invest_period
+                            and (e, d_inv) not in invest_forbidden
+                        )
+                        v += per_period_sum
+                    if in_total and not in_period:
+                        v += e_invest_max_total.get(e, 0.0)
+                    if in_period and in_total:
+                        per_period_sum = sum(
+                            invest_max_period.get((e, d_inv), 0.0)
+                            for d_inv in edd_invest_by_ed.get((e, d), ())
+                            if (e, d_inv) in invest_period
+                            and (e, d_inv) not in invest_forbidden
+                        )
+                        v += max(per_period_sum, e_invest_max_total.get(e, 0.0))
+                invest_cum_max[(e, d)] = v
+                fh.write(f"{e},{d},{repr(v)}\n")
+
+    # ---- p_entity_dispatch_capacity_max -------------------------------
+    out_dcm = solve_data_dir / "p_entity_dispatch_capacity_max.csv"
+    with out_dcm.open("w") as fh:
+        fh.write("entity,period,value\n")
+        for e in entities:
+            for d in periods:
+                if d not in period_in_use:
+                    continue
+                v = all_existing.get((e, d), 0.0)
+                if e in entity_invest:
+                    v += invest_cum_max.get((e, d), 0.0)
+                fh.write(f"{e},{d},{repr(v)}\n")
+
+
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
     if not path.exists():
         return []
