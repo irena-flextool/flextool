@@ -305,3 +305,10 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_p_storage_state_reference_price(
         input_dir, solve_data_dir
     )
+    # L2 batch 67: p_flow_min + p_flow_max — peedt-domain calc params
+    # bounding v_flow. LONG-format CSV at solve_data/p_flow_*.csv.
+    # Path-collision: mod's `if solveFirst` printf at L4290-4319 (WIDE
+    # format consumed by read_parameters.py) retargeted to
+    # solve__p_flow_*.csv. read_parameters.py:43-44 also retargeted.
+    process_arc_unions.write_p_flow_min(input_dir, solve_data_dir)
+    process_arc_unions.write_p_flow_max(input_dir, solve_data_dir)

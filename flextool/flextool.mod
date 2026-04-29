@@ -1658,30 +1658,10 @@ table data IN 'CSV' 'solve_data/process_sink_coeff_zero.csv' : process_sink_coef
 set process_source_sink_coeff_zero dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process_source_sink_coeff_zero.csv' : process_source_sink_coeff_zero <- [process, source, sink];
 
-param p_flow_max{(p, source, sink, d, t) in peedt} :=
-  if (p, source, sink) in process_source_sink_coeff_zero
-  then
-    + p_unconstrained_flow_cap   # Configured via model.max_flow_for_unconstrained_variables (default 1e6).
-  else
-    + (
-      if exists{(p, m) in process__method_indirect} 1 && (p, source) in process_source
-      then
-        + ( if (p, 'min_load_efficiency') in process__ct_method
-          then pdtProcess_slope[p, d, t] + pdtProcess_section[p, d, t]
-          else pdtProcess_slope[p, d, t]
-          ) * (p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
-          / p_process_source_max_capacity_coefficient[p, source]
-      else
-        + (p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
-      )
-      * (if (p, sink) in process_sink then p_process_sink_max_capacity_coefficient[p, sink] else 1)
-;
-
-param p_flow_min{(p, source, sink, d, t) in peedt} :=
-  if (p, source, sink) in process__source__sinkIsNode_2way1var
-  then -(p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
-  else 0
-;
+param p_flow_max{(p, source, sink, d, t) in peedt};                  # Migrated to Python (preprocessing/process_arc_unions.py).
+param p_flow_min{(p, source, sink, d, t) in peedt} default 0;        # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/p_flow_max.csv' : [process, source, sink, period, time], p_flow_max~value;
+table data IN 'CSV' 'solve_data/p_flow_min.csv' : [process, source, sink, period, time], p_flow_min~value;
 
 set process_VRE;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process_VRE.csv' : process_VRE <- [process];
@@ -4287,35 +4267,38 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s,%.8g", s, d, t, p_rp_cost_weight[d, t] >> "solve_data/p_rp_cost_weight.csv";
 }
 
-# Write p_flow_min
+# Write p_flow_min — wide-format dump for read_parameters.py;
+# retargeted to solve__p_flow_min.csv to break the path collision
+# with the LONG-format CSV that Python preprocessing writes for
+# mod's table-data-IN (see preprocessing/process_arc_unions.py).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/p_flow_min.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "solve_data/p_flow_min.csv";}
-  printf "\n,," >> "solve_data/p_flow_min.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "solve_data/p_flow_min.csv";}
-  printf "\n,," >> "solve_data/p_flow_min.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "solve_data/p_flow_min.csv";}
+  printf "solve,period,time" > "solve_data/solve__p_flow_min.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "solve_data/solve__p_flow_min.csv";}
+  printf "\n,," >> "solve_data/solve__p_flow_min.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "solve_data/solve__p_flow_min.csv";}
+  printf "\n,," >> "solve_data/solve__p_flow_min.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "solve_data/solve__p_flow_min.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/p_flow_min.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__p_flow_min.csv";
     for {(p, source, sink) in process_source_sink} {
-        printf ",%.8g", p_flow_min[p, source, sink, d, t] >> "solve_data/p_flow_min.csv";
+        printf ",%.8g", p_flow_min[p, source, sink, d, t] >> "solve_data/solve__p_flow_min.csv";
     }
 }
 
-# Write p_flow_max
+# Write p_flow_max — same path-collision retarget as p_flow_min above.
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/p_flow_max.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "solve_data/p_flow_max.csv";}
-  printf "\n,," >> "solve_data/p_flow_max.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "solve_data/p_flow_max.csv";}
-  printf "\n,," >> "solve_data/p_flow_max.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "solve_data/p_flow_max.csv";}
+  printf "solve,period,time" > "solve_data/solve__p_flow_max.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "solve_data/solve__p_flow_max.csv";}
+  printf "\n,," >> "solve_data/solve__p_flow_max.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "solve_data/solve__p_flow_max.csv";}
+  printf "\n,," >> "solve_data/solve__p_flow_max.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "solve_data/solve__p_flow_max.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/p_flow_max.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__p_flow_max.csv";
     for {(p, source, sink) in process_source_sink} {
-        printf ",%.8g", p_flow_max[p, source, sink, d, t] >> "solve_data/p_flow_max.csv";
+        printf ",%.8g", p_flow_max[p, source, sink, d, t] >> "solve_data/solve__p_flow_max.csv";
     }
 }
 
