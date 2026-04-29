@@ -463,6 +463,43 @@ def write_group_commodity_node_period_co2_total(
                list(dict.fromkeys(rows)))
 
 
+def write_process_source_sink_param_t(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1197 — process_source_sink_eff × processTimeParam
+    filtered by (p, param) ∈ process__param_t.
+
+        set process_source_sink_param_t :=
+            {(p, source, sink) in process_source_sink_eff, param in processTimeParam :
+             (p, param) in process__param_t};
+
+    process__param_t is the projection of process__param__time, which is
+    loaded from solve_data/pt_process.csv. processTimeParam is a constant
+    enum from flextool_base.dat:153 (PROCESS_TIME_PARAM in our taxonomy).
+    """
+    from flextool.flextoolrunner.preprocessing._param_taxonomy import (
+        PROCESS_TIME_PARAM,
+    )
+    pss_eff = _read_n_col(solve_data_dir / "process_source_sink_eff.csv", 3)
+    process_param_t: set[tuple[str, str]] = set()
+    pt_path = solve_data_dir / "pt_process.csv"
+    if pt_path.exists():
+        with pt_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    process_param_t.add((row[0], row[1]))
+    rows: list[tuple[str, str, str, str]] = []
+    for p, source, sink in pss_eff:
+        for param in PROCESS_TIME_PARAM:
+            if (p, param) in process_param_t:
+                rows.append((p, source, sink, param))
+    _write_csv(solve_data_dir / "process_source_sink_param_t.csv",
+               ("process", "source", "sink", "param"),
+               list(dict.fromkeys(rows)))
+
+
 def write_node_time_param_in_use(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
