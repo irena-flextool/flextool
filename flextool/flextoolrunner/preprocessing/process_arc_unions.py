@@ -561,6 +561,68 @@ def write_process_source_delayed_partition(
                ("process", "source"), undelayed_rows)
 
 
+def write_process_source_sink_param(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1185-1189 — process_source_sink × sourceSinkParam
+    filtered by parameter membership on either side or via process_connection.
+
+        { (p, src, sink) in process_source_sink, param in SOURCE_SINK_PARAM :
+          (p, src,  param) in process__source__param
+          OR (p, sink, param) in process__sink__param
+          OR ((p, param) in process__param AND p in process_connection) }
+
+    process__source__param ← input/p_process_source.csv columns
+        [process, source, sourceSinkParam]
+    process__sink__param   ← input/p_process_sink.csv   columns [process, sink, …]
+    process__param         ← input/p_process.csv columns [process, processParam]
+    process_connection     ← input/process_connection.csv [process_connection]
+    """
+    from flextool.flextoolrunner.preprocessing._param_taxonomy import (
+        SOURCE_SINK_PARAM,
+    )
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+
+    src_param: set[tuple[str, str, str]] = set()
+    pps_path = input_dir / "p_process_source.csv"
+    if pps_path.exists():
+        with pps_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    src_param.add((r[0], r[1], r[2]))
+    sink_param: set[tuple[str, str, str]] = set()
+    ppk_path = input_dir / "p_process_sink.csv"
+    if ppk_path.exists():
+        with ppk_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    sink_param.add((r[0], r[1], r[2]))
+    proc_param: set[tuple[str, str]] = set()
+    pp_path = input_dir / "p_process.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0] and r[1]:
+                    proc_param.add((r[0], r[1]))
+    proc_conn = frozenset(_read_singles(input_dir / "process_connection.csv"))
+
+    rows: list[tuple[str, str, str, str]] = []
+    for p, src, sink in triples:
+        for param in SOURCE_SINK_PARAM:
+            if ((p, src, param) in src_param
+                    or (p, sink, param) in sink_param
+                    or ((p, param) in proc_param and p in proc_conn)):
+                rows.append((p, src, sink, param))
+    _write_csv(solve_data_dir / "process__source__sink__param.csv",
+               ("process", "source", "sink", "param"), rows)
+
+
 def write_node_group_dispatch_process_fully_inside(
     input_dir: Path, solve_data_dir: Path
 ) -> None:

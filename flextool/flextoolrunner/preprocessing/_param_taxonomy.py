@@ -53,6 +53,14 @@ SOURCE_SINK_TIME_PARAM_REQUIRED: frozenset[str] = frozenset((
     "efficiency", "other_operational_cost",
 ))
 
+# flextool_base.dat:155 (sourceSinkParam — full enum, broader than the
+# *Time variant: includes coefficient/unitsize/ramp/inertia).
+SOURCE_SINK_PARAM: frozenset[str] = frozenset((
+    "efficiency", "efficiency_at_min_load", "min_load", "coefficient",
+    "flow_unitsize", "other_operational_cost", "ramp_cost",
+    "ramp_speed_up", "ramp_speed_down", "inertia_constant",
+))
+
 # flextool_base.dat:160-161 (sourceSinkPeriodParam[Required])
 SOURCE_SINK_PERIOD_PARAM: frozenset[str] = SOURCE_SINK_TIME_PARAM
 SOURCE_SINK_PERIOD_PARAM_REQUIRED: frozenset[str] = SOURCE_SINK_TIME_PARAM_REQUIRED
