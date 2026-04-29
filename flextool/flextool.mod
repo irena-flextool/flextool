@@ -1677,24 +1677,20 @@ table data IN 'CSV' 'solve_data/p_negative_inflow.csv' : [node, period, time], p
 
 param p_entity_pre_existing {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/p_entity_pre_existing.csv' : [entity, period], p_entity_pre_existing~value;
-param p_entity_existing_capacity_later_solves {e in entity, d in period_in_use} :=
-  + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_existing_capacity[e, d_history]);
+param p_entity_existing_capacity_later_solves {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_existing_capacity_later_solves.csv' : [entity, period], p_entity_existing_capacity_later_solves~value;
 
-param p_entity_all_existing {e in entity, d in period_in_use} :=
-  + (if p_model['solveFirst'] then p_entity_pre_existing[e, d])
-  + (if not p_model['solveFirst'] then p_entity_existing_capacity_later_solves[e, d])
-  - (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
-;
+param p_entity_all_existing {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_all_existing.csv' : [entity, period], p_entity_all_existing~value;
 
-param p_entity_existing_count {e in entity, d in period_in_use} :=
-  + p_entity_all_existing[e, d]
-    / p_entity_unitsize[e];
+param p_entity_existing_count {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_existing_count.csv' : [entity, period], p_entity_existing_count~value;
 
-param p_entity_existing_integer_count {e in entity, d in period_in_use} :=
-  + round( p_entity_existing_count[e, d] );
+param p_entity_existing_integer_count {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_existing_integer_count.csv' : [entity, period], p_entity_existing_integer_count~value;
 
-param p_entity_previously_invested_capacity {e in entity, d in period_in_use} :=
-  + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_invested_capacity[e, d_history]);
+param p_entity_previously_invested_capacity {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_previously_invested_capacity.csv' : [entity, period], p_entity_previously_invested_capacity~value;
 
 param p_entity_max_capacity {e in entity, d in period_in_use} :=
   + if (e, d) in ed_invest_cumulative
@@ -4628,15 +4624,18 @@ for {s in solve_current, d in d_realize_dispatch_or_invest} {
     }
 }
 
-# Write p_entity_all_existing
+# Write p_entity_all_existing (post-solve realized values, wide format).
+# Mod's input now reads solve_data/p_entity_all_existing.csv (long) written by
+# Python preprocessing, so this output goes to solve__p_entity_all_existing.csv
+# (handoff_writers._load_p_entity_all_existing + read_parameters.py:62 read here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/p_entity_all_existing.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/p_entity_all_existing.csv";}
+  printf "solve,period" > "solve_data/solve__p_entity_all_existing.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__p_entity_all_existing.csv";}
 }
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/p_entity_all_existing.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__p_entity_all_existing.csv";
     for {e in entity} {
-        printf ",%.8g", p_entity_all_existing[e, d] >> "solve_data/p_entity_all_existing.csv";
+        printf ",%.8g", p_entity_all_existing[e, d] >> "solve_data/solve__p_entity_all_existing.csv";
     }
 }
 

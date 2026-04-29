@@ -1357,6 +1357,210 @@ def write_p_positive_negative_inflow(input_dir: Path, solve_data_dir: Path) -> N
                     fh.write(f"{n},{d},{t},{repr(v if v < 0 else 0.0)}\n")
 
 
+def _read_solve_first_flag(input_dir: Path) -> bool:
+    """Read p_model.csv and return whether this is the first solve."""
+    pm_path = input_dir / "p_model.csv"
+    if not pm_path.exists():
+        return False
+    with pm_path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for r in reader:
+            if len(r) >= 2 and r[0] == "solveFirst":
+                try:
+                    return bool(int(r[1]))
+                except ValueError:
+                    return False
+    return False
+
+
+def write_p_entity_existing_chain(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1680-1697 — five cascading entity-capacity params:
+
+      * ``p_entity_existing_capacity_later_solves{e, d}``
+            = 0 on first solve; on later solves, sum of
+              ``p_entity_period_existing_capacity[e, d_history]`` across
+              ``(e, d_history, d) in edd_history`` AND
+              ``(e, d_history) in ed_history_realized``.
+
+      * ``p_entity_all_existing{e, d}``
+            = pre-existing on first solve, later_solves on others, minus
+              ``p_entity_divested[e]`` if not first solve and e ∈
+              entityDivest.
+
+      * ``p_entity_existing_count{e, d}``           = all_existing / unitsize
+      * ``p_entity_existing_integer_count{e, d}``   = round(count)
+      * ``p_entity_previously_invested_capacity{e, d}``
+            = same shape as later_solves but using
+              ``p_entity_period_invested_capacity`` from the handoff CSV.
+
+    Inputs:
+      * solveFirst flag from input/p_model.csv
+      * solve_data/p_entity_pre_existing.csv (batch 12)
+      * solve_data/p_entity_unitsize.csv (batch 18)
+      * solve_data/edd_history.csv
+      * solve_data/ed_history_realized_first.csv (batch 39)
+      * solve_data/p_entity_period_existing_capacity.csv (handoff)
+      * solve_data/p_entity_divested.csv (handoff)
+      * solve_data/entityDivest.csv
+
+    Path-collision: mod also writes wide-format
+    ``solve_data/p_entity_all_existing.csv``; the printf is retargeted to
+    ``solve_data/solve__p_entity_all_existing.csv``. handoff_writers and
+    read_parameters updated accordingly.
+    """
+    solve_first = _read_solve_first_flag(input_dir)
+    entities = _read_singles(input_dir / "entity.csv")
+    periods_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+
+    # ---- pre-existing & unitsize from earlier batches -----------------
+    pre_existing: dict[tuple[str, str], float] = {}
+    pe_path = solve_data_dir / "p_entity_pre_existing.csv"
+    if pe_path.exists():
+        with pe_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        pre_existing[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    unitsize: dict[str, float] = {}
+    us_path = solve_data_dir / "p_entity_unitsize.csv"
+    if us_path.exists():
+        with us_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        unitsize[r[0]] = float(r[1])
+                    except ValueError:
+                        continue
+
+    # ---- edd_history (e, d_history, d) --------------------------------
+    edd_history: list[tuple[str, str, str]] = []
+    eh_path = solve_data_dir / "edd_history.csv"
+    if eh_path.exists():
+        with eh_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    edd_history.append((r[0], r[1], r[2]))
+
+    # ---- prior solve's existing/invested capacity (per d_history) ----
+    ppec: dict[tuple[str, str], float] = {}
+    ppic: dict[tuple[str, str], float] = {}
+    ppe_path = solve_data_dir / "p_entity_period_existing_capacity.csv"
+    if ppe_path.exists():
+        with ppe_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1]:
+                    try:
+                        ppec[(r[0], r[1])] = float(r[2])
+                        ppic[(r[0], r[1])] = float(r[3])
+                    except ValueError:
+                        continue
+
+    # ---- ed_history_realized = read ∪ first ----------------------------
+    ed_history_realized: set[tuple[str, str]] = set(ppec.keys())
+    eh1_path = solve_data_dir / "ed_history_realized_first.csv"
+    if eh1_path.exists():
+        with eh1_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0] and r[1]:
+                    ed_history_realized.add((r[0], r[1]))
+
+    # ---- divest data ---------------------------------------------------
+    entity_divest = frozenset(_read_singles(solve_data_dir / "entityDivest.csv"))
+    p_divested: dict[str, float] = {}
+    pd_path = solve_data_dir / "p_entity_divested.csv"
+    if pd_path.exists():
+        with pd_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        p_divested[r[0]] = float(r[1])
+                    except ValueError:
+                        continue
+
+    # ---- compute later_solves (existing) and previously_invested ------
+    later_existing: dict[tuple[str, str], float] = {}
+    later_invested: dict[tuple[str, str], float] = {}
+    if not solve_first:
+        # Group edd_history by (e, d) for fast lookup
+        edd_by_ed: dict[tuple[str, str], list[str]] = {}
+        for (e, d_h, d) in edd_history:
+            edd_by_ed.setdefault((e, d), []).append(d_h)
+        for e in entities:
+            for d in periods_in_use:
+                histories = edd_by_ed.get((e, d), ())
+                tot_e = 0.0
+                tot_i = 0.0
+                for d_h in histories:
+                    if (e, d_h) in ed_history_realized:
+                        tot_e += ppec.get((e, d_h), 0.0)
+                        tot_i += ppic.get((e, d_h), 0.0)
+                later_existing[(e, d)] = tot_e
+                later_invested[(e, d)] = tot_i
+
+    # ---- write p_entity_existing_capacity_later_solves -----------------
+    pelater = solve_data_dir / "p_entity_existing_capacity_later_solves.csv"
+    with pelater.open("w") as fh:
+        fh.write("entity,period,value\n")
+        for e in entities:
+            for d in periods_in_use:
+                v = 0.0 if solve_first else later_existing.get((e, d), 0.0)
+                fh.write(f"{e},{d},{repr(v)}\n")
+
+    # ---- write p_entity_all_existing -----------------------------------
+    all_existing: dict[tuple[str, str], float] = {}
+    pall = solve_data_dir / "p_entity_all_existing.csv"
+    with pall.open("w") as fh:
+        fh.write("entity,period,value\n")
+        for e in entities:
+            for d in periods_in_use:
+                if solve_first:
+                    v = pre_existing.get((e, d), 0.0)
+                else:
+                    v = later_existing.get((e, d), 0.0)
+                    if e in entity_divest:
+                        v -= p_divested.get(e, 0.0)
+                all_existing[(e, d)] = v
+                fh.write(f"{e},{d},{repr(v)}\n")
+
+    # ---- p_entity_existing_count + integer_count -----------------------
+    pcount = solve_data_dir / "p_entity_existing_count.csv"
+    pintc = solve_data_dir / "p_entity_existing_integer_count.csv"
+    with pcount.open("w") as fhc, pintc.open("w") as fhi:
+        fhc.write("entity,period,value\n")
+        fhi.write("entity,period,value\n")
+        for e in entities:
+            us = unitsize.get(e, 0.0)
+            for d in periods_in_use:
+                ae = all_existing[(e, d)]
+                cnt = ae / us if us else 0.0
+                fhc.write(f"{e},{d},{repr(cnt)}\n")
+                fhi.write(f"{e},{d},{repr(round(cnt))}\n")
+
+    # ---- p_entity_previously_invested_capacity -------------------------
+    ppic_out = solve_data_dir / "p_entity_previously_invested_capacity.csv"
+    with ppic_out.open("w") as fh:
+        fh.write("entity,period,value\n")
+        for e in entities:
+            for d in periods_in_use:
+                v = 0.0 if solve_first else later_invested.get((e, d), 0.0)
+                fh.write(f"{e},{d},{repr(v)}\n")
+
+
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
     if not path.exists():
         return []
