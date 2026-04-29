@@ -1503,29 +1503,16 @@ table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_sink_up.csv'     
 table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_source_down.csv' : process_source_sink_ramp_limit_source_down <- [process, source, sink];
 table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_sink_down.csv'   : process_source_sink_ramp_limit_sink_down   <- [process, source, sink];
 table data IN 'CSV' 'solve_data/process_source_sink_ramp_cost.csv'              : process_source_sink_ramp_cost              <- [process, source, sink];
-set process_source_sink_ramp :=
-    process_source_sink_ramp_limit_source_up
-    union process_source_sink_ramp_limit_sink_up
-	union process_source_sink_ramp_limit_source_down
-	union process_source_sink_ramp_limit_sink_down
-	union process_source_sink_ramp_cost;
-
-set process_source_sink_dtttdt_ramp_limit_source_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit_source_up, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
- 		    p_process_source[p, source, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
-        };
-set process_source_sink_dtttdt_ramp_limit_sink_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit_sink_up, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
- 		    p_process_sink[p, sink, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
-        };
-set process_source_sink_dtttdt_ramp_limit_source_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit_source_down, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
- 		    p_process_source[p, source, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
-        };
-set process_source_sink_dtttdt_ramp_limit_sink_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit_sink_down, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
- 		    p_process_sink[p, sink, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
-        };
+set process_source_sink_ramp dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_dtttdt_ramp_limit_source_up   dimen 9;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_dtttdt_ramp_limit_sink_up     dimen 9;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_dtttdt_ramp_limit_source_down dimen 9;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_dtttdt_ramp_limit_sink_down   dimen 9;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_ramp.csv' : process_source_sink_ramp <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_dtttdt_ramp_limit_source_up.csv'   : process_source_sink_dtttdt_ramp_limit_source_up   <- [process, source, sink, period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
+table data IN 'CSV' 'solve_data/process_source_sink_dtttdt_ramp_limit_sink_up.csv'     : process_source_sink_dtttdt_ramp_limit_sink_up     <- [process, source, sink, period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
+table data IN 'CSV' 'solve_data/process_source_sink_dtttdt_ramp_limit_source_down.csv' : process_source_sink_dtttdt_ramp_limit_source_down <- [process, source, sink, period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
+table data IN 'CSV' 'solve_data/process_source_sink_dtttdt_ramp_limit_sink_down.csv'   : process_source_sink_dtttdt_ramp_limit_sink_down   <- [process, source, sink, period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
 
 param p_process_reserve_upDown_node_reliability {(p, r, ud, n) in process_reserve_upDown_node_active};  # Migrated to Python (preprocessing/reserve_calc_params.py).
 table data IN 'CSV' 'solve_data/p_process_reserve_upDown_node_reliability.csv' : [process, reserve, upDown, node], p_process_reserve_upDown_node_reliability~value;
