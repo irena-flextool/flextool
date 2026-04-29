@@ -1499,6 +1499,172 @@ def write_node_group_dispatch_sets(
                ("group", "group_aggregate"), list(seen12.keys()))
 
 
+def write_p_process_delay_weight(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1096-1099 — p_process_delay_weight.
+
+        param p_process_delay_weight {(p, td) in process_delayed__duration}
+            := if (p, td) in process_delay_single__delay_duration
+               then 1
+               else p_process_delay_weighted[p, td];
+
+    Reads solve_data/process_delayed__duration.csv (already migrated),
+    input/process_delay_single.csv, input/p_process_delay_weighted.csv.
+    """
+    delayed_duration = _read_pairs(
+        solve_data_dir / "process_delayed__duration.csv"
+    )
+    delay_single = frozenset(
+        _read_pairs(input_dir / "process_delay_single.csv")
+    )
+    weighted: dict[tuple[str, str], float] = {}
+    pdw_path = input_dir / "p_process_delay_weighted.csv"
+    if pdw_path.exists():
+        with pdw_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        weighted[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    rows: list[tuple[str, str, str]] = []
+    for p, td in delayed_duration:
+        v = 1.0 if (p, td) in delay_single else weighted.get((p, td), 0.0)
+        rows.append((p, td, repr(v)))
+    _write_csv(solve_data_dir / "p_process_delay_weight.csv",
+               ("process", "delay_duration", "value"), rows)
+
+
+def write_gcndt_co2_price(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1542-1548 — gcndt_co2_price (5-tuple set).
+
+        {g in group, (c,n) in commodity_node, d in period_in_use,
+         t in time_in_use:
+             (d,t) in dt
+             AND (g, n) in group_node
+             AND p_commodity[c, 'co2_content']
+             AND g in group_co2_price
+             AND pdtGroup[g, 'co2_price', d, t]
+        };
+
+    Note: the period_in_use × time_in_use × `(d,t) in dt` triple gate
+    is equivalent to iterating (d, t) ∈ dt directly (dt ⊆ period_in_use
+    × time_in_use by construction).
+    """
+    g_co2_price = frozenset(
+        _read_singles(solve_data_dir / "group_co2_price.csv")
+    )
+    cn = _read_pairs(input_dir / "commodity__node.csv")
+
+    gn_acc: dict[str, set[str]] = {}
+    for g, n in _read_pairs(input_dir / "group__node.csv"):
+        gn_acc.setdefault(g, set()).add(n)
+
+    p_commodity_co2: dict[str, float] = {}
+    pc_path = input_dir / "p_commodity.csv"
+    if pc_path.exists():
+        with pc_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] == "co2_content":
+                    try:
+                        p_commodity_co2[r[0]] = float(r[2])
+                    except ValueError:
+                        continue
+
+    co2_price_dt: set[tuple[str, str, str]] = set()
+    pdtg_path = solve_data_dir / "pdtGroup.csv"
+    if pdtg_path.exists():
+        with pdtg_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if (len(r) >= 5 and r[0] and r[1] == "co2_price"
+                        and r[2] and r[3]):
+                    try:
+                        if float(r[4]) != 0.0:
+                            co2_price_dt.add((r[0], r[2], r[3]))
+                    except ValueError:
+                        continue
+
+    dt_pairs = _read_n_col(solve_data_dir / "steps_in_use.csv", 2)
+
+    rows: list[tuple[str, str, str, str, str]] = []
+    for g in g_co2_price:
+        gnodes = gn_acc.get(g, set())
+        if not gnodes:
+            continue
+        for c, n in cn:
+            if n not in gnodes:
+                continue
+            if p_commodity_co2.get(c, 0.0) == 0.0:
+                continue
+            for d, t in dt_pairs:
+                if (g, d, t) in co2_price_dt:
+                    rows.append((g, c, n, d, t))
+    _write_csv(solve_data_dir / "gcndt_co2_price.csv",
+               ("group", "commodity", "node", "period", "time"), rows)
+
+
+def write_group_commodity_node_period_co2_period(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1550-1555 — group_commodity_node_period_co2_period.
+
+        {g in group, (c, n) in commodity_node, d in period_in_use:
+            (g, n) in group_node
+            AND p_commodity[c, 'co2_content']
+            AND g in group_co2_max_period
+        };
+    """
+    g_co2_max_period = frozenset(
+        _read_singles(solve_data_dir / "group_co2_max_period.csv")
+    )
+    cn = _read_pairs(input_dir / "commodity__node.csv")
+
+    gn_acc: dict[str, set[str]] = {}
+    for g, n in _read_pairs(input_dir / "group__node.csv"):
+        gn_acc.setdefault(g, set()).add(n)
+
+    p_commodity_co2: dict[str, float] = {}
+    pc_path = input_dir / "p_commodity.csv"
+    if pc_path.exists():
+        with pc_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] == "co2_content":
+                    try:
+                        p_commodity_co2[r[0]] = float(r[2])
+                    except ValueError:
+                        continue
+
+    period_in_use = _read_singles(
+        solve_data_dir / "period_in_use_set.csv"
+    )
+
+    rows: list[tuple[str, str, str, str]] = []
+    for g in g_co2_max_period:
+        gnodes = gn_acc.get(g, set())
+        if not gnodes:
+            continue
+        for c, n in cn:
+            if n not in gnodes:
+                continue
+            if p_commodity_co2.get(c, 0.0) == 0.0:
+                continue
+            for d in period_in_use:
+                rows.append((g, c, n, d))
+    _write_csv(solve_data_dir / "group_commodity_node_period_co2_period.csv",
+               ("group", "commodity", "node", "period"), rows)
+
+
 def write_peedt(input_dir: Path, solve_data_dir: Path) -> None:
     """flextool.mod L1084 — peedt is the cross-product of arcs × timesteps.
 

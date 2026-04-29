@@ -357,3 +357,111 @@ def write_period_calculated_params(input_dir: Path, solve_data_dir: Path) -> Non
     # pdtProcess itself. The L0 batch's matrix-gen impact is minimal
     # (it's a pre-evaluated coefficient lookup, not a constraint
     # iteration).
+    # (pdtConversion_rate, section, slope landed in batch 57 inside
+    # entity_period_calc_params.py.)
+
+
+def write_branch_weights(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L563-567 — pd_branch_weight + pdt_branch_weight.
+
+    Both normalize p_branch_weight_input[d] by the sum of input weights
+    across sibling branches.
+
+        pd_branch_weight[d] = w[d] / sum w[b] over branches b such that
+            (d2, b) ∈ period__branch
+            AND (b, ts) ∈ period__time_first
+            AND (d, ts) ∈ period__time_first    # same first-time as d
+            AND (d2, d) ∈ period__branch        # same parent d2
+
+        pdt_branch_weight[d, t] = w[d] / sum w[b] over branches b such that
+            (d2, b) ∈ period__branch
+            AND (b, t) ∈ dt                     # b's dt contains t
+            AND (d2, d) ∈ period__branch        # same parent d2
+
+    Reads solve_data/period__branch.csv (period, branch),
+    solve_data/solve_branch_weight.csv (branch, value),
+    solve_data/first_timesteps.csv (period, step) for period__time_first,
+    solve_data/steps_in_use.csv (period, step, step_duration) for dt,
+    solve_data/period_in_use_set.csv for the pd output domain.
+
+    Float values formatted with `repr()` for round-trip-exact
+    serialization within Python; MPS parity uses 7-sig-fig comparison.
+    """
+    pb_rows: list[tuple[str, str]] = []
+    for r in _read_csv_columns(solve_data_dir / "period__branch.csv"):
+        if len(r) >= 2 and r[0] and r[1]:
+            pb_rows.append((r[0], r[1]))
+    parents_of: dict[str, set[str]] = {}  # b -> {d2 : (d2, b) ∈ pb}
+    for d2, b in pb_rows:
+        parents_of.setdefault(b, set()).add(d2)
+
+    branch_weight: dict[str, float] = {}
+    for r in _read_csv_columns(solve_data_dir / "solve_branch_weight.csv"):
+        if len(r) >= 2 and r[0]:
+            try:
+                branch_weight[r[0]] = float(r[1])
+            except ValueError:
+                continue
+
+    def w(b: str) -> float:
+        return branch_weight.get(b, 1.0)
+
+    # period__time_first (period, step) — read solve_data/first_timesteps.csv
+    times_with_first_set: dict[str, set[str]] = {}
+    first_time_for_d: dict[str, str] = {}
+    for r in _read_csv_columns(solve_data_dir / "first_timesteps.csv"):
+        if len(r) >= 2 and r[0] and r[1]:
+            first_time_for_d[r[0]] = r[1]
+            times_with_first_set.setdefault(r[1], set()).add(r[0])
+
+    # dt as (period, time)
+    dt_pairs: list[tuple[str, str]] = []
+    branches_for_t: dict[str, set[str]] = {}
+    for r in _read_csv_columns(solve_data_dir / "steps_in_use.csv"):
+        if len(r) >= 2 and r[0] and r[1]:
+            dt_pairs.append((r[0], r[1]))
+            branches_for_t.setdefault(r[1], set()).add(r[0])
+
+    period_in_use = [r[0] for r in _read_csv_columns(
+        solve_data_dir / "period_in_use_set.csv"
+    ) if r and r[0]]
+
+    # Iterate exactly as mod does — over (d2, b) tuples in pb — so a
+    # branch b that has multiple parents d2 sharing parenthood with d is
+    # counted once per (d2, b) tuple, matching MathProg's sum.
+    pb_set = frozenset(pb_rows)
+
+    pd_rows: list[tuple[str, float]] = []
+    for d in period_in_use:
+        ts = first_time_for_d.get(d)
+        if ts is None:
+            continue
+        branches_at_ts = times_with_first_set.get(ts, set())
+        denom = 0.0
+        for d2, b in pb_rows:
+            if b not in branches_at_ts:
+                continue
+            if (d2, d) not in pb_set:
+                continue
+            denom += w(b)
+        if denom == 0.0:
+            continue
+        pd_rows.append((d, w(d) / denom))
+    _write_keyed(solve_data_dir / "pd_branch_weight.csv",
+                 ("period", "value"), pd_rows)
+
+    pdt_rows: list[tuple[str, str, float]] = []
+    for d, t in dt_pairs:
+        branches_with_t = branches_for_t.get(t, set())
+        denom = 0.0
+        for d2, b in pb_rows:
+            if b not in branches_with_t:
+                continue
+            if (d2, d) not in pb_set:
+                continue
+            denom += w(b)
+        if denom == 0.0:
+            continue
+        pdt_rows.append((d, t, w(d) / denom))
+    _write_keyed_2(solve_data_dir / "pdt_branch_weight.csv",
+                   ("period", "time", "value"), pdt_rows)

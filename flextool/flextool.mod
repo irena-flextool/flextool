@@ -560,11 +560,10 @@ set groupStochastic dimen 1 within {group};
 set solve_branch__time_branch dimen 2 within {branch_all, time_branch_all};
 param p_branch_weight_input {b in branch} default 1;
 #normalize the branches with the same starting time to add up to 1
-param pd_branch_weight {d in period_in_use} :=
-p_branch_weight_input[d] /(sum{(d2,b) in period__branch, (b, ts) in period__time_first: (d,ts) in period__time_first && (d2,d) in period__branch} p_branch_weight_input[b]);
-
-param pdt_branch_weight {(d,t) in dt} :=
-p_branch_weight_input[d] /(sum{(d2,b) in period__branch: (b,t) in dt && (d2,d) in period__branch} p_branch_weight_input[b]);
+param pd_branch_weight {d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+param pdt_branch_weight {(d,t) in dt};        # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/pd_branch_weight.csv'  : [period],          pd_branch_weight~value;
+table data IN 'CSV' 'solve_data/pdt_branch_weight.csv' : [period, time],    pdt_branch_weight~value;
 
 set dt_non_anticipativity dimen 2;  # Migrated to Python (preprocessing/per_solve_sets.py).
 
@@ -1093,10 +1092,8 @@ set process_source_sink_delayed   dimen 3;  # Migrated to Python (preprocessing/
 table data IN 'CSV' 'solve_data/process_source_sink_undelayed.csv' : process_source_sink_undelayed <- [process, source, sink];
 table data IN 'CSV' 'solve_data/process_source_sink_delayed.csv'   : process_source_sink_delayed   <- [process, source, sink];
 
-param p_process_delay_weight {(p, td) in process_delayed__duration} :=
-  + if (p, td) in process_delay_single__delay_duration
-    then 1
-    else p_process_delay_weighted[p, td];
+param p_process_delay_weight {(p, td) in process_delayed__duration};  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/p_process_delay_weight.csv' : [process, delay_duration], p_process_delay_weight~value;
 
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdCommodity.csv' : [commodity, param, period], pdCommodity~value;
@@ -1539,20 +1536,10 @@ table data IN 'CSV' 'solve_data/p_startup_cap_reduction_source.csv' : [process, 
 param p_shutdown_cap_reduction_source {(p, source) in process_source, (d, t) in dt : p in process_online};  # Migrated to Python.
 table data IN 'CSV' 'solve_data/p_shutdown_cap_reduction_source.csv' : [process, source, period, time], p_shutdown_cap_reduction_source~value;
 
-set gcndt_co2_price :=
-        {g in group, (c,n) in commodity_node, d in period_in_use, t in time_in_use: (d,t) in dt
-        && (g, n) in group_node
-        && p_commodity[c, 'co2_content']
-        && g in group_co2_price
-        && pdtGroup[g, 'co2_price', d, t]
-      };
-
-set group_commodity_node_period_co2_period :=
-        {g in group, (c, n) in commodity_node, d in period_in_use :
-		    (g, n) in group_node
-			&& p_commodity[c, 'co2_content']
-			&& g in group_co2_max_period
-		};
+set gcndt_co2_price                          dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set group_commodity_node_period_co2_period   dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/gcndt_co2_price.csv'                          : gcndt_co2_price                          <- [group, commodity, node, period, time];
+table data IN 'CSV' 'solve_data/group_commodity_node_period_co2_period.csv'   : group_commodity_node_period_co2_period   <- [group, commodity, node, period];
 
 set group_commodity_node_period_co2_total dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/group_commodity_node_period_co2_total.csv' : group_commodity_node_period_co2_total <- [group, commodity, node];
