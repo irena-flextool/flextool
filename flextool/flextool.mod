@@ -1213,12 +1213,8 @@ set node__TimeParam_in_use :=
     || ((n, 'use_reference_value') in node__storage_solve_horizon_method && param == 'storage_state_reference_value')
   };
 
-param pdNode {(n, param) in node__PeriodParam_in_use, d in period_with_history} :=
-    + if (n, param, d) in node__param__period
-		   then pd_node[n, param, d]
-      else if exists{(n, param, db) in node__param__period: (db, d) in period__branch} 1
-           then sum{(db, d) in period__branch} pd_node[n, param, db]
-	  else p_node[n, param];
+param pdNode {(n, param) in node__PeriodParam_in_use, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdNode.csv' : [node, param, period], pdNode~value;
 
 param pdtNode {(n, param) in node__TimeParam_in_use, (d, t) in dt} :=
       + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, param, tb, ts, t) in node__param__branch__time} 1
@@ -1249,14 +1245,8 @@ set process_TimeParam_in_use dimen 2;     # Migrated to Python (preprocessing/pr
 table data IN 'CSV' 'solve_data/process__PeriodParam_in_use.csv' : process__PeriodParam_in_use <- [process, param];
 table data IN 'CSV' 'solve_data/process_TimeParam_in_use.csv' : process_TimeParam_in_use <- [process, param];
 
-param pdProcess {(p, param) in process__PeriodParam_in_use, d in period_with_history} :=
-     + if (p, param, d) in process__param__period
-		  then pd_process[p, param, d]
-       else if exists{(p, param, db) in process__param__period: (db, d) in period__branch} 1
-            then sum{(db, d) in period__branch} pd_process[p, param, db]
-	   else if (p, param) in process__param
-		    then p_process[p, param]
-	   else 0;
+param pdProcess {(p, param) in process__PeriodParam_in_use, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdProcess.csv' : [process, param, period], pdProcess~value;
 param pdtProcess {(p, param) in process_TimeParam_in_use, (d,t) in dt} :=
       + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, param, tb, ts, t) in process__param__branch__time} 1
 	       && exists{(g,p) in group_process: g in groupStochastic} 1
@@ -1302,9 +1292,8 @@ param p_entity_unitsize {e in entity} :=
 					  else 1000
 			   );
 
-param edEntity_lifetime {e in entity, d in period_with_history} :=
-        + if e in process then pdProcess[e, 'lifetime', d]
-		  else if e in node then pdNode[e, 'lifetime', d];
+param edEntity_lifetime {e in entity, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/edEntity_lifetime.csv' : [entity, period], edEntity_lifetime~value;
 
 param pProcess_source_sink {(p, source, sink, param) in process__source__sink__param} :=
 		+ if (p, source, param) in process__source__param
@@ -1630,9 +1619,8 @@ param ed_entity_annual_divest_discounted{e in entityDivest, d in period_invest} 
 		  )
 ;
 
-param ed_fixed_cost{e in entity, d in period_with_history} :=
-  + (if e in node then pdNode[e, 'fixed_cost', d] * 1000 else 0)
-  + (if e in process then pdProcess[e, 'fixed_cost', d] * 1000 else 0);
+param ed_fixed_cost{e in entity, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/ed_fixed_cost.csv' : [entity, period], ed_fixed_cost~value;
 
 param ed_lifetime_fixed_cost{e in entity, d in period_with_history} :=
         + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice' || m = 'no_investment'}

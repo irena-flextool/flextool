@@ -58,6 +58,7 @@ def run(state: RunnerState, solve_name: str) -> None:
         invest_total_sets,
         process_arc_unions,
         period_calculated_params,
+        entity_period_calc_params,
         per_solve_sets,
     )
     period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
@@ -111,3 +112,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     # L1 batch 13: per-period calculated params (per-solve scope).
     # Reads period_in_use_set.csv etc. that per_solve_sets just wrote.
     period_calculated_params.write_period_calculated_params(input_dir, solve_data_dir)
+    # L1 batch 15: pdProcess / pdNode + edEntity_lifetime + ed_fixed_cost.
+    entity_period_calc_params.write_entity_period_calc_params(input_dir, solve_data_dir)
