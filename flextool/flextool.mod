@@ -365,7 +365,8 @@ set complete_time_in_use;  # Migrated to Python (preprocessing/per_solve_sets.py
 param complete_step_duration{(d, t) in dt_complete};
 set timeline_steps dimen 2;  # Migrated to Python (preprocessing/simple_projections.py).
 param p_timeline_step_duration{timeline_steps};
-param p_timeline_duration_in_years{tl in timeline}:= sum{(tl,t) in timeline_steps} p_timeline_step_duration[tl,t] /8760;
+param p_timeline_duration_in_years{tl in timeline};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/p_timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years~value;
 
 set dt_fix_storage_timesteps dimen 2 within period_time;
 set d_fix_storage_period;  # Migrated to Python (preprocessing/per_solve_sets.py).
@@ -1388,15 +1389,21 @@ set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt
 set pdt_online_linear := {p in process_online_linear, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 set pdt_online_integer := {p in process_online_integer, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 
-param hours_in_period{d in period_in_use} := sum {(d, t) in dt} (step_duration[d, t]);
+param hours_in_period{d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/hours_in_period.csv' : [period], hours_in_period~value;
 param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
-param period_share_of_year{d in period_in_use} := hours_in_period[d] / 8760;
+param period_share_of_year{d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/period_share_of_year.csv' : [period], period_share_of_year~value;
 param solve_share_of_year := hours_in_solve / 8760;
-param p_years_d{d in period_with_history} := p_period_from_solve[d];
-param p_years_represented_d{d in periodAll} := sum {y in year : (d, y) in period__year} p_years_represented[d, y];
+param p_years_d{d in period_with_history};            # Migrated to Python (preprocessing/period_calculated_params.py).
+param p_years_represented_d{d in periodAll};          # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/p_years_d.csv' : [period], p_years_d~value;
+table data IN 'CSV' 'solve_data/p_years_represented_d_calc.csv' : [period], p_years_represented_d~value;
 
-param complete_hours_in_period{d in period_in_use} := sum {(d2, t) in dt_complete: (d2, d) in period__branch} (complete_step_duration[d2, t]);
-param complete_period_share_of_year{d in period_in_use} := complete_hours_in_period[d] / 8760;
+param complete_hours_in_period{d in period_in_use};       # Migrated to Python (preprocessing/period_calculated_params.py).
+param complete_period_share_of_year{d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/complete_hours_in_period.csv' : [period], complete_hours_in_period~value;
+table data IN 'CSV' 'solve_data/complete_period_share_of_year_calc.csv' : [period], complete_period_share_of_year~value;
 
 # Rolling "fraction of period d filled" — central to the rolling-aware
 # ladder caps below.  Numerator = sim-hours of period d already realized
