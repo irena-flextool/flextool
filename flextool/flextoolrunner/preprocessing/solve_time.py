@@ -205,3 +205,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     reserve_calc_params.write_process_reserve_filters_and_reliability(
         input_dir, solve_data_dir
     )
+    # L0 batch 50: p_*_cap_reduction_*  (4 Morales-Espana cap reduction params).
+    entity_period_calc_params.write_cap_reduction_params(input_dir, solve_data_dir)

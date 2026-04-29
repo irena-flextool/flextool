@@ -607,6 +607,102 @@ def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
     return out
 
 
+def write_cap_reduction_params(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1637-1663 — Morales-Espana startup/shutdown capacity
+    reduction params (4 calc params, 1 per side × startup/shutdown).
+
+        if p_process_<side>[p, side_n, 'ramp_speed_<dir>'] > 0 then
+            max(0, 1 - p_process[p, 'min_load']
+                    - p_process_<side>[..,'ramp_speed_<dir>'] * 60 * step_duration[d, t])
+        else 0;
+
+    Domain: (p, side_n) in process_<side> × dt, restricted to p in
+    process_online.
+    """
+    p_process: dict[tuple[str, str], float] = {}
+    pp_path = input_dir / "p_process.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        p_process[(row[0], row[1])] = float(row[2])
+                    except ValueError:
+                        continue
+
+    def _read_p_side(path: Path) -> dict[tuple[str, str, str], float]:
+        out: dict[tuple[str, str, str], float] = {}
+        if not path.exists():
+            return out
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and all(row[i] for i in range(3)):
+                    try:
+                        out[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+        return out
+
+    p_process_source = _read_p_side(input_dir / "p_process_source.csv")
+    p_process_sink = _read_p_side(input_dir / "p_process_sink.csv")
+
+    process_online = frozenset(_read_singles(solve_data_dir / "process_online.csv"))
+    proc_src = _read_pairs(input_dir / "process__source.csv")
+    proc_snk = _read_pairs(input_dir / "process__sink.csv")
+
+    # dt with step_duration
+    dt_with_dur: list[tuple[str, str, float]] = []
+    su_path = solve_data_dir / "steps_in_use.csv"
+    if su_path.exists():
+        with su_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        dt_with_dur.append((row[0], row[1], float(row[2])))
+                    except ValueError:
+                        continue
+
+    def _compute(p_side: dict, pairs: list[tuple[str, str]],
+                 ramp_param: str) -> list[tuple[str, str, str, str, float]]:
+        rows: list[tuple[str, str, str, str, float]] = []
+        for (p, side_n) in pairs:
+            if p not in process_online:
+                continue
+            ramp = p_side.get((p, side_n, ramp_param), 0.0)
+            if ramp <= 0:
+                # Branch evaluates to 0 for all (d, t).
+                for (d, t, _dur) in dt_with_dur:
+                    rows.append((p, side_n, d, t, 0.0))
+                continue
+            min_load = p_process.get((p, "min_load"), 0.0)
+            for (d, t, dur) in dt_with_dur:
+                v = max(0.0, 1.0 - min_load - ramp * 60.0 * dur)
+                rows.append((p, side_n, d, t, v))
+        return rows
+
+    def _write(path: Path, side_label: str,
+               rows: list[tuple[str, str, str, str, float]]) -> None:
+        with path.open("w") as fh:
+            fh.write(f"process,{side_label},period,time,value\n")
+            for (p, sn, d, t, v) in rows:
+                fh.write(f"{p},{sn},{d},{t},{repr(v)}\n")
+
+    _write(solve_data_dir / "p_startup_cap_reduction_sink.csv", "sink",
+           _compute(p_process_sink, proc_snk, "ramp_speed_up"))
+    _write(solve_data_dir / "p_shutdown_cap_reduction_sink.csv", "sink",
+           _compute(p_process_sink, proc_snk, "ramp_speed_down"))
+    _write(solve_data_dir / "p_startup_cap_reduction_source.csv", "source",
+           _compute(p_process_source, proc_src, "ramp_speed_up"))
+    _write(solve_data_dir / "p_shutdown_cap_reduction_source.csv", "source",
+           _compute(p_process_source, proc_src, "ramp_speed_down"))
+
+
 def write_pssdt_varCost_filters(input_dir: Path, solve_data_dir: Path) -> None:
     """flextool.mod L1498-1501 — four filter sets keyed on pdt-* OOC values.
 

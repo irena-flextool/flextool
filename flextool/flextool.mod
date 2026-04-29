@@ -1634,33 +1634,17 @@ table data IN 'CSV' 'solve_data/process_large_failure.csv' : process_large_failu
 # Morales-Espana startup/shutdown capacity reduction parameters
 # If ramp_speed > 0: reduction = max(0, 1 - min_load - ramp_speed * 60 * step_duration)
 # If no ramp: reduction = 0 (unit can reach full power instantly)
-param p_startup_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt
-                                    : p in process_online} :=
-  if p_process_sink[p, sink, 'ramp_speed_up'] > 0 then
-    max(0, 1 - p_process[p, 'min_load']
-            - p_process_sink[p, sink, 'ramp_speed_up'] * 60 * step_duration[d, t])
-  else 0;
+param p_startup_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt : p in process_online};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_startup_cap_reduction_sink.csv' : [process, sink, period, time], p_startup_cap_reduction_sink~value;
 
-param p_shutdown_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt
-                                     : p in process_online} :=
-  if p_process_sink[p, sink, 'ramp_speed_down'] > 0 then
-    max(0, 1 - p_process[p, 'min_load']
-            - p_process_sink[p, sink, 'ramp_speed_down'] * 60 * step_duration[d, t])
-  else 0;
+param p_shutdown_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt : p in process_online};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/p_shutdown_cap_reduction_sink.csv' : [process, sink, period, time], p_shutdown_cap_reduction_sink~value;
 
-param p_startup_cap_reduction_source {(p, source) in process_source, (d, t) in dt
-                                      : p in process_online} :=
-  if p_process_source[p, source, 'ramp_speed_up'] > 0 then
-    max(0, 1 - p_process[p, 'min_load']
-            - p_process_source[p, source, 'ramp_speed_up'] * 60 * step_duration[d, t])
-  else 0;
+param p_startup_cap_reduction_source {(p, source) in process_source, (d, t) in dt : p in process_online};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/p_startup_cap_reduction_source.csv' : [process, source, period, time], p_startup_cap_reduction_source~value;
 
-param p_shutdown_cap_reduction_source {(p, source) in process_source, (d, t) in dt
-                                       : p in process_online} :=
-  if p_process_source[p, source, 'ramp_speed_down'] > 0 then
-    max(0, 1 - p_process[p, 'min_load']
-            - p_process_source[p, source, 'ramp_speed_down'] * 60 * step_duration[d, t])
-  else 0;
+param p_shutdown_cap_reduction_source {(p, source) in process_source, (d, t) in dt : p in process_online};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/p_shutdown_cap_reduction_source.csv' : [process, source, period, time], p_shutdown_cap_reduction_source~value;
 
 set gcndt_co2_price :=
         {g in group, (c,n) in commodity_node, d in period_in_use, t in time_in_use: (d,t) in dt
