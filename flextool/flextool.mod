@@ -1686,16 +1686,10 @@ param p_flow_min{(p, source, sink, d, t) in peedt} :=
 set process_VRE;  # Migrated to Python (preprocessing/process_method_sets.py).
 table data IN 'CSV' 'solve_data/process_VRE.csv' : process_VRE <- [process];
 
-param p_state_slack_share{(g,n) in group_node, (d,t) in dt: g in group_loss_share} :=
-  if (g,'inflow_weighted') in group__loss_share_type then pdtNodeInflow[n,d,t] / (sum{(g,ng) in group_node} pdtNodeInflow[ng,d,t])
-  else (if (g,'equal') in group__loss_share_type then 1 / (sum{(g,ng) in group_node} 1) else 0);
-
-param p_storage_state_reference_price{n in nodeState, d in period_in_use}:=
-  # if a price is found in the last timestep of the period
-  if exists{(n,d2,t2) in ndt_fix_storage_price, (d,t) in period__time_last: (d2,d) in period__branch && (d, t, t2) in dtt_timeline_matching} 1
-  then sum{(d2,d) in period__branch, (d,t) in period__time_last, (d, t, t2) in dtt_timeline_matching} p_fix_storage_price[n,d2,t2]
-  else (if (n, 'use_reference_price') in node__storage_solve_horizon_method then pdNode[n, 'storage_state_reference_price', d]
-  else 0);
+param p_state_slack_share{(g,n) in group_node, (d,t) in dt: g in group_loss_share};  # Migrated to Python (preprocessing/process_arc_unions.py).
+param p_storage_state_reference_price{n in nodeState, d in period_in_use};           # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/p_state_slack_share.csv'              : [group, node, period, time], p_state_slack_share~value;
+table data IN 'CSV' 'solve_data/p_storage_state_reference_price.csv'  : [node, period],              p_storage_state_reference_price~value;
 
 param d_obj default 0;
 param d_flow {(p, source, sink, d, t) in peedt} default 0;
