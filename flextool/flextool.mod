@@ -1184,15 +1184,8 @@ set process__timeParam :=
 
 set process__source__sink__param dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process__source__sink__param.csv' : process__source__sink__param <- [process, source, sink, param];
-set process__source__sink__param_t :=
-    { (p, source, sink) in process_source_sink, param in sourceSinkTimeParam
-	    :  (p, source, param) in process__source__param
-	    || (p, source, param) in process__source__param_t
-	    || (p, sink, param) in process__sink__param
-	    || (p, sink, param) in process__sink__param_t
-	    || ((p, param) in process__param && p in process_connection)
-	    || ((p, param) in process__param_t && p in process_connection)
-	};
+set process__source__sink__param_t dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__param_t.csv' : process__source__sink__param_t <- [process, source, sink, param];
 
 
 set process_source_sink_param_t dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).

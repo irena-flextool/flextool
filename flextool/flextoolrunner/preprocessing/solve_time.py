@@ -158,3 +158,7 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_node_group_dispatch_process_fully_inside(input_dir, solve_data_dir)
     # L4 batch 34: process__source__sink__param.
     process_arc_unions.write_process_source_sink_param(input_dir, solve_data_dir)
+    # L4 batch 35: process__source__sink__param_t (double-underscore mod
+    # name; broader than batch 25's process_source_sink_param_t — adds
+    # time-variant ORs).
+    process_arc_unions.write_process_source_sink_param_with_time(input_dir, solve_data_dir)
