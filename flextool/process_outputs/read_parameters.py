@@ -59,7 +59,7 @@ def read_parameters(output_dir):
     p.years_from_start_d = pd.read_csv(solve_data_path / 'p_years_from_start_d.csv', index_col=[0, 1])['value'].astype(float)
     p.years_represented_d = pd.read_csv(solve_data_path / 'p_years_represented_d.csv', index_col=[0, 1])['value'].astype(float)
     p.entity_max_units = pd.read_csv(solve_data_path / 'p_entity_max_units.csv', index_col=[0, 1]).astype(float)
-    p.entity_all_existing = pd.read_csv(solve_data_path / 'p_entity_all_existing.csv', index_col=[0, 1]).astype(float)
+    p.entity_all_existing = pd.read_csv(solve_data_path / 'solve__p_entity_all_existing.csv', index_col=[0, 1]).astype(float)
     # ``entity_all_capacity`` is post-solve derived (uses v_invest.val +
     # v_divest.val).  Both pathways write to ``output_raw/`` — legacy
     # via glpsol phase 3, new via

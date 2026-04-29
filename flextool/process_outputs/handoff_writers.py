@@ -819,7 +819,7 @@ def _load_p_entity_all_existing(
 ) -> dict[tuple[str, str], float]:
     """Return ``{(entity, period): p_entity_all_existing[e, d]}`` for the
     given roll (``solve`` column filtered)."""
-    path = work_folder / "solve_data" / "p_entity_all_existing.csv"
+    path = work_folder / "solve_data" / "solve__p_entity_all_existing.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path, index_col=[0, 1]).astype(float)

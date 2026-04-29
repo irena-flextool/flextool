@@ -242,3 +242,10 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_p_positive_negative_inflow(
         input_dir, solve_data_dir
     )
+    # L6/L7 batch 59: p_entity existing-capacity chain (5 cascading params).
+    # Reads p_entity_pre_existing (batch 12), p_entity_unitsize (batch 18),
+    # edd_history, ed_history_realized_first, p_entity_period_existing_capacity
+    # (handoff), p_entity_divested (handoff). solveFirst flag from p_model.csv.
+    entity_period_calc_params.write_p_entity_existing_chain(
+        input_dir, solve_data_dir
+    )
