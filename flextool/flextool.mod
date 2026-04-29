@@ -390,20 +390,25 @@ set modelParam;
 
 set process__param dimen 2 within {process, processParam};
 set process__param__time dimen 3 within {process, processTimeParam, time};
-set process__param_t := setof {(p, param, t) in process__param__time} (p, param);
+set process__param_t dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__param_t.csv' : process__param_t <- [process, param];
 set profile_param dimen 1 within {profile};
 set profile_param__time dimen 2 within {profile, time};
 
 set connection__param dimen 2;  # Migrated to Python (preprocessing/structural_filters.py).
-set connection__param__time := { (p, param, t) in process__param__time : (p in process_connection)};
-set connection__param_t := setof {(connection, param, t) in connection__param__time} (connection, param);
+set connection__param__time dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set connection__param_t     dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/connection__param__time.csv' : connection__param__time <- [connection, param, time];
+table data IN 'CSV' 'solve_data/connection__param_t.csv'     : connection__param_t     <- [connection, param];
 set process__source__param dimen 3 within {process_source, sourceSinkParam};
 set process__source__param__time dimen 4 within {process_source, sourceSinkTimeParam, time};
 set process__source__param__period dimen 4 within {process_source, sourceSinkPeriodParam, period};
-set process__source__param_t := setof {(p, source, param, t) in process__source__param__time} (p, source, param);
+set process__source__param_t dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__param_t.csv' : process__source__param_t <- [process, source, param];
 set process__sink__param dimen 3 within {process_sink, sourceSinkParam};
 set process__sink__param__time dimen 4 within {process_sink, sourceSinkTimeParam, time};
-set process__sink__param_t := setof {(p, sink, param, t) in process__sink__param__time} (p, sink, param);
+set process__sink__param_t dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__sink__param_t.csv' : process__sink__param_t <- [process, sink, param];
 set process__sink__param__period dimen 4 within {process_sink, sourceSinkPeriodParam, period};
 
 set node__param dimen 2 within {node, nodeParam};
@@ -1128,26 +1133,17 @@ set process_sinkIsNode_2way1var := setof {(p, source, sink) in process__source__
 set process__source__sinkIsNode_2way2var dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process__source__sinkIsNode_2way2var.csv' : process__source__sinkIsNode_2way2var <- [process, source, sink];
 
-set gdt_maxInstantFlow := {g in group, (d, t) in dt : pdtGroup[g, 'max_instant_flow', d, t]};
-set gdt_minInstantFlow := {g in group, (d, t) in dt : pdtGroup[g, 'min_instant_flow', d, t]};
+set gdt_maxInstantFlow dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set gdt_minInstantFlow dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/gdt_maxInstantFlow.csv' : gdt_maxInstantFlow <- [group, period, time];
+table data IN 'CSV' 'solve_data/gdt_minInstantFlow.csv' : gdt_minInstantFlow <- [group, period, time];
 
-set process__source__timeParam :=
-    { (p, source) in process_source, param in sourceSinkTimeParam
-	    :  (p, source, param) in process__source__param
-	    || (p, source, param) in process__source__param_t
-	};
-
-set process__sink__timeParam :=
-    { (p, sink) in process_sink, param in sourceSinkTimeParam
-	    :  (p, sink, param) in process__sink__param
-	    || (p, sink, param) in process__sink__param_t
-	};
-
-set process__timeParam :=
-    { p in process, param in sourceSinkTimeParam
-	   :  ((p, param) in process__param && p in process_connection)
-	   || ((p, param) in process__param_t && p in process_connection)
-	};
+set process__source__timeParam dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process__sink__timeParam   dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process__timeParam         dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__timeParam.csv' : process__source__timeParam <- [process, source, param];
+table data IN 'CSV' 'solve_data/process__sink__timeParam.csv'   : process__sink__timeParam   <- [process, sink, param];
+table data IN 'CSV' 'solve_data/process__timeParam.csv'         : process__timeParam         <- [process, param];
 
 set process__source__sink__param dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process__source__sink__param.csv' : process__source__sink__param <- [process, source, sink, param];

@@ -1499,6 +1499,197 @@ def write_node_group_dispatch_sets(
                ("group", "group_aggregate"), list(seen12.keys()))
 
 
+def write_param_t_projections_and_time_params(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L393-L1149 — 8-set family around the process__param
+    projections and their sourceSinkTimeParam joins.
+
+    Projections (drop the time column from each *__time set):
+      * process__param_t          (mod L393)
+      * connection__param__time   (mod L398, filter by process_connection)
+      * connection__param_t       (mod L399)
+      * process__source__param_t  (mod L403)
+      * process__sink__param_t    (mod L406)
+
+    Joins with SOURCE_SINK_TIME_PARAM (3 sets):
+      * process__source__timeParam (mod L1134)
+      * process__sink__timeParam   (mod L1140)
+      * process__timeParam         (mod L1146; only for connection processes)
+
+    Reads:
+    - solve_data/pt_process.csv (process, param, time, value) →
+      process__param__time
+    - solve_data/pt_process_source.csv (process, source, param, time, value)
+    - solve_data/pt_process_sink.csv (process, sink, param, time, value)
+    - input/p_process_source.csv / p_process_sink.csv / p_process.csv
+      (provide the static *__param sets)
+    - input/process_connection.csv
+    """
+    from flextool.flextoolrunner.preprocessing._param_taxonomy import (
+        SOURCE_SINK_TIME_PARAM,
+    )
+    proc_conn = frozenset(
+        _read_singles(input_dir / "process_connection.csv")
+    )
+
+    # process__param__time → projection (process, param) [drop time]
+    pp_t_seen: dict[tuple[str, str], None] = {}
+    conn_pt_rows: list[tuple[str, str, str]] = []
+    conn_pt_seen: dict[tuple[str, str], None] = {}
+    pt_path = solve_data_dir / "pt_process.csv"
+    if pt_path.exists():
+        with pt_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    pp_t_seen.setdefault((r[0], r[1]), None)
+                    if r[0] in proc_conn:
+                        conn_pt_rows.append((r[0], r[1], r[2]))
+                        conn_pt_seen.setdefault((r[0], r[1]), None)
+    _write_csv(solve_data_dir / "process__param_t.csv",
+               ("process", "param"), list(pp_t_seen.keys()))
+    _write_csv(solve_data_dir / "connection__param__time.csv",
+               ("connection", "param", "time"), conn_pt_rows)
+    _write_csv(solve_data_dir / "connection__param_t.csv",
+               ("connection", "param"), list(conn_pt_seen.keys()))
+
+    # process__source__param_t (drop time)
+    pps_t_seen: dict[tuple[str, str, str], None] = {}
+    pts_path = solve_data_dir / "pt_process_source.csv"
+    if pts_path.exists():
+        with pts_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] and r[2]:
+                    pps_t_seen.setdefault((r[0], r[1], r[2]), None)
+    _write_csv(solve_data_dir / "process__source__param_t.csv",
+               ("process", "source", "param"), list(pps_t_seen.keys()))
+
+    # process__sink__param_t
+    ppk_t_seen: dict[tuple[str, str, str], None] = {}
+    ptk_path = solve_data_dir / "pt_process_sink.csv"
+    if ptk_path.exists():
+        with ptk_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] and r[2]:
+                    ppk_t_seen.setdefault((r[0], r[1], r[2]), None)
+    _write_csv(solve_data_dir / "process__sink__param_t.csv",
+               ("process", "sink", "param"), list(ppk_t_seen.keys()))
+
+    # process__source__param (static) from input/p_process_source.csv
+    src_param: set[tuple[str, str, str]] = set()
+    pps_path = input_dir / "p_process_source.csv"
+    if pps_path.exists():
+        with pps_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    src_param.add((r[0], r[1], r[2]))
+    sink_param: set[tuple[str, str, str]] = set()
+    ppk_path = input_dir / "p_process_sink.csv"
+    if ppk_path.exists():
+        with ppk_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    sink_param.add((r[0], r[1], r[2]))
+    proc_param: set[tuple[str, str]] = set()
+    pp_path = input_dir / "p_process.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0] and r[1]:
+                    proc_param.add((r[0], r[1]))
+
+    # process__source__timeParam: { (p, source) in process_source, param :
+    #   (p, src, param) in process__source__param OR in process__source__param_t }
+    proc_sources = _read_pairs(input_dir / "process__source.csv")
+    proc_sinks = _read_pairs(input_dir / "process__sink.csv")
+    pps_t_set = frozenset(pps_t_seen.keys())
+    ppk_t_set = frozenset(ppk_t_seen.keys())
+    pp_t_set = frozenset(pp_t_seen.keys())
+
+    rows_src_tp: list[tuple[str, str, str]] = []
+    for p, src in proc_sources:
+        for param in SOURCE_SINK_TIME_PARAM:
+            if ((p, src, param) in src_param
+                    or (p, src, param) in pps_t_set):
+                rows_src_tp.append((p, src, param))
+    _write_csv(solve_data_dir / "process__source__timeParam.csv",
+               ("process", "source", "param"), rows_src_tp)
+
+    rows_snk_tp: list[tuple[str, str, str]] = []
+    for p, snk in proc_sinks:
+        for param in SOURCE_SINK_TIME_PARAM:
+            if ((p, snk, param) in sink_param
+                    or (p, snk, param) in ppk_t_set):
+                rows_snk_tp.append((p, snk, param))
+    _write_csv(solve_data_dir / "process__sink__timeParam.csv",
+               ("process", "sink", "param"), rows_snk_tp)
+
+    # process__timeParam: { p in process, param in sourceSinkTimeParam :
+    #     ((p, param) in process__param   AND p in process_connection)
+    #  OR ((p, param) in process__param_t AND p in process_connection) }
+    processes = _read_singles(input_dir / "process.csv")
+    rows_p_tp: list[tuple[str, str]] = []
+    for p in processes:
+        if p not in proc_conn:
+            continue
+        for param in SOURCE_SINK_TIME_PARAM:
+            if (p, param) in proc_param or (p, param) in pp_t_set:
+                rows_p_tp.append((p, param))
+    _write_csv(solve_data_dir / "process__timeParam.csv",
+               ("process", "param"), rows_p_tp)
+
+
+def write_gdt_instant_flow_sets(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1131-1132 — gdt_maxInstantFlow + gdt_minInstantFlow.
+
+        gdt_maxInstantFlow := {g in group, (d, t) in dt :
+                                pdtGroup[g, 'max_instant_flow', d, t]};
+        gdt_minInstantFlow := {g in group, (d, t) in dt :
+                                pdtGroup[g, 'min_instant_flow', d, t]};
+
+    Reads solve_data/pdtGroup.csv (cols: group, param, period, time, value).
+    Filter is "value != 0" — mathprog `pdtGroup[...]` in a boolean
+    context is true iff non-zero.
+    """
+    max_rows: list[tuple[str, str, str]] = []
+    min_rows: list[tuple[str, str, str]] = []
+    pdtg_path = solve_data_dir / "pdtGroup.csv"
+    if pdtg_path.exists():
+        with pdtg_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if (len(r) >= 5 and r[0] and r[2] and r[3]):
+                    try:
+                        v = float(r[4])
+                    except ValueError:
+                        continue
+                    if v == 0.0:
+                        continue
+                    if r[1] == "max_instant_flow":
+                        max_rows.append((r[0], r[2], r[3]))
+                    elif r[1] == "min_instant_flow":
+                        min_rows.append((r[0], r[2], r[3]))
+    _write_csv(solve_data_dir / "gdt_maxInstantFlow.csv",
+               ("group", "period", "time"), max_rows)
+    _write_csv(solve_data_dir / "gdt_minInstantFlow.csv",
+               ("group", "period", "time"), min_rows)
+
+
 def write_p_process_delay_weight(
     input_dir: Path, solve_data_dir: Path
 ) -> None:

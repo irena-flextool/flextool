@@ -283,3 +283,12 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_group_commodity_node_period_co2_period(
         input_dir, solve_data_dir
     )
+    # L0/L1 batch 64: process__*__param family + gdt_{max,min}InstantFlow.
+    # 8 set projections/joins around process__*__param__time CSVs +
+    # 2 group×dt sets gated by pdtGroup non-zero values.
+    process_arc_unions.write_param_t_projections_and_time_params(
+        input_dir, solve_data_dir
+    )
+    process_arc_unions.write_gdt_instant_flow_sets(
+        input_dir, solve_data_dir
+    )
