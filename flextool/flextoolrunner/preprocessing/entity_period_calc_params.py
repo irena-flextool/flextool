@@ -1300,6 +1300,63 @@ def write_pdtConversion_rate_section_slope(
                 fh.write(f"{p},{d},{t},{repr(v)}\n")
 
 
+def write_p_positive_negative_inflow(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1672 / L1675 — positive/negative thresholds on pdtNodeInflow.
+
+      * ``p_positive_inflow{n, (d,t) : not no_inflow}`` = max(pdtNodeInflow, 0)
+      * ``p_negative_inflow{n, (d,t)}``                 = min(pdtNodeInflow, 0)
+
+    Reads ``solve_data/pdtNodeInflow.csv`` (migrated batch 54). For
+    no_inflow nodes pdtNodeInflow is undefined; p_negative_inflow is 0
+    there to match mod's all-nodes domain.
+    """
+    nodes = _read_singles(input_dir / "node.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    inflow_method_pairs = frozenset(
+        _read_pairs(solve_data_dir / "node__inflow_method.csv")
+    )
+    no_inflow_nodes = frozenset(
+        n for n in nodes if (n, "no_inflow") in inflow_method_pairs
+    )
+
+    # Read pdtNodeInflow into a dict
+    pdt_inflow: dict[tuple[str, str, str], float] = {}
+    pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
+    if pdtni_path.exists():
+        with pdtni_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and row[0] and row[1] and row[2]:
+                    try:
+                        pdt_inflow[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+
+    # ---- p_positive_inflow (non-no_inflow nodes only) -----------------
+    pos_path = solve_data_dir / "p_positive_inflow.csv"
+    with pos_path.open("w") as fh:
+        fh.write("node,period,time,value\n")
+        for n in nodes:
+            if n in no_inflow_nodes:
+                continue
+            for (d, t) in dt:
+                v = pdt_inflow.get((n, d, t), 0.0)
+                fh.write(f"{n},{d},{t},{repr(v if v >= 0 else 0.0)}\n")
+
+    # ---- p_negative_inflow (all nodes) --------------------------------
+    neg_path = solve_data_dir / "p_negative_inflow.csv"
+    with neg_path.open("w") as fh:
+        fh.write("node,period,time,value\n")
+        for n in nodes:
+            for (d, t) in dt:
+                if n in no_inflow_nodes:
+                    fh.write(f"{n},{d},{t},0.0\n")
+                else:
+                    v = pdt_inflow.get((n, d, t), 0.0)
+                    fh.write(f"{n},{d},{t},{repr(v if v < 0 else 0.0)}\n")
+
+
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
     if not path.exists():
         return []

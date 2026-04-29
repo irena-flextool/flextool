@@ -237,3 +237,8 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_pdtConversion_rate_section_slope(
         input_dir, solve_data_dir
     )
+    # L8 batch 58: p_positive_inflow + p_negative_inflow — max/min thresholds
+    # on pdtNodeInflow. Reads pdtNodeInflow.csv (batch 54).
+    entity_period_calc_params.write_p_positive_negative_inflow(
+        input_dir, solve_data_dir
+    )

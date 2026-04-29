@@ -1669,11 +1669,11 @@ set nodeGroupDispatch__group_aggregate_Unit_to_group :=
 set nodeGroupDispatch__group_aggregate_Group_to_unit :=
     setof {(g, ga, p, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_unit} (g, ga);
 
-param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__inflow_method} :=
-  +(if pdtNodeInflow[n,d,t] >= 0 then pdtNodeInflow[n,d,t] else 0);
+param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__inflow_method};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_positive_inflow.csv' : [node, period, time], p_positive_inflow~value;
 
-param p_negative_inflow{n in node, (d,t) in dt} :=
-  +(if pdtNodeInflow[n,d,t] < 0 then pdtNodeInflow[n,d,t] else 0);
+param p_negative_inflow{n in node, (d,t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_negative_inflow.csv' : [node, period, time], p_negative_inflow~value;
 
 param p_entity_pre_existing {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/p_entity_pre_existing.csv' : [entity, period], p_entity_pre_existing~value;
