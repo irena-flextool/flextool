@@ -135,3 +135,7 @@ def run(state: RunnerState, solve_name: str) -> None:
     process_arc_unions.write_node_time_param_in_use(input_dir, solve_data_dir)
     # L2 batch 25: process_source_sink_param_t (filter on pt_process keys).
     process_arc_unions.write_process_source_sink_param_t(input_dir, solve_data_dir)
+    # L2 batch 26: p_entity_pre_existing (12-branch lifetime-method
+    # × entity-kind × virtual-unitsize gate). Reads pdProcess, pdNode,
+    # edEntity_lifetime written by write_entity_period_calc_params above.
+    entity_period_calc_params.write_p_entity_pre_existing(input_dir, solve_data_dir)
