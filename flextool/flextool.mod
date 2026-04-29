@@ -1196,7 +1196,8 @@ set process__source__sink__param_t :=
 	};
 
 
-set process_source_sink_param_t := {(p, source, sink) in process_source_sink_eff, param in processTimeParam : (p, param) in process__param_t};
+set process_source_sink_param_t dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_param_t.csv' : process_source_sink_param_t <- [process, source, sink, param];
 
 set process__source__sink__ramp_method :=
     { (p, source, sink) in process_source_sink, m in ramp_method
