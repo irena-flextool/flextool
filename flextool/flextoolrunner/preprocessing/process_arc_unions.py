@@ -561,6 +561,38 @@ def write_process_source_delayed_partition(
                ("process", "source"), undelayed_rows)
 
 
+def write_process_source_sink_ramp_method(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1205-1209 — process_source_sink × ramp_method
+    filtered by per-side ramp_method membership.
+
+        { (p, src, sink) in process_source_sink, m in ramp_method :
+          (p, src, m)  in process_node_ramp_method
+          OR (p, sink, m) in process_node_ramp_method }
+    """
+    from flextool.flextoolrunner.preprocessing._method_constants import (
+        RAMP_METHOD,
+    )
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+    pnrm: set[tuple[str, str, str]] = set()
+    pnrm_path = input_dir / "process__node__ramp_method.csv"
+    if pnrm_path.exists():
+        with pnrm_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    pnrm.add((r[0], r[1], r[2]))
+    rows: list[tuple[str, str, str, str]] = []
+    for p, src, sink in triples:
+        for m in RAMP_METHOD:
+            if (p, src, m) in pnrm or (p, sink, m) in pnrm:
+                rows.append((p, src, sink, m))
+    _write_csv(solve_data_dir / "process__source__sink__ramp_method.csv",
+               ("process", "source", "sink", "ramp_method"), rows)
+
+
 def write_process_source_sink_coeff_zero(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
