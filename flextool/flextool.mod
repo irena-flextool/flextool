@@ -1316,14 +1316,8 @@ param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink_
 		  else 0;
 
 
-param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt} :=
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1 && g in groupStochastic
-      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t]
-      else if exists{(pe,tb) in solve_branch__time_branch,  (d,ts) in period__time_first: (pe,d) in period__branch && (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1
-      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t]
-      else if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
-		  then pt_reserve_upDown_group[r, ud, g, param, t]
-		  else p_reserve_upDown_group[r, ud, g, param];
+param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt};  # Migrated to Python (preprocessing/reserve_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtReserve_upDown_group.csv' : [reserve, upDown, group, param, period, time], pdtReserve_upDown_group~value;
 set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group, (d,t) in dt} pdtReserve_upDown_group[r, ud, g, 'reservation', d, t]};
 set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt};
 set pdt_online_linear := {p in process_online_linear, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
