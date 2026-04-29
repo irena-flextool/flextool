@@ -559,3 +559,21 @@ def write_process_source_delayed_partition(
                ("process", "source"), delayed_rows)
     _write_csv(solve_data_dir / "process_source_undelayed.csv",
                ("process", "source"), undelayed_rows)
+
+
+def write_process_source_sink_delayed_partition(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1096-1097 — partition process_source_sink by process_delayed.
+
+        set process_source_sink_undelayed := {(p, source, sink) in process_source_sink : p not in process_delayed};
+        set process_source_sink_delayed   := {(p, source, sink) in process_source_sink : p in process_delayed};
+    """
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+    delayed = frozenset(_read_singles(solve_data_dir / "process_delayed.csv"))
+    delayed_rows = [(p, src, sink) for p, src, sink in triples if p in delayed]
+    undelayed_rows = [(p, src, sink) for p, src, sink in triples if p not in delayed]
+    _write_csv(solve_data_dir / "process_source_sink_delayed.csv",
+               ("process", "source", "sink"), delayed_rows)
+    _write_csv(solve_data_dir / "process_source_sink_undelayed.csv",
+               ("process", "source", "sink"), undelayed_rows)

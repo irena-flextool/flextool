@@ -143,3 +143,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     # by no_investment method + expired lifetime). Reads ed_invest from
     # batch 19 and edEntity_lifetime from entity_period_calc_params.
     invest_divest_sets.write_ed_invest_forbidden_no_investment(input_dir, solve_data_dir)
+    # L4 batch 28: process_source_sink partitioned by process_delayed.
+    process_arc_unions.write_process_source_sink_delayed_partition(input_dir, solve_data_dir)
