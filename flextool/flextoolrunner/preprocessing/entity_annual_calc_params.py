@@ -220,7 +220,9 @@ def write_entity_annual_calc_params(input_dir: Path, solve_data_dir: Path) -> No
     rows_ann_disc: list[tuple[str, str, float]] = []
     for e in entityInvest:
         elm_set = frozenset(lifetime_methods_for_entity.get(e, ()))
-        is_choice_or_no_invest = bool(elm_set & {"reinvest_choice", "no_investment"})
+        is_choice_or_no_invest = (
+            "reinvest_choice" in elm_set or "no_investment" in elm_set
+        )
         is_automatic = "reinvest_automatic" in elm_set
         for d in period_invest:
             ann = _per_method_annuity_invest(e, d)
@@ -293,7 +295,9 @@ def write_entity_annual_calc_params(input_dir: Path, solve_data_dir: Path) -> No
     rows_lfc: list[tuple[str, str, float]] = []
     for e in entities:
         elm_set = frozenset(lifetime_methods_for_entity.get(e, ()))
-        is_choice_or_no_invest = bool(elm_set & {"reinvest_choice", "no_investment"})
+        is_choice_or_no_invest = (
+            "reinvest_choice" in elm_set or "no_investment" in elm_set
+        )
         is_automatic = "reinvest_automatic" in elm_set
         for d in period_with_history:
             fc = ed_fixed_cost.get((e, d), 0.0)
