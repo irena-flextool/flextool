@@ -202,3 +202,64 @@ def _read_p_reserve(path: Path) -> dict[tuple[str, str, str, str], float]:
                 except ValueError:
                     continue
     return out
+
+
+def write_process_reserve_upDown_node_active_and_prundt(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1321-1322 — derived sets keyed on pdtReserve_upDown_group.
+
+        set process_reserve_upDown_node_active :=
+            {(p, r, ud, n) in process_reserve_upDown_node :
+                 sum{(r, ud, g) in reserve__upDown__group, (d,t) in dt}
+                     pdtReserve_upDown_group[r, ud, g, 'reservation', d, t]};
+        set prundt :=
+            {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt};
+
+    GMPL semantics: in ``sum{(r, ud, g) in reserve__upDown__group, ...}``
+    the outer ``(r, ud)`` are pre-bound and filter ``reserve__upDown__group``
+    to rows whose first two columns equal them; ``g`` is fresh.
+    """
+    # Load pdtReserve as (r, ud, g, param, d, t) → value (just-written by batch 43)
+    pdt_reserve: dict[tuple[str, str, str, str, str, str], float] = {}
+    pdt_path = solve_data_dir / "pdtReserve_upDown_group.csv"
+    if pdt_path.exists():
+        with pdt_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 7 and all(row[i] for i in range(6)):
+                    try:
+                        pdt_reserve[(row[0], row[1], row[2], row[3], row[4], row[5])] = float(row[6])
+                    except ValueError:
+                        continue
+    # (r, ud) → list[g] from reserve__upDown__group
+    rug_by_ru: dict[tuple[str, str], list[str]] = {}
+    for r, ud, g in _read_n_col(solve_data_dir / "reserve__upDown__group.csv", 3):
+        rug_by_ru.setdefault((r, ud), []).append(g)
+
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    prun = _read_n_col(input_dir / "process__reserve__upDown__node.csv", 4)
+
+    active_rows: list[tuple[str, str, str, str]] = []
+    for (p, r, ud, n) in prun:
+        groups = rug_by_ru.get((r, ud), ())
+        total = 0.0
+        for g in groups:
+            for (d, t) in dt:
+                total += pdt_reserve.get((r, ud, g, "reservation", d, t), 0.0)
+        if total != 0.0:
+            active_rows.append((p, r, ud, n))
+
+    out_active = solve_data_dir / "process_reserve_upDown_node_active.csv"
+    with out_active.open("w") as fh:
+        fh.write("process,reserve,upDown,node\n")
+        for row in active_rows:
+            fh.write(",".join(row) + "\n")
+
+    out_prundt = solve_data_dir / "prundt.csv"
+    with out_prundt.open("w") as fh:
+        fh.write("process,reserve,upDown,node,period,time\n")
+        for (p, r, ud, n) in active_rows:
+            for (d, t) in dt:
+                fh.write(f"{p},{r},{ud},{n},{d},{t}\n")

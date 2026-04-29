@@ -183,3 +183,8 @@ def run(state: RunnerState, solve_name: str) -> None:
     # L0 batch 43: pdtReserve_upDown_group — 4-branch hourly reserve param.
     # Unblocks process_reserve_upDown_node_active + prundt + reserve ratio sets.
     reserve_calc_params.write_pdtReserve_upDown_group(input_dir, solve_data_dir)
+    # L1 batch 44: process_reserve_upDown_node_active + prundt — depend on
+    # pdtReserve_upDown_group from batch 43.
+    reserve_calc_params.write_process_reserve_upDown_node_active_and_prundt(
+        input_dir, solve_data_dir
+    )
