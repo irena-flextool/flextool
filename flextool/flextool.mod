@@ -1657,35 +1657,16 @@ table data IN 'CSV' 'solve_data/ed_divest_min_period.csv' : [entity, period], ed
 table data IN 'CSV' 'solve_data/ed_cumulative_max_capacity.csv' : [entity, period], ed_cumulative_max_capacity~value;
 table data IN 'CSV' 'solve_data/ed_cumulative_min_capacity.csv' : [entity, period], ed_cumulative_min_capacity~value;
 
-set process_source_sink_ramp_limit_source_up :=
-    {(p, source, sink) in process_source_sink
-	    : ( sum{(p, source, m) in process_node_ramp_method : m in ramp_limit_method} 1
-		    && p_process_source[p, source, 'ramp_speed_up'] > 0
-		  )
-	};
-set process_source_sink_ramp_limit_sink_up :=
-    {(p, source, sink) in process_source_sink
-	    : ( sum{(p, sink, m) in process_node_ramp_method : m in ramp_limit_method} 1
-		    && p_process_sink[p, sink, 'ramp_speed_up'] > 0
-		  )
-	};
-set process_source_sink_ramp_limit_source_down :=
-    {(p, source, sink) in process_source_sink
-	    : ( sum{(p, source, m) in process_node_ramp_method : m in ramp_limit_method} 1
-		    && p_process_source[p, source, 'ramp_speed_down'] > 0
-		  )
-	};
-set process_source_sink_ramp_limit_sink_down :=
-    {(p, source, sink) in process_source_sink
-	    : ( sum{(p, sink, m) in process_node_ramp_method : m in ramp_limit_method} 1
-		    && p_process_sink[p, sink, 'ramp_speed_down'] > 0
-		  )
-	};
-set process_source_sink_ramp_cost :=
-    {(p, source, sink) in process_source_sink
-	    : sum{(p, source, m) in process_node_ramp_method : m in ramp_cost_method} 1
-		  || sum{(p, sink, m) in process_node_ramp_method : m in ramp_cost_method} 1
-	};
+set process_source_sink_ramp_limit_source_up   dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_ramp_limit_sink_up     dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_ramp_limit_source_down dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_ramp_limit_sink_down   dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_ramp_cost              dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_source_up.csv'   : process_source_sink_ramp_limit_source_up   <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_sink_up.csv'     : process_source_sink_ramp_limit_sink_up     <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_source_down.csv' : process_source_sink_ramp_limit_source_down <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_sink_down.csv'   : process_source_sink_ramp_limit_sink_down   <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_cost.csv'              : process_source_sink_ramp_cost              <- [process, source, sink];
 set process_source_sink_ramp :=
     process_source_sink_ramp_limit_source_up
     union process_source_sink_ramp_limit_sink_up

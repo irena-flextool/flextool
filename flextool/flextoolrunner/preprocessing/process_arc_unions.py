@@ -561,6 +561,98 @@ def write_process_source_delayed_partition(
                ("process", "source"), undelayed_rows)
 
 
+def write_process_source_sink_ramp_family(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1660-1688 — process_source_sink filtered by per-arc
+    ramp_method membership and (for the limit variants) a positive
+    ramp_speed parameter.
+
+        process_source_sink_ramp_limit_source_up   — (p,src,sink) where
+            (p,src,m) in process_node_ramp_method with m in RAMP_LIMIT_METHOD
+            AND p_process_source[p,src,'ramp_speed_up'] > 0
+        process_source_sink_ramp_limit_sink_up     — symmetric on sink
+        process_source_sink_ramp_limit_source_down — symmetric on speed_down
+        process_source_sink_ramp_limit_sink_down   — symmetric
+        process_source_sink_ramp_cost              — OR of source-side
+            and sink-side membership in RAMP_COST_METHOD (no speed gate)
+
+    Reads input/process__node__ramp_method.csv (mod loader L684) and
+    input/p_process_source.csv / p_process_sink.csv (canonical sources;
+    solve_data variants only exist after first solve via mod printf).
+    """
+    from flextool.flextoolrunner.preprocessing._method_constants import (
+        RAMP_LIMIT_METHOD, RAMP_COST_METHOD,
+    )
+    triples = _read_n_col(solve_data_dir / "process_source_sink.csv", 3)
+
+    # process_node_ramp_method (process, node, ramp_method)
+    pnrm: dict[tuple[str, str], set[str]] = {}
+    pnrm_path = input_dir / "process__node__ramp_method.csv"
+    if pnrm_path.exists():
+        with pnrm_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] and r[2]:
+                    pnrm.setdefault((r[0], r[1]), set()).add(r[2])
+
+    def _has_ramp_method(p: str, n: str, methods: frozenset[str]) -> bool:
+        return bool(pnrm.get((p, n), set()) & methods)
+
+    # p_process_source / p_process_sink: (process, side, param, value)
+    p_proc_side: dict[tuple[str, str, str, str], float] = {}
+    for filename, side_label in (
+        ("p_process_source.csv", "source"),
+        ("p_process_sink.csv",   "sink"),
+    ):
+        path = input_dir / filename
+        if not path.exists():
+            continue
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] and r[2]:
+                    try:
+                        p_proc_side[(side_label, r[0], r[1], r[2])] = float(r[3])
+                    except ValueError:
+                        continue
+
+    def _ramp_speed(side: str, p: str, n: str, dir_: str) -> float:
+        return p_proc_side.get((side, p, n, f"ramp_speed_{dir_}"), 0.0)
+
+    rsu_rows = [(p, src, sink) for p, src, sink in triples
+                if _has_ramp_method(p, src, RAMP_LIMIT_METHOD)
+                and _ramp_speed("source", p, src, "up") > 0]
+    _write_csv(solve_data_dir / "process_source_sink_ramp_limit_source_up.csv",
+               ("process", "source", "sink"), rsu_rows)
+
+    siu_rows = [(p, src, sink) for p, src, sink in triples
+                if _has_ramp_method(p, sink, RAMP_LIMIT_METHOD)
+                and _ramp_speed("sink", p, sink, "up") > 0]
+    _write_csv(solve_data_dir / "process_source_sink_ramp_limit_sink_up.csv",
+               ("process", "source", "sink"), siu_rows)
+
+    rsd_rows = [(p, src, sink) for p, src, sink in triples
+                if _has_ramp_method(p, src, RAMP_LIMIT_METHOD)
+                and _ramp_speed("source", p, src, "down") > 0]
+    _write_csv(solve_data_dir / "process_source_sink_ramp_limit_source_down.csv",
+               ("process", "source", "sink"), rsd_rows)
+
+    sid_rows = [(p, src, sink) for p, src, sink in triples
+                if _has_ramp_method(p, sink, RAMP_LIMIT_METHOD)
+                and _ramp_speed("sink", p, sink, "down") > 0]
+    _write_csv(solve_data_dir / "process_source_sink_ramp_limit_sink_down.csv",
+               ("process", "source", "sink"), sid_rows)
+
+    cost_rows = [(p, src, sink) for p, src, sink in triples
+                 if _has_ramp_method(p, src, RAMP_COST_METHOD)
+                 or _has_ramp_method(p, sink, RAMP_COST_METHOD)]
+    _write_csv(solve_data_dir / "process_source_sink_ramp_cost.csv",
+               ("process", "source", "sink"), cost_rows)
+
+
 def write_process_source_sink_is_node_family(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
