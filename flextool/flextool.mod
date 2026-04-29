@@ -996,7 +996,8 @@ table data IN 'CSV' 'solve_data/dt_non_anticipativity_set.csv' : dt_non_anticipa
 #check
 set ed_history_realized_first dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/ed_history_realized_first.csv' : ed_history_realized_first <- [entity, period];
-set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
+set ed_history_realized dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/ed_history_realized.csv' : ed_history_realized <- [entity, period];
 
 set process_delayed__duration dimen 2;  # Migrated to Python (preprocessing/union_sets.py).
 table data IN 'CSV' 'solve_data/process_delayed__duration.csv' : process_delayed__duration <- [process, delay_duration];
@@ -1058,12 +1059,8 @@ table data IN 'CSV' 'solve_data/process_source_sink_eff.csv' : process_source_si
 
 set process__source__sink__profile__profile_method_connection dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process__source__sink__profile__profile_method_connection.csv' : process__source__sink__profile__profile_method_connection <- [process, source, sink, profile, profile_method];
-set process__source__sink__profile__profile_method :=
-    process__profileProcess__toSink__profile__profile_method union
-	process__source__toProfileProcess__profile__profile_method union
-	process__source__sink__profile__profile_method_connection union
-	process__source__sink__profile__profile_method_direct
-;
+set process__source__sink__profile__profile_method dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__profile__profile_method.csv' : process__source__sink__profile__profile_method <- [process, source, sink, profile, profile_method];
 
 set process__source__sinkIsNode dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process__source__sinkIsNode.csv' : process__source__sinkIsNode <- [process, source, sink];
@@ -1129,7 +1126,8 @@ set process__source__sinkIsNode_not2way1var dimen 3;  # Migrated to Python (prep
 set process__source__sinkIsNode_2way1var    dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process__source__sinkIsNode_not2way1var.csv' : process__source__sinkIsNode_not2way1var <- [process, source, sink];
 table data IN 'CSV' 'solve_data/process__source__sinkIsNode_2way1var.csv'    : process__source__sinkIsNode_2way1var    <- [process, source, sink];
-set process_sinkIsNode_2way1var := setof {(p, source, sink) in process__source__sinkIsNode_2way1var} p;
+set process_sinkIsNode_2way1var dimen 1;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_sinkIsNode_2way1var.csv' : process_sinkIsNode_2way1var <- [process];
 set process__source__sinkIsNode_2way2var dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
 table data IN 'CSV' 'solve_data/process__source__sinkIsNode_2way2var.csv' : process__source__sinkIsNode_2way2var <- [process, source, sink];
 
@@ -1171,7 +1169,8 @@ table data IN 'CSV' 'solve_data/pdtNode.csv' : [node, param, period, time], pdtN
 
 param ptNode_inflow {n in node, t in time};  # Migrated to Python.
 table data IN 'CSV' 'solve_data/ptNode_inflow.csv' : [node, time], ptNode_inflow~value;
-set nodeSelfDischarge :=  {n in nodeState : exists{(d, t) in dt : pdtNode[n, 'self_discharge_loss', d, t]} 1};
+set nodeSelfDischarge dimen 1;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/nodeSelfDischarge.csv' : nodeSelfDischarge <- [node];
 
 set process__PeriodParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
 set process_TimeParam_in_use dimen 2;     # Migrated to Python (preprocessing/process_arc_unions.py).
@@ -1219,8 +1218,10 @@ set process_reserve_upDown_node_active dimen 4;  # Migrated to Python (preproces
 table data IN 'CSV' 'solve_data/process_reserve_upDown_node_active.csv' : process_reserve_upDown_node_active <- [process, reserve, upDown, node];
 set prundt dimen 6;  # Migrated to Python (preprocessing/reserve_calc_params.py).
 table data IN 'CSV' 'solve_data/prundt.csv' : prundt <- [process, reserve, upDown, node, period, time];
-set pdt_online_linear := {p in process_online_linear, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
-set pdt_online_integer := {p in process_online_integer, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
+set pdt_online_linear  dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set pdt_online_integer dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/pdt_online_linear.csv'  : pdt_online_linear  <- [process, period, time];
+table data IN 'CSV' 'solve_data/pdt_online_integer.csv' : pdt_online_integer <- [process, period, time];
 
 param hours_in_period{d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
 table data IN 'CSV' 'solve_data/hours_in_period.csv' : [period], hours_in_period~value;

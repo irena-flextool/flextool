@@ -1499,6 +1499,117 @@ def write_node_group_dispatch_sets(
                ("group", "group_aggregate"), list(seen12.keys()))
 
 
+def write_small_set_derivations(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L999, L1061, L1132, L1174, L1222-1223 — 6 small
+    derived sets that depend on already-migrated solve_data CSVs.
+
+      * ed_history_realized              (mod L999) = ed_history_realized_read
+                                                    ∪ ed_history_realized_first
+      * process__source__sink__profile__profile_method
+                                          (mod L1061) = 4-way union of
+                                          profile_method connection/direct +
+                                          profileProcess source/sink sets
+      * process_sinkIsNode_2way1var       (mod L1132) = setof p from
+                                          process__source__sinkIsNode_2way1var
+      * nodeSelfDischarge                 (mod L1174) = {n ∈ nodeState : ∃
+                                          (d, t) ∈ dt with pdtNode[n,
+                                          'self_discharge_loss', d, t] != 0}
+      * pdt_online_linear/integer         (mod L1222-3) = {p ∈ process_online_*,
+                                          (d, t) ∈ dt : pdProcess[p,
+                                          'startup_cost', d] != 0}
+    """
+    # ed_history_realized (mod L999)
+    ed_read = _read_pairs(
+        solve_data_dir / "p_entity_period_existing_capacity.csv"
+    )
+    ed_first = _read_pairs(solve_data_dir / "ed_history_realized_first.csv")
+    seen_ed: dict[tuple[str, str], None] = {}
+    for r in ed_read:
+        seen_ed.setdefault(r, None)
+    for r in ed_first:
+        seen_ed.setdefault(r, None)
+    _write_csv(solve_data_dir / "ed_history_realized.csv",
+               ("entity", "period"), list(seen_ed.keys()))
+
+    # process__source__sink__profile__profile_method (mod L1061) = 4-way union
+    seen_pf: dict[tuple[str, ...], None] = {}
+    for fname in (
+        "process__profileProcess__toSink__profile__profile_method.csv",
+        "process__source__toProfileProcess__profile__profile_method.csv",
+        "process__source__sink__profile__profile_method_connection.csv",
+        "process__source__sink__profile__profile_method_direct.csv",
+    ):
+        for r in _read_n_col(solve_data_dir / fname, 5):
+            seen_pf.setdefault(r, None)
+    _write_csv(
+        solve_data_dir / "process__source__sink__profile__profile_method.csv",
+        ("process", "source", "sink", "profile", "profile_method"),
+        list(seen_pf.keys()),
+    )
+
+    # process_sinkIsNode_2way1var (mod L1132) = projection of column 0
+    triples = _read_n_col(
+        solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3
+    )
+    seen_p: dict[str, None] = {}
+    for p, _, _ in triples:
+        seen_p.setdefault(p, None)
+    _write_csv(solve_data_dir / "process_sinkIsNode_2way1var.csv",
+               ("process",), [(p,) for p in seen_p.keys()])
+
+    # nodeSelfDischarge (mod L1174) — exists filter on pdtNode
+    nodeState = frozenset(_read_singles(solve_data_dir / "nodeState.csv"))
+    nodes_with_selfdischarge: set[str] = set()
+    pdtn_path = solve_data_dir / "pdtNode.csv"
+    if pdtn_path.exists():
+        with pdtn_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if (len(r) >= 5 and r[0] in nodeState
+                        and r[1] == "self_discharge_loss"):
+                    try:
+                        if float(r[4]) != 0.0:
+                            nodes_with_selfdischarge.add(r[0])
+                    except ValueError:
+                        continue
+    _write_csv(solve_data_dir / "nodeSelfDischarge.csv",
+               ("node",),
+               [(n,) for n in _read_singles(solve_data_dir / "nodeState.csv")
+                if n in nodes_with_selfdischarge])
+
+    # pdt_online_linear / pdt_online_integer (mod L1222-1223)
+    # Filter dt × process_online_* by pdProcess[p, 'startup_cost', d] != 0.
+    pd_startup: set[tuple[str, str]] = set()  # (process, period) where startup_cost != 0
+    pdp_path = solve_data_dir / "pdProcess.csv"
+    if pdp_path.exists():
+        with pdp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] == "startup_cost" and r[2]:
+                    try:
+                        if float(r[3]) != 0.0:
+                            pd_startup.add((r[0], r[2]))
+                    except ValueError:
+                        continue
+    dt_pairs = _read_n_col(solve_data_dir / "steps_in_use.csv", 2)
+    for fname_in, fname_out in (
+        ("process_online_linear.csv",  "pdt_online_linear.csv"),
+        ("process_online_integer.csv", "pdt_online_integer.csv"),
+    ):
+        procs = _read_singles(solve_data_dir / fname_in)
+        rows: list[tuple[str, str, str]] = []
+        for p in procs:
+            for d, t in dt_pairs:
+                if (p, d) in pd_startup:
+                    rows.append((p, d, t))
+        _write_csv(solve_data_dir / fname_out,
+                   ("process", "period", "time"), rows)
+
+
 def write_param_t_projections_and_time_params(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
