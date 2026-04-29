@@ -218,3 +218,7 @@ def run(state: RunnerState, solve_name: str) -> None:
     # Same shape as pdtProcess but time-first axis priority and extra
     # class_paramName_default fallback (input/default_values.csv).
     entity_period_calc_params.write_pdtNode(input_dir, solve_data_dir)
+    # L8 batch 54: pdtNodeInflow — stochastic / parent-branch fold-in OR
+    # additive sum across the 4 inflow scaling methods. Reads pdNode +
+    # ptNode_inflow + period_flow_*_multiplier + new_old_slope/section.
+    entity_period_calc_params.write_pdtNodeInflow(input_dir, solve_data_dir)

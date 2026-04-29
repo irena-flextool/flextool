@@ -1322,25 +1322,8 @@ table data IN 'CSV' 'solve_data/new_peak_inflow_sum.csv' : [node, period], new_p
 table data IN 'CSV' 'solve_data/new_old_multiplier.csv' : [node, period], new_old_multiplier~value;
 table data IN 'CSV' 'solve_data/new_old_slope.csv' : [node, period], new_old_slope~value;
 table data IN 'CSV' 'solve_data/new_old_section.csv' : [node, period], new_old_section~value;
-param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  :=
-        + (if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, tb, ts, t) in node__branch__time_inflow} 1
-              && exists{(g,n) in group_node: g in groupStochastic} 1
-           then sum{(d,ts) in period__time_first,(d,tb) in solve_branch__time_branch} pbt_node_inflow[n, tb, ts, t]
-           else
-		       if exists{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, tb, ts, t) in node__branch__time_inflow} 1
-               then
-			       sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node_inflow[n, tb, ts, t]
-               else
-			       + (if n in nodeBalance union nodeBalancePeriod && (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]
-				       then + period_flow_annual_multiplier[n, d] * ptNode_inflow[n, t])
-			       + (if n in nodeBalance union nodeBalancePeriod && (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]
-					   then + period_flow_proportional_multiplier[n, d] * ptNode_inflow[n, t])
-				   + (if n in nodeBalance union nodeBalancePeriod && (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]
-					   then + new_old_slope[n, d] * ptNode_inflow[n, t]
-			                - new_old_section[n, d])
-				   + (if n in nodeBalance union nodeBalancePeriod && (n, 'use_original') in node__inflow_method
-		               then + ptNode_inflow[n, t])
-		  );
+param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtNodeInflow.csv' : [node, period, time], pdtNodeInflow~value;
 # Agent 5b (LP-scaling): row scalers for node and group, computed from
 # connected-unit unitsizes when the solve opts in via
 # p_use_row_scaling == 1; otherwise held at 1 (pre-Agent-5 behaviour).
@@ -4577,15 +4560,18 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     }
 }
 
-# Write pdtNodeInflow
+# Write pdtNodeInflow (post-solve realized values, wide solve×period×time × node).
+# Mod's input now reads solve_data/pdtNodeInflow.csv (long format) written
+# by Python preprocessing, so this output goes to solve__pdtNodeInflow.csv
+# to avoid the dual-writer path collision (read_parameters.py:54 reads here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/pdtNodeInflow.csv";
-  for {n in node} {printf ",%s", n >> "solve_data/pdtNodeInflow.csv";}
+  printf "solve,period,time" > "solve_data/solve__pdtNodeInflow.csv";
+  for {n in node} {printf ",%s", n >> "solve_data/solve__pdtNodeInflow.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/pdtNodeInflow.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__pdtNodeInflow.csv";
     for {n in node} {
-        printf ",%.8g", pdtNodeInflow[n, d, t] >> "solve_data/pdtNodeInflow.csv";
+        printf ",%.8g", pdtNodeInflow[n, d, t] >> "solve_data/solve__pdtNodeInflow.csv";
     }
 }
 
