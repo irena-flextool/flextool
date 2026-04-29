@@ -151,3 +151,48 @@ def write_entity_period_calc_params(input_dir: Path, solve_data_dir: Path) -> No
     # ``table data IN [entity, period]`` may not be silently tolerated by
     # MathProg's loader. Once ed_invest moves to Python (later batch
     # after ed_entity_annual lands), these can follow.
+
+    # ---- p_entity_unitsize{e in entity} (write_input scope) ------------
+    # mod L1279: process branch prefers virtual_unitsize, then existing,
+    # then 1000. Same for nodes.
+    p_process: dict[tuple[str, str], float] = {}
+    pp_path = input_dir / "p_process.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        p_process[(row[0], row[1])] = float(row[2])
+                    except ValueError:
+                        continue
+    p_node: dict[tuple[str, str], float] = {}
+    pn_path = input_dir / "p_node.csv"
+    if pn_path.exists():
+        with pn_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        p_node[(row[0], row[1])] = float(row[2])
+                    except ValueError:
+                        continue
+    unitsize_rows: list[tuple[str, float]] = []
+    for e in entities:
+        if e in process_set:
+            v = (p_process.get((e, "virtual_unitsize"), 0.0)
+                 or p_process.get((e, "existing"), 0.0)
+                 or 1000.0)
+        elif e in node_set:
+            v = (p_node.get((e, "virtual_unitsize"), 0.0)
+                 or p_node.get((e, "existing"), 0.0)
+                 or 1000.0)
+        else:
+            v = 0.0
+        unitsize_rows.append((e, v))
+    (solve_data_dir / "p_entity_unitsize.csv").write_text(
+        "entity,value\n"
+        + "".join(f"{e},{repr(v)}\n" for e, v in unitsize_rows)
+    )

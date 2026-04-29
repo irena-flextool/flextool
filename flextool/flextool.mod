@@ -1276,21 +1276,8 @@ param pdtProfile {p in profile, (d,t) in dt} :=
 		  then p_profile[p]
 		  else 0;
 
-param p_entity_unitsize {e in entity} :=
-        + if e in process
-		  then ( if p_process[e, 'virtual_unitsize']
-                 then p_process[e, 'virtual_unitsize']
-		         else if e in process && p_process[e, 'existing']
-			          then p_process[e, 'existing']
-					  else 1000
-			   )
-          else if e in node
-		  then ( if p_node[e, 'virtual_unitsize']
-                 then p_node[e, 'virtual_unitsize']
-		         else if e in node && p_node[e, 'existing']
-		              then p_node[e, 'existing']
-					  else 1000
-			   );
+param p_entity_unitsize {e in entity};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_unitsize.csv' : [entity], p_entity_unitsize~value;
 
 param edEntity_lifetime {e in entity, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/edEntity_lifetime.csv' : [entity, period], edEntity_lifetime~value;
