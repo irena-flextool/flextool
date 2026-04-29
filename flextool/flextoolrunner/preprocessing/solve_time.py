@@ -169,3 +169,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     # L4 batch 38: p_entity_divest_cumulative_max — depends on
     # ed_divest_period (batch 19) and ed_divest_max_period (batch 20).
     entity_period_calc_params.write_p_entity_divest_cumulative_max(input_dir, solve_data_dir)
+    # L4 batch 39: ed_history_realized_first (gated on p_model['solveFirst']).
+    process_arc_unions.write_ed_history_realized_first(input_dir, solve_data_dir)

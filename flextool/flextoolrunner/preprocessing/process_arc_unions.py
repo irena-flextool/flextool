@@ -760,6 +760,62 @@ def write_process_source_sink_param_with_time(
                ("process", "source", "sink", "param"), rows)
 
 
+def write_ed_history_realized_first(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L993 — entity × realized periods, first solve only.
+
+        { (e, d) in entity × (d_realize_invest ∪ d_fix_storage_period
+                              ∪ d_realized_period)
+          : (d, d) in period__branch
+            AND p_model['solveFirst'] }
+
+    On non-first solves the set is empty (the AND on solveFirst short-
+    circuits). Reads p_model.csv (input/) for the solveFirst flag.
+    """
+    # Honour solveFirst: empty result on non-first solves.
+    solve_first = False
+    pm_path = input_dir / "p_model.csv"
+    if pm_path.exists():
+        with pm_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0] == "solveFirst":
+                    try:
+                        solve_first = bool(int(r[1]))
+                    except ValueError:
+                        pass
+                    break
+    if not solve_first:
+        _write_csv(solve_data_dir / "ed_history_realized_first.csv",
+                   ("entity", "period"), [])
+        return
+
+    entities = _read_singles(input_dir / "entity.csv")
+    d_realize_invest = frozenset(_read_singles(
+        solve_data_dir / "realized_invest_periods_of_current_solve.csv"
+    ))
+    d_fix_storage = frozenset(_read_singles(
+        solve_data_dir / "d_fix_storage_period_set.csv"
+    ))
+    d_realized = frozenset(_read_singles(
+        solve_data_dir / "d_realized_period_set.csv"
+    ))
+    realized_periods = d_realize_invest | d_fix_storage | d_realized
+
+    pb = _read_pairs(solve_data_dir / "period__branch.csv")
+    same_branch = frozenset((d, b) for d, b in pb if d == b)
+    diag_periods = frozenset(d for d, _ in same_branch)
+
+    rows = [
+        (e, d) for e in entities
+        for d in realized_periods if d in diag_periods
+    ]
+    _write_csv(solve_data_dir / "ed_history_realized_first.csv",
+               ("entity", "period"), rows)
+
+
 def write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
     input_dir: Path, solve_data_dir: Path
 ) -> None:
