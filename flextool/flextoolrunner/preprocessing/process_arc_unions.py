@@ -1119,6 +1119,141 @@ def write_process_source_sink_ramp_family(
                ("process", "source", "sink"), cost_rows)
 
 
+def write_process_source_sink_ramp_unions(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1506-1528 — process_source_sink_ramp (5-way union of
+    the ramp_limit_*/ramp_cost sets) plus 4 dtttdt-filtered ramp limit
+    variants.
+
+    The 5 input ramp_*.csv files are written by
+    write_process_source_sink_ramp_family above. Must be called after it.
+
+    The dtttdt-filtered sets aren't referenced by any constraint today
+    (mod L3468-3543's ramp_*_constraint families inline the same filter
+    on block_dtttdt instead), but the bare-decl is still present so we
+    migrate faithfully.
+
+    dtttdt-filter for each side/direction:
+        p_process_<side>[p, n, 'ramp_speed_<dir>'] * 60 < step_duration[d, t]
+        AND dt_jump[d, t] == 1
+    """
+    ramp_files = (
+        "process_source_sink_ramp_limit_source_up.csv",
+        "process_source_sink_ramp_limit_sink_up.csv",
+        "process_source_sink_ramp_limit_source_down.csv",
+        "process_source_sink_ramp_limit_sink_down.csv",
+        "process_source_sink_ramp_cost.csv",
+    )
+    seen: dict[tuple[str, ...], None] = {}
+    for fname in ramp_files:
+        for r in _read_n_col(solve_data_dir / fname, 3):
+            seen.setdefault(r, None)
+    _write_csv(solve_data_dir / "process_source_sink_ramp.csv",
+               ("process", "source", "sink"),
+               list(seen.keys()))
+
+    header9 = ("process", "source", "sink", "period", "time", "previous",
+               "previous_within_timeset", "previous_period",
+               "previous_within_solve")
+
+    sp_path = solve_data_dir / "step_previous.csv"
+    if not sp_path.exists():
+        for tail in ("source_up", "sink_up", "source_down", "sink_down"):
+            _write_csv(
+                solve_data_dir
+                / f"process_source_sink_dtttdt_ramp_limit_{tail}.csv",
+                header9, [],
+            )
+        return
+
+    # step_previous.csv cols: period, time, previous, previous_within_timeset,
+    #                         previous_period, previous_within_solve, jump
+    dtttdt_jump1: list[tuple[str, ...]] = []
+    with sp_path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for r in reader:
+            if len(r) < 7 or not r[0] or not r[1]:
+                continue
+            try:
+                jump = int(r[6])
+            except ValueError:
+                try:
+                    jump = int(float(r[6]))
+                except ValueError:
+                    continue
+            if jump == 1:
+                dtttdt_jump1.append(tuple(r[:6]))
+
+    step_duration: dict[tuple[str, str], float] = {}
+    siu_path = solve_data_dir / "steps_in_use.csv"
+    if siu_path.exists():
+        with siu_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        step_duration[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+
+    ramp_speed: dict[tuple[str, str, str, str], float] = {}
+    for fname, side_label in (
+        ("p_process_source.csv", "source"),
+        ("p_process_sink.csv",   "sink"),
+    ):
+        path = input_dir / fname
+        if not path.exists():
+            continue
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if (len(r) >= 4 and r[0] and r[1]
+                        and r[2] in ("ramp_speed_up", "ramp_speed_down")):
+                    try:
+                        ramp_speed[(side_label, r[0], r[1], r[2])] = float(r[3])
+                    except ValueError:
+                        continue
+
+    def _gen(filename: str, side: str, dir_: str) -> list[tuple[str, ...]]:
+        triples = _read_n_col(solve_data_dir / filename, 3)
+        if not triples:
+            return []
+        out: list[tuple[str, ...]] = []
+        for p, src, sink in triples:
+            n = src if side == "source" else sink
+            rs60 = ramp_speed.get((side, p, n, f"ramp_speed_{dir_}"), 0.0) * 60.0
+            for tup in dtttdt_jump1:
+                d, t = tup[0], tup[1]
+                if rs60 < step_duration.get((d, t), 0.0):
+                    out.append((p, src, sink, *tup))
+        return out
+
+    _write_csv(
+        solve_data_dir / "process_source_sink_dtttdt_ramp_limit_source_up.csv",
+        header9,
+        _gen("process_source_sink_ramp_limit_source_up.csv", "source", "up"),
+    )
+    _write_csv(
+        solve_data_dir / "process_source_sink_dtttdt_ramp_limit_sink_up.csv",
+        header9,
+        _gen("process_source_sink_ramp_limit_sink_up.csv", "sink", "up"),
+    )
+    _write_csv(
+        solve_data_dir / "process_source_sink_dtttdt_ramp_limit_source_down.csv",
+        header9,
+        _gen("process_source_sink_ramp_limit_source_down.csv", "source", "down"),
+    )
+    _write_csv(
+        solve_data_dir / "process_source_sink_dtttdt_ramp_limit_sink_down.csv",
+        header9,
+        _gen("process_source_sink_ramp_limit_sink_down.csv", "sink", "down"),
+    )
+
+
 def write_process_source_sink_is_node_family(
     input_dir: Path, solve_data_dir: Path
 ) -> None:

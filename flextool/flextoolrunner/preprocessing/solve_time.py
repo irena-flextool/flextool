@@ -256,3 +256,10 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_p_entity_capacity_max_chain(
         input_dir, solve_data_dir
     )
+    # L4/L5 batch 61: process_source_sink_ramp (5-way union of ramp_*
+    # input sets) + 4 dtttdt-filtered ramp limit sets. Reads the 5
+    # ramp_*.csv files written by batch 30 + step_previous.csv +
+    # steps_in_use.csv + p_process_source/sink.csv.
+    process_arc_unions.write_process_source_sink_ramp_unions(
+        input_dir, solve_data_dir
+    )
