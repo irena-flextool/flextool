@@ -191,6 +191,155 @@ def write_entity_period_calc_params(input_dir: Path, solve_data_dir: Path) -> No
     )
 
 
+def write_p_entity_pre_existing(
+    input_dir: Path, solve_data_dir: Path
+) -> None:
+    """flextool.mod L1886-1895 — pre-existing capacity per (entity, period).
+
+    12-branch sum, but exactly one branch fires per (e, d) given the
+    method/kind/virtual_unitsize trichotomy. Equivalent simplified form:
+
+        Let method = entity__lifetime_method[e]
+        Let v_existing = pdProcess[e,'existing',d] if e in process
+                         else pdNode[e,'existing',d] if e in node
+                         else 0
+        Let v_unit = p_process[e,'virtual_unitsize'] if e in process
+                     else p_node[e,'virtual_unitsize'] if e in node
+                     else 0
+        if method not in {reinvest_automatic, reinvest_choice, no_investment}: 0
+        if method in {reinvest_choice, no_investment} and not (
+              p_years_d[d] < sum_{d_first in period_first}
+                              (p_years_d[d_first] + edEntity_lifetime[e, d_first])
+            ): 0
+        else: v_existing * v_unit  if v_unit else  v_existing
+
+    Output covers entity × period_in_use (matches mod's index domain) so
+    every key the mod's `param p_entity_pre_existing` table loader expects
+    is present. Reads pdProcess/pdNode and edEntity_lifetime CSVs that
+    write_entity_period_calc_params just wrote in the same per-solve
+    pass.
+    """
+    process_set = frozenset(_read_singles(input_dir / "process.csv"))
+    node_set = frozenset(_read_singles(input_dir / "node.csv"))
+    entities = _read_singles(input_dir / "entity.csv")
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+    period_first = _read_singles(solve_data_dir / "period_first.csv")
+
+    lifetime_method: dict[str, str] = {}
+    for e_, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv"):
+        lifetime_method[e_] = m
+
+    p_years_d: dict[str, float] = {}
+    for r in _read_pairs(solve_data_dir / "p_years_d.csv"):
+        try:
+            p_years_d[r[0]] = float(r[1])
+        except ValueError:
+            continue
+
+    ed_lifetime: dict[tuple[str, str], float] = {}
+    elf = solve_data_dir / "edEntity_lifetime.csv"
+    if elf.exists():
+        with elf.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        ed_lifetime[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+
+    pd_existing_proc: dict[tuple[str, str], float] = {}
+    pd_existing_node: dict[tuple[str, str], float] = {}
+    pdp = solve_data_dir / "pdProcess.csv"
+    if pdp.exists():
+        with pdp.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] == "existing" and r[2]:
+                    try:
+                        pd_existing_proc[(r[0], r[2])] = float(r[3])
+                    except ValueError:
+                        continue
+    pdn = solve_data_dir / "pdNode.csv"
+    if pdn.exists():
+        with pdn.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] == "existing" and r[2]:
+                    try:
+                        pd_existing_node[(r[0], r[2])] = float(r[3])
+                    except ValueError:
+                        continue
+
+    p_process_vu: dict[str, float] = {}
+    p_node_vu: dict[str, float] = {}
+    pp_path = input_dir / "p_process.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] == "virtual_unitsize":
+                    try:
+                        p_process_vu[r[0]] = float(r[2])
+                    except ValueError:
+                        continue
+    pn_path = input_dir / "p_node.csv"
+    if pn_path.exists():
+        with pn_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] == "virtual_unitsize":
+                    try:
+                        p_node_vu[r[0]] = float(r[2])
+                    except ValueError:
+                        continue
+
+    # Per-entity lifetime gate sum: sum_{d_first in period_first}
+    #                                 (p_years_d[d_first] + edEntity_lifetime[e, d_first])
+    def _life_sum(e: str) -> float:
+        return sum(
+            p_years_d.get(d_first, 0.0) + ed_lifetime.get((e, d_first), 0.0)
+            for d_first in period_first
+        )
+
+    rows: list[tuple[str, str, float]] = []
+    for e in entities:
+        method = lifetime_method.get(e, "")
+        is_proc = e in process_set
+        is_node = e in node_set
+        v_unit = (
+            p_process_vu.get(e, 0.0) if is_proc
+            else p_node_vu.get(e, 0.0) if is_node
+            else 0.0
+        )
+        gate_sum = (
+            _life_sum(e)
+            if method in ("reinvest_choice", "no_investment") else None
+        )
+        for d in period_in_use:
+            v: float = 0.0
+            if method in ("reinvest_automatic", "reinvest_choice", "no_investment"):
+                if method == "reinvest_automatic" or (
+                    gate_sum is not None and p_years_d.get(d, 0.0) < gate_sum
+                ):
+                    if is_proc:
+                        pd_e = pd_existing_proc.get((e, d), 0.0)
+                    elif is_node:
+                        pd_e = pd_existing_node.get((e, d), 0.0)
+                    else:
+                        pd_e = 0.0
+                    v = pd_e * v_unit if v_unit else pd_e
+            rows.append((e, d, v))
+
+    _write_keyed_2(solve_data_dir / "p_entity_pre_existing.csv",
+                   ("entity", "period", "value"), rows)
+
+
 def write_ed_period_params(input_dir: Path, solve_data_dir: Path) -> None:
     """ed_*_period / ed_cumulative_* family — keyed on ed_invest / ed_divest.
 

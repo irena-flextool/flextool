@@ -1880,20 +1880,8 @@ param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__in
 param p_negative_inflow{n in node, (d,t) in dt} :=
   +(if pdtNodeInflow[n,d,t] < 0 then pdtNodeInflow[n,d,t] else 0);
 
-param p_entity_pre_existing {e in entity, d in period_in_use} :=
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && e in process && not p_process[e, 'virtual_unitsize'] then pdProcess[e, 'existing', d])
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && e in process && p_process[e, 'virtual_unitsize'] then pdProcess[e, 'existing', d] * p_process[e, 'virtual_unitsize'])
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && e in node && not p_node[e, 'virtual_unitsize'] then pdNode[e, 'existing', d])
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && e in node && p_node[e, 'virtual_unitsize'] then pdNode[e, 'existing', d] * p_node[e, 'virtual_unitsize'])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && e in process && not p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && e in process && p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d] * p_process[e, 'virtual_unitsize'])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && e in node && not p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && e in node && p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d] * p_node[e, 'virtual_unitsize'])
-  + (if (e, 'no_investment') in entity__lifetime_method && e in process && not p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d])
-  + (if (e, 'no_investment') in entity__lifetime_method && e in process && p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d] * p_process[e, 'virtual_unitsize'])
-  + (if (e, 'no_investment') in entity__lifetime_method && e in node && not p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d])
-  + (if (e, 'no_investment') in entity__lifetime_method && e in node && p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d] * p_node[e, 'virtual_unitsize'])
-;
+param p_entity_pre_existing {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_pre_existing.csv' : [entity, period], p_entity_pre_existing~value;
 param p_entity_existing_capacity_later_solves {e in entity, d in period_in_use} :=
   + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_existing_capacity[e, d_history]);
 
