@@ -1318,8 +1318,10 @@ param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink_
 
 param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt};  # Migrated to Python (preprocessing/reserve_calc_params.py).
 table data IN 'CSV' 'solve_data/pdtReserve_upDown_group.csv' : [reserve, upDown, group, param, period, time], pdtReserve_upDown_group~value;
-set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group, (d,t) in dt} pdtReserve_upDown_group[r, ud, g, 'reservation', d, t]};
-set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt};
+set process_reserve_upDown_node_active dimen 4;  # Migrated to Python (preprocessing/reserve_calc_params.py).
+table data IN 'CSV' 'solve_data/process_reserve_upDown_node_active.csv' : process_reserve_upDown_node_active <- [process, reserve, upDown, node];
+set prundt dimen 6;  # Migrated to Python (preprocessing/reserve_calc_params.py).
+table data IN 'CSV' 'solve_data/prundt.csv' : prundt <- [process, reserve, upDown, node, period, time];
 set pdt_online_linear := {p in process_online_linear, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 set pdt_online_integer := {p in process_online_integer, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 
