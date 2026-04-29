@@ -197,3 +197,5 @@ def run(state: RunnerState, solve_name: str) -> None:
     entity_period_calc_params.write_pdtProcess__source__sink__dt_varCost_pair(
         input_dir, solve_data_dir
     )
+    # L2/L5 batch 48: pssdt_varCost_eff_*/noEff (4 filter sets).
+    entity_period_calc_params.write_pssdt_varCost_filters(input_dir, solve_data_dir)

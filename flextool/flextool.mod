@@ -1495,10 +1495,14 @@ table data IN 'CSV' 'solve_data/pdtProcess__source__sink__dt_varCost.csv' : [pro
 
 param pdtProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdtProcess__source__sink__dt_varCost_alwaysProcess.csv' : [process, source, sink, period, time], pdtProcess__source__sink__dt_varCost_alwaysProcess~value;
-set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : pdtProcess__source__sink__dt_varCost[p, source, sink, d, t]};
-set pssdt_varCost_eff_unit_source := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && pdtProcess_source[p, source, 'other_operational_cost', d, t]};
-set pssdt_varCost_eff_unit_sink := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && pdtProcess_sink[p, sink, 'other_operational_cost', d, t]};
-set pssdt_varCost_eff_connection := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : pdtProcess[p,'other_operational_cost', d, t]};
+set pssdt_varCost_noEff dimen 5;  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+set pssdt_varCost_eff_unit_source dimen 5;  # Migrated to Python.
+set pssdt_varCost_eff_unit_sink dimen 5;    # Migrated to Python.
+set pssdt_varCost_eff_connection dimen 5;   # Migrated to Python.
+table data IN 'CSV' 'solve_data/pssdt_varCost_noEff.csv' : pssdt_varCost_noEff <- [process, source, sink, period, time];
+table data IN 'CSV' 'solve_data/pssdt_varCost_eff_unit_source.csv' : pssdt_varCost_eff_unit_source <- [process, source, sink, period, time];
+table data IN 'CSV' 'solve_data/pssdt_varCost_eff_unit_sink.csv' : pssdt_varCost_eff_unit_sink <- [process, source, sink, period, time];
+table data IN 'CSV' 'solve_data/pssdt_varCost_eff_connection.csv' : pssdt_varCost_eff_connection <- [process, source, sink, period, time];
 set ed_invest dimen 2;            # Migrated to Python (preprocessing/invest_divest_sets.py).
 set ed_invest_period dimen 2;     # Migrated to Python.
 set e_invest_total;               # Migrated to Python (preprocessing/invest_total_sets.py).
