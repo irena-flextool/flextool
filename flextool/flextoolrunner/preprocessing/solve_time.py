@@ -24,15 +24,27 @@ write_input-time pass is sufficient.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from flextool.flextoolrunner.runner_state import RunnerState
 
+if TYPE_CHECKING:
+    from flextool.flextoolrunner.solve_handoff import SolveHandoff
 
-def run(state: RunnerState, solve_name: str) -> None:
+
+def run(
+    state: RunnerState, solve_name: str,
+    *, prior_handoff: "SolveHandoff | None" = None,
+) -> None:
     """Execute per-solve preprocessing for ``solve_name``.
 
     Idempotent: calling twice with the same ``solve_name`` produces
     the same outputs.
+
+    ``prior_handoff`` (when supplied) replaces the parent-solve CSV
+    reads inside per-solve preprocessing modules with in-memory frame
+    lookups.  When ``None`` (default), the file-based path runs and
+    behavior is bit-identical to pre-handoff flextool.
     """
     wf = state.paths.work_folder
     input_dir = wf / "input"
@@ -253,8 +265,10 @@ def run(state: RunnerState, solve_name: str) -> None:
     # Reads p_entity_pre_existing (batch 12), p_entity_unitsize (batch 18),
     # edd_history, ed_history_realized_first, p_entity_period_existing_capacity
     # (handoff), p_entity_divested (handoff). solveFirst flag from p_model.csv.
+    # ``prior_handoff`` (when supplied) bypasses the parent-solve CSV reads
+    # for the realized_invest / realized_existing / divest_cumulative carriers.
     entity_period_calc_params.write_p_entity_existing_chain(
-        input_dir, solve_data_dir
+        input_dir, solve_data_dir, prior_handoff=prior_handoff,
     )
     # L9/L10 batch 60: capacity max chain (4 params).
     # p_entity_max_capacity, p_entity_max_units, p_entity_invest_cumulative_max,

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from flextool.flextoolrunner.preprocessing.pd_lookups import (
     PdLookup,
@@ -30,6 +31,9 @@ from flextool.flextoolrunner.preprocessing.pd_lookups import (
     NODE_PARAM_DEF1,
     read_class_defaults,
 )
+
+if TYPE_CHECKING:
+    from flextool.flextoolrunner.solve_handoff import SolveHandoff
 
 
 def _read_singles(path: Path) -> list[str]:
@@ -1374,7 +1378,10 @@ def _read_solve_first_flag(solve_data_dir: Path) -> bool:
     return False
 
 
-def write_p_entity_existing_chain(input_dir: Path, solve_data_dir: Path) -> None:
+def write_p_entity_existing_chain(
+    input_dir: Path, solve_data_dir: Path,
+    *, prior_handoff: "SolveHandoff | None" = None,
+) -> None:
     """flextool.mod L1680-1697 — five cascading entity-capacity params:
 
       * ``p_entity_existing_capacity_later_solves{e, d}``
@@ -1400,8 +1407,11 @@ def write_p_entity_existing_chain(input_dir: Path, solve_data_dir: Path) -> None
       * solve_data/p_entity_unitsize.csv (batch 18)
       * solve_data/edd_history.csv
       * solve_data/ed_history_realized_first.csv (batch 39)
-      * solve_data/p_entity_period_existing_capacity.csv (handoff)
-      * solve_data/p_entity_divested.csv (handoff)
+      * solve_data/p_entity_period_existing_capacity.csv (handoff) —
+        bypassed when ``prior_handoff`` provides ``realized_existing`` /
+        ``realized_invest``.
+      * solve_data/p_entity_divested.csv (handoff) — bypassed when
+        ``prior_handoff`` provides ``divest_cumulative``.
       * solve_data/entityDivest.csv
 
     Path-collision: mod also writes wide-format
@@ -1451,20 +1461,36 @@ def write_p_entity_existing_chain(input_dir: Path, solve_data_dir: Path) -> None
                     edd_history.append((r[0], r[1], r[2]))
 
     # ---- prior solve's existing/invested capacity (per d_history) ----
+    # In-memory ``prior_handoff`` (when populated) bypasses the file
+    # read — same data, sourced from ``RunnerState.handoffs`` instead
+    # of the parent solve's CSV output.
     ppec: dict[tuple[str, str], float] = {}
     ppic: dict[tuple[str, str], float] = {}
-    ppe_path = solve_data_dir / "p_entity_period_existing_capacity.csv"
-    if ppe_path.exists():
-        with ppe_path.open() as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for r in reader:
-                if len(r) >= 4 and r[0] and r[1]:
-                    try:
-                        ppec[(r[0], r[1])] = float(r[2])
-                        ppic[(r[0], r[1])] = float(r[3])
-                    except ValueError:
-                        continue
+    used_handoff_existing = (
+        prior_handoff is not None
+        and (prior_handoff.realized_existing is not None
+             or prior_handoff.realized_invest is not None)
+    )
+    if used_handoff_existing:
+        if prior_handoff.realized_existing is not None:
+            for r in prior_handoff.realized_existing.iter_rows(named=True):
+                ppec[(str(r["entity"]), str(r["period"]))] = float(r["value"])
+        if prior_handoff.realized_invest is not None:
+            for r in prior_handoff.realized_invest.iter_rows(named=True):
+                ppic[(str(r["entity"]), str(r["period"]))] = float(r["value"])
+    else:
+        ppe_path = solve_data_dir / "p_entity_period_existing_capacity.csv"
+        if ppe_path.exists():
+            with ppe_path.open() as fh:
+                reader = csv.reader(fh)
+                next(reader, None)
+                for r in reader:
+                    if len(r) >= 4 and r[0] and r[1]:
+                        try:
+                            ppec[(r[0], r[1])] = float(r[2])
+                            ppic[(r[0], r[1])] = float(r[3])
+                        except ValueError:
+                            continue
 
     # ---- ed_history_realized = read ∪ first ----------------------------
     ed_history_realized: set[tuple[str, str]] = set(ppec.keys())
@@ -1480,17 +1506,21 @@ def write_p_entity_existing_chain(input_dir: Path, solve_data_dir: Path) -> None
     # ---- divest data ---------------------------------------------------
     entity_divest = frozenset(_read_singles(solve_data_dir / "entityDivest.csv"))
     p_divested: dict[str, float] = {}
-    pd_path = solve_data_dir / "p_entity_divested.csv"
-    if pd_path.exists():
-        with pd_path.open() as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for r in reader:
-                if len(r) >= 2 and r[0]:
-                    try:
-                        p_divested[r[0]] = float(r[1])
-                    except ValueError:
-                        continue
+    if prior_handoff is not None and prior_handoff.divest_cumulative is not None:
+        for r in prior_handoff.divest_cumulative.iter_rows(named=True):
+            p_divested[str(r["entity"])] = float(r["value"])
+    else:
+        pd_path = solve_data_dir / "p_entity_divested.csv"
+        if pd_path.exists():
+            with pd_path.open() as fh:
+                reader = csv.reader(fh)
+                next(reader, None)
+                for r in reader:
+                    if len(r) >= 2 and r[0]:
+                        try:
+                            p_divested[r[0]] = float(r[1])
+                        except ValueError:
+                            continue
 
     # ---- compute later_solves (existing) and previously_invested ------
     later_existing: dict[tuple[str, str], float] = {}

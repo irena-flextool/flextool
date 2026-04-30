@@ -12,6 +12,7 @@ from collections import defaultdict
 
 from flextool.flextoolrunner.blocks import write_block_data_for_solve
 from flextool.flextoolrunner.preprocessing import solve_time as preprocessing_solve_time
+from flextool.flextoolrunner.solve_handoff import capture_post_solve
 from flextool.flextoolrunner.minimum_time import write_minimum_time_data
 from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigError, FlexToolSolveError, SolveResult
 from flextool.flextoolrunner.solver_runner import SolverRunner
@@ -219,6 +220,12 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
 
     first = True
     previous_complete_solve = None
+    # Track the most-recent solve whose post-solve capture deposited a
+    # ``SolveHandoff`` into ``state.handoffs`` — that entry feeds the
+    # *next* iteration's per-solve preprocessing as ``prior_handoff``.
+    # When ``state.handoffs is None`` the consume side is a no-op and
+    # preprocessing falls back to the file-based path.
+    last_captured_solve: str | None = None
     cached_complete_active_time_lists: dict = {}
     for i, solve in enumerate(all_solves):
         timer_in_solve = time.perf_counter()
@@ -402,9 +409,26 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         #if multiple storage solve levels, get the storage fix of the upper level, (not the fix of the previous roll):
         if storage_fix_values_exist:
             state.logger.info("Fetching storage parameters from the upper solve")
-            shutil.copy(str(wf / f"solve_data/fix_storage_quantity_{complete_solve[parent_roll[solve]]}.csv"), str(wf / "solve_data/fix_storage_quantity.csv"))
-            shutil.copy(str(wf / f"solve_data/fix_storage_price_{complete_solve[parent_roll[solve]]}.csv"), str(wf / "solve_data/fix_storage_price.csv"))
-            shutil.copy(str(wf / f"solve_data/fix_storage_usage_{complete_solve[parent_roll[solve]]}.csv"), str(wf / "solve_data/fix_storage_usage.csv"))
+            parent_complete = complete_solve[parent_roll[solve]]
+            parent_handoff = (
+                state.handoffs.get(parent_complete)
+                if state.handoffs is not None else None
+            )
+            if parent_handoff is not None and parent_handoff.fix_storage is not None:
+                # Source the parent's fix_storage from the in-memory
+                # handoff frame.  The .mod still reads CSV, but the
+                # archived ``fix_storage_*_<parent>.csv`` files are no
+                # longer the source of truth.
+                from flextool.flextoolrunner.solve_handoff import (
+                    write_fix_storage_files_from_handoff,
+                )
+                write_fix_storage_files_from_handoff(
+                    parent_handoff.fix_storage, wf / "solve_data",
+                )
+            else:
+                shutil.copy(str(wf / f"solve_data/fix_storage_quantity_{parent_complete}.csv"), str(wf / "solve_data/fix_storage_quantity.csv"))
+                shutil.copy(str(wf / f"solve_data/fix_storage_price_{parent_complete}.csv"), str(wf / "solve_data/fix_storage_price.csv"))
+                shutil.copy(str(wf / f"solve_data/fix_storage_usage_{parent_complete}.csv"), str(wf / "solve_data/fix_storage_usage.csv"))
 
         solve_writers.write_solve_status(first_of_nested_level, last_of_nested_level, nested=True, work_folder=wf)
         last = i == len(solves) - 1
@@ -492,7 +516,14 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         # Migration hook (Option A): refresh / compute per-solve
         # preprocessing CSVs after solve_writers + blocks have written
         # their per-solve inputs, but before glpsol reads them.
-        preprocessing_solve_time.run(state, complete_solve[solve])
+        prior_handoff = (
+            state.handoffs.get(last_captured_solve)
+            if state.handoffs is not None and last_captured_solve is not None
+            else None
+        )
+        preprocessing_solve_time.run(
+            state, complete_solve[solve], prior_handoff=prior_handoff,
+        )
         exit_status = solver.run(complete_solve[solve])
         state.current_scale_solve_name = None
         if exit_status == 0:
@@ -502,6 +533,19 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             message = f'Error: {exit_status}'
             state.logger.error(message)
             raise FlexToolSolveError(message)
+
+        # In-memory solve-to-solve handoff (add-on, opt-in via
+        # ``state.handoffs``).  No-op when the slot is None (default,
+        # behavior bit-identical to pre-handoff flextool).  See
+        # ``solve_handoff.py`` for the carrier dataclass.
+        capture_post_solve(state, complete_solve[solve])
+        if state.handoffs is not None:
+            last_captured_solve = complete_solve[solve]
+            # Mirror onto state so post-solve writers in
+            # ``solver_runner._run_highs`` (which run BEFORE the next
+            # iteration starts) can find the most-recent capture by
+            # name without re-implementing iteration tracking.
+            state.last_captured_solve = last_captured_solve
 
         # Agent 10 (LP-scaling): user-facing diagnostic report.  Always
         # generated; cheap; reads the ScaleTable cached by Agent 8, the
