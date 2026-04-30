@@ -221,8 +221,8 @@ def _load_node_state(work_folder: Path) -> set[str]:
 
 
 def _load_entity(work_folder: Path) -> set[str]:
-    """Return the full ``entity`` set from ``solve_data/entity.csv``."""
-    path = work_folder / "solve_data" / "entity.csv"
+    """Return the full ``entity`` set from ``input/entity.csv``."""
+    path = work_folder / "input" / "entity.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)
