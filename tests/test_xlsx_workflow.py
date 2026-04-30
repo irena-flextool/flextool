@@ -12,11 +12,14 @@ import shutil
 import unittest
 from pathlib import Path
 
+import pytest
+
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parent.parent
 XLSX_PATH = FLEXTOOL_ROOT / "templates" / "example_input_template.xlsx"
 
 
+@pytest.mark.slow
 @unittest.skipUnless(XLSX_PATH.exists(), f"Test input file not found: {XLSX_PATH}")
 class TestXlsxWorkflow(unittest.TestCase):
     """Test the full FlexTool workflow starting from an xlsx input file."""
