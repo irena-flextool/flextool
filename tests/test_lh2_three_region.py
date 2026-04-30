@@ -26,6 +26,7 @@ import pytest
 
 TEST_DIR = Path(__file__).parent
 EXPECTED_DIR = TEST_DIR / "expected"
+FIXTURES_DIR = TEST_DIR / "fixtures"
 REPO_ROOT = TEST_DIR.parent
 
 if str(TEST_DIR) not in sys.path:
@@ -41,8 +42,8 @@ from build_lh2_three_region import (  # noqa: E402
     N_HOURS,
     REGIONS,
     SCENARIO,
-    build,
 )
+from db_utils import json_to_db  # noqa: E402
 
 from flextool.flextoolrunner.flextoolrunner import FlexToolRunner  # noqa: E402
 
@@ -58,9 +59,15 @@ OBJECTIVE_TOLERANCE = 1e-4
 
 @pytest.fixture(scope="session")
 def lh2_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
-    """Build the LH2 fixture once per session and return the sqlite URL."""
+    """Build the LH2 fixture once per session and return the sqlite URL.
+
+    Mirrors the ``tests.json → tests.sqlite`` pattern from
+    ``tests/conftest.py``: the JSON fixture is the committed source of
+    truth, and ``json_to_db`` materialises a fresh SQLite for each
+    pytest session (no stale state from previous runs).
+    """
     db_path = tmp_path_factory.mktemp("lh2_db") / "lh2_three_region.sqlite"
-    return build(db_path)
+    return json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
 
 
 @pytest.fixture(scope="session")
