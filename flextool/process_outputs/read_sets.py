@@ -27,7 +27,7 @@ def read_sets(output_dir):
     s = SimpleNamespace()
 
     # Process and entity sets (write-once)
-    s.entity = pd.read_csv(solve_data_path / 'entity.csv').set_index(['entity']).index
+    s.entity = pd.read_csv(input_path / 'entity.csv').set_index(['entity']).index
     s.entityInvest = pd.read_csv(solve_data_path / 'entityInvest.csv').set_index(['entity']).index
     s.entityDivest = pd.read_csv(solve_data_path / 'entityDivest.csv').set_index(['entity']).index
     s.process_online = pd.read_csv(solve_data_path / 'process_online.csv').set_index(['process']).index
@@ -46,14 +46,14 @@ def read_sets(output_dir):
     s.ed_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__ed_invest.csv'))
     s.ed_divest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__ed_divest.csv'))
     s.edd_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__edd_invest.csv'))
-    s.process__node__profile__profile_method = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'process__node__profile__profile_method.csv'))
+    s.process__node__profile__profile_method = pd.MultiIndex.from_frame(pd.read_csv(input_path / 'process__node__profile__profile_method.csv'))
 
     # Process topology sets (write-once)
     s.process_source_sink = pd.read_csv(solve_data_path / 'process_source_sink.csv').set_index(['process', 'source', 'sink']).index
     s.process_method_sources_sinks = pd.read_csv(solve_data_path / 'process_method_sources_sinks.csv').set_index(['process', 'method', 'orig_source', 'orig_sink', 'always_source', 'always_sink']).index
 
     # Process method sets (write-once)
-    s.process_method = pd.read_csv(solve_data_path / 'process_method.csv').set_index(['process', 'method']).index
+    s.process_method = pd.read_csv(input_path / 'process_method.csv').set_index(['process', 'method']).index
     s.process__ct_method = pd.read_csv(solve_data_path / 'process__ct_method.csv').set_index(['process', 'method']).index
 
      # Method sets (write-once)
@@ -74,7 +74,7 @@ def read_sets(output_dir):
     # Node-related sets — derived from per-node p_node_type.
     # Nodes absent from p_node_type.csv take the mod's default 'balance'
     # (flextool.mod: `param p_node_type ... default 'balance'`).
-    all_nodes = pd.read_csv(solve_data_path / 'node.csv')['node']
+    all_nodes = pd.read_csv(input_path / 'node.csv')['node']
     nt_df = pd.read_csv(input_path / 'p_node_type.csv')
     nt_map = dict(zip(nt_df['node'], nt_df['p_node_type']))
     node_types = {n: nt_map.get(n, 'balance') for n in all_nodes}
@@ -90,8 +90,8 @@ def read_sets(output_dir):
     s.node__storage_nested_fix_method = pd.read_csv(solve_data_path / 'node__storage_nested_fix_method.csv').set_index(['node', 'method']).index
 
     # Process-related sets (write-once)
-    s.process = pd.read_csv(solve_data_path / 'process.csv').set_index(['process']).index
-    s.node = pd.read_csv(solve_data_path / 'node.csv').set_index(['node']).index
+    s.process = pd.read_csv(input_path / 'process.csv').set_index(['process']).index
+    s.node = pd.read_csv(input_path / 'node.csv').set_index(['node']).index
     s.process_source = pd.read_csv(solve_data_path / 'process_source.csv').set_index(['process', 'source']).index
     s.process_sink = pd.read_csv(solve_data_path / 'process_sink.csv').set_index(['process', 'sink']).index
     s.process_VRE = pd.read_csv(solve_data_path / 'process_VRE.csv').set_index(['process', 'node']).index
@@ -111,17 +111,17 @@ def read_sets(output_dir):
     s.group_co2_limit = pd.read_csv(solve_data_path / 'group_co2_limit.csv').set_index(['group']).index
 
     # Group-related sets (write-once)
-    df = pd.read_csv(solve_data_path / 'groupInertia.csv')
+    df = pd.read_csv(input_path / 'groupInertia.csv')
     s.groupInertia = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(solve_data_path / 'groupNonSync.csv')
+    df = pd.read_csv(input_path / 'groupNonSync.csv')
     s.groupNonSync = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(solve_data_path / 'groupCapacityMargin.csv')
+    df = pd.read_csv(input_path / 'groupCapacityMargin.csv')
     s.groupCapacityMargin = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(solve_data_path / 'nodeGroupDispatch.csv')
+    df = pd.read_csv(input_path / 'nodeGroupDispatch.csv')
     s.nodeGroupDispatch = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(solve_data_path / 'nodeGroupIndicators.csv')
+    df = pd.read_csv(input_path / 'nodeGroupIndicators.csv')
     s.nodeGroupIndicators = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(solve_data_path / 'flowGroupIndicators.csv')
+    df = pd.read_csv(input_path / 'flowGroupIndicators.csv')
     s.flowGroupIndicators = pd.Index(df.iloc[:, 0])
     s.nodeGroupDispatch__connection_Not_in_aggregate = pd.read_csv(solve_data_path / 'nodeGroupDispatch__connection_Not_in_aggregate.csv').set_index(['group', 'connection']).index
     s.nodeGroupDispatch__process__unit__to_node_Not_in_aggregate = pd.read_csv(solve_data_path / 'nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv').set_index(['group', 'process', 'unit', 'node']).index

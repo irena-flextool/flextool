@@ -4873,10 +4873,6 @@ if p_model['solveFirst'] then {
 
   # Sets needed for entity_all_capacity
   # entity - all entities (ordered)
-  printf "entity\n" > "solve_data/entity.csv";
-  for {e in entity} {
-      printf "%s\n", e >> "solve_data/entity.csv";
-  }
 
   # period - all periods (ordered)
   if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/period.csv";
@@ -4947,17 +4943,7 @@ if p_model['solveFirst'] then {
   }
 
   # Process process__node__profile__profile_method set
-  printf "process,node,profile,profile_method\n" > "solve_data/process__node__profile__profile_method.csv";
-  for {(p, n, prof, m) in process__node__profile__profile_method} {
-      printf "%s,%s,%s,%s\n", p, n, prof, m >> "solve_data/process__node__profile__profile_method.csv";
-  }
-
   # Process method sets
-  printf "process,method\n" > "solve_data/process_method.csv";
-  for {(p, m) in process_method} {
-      printf "%s,%s\n", p, m >> "solve_data/process_method.csv";
-  }
-
   printf "process,method\n" > "solve_data/process__ct_method.csv";
   for {(p, m) in process__ct_method} {
       printf "%s,%s\n", p, m >> "solve_data/process__ct_method.csv";
@@ -5015,16 +5001,6 @@ if p_model['solveFirst'] then {
   }
 
   # Process-related sets
-  printf "process\n" > "solve_data/process.csv";
-  for {p in process} {
-      printf "%s\n", p >> "solve_data/process.csv";
-  }
-
-  printf "node\n" > "solve_data/node.csv";
-  for {n in node} {
-      printf "%s\n", n >> "solve_data/node.csv";
-  }
-
   printf "process\n" > "solve_data/process_connection.csv";
   for {c in process_connection} {
       printf "%s\n", c >> "solve_data/process_connection.csv";
@@ -5080,36 +5056,6 @@ if p_model['solveFirst'] then {
   printf "group\n" > "solve_data/group_co2_limit.csv";
   for {g in group_co2_max_period union group_co2_max_total} {
       printf "%s\n", g >> "solve_data/group_co2_limit.csv";
-  }
-
-  printf "group\n" > "solve_data/groupInertia.csv";
-  for {g in groupInertia} {
-      printf "%s\n", g >> "solve_data/groupInertia.csv";
-  }
-
-  printf "group\n" > "solve_data/groupNonSync.csv";
-  for {g in groupNonSync} {
-      printf "%s\n", g >> "solve_data/groupNonSync.csv";
-  }
-
-  printf "group\n" > "solve_data/groupCapacityMargin.csv";
-  for {g in groupCapacityMargin} {
-      printf "%s\n", g >> "solve_data/groupCapacityMargin.csv";
-  }
-
-  printf "group\n" > "solve_data/nodeGroupDispatch.csv";
-  for {g in nodeGroupDispatch} {
-      printf "%s\n", g >> "solve_data/nodeGroupDispatch.csv";
-  }
-
-  printf "group\n" > "solve_data/nodeGroupIndicators.csv";
-  for {g in nodeGroupIndicators} {
-      printf "%s\n", g >> "solve_data/nodeGroupIndicators.csv";
-  }
-
-  printf "group\n" > "solve_data/flowGroupIndicators.csv";
-  for {g in flowGroupIndicators} {
-      printf "%s\n", g >> "solve_data/flowGroupIndicators.csv";
   }
 
   # The 12 nodeGroupDispatch__* derived-set printfs that used to live
