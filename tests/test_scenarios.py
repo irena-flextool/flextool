@@ -34,10 +34,24 @@ from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
 from flextool.process_outputs.write_outputs import write_outputs
 
 
-def _load_scenarios() -> list[tuple[str, list[str]]]:
+def _load_scenarios() -> list:
+    """Load scenarios from YAML, applying ``smoke`` marker where requested.
+
+    Each entry may set ``smoke: true`` to be included in the per-commit
+    smoke gate (``pytest -m smoke``). Returns a list of ``pytest.param``
+    objects so markers can be attached per-parametrize-case.
+    """
     with open(TEST_DIR / "scenarios.yaml") as f:
         entries = yaml.safe_load(f)
-    return [(e["scenario"], e["csvs"]) for e in entries]
+    params = []
+    for e in entries:
+        marks = []
+        if e.get("smoke"):
+            marks.append(pytest.mark.smoke)
+        params.append(
+            pytest.param(e["scenario"], e["csvs"], marks=marks, id=e["scenario"])
+        )
+    return params
 
 
 # CSVs with non-standard formatting that pd.read_csv cannot parse.
@@ -57,7 +71,7 @@ def _strip_timestamps(text: str) -> str:
 SCENARIOS = _load_scenarios()
 
 
-@pytest.mark.parametrize("scenario,csvs", SCENARIOS, ids=[s[0] for s in SCENARIOS])
+@pytest.mark.parametrize("scenario,csvs", SCENARIOS)
 def test_scenario(
     scenario: str,
     csvs: list[str],

@@ -12,6 +12,7 @@
 
 # --- Barebone ---
 - scenario: base
+  smoke: true
   csvs:
     - node__d.csv
     - costs__dt.csv
@@ -62,6 +63,7 @@
 # --- Basic thermal dispatch ---
 
 - scenario: coal
+  smoke: true
   csvs:
     - unit__outputNode__dt.csv
     - costs__dt.csv
@@ -98,6 +100,7 @@
     - co2.csv
 
 - scenario: coal_min_load
+  smoke: true
   csvs:
     - unit__outputNode__dt.csv
     - unit_online__dt.csv
@@ -170,6 +173,7 @@
     - costs__dt.csv
 
 - scenario: wind_battery_invest
+  smoke: true
   csvs:
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv
@@ -293,6 +297,7 @@
     - costs_discounted.csv
 
 - scenario: multi_year_one_solve
+  smoke: true
   csvs:
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv

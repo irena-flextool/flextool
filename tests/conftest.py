@@ -52,6 +52,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers", "smoke: fast Layer-1 scenarios for the per-commit gate"
+    )
+    config.addinivalue_line(
+        "markers", "solver: tests that invoke a real solver (glpsol/HiGHS)"
+    )
+    config.addinivalue_line(
+        "markers", "slow: tests that take more than ~30 seconds"
+    )
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
