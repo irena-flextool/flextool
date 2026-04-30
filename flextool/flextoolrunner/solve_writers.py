@@ -239,7 +239,7 @@ def write_solve_status(
     """Write solve_first.csv with information if the current solve is the first to be run."""
     wf = work_folder if work_folder is not None else Path.cwd()
     if not nested:
-        with open(wf / "input/p_model.csv", 'w', newline='') as p_model_file:
+        with open(wf / "solve_data/p_model.csv", 'w', newline='') as p_model_file:
             writer = csv.writer(p_model_file)
             writer.writerow(["modelParam", "p_model"])
             writer.writerow(["solveFirst", 1 if first_state else 0])

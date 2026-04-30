@@ -287,11 +287,11 @@ def _load_step_duration(work_folder: Path) -> dict[tuple[str, str], float]:
 def _is_first_solve(work_folder: Path) -> bool:
     """True iff this is the first solve in the model.
 
-    Source: ``input/p_model.csv`` (long ``modelParam,p_model`` pairs)
+    Source: ``solve_data/p_model.csv`` (long ``modelParam,p_model`` pairs)
     written by ``write_solve_status``.  Same flag the GMPL writer reads
     via ``p_model['solveFirst']``.
     """
-    path = work_folder / "input" / "p_model.csv"
+    path = work_folder / "solve_data" / "p_model.csv"
     if not path.exists():
         return True
     df = pd.read_csv(path)
