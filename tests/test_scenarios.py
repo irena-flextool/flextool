@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -46,6 +47,11 @@ def _load_scenarios() -> list:
     that produces a consistently-wrong objective (but still writes
     self-consistent CSVs that the golden-comparison would lock in) is
     caught here.
+
+    Optional ``time_budget_seconds`` field enables a per-scenario timing
+    assertion: the test body (write_input → run_model → write_outputs)
+    must finish within the given budget. Catches large performance
+    regressions in the writer/runner/post-process layers.
     """
     with open(TEST_DIR / "scenarios.yaml") as f:
         entries = yaml.safe_load(f)
@@ -60,6 +66,7 @@ def _load_scenarios() -> list:
                 e["csvs"],
                 e.get("expected_objective"),
                 e.get("expected_objective_tolerance", 1e-3),
+                e.get("time_budget_seconds"),
                 marks=marks,
                 id=e["scenario"],
             )
@@ -119,13 +126,15 @@ SCENARIOS = _load_scenarios()
 
 
 @pytest.mark.parametrize(
-    "scenario,csvs,expected_objective,expected_objective_tolerance", SCENARIOS
+    "scenario,csvs,expected_objective,expected_objective_tolerance,time_budget_seconds",
+    SCENARIOS,
 )
 def test_scenario(
     scenario: str,
     csvs: list[str],
     expected_objective: float | None,
     expected_objective_tolerance: float,
+    time_budget_seconds: float | None,
     test_db_url: str,
     test_bin_dir: Path,
     workdir: Path,
@@ -133,7 +142,10 @@ def test_scenario(
 ) -> None:
     regenerate = request.config.getoption("--regenerate")
 
-    # Run the model
+    # Run the model — wrap write_input → run_model → write_outputs in a
+    # perf_counter so the optional time_budget_seconds assertion (below)
+    # measures the actual scenario work, not pytest fixture setup.
+    t_start = time.perf_counter()
     runner = FlexToolRunner(
         input_db_url=test_db_url,
         scenario_name=scenario,
@@ -153,6 +165,7 @@ def test_scenario(
         write_methods=["csv"],
         fallback_output_location=str(workdir),
     )
+    elapsed_seconds = time.perf_counter() - t_start
 
     # Compare (or regenerate) each expected CSV
     if regenerate == scenario:
@@ -217,3 +230,15 @@ def test_scenario(
                 f"expected={expected_objective} got={actual_objective} "
                 f"rel_err={rel_err:.3e} tolerance={expected_objective_tolerance:.3e}"
             )
+
+    # Optional timing budget. Budgets are set to ~1.5x the observed max
+    # over a small sample of clean runs (see tests/README.md), so a
+    # tripped assertion indicates a real performance regression rather
+    # than CI noise. Placed last so a CSV/objective regression is
+    # reported first; pytest stops at the first failed assertion.
+    if time_budget_seconds is not None:
+        assert elapsed_seconds <= time_budget_seconds, (
+            f"timing regression: scenario={scenario} "
+            f"observed={elapsed_seconds:.2f}s budget={time_budget_seconds:.2f}s "
+            f"(set in tests/scenarios.yaml; bump if the increase is intended)"
+        )

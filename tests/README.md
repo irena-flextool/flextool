@@ -84,6 +84,30 @@ done
 5. Inspect `tests/expected/my_new_scenario/` and commit `tests.json`
    and the new goldens together.
 
+### Optional scenario-entry fields
+
+A scenario entry in `tests/scenarios.yaml` can carry up to three
+optional fields beyond the required `scenario` and `csvs`:
+
+| Field | Default | Purpose |
+|---|---|---|
+| `smoke: true` | (absent) | Includes the scenario in `pytest -m smoke` — the per-commit fast gate. About 5 short scenarios are marked. |
+| `expected_objective: <number>` | (no check) | Hand-derived total system cost (in M CUR) read from `summary_solve.csv`. About 10 scenarios where the optimum is easy to verify. Comment the derivation above the field so future edits can re-check. |
+| `expected_objective_tolerance: <relative>` | `1.0e-3` | Relative tolerance for the objective check. Use `1.0e-5` for slack-only or fully-deterministic dispatch; relax for scenarios where penalty variables make the objective sensitive to small slack shifts. |
+| `time_budget_seconds: <wall>` | (no check) | Asserts that the wrapped block (`runner.write_input` + `run_model` + `write_outputs`) completes within this wall-clock budget. Set to `~1.5 ×` the observed maximum on a representative machine, rounded up to 0.5 s. About 60 scenarios have budgets; the long multi-roll / nested ones are skipped because their wall-clock variance defeats the assertion. |
+
+A failing timing assertion looks like:
+
+```
+AssertionError: timing regression: scenario=coal observed=6.34s budget=4.00s
+(set in tests/scenarios.yaml; bump if the increase is intended)
+```
+
+Bump the budget when the regression is intentional (e.g. you knowingly
+added preprocessing work). If you don't recognise the cause, treat it
+as a real regression — the budgets are set with 50 % slack so they
+shouldn't trip on noise.
+
 ### DB fixture maintenance
 
 `tests/tests.sqlite` is the editable Spine DB (gitignored).
