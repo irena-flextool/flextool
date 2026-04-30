@@ -62,8 +62,8 @@ def _make_workfolder(tmp_path: Path, *, first_solve: bool = True) -> Path:
     (tmp_path / "output_raw").mkdir()
     (tmp_path / "solve_data").mkdir()
 
-    # solveFirst flag — input/p_model.csv (long format).
-    (tmp_path / "input" / "p_model.csv").write_text(
+    # solveFirst flag — solve_data/p_model.csv (long format).
+    (tmp_path / "solve_data" / "p_model.csv").write_text(
         f"modelParam,p_model\nsolveFirst,{1 if first_solve else 0}\nsolveLast,1\n"
     )
     return tmp_path
@@ -99,14 +99,14 @@ def test_is_first_solve_reads_p_model(tmp_path: Path) -> None:
     work = _make_workfolder(tmp_path, first_solve=True)
     assert _is_first_solve(work) is True
 
-    (work / "input" / "p_model.csv").write_text(
+    (work / "solve_data" / "p_model.csv").write_text(
         "modelParam,p_model\nsolveFirst,0\nsolveLast,0\n"
     )
     assert _is_first_solve(work) is False
 
 
 def test_is_first_solve_defaults_true_when_missing(tmp_path: Path) -> None:
-    (tmp_path / "input").mkdir()
+    (tmp_path / "solve_data").mkdir()
     assert _is_first_solve(tmp_path) is True
 
 

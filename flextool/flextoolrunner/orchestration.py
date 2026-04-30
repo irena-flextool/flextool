@@ -209,6 +209,14 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                 elif param == "min_downtime" and proc in process_min_downtime_set and val > 0:
                     process_min_downtime[proc] = val
 
+    # write_timesets is solve-loop-invariant: its args (timesets_used_by_solves,
+    # timesets__timeline) come from `state` set up once in `runner.write_input()`,
+    # so the output CSVs (input/timesets_in_use.csv, input/timesets__timeline.csv)
+    # are identical every roll. Hoisted out of the per-solve loop to write once.
+    solve_writers.write_timesets(state.solve.timesets_used_by_solves,
+                                 state.timeline.timesets__timeline,
+                                 work_folder=wf)
+
     first = True
     previous_complete_solve = None
     cached_complete_active_time_lists: dict = {}
@@ -243,7 +251,6 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         solve_writers.write_step_jump(jump_lists[solve], work_folder=wf)
         pb_time, pb_succ = make_period_block(active_time_lists[solve])
         solve_writers.write_period_block(pb_time, pb_succ, work_folder=wf)
-        solve_writers.write_timesets(state.solve.timesets_used_by_solves, state.timeline.timesets__timeline, work_folder=wf)
         state.logger.debug("Creating period data")
         solve_writers.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], str(wf / 'solve_data/period_with_history.csv'))
         solve_writers.write_periods(complete_solve[solve], state.solve.realized_invest_periods, str(wf / 'solve_data/realized_invest_periods_of_current_solve.csv'))

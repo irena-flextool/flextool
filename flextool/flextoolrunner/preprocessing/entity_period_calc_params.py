@@ -1357,9 +1357,9 @@ def write_p_positive_negative_inflow(input_dir: Path, solve_data_dir: Path) -> N
                     fh.write(f"{n},{d},{t},{repr(v if v < 0 else 0.0)}\n")
 
 
-def _read_solve_first_flag(input_dir: Path) -> bool:
-    """Read p_model.csv and return whether this is the first solve."""
-    pm_path = input_dir / "p_model.csv"
+def _read_solve_first_flag(solve_data_dir: Path) -> bool:
+    """Read solve_data/p_model.csv and return whether this is the first solve."""
+    pm_path = solve_data_dir / "p_model.csv"
     if not pm_path.exists():
         return False
     with pm_path.open() as fh:
@@ -1395,7 +1395,7 @@ def write_p_entity_existing_chain(input_dir: Path, solve_data_dir: Path) -> None
               ``p_entity_period_invested_capacity`` from the handoff CSV.
 
     Inputs:
-      * solveFirst flag from input/p_model.csv
+      * solveFirst flag from solve_data/p_model.csv
       * solve_data/p_entity_pre_existing.csv (batch 12)
       * solve_data/p_entity_unitsize.csv (batch 18)
       * solve_data/edd_history.csv
@@ -1409,7 +1409,7 @@ def write_p_entity_existing_chain(input_dir: Path, solve_data_dir: Path) -> None
     ``solve_data/solve__p_entity_all_existing.csv``. handoff_writers and
     read_parameters updated accordingly.
     """
-    solve_first = _read_solve_first_flag(input_dir)
+    solve_first = _read_solve_first_flag(solve_data_dir)
     entities = _read_singles(input_dir / "entity.csv")
     periods_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
 

@@ -827,11 +827,11 @@ def write_ed_history_realized_first(
             AND p_model['solveFirst'] }
 
     On non-first solves the set is empty (the AND on solveFirst short-
-    circuits). Reads p_model.csv (input/) for the solveFirst flag.
+    circuits). Reads p_model.csv (solve_data/) for the solveFirst flag.
     """
     # Honour solveFirst: empty result on non-first solves.
     solve_first = False
-    pm_path = input_dir / "p_model.csv"
+    pm_path = solve_data_dir / "p_model.csv"
     if pm_path.exists():
         with pm_path.open() as fh:
             reader = csv.reader(fh)

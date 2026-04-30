@@ -1501,8 +1501,8 @@ def write_v_dual_reserve_balance(
 
 
 def _is_first_solve_from_p_model(work_folder: Path) -> bool:
-    """True iff ``input/p_model.csv`` says ``solveFirst`` is 1 (or missing)."""
-    path = work_folder / "input" / "p_model.csv"
+    """True iff ``solve_data/p_model.csv`` says ``solveFirst`` is 1 (or missing)."""
+    path = work_folder / "solve_data" / "p_model.csv"
     if not path.exists():
         return True
     df = pd.read_csv(path)

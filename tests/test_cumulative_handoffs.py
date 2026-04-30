@@ -58,7 +58,7 @@ def _fake_highs(
 def _make_workfolder(tmp_path: Path, *, first_solve: bool = True) -> Path:
     (tmp_path / "input").mkdir()
     (tmp_path / "solve_data").mkdir()
-    (tmp_path / "input" / "p_model.csv").write_text(
+    (tmp_path / "solve_data" / "p_model.csv").write_text(
         f"modelParam,p_model\nsolveFirst,{1 if first_solve else 0}\nsolveLast,1\n"
     )
     return tmp_path

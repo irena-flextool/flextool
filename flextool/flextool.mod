@@ -788,7 +788,7 @@ table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jum
 table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period], p_period_from_solve~param;
 table data IN 'CSV' 'solve_data/realized_invest_periods_of_current_solve.csv' : d_realize_invest <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
-table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
+table data IN 'CSV' 'solve_data/p_model.csv' : [modelParam], p_model;
 
 # Clear some files in the first solve
 if p_model["solveFirst"] == 1 and 'read' in phase then {
