@@ -15,6 +15,7 @@ from typing import NamedTuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from flextool.flextoolrunner.solve_config import SolveConfig
     from flextool.flextoolrunner.timeline_config import TimelineConfig
+    from flextool.flextoolrunner.solve_handoff import SolveHandoff
 
 
 class FlexToolError(Exception):
@@ -97,3 +98,19 @@ class RunnerState:
     # True.  Both are set by the CLI layer; neither has DB precedence.
     relax_feasibility: float | None = None
     use_ipm: bool = False
+    # In-memory solve-to-solve handoff (PoC, opt-in).  Default ``None``
+    # leaves flextool's behavior bit-identical to pre-handoff (file-based)
+    # operation.  Set to ``{}`` to enable: the post-solve hook in
+    # ``orchestration.run_model`` then deposits one ``SolveHandoff`` entry
+    # per completed solve, keyed by full solve name.  Per-solve
+    # preprocessing reads from this dict (when populated) instead of the
+    # parent solve's CSV outputs.  See ``solve_handoff.py``.
+    handoffs: "dict[str, SolveHandoff] | None" = None
+    # Name of the most-recent solve whose post-solve hook deposited a
+    # ``SolveHandoff`` into ``handoffs``.  Set by ``orchestration.run_model``
+    # after each capture; consulted by post-solve writers (e.g. the
+    # cumulative-handoff writers in ``solver_runner._run_highs``) to
+    # source prior-roll state from the in-memory dict instead of disk.
+    # ``None`` outside an active solve loop and on the first solve of
+    # any loop.
+    last_captured_solve: str | None = None

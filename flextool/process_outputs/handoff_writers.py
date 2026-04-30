@@ -64,6 +64,7 @@ from flextool.process_outputs.read_highs_solution import (
 
 if TYPE_CHECKING:
     import highspy
+    from flextool.flextoolrunner.solve_handoff import SolveHandoff
 
 _logger = logging.getLogger(__name__)
 
@@ -117,20 +118,37 @@ def _load_pre_existing(work_folder: Path) -> dict[tuple[str, str], float]:
 
 def _load_prior_existing(
     work_folder: Path,
+    *, prior_handoff: "SolveHandoff | None" = None,
 ) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float]]:
     """Return prior ``p_entity_period_existing_capacity`` + ``_invested_capacity``.
 
-    Source: the previous solve's ``solve_data/p_entity_period_existing_capacity.csv``.
-    For the first solve this file does not yet exist — return empty dicts.
+    With ``prior_handoff`` populated, read the two dicts from
+    ``realized_existing`` / ``realized_invest`` (in-memory consume side).
+    Else fall back to the previous solve's
+    ``solve_data/p_entity_period_existing_capacity.csv`` (file fallback).
+    For the first solve neither is available → return empty dicts.
     """
+    if prior_handoff is not None and (
+        prior_handoff.realized_existing is not None
+        or prior_handoff.realized_invest is not None
+    ):
+        existing: dict[tuple[str, str], float] = {}
+        invested: dict[tuple[str, str], float] = {}
+        if prior_handoff.realized_existing is not None:
+            for r in prior_handoff.realized_existing.iter_rows(named=True):
+                existing[(str(r["entity"]), str(r["period"]))] = float(r["value"])
+        if prior_handoff.realized_invest is not None:
+            for r in prior_handoff.realized_invest.iter_rows(named=True):
+                invested[(str(r["entity"]), str(r["period"]))] = float(r["value"])
+        return existing, invested
     path = work_folder / "solve_data" / "p_entity_period_existing_capacity.csv"
     if not path.exists():
         return {}, {}
     df = pd.read_csv(path)
     if df.empty:
         return {}, {}
-    existing: dict[tuple[str, str], float] = {}
-    invested: dict[tuple[str, str], float] = {}
+    existing = {}
+    invested = {}
     for _, row in df.iterrows():
         key = (str(row["entity"]), str(row["period"]))
         existing[key] = float(row["p_entity_period_existing_capacity"])
@@ -138,8 +156,19 @@ def _load_prior_existing(
     return existing, invested
 
 
-def _load_prior_divested(work_folder: Path) -> dict[str, float]:
-    """Return ``{entity: cumulative_divested}`` from prior solve, or empty."""
+def _load_prior_divested(
+    work_folder: Path,
+    *, prior_handoff: "SolveHandoff | None" = None,
+) -> dict[str, float]:
+    """Return ``{entity: cumulative_divested}`` from prior solve, or empty.
+
+    Reads from ``prior_handoff.divest_cumulative`` when populated; else
+    falls back to ``solve_data/p_entity_divested.csv``."""
+    if prior_handoff is not None and prior_handoff.divest_cumulative is not None:
+        return {
+            str(r["entity"]): float(r["value"])
+            for r in prior_handoff.divest_cumulative.iter_rows(named=True)
+        }
     path = work_folder / "solve_data" / "p_entity_divested.csv"
     if not path.exists():
         return {}
@@ -308,17 +337,25 @@ def _is_first_solve(work_folder: Path) -> bool:
 
 def write_p_entity_divested(
     h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
 ) -> Path:
     """Write ``solve_data/p_entity_divested.csv`` from v_divest + prior.
 
     ``cumulative_divested[e] = prior_divested[e] + sum_d v_divest[e,d] * unitsize[e]``
     over every divest period (sum_d means all (e,d) declared in ed_divest).
+
+    ``prior_handoff`` (when populated) replaces the on-disk read of the
+    parent solve's ``p_entity_divested.csv`` with the in-memory
+    ``divest_cumulative`` carrier.
     """
     out_path = work_folder / "solve_data" / "p_entity_divested.csv"
 
     entities = _load_entity_divest(work_folder)
     unitsize = _load_unitsize(work_folder)
-    prior = {} if _is_first_solve(work_folder) else _load_prior_divested(work_folder)
+    prior = (
+        {} if _is_first_solve(work_folder)
+        else _load_prior_divested(work_folder, prior_handoff=prior_handoff)
+    )
     divest_df = extract_variable(
         h, "v_divest", ("entity",), solve_name=solve_name, has_time=False,
     )
@@ -433,6 +470,7 @@ def write_p_roll_continue_state(
 
 def write_p_entity_period_existing_capacity(
     h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
 ) -> Path:
     """Write ``solve_data/p_entity_period_existing_capacity.csv``.
 
@@ -455,7 +493,7 @@ def write_p_entity_period_existing_capacity(
     pre_existing = _load_pre_existing(work_folder)
     prior_existing, prior_invested = (
         ({}, {}) if _is_first_solve(work_folder)
-        else _load_prior_existing(work_folder)
+        else _load_prior_existing(work_folder, prior_handoff=prior_handoff)
     )
     first_solve = _is_first_solve(work_folder)
 
@@ -1175,12 +1213,25 @@ def _bump_period_capacity(work_folder: Path, solve_name: str) -> None:
 
 def write_all_handoffs(
     h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
 ) -> list[Path]:
     """Write all six handoff files.
 
     Each writer is independent — failure on one is logged and does not
     abort the rest, mirroring :func:`write_all_variables`.
+
+    ``prior_handoff`` (when provided) sources the prior-roll state
+    (``realized_existing`` / ``realized_invest`` / ``divest_cumulative``)
+    from the in-memory ``SolveHandoff`` instead of re-reading the
+    parent solve's CSV outputs.  Forwarded to the two writers that
+    consume prior state; the remainder ignore it.
     """
+    # Writers that take ``prior_handoff`` as a kwarg.  The rest read
+    # only this-solve's state from the highs instance + work_folder.
+    _PRIOR_AWARE = (
+        write_p_entity_divested,
+        write_p_entity_period_existing_capacity,
+    )
     written: list[Path] = []
     for fn in (
         write_p_entity_divested,
@@ -1195,7 +1246,13 @@ def write_all_handoffs(
         write_node_capacity,
     ):
         try:
-            written.append(fn(h, solve_name=solve_name, work_folder=work_folder))
+            if fn in _PRIOR_AWARE:
+                written.append(fn(
+                    h, solve_name=solve_name, work_folder=work_folder,
+                    prior_handoff=prior_handoff,
+                ))
+            else:
+                written.append(fn(h, solve_name=solve_name, work_folder=work_folder))
         except Exception as exc:  # noqa: BLE001
             _logger.warning("handoff writer %s failed: %s", fn.__name__, exc)
     # Accumulate this solve's realized periods for the next roll's

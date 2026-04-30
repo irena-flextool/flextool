@@ -362,11 +362,22 @@ class SolverRunner:
                 )
             except Exception as exc:  # noqa: BLE001
                 self.logger.warning(f"parquet variable extraction failed: {exc}")
+            # Resolve the prior-roll ``SolveHandoff`` once, used by both
+            # the entity-capacity and cumulative-quota writers below.
+            # ``last_captured_solve`` is set by ``orchestration.run_model``
+            # after each capture; ``None`` on the first solve of a run.
+            prior_handoff = (
+                self.state.handoffs.get(self.state.last_captured_solve)
+                if self.state.handoffs is not None
+                and self.state.last_captured_solve is not None
+                else None
+            )
             try:
                 write_all_handoffs(
                     highs_instance,
                     solve_name=roll_name,
                     work_folder=wf,
+                    prior_handoff=prior_handoff,
                 )
             except Exception as exc:  # noqa: BLE001
                 self.logger.warning(f"handoff writers failed: {exc}")
@@ -378,6 +389,7 @@ class SolverRunner:
                     highs_instance,
                     solve_name=roll_name,
                     work_folder=wf,
+                    prior_handoff=prior_handoff,
                 )
             except Exception as exc:  # noqa: BLE001
                 self.logger.warning(f"cumulative handoff writers failed: {exc}")
