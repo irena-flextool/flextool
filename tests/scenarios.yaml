@@ -18,6 +18,12 @@
     - costs__dt.csv
     - summary_solve.csv
     - slack__upward__node_state__dt.csv
+  # Pure slack-penalty 2-day dispatch (no generators). Hand-derivation:
+  #   sum of `upward slack penalty` column in costs__dt.csv = 26,192,700 CUR
+  #   annualization factor = 365 / 2 (years_in_use = 2/365)
+  #   objective (M CUR) = 26,192,700 * 365/2 / 1e6 = 4780.16775
+  expected_objective: 4780.16775
+  expected_objective_tolerance: 1.0e-5
 
 # Base + non-uniform timeset_weights = {t0001:0.25, t0002:0.75}. After
 # normalization the per-step cost weights become 0.5 and 1.5, shifting
@@ -30,6 +36,11 @@
     - node__d.csv
     - costs__dt.csv
     - summary_solve.csv
+  # Same dispatch as base, but timeset weights redistribute costs.
+  #   sum of `upward slack penalty` column in costs__dt.csv = 27,909,360 CUR
+  #   objective (M CUR) = 27,909,360 * 365/2 / 1e6 = 5093.4582
+  expected_objective: 5093.4582
+  expected_objective_tolerance: 1.0e-5
 
 # lifetime_method = no_investment: wind_plant with lifetime 10y in a
 # multi-year horizon (p2020, p2025, p2030, p2035). The first-period
@@ -51,10 +62,20 @@
   csvs:
     - slack__capacity_margin__d.csv
     - summary_solve.csv
+  # Capacity-margin shortfall priced in M CUR via a high penalty.
+  # The per-period capacity-margin slack value times the penalty gives
+  # the objective (no per-time-step costs). Locked to the observed
+  # value; large magnitude (~1.6 M CUR) makes 1e-5 tolerance still tight.
+  expected_objective: 1585705.0485
+  expected_objective_tolerance: 1.0e-5
 
 - scenario: fullYear
   csvs:
     - summary_solve.csv
+  # Full-year (8760-hour) dispatch with no generators — pure slack.
+  # Locked to observed solver objective.
+  expected_objective: 4952.685
+  expected_objective_tolerance: 1.0e-5
 
 - scenario: fullYear_roll
   csvs:
@@ -357,6 +378,12 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+  # 1x10y multi-period investment with discounting. Optimal investment
+  # in wind_plant: 0.3132 MW at p2020. Locked to observed full-horizon
+  # total cost (operational + investment + fixed - same as the 2x5y
+  # variant since both cover the same 10-year horizon).
+  expected_objective: 267.445118702
+  expected_objective_tolerance: 1.0e-4
 
 - scenario: y2020_2029_2x5y
   csvs:
@@ -364,6 +391,10 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+  # 2x5y split of the same 10-year horizon as y2020_2029_1x10y; same
+  # full-horizon objective since the underlying economics are identical.
+  expected_objective: 267.445118702
+  expected_objective_tolerance: 1.0e-4
 
 # --- Full year / rolling ---
 
@@ -468,6 +499,13 @@
   csvs:
     - connection__dt.csv
     - costs__dt.csv
+  # network_coal_wind + west-east-aux connection with VOM=0.1.
+  #   sum(costs__dt.csv all numeric columns) = 3,004,895.90 CUR
+  #   objective (M CUR) = 3,004,895.90 * 365/2 / 1e6 = 548.39350
+  # Slightly larger tolerance — connection routing across parallel
+  # links has multiple equally-optimal solutions in dispatch.
+  expected_objective: 548.39350
+  expected_objective_tolerance: 1.0e-4
 
 # Regression guard: ``years_represented = 0.5`` correctly halves the
 # inflation factor (and therefore all annualized cost terms in the
@@ -478,6 +516,12 @@
     - unit__outputNode__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+  # Hand-derivation:
+  #   sum(costs__dt.csv numeric columns) = 6,268,700 CUR
+  #   annualization (years_represented=0.5, 24h block) = 365/4
+  #   objective (M CUR) = 6,268,700 * 365/4 / 1e6 = 572.018875
+  expected_objective: 572.018875
+  expected_objective_tolerance: 1.0e-5
 
 # Regression guard: ``years_represented = 2.5`` emits 3 width rows
 # (1, 1, 0.5) summing to 2.5. Before the ceil-based fix the trailing
@@ -488,6 +532,10 @@
     - unit__outputNode__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+  # Same dispatch as years_represented_half but years_represented=2.5
+  # (5x larger). Objective therefore 5x: 572.018875 * 5 = 2860.094375.
+  expected_objective: 2860.094375
+  expected_objective_tolerance: 1.0e-5
 
 # Regression guard: ``transfer_method = unidirectional`` resolves to
 # ``method_1way_1var_off`` end-to-end. Setting all three transmission
@@ -498,3 +546,8 @@
   csvs:
     - connection__dt.csv
     - costs__dt.csv
+  # network_coal_wind with all three connections unidirectional.
+  #   sum(costs__dt.csv numeric columns) = 3,209,383.27 CUR
+  #   objective (M CUR) = 3,209,383.27 * 365/2 / 1e6 = 585.71245
+  expected_objective: 585.71245
+  expected_objective_tolerance: 1.0e-4
