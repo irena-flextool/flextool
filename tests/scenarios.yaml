@@ -454,3 +454,47 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - summary_solve.csv
+
+# --- Promoted Layer-3 regressions (2026-04-30) ---
+
+# Regression guard: hyphens in entity names (e.g. ``BRA_ARG-H2``) survived
+# DB → solve → CSV when combined with non-zero ``other_operational_cost``
+# (which forces the connection into ``pssdt_varCost_eff_connection``).
+# The original report blamed the hyphen colliding with MathProg's
+# subtraction operator; the validator that rejected hyphens was a false
+# positive. This scenario adds a parallel ``west-east-aux`` connection
+# with VOM=0.1 to ``network_coal_wind`` and locks the dispatch CSVs.
+- scenario: hyphenated_entity_names
+  csvs:
+    - connection__dt.csv
+    - costs__dt.csv
+
+# Regression guard: ``years_represented = 0.5`` correctly halves the
+# inflation factor (and therefore all annualized cost terms in the
+# objective). Before the write_years_represented fix, the factor came
+# out as 1.0 instead of 0.5.
+- scenario: years_represented_half
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+# Regression guard: ``years_represented = 2.5`` emits 3 width rows
+# (1, 1, 0.5) summing to 2.5. Before the ceil-based fix the trailing
+# 0.5-year row was dropped (``int(max(1.0, 2.5))`` = 2) so the factor
+# came out as 2.0 instead of 2.5.
+- scenario: years_represented_2_5
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+# Regression guard: ``transfer_method = unidirectional`` resolves to
+# ``method_1way_1var_off`` end-to-end. Setting all three transmission
+# connections of ``network_coal_wind`` to unidirectional restricts each
+# to source → sink only. The ``connection__dt.csv`` golden locks the
+# directionality (no negative flows on any connection).
+- scenario: unidirectional_connection
+  csvs:
+    - connection__dt.csv
+    - costs__dt.csv

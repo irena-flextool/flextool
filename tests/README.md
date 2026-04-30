@@ -185,15 +185,18 @@ doesn't fit cleanly into the Layer-1 manifest. One file per feature:
 | File | Pins |
 |------|------|
 | `test_lh2_three_region.py` | flex-temporal stack on the 3-region LH2 fixture (hourly + daily blocks coexist) |
-| `test_hyphen_end_to_end.py` | entity names containing hyphens survive DB → solve → output |
 | `test_commodity_ladder_smoke.py` | commodity-ladder mechanism (price tiers, indirect conversion) — single-solve |
 | `test_commodity_ladder_rolling.py` | commodity ladder under rolling-horizon orchestration |
 | `test_cost_aggregation_semantics.py` | post-process cost aggregations match the LP objective |
-| `test_years_represented.py` | inflation-factor scaling (years_represented) |
-| `test_vq_penalties.py` | penalty-variable behavior (slack costs, infeasibility) |
+| `test_years_represented.py` | inflation-factor scaling (years_represented) — kept for `solve_data/p_years_represented.csv` row-pattern assertions; the cost-scaling part was promoted to Layer-1 scenarios `years_represented_half` + `years_represented_2_5` |
 | `test_regional_filter.py` | Lagrangian regional decomposition export (`--region`) |
 | `test_xlsx_workflow.py` | full xlsx → DB → solve pipeline (slow, multi-minute) |
 | `test_read_highs_solution.py` | HiGHS solution-file reader |
+
+`test_hyphen_end_to_end.py` and `test_vq_penalties.py` were promoted to Layer-1
+scenarios (`hyphenated_entity_names`, `unidirectional_connection`,
+`years_represented_half`, `years_represented_2_5`) and deleted.  See
+`tests/scenarios.yaml` for the new entries.
 
 Some of these are candidates for promotion to Layer 1 — if the test
 boils down to "scenario X produces CSV Y", it's cheaper as a
