@@ -40,6 +40,12 @@ def _load_scenarios() -> list:
     Each entry may set ``smoke: true`` to be included in the per-commit
     smoke gate (``pytest -m smoke``). Returns a list of ``pytest.param``
     objects so markers can be attached per-parametrize-case.
+
+    Optional ``expected_objective`` and ``expected_objective_tolerance``
+    fields enable hand-derived objective-value assertions: a regression
+    that produces a consistently-wrong objective (but still writes
+    self-consistent CSVs that the golden-comparison would lock in) is
+    caught here.
     """
     with open(TEST_DIR / "scenarios.yaml") as f:
         entries = yaml.safe_load(f)
@@ -49,9 +55,50 @@ def _load_scenarios() -> list:
         if e.get("smoke"):
             marks.append(pytest.mark.smoke)
         params.append(
-            pytest.param(e["scenario"], e["csvs"], marks=marks, id=e["scenario"])
+            pytest.param(
+                e["scenario"],
+                e["csvs"],
+                e.get("expected_objective"),
+                e.get("expected_objective_tolerance", 1e-3),
+                marks=marks,
+                id=e["scenario"],
+            )
         )
     return params
+
+
+def _parse_summary_solve_objective(summary_path: Path) -> float:
+    """Extract the full-horizon total cost from ``summary_solve.csv``.
+
+    The file's format (see tests/expected/base/summary_solve.csv) is a
+    free-form CSV with this row near the top:
+
+        "Total cost (calculated) full horizon (M CUR)",4780.16775,...
+
+    This row is the most stable single-number summary across single-
+    and multi-solve scenarios — for rolling/multi-solve runs the
+    ``Solve,Objective`` rows are per-roll while this row aggregates the
+    full horizon.
+    """
+    label = "Total cost (calculated) full horizon"
+    for raw in summary_path.read_text().splitlines():
+        if label in raw:
+            # Format: "<label> (M CUR)",<value>,...
+            parts = raw.split(",")
+            for part in parts[1:]:
+                cleaned = part.strip().strip('"')
+                if not cleaned:
+                    continue
+                try:
+                    return float(cleaned)
+                except ValueError:
+                    continue
+            raise ValueError(
+                f"Could not parse objective value from row: {raw!r}"
+            )
+    raise ValueError(
+        f"No '{label}' row found in {summary_path}"
+    )
 
 
 # CSVs with non-standard formatting that pd.read_csv cannot parse.
@@ -71,10 +118,14 @@ def _strip_timestamps(text: str) -> str:
 SCENARIOS = _load_scenarios()
 
 
-@pytest.mark.parametrize("scenario,csvs", SCENARIOS)
+@pytest.mark.parametrize(
+    "scenario,csvs,expected_objective,expected_objective_tolerance", SCENARIOS
+)
 def test_scenario(
     scenario: str,
     csvs: list[str],
+    expected_objective: float | None,
+    expected_objective_tolerance: float,
     test_db_url: str,
     test_bin_dir: Path,
     workdir: Path,
@@ -148,3 +199,21 @@ def test_scenario(
                     rtol=1e-4,
                     obj=f"{scenario}/{csv_name}",
                 )
+
+        # Optional hand-derived objective check. Catches a class of bugs
+        # where outputs are self-consistent (golden CSV diff passes) but
+        # the underlying objective is wrong.
+        if expected_objective is not None:
+            summary_path = workdir / "output_csv" / scenario / "summary_solve.csv"
+            assert summary_path.exists(), (
+                f"summary_solve.csv missing for scenario '{scenario}' "
+                f"— required for expected_objective check"
+            )
+            actual_objective = _parse_summary_solve_objective(summary_path)
+            denom = max(abs(expected_objective), 1e-9)
+            rel_err = abs(actual_objective - expected_objective) / denom
+            assert rel_err <= expected_objective_tolerance, (
+                f"objective drift: scenario={scenario} "
+                f"expected={expected_objective} got={actual_objective} "
+                f"rel_err={rel_err:.3e} tolerance={expected_objective_tolerance:.3e}"
+            )
