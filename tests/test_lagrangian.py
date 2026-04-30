@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 TEST_DIR = Path(__file__).parent
+FIXTURES_DIR = TEST_DIR / "fixtures"
 REPO_ROOT = TEST_DIR.parent
 
 if str(TEST_DIR) not in sys.path:
@@ -33,7 +34,8 @@ if str(TEST_DIR) not in sys.path:
 if str(TEST_DIR / "fixtures") not in sys.path:
     sys.path.insert(0, str(TEST_DIR / "fixtures"))
 
-from build_lh2_three_region import SCENARIO, build  # noqa: E402
+from build_lh2_three_region import SCENARIO  # noqa: E402
+from db_utils import json_to_db  # noqa: E402
 
 from flextool.flextoolrunner import region_filter  # noqa: E402
 from flextool.flextoolrunner.lagrangian import (  # noqa: E402
@@ -169,7 +171,7 @@ MONOLITHIC_OBJECTIVE = 4815.8143
 @pytest.fixture(scope="module")
 def lh2_db_url_lagrangian(tmp_path_factory: pytest.TempPathFactory) -> str:
     db_path = tmp_path_factory.mktemp("lh2_lag_db") / "lh2_three_region.sqlite"
-    return build(db_path)
+    return json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
 
 
 def test_lh2_lagrangian_converges_to_monolithic_optimum(
