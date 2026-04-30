@@ -19,7 +19,7 @@ migration completes.
 | `order.txt` | Layered migration order — one item per line, blank lines between layers. |
 | `schema_defaults_audit.py` | Schema vs. `.mod` `default ...` clause cross-reference. |
 | `schema_defaults.csv` | 225 schema params + 68 mod-side defaults. |
-| `baselines/h2_trade_baseline.json` | Reference MPS hash on the H2 trade `scenario_test_6h_no_carrier_storage` fixture (commodity ladder + indirect conversion; ~2.3k rows). |
+| `baselines/h2_trade_baseline.json` | Reference MPS hash on the H2 trade `scenario_test_6h_no_carrier_storage` fixture (commodity ladder + indirect conversion; ~2.3k rows). The fixture is rebuilt from `tests/fixtures/h2_trade_parity.json` via `tests/db_utils.py:json_to_db` — see "H2 trade parity fixture" below. |
 | `baselines/test_a_lot_baseline.json` | Complementary reference MPS hash on `tests/fixtures/tests.sqlite::test_a_lot` (UC/online_linear, reserves, capacity margin, inertia, co2 limit, profile_state, storage_state_start_binding, min_load; ~5.3k rows). |
 | `baselines/fullYear_roll_baseline.json` | Solve-loop coverage: rolling-window solve on `tests/fixtures/tests.sqlite::fullYear_roll` (`solve_mode=rolling_window`, horizon=8h, jump=4h, full year ⇒ many rolls). Captures the LAST roll's MPS (~41 rows). |
 | `baselines/5weeks_invest_fullYear_dispatch_coal_wind_baseline.json` | Solve-loop coverage: multi-solve via `model.solves` on `tests/fixtures/tests.sqlite::5weeks_invest_fullYear_dispatch_coal_wind` (`model.solves=[invest_1year_5weeks, y2020_fullYear_dispatch]`, two single-solves back-to-back, no `contains_solve`). Captures the LAST solve's MPS (~433 rows). |
@@ -28,6 +28,50 @@ migration completes.
 The lint that bans bare `set()` in preprocessing modules lives at
 `tests/test_preprocessing_ordered_set_lint.py` — it is a no-op until
 the first preprocessing module lands.
+
+## H2 trade parity fixture
+
+`baselines/h2_trade_baseline.json` was originally pinned against the
+user's live workshop database
+`projects/h2-imo/input_sources/H2_trade.sqlite` (~14 MB, regenerated
+from code each iteration, NOT committed).  The committed fixture
+`tests/fixtures/h2_trade_parity.json` (~420 KB) replaces that
+dependency — it is the
+``scenario_test_6h_no_carrier_storage``-only slice of the live DB
+with timestep-indexed Maps truncated to the 24h window the scenario
+actually exercises.
+
+Rebuilding the fixture from JSON and running the parity check:
+
+```bash
+# 1. Rebuild a fresh SQLite from the committed JSON fixture.
+python tests/db_utils.py import \
+    tests/fixtures/h2_trade_parity.json /tmp/h2_trade_parity.sqlite
+
+# 2. Run the scenario against the rebuilt SQLite.
+python -m flextool.cli.cmd_run_flextool sqlite:////tmp/h2_trade_parity.sqlite \
+    --scenario-name scenario_test_6h_no_carrier_storage \
+    --work-folder /tmp/parity-coverage/h2_trade \
+    --output-location /tmp/parity-coverage --output-subdir h2_trade \
+    --write-methods csv --highs-threads 1
+
+# 3. Compare against the committed baseline hash.
+python -m migration.mps_parity check /tmp/parity-coverage/h2_trade/flextool.mps \
+    --baseline migration/baselines/h2_trade_baseline.json
+# expected: OK: MPS structurally identical to baseline (hash=8a386d0b...)
+```
+
+To regenerate the JSON fixture from the live workshop DB (only needed
+when the scenario's input changes), run:
+
+```bash
+python tests/fixtures/build_h2_trade_parity.py
+```
+
+The build script reads
+``projects/h2-imo/input_sources/H2_trade.sqlite`` by default and
+writes ``tests/fixtures/h2_trade_parity.json``.  See the script's
+docstring for the filtering rules.
 
 ## Per-step workflow
 
@@ -50,9 +94,16 @@ For each item in `order.txt` (strict sequential, layer by layer):
    add coverage for `orchestration.py`'s rolling / multi-solve /
    nested-solve code paths that the first two never exercise:
    ```bash
-   # H2 trade — write-input-scope, single solve
-   python -m flextool.cli.cmd_run_flextool <h2_fixture>
-   python -m migration.mps_parity check <h2_work>/flextool.mps \
+   # H2 trade — write-input-scope, single solve.
+   # Rebuild the fixture sqlite from the committed JSON before running.
+   python tests/db_utils.py import \
+       tests/fixtures/h2_trade_parity.json /tmp/h2_trade_parity.sqlite
+   python -m flextool.cli.cmd_run_flextool sqlite:////tmp/h2_trade_parity.sqlite \
+       --scenario-name scenario_test_6h_no_carrier_storage \
+       --work-folder /tmp/parity-coverage/h2_trade \
+       --output-location /tmp/parity-coverage --output-subdir h2_trade \
+       --write-methods csv --highs-threads 1
+   python -m migration.mps_parity check /tmp/parity-coverage/h2_trade/flextool.mps \
        --baseline migration/baselines/h2_trade_baseline.json
 
    # test_a_lot — wide structural coverage, single solve
