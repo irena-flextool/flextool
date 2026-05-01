@@ -1,31 +1,36 @@
-"""Tier 6 perturbation test #5 — step duration multiplier.
+"""Tier 6 perturbation test #5 — step_duration on storage dynamics.
 
-Mutation
---------
-``solve_data/steps_in_use.csv`` ``step_duration`` column is
-doubled. ``steps_in_use.csv`` is the file the mod reads to populate
-``step_duration[d, t]`` (see ``flextool.mod`` line ~781:
-``table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- ...``).
+The spec's original prediction (``obj × 2`` from doubling
+``step_duration``) was wrong: in flextool's mod every operational obj
+term carries ``step_duration[d, t] / complete_period_share_of_year[d]``
+and ``complete_period_share_of_year`` is itself a sum of step_duration
+values, so the ratio is invariant under uniform scaling.  That
+cancellation is **by design** — operational weight of one year needs
+to equal one year so it matches the investment-annuity weighting.  A
+dispatch-only test of that invariant would also be hard to make robust
+on top of the harness's solve_data-level mutation: step_duration
+cascades into several preprocessing-derived files
+(``complete_period_share_of_year.csv`` and friends) that the patch
+doesn't repaint, so a naive "double step_duration in solve_data" run
+ends up with an inconsistent state, not a true uniform scaling.
 
-Spec prediction (and why it's wrong)
-------------------------------------
-The spec predicts ``obj × 2`` on the assumption that ``step_duration``
-is a "universal time multiplier" on every obj term. In flextool's
-actual mod, every operational obj term carries the factor::
+What ``step_duration`` *does* affect — which the user flagged
+explicitly — is **storage dynamics**.  Storage state evolution carries
+an explicit ``step_duration`` factor that is not cancelled by the
+annualisation ratio (``v_state[t] = v_state[t-1] +
+(charge - discharge) * step_duration``), so doubling the step makes
+the model see twice the energy charged/discharged per timestep.  The
+optimal dispatch then changes and the obj moves.  That is the
+regression class this test pins: a bug that drops ``step_duration``
+from the storage state-balance constraint would leave the obj
+unchanged when it should not.
 
-    step_duration[d, t] / complete_period_share_of_year[d]
-
-and ``complete_period_share_of_year[d] = sum_t step_duration[d, t] / 8760``
-— a sum of the very same step_duration values. Scaling
-step_duration uniformly by 2 therefore doubles BOTH numerator and
-denominator, and the ratio is unchanged. The objective is
-invariant under uniform step_duration scaling.
-
-This is a real model behaviour, not a bug, so we mark the test
-``xfail`` with the closed-form prediction documented above. A
-``XPASS`` here would itself be a regression signal — the most
-likely cause being someone removing ``complete_period_share_of_year``
-from the obj and breaking annualization.
+We don't have a clean closed-form for the magnitude — the new optimum
+depends on the wind/load profile and how soon the doubled charge rate
+binds the storage capacity — so this is a "delta is non-trivially
+non-zero" assertion rather than a numerical match.  That is weaker
+than the other four perturbation tests but is the right granularity
+for this multiplier on this scenario.
 """
 from __future__ import annotations
 
@@ -34,7 +39,6 @@ from pathlib import Path
 import pytest
 
 from tests.perturbation._harness import (
-    assert_obj_changed_by,
     rerun_and_get_obj,
     run_baseline,
     scale_input_csv_column,
@@ -42,19 +46,10 @@ from tests.perturbation._harness import (
 
 
 @pytest.mark.perturbation
-@pytest.mark.xfail(
-    reason=(
-        "step_duration appears in numerator (per-step costs) and denominator "
-        "(complete_period_share_of_year, which is a sum of step_duration "
-        "values). Uniformly scaling step_duration by 2 cancels out — the "
-        "objective is invariant, so observed_delta = 0 ≠ baseline_obj."
-    ),
-    strict=True,
-)
-def test_perturb_step_duration_scales_dispatch(
+def test_perturb_step_duration_changes_storage_obj(
     test_db_url: str, test_bin_dir: Path, workdir: Path
 ) -> None:
-    scenario = "coal"
+    scenario = "wind_battery"
     runner, base_obj = run_baseline(workdir, scenario, test_db_url, test_bin_dir)
 
     factor = 2.0
@@ -69,6 +64,16 @@ def test_perturb_step_duration_scales_dispatch(
     finally:
         unpatch()
 
-    # Spec prediction (will fail per the xfail reason above).
-    expected_delta = (factor - 1.0) * base_obj
-    assert_obj_changed_by(base_obj, perturbed_obj, expected_delta)
+    delta = perturbed_obj - base_obj
+    # Floor: scenario-relative (1‰ of base_obj) but at least 1 M CUR so
+    # solver float noise can't masquerade as "step_duration influences
+    # storage".  A regression that silently drops step_duration from the
+    # storage state-balance leaves the obj unchanged → assertion trips.
+    min_delta = max(abs(base_obj) * 1e-3, 1.0)
+    assert abs(delta) >= min_delta, (
+        f"step_duration ×2 left wind_battery obj effectively unchanged "
+        f"(delta={delta!r}, min_delta={min_delta!r}, base_obj={base_obj!r}). "
+        f"Storage state-balance should carry step_duration without "
+        f"cancellation; if this asserts, step_duration may be silently "
+        f"dropped from the storage dynamics."
+    )
