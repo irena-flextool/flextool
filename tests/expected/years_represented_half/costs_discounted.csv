@@ -6,12 +6,12 @@ fixed cost pre-existing,0.0
 fixed cost invested,0.0
 fixed cost reduction of divestments,0.0
 capacity margin penalty,0.0
-commodity_cost,53.4725
+commodity_cost,106.945
 commodity_sales,0.0
 co2,0.0
 other operational,0.0
 starts,0.0
-upward slack penalty,232.5369
+upward slack penalty,465.0739
 downward slack penalty,0.0
 inertia slack penalty,0.0
 non-synchronous slack penalty,0.0

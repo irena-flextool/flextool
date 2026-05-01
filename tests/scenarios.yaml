@@ -424,9 +424,12 @@
     - costs_discounted.csv
   # 1x10y multi-period investment with discounting. Optimal investment
   # in wind_plant: 0.3132 MW at p2020. Locked to observed full-horizon
-  # total cost (operational + investment + fixed - same as the 2x5y
-  # variant since both cover the same 10-year horizon).
-  expected_objective: 267.445118702
+  # total cost — operational + invest + divest + fixed (pre-existing,
+  # invested, divested), same as the 2x5y variant since both cover the
+  # same 10-year horizon. Decomposition: 46.005522 commodity + 221.4396
+  # unit invest + 100 fixed pre-existing + 80.5094 fixed invested
+  # = 447.9545.
+  expected_objective: 447.954518702
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 4.0
 
@@ -438,7 +441,7 @@
     - costs_discounted.csv
   # 2x5y split of the same 10-year horizon as y2020_2029_1x10y; same
   # full-horizon objective since the underlying economics are identical.
-  expected_objective: 267.445118702
+  expected_objective: 447.954518702
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 4.0
 
