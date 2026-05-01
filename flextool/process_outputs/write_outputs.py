@@ -406,11 +406,19 @@ def write_summary_csv(par, s, v, r, csv_dir):
         for row_idx in v.obj.index:
             f.write(f'{row_idx},{v.obj.loc[row_idx, "objective"] / 1000000:.12g}\n')
 
-        # Total cost (calculated) full horizon (M CUR)
+        # Total cost (calculated) full horizon (M CUR).  Mirrors the LP
+        # objective: oper + penalty + invest + divest + fixed (pre-existing
+        # + invested + divested).  Fixed-cost terms are in the LP obj at
+        # flextool.mod:2107-2126; omitting them here would under-report
+        # the objective for any scenario with non-zero existing capacity
+        # or a non-zero lifetime_fixed_cost on invest/divest entities.
         total_cost_full = (
             r.costOper_and_penalty_d
                 .add(r.costInvest_d, fill_value=0.0)
                 .add(r.costDivest_d, fill_value=0.0)
+                .add(r.costFixedPreExisting_d, fill_value=0.0)
+                .add(r.costFixedInvested_d, fill_value=0.0)
+                .add(r.costFixedDivested_d, fill_value=0.0)
         ).sum(axis=0) / 1000000
 
         f.write(f'"Total cost (calculated) full horizon (M CUR)",{total_cost_full:.12g},"Annualized operational, penalty and investment costs"\n')
