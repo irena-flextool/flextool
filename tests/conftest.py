@@ -62,6 +62,15 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "slow: tests that take more than ~30 seconds"
     )
+    config.addinivalue_line(
+        "markers", "decomposition: Tier 8 obj-decomposition parity tests"
+    )
+    config.addinivalue_line(
+        "markers", "perturbation: Tier 6 single-multiplier perturbation tests"
+    )
+    config.addinivalue_line(
+        "markers", "emission: Tier 7 MPS row-count emission tests"
+    )
 
 
 def pytest_collection_modifyitems(
