@@ -5,9 +5,19 @@ Captured on 2026-05-01 during the test-infrastructure batch
 predate this batch and are out of scope for it; flagged here so they
 don't get lost.
 
+> **Status update (2026-05-01):** Issue 1 is **fixed** in commit
+> `<this-commit>`. The fix was a one-line path change in
+> `_load_entity_class_set` (`solve_data/<set>.csv` →
+> `input/<set>.csv`), matching the design intent that all consumers
+> read from `input/` directly now that the redundant solve_data/
+> printfs have been retired. Full Layer-1 suite goes from
+> 53 failing / 11 passing → **64 passing** (5:23 wall-clock).
+> Issue 2 (the timing-budget wiring still wants a human scan) and
+> the stash-cleanup reference remain open.
+
 ---
 
-## Issue 1: ~50 of 64 Layer-1 scenarios fail with `KeyError` on default-HiGHS solves
+## Issue 1: ~50 of 64 Layer-1 scenarios fail with `KeyError` on default-HiGHS solves [FIXED]
 
 ### Symptom
 
