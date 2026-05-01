@@ -781,17 +781,18 @@ def write_fix_storage_usage(
 
 
 def _load_entity_class_set(work_folder: Path, set_name: str) -> list[str]:
-    """Return the ordered list of entities in ``solve_data/<set_name>.csv``.
+    """Return the ordered list of entities in ``input/<set_name>.csv``.
 
-    Column order in the dump file must match the order phase 3 would
-    use, which is the order entities appear in this set file.  The
-    resolved-set CSVs (``entity.csv``, ``process_unit.csv``,
-    ``process_connection.csv``) are written by ``flextool.mod``'s
-    ``printf`` blocks during phase 1.
+    The resolved-set CSVs (``entity.csv``, ``process_unit.csv``,
+    ``process_connection.csv``) are written by ``input_writer`` from
+    the DB and live in ``input/``.  The mod previously also re-emitted
+    them under ``solve_data/`` via ``printf`` blocks; that redundant
+    write was retired in the post-solve cleanup, so all consumers now
+    read directly from ``input/``.
 
-    Special case: ``nodeState`` is no longer dumped by the mod —
-    it's derived from ``input/p_node_type.csv`` (rows with
-    ``p_node_type == 'storage'``), preserving the original node order.
+    Special case: ``nodeState`` is derived from ``input/p_node_type.csv``
+    (rows with ``p_node_type == 'storage'``), preserving the original
+    node order.
     """
     if set_name == "nodeState":
         path = work_folder / "input" / "p_node_type.csv"
@@ -801,7 +802,7 @@ def _load_entity_class_set(work_folder: Path, set_name: str) -> list[str]:
         if df.empty or "p_node_type" not in df.columns:
             return []
         return df.loc[df["p_node_type"].astype(str) == "storage", "node"].astype(str).tolist()
-    path = work_folder / "solve_data" / f"{set_name}.csv"
+    path = work_folder / "input" / f"{set_name}.csv"
     if not path.exists():
         return []
     df = pd.read_csv(path)
