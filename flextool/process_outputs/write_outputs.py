@@ -360,6 +360,19 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
         output_config_path = os.path.join(_flextool_root, 'templates', 'default_plots.yaml')
     elif not os.path.isabs(output_config_path):
         output_config_path = os.path.join(_flextool_root, output_config_path)
+    # Self-heal for stale settings DBs that still point at the deleted
+    # ``default_comparison_plots.yaml`` (comparison rules now live inside
+    # default_plots.yaml via per-leaf ``scenario_rule``).
+    if (os.path.basename(output_config_path) == 'default_comparison_plots.yaml'
+            or not os.path.isfile(output_config_path)):
+        merged = os.path.join(_flextool_root, 'templates', 'default_plots.yaml')
+        if os.path.isfile(merged):
+            if output_config_path != merged:
+                logging.info(
+                    "output-config-path %s not found or superseded — using "
+                    "merged %s instead.", output_config_path, merged,
+                )
+            output_config_path = merged
     if active_configs is None:
         active_configs = ['default']
     if plot_rows is None:

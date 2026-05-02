@@ -1039,13 +1039,22 @@ class ExecutionManager:
 
         comp = settings.comparison_plot_settings
 
-        if comp.config_file:
-            cmd.extend(["--output-config-path", comp.config_file])
+        # Self-heal stale settings still pointing at the removed
+        # default_comparison_plots.yaml — comparison rendering now lives
+        # in default_plots.yaml.
+        cfg_file = comp.config_file
+        if cfg_file and cfg_file.endswith("default_comparison_plots.yaml"):
+            cfg_file = cfg_file.replace(
+                "default_comparison_plots.yaml", "default_plots.yaml",
+            )
+
+        if cfg_file:
+            cmd.extend(["--output-config-path", cfg_file])
 
         active = comp.active_configs
         if not active:
             from flextool.gui.config_parser import parse_plot_configs
-            config_file = comp.config_file or "templates/default_plots.yaml"
+            config_file = cfg_file or "templates/default_plots.yaml"
             config_path = Path(config_file)
             if not config_path.is_absolute():
                 config_path = Path(__file__).resolve().parent.parent.parent / config_file
