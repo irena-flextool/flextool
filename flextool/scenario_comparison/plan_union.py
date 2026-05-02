@@ -1,53 +1,30 @@
-"""Lazy union of per-scenario plot plan parquets for comparison view.
+"""Comparison-mode helpers built on the merged ``default_plots.yaml``.
 
-Comparison-mode rendering doesn't pre-combine raw data.  Instead, the
-result viewer reads each viewer scenario's already-plot-shaped plan
-parquet for the requested ``(result_key, sub_config)`` and concats them
-with ``scenario`` as the top column-MultiIndex level — a small,
-per-plot operation.
+Each leaf config in ``default_plots.yaml`` carries optional comparison-mode
+add-ons:
 
-Per-scenario plan files live at::
+* ``scenario_rule`` — single character that says how the ``scenario`` dim is
+  folded into the comparison view (``g``=grouped/coloured bars, ``l``=lines,
+  ``u``=subplots, ``f``=files, ``s``=stacked, ``e``=expand-axis).
+* ``comparison_overrides`` — optional dict of plot-setting overrides applied
+  on top of the single config in comparison mode.  When it includes
+  ``map_dimensions_for_plots``, that explicit value wins over the value
+  auto-derived from ``single + scenario_rule``.
 
-    <project>/output_parquet/<scenario>/plot_plans/{result_key}__{sub_config}_plan.parquet
-    <project>/output_parquet/<scenario>/plot_plans/{result_key}__{sub_config}_plan.json
+Two helpers live here:
 
-(see :func:`flextool.plot_outputs.plan.save_plot_plan`).  The
-``_plan`` suffix is part of the layout — kept for compatibility with
-existing scenario-runs.
-
-Every comparison plot config can be served from the union path.  The
-unioned DataFrame has ``scenario`` as the **top** column-MultiIndex
-level, with whatever per-scenario columns the dimension-rule pass
-produced nested underneath — structurally what
-``_apply_dimension_rules`` would compute on a combined raw frame for
-any role that names ``scenario`` (line / subplot / stack / grouped-bar
-/ expand-axis).  The column index simply needs ``scenario`` at the
-position the comparison config expects (always level 0 in the
-``index_types`` column part — verified across every shipped config in
-``templates/default_comparison_plots.yaml``).
-
-Two subtleties — both handled by :func:`normalize_config_for_plan_union`:
-
-1. The dim-rule character ``s`` is overloaded in
-   ``map_dimensions_for_plots[0]``: in the **column** part it means
-   ``scenario``; in the **row** part it means ``solve`` (the FlexTool
-   solve dimension).  The per-scenario plan compute step already
-   collapses ``solve`` (rule ``m`` / ``y`` / ``z`` in the row part), so
-   the unioned plan parquet has no ``solve`` row level.  The
-   comparison config's ``s`` row entry must therefore be stripped out
-   before we re-run the dim rules on the unioned frame; otherwise the
-   length check in ``_apply_dimension_rules`` fails (rules count
-   exceeds level count by one).
-2. Nothing else needs reordering.  ``pd.concat(axis=1,
-   keys=found_scenarios, names=['scenario'])`` already places
-   ``scenario`` as level 0 of the column MultiIndex, matching every
-   shipped config's expected ``s`` position in its column-part
-   ``index_types``.
+* :func:`derive_comparison_config` — builds a comparison-mode ``PlotConfig``
+  from a single-mode one by inserting ``s`` + ``scenario_rule`` into the
+  column part of ``index_types``/``rules`` and merging in
+  ``comparison_overrides``.
+* :func:`union_raw_data` — reads each viewer scenario's raw result parquet
+  and unions them with ``scenario`` as the outermost column-MultiIndex
+  level, so the derived config can be applied via the standard
+  ``compute_live_plan`` pipeline.
 """
 from __future__ import annotations
 
 import dataclasses
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -64,375 +41,153 @@ logger = logging.getLogger(__name__)
 
 
 def _read_parquet(path: Path) -> pd.DataFrame:
-    """Read a plan parquet, preferring lean reader when available."""
+    """Read a parquet file, preferring the lean reader when available."""
     if read_lean_parquet is not None:
         return read_lean_parquet(path)
     return pd.read_parquet(path)
 
 
-def per_scenario_plan_path(
-    project_path: Path, scenario: str, result_key: str, sub_config: str,
-) -> Path:
-    """Return the on-disk path of a single-scenario plan parquet.
+def derive_comparison_config(single_cfg: Any) -> Any:
+    """Build a comparison-mode PlotConfig from a single-mode one.
 
-    The trailing ``_plan.parquet`` suffix matches
-    :func:`flextool.plot_outputs.plan.save_plot_plan`.  ``scenario`` is
-    used verbatim as the directory name — underscores or other
-    filesystem-safe characters round-trip; the layer that originally
-    chose those names already vetted them.
+    The unioned **raw** comparison frame has shape::
+
+        row = (single's row dims)
+        col = ('scenario', *single's col dims)
+
+    so we prepend ``s`` to ``index_types``'s column part and prepend
+    ``scenario_rule`` to the rules string's column part.  The single-mode
+    rules string is otherwise unchanged, which means
+    ``_apply_dimension_rules`` will reshape the data exactly as it does in
+    single mode, with one extra column dim representing scenario.
+
+    ``comparison_overrides`` (also on the single config) provides per-mode
+    overrides for layout knobs.  Overrides win — including
+    ``map_dimensions_for_plots`` if explicitly given (used by the rare
+    configs whose comparison view wants a different visual treatment than
+    "single + scenario_rule prepended").
+
+    Raises ``ValueError`` when ``scenario_rule`` is not set or
+    ``map_dimensions_for_plots`` is malformed.
     """
-    return (
-        Path(project_path)
-        / "output_parquet"
-        / scenario
-        / "plot_plans"
-        / f"{result_key}__{sub_config}_plan.parquet"
+    scenario_rule = getattr(single_cfg, "scenario_rule", None)
+    if scenario_rule is None and isinstance(single_cfg, dict):
+        scenario_rule = single_cfg.get("scenario_rule")
+    if scenario_rule is None:
+        raise ValueError(
+            "derive_comparison_config: the single config has no "
+            "scenario_rule — define one (e.g. 'g' for grouped bars, "
+            "'l' for lines, 'u' for subplots) to enable comparison view."
+        )
+
+    if hasattr(single_cfg, "map_dimensions_for_plots"):
+        md = single_cfg.map_dimensions_for_plots
+    else:
+        md = single_cfg.get("map_dimensions_for_plots")
+    if not isinstance(md, (list, tuple)) or len(md) < 2:
+        raise ValueError(
+            f"derive_comparison_config: map_dimensions_for_plots must be a "
+            f"2-element [index_types, rules] list, got {md!r}"
+        )
+    idx, rules = md[0], md[1]
+    if not isinstance(idx, str) or "_" not in idx:
+        raise ValueError(
+            f"derive_comparison_config: index_types must contain '_' "
+            f"separating row and column parts, got {idx!r}"
+        )
+    if not isinstance(rules, str) or "_" not in rules:
+        raise ValueError(
+            f"derive_comparison_config: rules must contain '_' separating "
+            f"row and column parts, got {rules!r}"
+        )
+    row_idx, col_idx = idx.split("_", 1)
+    row_rules, col_rules = rules.split("_", 1)
+
+    # If the single rules already name 'scenario' in the col part (e.g.
+    # ``[d_s, s_b]`` for a costs-by-scenario chart that's the same shape
+    # in both modes), don't auto-prepend another ``s`` — the existing rule
+    # for scenario stands.  ``scenario_rule`` is required to mark the
+    # config as comparison-renderable, but its value is unused on this
+    # branch (and may be overridden via ``comparison_overrides``).
+    if "s" in col_idx:
+        new_idx, new_rules = idx, rules
+    else:
+        new_idx = f"{row_idx}_s{col_idx}"
+        new_rules = f"{row_rules}_{scenario_rule}{col_rules}"
+
+    overrides = getattr(single_cfg, "comparison_overrides", None)
+    if overrides is None and isinstance(single_cfg, dict):
+        overrides = single_cfg.get("comparison_overrides")
+    overrides = dict(overrides or {})
+
+    if hasattr(single_cfg, "__dataclass_fields__"):
+        valid_fields = set(single_cfg.__dataclass_fields__.keys())
+        replace_kwargs = {k: v for k, v in overrides.items() if k in valid_fields}
+        # Two-step replace: derive first, then apply overrides — so a config
+        # whose comparison rules differ beyond just adding scenario can carry
+        # ``map_dimensions_for_plots`` in ``comparison_overrides`` and have it
+        # take precedence over the derived value.
+        derived = dataclasses.replace(
+            single_cfg, map_dimensions_for_plots=[new_idx, new_rules],
+        )
+        return dataclasses.replace(derived, **replace_kwargs)
+
+    if isinstance(single_cfg, dict):
+        new_cfg = dict(single_cfg)
+        new_cfg["map_dimensions_for_plots"] = [new_idx, new_rules]
+        new_cfg.update(overrides)  # overrides win, including map_dimensions_for_plots
+        return new_cfg
+
+    raise TypeError(
+        f"derive_comparison_config: unsupported config type {type(single_cfg)!r}"
     )
 
 
-def per_scenario_plan_json_path(
-    project_path: Path, scenario: str, result_key: str, sub_config: str,
-) -> Path:
-    """Return the on-disk path of a single-scenario plan-JSON metadata file."""
-    return (
-        Path(project_path)
-        / "output_parquet"
-        / scenario
-        / "plot_plans"
-        / f"{result_key}__{sub_config}_plan.json"
-    )
-
-
-def load_per_scenario_plan_jsons(
+def union_raw_data(
     project_path: Path,
     scenarios: list[str],
     result_key: str,
-    sub_config: str,
-) -> list[dict]:
-    """Load the per-scenario plan-JSON metadata for one ``(result_key, sub_config)``.
-
-    Missing files contribute nothing (silent skip — matches Phase C/D).
-    """
-    out: list[dict] = []
-    for s in scenarios:
-        p = per_scenario_plan_json_path(project_path, s, result_key, sub_config)
-        if not p.is_file():
-            continue
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                out.append(json.load(f))
-        except Exception:
-            continue
-    return out
-
-
-def union_plan_data(
-    project_path: Path,
-    scenarios: list[str],
-    result_key: str,
-    sub_config: str,
 ) -> pd.DataFrame | None:
-    """Concat per-scenario plan parquets with scenario at top column level.
+    """Read each scenario's raw result parquet and union them.
 
-    Returns ``None`` when no per-scenario file exists for any of
-    *scenarios*.  Missing files for a subset are silently skipped — the
-    union proceeds with whatever is present (matches Phase C/D
-    fail-open behaviour).
+    Each per-scenario raw parquet at ``output_parquet/<scenario>/<rk>.parquet``
+    already carries a ``scenario`` column-MultiIndex level (added at write
+    time); we drop that local level and re-concat across scenarios with the
+    **viewer-supplied** scenario name as the new outermost ``scenario``
+    level.  This handles the case where a scenario folder name differs from
+    the embedded scenario name (e.g. sensitivity replicas where the folder
+    is ``scenario_test_6h_2`` but the embedded name is ``scenario_test_6h``).
 
-    Defensive index dedup: some result_keys (rolling-window /
-    solve-aware variants in particular) can produce per-scenario plan
-    parquets with duplicate row entries.  ``pd.concat(..., axis=1,
-    keys=...)`` reindexes each piece against the union of indices and
-    fails with ``InvalidIndexError`` on duplicates.  We dedupe each
-    piece via groupby-first (preserves the first row's value, the
-    safest aggregation when we don't know the data semantics) and log a
-    warning so the underlying producer can be fixed later.  Column
-    indices are checked too in case a future producer emits duplicates
-    there.
+    Returns ``None`` when no raw parquet exists for any of *scenarios*.
+    Missing files for a subset are silently skipped — the union proceeds
+    with whatever is present.
     """
     pieces: list[pd.DataFrame] = []
-    found_scenarios: list[str] = []
+    found: list[str] = []
     for s in scenarios:
-        path = per_scenario_plan_path(project_path, s, result_key, sub_config)
+        path = Path(project_path) / "output_parquet" / s / f"{result_key}.parquet"
         if not path.is_file():
             continue
         try:
             df = _read_parquet(path)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "plan_union: failed to read %s: %s", path, exc,
-            )
+            logger.warning("union_raw_data: failed to read %s: %s", path, exc)
             continue
-        # Row-index dedupe (defensive — see docstring).
-        if not df.index.is_unique:
-            dup_count = int(df.index.duplicated().sum())
-            logger.warning(
-                "plan_union: scenario=%s result_key=%s sub_config=%s has "
-                "%d duplicate row index entries — deduping with "
-                "groupby-first.",
-                s, result_key, sub_config, dup_count,
-            )
-            df = df.groupby(level=list(range(df.index.nlevels))).first()
-        # Column-index dedupe (defensive — concat keys=... also reindexes
-        # along columns when sharing them across pieces, but per-piece
-        # columns are kept distinct via the scenario level so this is
-        # mostly belt-and-braces).
-        if not df.columns.is_unique:
-            dup_count = int(df.columns.duplicated().sum())
-            logger.warning(
-                "plan_union: scenario=%s result_key=%s sub_config=%s has "
-                "%d duplicate column index entries — keeping first.",
-                s, result_key, sub_config, dup_count,
-            )
-            df = df.loc[:, ~df.columns.duplicated(keep="first")]
+        # Strip the embedded scenario level so the keys=... we set below is
+        # the only authoritative scenario label.  Two cases:
+        #  * MultiIndex columns with a 'scenario' level → droplevel.
+        #  * Single-level Index named 'scenario' (e.g. costs_discounted_p_,
+        #    a category × scenario table) → squeeze to a Series so concat
+        #    below adds 'scenario' as the only column level (otherwise the
+        #    inner unnamed level lingers and breaks rules like ``s_b``).
+        if isinstance(df.columns, pd.MultiIndex) and "scenario" in df.columns.names:
+            df = df.droplevel("scenario", axis=1)
+        elif (not isinstance(df.columns, pd.MultiIndex)
+              and df.columns.name == "scenario"
+              and len(df.columns) == 1):
+            df = df.iloc[:, 0]  # Series with the row index preserved
         pieces.append(df)
-        found_scenarios.append(s)
+        found.append(s)
     if not pieces:
         return None
-    combined = pd.concat(pieces, axis=1, keys=found_scenarios, names=["scenario"])
-    return combined
-
-
-# ---------------------------------------------------------------------------
-#  Config normalisation for the plan-union path
-# ---------------------------------------------------------------------------
-
-# Row-part rules that mean "collapse this row level entirely".  When the
-# row-part of ``index_types`` carries ``s`` (the FlexTool ``solve``
-# dimension, *not* ``scenario``) and the matching rule is one of these,
-# the per-scenario plan compute step already collapsed ``solve`` away.
-# The unioned plan parquet therefore has no ``solve`` row level and the
-# comparison config's row-part ``s`` + collapsing rule must be stripped
-# before re-running ``_apply_dimension_rules`` on the union — otherwise
-# the rule-length vs level-count check fails by one.
-_ROW_COLLAPSE_RULES = frozenset({"m", "y", "z"})
-
-
-def _strip_row_solve_dim(map_dims: Any) -> tuple[str, str] | None:
-    """If row-part has a leading collapsing ``s``, return adjusted (idx, rules).
-
-    Returns ``None`` when no adjustment is needed.  The function is
-    deliberately conservative: it only strips when the **first** row
-    dimension is ``s`` AND the matching rule collapses (sum / weighted
-    sum / weighted average).  Any other shape is left untouched so this
-    helper is a no-op for the 110/114 shipped configs that have no
-    row-part ``s`` at all.
-    """
-    if not isinstance(map_dims, (list, tuple)) or len(map_dims) < 2:
-        return None
-    idx, rules = map_dims[0], map_dims[1]
-    if not (isinstance(idx, str) and isinstance(rules, str)):
-        return None
-    if "_" not in idx:
-        return None
-    row_idx, col_idx = idx.split("_", 1)
-    # Rules string carries an underscore separating row/col rules in the
-    # YAML; ``_apply_dimension_rules`` strips it.  We mirror that here so
-    # we can reason positionally about row-rule chars.
-    rules_no_us = rules.replace("_", "")
-    if not row_idx or not row_idx.startswith("s"):
-        return None
-    if len(rules_no_us) < len(row_idx) + len(col_idx):
-        return None
-    row_rule_for_s = rules_no_us[0]
-    if row_rule_for_s not in _ROW_COLLAPSE_RULES:
-        return None
-    new_row_idx = row_idx[1:]
-    # Drop the first row-rule char and rebuild the rules string with the
-    # original underscore position (between row and col rules).
-    new_row_rules = rules_no_us[1: len(row_idx)]
-    new_col_rules = rules_no_us[len(row_idx):]
-    new_idx = f"{new_row_idx}_{col_idx}"
-    new_rules = f"{new_row_rules}_{new_col_rules}"
-    return new_idx, new_rules
-
-
-def normalize_config_for_plan_union(config: Any) -> Any:
-    """Return a config adjusted for re-applying dim rules to a unioned plan.
-
-    The unioned plan parquet shape is ``(per-scenario plan rows) ×
-    (scenario, per-scenario plan cols)`` — i.e. the per-scenario row
-    dims are unchanged but ``scenario`` has been added as the outermost
-    column level.
-
-    For most configs (110/114 shipped comparison configs), the
-    comparison ``map_dimensions_for_plots`` already matches that shape
-    1:1, so this returns *config* unchanged.
-
-    For the ``sdt_*`` configs (4 shipped: ``Node prices``, ``Reserve
-    price in NodeGroups``), the comparison config still names the
-    FlexTool ``solve`` row dim (``s`` in row-part of ``index_types``)
-    even though the per-scenario plan compute step already collapsed
-    it.  We strip the row-part ``s`` + matching collapse rule so the
-    rules length matches the unioned frame's level count.
-
-    Accepts ``PlotConfig`` dataclass instances or plain dicts.  Returns
-    a new instance / dict; never mutates *config* in place.
-    """
-    if config is None:
-        return config
-
-    if hasattr(config, "__dataclass_fields__"):
-        map_dims = getattr(config, "map_dimensions_for_plots", None)
-        adjusted = _strip_row_solve_dim(map_dims)
-        if adjusted is None:
-            return config
-        new_idx, new_rules = adjusted
-        return dataclasses.replace(
-            config, map_dimensions_for_plots=[new_idx, new_rules],
-        )
-
-    if isinstance(config, dict):
-        map_dims = config.get("map_dimensions_for_plots")
-        adjusted = _strip_row_solve_dim(map_dims)
-        if adjusted is None:
-            return config
-        new_idx, new_rules = adjusted
-        new_cfg = dict(config)
-        new_cfg["map_dimensions_for_plots"] = [new_idx, new_rules]
-        return new_cfg
-
-    return config
-
-
-def _strip_col_scenario_dim(map_dims: Any) -> tuple[str, str] | None:
-    """If column-part has a leading ``s`` (scenario), return adjusted (idx, rules).
-
-    Mirror image of :func:`_strip_row_solve_dim` for the column part.
-    The unioned plan parquet places ``scenario`` as the **outermost**
-    column-MultiIndex level (``pd.concat(axis=1, keys=found_scenarios,
-    names=['scenario'])`` in :func:`union_plan_data`), and every shipped
-    comparison config places the ``s`` (scenario) character at position
-    0 of the column part of ``index_types``.
-
-    At single-scenario-run time the per-scenario data has no ``scenario``
-    column level — it's added later by ``union_plan_data`` at view time.
-    To compute per-scenario plans for comparison configs, we strip the
-    column-part ``s`` + its matching column-rule character so the rule
-    string length matches the actual single-scenario column count.
-
-    Returns ``None`` when no adjustment is needed:
-
-    - The column part has no ``s`` at all (no scenario dim — config is
-      already single-scenario-shaped, no normalisation needed).
-    - The column part has ``s`` but consists only of ``s`` (i.e.
-      column-only-scenario config like ``[d_s, s_b]``); stripping would
-      leave an empty column part with no plotted dimension. Caller
-      should skip such configs entirely — there is no meaningful
-      single-scenario plan for a chart whose only column dim is
-      ``scenario``.
-    - The column part doesn't start with ``s`` (defensive — currently
-      no shipped config has ``s`` anywhere except position 0 of the
-      column part, but this keeps the helper conservative).
-    """
-    if not isinstance(map_dims, (list, tuple)) or len(map_dims) < 2:
-        return None
-    idx, rules = map_dims[0], map_dims[1]
-    if not (isinstance(idx, str) and isinstance(rules, str)):
-        return None
-    if "_" not in idx:
-        return None
-    row_idx, col_idx = idx.split("_", 1)
-    if not col_idx or not col_idx.startswith("s"):
-        return None
-    # Defensive: a column-only-``s`` config (e.g. ``[d_s, s_b]``) has no
-    # other column dim to plot once scenario is stripped — caller skips.
-    if col_idx == "s":
-        return None
-    rules_no_us = rules.replace("_", "")
-    if len(rules_no_us) < len(row_idx) + len(col_idx):
-        return None
-    new_col_idx = col_idx[1:]
-    # Drop the column-rule char at position 0 (matching the leading ``s``
-    # in the column part).  Rebuild the rules string with the original
-    # underscore position (between row and col rules).
-    col_rule_start = len(row_idx)
-    new_row_rules = rules_no_us[:col_rule_start]
-    new_col_rules = rules_no_us[col_rule_start + 1:]
-    new_idx = f"{row_idx}_{new_col_idx}"
-    new_rules = f"{new_row_rules}_{new_col_rules}"
-    return new_idx, new_rules
-
-
-def normalize_config_for_per_scenario_compute(config: Any) -> Any:
-    """Strip the column-part scenario (``s``) rule from a comparison config.
-
-    At single-scenario-run time the per-scenario DataFrame has no
-    ``scenario`` column level — that level only appears after
-    :func:`union_plan_data` concats the per-scenario plan parquets at
-    view time.  Comparison configs were written for the unioned shape
-    and carry an ``s`` character + matching rule for the scenario dim
-    in the column part of ``map_dimensions_for_plots``.  Feeding such a
-    config to ``compute_all_plot_plans`` against single-scenario data
-    triggers the "column part has N levels but DataFrame has N-1 column
-    levels" warning and skips the config.
-
-    This function returns a copy of *config* with the leading column-
-    part ``s`` and its matching rule character removed, so the resulting
-    config matches the per-scenario data's actual shape.  The view-time
-    union step recovers the scenario dim and its rule remains compatible
-    via :func:`normalize_config_for_plan_union` (which strips the row-
-    part ``s`` separately, for a different — solve-dimension — reason).
-
-    Returns ``None`` for configs whose column part is *only* ``s`` (no
-    other plotted column dim once scenario is removed) — caller should
-    skip those configs entirely.  Returns *config* unchanged when no
-    adjustment is needed (no column-part ``s``).
-
-    Accepts ``PlotConfig`` dataclass instances or plain dicts.  Never
-    mutates *config* in place.
-    """
-    if config is None:
-        return config
-
-    if hasattr(config, "__dataclass_fields__"):
-        map_dims = getattr(config, "map_dimensions_for_plots", None)
-        # Defensive skip for column-only-``s`` configs.
-        if (isinstance(map_dims, (list, tuple)) and len(map_dims) >= 2
-                and isinstance(map_dims[0], str) and "_" in map_dims[0]):
-            _, col_idx = map_dims[0].split("_", 1)
-            if col_idx == "s":
-                return None
-        adjusted = _strip_col_scenario_dim(map_dims)
-        if adjusted is None:
-            return config
-        new_idx, new_rules = adjusted
-        return dataclasses.replace(
-            config, map_dimensions_for_plots=[new_idx, new_rules],
-        )
-
-    if isinstance(config, dict):
-        map_dims = config.get("map_dimensions_for_plots")
-        if (isinstance(map_dims, (list, tuple)) and len(map_dims) >= 2
-                and isinstance(map_dims[0], str) and "_" in map_dims[0]):
-            _, col_idx = map_dims[0].split("_", 1)
-            if col_idx == "s":
-                return None
-        adjusted = _strip_col_scenario_dim(map_dims)
-        if adjusted is None:
-            return config
-        new_idx, new_rules = adjusted
-        new_cfg = dict(config)
-        new_cfg["map_dimensions_for_plots"] = [new_idx, new_rules]
-        return new_cfg
-
-    return config
-
-
-def is_scenario_pivot_config(config: Any) -> bool:
-    """Pure no-op kept for forward compatibility — always returns ``False``.
-
-    Phase E originally routed configs whose ``map_dimensions_for_plots``
-    contained ``s`` to a legacy combined-parquet fallback.  That routing
-    was overconservative: ``s`` in the column part of ``index_types``
-    means ``scenario`` (which the union path handles natively), and
-    ``s`` in the row part means ``solve`` (which the per-scenario plan
-    compute step has already collapsed — see
-    :func:`normalize_config_for_plan_union`).  Every shipped comparison
-    config is therefore servable from the union path.
-
-    The function is kept (returning ``False`` for any input) so older
-    callers that import it don't break; new code should use
-    :func:`normalize_config_for_plan_union` instead.
-    """
-    return False
+    return pd.concat(pieces, axis=1, keys=found, names=["scenario"])

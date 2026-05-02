@@ -73,6 +73,13 @@ def load_dispatch_mappings(parquet_dir: Path) -> dict[str, pd.DataFrame | None]:
         else:
             mappings[key] = None
 
+    # nodeGroupDispatch.parquet stores its single membership column under the
+    # set name 'nodeGroupDispatch'; downstream consumers expect 'group'
+    # (matching group_node / group_process_node).
+    dg_df = mappings.get('dispatch_groups')
+    if dg_df is not None and 'nodeGroupDispatch' in dg_df.columns:
+        mappings['dispatch_groups'] = dg_df.rename(columns={'nodeGroupDispatch': 'group'})
+
     return mappings
 
 

@@ -251,7 +251,7 @@ class OutputActionManager:
         if comp.config_file:
             cmd.extend(["--output-config-path", comp.config_file])
 
-        active = self._resolve_active_configs(comp, "templates/default_comparison_plots.yaml")
+        active = self._resolve_active_configs(comp, "templates/default_plots.yaml")
         cmd.extend(["--active-configs", *active])
 
         if comp.duration > 0:
