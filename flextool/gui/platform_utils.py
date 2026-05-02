@@ -200,14 +200,20 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
 
     if dpi is not None and dpi > 0:
         # Tk documents ``tk scaling`` as pixels-per-point with 72 pt/inch,
-        # which would give ``scaling = dpi / 72``.  In practice, Linux/X11
+        # which would give ``scaling = dpi / 72``.  In practice Linux/X11
         # desktop apps render at the Windows-style 96-DPI reference
-        # baseline — at "scaling = 1.0", a 10pt font is ~10px, not 14px.
-        # Using dpi/72 directly thus over-scales by ~33% (visibly chunky
-        # fonts on a 4K display).  Matching the desktop convention
-        # (dpi/96) gives a 1.45× scale on a 139-DPI display, which feels
-        # right next to the rest of the Plasma/GNOME UI.
-        new_scaling = dpi / 96.0
+        # baseline (Plasma/GNOME both treat 96 DPI as "scale = 1.0"), so
+        # matching that convention is closer to "feels right next to
+        # other apps on the same screen".
+        #
+        # The 0.85 fudge factor pulls fonts ~15% smaller than the
+        # geometric DPI would otherwise produce.  Empirically, sv_ttk's
+        # font metrics + tk-rendered tree row layout end up looking
+        # heavier than equivalent Qt/GTK content at the same point size,
+        # and 0.85 is the value that matches the surrounding desktop
+        # without introducing a per-app config knob.  ``FLEXTOOL_DPI``
+        # remains the override for users who disagree.
+        new_scaling = (dpi / 96.0) * 0.85
         current_scaling = float(root.tk.call("tk", "scaling"))
         # Only apply if the OS requests a higher scale than tk's default,
         # to avoid shrinking fonts on systems where tk already got it right.

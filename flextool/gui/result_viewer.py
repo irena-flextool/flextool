@@ -366,7 +366,7 @@ class ResultViewer(tk.Toplevel):
         self._comp_tree.heading("check", text="")
         self._comp_tree.heading("name", text="Scenario")
         _cw = self._char_width
-        self._comp_tree.column("check", width=_cw * 3, minwidth=_cw * 3, stretch=False)
+        self._comp_tree.column("check", width=int(_cw * 3.45), minwidth=int(_cw * 3.45), stretch=False)
         self._comp_tree.column("name", width=_cw * 20, minwidth=_cw * 12, stretch=True)
         self._comp_tree.grid(row=0, column=0, sticky="nsew")
 
