@@ -314,7 +314,7 @@ class MainWindow(tk.Tk):
             command=self._sort_input_by_number,
         )
         self.input_sources_tree.heading("status", text="")
-        self.input_sources_tree.column("check", width=cw * 2, minwidth=cw * 2, stretch=False)
+        self.input_sources_tree.column("check", width=int(cw * 2.3), minwidth=int(cw * 2.3), stretch=False)
         self.input_sources_tree.column("name", width=cw * 25, minwidth=cw * 12)
         self.input_sources_tree.column("number", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.input_sources_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
@@ -569,7 +569,7 @@ class MainWindow(tk.Tk):
             "scenario_name", text="Scenario \u25b2",
             command=self._sort_available_by_name,
         )
-        self.available_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.available_tree.column("check", width=int(cw * 3.45), minwidth=int(cw * 3.45), stretch=False)
         self.available_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.available_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
         self.available_tree.grid(row=0, column=0, sticky="nsew")
@@ -618,7 +618,7 @@ class MainWindow(tk.Tk):
             "timestamp", text="Timestamp",
             command=self._sort_executed_by_timestamp,
         )
-        self.executed_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.executed_tree.column("check", width=int(cw * 3.45), minwidth=int(cw * 3.45), stretch=False)
         self.executed_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.executed_tree.column("scenario_name", width=cw * 29, minwidth=cw * 12, stretch=True)
         self.executed_tree.column("view", width=cw * 3, minwidth=cw * 3, stretch=False, anchor="center")

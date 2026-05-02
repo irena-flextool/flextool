@@ -144,7 +144,7 @@ class _PlotSection:
         )
         self._config_tree.heading("check", text="\u25bd")
         self._config_tree.heading("name", text="Config")
-        self._config_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self._config_tree.column("check", width=int(cw * 3.45), minwidth=int(cw * 3.45), stretch=False)
         self._config_tree.column("name", width=cw * 20, minwidth=cw * 10, stretch=True)
         self._config_tree.grid(row=0, column=0, sticky="nsew")
 
