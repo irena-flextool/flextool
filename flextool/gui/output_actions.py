@@ -249,7 +249,14 @@ class OutputActionManager:
         cmd.extend(["--comparison-parquet-dir", str(comparison_parquet_dir)])
 
         if comp.config_file:
-            cmd.extend(["--output-config-path", comp.config_file])
+            # Self-heal stale settings still pointing at the removed
+            # default_comparison_plots.yaml.
+            cfg_file = comp.config_file
+            if cfg_file.endswith("default_comparison_plots.yaml"):
+                cfg_file = cfg_file.replace(
+                    "default_comparison_plots.yaml", "default_plots.yaml",
+                )
+            cmd.extend(["--output-config-path", cfg_file])
 
         active = self._resolve_active_configs(comp, "templates/default_plots.yaml")
         cmd.extend(["--active-configs", *active])
