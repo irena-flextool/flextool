@@ -217,6 +217,12 @@ class SolverRunner:
     ) -> int:
         """Run a pure-GLPSOL solve (no HiGHS/CPLEX)."""
         wf = self.state.paths.work_folder
+        # ``current_roll_index`` may be 0 (first roll) — preserve the
+        # zero by checking ``is not None`` rather than truthiness.  Empty
+        # string is the recorder's "not applicable" sentinel.
+        _roll_idx = self.state.current_roll_index
+        if _roll_idx is None:
+            _roll_idx = ''
         with open(wf / "solve_data/glpsol_phase.csv", 'w') as p_model_file:
             p_model_file.write("phase\nread\n")
 
@@ -248,8 +254,15 @@ class SolverRunner:
 
         timing = time.perf_counter() - timer_start
         self.logger.info(f"--- Solve with GLPSOL: {timing:.4f} seconds ---")
-        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write(',,' + str(round(timing, 4)) + ',')
+        recorder = getattr(self.state, 'timing_recorder', None)
+        if recorder is not None:
+            recorder.record(
+                'solve', subphase='glpsol_solve',
+                solve=current_solve,
+                roll_index=_roll_idx,
+                seconds=timing,
+                t_start=timer_start,
+            )
 
         return returncode
 
@@ -270,6 +283,10 @@ class SolverRunner:
         """Run the three-phase glpsol→HiGHS/CPLEX→glpsol workflow."""
         wf = self.state.paths.work_folder
         timer_in_model_run = timer_start
+        # See note in _run_glpsol_solver: preserve roll_index == 0.
+        _roll_idx = self.state.current_roll_index
+        if _roll_idx is None:
+            _roll_idx = ''
 
         # Phase 1: GLPSOL creates MPS file
         with open(wf / "solve_data/glpsol_phase.csv", 'w') as p_model_file:
@@ -296,8 +313,15 @@ class SolverRunner:
 
         timing = time.perf_counter() - timer_in_model_run
         self.logger.info(f"--- GLPSOL created sol file: {timing:.4f} seconds ---")
-        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write(',' + str(round(timing, 4)))
+        recorder = getattr(self.state, 'timing_recorder', None)
+        if recorder is not None:
+            recorder.record(
+                'solve', subphase='mps_gen',
+                solve=current_solve,
+                roll_index=_roll_idx,
+                seconds=timing,
+                t_start=timer_in_model_run,
+            )
         timer_in_model_run = timer_in_model_run + timing
 
         # Phase 2: Run solver
@@ -306,8 +330,15 @@ class SolverRunner:
             highs_instance = self._run_highs(current_solve, highs_file, mps_file, highs_option_file, flextool_sol_file)
             timing = time.perf_counter() - timer_in_model_run
             self.logger.info(f"--- Solver (HiGHS): {timing:.4f} seconds ---")
-            with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-                solve_progress.write(',' + str(round(timing, 4)))
+            recorder = getattr(self.state, 'timing_recorder', None)
+            if recorder is not None:
+                recorder.record(
+                    'solve', subphase='lp_solve',
+                    solve=current_solve,
+                    roll_index=_roll_idx,
+                    seconds=timing,
+                    t_start=timer_in_model_run,
+                )
             timer_in_model_run = timer_in_model_run + timing
 
         elif solver == "cplex":
@@ -316,8 +347,15 @@ class SolverRunner:
             self._run_cplex(current_solve, mps_file, cplex_sol_file, flextool_sol_file)
             timing = time.perf_counter() - timer_in_model_run
             self.logger.info(f"--- Solver (CPLEX or Gurobi): {timing:.4f} seconds ---")
-            with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-                solve_progress.write(',' + str(round(timing, 4)))
+            recorder = getattr(self.state, 'timing_recorder', None)
+            if recorder is not None:
+                recorder.record(
+                    'solve', subphase='lp_solve',
+                    solve=current_solve,
+                    roll_index=_roll_idx,
+                    seconds=timing,
+                    t_start=timer_in_model_run,
+                )
             timer_in_model_run = timer_in_model_run + timing
 
         # Phase 3: glpsol re-reads the model + ``.sol`` and writes the
@@ -414,6 +452,10 @@ class SolverRunner:
         for parameters/sets, :mod:`read_highs_solution` for solver values,
         :mod:`handoff_writers` for per-entity capacity).
         """
+        # See note in _run_glpsol_solver: preserve roll_index == 0.
+        _roll_idx = self.state.current_roll_index
+        if _roll_idx is None:
+            _roll_idx = ''
         with open(wf / "solve_data/glpsol_phase.csv", 'w') as p_model_file:
             p_model_file.write("phase\nwrite\n")
 
@@ -425,8 +467,15 @@ class SolverRunner:
 
         timing = time.perf_counter() - timer_in_model_run
         self.logger.info(f"--- GLPSOL wrote outputs: {timing:.4f} seconds ---")
-        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write(',' + str(round(timing, 4)) + '\n')
+        recorder = getattr(self.state, 'timing_recorder', None)
+        if recorder is not None:
+            recorder.record(
+                'solve', subphase='glpsol_phase3',
+                solve=current_solve,
+                roll_index=_roll_idx,
+                seconds=timing,
+                t_start=timer_in_model_run,
+            )
 
         return returncode
 

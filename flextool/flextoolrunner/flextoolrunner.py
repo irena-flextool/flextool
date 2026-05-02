@@ -11,6 +11,7 @@ from flextool.flextoolrunner.solve_config import SolveConfig
 from flextool.flextoolrunner.timeline_config import TimelineConfig
 from flextool.flextoolrunner.runner_state import PathConfig, RunnerState, FlexToolError, FlexToolConfigError
 from flextool.flextoolrunner.solver_runner import SolverRunner
+from flextool.flextoolrunner.timing_recorder import TimingRecorder
 
 #return_codes
 #0 : Success
@@ -28,7 +29,7 @@ class FlexToolRunner:
     See ``flextool.flextoolrunner.__init__`` docstring for a full module navigation guide.
     """
 
-    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False, highs_threads=None, auto_scale=False, relax_feasibility=None, use_ipm=False, glpsol_timing=False):
+    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False, highs_threads=None, auto_scale=False, relax_feasibility=None, use_ipm=False, glpsol_timing=False, timing_recorder: "TimingRecorder | None" = None):
         try:
             logger = logging.getLogger(__name__)
             # Resolve work_folder: default to cwd for backward compatibility
@@ -103,6 +104,21 @@ class FlexToolRunner:
                 stale_timing = resolved_work_folder / "solve_data" / "glpsol_constraint_timing.csv"
                 if stale_timing.exists():
                     stale_timing.unlink()
+            # Phase-timing recorder.  The CLI constructs one earlier and
+            # passes it in; direct callers (tests) get a fresh recorder
+            # bootstrapped here so timings.csv coverage is consistent
+            # across both entry points.  The recorder always lives on
+            # ``state.timing_recorder``.
+            if timing_recorder is not None:
+                self.state.timing_recorder = timing_recorder
+                # Late-bind scenario when the CLI couldn't pass it in.
+                if scenario_name and not timing_recorder.scenario:
+                    timing_recorder.set_scenario(scenario_name)
+            elif self.state.timing_recorder is None:
+                self.state.timing_recorder = TimingRecorder(
+                    work_folder=resolved_work_folder,
+                    scenario=scenario_name,
+                )
         except FlexToolError:
             sys.exit(-1)
 
