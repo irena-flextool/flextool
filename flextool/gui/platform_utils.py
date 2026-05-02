@@ -123,13 +123,16 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
     default fonts (and everything derived from them) pick up the correct
     size.
 
-    On Linux/X11 the ``Xft.dpi`` X resource is the most reliable source
-    (GNOME, KDE, and Xfce all set it).  The ``GDK_SCALE`` environment
-    variable is checked as a fallback.
+    Resolution order:
 
-    On Windows, ``ctypes`` is used to query the system DPI.
-
-    On macOS, Tk handles Retina scaling internally so nothing is needed.
+    1. ``FLEXTOOL_DPI`` environment variable — explicit user override
+       (e.g. ``FLEXTOOL_DPI=144``) for setups where auto-detection fails.
+    2. On Windows, ``ctypes`` queries the system DPI directly.
+    3. On Linux/X11, ``Xft.dpi`` (set by GNOME/KDE/Xfce) is the most
+       reliable hint, followed by ``GDK_SCALE`` and finally an
+       ``xrandr``-derived DPI computed from the primary monitor's
+       physical dimensions.
+    4. On macOS, Tk handles Retina internally — nothing to do.
 
     Returns:
         The ratio by which tk scaling was increased (1.0 means no change).
@@ -140,14 +143,22 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
 
     dpi: float | None = None
 
-    if sys.platform == "win32":
+    # Explicit override always wins.
+    flextool_dpi = os.environ.get("FLEXTOOL_DPI")
+    if flextool_dpi:
+        try:
+            dpi = float(flextool_dpi)
+        except ValueError:
+            pass
+
+    if dpi is None and sys.platform == "win32":
         try:
             import ctypes
             ctypes.windll.shcore.SetProcessDpiAwareness(1)  # type: ignore[attr-defined]
             dpi = ctypes.windll.user32.GetDpiForSystem()  # type: ignore[attr-defined]
         except Exception:
             pass
-    else:
+    elif dpi is None:
         # Linux / X11: try xrdb for Xft.dpi (set by GNOME, KDE, Xfce)
         try:
             out = subprocess.check_output(
@@ -167,6 +178,11 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
                     dpi = 96.0 * float(gdk_scale)
                 except ValueError:
                     pass
+        # Last resort: derive from xrandr's primary-monitor physical
+        # dimensions.  Catches setups (e.g. plain X11 or some KDE
+        # installs) where neither Xft.dpi nor GDK_SCALE is exported.
+        if dpi is None:
+            dpi = _xrandr_primary_dpi()
 
     if dpi is not None and dpi > 0:
         # tk scaling is in units of pixels-per-point where 1.0 ≈ 72 DPI.
@@ -179,6 +195,35 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
             root.tk.call("tk", "scaling", new_scaling)
             return new_scaling / current_scaling
     return 1.0
+
+
+def _xrandr_primary_dpi() -> float | None:
+    """Compute DPI from xrandr's primary-display physical width.
+
+    Returns ``None`` when xrandr is unavailable, no primary display is
+    flagged, or the reported physical width is 0 (some virtual /
+    headless setups report 0mm).
+    """
+    import re
+    try:
+        out = subprocess.check_output(
+            ["xrandr"], text=True, timeout=2, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return None
+    # Match e.g. "DP-0 connected primary 3840x2160+1920+0 ... 700mm x 390mm"
+    pattern = re.compile(
+        r"\bprimary\s+(\d+)x(\d+)\+\d+\+\d+.*?(\d+)mm\s+x\s+(\d+)mm"
+    )
+    for line in out.splitlines():
+        m = pattern.search(line)
+        if not m:
+            continue
+        px_w = int(m.group(1))
+        mm_w = int(m.group(3))
+        if px_w > 0 and mm_w > 0:
+            return (px_w / mm_w) * 25.4
+    return None
 
 
 def normalize_default_font_size(root: tk.Tk, size: int = 10) -> None:
