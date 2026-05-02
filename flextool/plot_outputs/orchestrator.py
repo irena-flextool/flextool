@@ -357,6 +357,13 @@ def _apply_dimension_rules(
     level_names_before = list(df.index.names) + list(df.columns.names)
     name_to_rule = dict(zip(level_names_before, rules))
 
+    # Sentinel marker for the spurious column level introduced by
+    # ``to_frame()`` when ``stack`` / ``unstack`` collapses to a Series.
+    # We tag the level name and drop the level once a real col level
+    # appears alongside (i.e. once an unstack adds one).  See the
+    # block after the unstack below.
+    _SPURIOUS_COL = '__flextool_spurious_col__'
+
     # Move bar/line levels from columns to index (batch to avoid Cartesian product)
     nr_row = df.index.nlevels
     col_levels_to_stack = [i - nr_row for i, c in enumerate(rules)
@@ -364,7 +371,15 @@ def _apply_dimension_rules(
     if col_levels_to_stack:
         df = df.stack(col_levels_to_stack, future_stack=True)
         if isinstance(df, pd.Series):
-            df = df.to_frame()
+            # Stacking the only column level collapses to a Series.
+            # ``to_frame()`` brings it back to a DataFrame but with a
+            # default-named placeholder column level — tag it so we can
+            # drop it later if a real col level is added by the unstack
+            # below.  Without this, the placeholder lingers and breaks
+            # the rules-string-vs-level-count invariant downstream
+            # (configs like ``[d_s, s_b]`` end up with a "phantom"
+            # extra col level that prevents stacks from rendering).
+            df = df.to_frame().rename_axis(columns=_SPURIOUS_COL)
 
     # Rebuild rules to match level order after stacking
     level_names_mid = list(df.index.names) + list(df.columns.names)
@@ -381,7 +396,18 @@ def _apply_dimension_rules(
     if row_levels_to_unstack:
         df = df.unstack(row_levels_to_unstack)
         if isinstance(df, pd.Series):
-            df = df.to_frame()
+            df = df.to_frame().rename_axis(columns=_SPURIOUS_COL)
+
+    # Drop the spurious col level introduced by Phase 1's ``to_frame()``
+    # — but only if a real col level was added alongside (otherwise the
+    # data has no col index at all and we'd leave it as 0-level, which
+    # ``rebuild rules`` and the figure builder don't expect).
+    spurious_cols = [
+        i for i, name in enumerate(df.columns.names) if name == _SPURIOUS_COL
+    ]
+    if spurious_cols and df.columns.nlevels > len(spurious_cols):
+        for i in reversed(spurious_cols):
+            df = df.droplevel(i, axis=1)
 
     # Rebuild rules to match actual level order after stack/unstack
     level_names_after = list(df.index.names) + list(df.columns.names)
