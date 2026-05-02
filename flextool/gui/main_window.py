@@ -622,7 +622,7 @@ class MainWindow(tk.Tk):
         self.executed_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.executed_tree.column("scenario_name", width=cw * 29, minwidth=cw * 12, stretch=True)
         self.executed_tree.column("view", width=cw * 3, minwidth=cw * 3, stretch=False, anchor="center")
-        self.executed_tree.column("timestamp", width=cw * 13, minwidth=cw * 13, stretch=False)
+        self.executed_tree.column("timestamp", width=int(cw * 24.7), minwidth=int(cw * 24.7), stretch=False)
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
 
         # No row-level tag for View — Treeview tags color the entire row.
