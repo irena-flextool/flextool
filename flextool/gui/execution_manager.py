@@ -1045,7 +1045,7 @@ class ExecutionManager:
         active = comp.active_configs
         if not active:
             from flextool.gui.config_parser import parse_plot_configs
-            config_file = comp.config_file or "templates/default_comparison_plots.yaml"
+            config_file = comp.config_file or "templates/default_plots.yaml"
             config_path = Path(config_file)
             if not config_path.is_absolute():
                 config_path = Path(__file__).resolve().parent.parent.parent / config_file

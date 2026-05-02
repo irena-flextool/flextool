@@ -18,8 +18,45 @@ from flextool.scenario_comparison.data_models import DispatchMappings
 from flextool.scenario_comparison.db_reader import get_scenario_results
 from flextool.scenario_comparison.dispatch_mappings import combine_dispatch_mappings
 from flextool.scenario_comparison.dispatch_plots import create_dispatch_plots
+from flextool.scenario_comparison.plan_union import derive_comparison_config
 from flextool.plot_outputs.config import _is_single_config, flatten_new_format
 from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
+
+
+def _derive_comparison_settings(plots_flat: dict) -> dict:
+    """Map each leaf config dict through ``derive_comparison_config``.
+
+    Drops entries whose configs lack ``scenario_rule`` (those plots don't
+    have a comparison rendering).  Produces the same flat-dict shape that
+    ``plot_dict_of_dataframes`` and ``compute_all_plot_plans`` expect.
+    """
+    out: dict = {}
+    for rk, cfg_dict in plots_flat.items():
+        if not isinstance(cfg_dict, dict):
+            continue
+        if _is_single_config(cfg_dict):
+            # Direct config (no sub_configs)
+            if "scenario_rule" not in cfg_dict:
+                continue
+            try:
+                out[rk] = derive_comparison_config(cfg_dict)
+            except (ValueError, TypeError):
+                continue
+            continue
+        # Named sub-configs
+        new_sub: dict = {}
+        for sub, leaf in cfg_dict.items():
+            if not isinstance(leaf, dict):
+                continue
+            if "scenario_rule" not in leaf:
+                continue
+            try:
+                new_sub[sub] = derive_comparison_config(leaf)
+            except (ValueError, TypeError):
+                continue
+        if new_sub:
+            out[rk] = new_sub
+    return out
 
 
 def run(
@@ -85,8 +122,14 @@ def run(
             plot_dir, results, scenarios, mappings
         )
 
-    # Flatten new-format entries to flat result_key mapping for downstream use
-    settings['plots'] = flatten_new_format(settings.get('plots', {}))
+    # Flatten new-format entries to flat result_key mapping for downstream use.
+    # Then derive comparison-mode configs from each leaf (single rules +
+    # scenario_rule), since the merged ``default_plots.yaml`` carries
+    # single-mode rules.  Entries without ``scenario_rule`` have no
+    # comparison rendering and are dropped here.
+    settings['plots'] = _derive_comparison_settings(
+        flatten_new_format(settings.get('plots', {}))
+    )
 
     # If shared_legend is disabled, replace 'shared' legend with 'right' in all plot configs
     if not shared_legend:
@@ -167,7 +210,7 @@ def run(
             import logging as _logging
             _logging.warning("Plot plan computation failed (non-fatal): %s", exc)
 
-    # Generate original comparison plots (from default_comparison_plots.yaml)
+    # Generate comparison plots from the merged settings derived above.
     plot_dict_of_dataframes(
         combined_dfs, plot_dir, settings['plots'],
         active_settings=active_configs, plot_rows=plot_rows,

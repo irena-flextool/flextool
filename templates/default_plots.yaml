@@ -51,6 +51,36 @@
 # - always_include_zero_in_axis: true/false (default true). Zero will always be within the axis bounds (preventing automatic behaviour where it can be hard to see the scale of the plot)
 # - skip_data_with_only_zeroes: true/false (default false). Drops all-zero columns (and all-zero rows for bar charts) before plotting
 #
+# --- Comparison-mode add-ons -------------------------------------------------
+# These two optional fields drive the comparison view (multiple scenarios shown
+# side by side).  When `scenario_rule` is set, comparison-mode rendering reads
+# this single config and folds the scenario dim in on the fly — there is no
+# separate comparison YAML.
+#
+# - scenario_rule: How the 'scenario' dim is handled in comparison mode.
+#     Common choices: 'g' (grouped/coloured bars), 'l' (line series),
+#     'u' (subplot panel per scenario), 'f' (file per scenario).
+#     For pure-derivation configs, this is the ONLY thing you need.
+#     Example: single map_dimensions_for_plots [d_e, t_l] + scenario_rule 'l'
+#     produces comparison-effective rules [d_se, t_gl] at view time.
+#
+# - comparison_overrides: Optional dict of plot settings that take effect only
+#     in comparison mode. Any field listed above is allowed.  Two common uses:
+#       * tighter layouts in comparison view (scenarios multiply bar count):
+#           comparison_overrides:
+#             max_subplots_per_file: 2
+#             legend: shared
+#       * preserving a custom comparison rule layout that *isn't* just
+#         "single + scenario_rule prepended" (rare — needed when the chart
+#         author wanted a different visual treatment of an existing dim
+#         in comparison mode):
+#           comparison_overrides:
+#             map_dimensions_for_plots: [ed_sp, eb_gu]
+#     If `map_dimensions_for_plots` is absent from `comparison_overrides`, the
+#     runtime auto-derives it as: prepend 's' to col_idx and `scenario_rule`
+#     to col_rules.
+# -----------------------------------------------------------------------------
+#
 # There is also filename configuration section after the plot rules (used by csv and parquet)
 
 # Default time-range duration per variant letter, used the first time the
@@ -78,6 +108,13 @@ plots:
         xlabel: MWh (annualized)
         ylabel: Node
         skip_data_with_only_zeroes: true
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_se, b_ge]
+          legend: shared
+          max_items_per_plot: 40
+          max_subplots_per_file: 2
+          subplots_per_row: 2
       sum_periods:
         plot_name: 'Loss of load (upward slack) total'
         variant: a
@@ -86,6 +123,13 @@ plots:
         xlabel: MWh (horizon total)
         ylabel: Node
         skip_data_with_only_zeroes: true
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_se, y_ge]
+          legend: shared
+          max_items_per_plot: 40
+          max_subplots_per_file: 2
+          subplots_per_row: 2
     node_slack_up_dt_e:
       default:
         variant: h
@@ -96,6 +140,12 @@ plots:
         ylabel: Node
         xlabel: MWh
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_se, tt_lu]
+          max_items_per_plot: 10
+          legend: shared
+          ylabel: MWh
       chunks:
         plot_name: 'Loss of load (upward slack) weekly avg'
         variant: w
@@ -107,6 +157,12 @@ plots:
         ylabel: Node
         xlabel: MWh
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sp, ti_lu]
+          max_items_per_plot: 10
+          legend: shared
+          ylabel: MWh
   'Excess load + spill (downward slack)':
     group: 0
     order: 1
@@ -118,6 +174,13 @@ plots:
         xlabel: MWh (annualized)
         ylabel: Node
         skip_data_with_only_zeroes: true
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_se, b_ge]
+          legend: shared
+          max_items_per_plot: 40
+          max_subplots_per_file: 2
+          subplots_per_row: 2
       sum_periods:
         plot_name: 'Excess load + spill (downward slack) total'
         variant: a
@@ -126,6 +189,13 @@ plots:
         xlabel: MWh (horizon total)
         ylabel: Node
         skip_data_with_only_zeroes: true
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_se, y_ge]
+          legend: shared
+          max_items_per_plot: 40
+          max_subplots_per_file: 2
+          subplots_per_row: 2
     node_slack_down_dt_e:
       default:
         variant: h
@@ -136,6 +206,11 @@ plots:
         xlabel: MWh
         ylabel: Node
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          max_items_per_plot: 10
+          legend: shared
+          ylabel: MWh
       chunks:
         plot_name: 'Excess load + spill (downward slack) weekly avg'
         variant: w
@@ -147,6 +222,12 @@ plots:
         xlabel: MWh
         ylabel: Node
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sp, ti_lu]
+          legend: shared
+          max_items_per_plot: 10
+          ylabel: MWh
   'Lack of reserves':
     group: 0
     order: 2
@@ -159,6 +240,12 @@ plots:
         xlabel: MWh/h
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_seeg, tt_luuu]
+          max_items_per_plot: 10
+          legend: shared
+          ylabel: MWh/h
       chunks:
         plot_name: 'Lack of reserves weekly avg'
         variant: w
@@ -169,6 +256,12 @@ plots:
         xlabel: MWh/h
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_seeg, ti_luuu]
+          max_items_per_plot: 10
+          legend: shared
+          ylabel: MWh/h
     nodeGroup_slack_reserve_d_eeg:
       default:
         variant: p
@@ -178,6 +271,11 @@ plots:
         xlabel: MWh (annualized)
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
+        scenario_rule: e
+        comparison_overrides:
+          map_dimensions_for_plots: [d_seeg, b_essu]
+          max_items_per_plot: 40
+          ylabel: MWh
       sum_periods:
         plot_name: 'Lack of reserves total'
         variant: a
@@ -187,6 +285,11 @@ plots:
         xlabel: MWh (horizon total)
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
+        scenario_rule: e
+        comparison_overrides:
+          map_dimensions_for_plots: [d_seeg, y_essu]
+          max_items_per_plot: 40
+          ylabel: MWh (horizon total)
   'Lack of inertia':
     group: 0
     order: 3
@@ -199,6 +302,11 @@ plots:
         xlabel: MWs
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          max_items_per_plot: 10
+          legend: shared
+          ylabel: MWs
       chunks:
         plot_name: 'Lack of inertia weekly avg'
         variant: w
@@ -209,6 +317,11 @@ plots:
         xlabel: MWs
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          max_items_per_plot: 10
+          legend: shared
+          ylabel: MWs
     nodeGroup_slack_inertia_d_g:
       default:
         variant: p
@@ -216,6 +329,11 @@ plots:
         ylabel: NodeGroup
         xlabel: MWs (annualized)
         skip_data_with_only_zeroes: true
+        scenario_rule: e
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, b_eu]
+          max_items_per_plot: 40
+          ylabel: MWs (annualized)
       sum_periods:
         plot_name: 'Lack of inertia total'
         variant: a
@@ -223,6 +341,11 @@ plots:
         ylabel: NodeGroup
         xlabel: MWs (horizon total)
         skip_data_with_only_zeroes: true
+        scenario_rule: e
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, y_eu]
+          max_items_per_plot: 40
+          ylabel: MWs (horizon total)
   'Lack of nonsynchronous sources':
     group: 0
     order: 4
@@ -235,6 +358,11 @@ plots:
         ylabel: NodeGroup
         xlabel: MWh
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          max_items_per_plot: 10
+          legend: shared
+          ylabel: MWh
       chunks:
         plot_name: 'Lack of nonsynchronous sources weekly avg'
         variant: w
@@ -245,6 +373,11 @@ plots:
         ylabel: NodeGroup
         xlabel: MWh
         skip_data_with_only_zeroes: true
+        scenario_rule: l
+        comparison_overrides:
+          max_items_per_plot: 10
+          legend: shared
+          ylabel: MWh
     nodeGroup_slack_nonsync_d_g:
       default:
         variant: p
@@ -252,6 +385,11 @@ plots:
         ylabel: NodeGroup
         xlabel: MWh (annualized)
         skip_data_with_only_zeroes: true
+        scenario_rule: e
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, b_eu]
+          max_items_per_plot: 40
+          ylabel: MWh (annualized)
       sum_periods:
         plot_name: 'Lack of nonsynchronous sources total'
         variant: a
@@ -259,6 +397,11 @@ plots:
         ylabel: NodeGroup
         xlabel: MWh (horizon total)
         skip_data_with_only_zeroes: true
+        scenario_rule: e
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, y_eu]
+          max_items_per_plot: 40
+          ylabel: MWh (horizon total)
   'Violation of capacity margin':
     group: 0
     order: 5
@@ -269,6 +412,11 @@ plots:
         ylabel: NodeGroup
         xlabel: MW
         skip_data_with_only_zeroes: true
+        scenario_rule: e
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, b_eu]
+          max_items_per_plot: 40
+          xlabel: MWh
       sum_periods:
         plot_name: 'Violation of capacity margin average'
         variant: a
@@ -278,6 +426,10 @@ plots:
         skip_data_with_only_zeroes: true
 
   # Curtailments
+        scenario_rule: e
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, z_eu]
+          max_items_per_plot: 40
   'Curtaiment amount':
     group: 1
     order: 0
@@ -289,6 +441,12 @@ plots:
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
         xlabel: MWh (annualized)
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_see, b_gee]
+          max_items_per_plot: 40
+          legend: shared
+          axis_bounds: shared
       sum_periods:
         plot_name: 'Curtail. amount total'
         variant: a
@@ -297,6 +455,11 @@ plots:
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
         xlabel: MWh (horizon total)
+        scenario_rule: g
+        comparison_overrides:
+          max_items_per_plot: 40
+          legend: shared
+          axis_bounds: shared
     unit_curtailment_outputNode_dt_ee:
       default:
         variant: h
@@ -320,6 +483,12 @@ plots:
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
         axis_tick_format: '1,.0f'
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, ti_luu]
+          plot_name: 'Unit curtailment weekly avg'
+          legend: shared
+          ylabel: MWh
   'Curtailment share of VRE':
     group: 1
     order: 1
@@ -334,6 +503,10 @@ plots:
         max_items_per_plot: 40
         axis_bounds: shared
         axis_tick_format: '.0%'
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_see, b_gee]
+          legend: shared
       sum_periods:
         plot_name: 'Curtail. share of VRE average'
         variant: a
@@ -345,6 +518,10 @@ plots:
         axis_bounds: shared
         axis_tick_format: '.0%'
         xlabel: percent (weighted average)
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_see, z_gbu]
+          legend: shared
     unit_curtailment_share_outputNode_dt_ee:
       default:
         variant: h
@@ -355,6 +532,9 @@ plots:
         legend: all
         skip_data_with_only_zeroes: true
         axis_tick_format: '.0%'
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_luu]
       chunks:
         plot_name: 'Curtail. share of VRE weekly avg'
         variant: w
@@ -368,6 +548,9 @@ plots:
         axis_tick_format: '.0%'
 
   # Flows for units and connections
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, ti_luu]
   'Flows: unit to node':
     group: 2
     order: 0
@@ -381,6 +564,9 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 6
         skip_data_with_only_zeroes: true
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
       sum_periods:
         plot_name: 'Flows: unit to node total'
         variant: a
@@ -392,6 +578,10 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 6
         skip_data_with_only_zeroes: true
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_see, y_gbu]
+          legend: shared
     unit_outputNode_dt_ee:
       default:
         variant: h
@@ -413,6 +603,24 @@ plots:
         base_length: 5
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, ti_luu]
+          plot_name: 'Flows unit to node weekly avg'
+          legend: shared
+          max_items_per_plot: 10
+          subplots_per_row: 2
+          ylabel: MWh
+      unit_time_plots:
+        variant: h
+        map_dimensions_for_plots: [dt_ee, tt_uu]
+        legend: shared
+        max_items_per_plot: 10
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+        scenario_rule: l
   'Flows: node to unit':
     group: 2
     order: 1
@@ -424,6 +632,10 @@ plots:
         xlabel: MWh (annualized)
         max_items_per_plot: 40
         max_subplots_per_file: 6
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
+          max_subplots_per_file: 8
       sum_periods:
         plot_name: 'Flows: node to unit total'
         variant: a
@@ -433,6 +645,12 @@ plots:
         axis_bounds: shared
         max_items_per_plot: 40
         max_subplots_per_file: 6
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_see, y_gbu]
+          max_subplots_per_file: 8
+          legend: shared
+          skip_data_with_only_zeroes: true
     unit_inputNode_dt_ee:
       default:
         variant: h
@@ -454,6 +672,22 @@ plots:
         base_length: 5
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, ti_luu]
+          legend: shared
+          max_items_per_plot: 10
+          subplots_per_row: 2
+          ylabel: MWh
+      unit_time_plots:
+        variant: h
+        map_dimensions_for_plots: [dt_ee, tt_uu]
+        legend: shared
+        max_items_per_plot: 10
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        ylabel: MWh
+        scenario_rule: l
   'Flows connection':
     group: 2
     order: 2
@@ -466,6 +700,11 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 6
         subplots_per_row: 2
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_se, u_gb]
+          legend: shared
+          axis_bounds: shared
       sum_periods:
         plot_name: 'Flows connection total'
         variant: a
@@ -476,6 +715,10 @@ plots:
         max_subplots_per_file: 6
         subplots_per_row: 2
         axis_bounds: shared
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
+          skip_data_with_only_zeroes: true
     connection_dt_eee:
       default:
         variant: h
@@ -497,6 +740,12 @@ plots:
         legend: all
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_se, ti_lu]
+          legend: shared
+          subplots_per_row: 2
+          ylabel: MWh
   'Connection leftward':
     group: 2
     order: 3
@@ -590,6 +839,11 @@ plots:
         map_dimensions_for_plots: [d_p, b_s]
         skip_data_with_only_zeroes: true
         color_category: costs
+        scenario_rule: e
+        comparison_overrides:
+          base_length: 10
+          max_subplots_per_file: 1
+          xlabel: Millions of Currency
       sum_periods:
         plot_name: 'Costs total'
         variant: a
@@ -599,6 +853,13 @@ plots:
         skip_data_with_only_zeroes: true
         ylabel: Currency (horizon total)
         color_category: costs
+        scenario_rule: b
+        comparison_overrides:
+          base_length: 10
+          max_items_per_plot: 40
+          max_subplots_per_file: 1
+          legend: shared
+          xlabel: Millions of Currency (horizon total)
     costs_dt_p:
       default:
         plot_name: 'Costs stack'
@@ -608,6 +869,13 @@ plots:
         map_dimensions_for_plots: [dt_p, tt_s]
         ylabel: Currency/h
         color_category: costs
+        scenario_rule: u
+        comparison_overrides:
+          max_items_per_plot: 20
+          max_subplots_per_file: 9
+          subplots_per_row: 3
+          axis_bounds: shared
+          ylabel: Currency
       chunks:
         plot_name: 'Costs time chunks'
         variant: w
@@ -617,6 +885,15 @@ plots:
         subplots_per_row: 2
         max_subplots_per_file: 6
         color_category: costs
+        scenario_rule: u
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sp, ti_us]
+          plot_name: 'Costs weekly chunks'
+          legend: shared
+          max_items_per_plot: 20
+          max_subplots_per_file: 9
+          subplots_per_row: 3
+          ylabel: Currency
   'Costs line-plot':
     group: 3
     order: 1
@@ -629,7 +906,16 @@ plots:
         max_subplots_per_file: 12
         ylabel: Currency
         color_category: costs
-      chunks:
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sp, tt_lu]
+          legend: shared
+          axis_bounds: shared
+          always_include_zero_in_axis: false
+      # Renamed from 'chunks' (which originally collided with the duplicate
+      # 'lines' key in the legacy comparison YAML) to make it unambiguous:
+      # weekly-averaged version of the line plot.
+      lines_weekly:
         variant: w
         map_dimensions_for_plots: [dt_p, ti_l]
         max_items_per_plot: 20
@@ -640,6 +926,10 @@ plots:
         ylabel: Currency
         time_average_duration: 168
         color_category: costs
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sp, ti_lu]
+          always_include_zero_in_axis: false
   'Costs discounted':
     group: 3
     order: 2
@@ -652,6 +942,11 @@ plots:
         ylabel: Currency
         skip_data_with_only_zeroes: true
         color_category: costs
+        scenario_rule: e
+        comparison_overrides:
+          max_items_per_plot: 40
+          base_length: 8
+          ylabel: Millions of Currency
       sum_periods:
         plot_name: 'Costs discounted total'
         variant: a
@@ -661,6 +956,26 @@ plots:
         ylabel: Currency
         skip_data_with_only_zeroes: true
         color_category: costs
+    # `costs_discounted_p_` is a per-category-vs-scenario table (no period
+    # or entity dim).  Single mode: one stacked bar with categories shown
+    # as stacks.  Comparison: one stacked bar per scenario, side by side.
+    # The rules ``[d_s, s_b]`` already name 'scenario' in the column part
+    # (the ``s`` after ``_``); ``derive_comparison_config`` detects this
+    # and skips the auto-prepend, so the same rules drive both modes.
+    costs_discounted_p_:
+      default:
+        variant: a
+        bar_orientation: vertical
+        base_length: 6
+        map_dimensions_for_plots: [d_s, s_b]
+        ylabel: Currency
+        xlabel: Cost category
+        skip_data_with_only_zeroes: true
+        color_category: costs
+        scenario_rule: b
+        comparison_overrides:
+          base_length: 10
+          legend: shared
 
   # Capacities for units, nodes and connections
   'Capacity nodes':
@@ -677,6 +992,12 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [ed_sp, eb_gu]
+          max_subplots_per_file: 2
+          base_length: 4
+          legend: shared
   'Capacity units':
     group: 4
     order: 1
@@ -691,6 +1012,14 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
+        # In the comparison view, the unioned plan parquet has 'scenario'
+        # prepended as the outermost column level. 'g' renders each scenario
+        # as a separate colour group on the bars (side-by-side per unit).
+        scenario_rule: g
+        comparison_overrides:
+          max_subplots_per_file: 2
+          base_length: 4
+          legend: shared
   'Capacity connections':
     group: 4
     order: 2
@@ -705,6 +1034,12 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [ed_sp, eb_gu]
+          legend: shared
+          max_subplots_per_file: 2
+          base_length: 4
   'Node marginal investment value':
     group: 4
     order: 3
@@ -718,6 +1053,9 @@ plots:
         base_length: 4
         skip_data_with_only_zeroes: false
         xlabel: Currency / MWh
+        scenario_rule: g
+        comparison_overrides:
+          max_subplots_per_file: 2
   'Unit marginal investment value':
     group: 4
     order: 4
@@ -731,6 +1069,9 @@ plots:
         base_length: 4
         skip_data_with_only_zeroes: false
         xlabel: Currency / MW
+        scenario_rule: g
+        comparison_overrides:
+          max_subplots_per_file: 2
   'Connection marginal investment value':
     group: 4
     order: 5
@@ -746,6 +1087,9 @@ plots:
         xlabel: Currency / MW
 
   # Emissions
+        scenario_rule: g
+        comparison_overrides:
+          max_subplots_per_file: 2
   'Emissions CO2 whole model':
     group: 5
     order: 0
@@ -754,6 +1098,11 @@ plots:
         variant: a
         map_dimensions_for_plots: [x_x, m_b]
         xlabel: Mt CO2
+        # Single mode: one bar (model-wide CO2 for the chosen scenario).
+        # Comparison: one coloured bar per scenario, all in the same plot.
+        scenario_rule: g
+        comparison_overrides:
+          base_length: 8
   'Emissions CO2 per nodeGroup':
     group: 5
     order: 1
@@ -765,6 +1114,10 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: t CO2 (annualized)
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, b_gu]
+          legend: shared
       sum_periods:
         plot_name: 'Emissions CO2 per nodeGroup total'
         variant: a
@@ -773,6 +1126,7 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: t CO2 (horizon total)
+        scenario_rule: g
   'Process CO2 emissions':
     group: 5
     order: 2
@@ -784,6 +1138,10 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: t CO2 (annualized)
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_seeee, u_gxbxe]
+          legend: shared
       sum_periods:
         plot_name: 'Process CO2 emissions total'
         variant: a
@@ -792,6 +1150,10 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: t CO2 (horizon total)
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_seeee, y_gxbxe]
+          legend: shared
   'CO2 period limited shadow price':
     group: 5
     order: 3
@@ -803,6 +1165,10 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: Currency / tCO2
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, u_gb]
+          legend: shared
   'CO2 cumulative limit shadow price':
     group: 5
     order: 4
@@ -816,6 +1182,10 @@ plots:
         xlabel: Currency / tCO2
 
   # NodeGroups
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, u_gb]
+          legend: shared
   'NodeGroup dispatch':
     group: 6
     order: 0
@@ -830,6 +1200,11 @@ plots:
         map_dimensions_for_plots: [d_gpe, b_uss]
         ylabel: MWh (annualized)
         color_category: nodegroup_flows
+        scenario_rule: e
+        comparison_overrides:
+          max_items_per_plot: 30
+          max_subplots_per_file: 2
+          base_length: 12
       sum_periods:
         plot_name: 'NodeGroup dispatch total'
         variant: a
@@ -841,6 +1216,11 @@ plots:
         map_dimensions_for_plots: [d_gpe, y_uss]
         ylabel: MWh (horizon total)
         color_category: nodegroup_flows
+        scenario_rule: b
+        comparison_overrides:
+          max_items_per_plot: 30
+          max_subplots_per_file: 2
+          base_length: 12
     nodeGroup_flows_dt_gpe:
       default:
         variant: h
@@ -851,6 +1231,11 @@ plots:
         map_dimensions_for_plots: [dt_gpe, tt_uss]
         ylabel: MWh/h
         color_category: nodegroup_flows
+        scenario_rule: f
+        comparison_overrides:
+          max_subplots_per_file: 2
+          base_length: 10
+          ylabel: MWh
       chunks:
         plot_name: 'NodeGroup dispatch weekly avg'
         variant: w
@@ -862,6 +1247,12 @@ plots:
         time_average_duration: 168
         ylabel: MWh/h
         color_category: nodegroup_flows
+        scenario_rule: f
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sgpe, ti_fuss]
+          max_subplots_per_file: 2
+          base_length: 10
+          ylabel: MWh
   'NodeGroup indicators':
     group: 6
     order: 1
@@ -895,6 +1286,11 @@ plots:
         axis_bounds: [[0, 1], [0, 1], [0, 1], [0, 1], [], [0, 1]]
         axis_tick_format: ['.0%', '.0%', '.0%', '.0%', '1,.0f', '.0%']
         xlabel: [percent, percent, percent, percent, MWh, percent]
+        scenario_rule: b
+        comparison_overrides:
+          map_dimensions_for_plots: [gd_sp, fg_bu]
+          max_items_per_plot: 40
+          axis_tick_format: ['.0%', '.0%', '.0%', '.0%', dynamic, '.0%']
       sum_periods:
         variant: a
         map_dimensions_for_plots: [gd_p, fz_u]
@@ -904,6 +1300,10 @@ plots:
         axis_bounds: [[0, 1], [0, 1], [0, 1], [0, 1], [], [0, 1]]
         axis_tick_format: ['.0%', '.0%', '.0%', '.0%', '1,.0f', '.0%']
         xlabel: [percent, percent, percent, percent, MWh, percent]
+        scenario_rule: b
+        comparison_overrides:
+          max_items_per_plot: 40
+          axis_tick_format: ['.0%', '.0%', '.0%', '.0%', dynamic, '.0%']
   'NodeGroup VRE share':
     group: 6
     order: 2
@@ -916,6 +1316,27 @@ plots:
         max_subplots_per_file: 8
         axis_tick_format: '.0%'
         xlabel: share
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, b_ge]
+          legend: shared
+          subplots_per_row: 1
+          max_subplots_per_file: 1
+          base_length: 8
+          skip_data_with_only_zeroes: true
+      sum_periods:
+        plot_name: 'NodeGroup VRE share average'
+        variant: a
+        map_dimensions_for_plots: [d_g, z_b]
+        legend: shared
+        subplots_per_row: 1
+        max_items_per_plot: 40
+        max_subplots_per_file: 1
+        base_length: 8
+        skip_data_with_only_zeroes: true
+        axis_tick_format: '.0%'
+        xlabel: percent (weighted average)
+        scenario_rule: g
     nodeGroup_VRE_share_dt_g:
       default:
         variant: h
@@ -925,6 +1346,11 @@ plots:
         max_subplots_per_file: 4
         axis_tick_format: '.0%'
         ylabel: share
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sg, tt_lu]
+          legend: shared
+          axis_bounds: shared
       chunks:
         plot_name: 'NodeGroup VRE share weekly avg'
         variant: w
@@ -935,6 +1361,11 @@ plots:
         max_subplots_per_file: 4
         axis_tick_format: '.0%'
         ylabel: share
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sg, ti_lu]
+          legend: shared
+          axis_bounds: shared
   'NodeGroup inertia':
     group: 6
     order: 3
@@ -946,6 +1377,10 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 4
         ylabel: MWs
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sg, tt_lu]
+          legend: shared
       chunks:
         plot_name: 'NodeGroup inertia weekly avg'
         variant: w
@@ -955,6 +1390,10 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 4
         ylabel: MWs
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sg, ti_lu]
+          legend: shared
   'NodeGroup inertia of largest flow':
     group: 6
     order: 4
@@ -975,6 +1414,7 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 4
         ylabel: MWs
+        scenario_rule: l
   'NodeGroup inertia of unit flows':
     group: 6
     order: 5
@@ -995,6 +1435,12 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 4
         ylabel: MWs
+        scenario_rule: b
+      debug:
+        variant: h
+        map_dimensions_for_plots: [dt_gee, tt_uss]
+        ylabel: MWs
+        scenario_rule: b
   'NodeGroup inflow':
     group: 6
     order: 6
@@ -1006,6 +1452,12 @@ plots:
         map_dimensions_for_plots: [d_g, b_s]
         max_items_per_plot: 40
         ylabel: MWh (annualized)
+        scenario_rule: b
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, g_bu]
+          legend: shared
+          subplots_per_row: 2
+          max_subplots_per_file: 8
       sum_periods:
         plot_name: 'NodeGroup inflow cumulative'
         variant: a
@@ -1014,6 +1466,14 @@ plots:
         map_dimensions_for_plots: [d_g, y_s]
         max_items_per_plot: 40
         ylabel: MWh (horizon total)
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sg, y_gb]
+          plot_name: 'NodeGroup inflows total'
+          subplots_per_row: 2
+          max_subplots_per_file: 8
+          legend: shared
+          ylabel: MWh
     nodeGroup_flows_dt_g:
       default:
         variant: h
@@ -1022,6 +1482,9 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 4
         ylabel: MWh/h
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sg, tt_lu]
       chunks:
         plot_name: 'NodeGroup inflow weekly avg'
         variant: w
@@ -1033,6 +1496,10 @@ plots:
         ylabel: MWh/h
 
   # Node details
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sg, ti_lu]
+          max_subplots_per_file: 6
   'Node':
     group: 7
     order: 0
@@ -1045,6 +1512,12 @@ plots:
         subplots_per_row: 2
         ylabel: MWh (annualized)
         color_category: node_flows
+        scenario_rule: b
+        comparison_overrides:
+          map_dimensions_for_plots: [d_sep, u_bes]
+          base_length: 6
+          axis_bounds: shared
+          xlabel: MWh (annualized)
       sum_periods:
         plot_name: 'Node total'
         variant: a
@@ -1054,6 +1527,11 @@ plots:
         subplots_per_row: 2
         ylabel: MWh (horizon total)
         color_category: node_flows
+        scenario_rule: b
+        comparison_overrides:
+          base_length: 6
+          axis_bounds: shared
+          xlabel: MWh (horizon total)
     node_dt_ep:
       default:
         variant: h
@@ -1063,6 +1541,12 @@ plots:
         legend: all
         ylabel: MWh/h
         color_category: node_flows
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sep, tt_luu]
+          max_items_per_plot: 10
+          subplots_per_row: 2
+          ylabel: MWh
       chunks:
         plot_name: 'Node weekly avg'
         variant: w
@@ -1073,6 +1557,13 @@ plots:
         legend: all
         ylabel: MWh/h
         color_category: node_flows
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_sep, ti_luu]
+          plot_name: 'Node flows weekly avg'
+          max_items_per_plot: 10
+          subplots_per_row: 2
+          ylabel: MWh
   'Node prices':
     group: 7
     order: 1
@@ -1083,6 +1574,11 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: Currency/MWh
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [sdt_se, mtt_lu]
+          legend: shared
+          ylabel: Currency / MWh
       chunks:
         plot_name: 'Node prices weekly avg'
         variant: w
@@ -1091,6 +1587,11 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: Currency/MWh
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [sdt_se, mti_lu]
+          legend: shared
+          ylabel: Currency / MWh
   'Node state':
     group: 7
     order: 2
@@ -1101,6 +1602,11 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: MWh
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_se, tt_lu]
+          skip_data_with_only_zeroes: true
+          legend: shared
       chunks:
         plot_name: 'Node state weekly avg'
         variant: w
@@ -1111,6 +1617,11 @@ plots:
         ylabel: MWh
 
   # Unit and connection (process) details
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_se, ti_lu]
+          skip_data_with_only_zeroes: true
+          legend: shared
   'Unit cf for inputs':
     group: 8
     order: 0
@@ -1155,6 +1666,27 @@ plots:
         axis_bounds: [0, 1]
         axis_tick_format: '.0%'
         xlabel: percent (weighted average)
+      unit_details:
+        variant: p
+        map_dimensions_for_plots: [d_ee, b_eu]
+        legend: shared
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        subplots_per_row: 2
+        axis_tick_format: '.0%'
+        axis_bounds: [0, 1]
+        scenario_rule: g
+      sum_period:
+        variant: a
+        map_dimensions_for_plots: [d_ee, z_bu]
+        legend: shared
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        subplots_per_row: 2
+        axis_tick_format: '.0%'
+        axis_bounds: [0, 1]
+        xlabel: percent (weighted average)
+        scenario_rule: g
   'Unit online':
     group: 8
     order: 2
@@ -1173,6 +1705,17 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: units online
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_se, ti_lu]
+          legend: shared
+          ylabel: number of units online
+      unit_details:
+        variant: h
+        map_dimensions_for_plots: [dt_e, tt_u]
+        legend: shared
+        ylabel: number of units online
+        scenario_rule: l
     unit_online_average_d_e:
       default:
         variant: p
@@ -1185,6 +1728,19 @@ plots:
         map_dimensions_for_plots: [d_e, z_b]
         max_items_per_plot: 40
         xlabel: units online (weighted average)
+        scenario_rule: g
+        comparison_overrides:
+          max_subplots_per_file: 8
+          xlabel: unit online (weighted average)
+          subplots_per_row: 2
+          legend: shared
+      unit_details:
+        variant: p
+        map_dimensions_for_plots: [d_e, z_b]
+        max_items_per_plot: 40
+        legend: shared
+        xlabel: unit online (weighted average)
+        scenario_rule: g
   'Unit ramp inputs':
     group: 8
     order: 3
@@ -1207,6 +1763,7 @@ plots:
         max_subplots_per_file: 4
         legend: all
         ylabel: MW/h
+        scenario_rule: l
   'Unit ramp outputs':
     group: 8
     order: 4
@@ -1229,6 +1786,7 @@ plots:
         max_subplots_per_file: 4
         legend: all
         ylabel: MW/h
+        scenario_rule: l
   'Unit startup':
     group: 8
     order: 5
@@ -1244,6 +1802,23 @@ plots:
         map_dimensions_for_plots: [d_e, y_b]
         max_items_per_plot: 40
         xlabel: starts (horizon total)
+        scenario_rule: g
+        comparison_overrides:
+          plot_name: 'Unit startup cumulative'
+          legend: shared
+          subplots_per_row: 1
+          max_subplots_per_file: 1
+          base_length: 8
+      unit_details:
+        variant: p
+        map_dimensions_for_plots: [d_e, b_e]
+        legend: shared
+        subplots_per_row: 1
+        max_items_per_plot: 40
+        max_subplots_per_file: 1
+        base_length: 8
+        xlabel: number of units started up
+        scenario_rule: g
   'Connection losses':
     group: 8
     order: 6
@@ -1259,6 +1834,17 @@ plots:
         xlabel: MWh (horizon total)
         map_dimensions_for_plots: [d_e, y_b]
         max_items_per_plot: 40
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
+          ylabel: MWh (horizon total)
+      connection_details:
+        variant: p
+        map_dimensions_for_plots: [d_e, b_e]
+        max_items_per_plot: 40
+        legend: shared
+        ylabel: MWh (annualized)
+        scenario_rule: g
     connection_losses_dt_eee:
       default:
         variant: h
@@ -1274,6 +1860,17 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: MWh/h
+        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_se, ti_lu]
+          legend: shared
+          ylabel: MWh
+      connection_details:
+        variant: h
+        map_dimensions_for_plots: [dt_e, tt_u]
+        legend: shared
+        ylabel: MWh
+        scenario_rule: l
   'Connection cf':
     group: 8
     order: 7
@@ -1295,6 +1892,17 @@ plots:
         xlabel: percent (weighted average)
 
   # Extras
+        scenario_rule: g
+        comparison_overrides:
+          max_subplots_per_file: 4
+          legend: shared
+      connection_details:
+        variant: p
+        map_dimensions_for_plots: [d_e, b_e]
+        max_items_per_plot: 40
+        max_subplots_per_file: 4
+        legend: shared
+        scenario_rule: g
   'Reserve from process to node':
     group: 9
     order: 0
@@ -1317,6 +1925,18 @@ plots:
         max_subplots_per_file: 6
         legend: all
         ylabel: MWh/h
+        scenario_rule: g
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_seppe, ti_gullu]
+      debug:
+        variant: h
+        map_dimensions_for_plots: [dt_eppe, tt_ullu]
+        subplots_per_row: 2
+        max_items_per_plot: 10
+        max_subplots_per_file: 6
+        legend: all
+        ylabel: MWh/h
+        scenario_rule: g
     process_reserve_average_d_eppe:
       reserve:
         variant: p
@@ -1329,6 +1949,15 @@ plots:
         map_dimensions_for_plots: [d_eppe, z_bssb]
         max_items_per_plot: 40
         xlabel: MW (weighted average)
+        scenario_rule: u
+        comparison_overrides:
+          map_dimensions_for_plots: [d_seppe, z_uesse]
+      default:
+        variant: p
+        map_dimensions_for_plots: [d_eppe, z_esse]
+        max_items_per_plot: 40
+        xlabel: MW (weighted average)
+        scenario_rule: u
   'Reserve price in NodeGroups':
     group: 9
     order: 1
@@ -1351,6 +1980,16 @@ plots:
         max_subplots_per_file: 6
         legend: all
         ylabel: CUR/MW
+        scenario_rule: g
+      default:
+        variant: h
+        map_dimensions_for_plots: [sdt_ppg, mtt_llu]
+        subplots_per_row: 2
+        max_items_per_plot: 10
+        max_subplots_per_file: 6
+        legend: all
+        ylabel: CUR/MW
+        scenario_rule: g
   'Extras VRE potential':
     group: 9
     order: 2
@@ -1398,6 +2037,30 @@ plots:
         max_items_per_plot: 40
         xlabel: Currency/year
 
+  'Curtailment amount':
+    group: 1
+    order: 0
+    unit_curtailment_outputNode_dt_ee:
+      unit_details:
+        variant: h
+        map_dimensions_for_plots: [dt_ee, tt_uu]
+        legend: shared
+        max_items_per_plot: 10
+        ylabel: MWh
+        scenario_rule: l
+  'Flows: connection':
+    group: 2
+    order: 2
+    connection_dt_eee:
+      connection_time_plots:
+        variant: h
+        map_dimensions_for_plots: [dt_e, tt_u]
+        legend: shared
+        max_items_per_plot: 10
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        ylabel: MWh
+        scenario_rule: l
 rename:
   # [display_name, export_to_excel]
   # display_name: used for CSV filenames and Excel sheet names

@@ -16,7 +16,6 @@ from flextool.gui.plot_config_reader import (
 # Resolve template paths relative to the repository root
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_PLOTS = _REPO_ROOT / "templates" / "default_plots.yaml"
-_COMPARISON_PLOTS = _REPO_ROOT / "templates" / "default_comparison_plots.yaml"
 
 
 class TestParseDefaultPlots:
@@ -66,29 +65,6 @@ class TestParseDefaultPlots:
                     break
         assert entry is not None
         assert any(v.letter == "a" for v in entry.variants)
-
-
-class TestParseComparisonPlots:
-    """Integration tests using the real default_comparison_plots.yaml."""
-
-    @pytest.fixture()
-    def groups(self) -> list[PlotGroup]:
-        assert _COMPARISON_PLOTS.is_file(), f"Missing {_COMPARISON_PLOTS}"
-        return parse_plot_config(_COMPARISON_PLOTS)
-
-    def test_has_groups(self, groups):
-        assert len(groups) >= 10
-
-    def test_hidden_entries_without_map_dimensions(self, groups):
-        """Entries without map_dimensions_for_plots should be excluded.
-
-        The comparison YAML has several entries missing map_dimensions
-        (e.g., some reserve or VRE entries). The total should be less
-        than the raw entry count.
-        """
-        total = sum(len(g.entries) for g in groups)
-        # Should be less than 48 (the spec says 48 but some are hidden)
-        assert total <= 48
 
 
 class TestHiddenEntriesWithoutMapDimensions:

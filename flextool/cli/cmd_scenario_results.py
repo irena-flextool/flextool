@@ -38,7 +38,8 @@ def main() -> None:
                         help='Settings database URL (fills in unset params; CLI overrides DB)')
     parser.add_argument(
         '--output-config-path', default=None,
-        help='Path to output configuration YAML file (default: templates/default_comparison_plots.yaml)'
+        help='Path to output configuration YAML file (default: templates/default_plots.yaml — '
+             'comparison mode reads scenario_rule + comparison_overrides from each leaf)'
     )
     parser.add_argument('--active-configs', type=str, default=None, nargs="+",
                         help='Which plot configurations from config_path yaml to use (default: default)')
@@ -164,7 +165,7 @@ def main() -> None:
     # Apply hardcoded defaults for anything still unset
     _flextool_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if output_config_path is None:
-        output_config_path = os.path.join(_flextool_root, 'templates', 'default_comparison_plots.yaml')
+        output_config_path = os.path.join(_flextool_root, 'templates', 'default_plots.yaml')
     elif not os.path.isabs(output_config_path):
         output_config_path = os.path.join(_flextool_root, output_config_path)
     if active_configs is None:

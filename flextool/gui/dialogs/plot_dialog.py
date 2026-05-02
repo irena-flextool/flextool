@@ -354,7 +354,7 @@ class PlotDialog(tk.Toplevel):
             self,
             label="Scenario comparison settings:",
             settings=self._settings.comparison_plot_settings,
-            default_config_file="templates/default_comparison_plots.yaml",
+            default_config_file="templates/default_plots.yaml",
             show_dispatch=True,
             project_path=self._project_path,
         )

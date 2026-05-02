@@ -34,9 +34,6 @@ from flextool.scenario_comparison.db_reader import (
 from flextool.scenario_comparison.dispatch_data import prepare_dispatch_data
 from flextool.scenario_comparison.dispatch_mappings import load_dispatch_mappings
 from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
-from flextool.scenario_comparison.plan_union import (
-    normalize_config_for_plan_union, union_plan_data,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -249,9 +246,11 @@ class ResultViewer(tk.Toplevel):
             self._settings.single_plot_settings.config_file,
             "templates/default_plots.yaml",
         )
+        # Comparison mode now reads the same merged config as single mode;
+        # entries with ``scenario_rule`` set carry the comparison-mode info.
         self._comparison_config_path = self._resolve_config_path(
             self._settings.comparison_plot_settings.config_file,
-            "templates/default_comparison_plots.yaml",
+            "templates/default_plots.yaml",
         )
 
         # ── Initial population ───────────────────────────────────────
@@ -2239,6 +2238,70 @@ class ResultViewer(tk.Toplevel):
         # Fall back to first variant
         return entry.variants[0] if entry.variants else None
 
+    def _load_single_plot_config(
+        self, result_key: str, sub_config: str,
+    ) -> PlotConfig | None:
+        """Load PlotConfig from the **single-mode** YAML regardless of current mode.
+
+        Used by the merged-config comparison path: when a single-mode
+        config carries ``scenario_rule``, comparison view derives the
+        comparison config from it via
+        :func:`flextool.scenario_comparison.plan_union.derive_comparison_config`.
+        """
+        return self._load_plot_config_from(
+            self._single_config_path, result_key, sub_config,
+        )
+
+    def _load_plot_config_from(
+        self, config_path: Path, result_key: str, sub_config: str,
+    ) -> PlotConfig | None:
+        """Load a PlotConfig from a specific YAML file path."""
+        if config_path not in self._yaml_cache:
+            if not config_path.is_file():
+                return None
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+            except (yaml.YAMLError, OSError) as exc:
+                logger.error("Failed to read plot config %s: %s", config_path, exc)
+                return None
+            if not isinstance(data, dict):
+                return None
+            self._yaml_cache[config_path] = data
+        data = self._yaml_cache[config_path]
+        plots = data.get("plots")
+        if not isinstance(plots, dict):
+            return None
+        plots = flatten_new_format(plots)
+        entry = plots.get(result_key)
+        if not isinstance(entry, dict):
+            return None
+        if _is_single_config(entry):
+            if sub_config != "default":
+                return None
+            raw = entry
+        else:
+            raw = entry.get(sub_config)
+            if not isinstance(raw, dict):
+                return None
+        unknown_keys = [k for k in raw if k not in PLOT_FIELD_NAMES]
+        if unknown_keys:
+            logger.debug(
+                "Plot config '%s': ignoring unknown setting(s): %s",
+                result_key, ", ".join(repr(k) for k in unknown_keys),
+            )
+        filtered = {k: v for k, v in raw.items() if k in PLOT_FIELD_NAMES}
+        if "axis_scale_min_max" in filtered and "axis_bounds" not in filtered:
+            filtered["axis_bounds"] = filtered.pop("axis_scale_min_max")
+        elif "axis_scale_min_max" in filtered:
+            del filtered["axis_scale_min_max"]
+        filtered.pop("variant", None)
+        try:
+            return PlotConfig(**filtered)
+        except TypeError as exc:
+            logger.error("Failed to create PlotConfig for '%s': %s", result_key, exc)
+            return None
+
     def _load_plot_config(self, result_key: str, sub_config: str) -> PlotConfig | None:
         """Load PlotConfig for a result_key from the active YAML config file."""
         config_path = self._get_config_path_for_mode()
@@ -2506,102 +2569,6 @@ class ResultViewer(tk.Toplevel):
         self._parquet_cache_df = df
         return df
 
-    def _load_unioned_plan_df(
-        self,
-        result_key: str,
-        sub_config: str,
-        viewer_scenarios: list[str],
-        checked: set[str],
-    ) -> pd.DataFrame | None:
-        """Lazy-union per-scenario plan parquets for a comparison plot.
-
-        Phase E entry point.  Reads each viewer scenario's plan parquet
-        for ``(result_key, sub_config)`` from ``output_parquet/<scen>
-        /plot_plans/<rk>__<sc>_plan.parquet`` and concats them with
-        ``scenario`` as the top column-MultiIndex level.  The unioned
-        DataFrame is cached in ``_parquet_cache_df`` keyed by
-        ``("_comparison_union", result_key, sub_config,
-        viewer_scenarios_tuple)`` so repeated renders for the same
-        plot don't re-read the parquets.
-
-        Filtering to *checked* (the comparison-tree ticks) happens
-        *after* the cached union — toggling individual scenarios in
-        the comparison tree therefore reuses the cached union and
-        only pays the column-mask cost.
-
-        Returns ``None`` when no plan parquets exist for any of
-        *viewer_scenarios* — the legacy fallback / "no data" message
-        is left to the caller.
-        """
-        viewer_tuple = tuple(viewer_scenarios)
-        cache_key = (
-            "_comparison_union", result_key, sub_config, viewer_tuple,
-        )
-        if (
-            cache_key == self._parquet_cache_key
-            and self._parquet_cache_df is not None
-        ):
-            df_full = self._parquet_cache_df
-        else:
-            df_full = union_plan_data(
-                self._project_path, list(viewer_scenarios),
-                result_key, sub_config,
-            )
-            if df_full is None:
-                return None
-            self._parquet_cache_key = cache_key
-            self._parquet_cache_df = df_full
-
-        # Filter to the currently-ticked scenarios.  The viewer tree
-        # toggles are pure visibility; the cached union stays scoped to
-        # the viewer-scenarios set.
-        if (
-            checked
-            and isinstance(df_full.columns, pd.MultiIndex)
-            and 'scenario' in df_full.columns.names
-        ):
-            scenario_level = df_full.columns.get_level_values('scenario')
-            mask = scenario_level.isin(checked)
-            df = df_full.loc[:, mask]
-            return df
-        return df_full
-
-    def _load_legacy_combined_df(
-        self, result_key: str, checked: set[str],
-    ) -> pd.DataFrame | None:
-        """Read the (legacy) combined comparison parquet, if present.
-
-        Phase E doesn't write these from the GUI rebuild path, but the
-        CLI ``scenario_comparison/orchestrator.run`` still does.  When
-        a comparison plot pivots on the ``scenario`` dimension the
-        union path can't satisfy it; we fall back to the combined
-        parquet here.  Returns ``None`` when the file is missing or
-        unreadable.
-        """
-        path = (
-            self._project_path
-            / "output_parquet_comparison"
-            / f"{result_key}.parquet"
-        )
-        if not path.exists():
-            return None
-        try:
-            df = read_lean_parquet(path)
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "Failed to read legacy combined parquet %s", path,
-                exc_info=True,
-            )
-            return None
-        if (
-            checked
-            and isinstance(df.columns, pd.MultiIndex)
-            and 'scenario' in df.columns.names
-        ):
-            scenario_level = df.columns.get_level_values('scenario')
-            df = df.loc[:, scenario_level.isin(checked)]
-        return df
-
     def _load_break_times(self, scenario: str) -> set[str] | None:
         """Load timeline break times from parquet, cached per scenario."""
         if scenario in self._break_times_cache:
@@ -2865,118 +2832,138 @@ class ResultViewer(tk.Toplevel):
     # Comparison mode
     # ------------------------------------------------------------------
 
-    def _display_comparison(self, entry: PlotEntry, variant: PlotVariant) -> None:
-        """Render comparison plot via lazy per-scenario plan-parquet union.
+    def _display_comparison_from_single(
+        self,
+        entry: PlotEntry,
+        variant: PlotVariant,
+        single_cfg: PlotConfig,
+    ) -> None:
+        """Render comparison via merged-config (prototype) path.
 
-        Phase E (refined): every comparison config is served from the
-        union path.  ``normalize_config_for_plan_union`` adjusts the
-        config's ``map_dimensions_for_plots`` for the unioned shape
-        (currently only the 4 ``sdt_*`` configs need adjustment — see
-        :mod:`flextool.scenario_comparison.plan_union`).  No legacy
-        combined-parquet fallback runs from the GUI render path.
+        The single-mode config carries ``scenario_rule`` (and optionally
+        ``comparison_overrides``).  We:
+
+        1. Read each viewer scenario's **raw** result parquet and union
+           them with ``scenario`` as the outermost col-MultiIndex level.
+        2. Derive a comparison-mode PlotConfig by prepending ``s`` to the
+           column part of ``index_types`` and ``scenario_rule`` to the
+           column part of ``rules``, then merging in
+           ``comparison_overrides``.
+        3. Run ``compute_live_plan`` against the unioned raw frame with
+           the derived config and render.
+
+        No per-scenario plan parquet is read on this path — the dim-rule
+        pivot logic is applied directly to the raw union, which is the
+        only shape the augmented config knows how to interpret.
         """
-        config = self._load_plot_config(variant.result_key, variant.sub_config)
-        if config is None:
-            self._plot_canvas.show_message(f"No config for {variant.result_key}")
-            return
+        from flextool.scenario_comparison.plan_union import (
+            derive_comparison_config, union_raw_data,
+        )
+        from flextool.plot_outputs.plan import (
+            build_figure_from_plan, compute_live_plan,
+        )
 
         viewer_scenarios = self._get_comparison_viewer_scenarios()
         checked = set(self._get_comparison_scenarios())
 
-        df = self._load_unioned_plan_df(
-            variant.result_key, variant.sub_config,
-            viewer_scenarios, checked,
+        df = union_raw_data(
+            self._project_path, list(viewer_scenarios), variant.result_key,
         )
         if df is None:
             self._plot_canvas.show_message(
-                f"No per-scenario plan data for {variant.result_key}\n"
+                f"No raw parquet for {variant.result_key}\n"
                 f"in viewer scenarios."
             )
             return
+
+        # Filter to currently-ticked scenarios (visibility toggle).
+        if (
+            checked
+            and isinstance(df.columns, pd.MultiIndex)
+            and "scenario" in df.columns.names
+        ):
+            mask = df.columns.get_level_values("scenario").isin(checked)
+            df = df.loc[:, mask]
 
         if df.empty:
             self._plot_canvas.show_message(f"Empty data for {variant.result_key}")
             return
 
-        break_times = self._load_comparison_break_times(viewer_scenarios)
-        plot_name = config.plot_name or variant.full_name
-
-        # Adjust the comparison config to match the unioned shape.  For
-        # most configs this is a no-op; for ``sdt_*`` (Node prices,
-        # Reserve prices) it strips the ``solve`` row dim that the
-        # per-scenario plan compute step already collapsed.
-        plan_config = normalize_config_for_plan_union(config)
-
-        # Live plan (cached) for instant rendering.  The union path
-        # always builds a fresh live plan from the (cached) unioned
-        # DataFrame, since the per-scenario plan parquets were computed
-        # under the single-mode config and need re-rule under the
-        # comparison config (plus the union normalisation above).
         try:
-            from flextool.plot_outputs.plan import (
-                build_figure_from_plan, compute_live_plan,
+            cmp_cfg = derive_comparison_config(single_cfg)
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "derive_comparison_config failed for %s: %s",
+                variant.result_key, exc,
             )
-            plan_key = (
-                "_comparison", variant.result_key, variant.sub_config,
-                tuple(sorted(checked)),
+            self._plot_canvas.show_message(
+                f"Cannot derive comparison config for {variant.result_key}\n"
+                f"({exc})"
             )
-            if self._live_plan_key == plan_key and self._live_plan is not None:
-                plan = self._live_plan
-            else:
-                plan = compute_live_plan(df, plan_config, plot_name, break_times)
-                self._live_plan = plan
-                self._live_plan_key = plan_key
+            return
 
-            if plan is not None:
-                # Apply the cross-scenario axis override scoped to the
-                # *viewer scenarios* set — the scenarios locked in at the
-                # last "Update view scenarios" press.  This is what
-                # freezes the y-axis as the user toggles individual
-                # scenarios in ``_comp_tree``: ticking changes visibility
-                # only, never axes.  See ``_apply_axis_manifest`` and
-                # ``_get_comparison_viewer_scenarios`` for the wiring.
-                self._apply_axis_manifest(
-                    plan, variant.result_key, variant.sub_config,
-                )
-                self._update_time_range(len(plan.processed_df))
-                start = self._start_var.get()
-                duration = self._duration_var.get()
-                plot_rows = (start, start + duration)
-                self._file_count = plan.total_file_count
-                self._file_index = min(self._file_index, max(0, self._file_count - 1))
-                self._update_file_nav()
-                fig = build_figure_from_plan(plan, self._file_index, plot_rows)
-                if fig is not None:
-                    self._plot_canvas.display_figure(fig)
-                    logger.info(
-                        "Comparison %s: from plan [file %d/%d]",
-                        variant.result_key, self._file_index, plan.total_file_count,
-                    )
-                    return
-        except Exception:
-            logger.warning("Plan path failed for comparison %s", variant.result_key, exc_info=True)
+        break_times = self._load_comparison_break_times(viewer_scenarios)
+        plot_name = cmp_cfg.plot_name or variant.full_name
 
-        # Fallback: full prepare_plot_data pipeline.  Use the same
-        # normalised config as the live-plan path above so the rules
-        # length matches the unioned frame's level count.
-        self._update_time_range(len(df))
+        plan_key = (
+            "_comparison_merged", variant.result_key, variant.sub_config,
+            tuple(sorted(checked)),
+        )
+        if self._live_plan_key == plan_key and self._live_plan is not None:
+            plan = self._live_plan
+        else:
+            plan = compute_live_plan(df, cmp_cfg, plot_name, break_times)
+            self._live_plan = plan
+            self._live_plan_key = plan_key
+
+        if plan is None:
+            self._plot_canvas.show_message(
+                f"compute_live_plan returned None for {variant.result_key}"
+            )
+            return
+
+        self._apply_axis_manifest(plan, variant.result_key, variant.sub_config)
+        self._update_time_range(len(plan.processed_df))
         start = self._start_var.get()
         duration = self._duration_var.get()
         plot_rows = (start, start + duration)
-        figures, total_count = prepare_plot_data(
-            df, plan_config, plot_name, plot_rows, break_times,
-            only_file_index=self._file_index,
-        )
-
-        self._file_count = max(total_count, 1)
+        self._file_count = plan.total_file_count
         self._file_index = min(self._file_index, max(0, self._file_count - 1))
         self._update_file_nav()
-
-        if figures:
-            filename, fig = figures[0]
+        fig = build_figure_from_plan(plan, self._file_index, plot_rows)
+        if fig is not None:
             self._plot_canvas.display_figure(fig)
+            logger.info(
+                "Comparison %s (merged-config): file %d/%d",
+                variant.result_key, self._file_index, plan.total_file_count,
+            )
         else:
-            self._plot_canvas.show_message(f"No plottable data for {variant.full_name}")
+            self._plot_canvas.show_message(
+                f"build_figure_from_plan returned None for {variant.result_key}"
+            )
+
+    def _display_comparison(self, entry: PlotEntry, variant: PlotVariant) -> None:
+        """Render comparison plot from the merged single-mode config.
+
+        Comparison rendering is driven by the ``scenario_rule`` field on
+        the single-mode config (see :mod:`flextool.scenario_comparison.plan_union`).
+        Configs that don't carry ``scenario_rule`` have no comparison view
+        and surface a clear "no scenario_rule" message instead of trying
+        to render something undefined.
+        """
+        single_cfg = self._load_single_plot_config(
+            variant.result_key, variant.sub_config,
+        )
+        if single_cfg is None:
+            self._plot_canvas.show_message(f"No config for {variant.result_key}")
+            return
+        if getattr(single_cfg, "scenario_rule", None) is None:
+            self._plot_canvas.show_message(
+                f"No comparison rendering for {variant.result_key}\n"
+                f"(no `scenario_rule` defined in default_plots.yaml)."
+            )
+            return
+        self._display_comparison_from_single(entry, variant, single_cfg)
 
     def _load_comparison_break_times(
         self, viewer_scenarios: list[str] | None = None,
@@ -3221,9 +3208,9 @@ class ResultViewer(tk.Toplevel):
            comparison tree and the plot tree.
 
         The unit-of-work moves entirely to render time: when the user
-        opens a plot, :meth:`_load_unioned_plan_df` reads each viewer
-        scenario's plot-shaped plan parquet and concatenates with
-        ``scenario`` as the top column-MultiIndex level.
+        opens a plot, :meth:`_display_comparison_from_single` reads each
+        viewer scenario's raw parquet, derives a comparison config from
+        the single-mode rules + ``scenario_rule``, and renders.
 
         ``_comp_request_gen`` is still bumped so any in-flight async
         work from earlier rebuilds doesn't clobber the current state
@@ -3357,7 +3344,8 @@ class ResultViewer(tk.Toplevel):
         if df.empty:
             return
 
-        flagged_groups = set(df['group'].unique())
+        group_col = 'group' if 'group' in df.columns else 'nodeGroupDispatch'
+        flagged_groups = set(df[group_col].unique())
 
         # Filter to groups that actually have node members (group_node.parquet)
         group_node_path = parquet_dir / "group_node.parquet"
