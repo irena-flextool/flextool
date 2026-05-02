@@ -3,10 +3,12 @@
 CWD notes (Task 1 findings)
 ---------------------------
 FlexToolRunner writes several files relative to CWD:
-  solve_data/          — auto-created by __init__; holds solve progress CSVs
+  solve_data/          — auto-created by __init__; holds intermediate
+                         per-solve CSVs and timings.csv (the unified
+                         phase-timing log; replaces the legacy
+                         solve_progress.csv files)
   output_raw/          — created by glpsol Phase 3; holds raw solver output CSVs
   HiGHS.log            — written by HiGHS
-  output/              — created by write_outputs; holds output solve_progress.csv
 
 Intermediate solver files go to root_dir (not CWD):
   flextool.mps, flextool.sol, glpsol_solution.txt

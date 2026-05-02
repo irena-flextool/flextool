@@ -326,11 +326,23 @@ def _compute_comparison_only_plot_plans(
     _merge_availability_manifests(plan_dir, snapshot)
 
 
-def log_time(log_string, start):
-    print(f"---{log_string}: {time.perf_counter() - start:.4f} seconds")
-    os.makedirs('output', exist_ok=True)
-    with open("output/solve_progress.csv", "a") as solve_progress:
-        solve_progress.write(log_string + ',' + str(round(time.perf_counter() - start, 4)) + '\n')
+def log_time(log_string, start, timing_recorder=None):
+    """Print and record one ``write_outputs`` sub-phase.
+
+    Refactored to feed the new TimingRecorder when supplied; the legacy
+    append to ``output/solve_progress.csv`` (CWD-relative, append-mode,
+    never cleared) has been removed.  The ``print(...)`` line is kept
+    for human-readable stdout — that's the file most operators eyeball.
+    """
+    elapsed = time.perf_counter() - start
+    print(f"---{log_string}: {elapsed:.4f} seconds")
+    if timing_recorder is not None:
+        timing_recorder.record(
+            'write_outputs',
+            subphase=log_string,
+            seconds=elapsed,
+            t_start=start,
+        )
     return time.perf_counter()
 
 
@@ -629,7 +641,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -709,7 +721,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         plot_dir = os.path.join(output_location, 'output_plots')
 
     # Read and process data
-    start = log_time("Read configuration files", start)
+    start = log_time("Read configuration files", start, timing_recorder)
 
     # If results already exist as parquet files, read them
     if read_parquet_dir:
@@ -723,16 +735,16 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     results[key] = results[key].squeeze()
                 else:
                     results[key] = results[key].droplevel('scenario', axis=1)
-        start = log_time("Read parquet files", start)
+        start = log_time("Read parquet files", start, timing_recorder)
 
     # Read original raw outputs from FlexTool
     else:
         par, s, v = _read_outputs(raw_output_dir or 'output_raw')
-        start = log_time("Read flextool outputs", start)
+        start = log_time("Read flextool outputs", start, timing_recorder)
 
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
-        start = log_time("Post-processed outputs", start)
+        start = log_time("Post-processed outputs", start, timing_recorder)
 
         # Call the final processing functions for each category of outputs
         # and make a dict of dataframes to hold final results
@@ -753,7 +765,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 all_results[table_name] = result_df
 
         results = all_results
-        start = log_time("Formatted for output", start)
+        start = log_time("Formatted for output", start, timing_recorder)
 
     # Write files for debugging purposes
     if debug:
@@ -762,7 +774,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         print_namespace_structure(s, 's')
         print_namespace_structure(v, 'v')
         print_namespace_structure(par, 'par')
-        start = log_time("Wrote debugging files", start)
+        start = log_time("Wrote debugging files", start, timing_recorder)
 
     # Write to parquet
     if 'parquet' in write_methods and not read_parquet_dir:
@@ -787,7 +799,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             breaks_df = pd.read_csv(breaks_csv)
             write_lean_parquet(breaks_df, f'{parquet_dir}/timeline_breaks.parquet', index=False)
 
-        start = log_time("Wrote to parquet", start)
+        start = log_time("Wrote to parquet", start, timing_recorder)
 
     # Compute plot plans for the viewer (always, when parquets exist)
     if 'parquet' in write_methods or read_parquet_dir:
@@ -802,7 +814,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 active_settings=active_configs, plot_rows=plot_rows,
                 break_times=plan_break_times,
             )
-            start = log_time("Computed plot plans", start)
+            start = log_time("Computed plot plans", start, timing_recorder)
         except Exception as exc:
             logging.warning("Plot plan computation failed (non-fatal): %s", exc)
 
@@ -830,7 +842,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     plot_rows=plot_rows,
                     plan_break_times=plan_break_times,
                 )
-                start = log_time("Computed comparison-only plot plans", start)
+                start = log_time("Computed comparison-only plot plans", start, timing_recorder)
             except Exception as exc:
                 logging.warning(
                     "Comparison-only plot plan computation failed (non-fatal): %s",
@@ -884,7 +896,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             meta_path = os.path.join(parquet_dir, "_dispatch_metadata.json")
             with open(meta_path, "w", encoding="utf-8") as f:
                 _json.dump(disp_meta, f, indent=2)
-            start = log_time("Wrote dispatch metadata", start)
+            start = log_time("Wrote dispatch metadata", start, timing_recorder)
         except Exception as exc:
             logging.warning(
                 "Per-scenario dispatch metadata computation failed (non-fatal): %s",
@@ -904,7 +916,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         break_times = load_timeline_breaks(parquet_dir)
         plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_times)
 
-        start = log_time('Plotted figures', start)
+        start = log_time('Plotted figures', start, timing_recorder)
 
     # Write to csv
     if 'csv' in write_methods:
@@ -985,7 +997,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 df.columns.names = [None] * df.columns.nlevels
                 df.to_csv(csv_path, index=False, float_format='%.8g')
 
-        start = log_time('Wrote to csv', start)
+        start = log_time('Wrote to csv', start, timing_recorder)
 
     # Write to excel
     if 'excel' in write_methods:
@@ -1019,4 +1031,4 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             for sheet_name, df in sheets:
                 df.to_excel(writer, sheet_name=sheet_name)
 
-        start = log_time('Wrote to Excel', start)
+        start = log_time('Wrote to Excel', start, timing_recorder)

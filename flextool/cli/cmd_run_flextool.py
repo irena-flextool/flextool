@@ -10,6 +10,7 @@ import time
 import os
 from flextool.process_outputs.result_writer import write_outputs
 from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
+from flextool.flextoolrunner.timing_recorder import TimingRecorder
 from flextool.flextoolrunner.precision import (
     report_near_duplicates,
     resolve_precision_digits,
@@ -203,6 +204,13 @@ def main():
         except Exception as _exc:
             logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
 
+    # Phase-timing recorder: constructed once per CLI invocation, lives
+    # on ``runner.state.timing_recorder``, writes a structured timings.csv
+    # at <work_folder>/solve_data/timings.csv (one row per phase, atomic
+    # append style so a crash mid-run still leaves usable data).
+    # Replaces the legacy two ``solve_progress.csv`` files.
+    timing_recorder = TimingRecorder(work_folder=wf, scenario=scenario_name)
+    t_total_start = time.perf_counter()
     timer = []
     timer.append(time.perf_counter())
 
@@ -288,32 +296,35 @@ def main():
         sys.exit(0 if result.converged else 1)
 
     if scenario_name:
-        runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm, glpsol_timing=args.glpsol_timing)
+        runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm, glpsol_timing=args.glpsol_timing, timing_recorder=timing_recorder)
         timer.insert(0, time.perf_counter())
-        print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open(wf / "solve_data/solve_progress.csv", "w") as solve_progress:
-            solve_progress.write('scenario,' + scenario_name + '\n')
-            solve_progress.write('Init time,' + str(round(timer[0] - timer[1],4)) + '\n')
+        init_seconds = timer[0] - timer[1]
+        print("--- Init time %.4s seconds ---" % init_seconds)
+        timing_recorder.record('cli_init', seconds=init_seconds)
+        t_write_input = time.perf_counter()
         runner.write_input(input_db_url, scenario_name, precision_digits=effective_precision)
         timer.insert(0, time.perf_counter())
-        print("--- Write time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('Write input time,' + str(round(timer[0] - timer[1],4)) + '\n')
+        write_seconds = timer[0] - timer[1]
+        print("--- Write time %.4s seconds ---" % write_seconds)
+        timing_recorder.record('write_input', subphase='per_scenario',
+                               seconds=write_seconds, t_start=t_write_input)
 
     else:
-        runner = FlexToolRunner(input_db_url, output_path, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm, glpsol_timing=args.glpsol_timing)
+        runner = FlexToolRunner(input_db_url, output_path, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm, glpsol_timing=args.glpsol_timing, timing_recorder=timing_recorder)
         timer.insert(0, time.perf_counter())
-        print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('scenario,unknown\n')
-            solve_progress.write('Init time,' + str(round(timer[0] - timer[1],4)) + '\n')
+        init_seconds = timer[0] - timer[1]
+        print("--- Init time %.4s seconds ---" % init_seconds)
+        timing_recorder.record('cli_init', seconds=init_seconds)
+        t_write_input = time.perf_counter()
         runner.write_input(input_db_url, precision_digits=effective_precision)
         timer.insert(0, time.perf_counter())
-        print("--- Write time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('Write all input time,' + str(round(timer[0] - timer[1],4)) + '\n')
+        write_seconds = timer[0] - timer[1]
+        print("--- Write time %.4s seconds ---" % write_seconds)
+        timing_recorder.record('write_input', subphase='all',
+                               seconds=write_seconds, t_start=t_write_input)
         with DatabaseMapping(input_db_url) as db_map:
             scenario_name = name_from_dict(db_map.get_filter_configs()[0])
+        timing_recorder.set_scenario(scenario_name)
 
     # Diagnostic: cluster near-duplicate numeric parameter values.  Opt-in
     # via --report-near-duplicates or FLEXTOOL_REPORT_NEAR_DUPS=1; silent
@@ -325,19 +336,22 @@ def main():
             print(f"[precision] near-duplicate report failed: {exc}")
 
     print(f'Scenario: {scenario_name}')
+    t_solve_start = time.perf_counter()
     try:
         return_code = runner.run_model()
         timer.insert(0, time.perf_counter())
-        print("--- All Flextool solves time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('All Flextool solves,' + str(round(timer[0] - timer[1],4)) + '\n')
+        all_solves_seconds = timer[0] - timer[1]
+        print("--- All Flextool solves time %.4s seconds ---" % all_solves_seconds)
+        timing_recorder.record('all_solves', seconds=all_solves_seconds,
+                               t_start=t_solve_start)
     except Exception as e:
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
         sys.exit(1)
-    
+
     # If successful and requested, write outputs
+    output_subdir = args.output_subdir or scenario_name
     if return_code == 0:
-        output_subdir = args.output_subdir or scenario_name
+        t_write_outputs = time.perf_counter()
         write_outputs(
             scenario_name=scenario_name,
             output_location=args.output_location,
@@ -350,13 +364,32 @@ def main():
             fallback_output_location=str(output_path),
             raw_output_dir=str(wf / 'output_raw'),
             only_first_file=args.only_first_file_per_plot,
+            timing_recorder=timing_recorder,
         )
         timer.insert(0, time.perf_counter())
-    
-    print("\n--- Full execution time %.4s seconds ---------------------------------------" % (timer[0] - timer[-1]))
+        timing_recorder.record('write_outputs', subphase='total',
+                               seconds=time.perf_counter() - t_write_outputs,
+                               t_start=t_write_outputs)
+
+    full_seconds = time.perf_counter() - t_total_start
+    print("\n--- Full execution time %.4s seconds ---------------------------------------" % full_seconds)
     print("--------------------------------------------------------------------------\n")
-    with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-        solve_progress.write('Full execution time,' + str(round(timer[0] - timer[-1],4)) + '\n')
+    timing_recorder.record('total', seconds=full_seconds, t_start=t_total_start)
+
+    # Move timings.csv into the per-scenario output dir alongside
+    # summary_solve.csv.  Mirror write_outputs's resolution of the output
+    # location so the file lands in the same parent regardless of whether
+    # output_location was supplied via the CLI / env / settings DB.
+    try:
+        _resolved_output_location = args.output_location or str(output_path) or ''
+        _final_csv_dir = (
+            Path(_resolved_output_location) / 'output_csv' / output_subdir
+            if output_subdir else
+            Path(_resolved_output_location) / 'output_csv'
+        )
+        timing_recorder.finalize(_final_csv_dir)
+    except Exception as _exc:
+        logging.warning("Failed to copy timings.csv to output dir: %s", _exc)
 
     # Write scenario information to output database if provided
     if args.output_db_url:

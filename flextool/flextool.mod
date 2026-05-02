@@ -1970,8 +1970,13 @@ if p_model["solveFirst"] == 1 && 'read' in phase then {
 
 param setup := gmtime();
 printf 'Timer - Setup: %ss\n', setup - datetime0;
-param solve_progress symbolic := 'solve_data/solve_progress.csv';
-printf ',%s', setup - datetime0 >> solve_progress;
+# Per-solve mod-phase timings — truncated on each invocation (single
+# glpsol process per solve), so the file always reflects the current
+# solve.  orchestration.py reads it after solver.run() and feeds the
+# rows into the unified TimingRecorder (timings.csv).
+param mod_phases_file symbolic := 'solve_data/mod_phases.csv';
+printf 'phase,seconds\n' > mod_phases_file;
+printf '%s,%s\n', 'setup', setup - datetime0 >> mod_phases_file;
 
 printf("Constraint generation:\n");
 
@@ -2142,7 +2147,7 @@ minimize total_cost:
 ;
 param total_obj_cost := gmtime();
 printf 'Timer - Objective: %ss\n', total_obj_cost - setup;
-printf ',%s', total_obj_cost - setup >> solve_progress;
+printf '%s,%s\n', 'total_obj_cost', total_obj_cost - setup >> mod_phases_file;
 
 # ---------------------------------------------------------------------------
 # Generalized node balance equations (Agent 1.3 — M-matrix / overlap-set
@@ -2403,7 +2408,7 @@ s.t. nodeBalanceBlock_eq {c in solve_current, n in nodeStateBlock,
 
 param balance := gmtime();
 printf 'Timer - Balance: %ss\n', balance - total_obj_cost;
-printf ',%s', balance - total_obj_cost >> solve_progress;
+printf '%s,%s\n', 'balance', balance - total_obj_cost >> mod_phases_file;
 
 s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active
@@ -2532,7 +2537,7 @@ s.t. reserveBalance_down_n_1_eq{(r, 'down', ng, r_m) in reserve__upDown__group__
 ;
 param reserves := gmtime();
 printf 'Timer - Reserves: %ss\n', reserves - balance;
-printf ',%s', reserves - balance >> solve_progress;
+printf '%s,%s\n', 'reserves', reserves - balance >> mod_phases_file;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
 # Block-aware (Agent 1.5): the equation is emitted at the sink-side block
@@ -4229,7 +4234,8 @@ s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_act
 param rest := gmtime();
 printf "Timer - Rest: %ss\n", rest - reserves;
 printf "Timer - Total constraints: %ss\n\n", rest - setup;
-printf ',%s,%s', rest - reserves, rest - setup >> solve_progress;
+printf '%s,%s\n', 'rest', rest - reserves >> mod_phases_file;
+printf '%s,%s\n', 'total_constraints', rest - setup >> mod_phases_file;
 
 # ==========================================================
 # Outputs that do not depend on solver values — emitted in
@@ -5198,7 +5204,7 @@ solve;
 
 param r_solution := gmtime();
 printf "Timer - Read solution: %ss\n", r_solution - rest;
-printf ',%s', r_solution - rest >> solve_progress;
+printf '%s,%s\n', 'r_solution', r_solution - rest >> mod_phases_file;
 
 printf("\n\nOutputs:");
 
@@ -5806,7 +5812,7 @@ for {s in solve_current}
 
 param w_raw := gmtime();
 printf "Timer - Write raw output: %ss\n", w_raw - r_solution;
-printf ',%s', w_raw - r_solution >> solve_progress;
+printf '%s,%s\n', 'w_raw', w_raw - r_solution >> mod_phases_file;
 
 # hours_in_realized_period and realized_period_share_of_year removed —
 # unused in mod (no readers); the Python post-processor recomputes both
@@ -6033,7 +6039,7 @@ for {s in solve_current, e in nodeState, d in d_realize_dispatch_or_invest: 'yes
 
 param w_capacity := gmtime();
 printf "Timer - Write capacity: %ss\n", w_capacity - w_raw;
-printf ',%s', w_capacity - w_raw >> solve_progress;
+printf '%s,%s\n', 'w_capacity', w_capacity - w_raw >> mod_phases_file;
 
 #display period_first;
 #display period;

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from flextool.flextoolrunner.solve_config import SolveConfig
     from flextool.flextoolrunner.timeline_config import TimelineConfig
     from flextool.flextoolrunner.solve_handoff import SolveHandoff
+    from flextool.flextoolrunner.timing_recorder import TimingRecorder
 
 
 class FlexToolError(Exception):
@@ -90,6 +91,16 @@ class RunnerState:
     # differs from the parent (complete) solve name passed to the
     # solver.  ``None`` outside an active solve iteration.
     current_scale_solve_name: str | None = None
+    # Set by ``orchestration.run_model`` to the 0-based roll-loop index
+    # ``i`` just before each ``solver.run`` call so the per-roll Python
+    # solve subphases (``mps_gen``, ``lp_solve``, ``glpsol_*``) emitted
+    # by ``solver_runner`` carry the same ``roll_index`` as the
+    # mod-side ``solve / mod_*`` rows.  Without this, multi-roll
+    # scenarios where many rolls share a parent-solve name (e.g.
+    # 52 weekly rolls all named ``y2020_5week``) make the Python-side
+    # solve rows in ``timings.csv`` indistinguishable from each other.
+    # ``None`` outside an active solve iteration.
+    current_roll_index: int | None = None
     # Agent 18d (LP-scaling): user-facing solver-option knobs.
     # ``relax_feasibility`` is the explicit tolerance (e.g. ``1e-5``)
     # applied to HiGHS' primal + dual feasibility tolerance when the
@@ -114,3 +125,9 @@ class RunnerState:
     # ``None`` outside an active solve loop and on the first solve of
     # any loop.
     last_captured_solve: str | None = None
+    # Per-CLI-invocation phase timing recorder.  The CLI constructs one
+    # very early in ``cmd_run_flextool.main`` and assigns it onto
+    # ``state.timing_recorder``; tests calling :class:`FlexToolRunner`
+    # directly (without going through the CLI) bootstrap their own in
+    # ``FlexToolRunner.__init__``.  Always non-None inside an active run.
+    timing_recorder: "TimingRecorder | None" = None

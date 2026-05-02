@@ -168,9 +168,9 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
 
     timing = time.perf_counter() - timer
     state.logger.debug(f"--- Pre-processing of data: {timing:.4f} seconds ---")
-    with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-        solve_progress.write(',,solve,write_solve_input,setup,total_obj_cost,balance,reserves,rest,constraints,glpsol_input,solver,' \
-            'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,glpsol_output,\n')
+    if state.timing_recorder is not None:
+        state.timing_recorder.record('preprocessing_global', seconds=timing,
+                                     t_start=time.perf_counter() - timing)
     timer = timer + timing
 
     separate_period_and_timeseries_data(state.timeline.timelines, state.solve.timesets_used_by_solves, work_folder=wf)
@@ -503,8 +503,15 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
 
         state.logger.debug("Starting model creation")
 
-        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write(',,' + solve + ',' + str(round(time.perf_counter() - timer_in_solve,4)))
+        if state.timing_recorder is not None:
+            roll_setup_seconds = time.perf_counter() - timer_in_solve
+            state.timing_recorder.record(
+                'roll_setup',
+                solve=solve,
+                roll_index=i,
+                seconds=roll_setup_seconds,
+                t_start=timer_in_solve,
+            )
 
         # Agent 18c (LP-scaling): expose the current solve's cache key to
         # the solver runner so bound-scaling diagnostics land in the
@@ -513,6 +520,12 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         # ``analyze_solve`` a few hundred lines up); ``complete_solve[solve]``
         # is the parent-solve name that gets passed to ``solver.run``.
         state.current_scale_solve_name = solve
+        # Expose the roll-loop index to ``solver_runner`` so its four
+        # ``recorder.record(...)`` calls carry ``roll_index=i``,
+        # matching the mod-side ``solve / mod_*`` rows ingested below.
+        # Without this, rolling scenarios where rolls share a parent-
+        # solve name produce indistinguishable Python-side solve rows.
+        state.current_roll_index = i
         # Migration hook (Option A): refresh / compute per-solve
         # preprocessing CSVs after solve_writers + blocks have written
         # their per-solve inputs, but before glpsol reads them.
@@ -526,6 +539,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         )
         exit_status = solver.run(complete_solve[solve])
         state.current_scale_solve_name = None
+        state.current_roll_index = None
         if exit_status == 0:
             state.logger.debug('Success!')
             state.logger.debug("-------------------------------------------------------------------------------------------")
@@ -533,6 +547,39 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             message = f'Error: {exit_status}'
             state.logger.error(message)
             raise FlexToolSolveError(message)
+
+        # Pipe the .mod-side per-phase printf rows (setup / total_obj_cost /
+        # balance / reserves / rest / r_solution / w_raw / w_capacity) into
+        # the unified timings.csv.  The mod writes one row per phase to
+        # ``solve_data/mod_phases.csv`` (truncated each glpsol invocation,
+        # so the file always reflects the just-finished solve).  We read
+        # and re-emit each row as a ``phase='solve', subphase='mod_<name>'``
+        # entry so all timing data lives in one place.
+        if state.timing_recorder is not None:
+            mod_phases_path = wf / "solve_data" / "mod_phases.csv"
+            if mod_phases_path.exists():
+                try:
+                    with open(mod_phases_path) as _mp:
+                        _reader = csv.DictReader(_mp)
+                        for _row in _reader:
+                            try:
+                                _seconds = float(_row.get("seconds", "") or 0.0)
+                            except ValueError:
+                                continue
+                            _phase_name = (_row.get("phase") or "").strip()
+                            if not _phase_name:
+                                continue
+                            state.timing_recorder.record(
+                                'solve',
+                                subphase=f'mod_{_phase_name}',
+                                solve=complete_solve[solve],
+                                roll_index=i,
+                                seconds=_seconds,
+                            )
+                except Exception as _exc:  # diagnostic only — never fail solve
+                    state.logger.debug(
+                        f"mod_phases ingest failed for {complete_solve[solve]}: {_exc}"
+                    )
 
         # In-memory solve-to-solve handoff (add-on, opt-in via
         # ``state.handoffs``).  No-op when the slot is None (default,

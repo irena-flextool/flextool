@@ -23,9 +23,6 @@ def load_solve_order(work_folder: Path | str) -> dict[str, int]:
 
     Source: ``solve_data/solve__p_entity_pre_existing.csv`` — appended on
     every solve; unique solves in row order = creation order.
-    ``solve_progress.csv`` would be more direct but it interleaves
-    header rows (``Init time,...``) with the per-solve table, which
-    trips ``pd.read_csv``.
 
     Returns ``{}`` if the file is absent.
     """
