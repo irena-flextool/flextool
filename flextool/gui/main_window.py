@@ -150,10 +150,11 @@ class MainWindow(tk.Tk):
         # ── Treeview row height and selection visibility ──────────
         # Add ~25% vertical padding so rows don't touch the row above —
         # otherwise large fonts (high-DPI) clip and small fonts make
-        # the trees look cramped.  Min of 20px protects setups where
-        # font auto-detection underreports DPI.
+        # the trees look cramped.  Min of 24px keeps trees readable on
+        # setups where DPI auto-detection underreports or where the
+        # user has chosen a small font size.
         style = ttk.Style()
-        row_height = max(20, int(self._line_height * 1.25))
+        row_height = max(24, int(self._line_height * 1.25))
         style.configure("Treeview", rowheight=row_height)
 
         # Make LabelFrame titles the same font size as everything else

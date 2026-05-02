@@ -199,9 +199,15 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
             dpi = _xrandr_dpi_for_window(cursor_x, cursor_y)
 
     if dpi is not None and dpi > 0:
-        # tk scaling is in units of pixels-per-point where 1.0 ≈ 72 DPI.
-        # The formula is: scaling = dpi / 72
-        new_scaling = dpi / 72.0
+        # Tk documents ``tk scaling`` as pixels-per-point with 72 pt/inch,
+        # which would give ``scaling = dpi / 72``.  In practice, Linux/X11
+        # desktop apps render at the Windows-style 96-DPI reference
+        # baseline — at "scaling = 1.0", a 10pt font is ~10px, not 14px.
+        # Using dpi/72 directly thus over-scales by ~33% (visibly chunky
+        # fonts on a 4K display).  Matching the desktop convention
+        # (dpi/96) gives a 1.45× scale on a 139-DPI display, which feels
+        # right next to the rest of the Plasma/GNOME UI.
+        new_scaling = dpi / 96.0
         current_scaling = float(root.tk.call("tk", "scaling"))
         # Only apply if the OS requests a higher scale than tk's default,
         # to avoid shrinking fonts on systems where tk already got it right.
