@@ -515,11 +515,23 @@ def create_dispatch_plots(
                     # draw the demand line even when there are no supply flows.
                     idx = inflow.index if has_demand else pd.RangeIndex(1)
                     df_dispatch = pd.DataFrame(index=idx)
-                # Ensure consistent columns across scenarios for same nodeGroup
+                # Ensure consistent columns across scenarios for same nodeGroup.
+                # Build the missing columns in one DataFrame and concat once;
+                # the per-column ``df_dispatch[col] = 0.0`` loop triggered a
+                # pandas PerformanceWarning about frame fragmentation when
+                # ng_columns[ng] had many entries.
                 if ng in ng_columns:
-                    for col in ng_columns[ng]:
-                        if col not in df_dispatch.columns:
-                            df_dispatch[col] = 0.0
+                    missing = [
+                        c for c in ng_columns[ng]
+                        if c not in df_dispatch.columns
+                    ]
+                    if missing:
+                        zeros = pd.DataFrame(
+                            0.0, index=df_dispatch.index, columns=missing,
+                        )
+                        df_dispatch = pd.concat(
+                            [df_dispatch, zeros], axis=1,
+                        )
                     df_dispatch = df_dispatch[ng_columns[ng]]
                 output_path = plot_dir / f"dispatch_nodeGroup_{ng}_{scenario}.png"
                 plot_dispatch_area(
@@ -548,11 +560,20 @@ def create_dispatch_plots(
                 if df_node is None or df_node.empty:
                     idx = inflow_node.index if has_node_demand else pd.RangeIndex(1)
                     df_node = pd.DataFrame(index=idx)
-                # Ensure consistent columns across scenarios for same node
+                # Ensure consistent columns across scenarios for same node.
+                # Same fragmentation fix as the nodeGroup branch above —
+                # build missing zero-columns in one DataFrame + concat once
+                # instead of per-column ``df_node[col] = 0.0`` assignment.
                 if node in node_columns:
-                    for col in node_columns[node]:
-                        if col not in df_node.columns:
-                            df_node[col] = 0.0
+                    missing = [
+                        c for c in node_columns[node]
+                        if c not in df_node.columns
+                    ]
+                    if missing:
+                        zeros = pd.DataFrame(
+                            0.0, index=df_node.index, columns=missing,
+                        )
+                        df_node = pd.concat([df_node, zeros], axis=1)
                     df_node = df_node[node_columns[node]]
                 node_colors = _auto_assign_node_colors(df_node.columns)
                 output_path = plot_dir / f"dispatch_node_{node}_{scenario}.png"
