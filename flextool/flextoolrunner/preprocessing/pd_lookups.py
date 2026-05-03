@@ -223,7 +223,7 @@ class PdtLookup:
         period_time_first_csv: Path,  # solve_data/first_timesteps.csv [period, step]
         solve_branch_csv: Path,       # solve_data/solve_branch__time_branch.csv [period, branch]
         period_branch_csv: Path,      # solve_data/period__branch.csv [period, branch]
-        group_entity_csv: Path,       # solve_data/group_<class>.csv [group, entity]
+        group_entity_csv: Path,       # input/group__<class>.csv [group, entity]
         group_stochastic_csv: Path,   # input/groupIncludeStochastics.csv [group]
         param_def1: frozenset[str],
         time_first_priority: bool = False,
@@ -429,7 +429,7 @@ class PdtLookupPerSide:
         period_time_first_csv: Path,
         solve_branch_csv: Path,
         period_branch_csv: Path,
-        group_process_csv: Path,      # solve_data/group_process.csv [group, process]
+        group_process_csv: Path,      # input/group__process.csv [group, process]
         group_stochastic_csv: Path,
     ) -> None:
         self._pbt = _read_pbt_3(pbt_csv)

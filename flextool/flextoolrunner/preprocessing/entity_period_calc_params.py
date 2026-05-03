@@ -511,7 +511,7 @@ def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
         period_time_first_csv=solve_data_dir / "first_timesteps.csv",
         solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
-        group_entity_csv=solve_data_dir / "group_process.csv",
+        group_entity_csv=input_dir / "group__process.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
         param_def1=PROCESS_PARAM_DEF1,
     )
@@ -546,7 +546,7 @@ def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
         period_time_first_csv=solve_data_dir / "first_timesteps.csv",
         solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
-        group_entity_csv=solve_data_dir / "group_node.csv",
+        group_entity_csv=input_dir / "group__node.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
         param_def1=NODE_PARAM_DEF1,
         time_first_priority=True,
@@ -598,7 +598,7 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
     # Stochastic gate (n via group_node × groupIncludeStochastics)
     groups_stoch = frozenset(_read_singles(input_dir / "groupIncludeStochastics.csv"))
     stoch_node: set[str] = set()
-    gn_path = solve_data_dir / "group_node.csv"
+    gn_path = input_dir / "group__node.csv"
     if gn_path.exists():
         with gn_path.open() as fh:
             reader = csv.reader(fh)
@@ -853,7 +853,7 @@ def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
     groups_stoch = frozenset(_read_singles(input_dir / "groupIncludeStochastics.csv"))
     # group_process[g] / group_node[g] members
     stoch_processes: set[str] = set()
-    gp_path = solve_data_dir / "group_process.csv"
+    gp_path = input_dir / "group__process.csv"
     if gp_path.exists():
         with gp_path.open() as fh:
             reader = csv.reader(fh)
@@ -862,7 +862,7 @@ def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
                 if len(row) >= 2 and row[0] in groups_stoch and row[1]:
                     stoch_processes.add(row[1])
     stoch_nodes: set[str] = set()
-    gn_path = solve_data_dir / "group_node.csv"
+    gn_path = input_dir / "group__node.csv"
     if gn_path.exists():
         with gn_path.open() as fh:
             reader = csv.reader(fh)
@@ -1100,7 +1100,7 @@ def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
     # ---- stochastic processes -----------------------------------------
     groups_stoch = frozenset(_read_singles(input_dir / "groupIncludeStochastics.csv"))
     stoch_processes: set[str] = set()
-    gp_path = solve_data_dir / "group_process.csv"
+    gp_path = input_dir / "group__process.csv"
     if gp_path.exists():
         with gp_path.open() as fh:
             reader = csv.reader(fh)
@@ -1845,7 +1845,7 @@ def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path) -> None:
         period_time_first_csv=solve_data_dir / "first_timesteps.csv",
         solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
-        group_process_csv=solve_data_dir / "group_process.csv",
+        group_process_csv=input_dir / "group__process.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
     )
     domain = _read_triples(solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv")
@@ -1872,7 +1872,7 @@ def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
         period_time_first_csv=solve_data_dir / "first_timesteps.csv",
         solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
-        group_process_csv=solve_data_dir / "group_process.csv",
+        group_process_csv=input_dir / "group__process.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
     )
     domain = _read_triples(solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv")

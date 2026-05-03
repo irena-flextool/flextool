@@ -43,32 +43,34 @@ from tests.decomposition._helpers import (  # noqa: E402
 )
 
 
-# Collapse the existing parametrize signature to just the scenario name.
-# csvs / expected_objective / time_budget_seconds are irrelevant here —
-# we only need the scenario name and its `id` (which pytest derives from
-# the inner pytest.param). Re-wrap each entry as a single-value param so
-# pytest -k '<scenario>' still selects the same case as in
-# test_scenarios.py.
+# Re-wrap each SCENARIOS entry to carry just (scenario_name, db_fixture).
+# csvs / expected_objective / time_budget_seconds are irrelevant here.
+# The db_fixture column (last in SCENARIOS' parametrize tuple) selects
+# which DB fixture the scenario needs — main vs. stochastic etc. Pytest
+# `-k '<scenario>'` still selects the same case as in test_scenarios.py
+# because the `id` is preserved.
 _DECOMP_PARAMS = [
-    pytest.param(p.values[0], marks=p.marks, id=p.id) for p in SCENARIOS
+    pytest.param(p.values[0], p.values[-1], marks=p.marks, id=p.id)
+    for p in SCENARIOS
 ]
 
 
 @pytest.mark.decomposition
-@pytest.mark.parametrize("scenario", _DECOMP_PARAMS)
+@pytest.mark.parametrize("scenario,db_fixture", _DECOMP_PARAMS)
 def test_obj_decomposition(
     scenario: str,
-    test_db_url: str,
+    db_fixture: str,
+    scenario_db_url: str,
     test_bin_dir: Path,
     workdir: Path,
 ) -> None:
     runner = FlexToolRunner(
-        input_db_url=test_db_url,
+        input_db_url=scenario_db_url,
         scenario_name=scenario,
         root_dir=workdir,
         bin_dir=test_bin_dir,
     )
-    runner.write_input(test_db_url, scenario)
+    runner.write_input(scenario_db_url, scenario)
     return_code = runner.run_model()
     assert return_code == 0, f"Model run failed for scenario '{scenario}'"
 

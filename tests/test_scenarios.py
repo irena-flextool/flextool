@@ -67,6 +67,7 @@ def _load_scenarios() -> list:
                 e.get("expected_objective"),
                 e.get("expected_objective_tolerance", 1e-3),
                 e.get("time_budget_seconds"),
+                e.get("db_fixture", "main"),
                 marks=marks,
                 id=e["scenario"],
             )
@@ -126,7 +127,7 @@ SCENARIOS = _load_scenarios()
 
 
 @pytest.mark.parametrize(
-    "scenario,csvs,expected_objective,expected_objective_tolerance,time_budget_seconds",
+    "scenario,csvs,expected_objective,expected_objective_tolerance,time_budget_seconds,db_fixture",
     SCENARIOS,
 )
 def test_scenario(
@@ -135,7 +136,8 @@ def test_scenario(
     expected_objective: float | None,
     expected_objective_tolerance: float,
     time_budget_seconds: float | None,
-    test_db_url: str,
+    db_fixture: str,
+    scenario_db_url: str,
     test_bin_dir: Path,
     workdir: Path,
     request: pytest.FixtureRequest,
@@ -147,12 +149,12 @@ def test_scenario(
     # measures the actual scenario work, not pytest fixture setup.
     t_start = time.perf_counter()
     runner = FlexToolRunner(
-        input_db_url=test_db_url,
+        input_db_url=scenario_db_url,
         scenario_name=scenario,
         root_dir=workdir,
         bin_dir=test_bin_dir,
     )
-    runner.write_input(test_db_url, scenario)
+    runner.write_input(scenario_db_url, scenario)
     return_code = runner.run_model()
     assert return_code == 0, f"Model run failed for scenario '{scenario}'"
 
