@@ -264,6 +264,32 @@ class TestLadderVTradeParquetExtraction:
             f"1 MWh tier-1 cap), got max {tier2_max}"
         )
 
+        # r_cost_ladder proxy: sum(price[c,p,t] × v_trade[c,n,p,t]) over
+        # all rows in the ladder CSV must be strictly positive. Catches
+        # any regression where v_trade routes correctly (so the per-tier
+        # asserts above pass) but the ladder prices don't flow into the
+        # objective — e.g. a tier-index mismatch between the writer and
+        # a positional Python reader (cf. the bug fixed at
+        # simple_projections.py:237-244, where periods landed in the
+        # tier slot and p_ladder_ann_price defaulted to 0).
+        ladder_csv = workdir / "input" / "commodity_ladder_annual.csv"
+        prices = pd.read_csv(ladder_csv).set_index(
+            ["commodity", "period", "tier"]
+        )["price"]
+        ladder_cost = 0.0
+        for (commodity, node, tier), v_series in df.items():
+            for (_solve, period), v in v_series.items():
+                if v <= 0:
+                    continue
+                key = (commodity, period, int(tier))
+                if key not in prices.index:
+                    continue
+                ladder_cost += float(prices.loc[key]) * float(v)
+        assert ladder_cost > 0, (
+            f"Expected positive ladder cost (sum price × v_trade), "
+            f"got {ladder_cost}"
+        )
+
 
 class TestLadderPerPeriodAnnual:
     """2d `price_ladder_annual` — per-period price/quantity.  The writer

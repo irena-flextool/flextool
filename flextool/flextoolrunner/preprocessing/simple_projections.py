@@ -234,12 +234,13 @@ def write_simple_setof_projections(input_dir: Path, solve_data_dir: Path) -> Non
     (solve_data_dir / "timeline_steps.csv").write_text(
         "timeline,step\n" + "".join(",".join(t) + "\n" for t in seen3.keys())
     )
-    # commodity__tier_ann (c, i) from commodity__tier__period_ann (c, i, d)
+    # commodity__tier_ann (c, t) from commodity_ladder_annual.csv
+    # Header: commodity, period, tier, price, quantity — tier is r[2].
     rows = _read_csv(input_dir / "commodity_ladder_annual.csv")
     seen4: dict[tuple[str, str], None] = {}
     for r in rows:
-        if len(r) >= 2 and r[0] and r[1]:
-            seen4.setdefault((r[0], r[1]), None)
+        if len(r) >= 3 and r[0] and r[2]:
+            seen4.setdefault((r[0], r[2]), None)
     (solve_data_dir / "commodity__tier_ann.csv").write_text(
         "commodity,tier\n" + "".join(",".join(t) + "\n" for t in seen4.keys())
     )
