@@ -134,6 +134,76 @@ class TestWeightMatrix:
 
 
 # ---------------------------------------------------------------------------
+# Unit test: _read_time_series scalar handling
+# ---------------------------------------------------------------------------
+
+class TestReadTimeSeriesScalarFiltering:
+    """Regression: scalar inflows must be dropped, not crash the pipeline.
+
+    ``params_to_dict`` returns a scalar float as ``str(value)`` (a plain
+    string), but ``_build_clustering_matrix`` iterates each entry's
+    value as ``for k, v in ts_data:`` — iterating a string yields
+    single-character substrings, which then fail to unpack into
+    ``(k, v)`` with ``not enough values to unpack (expected 2, got 1)``.
+    Real-world databases routinely set ``node.inflow`` to a constant
+    scalar; without this filter, RP preprocessing crashes on the first
+    such node.
+    """
+
+    def test_drops_scalar_inflows_keeps_map_inflows(self, tmp_path):
+        from spinedb_api import DatabaseMapping, Map, import_data
+        from flextool.representative_periods.preprocess import (
+            _read_time_series,
+        )
+
+        db_path = tmp_path / "scalars.sqlite"
+        url = f"sqlite:///{db_path}"
+
+        with DatabaseMapping(url, create=True) as db:
+            inflow_map = Map(["t1", "t2", "t3"], [1.0, 2.0, 3.0])
+            _, errors = import_data(
+                db,
+                entity_classes=[("node", ()), ("profile", ())],
+                parameter_definitions=[
+                    ("node", "inflow", None, None,
+                     "Negative for demand, positive for supply."),
+                    ("profile", "profile", None, None, "Profile time series."),
+                ],
+                entities=[
+                    ("node", "scalar_demand_node", None),
+                    ("node", "timeseries_inflow_node", None),
+                    ("profile", "wind", None),
+                ],
+                parameter_values=[
+                    ("node", "scalar_demand_node", "inflow", -1500.0),
+                    ("node", "timeseries_inflow_node", "inflow", inflow_map),
+                    ("profile", "wind", "profile", inflow_map),
+                ],
+            )
+            if errors:
+                raise RuntimeError(f"import errors: {errors[:5]}")
+            db.commit_session("scalar-inflow regression fixture")
+
+        with DatabaseMapping(url) as db:
+            db.fetch_all("parameter_value")
+            profiles, inflows = _read_time_series(db)
+
+        # The Map-valued entries survive as list-of-tuple time series.
+        assert "timeseries_inflow_node" in inflows, (
+            f"Map-valued inflow dropped unexpectedly. Got: {inflows!r}"
+        )
+        assert isinstance(inflows["timeseries_inflow_node"], list)
+        assert "wind" in profiles and isinstance(profiles["wind"], list)
+
+        # The scalar inflow is filtered out (would otherwise crash the
+        # downstream `for k, v in ts_data:` unpack at preprocess.py:109).
+        assert "scalar_demand_node" not in inflows, (
+            f"Scalar inflow leaked through; would crash _build_clustering_matrix. "
+            f"Got: {inflows!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Functional tests: full pipeline
 # ---------------------------------------------------------------------------
 
