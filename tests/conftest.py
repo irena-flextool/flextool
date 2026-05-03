@@ -102,6 +102,46 @@ def test_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="session")
+def stochastic_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Stochastic-feature scenarios DB.
+
+    Built from ``tests/fixtures/stochastics.json`` (a JSON dump of the
+    user-facing ``how to example databases/stochastics.sqlite``).  The
+    JSON was exported at FlexTool DB v25 — this fixture migrates to the
+    current ``FLEXTOOL_DB_VERSION`` so scenarios resolve against the
+    same schema as the main test DB.
+    """
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_path = tmp_path_factory.mktemp("db_stoch") / "stochastics.sqlite"
+    url = json_to_db(FIXTURES_DIR / "stochastics.json", db_path)
+    migrate_database(url)
+    return url
+
+
+# Map scenarios.yaml ``db_fixture`` values to fixture names — kept in
+# conftest so adding a new fixture requires touching exactly two
+# places: the fixture definition above and this map.
+_DB_FIXTURE_NAMES: dict[str, str] = {
+    "main": "test_db_url",
+    "stochastic": "stochastic_db_url",
+}
+
+
+@pytest.fixture
+def scenario_db_url(request: pytest.FixtureRequest, db_fixture: str) -> str:
+    """Resolve the per-scenario DB url according to ``db_fixture`` field
+    in scenarios.yaml.  Defaults to ``main`` (== ``test_db_url``)."""
+    fixture_name = _DB_FIXTURE_NAMES.get(db_fixture)
+    if fixture_name is None:
+        raise ValueError(
+            f"Unknown db_fixture {db_fixture!r}; "
+            f"valid: {sorted(_DB_FIXTURE_NAMES)}"
+        )
+    return request.getfixturevalue(fixture_name)
+
+
+@pytest.fixture(scope="session")
 def test_bin_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Temp bin dir with test highs.opt and symlinked solver binaries.
 

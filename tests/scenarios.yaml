@@ -614,3 +614,31 @@
   expected_objective: 585.71245
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 4.0
+
+# --- Stochastic ---
+# Smoke coverage for the include_stochastics / stochastic_branches
+# pipeline. Built from the user-facing
+# ``how to example databases/stochastics.sqlite`` (exported to
+# tests/fixtures/stochastics.json). 2_day_stochastic_dispatch activates
+# stochastic branching on hydro_reservoir + wind_plant via the
+# ``add_stochastics`` group; populates period__branch with a non-trivial
+# topology and exercises the pbt_* parameter family, pd_branch_weight
+# / pdt_branch_weight normalisation, and the non-anticipativity
+# constraints. Without this entry, none of those code paths are
+# exercised by the scenario suite.
+#
+- scenario: 2_day_stochastic_dispatch
+  smoke: true
+  db_fixture: stochastic
+  csvs:
+    - costs__dt.csv
+    - summary_solve.csv
+  # Was 182.903 when pdtProfile silently dropped per-branch values
+  # (entity_period_calc_params.py read solve_data/group_process.csv
+  # which never existed; stoch_profile = {} → all branches got the
+  # realised profile). After the path fix to input/group__process.csv,
+  # the LP is constrained by min(per-branch wind profile) per step,
+  # raising thermal dispatch by ~47%.
+  expected_objective: 269.406895209
+  expected_objective_tolerance: 1.0e-4
+  time_budget_seconds: 30.0
