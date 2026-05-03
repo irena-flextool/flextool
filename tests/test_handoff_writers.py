@@ -79,7 +79,7 @@ def _write_unitsize(work: Path, unitsize: dict[str, float]) -> None:
 
 
 def _write_entity_set(work: Path, entities: list[str]) -> None:
-    (work / "solve_data" / "entity.csv").write_text(
+    (work / "input" / "entity.csv").write_text(
         "entity\n" + "\n".join(entities) + "\n"
     )
 
