@@ -2191,10 +2191,18 @@
     ],
     [
       "solve",
+      "timeline_hole_multiplier",
+      1.0,
+      null,
+      "[unitless] Multiplier applied to the inverse-step-duration term in nodeBalance_eq and storage-binding constraints across timeline gaps (holes).  Tunes how strongly state differences are penalised across discontinuities in the timeline.  Default 1.0 mirrors the .mod default and matches pre-v44 Python-convention behaviour.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "use_row_scaling",
       "no",
       "yes_no",
-      "Enable automatic row scaling (experimental): derive node_capacity_for_scaling / group_capacity_for_scaling from connected-unit unitsizes (rounded to nearest power of 10) so HiGHS sees matrix coefficients on a narrower range. Default 'no' preserves pre-scaling behaviour exactly. See flextool/SLACK_CONVENTION.md.",
+      "Enable automatic row scaling (experimental): derive node_capacity_for_scaling / group_capacity_for_scaling from connected-unit unitsizes (rounded to nearest power of 10) so HiGHS sees matrix coefficients on a narrower range.  Default 'no' preserves pre-scaling behaviour exactly.  See flextool/SLACK_CONVENTION.md.",
       "solve_advanced"
     ],
     [
@@ -3980,6 +3988,12 @@
       "stochastic_branches",
       "map",
       4
+    ],
+    [
+      "solve",
+      "timeline_hole_multiplier",
+      "float",
+      0
     ],
     [
       "solve",

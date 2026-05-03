@@ -1794,9 +1794,9 @@ def _v44_build_parameter_group_map() -> dict[tuple[str, str], str]:
         m[("solve", p)] = "solve_basics"
 
     # --- solve_advanced -----------------------------------------------
-    # timeline_hole_multiplier belongs here "if present" (proposal).  The
-    # migration below handles that conditionally, so we don't pre-declare
-    # it in this map.
+    # timeline_hole_multiplier is created + tagged in v44 Step 4 (it
+    # didn't exist in the schema before that step).  Listing it here too
+    # would be a no-op since Step 3's loop pre-dates its existence.
     for p in (
         "solver_arguments", "solver_precommand", "highs_presolve",
         "highs_method", "highs_parallel", "rolling_duration",
@@ -1845,17 +1845,26 @@ def _migrate_v44_parameter_groups(db) -> None:
       3. Assign every parameter_definition to its group from the
          data-driven membership map built by
          :func:`_v44_build_parameter_group_map`.
-      4. If ``solve.timeline_hole_multiplier`` exists in this database,
-         assign it to ``solve_advanced`` (proposal says "if present").
-         Otherwise skip silently.
+      4. Define ``solve.timeline_hole_multiplier`` (float, default 1.0)
+         and assign it to ``solve_advanced``.  The parameter has been
+         consumed end-to-end by the writer chain
+         (``input_writer._WRITE_ENTITY_PARAMETER_SPECS`` →
+         ``solve_writers.write_hole_multiplier`` → ``solve_data/
+         solve_hole_multiplier.csv`` → mod's ``p_hole_multiplier``)
+         since well before v44, but was never declared in the schema —
+         flextool relied on a Python-convention default of 1.0.  This
+         step closes the gap so the schema is the single source of
+         truth (matters for downstream consumers like flexpy that read
+         defaults from ``parameter_definition.default_value``).
     """
     # Step 1: rename the existing Outputs group (or create it if it is
     # somehow missing) and update its priority.  Doing an id-keyed update
     # preserves the link to the four output-parameter_definitions that
-    # v43 already tagged.
-    outputs_group = db.item(
-        db.mapped_table("parameter_group"), name="Outputs",
-    )
+    # v43 already tagged.  Use find_parameter_groups (plural) so a
+    # re-iterated migration on a DB that already has "output" (post-v44
+    # state, version rolled back) doesn't blow up on the lookup.
+    outputs_groups = list(db.find_parameter_groups(name="Outputs"))
+    outputs_group = outputs_groups[0] if outputs_groups else None
     if outputs_group is not None:
         db.update_item(
             "parameter_group",
@@ -1894,17 +1903,29 @@ def _migrate_v44_parameter_groups(db) -> None:
             parameter_group_name=group_name,
         )
 
-    # Step 4: conditionally tag timeline_hole_multiplier if present.
-    thm = list(db.find_parameter_definitions(
-        entity_class_name="solve", name="timeline_hole_multiplier",
-    ))
-    if thm:
-        db.add_update_item(
-            "parameter_definition",
-            entity_class_name="solve",
-            name="timeline_hole_multiplier",
-            parameter_group_name="solve_advanced",
-        )
+    # Step 4: declare solve.timeline_hole_multiplier (float, default 1.0)
+    # and tag it to solve_advanced.  add_update_item is idempotent on
+    # (entity_class_name, name) so re-running on a DB that already has
+    # the parameter (e.g. one carried in by hand) is a no-op except for
+    # back-filling missing fields (default, type, group).
+    thm_default_val, thm_default_type = to_database(1.0)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="timeline_hole_multiplier",
+        parameter_type_list=("float",),
+        default_value=thm_default_val,
+        default_type=thm_default_type,
+        parameter_group_name="solve_advanced",
+        description=(
+            "[unitless] Multiplier applied to the inverse-step-duration "
+            "term in nodeBalance_eq and storage-binding constraints "
+            "across timeline gaps (holes).  Tunes how strongly state "
+            "differences are penalised across discontinuities in the "
+            "timeline.  Default 1.0 mirrors the .mod default and matches "
+            "pre-v44 Python-convention behaviour."
+        ),
+    )
 
     try:
         db.commit_session(
@@ -1913,7 +1934,11 @@ def _migrate_v44_parameter_groups(db) -> None:
             "tech_advanced, reserve, emission, network, flow_limit, "
             "constraint, model, solve_basics, solve_advanced, timeline); "
             "assigned every parameter_definition to its group per "
-            "rivendell/PROPOSAL_parameter_groups.md"
+            "rivendell/PROPOSAL_parameter_groups.md; "
+            "declared solve.timeline_hole_multiplier (float, default 1.0) "
+            "in solve_advanced — closes the schema gap for a parameter "
+            "the writer chain has consumed for some time via a "
+            "Python-convention default."
         )
     except SpineDBAPIError:
         pass
