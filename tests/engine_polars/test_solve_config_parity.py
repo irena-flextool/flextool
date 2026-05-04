@@ -471,6 +471,82 @@ def test_duplicate_solve_idempotent_on_repeat_call() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Fan-out via 2D Map periods_to_tuples — real fixture invariant
+# ---------------------------------------------------------------------------
+
+
+def test_fanout_via_periods_to_tuples_inherits_parent_keys() -> None:
+    """The ``invest_5weeks`` solve fans out into per-period siblings
+    (``invest_5weeks_p2020``…``_p2035``) via ``periods_to_tuples``'s
+    2D-Map branch.  Each fan-out entry must have keys in EXACTLY the
+    same set of lockstep dicts as the original ``invest_5weeks``,
+    because ``duplicate_solve`` only copies entries the parent already
+    had (``if old_solve in dup_map.keys()``).
+
+    This is the canonical R-O4 regression fixture (see
+    ``audit/solve_orchestration_plan.md``).
+    """
+    sqlite = (
+        DATA
+        / "work_multi_fullYear_battery_nested_multi_invest"
+        / "tests.sqlite"
+    )
+    if not sqlite.exists():
+        pytest.skip("multi-invest fixture not present")
+
+    sc = _load_mine(sqlite, "multi_fullYear_battery_nested_multi_invest")
+
+    parent = "invest_5weeks"
+    fanout = [
+        "invest_5weeks_p2020",
+        "invest_5weeks_p2025",
+        "invest_5weeks_p2030",
+        "invest_5weeks_p2035",
+    ]
+    lockstep = [
+        ("solve_modes", sc.solve_modes),
+        ("roll_counter", sc.roll_counter),
+        ("highs.presolve", sc.highs.presolve),
+        ("highs.method", sc.highs.method),
+        ("highs.parallel", sc.highs.parallel),
+        ("solve_period_years_represented", sc.solve_period_years_represented),
+        ("solver_settings.solvers", sc.solver_settings.solvers),
+        ("solver_settings.precommand", sc.solver_settings.precommand),
+        ("solver_settings.arguments", sc.solver_settings.arguments),
+        ("contains_solves", sc.contains_solves),
+        ("rolling_times", sc.rolling_times),
+        ("realized_periods", sc.realized_periods),
+        ("realized_invest_periods", sc.realized_invest_periods),
+        ("invest_periods", sc.invest_periods),
+        ("fix_storage_periods", sc.fix_storage_periods),
+    ]
+    parent_membership = {name: parent in d for name, d in lockstep}
+    for child in fanout:
+        child_membership = {name: child in d for name, d in lockstep}
+        # ``invest_periods`` and ``realized_invest_periods`` are populated
+        # ON the child by ``periods_to_tuples`` itself (not via
+        # ``duplicate_solve``'s carbon-copy block), so they may differ
+        # from the parent's membership.  Check each one explicitly:
+        # the child must have its own value (the 2D-Map branch wrote it).
+        assert child in sc.invest_periods, (
+            f"{child} missing from invest_periods after 2D-Map fan-out"
+        )
+        assert child in sc.realized_invest_periods, (
+            f"{child} missing from realized_invest_periods after fan-out"
+        )
+        # Now the truly carbon-copied dicts: child membership must
+        # equal parent membership (for every dict OTHER than the two
+        # the periods_to_tuples branch writes directly).
+        for name, present in parent_membership.items():
+            if name in ("invest_periods", "realized_invest_periods"):
+                continue
+            assert child_membership[name] == present, (
+                f"lockstep desync: parent({name})={present} but "
+                f"child {child!r}({name})={child_membership[name]}"
+            )
+
+
+# ---------------------------------------------------------------------------
 # load_from_source — SpineDbReader-backed entry
 # ---------------------------------------------------------------------------
 
