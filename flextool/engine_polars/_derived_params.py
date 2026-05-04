@@ -2277,14 +2277,17 @@ def derived_overrides_b(
     # port the block filter into the helper.
     skip_flow_n = False
     if workdir is not None:
-        psb = Path(workdir) / "solve_data" / "process_side_block.csv"
-        if psb.exists():
-            try:
-                psb_df = _read_csv_file(psb)
-                if psb_df.height > 0:
-                    skip_flow_n = True
-            except Exception:
-                pass
+        # Δ.2: consume process_side_block via the in-memory BlockLayout
+        # bridge instead of reading the CSV directly.
+        from flextool.engine_polars._block_layout import BlockLayout
+        try:
+            bl = BlockLayout.load_from_solve_data(
+                Path(workdir) / "solve_data",
+            )
+            if bl.process_side_block_frame.height > 0:
+                skip_flow_n = True
+        except Exception:
+            pass
     if pss_frame is not None and pss_frame.height > 0 and not skip_flow_n:
         try:
             ftn_db = flow_to_n(source, pss_frame)
@@ -5076,73 +5079,69 @@ def period_block_family_from_source(source: "InputSource",
                                           orient="row").unique()
                           if pbt_rows else None)
 
-    # Multi-resolution synthesis (input.py:1985-2126 mirror).
+    # Multi-resolution synthesis (input.py:1985-2126 mirror).  Δ.2:
+    # consume frames via BlockLayout.load_from_solve_data instead of
+    # re-reading the CSVs at the call site.
     if workdir is not None:
+        from flextool.engine_polars._block_layout import BlockLayout
         sd = Path(workdir) / "solve_data"
-        eb_path = sd / "entity_block.csv"
-        bsd_path = sd / "block_step_duration.csv"
-        ov_path = sd / "overlap_set.csv"
-        if eb_path.exists() and bsd_path.exists():
-            eb = _read_csv_file(eb_path)
-            bsd = _read_csv_file(bsd_path)
-            if eb.height > 0 and bsd.height > 0:
-                distinct_blocks = bsd["block"].unique().to_list()
-                if len(distinct_blocks) >= 2:
-                    coarse = (bsd
-                              .filter(pl.col("step_duration") > 1.0)
-                              ["block"].unique().to_list())
-                    if coarse:
-                        # Identify coarse-blocked entities.
-                        non_default_nodes = eb.filter(
-                            pl.col("block").is_in(coarse))
-                        if non_default_nodes.height > 0:
-                            coarse_use = non_default_nodes["block"] \
-                                          .unique().to_list()
-                            bsd_c = bsd.filter(
-                                pl.col("block").is_in(coarse_use))
-                            new_pb = (bsd_c
-                                .rename({"period": "d", "step": "b_first"})
-                                .select("d", "b_first").unique())
-                            # period_block_succ: cyclic per (block, period).
-                            succ_rows: list[tuple[str, str, str]] = []
-                            bsd_sorted = bsd_c.rename(
-                                {"period": "d", "step": "b_first"}
-                                ).sort("block", "d", "b_first")
-                            for (blk, dval), grp in bsd_sorted.group_by(
-                                    ["block", "d"], maintain_order=True):
-                                bfs = grp["b_first"].to_list()
-                                n = len(bfs)
-                                for i in range(n):
-                                    succ_rows.append(
-                                        (dval, bfs[i], bfs[(i + 1) % n]))
-                            new_pbs = (pl.DataFrame(
-                                succ_rows,
-                                schema=["d", "b_first", "b_next"],
-                                orient="row")
-                                if succ_rows else None)
-                            new_pbt = None
-                            if ov_path.exists():
-                                ov = _read_csv_file(ov_path)
-                                if ov.height > 0:
-                                    ov = ov.rename({
-                                        "period": "d",
-                                        "block_coarse": "b",
-                                        "step_coarse": "b_first",
-                                        "block_fine": "b_fine",
-                                        "step_fine": "t",
-                                    })
-                                    ov_keep = ov.filter(
-                                        pl.col("b").is_in(coarse_use)
-                                        & (pl.col("b_fine") == "default"))
-                                    if ov_keep.height > 0:
-                                        new_pbt = ov_keep.select(
-                                            "d", "b_first", "t").unique()
-                            if new_pb is not None and new_pb.height > 0:
-                                period_block = new_pb
-                            if new_pbs is not None and new_pbs.height > 0:
-                                period_block_succ = new_pbs
-                            if new_pbt is not None and new_pbt.height > 0:
-                                period_block_time = new_pbt
+        bl = BlockLayout.load_from_solve_data(sd)
+        eb = bl.entity_block_frame
+        bsd = bl.block_step_duration_frame
+        if eb.height > 0 and bsd.height > 0:
+            distinct_blocks = bsd["block"].unique().to_list()
+            if len(distinct_blocks) >= 2:
+                coarse = bl.coarse_blocks(threshold=1.0)
+                if coarse:
+                    non_default_nodes = eb.filter(
+                        pl.col("block").is_in(coarse))
+                    if non_default_nodes.height > 0:
+                        coarse_use = non_default_nodes["block"] \
+                                      .unique().to_list()
+                        bsd_c = bsd.filter(
+                            pl.col("block").is_in(coarse_use))
+                        new_pb = (bsd_c
+                            .rename({"period": "d", "step": "b_first"})
+                            .select("d", "b_first").unique())
+                        # period_block_succ: cyclic per (block, period).
+                        succ_rows: list[tuple[str, str, str]] = []
+                        bsd_sorted = bsd_c.rename(
+                            {"period": "d", "step": "b_first"}
+                            ).sort("block", "d", "b_first")
+                        for (blk, dval), grp in bsd_sorted.group_by(
+                                ["block", "d"], maintain_order=True):
+                            bfs = grp["b_first"].to_list()
+                            n = len(bfs)
+                            for i in range(n):
+                                succ_rows.append(
+                                    (dval, bfs[i], bfs[(i + 1) % n]))
+                        new_pbs = (pl.DataFrame(
+                            succ_rows,
+                            schema=["d", "b_first", "b_next"],
+                            orient="row")
+                            if succ_rows else None)
+                        new_pbt = None
+                        ov = bl.overlap_set_frame
+                        if ov.height > 0:
+                            ov = ov.rename({
+                                "period": "d",
+                                "block_coarse": "b",
+                                "step_coarse": "b_first",
+                                "block_fine": "b_fine",
+                                "step_fine": "t",
+                            })
+                            ov_keep = ov.filter(
+                                pl.col("b").is_in(coarse_use)
+                                & (pl.col("b_fine") == "default"))
+                            if ov_keep.height > 0:
+                                new_pbt = ov_keep.select(
+                                    "d", "b_first", "t").unique()
+                        if new_pb is not None and new_pb.height > 0:
+                            period_block = new_pb
+                        if new_pbs is not None and new_pbs.height > 0:
+                            period_block_succ = new_pbs
+                        if new_pbt is not None and new_pbt.height > 0:
+                            period_block_time = new_pbt
 
     return dict(
         period_block=period_block,
@@ -5254,33 +5253,31 @@ def nodeStateBlock_from_source(source: "InputSource",
                           .collect())
         if intraperiod.height > 0:
             rows.extend(intraperiod["n"].to_list())
-    # Branch 2: multi-resolution synthesis from workdir CSVs.
+    # Branch 2: multi-resolution synthesis via in-memory BlockLayout
+    # (Δ.2: consolidated through ``BlockLayout.load_from_solve_data``).
     if workdir is not None:
+        from flextool.engine_polars._block_layout import BlockLayout
         sd = Path(workdir) / "solve_data"
-        eb_path = sd / "entity_block.csv"
-        bsd_path = sd / "block_step_duration.csv"
-        if eb_path.exists() and bsd_path.exists():
-            eb = _read_csv_file(eb_path)
-            bsd = _read_csv_file(bsd_path)
-            if eb.height > 0 and bsd.height > 0:
-                distinct_blocks = bsd["block"].unique().to_list()
-                if len(distinct_blocks) >= 2:
-                    coarse = (bsd
-                                .filter(pl.col("step_duration") > 1.0)
-                                ["block"].unique().to_list())
-                    if coarse:
-                        # Filter to nodeBalance nodes — read node entities
-                        # from source (we don't have nodeBalance set on
-                        # Spine, but every node-entity is an
-                        # entity_block candidate here).
-                        nodes = _try_entities(source, "node")
-                        if nodes is not None:
-                            node_set = set(nodes["name"].to_list())
-                            picked = (eb
-                                       .filter(pl.col("block").is_in(coarse))
-                                       .filter(pl.col("entity").is_in(node_set))
-                                       ["entity"].unique().to_list())
-                            rows.extend(picked)
+        bl = BlockLayout.load_from_solve_data(sd)
+        eb = bl.entity_block_frame
+        bsd = bl.block_step_duration_frame
+        if eb.height > 0 and bsd.height > 0:
+            distinct_blocks = bsd["block"].unique().to_list()
+            if len(distinct_blocks) >= 2:
+                coarse = bl.coarse_blocks(threshold=1.0)
+                if coarse:
+                    # Filter to nodeBalance nodes — read node entities
+                    # from source (we don't have nodeBalance set on
+                    # Spine, but every node-entity is an
+                    # entity_block candidate here).
+                    nodes = _try_entities(source, "node")
+                    if nodes is not None:
+                        node_set = set(nodes["name"].to_list())
+                        picked = (eb
+                                   .filter(pl.col("block").is_in(coarse))
+                                   .filter(pl.col("entity").is_in(node_set))
+                                   ["entity"].unique().to_list())
+                        rows.extend(picked)
     if not rows:
         return None
     out = (pl.DataFrame({"n": sorted(set(rows))})
@@ -5326,17 +5323,19 @@ def arc_block_dt_from_source(source: "InputSource",
             or pss.height == 0 or nodeStateBlock_df.height == 0
             or period_block_time_df.height == 0):
         return None
+    # Δ.2: consume block frames via BlockLayout instead of reading
+    # process_side_block.csv + block_step_duration.csv directly.
+    from flextool.engine_polars._block_layout import BlockLayout
     sd = Path(workdir) / "solve_data"
-    psb_path = sd / "process_side_block.csv"
-    bsd_path = sd / "block_step_duration.csv"
-    if not psb_path.exists() or not bsd_path.exists():
+    bl = BlockLayout.load_from_solve_data(sd)
+    if (bl.process_side_block_frame.height == 0
+            or bl.block_step_duration_frame.height == 0):
         return None
-    psb = _read_csv_file(psb_path).rename({"process": "p", "block": "b_f"})
-    bsd_arc = _read_csv_file(bsd_path).rename(
+    psb = bl.process_side_block_frame.rename(
+        {"process": "p", "block": "b_f"})
+    bsd_arc = bl.block_step_duration_frame.rename(
         {"block": "b_f", "period": "d", "step": "t",
           "step_duration": "weight"})
-    if psb.height == 0 or bsd_arc.height == 0:
-        return None
     nsb_set = nodeStateBlock_df["n"].unique()
     pbt = period_block_time_df
 

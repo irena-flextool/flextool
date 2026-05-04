@@ -30,6 +30,7 @@ from . import _cumulative_invest
 from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
+from ._block_layout import BlockLayout
 from ._input_source import _read_csv_file
 
 
@@ -702,7 +703,8 @@ def _load_node(sd: Path, dt: pl.DataFrame):
 # ---------------------------------------------------------------------------
 # Process-topology helpers (skipped if no processes)
 
-def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame):
+def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
+                            block_layout: "BlockLayout | None" = None):
     pss_path = sd / "process_source_sink.csv"
     if not pss_path.exists():
         return {k: None for k in ("pss","pss_eff","pss_noEff","pss_dt",
@@ -733,25 +735,20 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame):
     # We replicate this restriction by filtering ``flow_to_n``/
     # ``flow_from_n`` to drop (p, source, sink) rows whose relevant
     # side-block doesn't connect via overlap to the node's own block.
-    psb_path_arc = sd / "process_side_block.csv"
-    eb_path_arc = sd / "entity_block.csv"
-    ov_path_arc = sd / "overlap_set.csv"
-    if (psb_path_arc.exists() and eb_path_arc.exists()
-            and ov_path_arc.exists()):
-        psb_local = _read_csv_file(psb_path_arc).rename(
+    #
+    # Δ.2: block frames consumed via in-memory ``BlockLayout`` when one
+    # is provided; fall back to the legacy on-disk reads when not.
+    if (block_layout is not None
+            and block_layout.process_side_block_frame.height > 0
+            and block_layout.entity_block_frame.height > 0
+            and block_layout.overlap_set_frame.height > 0):
+        psb_local = block_layout.process_side_block_frame.rename(
             {"process": "p", "block": "b_f"})
-        eb_local = _read_csv_file(eb_path_arc).rename(
+        eb_local = block_layout.entity_block_frame.rename(
             {"entity": "n", "block": "b"})
-        ov_local = _read_csv_file(ov_path_arc)
+        block_compat = block_layout.block_compat()
         if (psb_local.height > 0 and eb_local.height > 0
-                and ov_local.height > 0):
-            # Build the set of (b_n, b_f) pairs that have at least one
-            # overlap row.
-            block_compat = (ov_local
-                .rename({"block_coarse": "b", "block_fine": "b_f"})
-                .select("b", "b_f").unique())
-            # For each arc-side, look up b_f.  Then for each node (n, b),
-            # an arc contributes iff (b, b_f) ∈ block_compat.
+                and block_compat.height > 0):
             psb_sink = psb_local.filter(pl.col("side") == "sink").select("p", "b_f")
             psb_source = psb_local.filter(pl.col("side") == "source").select("p", "b_f")
             # flow_to_n is keyed by sink-as-n; the relevant side is 'sink'.
@@ -1640,7 +1637,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                    pss_eff: pl.DataFrame | None,
                    pss_noEff: pl.DataFrame | None,
                    cap_pd: pl.DataFrame | None,
-                   unitsize: Param | None) -> dict:
+                   unitsize: Param | None,
+                   block_layout: "BlockLayout | None" = None) -> dict:
     """Load storage feature: nodeState set, capacity bounds, binding
     methods, dtttdt, and source-side nodeBalance topology.
 
@@ -1665,20 +1663,21 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
     # Apply the same block-compatibility filter as in flow_from_n /
     # flow_to_n: arc contributes to node's nodeBalance only if (b_n, b_f)
-    # has an overlap row.  Uses process_side_block.csv + entity_block.csv
-    # + overlap_set.csv from the solve_data dir.
-    psb_p = sd / "process_side_block.csv"
-    eb_p = sd / "entity_block.csv"
-    ov_p = sd / "overlap_set.csv"
-    if (psb_p.exists() and eb_p.exists() and ov_p.exists()
+    # has an overlap row.  Δ.2: consume frames from the in-memory
+    # ``BlockLayout`` (loaded once at the top of ``load_flextool``) when
+    # supplied; otherwise the CSVs would still be on disk but no caller
+    # passes None today.
+    if (block_layout is not None
+            and block_layout.process_side_block_frame.height > 0
+            and block_layout.entity_block_frame.height > 0
+            and block_layout.overlap_set_frame.height > 0
             and (flow_from_nb_eff is not None or flow_from_nb_noEff is not None)):
-        psb_l = _read_csv_file(psb_p).rename({"process": "p", "block": "b_f"})
-        eb_l = _read_csv_file(eb_p).rename({"entity": "n", "block": "b"})
-        ov_l = _read_csv_file(ov_p)
-        if psb_l.height > 0 and eb_l.height > 0 and ov_l.height > 0:
-            block_compat_l = (ov_l
-                .rename({"block_coarse": "b", "block_fine": "b_f"})
-                .select("b", "b_f").unique())
+        psb_l = block_layout.process_side_block_frame.rename(
+            {"process": "p", "block": "b_f"})
+        eb_l = block_layout.entity_block_frame.rename(
+            {"entity": "n", "block": "b"})
+        block_compat_l = block_layout.block_compat()
+        if psb_l.height > 0 and eb_l.height > 0 and block_compat_l.height > 0:
             psb_src_l = psb_l.filter(pl.col("side") == "source").select("p", "b_f")
             def _filter_by_compat(df: pl.DataFrame) -> pl.DataFrame:
                 if df is None or df.height == 0:
@@ -2003,13 +2002,15 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # non-'default' block to one or more nodeBalance nodes.  Fixtures without
     # entity_block.csv (or with everything set to 'default') keep their
     # existing pre-v51 hourly nodeBalance.
-    bsd_path = sd / "block_step_duration.csv"
-    eb_path2 = sd / "entity_block.csv"
-    if (eb_path2.exists() and bsd_path.exists()
+    # Δ.2: consume block frames from in-memory ``BlockLayout`` when
+    # available; falls through if no block_layout was passed.
+    if (block_layout is not None
+            and block_layout.entity_block_frame.height > 0
+            and block_layout.block_step_duration_frame.height > 0
             and nb is not None and nb.height > 0):
-        eb2 = _read_csv_file(eb_path2)
+        eb2 = block_layout.entity_block_frame.rename(
+            {"entity": "n", "block": "b"}).select("n", "b")
         if eb2.height > 0:
-            eb2 = eb2.rename({"entity": "n", "block": "b"}).select("n", "b")
             # Identify *coarse* blocks: those whose ``block_step_duration``
             # contains any entry > 1.  ``hourly_group`` (24-hourly grid with
             # sd=1.0 per row) reduces to the default fine grid and shouldn't
@@ -2030,14 +2031,12 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             # forcing v_state to be constant across the period via the
             # stateConstantWithinBlock_eq cyclic chain (battery can't
             # charge/discharge → ~3-5% obj-value gap).
-            bsd_full = _read_csv_file(bsd_path)
+            bsd_full = block_layout.block_step_duration_frame
             distinct_blocks = bsd_full["block"].unique().to_list()
             if len(distinct_blocks) < 2:
                 coarse_blocks = []
             else:
-                coarse_blocks = (bsd_full
-                    .filter(pl.col("step_duration") > 1.0)["block"]
-                    .unique().to_list())
+                coarse_blocks = block_layout.coarse_blocks(threshold=1.0)
             # Restrict to nodeBalance nodes with a *coarse* block.
             non_default_nodes = (eb2
                 .filter(pl.col("b").is_in(coarse_blocks))
@@ -2074,23 +2073,21 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                     # (b_coarse=non-default, b_fine=default) — every fine
                     # 'default' step that overlaps a coarse step.
                     new_pbt = None
-                    ov_path = sd / "overlap_set.csv"
-                    if ov_path.exists():
-                        ov = _read_csv_file(ov_path)
-                        if ov.height > 0:
-                            ov = ov.rename({
-                                "period": "d",
-                                "block_coarse": "b",
-                                "step_coarse": "b_first",
-                                "block_fine": "b_fine",
-                                "step_fine": "t",
-                            })
-                            ov_keep = ov.filter(
-                                pl.col("b").is_in(non_default_nodes["b"].unique())
-                                & (pl.col("b_fine") == "default"))
-                            if ov_keep.height > 0:
-                                new_pbt = ov_keep.select(
-                                    "d", "b_first", "t").unique()
+                    ov = block_layout.overlap_set_frame
+                    if ov.height > 0:
+                        ov = ov.rename({
+                            "period": "d",
+                            "block_coarse": "b",
+                            "step_coarse": "b_first",
+                            "block_fine": "b_fine",
+                            "step_fine": "t",
+                        })
+                        ov_keep = ov.filter(
+                            pl.col("b").is_in(non_default_nodes["b"].unique())
+                            & (pl.col("b_fine") == "default"))
+                        if ov_keep.height > 0:
+                            new_pbt = ov_keep.select(
+                                "d", "b_first", "t").unique()
                     if new_pbt is None:
                         # Fallback: synthesise period_block_time from bsd —
                         # each daily block (b_first, step_duration=N) covers
@@ -2236,23 +2233,23 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # nodeState_last_dt: (n, d, t) — last (d, t) per node, used as the index
     # for ``node_balance_fix_quantity_eq_lower``.  Built from
     # block_period_time_last (b, d, t) × entity_block (e=n, b) × nodeState.
+    # Δ.2: consume frames from in-memory ``BlockLayout``.
     nodeState_last_dt = None
-    bptl_path = sd / "block_period_time_last.csv"
-    eb_path = sd / "entity_block.csv"
     if (nodeState is not None and nodeState.height > 0
-            and bptl_path.exists() and eb_path.exists()):
-        bptl = _read_csv_file(bptl_path)
-        if bptl.height > 0:
-            bptl = bptl.rename({"block": "b", "period": "d", "step": "t"}).select("b", "d", "t")
-            eb = _read_csv_file(eb_path)
-            if eb.height > 0:
-                eb = eb.rename({"entity": "n", "block": "b"}).select("n", "b")
-                nodeState_last_dt = (nodeState.select("n")
-                    .join(eb, on="n", how="inner")
-                    .join(bptl, on="b", how="inner")
-                    .select("n", "d", "t").unique())
-                if nodeState_last_dt.height == 0:
-                    nodeState_last_dt = None
+            and block_layout is not None
+            and block_layout.block_period_time_last_frame.height > 0
+            and block_layout.entity_block_frame.height > 0):
+        bptl = block_layout.block_period_time_last_frame.rename(
+            {"block": "b", "period": "d", "step": "t"}).select("b", "d", "t")
+        eb = block_layout.entity_block_frame.rename(
+            {"entity": "n", "block": "b"}).select("n", "b")
+        if bptl.height > 0 and eb.height > 0:
+            nodeState_last_dt = (nodeState.select("n")
+                .join(eb, on="n", how="inner")
+                .join(bptl, on="b", how="inner")
+                .select("n", "d", "t").unique())
+            if nodeState_last_dt.height == 0:
+                nodeState_last_dt = None
 
     # ─── State-profile bounds — node__profile__profile_method ────────────
     # Maps (n, f, method) where method ∈ {upper_limit, lower_limit, fixed}.
@@ -3064,10 +3061,19 @@ def load_flextool(source: "Path | str | FlexInputSource",
     inp = source.input_dir
     sd  = source.solve_data_dir
 
+    # Δ.2: build the per-solve BlockLayout once from flextool's
+    # solve_data/ block CSVs (still produced by flextool's
+    # ``write_block_data_for_solve``).  Downstream block-aware helpers
+    # consume the in-memory frames instead of re-reading the same CSVs
+    # at each call site.  When the orchestrator transitions to building
+    # ``BlockLayout`` natively (Δ.3+), this load_from_solve_data call
+    # becomes a no-op or is replaced by passing the live layout in.
+    block_layout = BlockLayout.load_from_solve_data(sd)
+
     dt, step_dur, rp_cw, infl, psh = _load_time(sd)
     nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt)
 
-    proc = _load_process_topology(inp, sd, dt)
+    proc = _load_process_topology(inp, sd, dt, block_layout=block_layout)
 
     # base_cap_pd = (p, d, base) for profile RHS — recompute here; small.
     base_cap_pd = None
@@ -3158,7 +3164,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # ─── Storage (nodeState + binding methods + dtttdt + node-balance source-side flows)
     storage = _load_storage(inp, sd, dt, nb,
                              proc["pss_eff"], proc["pss_noEff"],
-                             base_cap_pd, proc["unitsize"])
+                             base_cap_pd, proc["unitsize"],
+                             block_layout=block_layout)
     # _load_storage emits its own dtttdt; if storage is inactive it'll be
     # None there but we want the top-level read.
     if storage["dtttdt"] is None:
@@ -3187,17 +3194,17 @@ def load_flextool(source: "Path | str | FlexInputSource",
     arc_source_block_dt = None
     p_arc_sink_weight = None
     p_arc_source_weight = None
-    psb_path = sd / "process_side_block.csv"
-    bsd_for_arc_path = sd / "block_step_duration.csv"
+    # Δ.2: consume block frames from the in-memory ``BlockLayout``.
     if (proc["pss"] is not None and proc["pss"].height > 0
             and storage.get("nodeStateBlock") is not None
             and storage["nodeStateBlock"].height > 0
             and storage.get("period_block_time") is not None
             and storage["period_block_time"].height > 0
-            and psb_path.exists() and bsd_for_arc_path.exists()):
-        psb = _read_csv_file(psb_path).rename(
+            and block_layout.process_side_block_frame.height > 0
+            and block_layout.block_step_duration_frame.height > 0):
+        psb = block_layout.process_side_block_frame.rename(
             {"process": "p", "block": "b_f"})
-        bsd_arc = _read_csv_file(bsd_for_arc_path).rename(
+        bsd_arc = block_layout.block_step_duration_frame.rename(
             {"block": "b_f", "period": "d", "step": "t",
              "step_duration": "weight"})
         nsb_set = storage["nodeStateBlock"]["n"].unique()
