@@ -1,0 +1,669 @@
+"""Solve-level configuration loaded from a SpineDB scenario.
+
+Γ.8.A foundation module.  Direct 1:1 port of
+``flextool/flextoolrunner/solve_config.py`` (426 LOC) and the
+``params_to_dict`` / ``get_single_entities`` helpers it depends on
+(``flextool/flextoolrunner/db_reader.py``).
+
+Architecture notes
+------------------
+
+* Algorithm parity with flextool is the contract — every downstream
+  module reads ``state.solve.<dict>`` keys produced here and the keys
+  must match exactly (including the ``np.str_`` leak through Spine
+  ``Map.indexes``, the stringified-float ``rolling_times`` entries,
+  and the lockstep mutation in :meth:`SolveConfig.duplicate_solve`).
+* The factory uses :class:`spinedb_api.DatabaseMapping` directly.  The
+  ``InputSource`` Protocol (``_input_source.py``) is the longer-term
+  abstraction (DB + file paths share one entry), but for Γ.8.A we
+  port the canonical DB-direct path verbatim; the Γ.8.D wiring will
+  add a thin ``load_from_source`` adapter once chain.py needs it.
+* Reads ``solve``, ``model``, ``unit`` parameter classes only.  The
+  17-parameter list comes from
+  ``audit/solve_orchestration_plan.md §1.3``; loading order matters
+  (``make_roll_counter`` → ``get_period_timesets`` → 4×
+  ``periods_to_tuples``) because each may call
+  :meth:`duplicate_solve`, which mutates 15 sibling defaultdicts in
+  lockstep.
+* The DB schema is assumed to be v50+.  v50 moved
+  ``new_stepduration`` from ``timeset`` to ``solve``;
+  ``update_flextool/db_migration.py`` handles upgrades for older DBs
+  before this loader runs.
+
+Reference: ``flextool/flextoolrunner/solve_config.py`` (read-only
+mirror at ``flextool-engine/flextool/flextoolrunner/``).
+"""
+from __future__ import annotations
+
+import logging
+from collections import defaultdict
+from dataclasses import dataclass
+from enum import Enum
+from typing import TYPE_CHECKING
+
+import spinedb_api as api
+
+from flextool.engine_polars._solve_state import FlexToolConfigError
+
+if TYPE_CHECKING:
+    from spinedb_api import DatabaseMapping
+
+
+# ---------------------------------------------------------------------------
+# Local re-implementation of ``flextoolrunner/db_reader.py`` helpers.
+#
+# The flexpy ``engine_polars`` package does not depend on
+# ``flextool.flextoolrunner`` (the GMPL/glpsol-era package).  Re-hosting
+# the two helpers we actually need here keeps the dependency graph clean
+# and lets the shipped module stand alone.
+# ---------------------------------------------------------------------------
+
+
+class DictMode(Enum):
+    """Output container shape for :func:`params_to_dict`."""
+
+    DICT = "dict"
+    DEFAULTDICT = "defaultdict"
+    LIST = "list"
+
+
+def get_single_entities(db: "DatabaseMapping", entity_class_name: str) -> list[str]:
+    """Return entity names for a single-dimension entity class.
+
+    Mirrors :func:`flextool.flextoolrunner.db_reader.get_single_entities`.
+    """
+    return [
+        entity["entity_byname"][0]
+        for entity in db.find_entities(entity_class_name=entity_class_name)
+    ]
+
+
+def params_to_dict(
+    db: "DatabaseMapping",
+    cl: str,
+    par: str,
+    mode: DictMode,
+    str_to_list: bool = False,
+) -> dict | defaultdict | list:
+    """Read parameter values of *par* on entity class *cl*.
+
+    Direct port of :func:`flextool.flextoolrunner.db_reader.params_to_dict`
+    (lines 72-127).  Behaviour is identical including the value-type
+    dispatch:
+
+    * Map of float → list of (index, float) tuples.
+    * Map of str → list of (index, str) tuples.
+    * Map of Map → :func:`spinedb_api.convert_map_to_table` flattening.
+    * Array → ``param_value.values`` (the raw numpy-string-typed list).
+    * Float scalar → :class:`str` of the float (matches flextool quirk).
+    * String scalar → either the bare string or ``[string]`` when
+      *str_to_list* is set.
+    """
+    all_params = db.find_parameter_values(
+        entity_class_name=cl, parameter_definition_name=par
+    )
+    result: dict | defaultdict | list
+    if mode == DictMode.DEFAULTDICT:
+        result = defaultdict(list)
+    elif mode == DictMode.DICT:
+        result = dict()
+    elif mode == DictMode.LIST:
+        result = []
+    else:  # pragma: no cover — exhaustive enum
+        raise ValueError(f"Unknown DictMode: {mode!r}")
+    for param in all_params:
+        param_value = api.from_database(param["value"], param["type"])
+        if mode in (DictMode.DEFAULTDICT, DictMode.DICT):
+            if isinstance(param_value, api.Map):
+                if isinstance(param_value.values[0], float):
+                    result[param["entity_name"]] = list(
+                        zip(
+                            list(param_value.indexes),
+                            list(map(float, param_value.values)),
+                        )
+                    )
+                elif isinstance(param_value.values[0], str):
+                    result[param["entity_name"]] = list(
+                        zip(list(param_value.indexes), param_value.values)
+                    )
+                elif isinstance(param_value.values[0], api.Map):
+                    result[param["entity_name"]] = api.convert_map_to_table(
+                        param_value
+                    )
+                else:
+                    raise TypeError(
+                        "params_to_dict function does not handle other "
+                        "values than floats and strings"
+                    )
+            elif isinstance(param_value, api.Array):
+                result[param["entity_name"]] = param_value.values
+            elif isinstance(param_value, float):
+                result[param["entity_name"]] = str(param_value)
+            elif isinstance(param_value, str):
+                if str_to_list:
+                    result[param["entity_name"]] = [param_value]
+                else:
+                    result[param["entity_name"]] = param_value
+        elif mode == DictMode.LIST:
+            if isinstance(param_value, (float, str)):
+                result.append([param["entity_name"], param_value])  # type: ignore[union-attr]
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Solver-config dataclasses
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HiGHSConfig:
+    """HiGHS solver option overrides — solve-level dispatch.
+
+    Each field is keyed by solve name; values are the raw strings stored
+    in Spine (e.g. ``"on"`` / ``"off"`` / ``"choose"``).  ``HiGHSProblem``
+    converts them at solve time.
+    """
+
+    presolve: dict[str, str]
+    method: dict[str, str]
+    parallel: dict[str, str]
+
+
+@dataclass
+class SolverSettings:
+    """Solver selection + invocation settings, keyed by solve name.
+
+    *arguments* uses :class:`collections.defaultdict[list]` to mirror
+    flextool's per-solve argument list shape.
+    """
+
+    solvers: dict[str, str]
+    precommand: dict[str, str]
+    arguments: defaultdict[str, list]
+
+
+# ---------------------------------------------------------------------------
+# SolveConfig — main container
+# ---------------------------------------------------------------------------
+
+
+class SolveConfig:
+    """All solve-level parameters and mutable tracking state.
+
+    Field-by-field equivalent of
+    :class:`flextool.flextoolrunner.solve_config.SolveConfig`.  See
+    ``audit/solve_orchestration_plan.md §1.3`` for the per-field
+    contract; downstream modules read these dicts directly so the
+    container shape (``defaultdict(list)`` vs plain ``dict``), the
+    keys, and the value types must match flextool exactly.
+    """
+
+    def __init__(
+        self,
+        model: list,
+        model_solve: defaultdict,
+        solve_modes: dict,
+        rolling_times: defaultdict,
+        highs: HiGHSConfig,
+        solver_settings: SolverSettings,
+        solve_period_years_represented: defaultdict,
+        hole_multipliers: defaultdict,
+        contains_solves: defaultdict,
+        stochastic_branches: defaultdict,
+        periods_available: dict,
+        delay_durations: dict,
+        logger: logging.Logger,
+        use_row_scaling: dict | None = None,
+    ) -> None:
+        # Base fields (read directly from DB in load_from_db).
+        self.model = model
+        self.model_solve = model_solve
+        self.solve_modes = solve_modes
+        self.rolling_times = rolling_times
+        self.highs = highs
+        self.solver_settings = solver_settings
+        self.solve_period_years_represented = solve_period_years_represented
+        self.hole_multipliers = hole_multipliers
+        self.contains_solves = contains_solves
+        self.stochastic_branches = stochastic_branches
+        self.periods_available = periods_available
+        self.delay_durations = delay_durations
+        self.logger = logger
+        # solve-name → "yes"/"no" string from the DB (default off everywhere).
+        self.use_row_scaling: dict = (
+            use_row_scaling if use_row_scaling is not None else {}
+        )
+
+        # Computed fields — populated by load_from_db after construction.
+        self.roll_counter: dict[str, int] = {}
+        self.timesets_used_by_solves: defaultdict = defaultdict(list)
+        self.invest_periods: defaultdict = defaultdict(list)
+        self.realized_periods: defaultdict = defaultdict(list)
+        self.realized_invest_periods: defaultdict = defaultdict(list)
+        self.fix_storage_periods: defaultdict = defaultdict(list)
+
+        # Mutable tracking — populated during the recursive solve loop.
+        self.real_solves: list[str] = []
+        self.first_of_complete_solve: list[str] = []
+        self.last_of_solve: list[str] = []
+
+    # ------------------------------------------------------------------
+    # Factories
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def load_from_db(
+        cls, db: "DatabaseMapping", logger: logging.Logger
+    ) -> "SolveConfig":
+        """Read all solve-level parameters from *db* into a SolveConfig.
+
+        Loading order is preserved exactly — see the four-step block at
+        the bottom of this method.
+
+        1. Basic params (model, solvers, rolling_times, …)
+        2. ``make_roll_counter`` (needs ``solve_modes``).
+        3. ``get_period_timesets`` (needs ``model_solve`` +
+           ``contains_solves``; may call ``duplicate_solve``).
+        4. Four ``periods_to_tuples`` calls
+           (``invest_periods``, ``realized_periods``,
+           ``realized_invest_periods``, ``fix_storage_periods``;
+           may call ``duplicate_solve`` for 2D-Map values).
+        """
+        model = get_single_entities(db=db, entity_class_name="model")
+        model_solve: defaultdict = params_to_dict(
+            db=db, cl="model", par="solves", mode=DictMode.DEFAULTDICT
+        )
+        # Auto-wire when no model:solves defined and only one solve exists.
+        # See ``flextoolrunner/solve_config.py:160`` — preserved verbatim.
+        solves_temp = get_single_entities(db=db, entity_class_name="solve")
+        if len(model_solve) == 0 and len(solves_temp) == 1:
+            model_solve["flextool"] = [solves_temp[0]]
+
+        solve_modes: dict = params_to_dict(
+            db=db, cl="solve", par="solve_mode", mode=DictMode.DICT
+        )
+        highs_presolve: dict = params_to_dict(
+            db=db, cl="solve", par="highs_presolve", mode=DictMode.DICT
+        )
+        highs_method: dict = params_to_dict(
+            db=db, cl="solve", par="highs_method", mode=DictMode.DICT
+        )
+        highs_parallel: dict = params_to_dict(
+            db=db, cl="solve", par="highs_parallel", mode=DictMode.DICT
+        )
+        solve_period_years_represented: defaultdict = params_to_dict(
+            db=db,
+            cl="solve",
+            par="years_represented",
+            mode=DictMode.DEFAULTDICT,
+        )
+        solvers: dict = params_to_dict(
+            db=db, cl="solve", par="solver", mode=DictMode.DICT
+        )
+        solver_precommand: dict = params_to_dict(
+            db=db, cl="solve", par="solver_precommand", mode=DictMode.DICT
+        )
+        solver_arguments: defaultdict = params_to_dict(
+            db=db,
+            cl="solve",
+            par="solver_arguments",
+            mode=DictMode.DEFAULTDICT,
+        )
+        stochastic_branches: defaultdict = params_to_dict(
+            db=db,
+            cl="solve",
+            par="stochastic_branches",
+            mode=DictMode.DEFAULTDICT,
+        )
+        contains_solves: defaultdict = params_to_dict(
+            db=db,
+            cl="solve",
+            par="contains_solves",
+            mode=DictMode.DEFAULTDICT,
+            str_to_list=True,
+        )
+        hole_multipliers: defaultdict = params_to_dict(
+            db=db,
+            cl="solve",
+            par="timeline_hole_multiplier",
+            mode=DictMode.DEFAULTDICT,
+        )
+        delay_durations: dict = params_to_dict(
+            db=db, cl="unit", par="delay", mode=DictMode.DICT
+        )
+        periods_available: dict = params_to_dict(
+            db=db, cl="model", par="periods_available", mode=DictMode.DICT
+        )
+        # Per-solve opt-in for automatic LP-row scaling.  Default
+        # absent / "no" leaves AMPL behaviour as pre-Agent-5; flexpy
+        # consumes this flag during preprocessing the same way.
+        use_row_scaling: dict = params_to_dict(
+            db=db, cl="solve", par="use_row_scaling", mode=DictMode.DICT
+        )
+
+        # rolling_times: assemble per-solve [jump, horizon, duration].
+        rolling_duration: dict = params_to_dict(
+            db=db, cl="solve", par="rolling_duration", mode=DictMode.DICT
+        )
+        rolling_solve_horizon: dict = params_to_dict(
+            db=db, cl="solve", par="rolling_solve_horizon", mode=DictMode.DICT
+        )
+        rolling_solve_jump: dict = params_to_dict(
+            db=db, cl="solve", par="rolling_solve_jump", mode=DictMode.DICT
+        )
+        all_keys = (
+            set(rolling_duration)
+            | set(rolling_solve_horizon)
+            | set(rolling_solve_jump)
+        )
+        rolling_times: defaultdict = defaultdict(
+            list,
+            {
+                key: [
+                    rolling_solve_jump.get(key, 0),
+                    rolling_solve_horizon.get(key, 0),
+                    rolling_duration.get(key, -1),
+                ]
+                for key in all_keys
+            },
+        )
+
+        highs = HiGHSConfig(
+            presolve=highs_presolve,
+            method=highs_method,
+            parallel=highs_parallel,
+        )
+        solver_settings = SolverSettings(
+            solvers=solvers,
+            precommand=solver_precommand,
+            arguments=solver_arguments,
+        )
+
+        obj = cls(
+            model=model,
+            model_solve=model_solve,
+            solve_modes=solve_modes,
+            rolling_times=rolling_times,
+            highs=highs,
+            solver_settings=solver_settings,
+            solve_period_years_represented=solve_period_years_represented,
+            hole_multipliers=hole_multipliers,
+            contains_solves=contains_solves,
+            stochastic_branches=stochastic_branches,
+            periods_available=periods_available,
+            delay_durations=delay_durations,
+            logger=logger,
+            use_row_scaling=use_row_scaling,
+        )
+
+        # Computed fields — loading order MUST be preserved exactly.
+        # ``duplicate_solve`` mutates 15 sibling dicts in lockstep, so
+        # any reordering desyncs them and downstream reads silently
+        # produce empty/zero results.
+        obj.roll_counter = obj.make_roll_counter()
+        obj.timesets_used_by_solves = obj.get_period_timesets(db=db)
+        obj.invest_periods = obj.periods_to_tuples(
+            db=db, cl="solve", par="invest_periods"
+        )
+        obj.realized_periods = obj.periods_to_tuples(
+            db=db, cl="solve", par="realized_periods"
+        )
+        obj.realized_invest_periods = obj.periods_to_tuples(
+            db=db, cl="solve", par="realized_invest_periods"
+        )
+        obj.fix_storage_periods = obj.periods_to_tuples(
+            db=db, cl="solve", par="fix_storage_periods"
+        )
+
+        return obj
+
+    @classmethod
+    def load_from_db_url(
+        cls,
+        db_url: str,
+        scenario: str,
+        logger: logging.Logger | None = None,
+    ) -> "SolveConfig":
+        """Convenience factory: open *db_url*, apply *scenario*, load.
+
+        Builds a short-lived :class:`spinedb_api.DatabaseMapping` with the
+        scenario filter applied, calls :meth:`load_from_db`, and closes
+        the DB.  Useful for tests / CLI entry points that don't already
+        own a session.
+        """
+        from spinedb_api import DatabaseMapping
+        from spinedb_api.filters.scenario_filter import (
+            apply_scenario_filter_to_subqueries,
+        )
+
+        if logger is None:
+            logger = logging.getLogger(f"flexpy.solve_config[{scenario}]")
+        url = str(db_url)
+        if not url.startswith("sqlite:") and not url.startswith("postgresql"):
+            url = f"sqlite:///{url}"
+        with DatabaseMapping(url) as db:
+            apply_scenario_filter_to_subqueries(db, scenario)
+            return cls.load_from_db(db, logger)
+
+    # ------------------------------------------------------------------
+    # Methods (1:1 port from ``flextoolrunner/solve_config.py``)
+    # ------------------------------------------------------------------
+
+    def make_roll_counter(self) -> dict[str, int]:
+        """Return a roll counter initialised to 0 for every rolling-window
+        solve.  Single-solve mode entries are intentionally absent from
+        the returned dict (NOT zero) so callers can distinguish ``not in``
+        from ``== 0`` semantics.
+
+        Mirrors ``flextoolrunner/solve_config.py:278-284``.
+        """
+        roll_counter_map: dict[str, int] = {}
+        for key, mode in list(self.solve_modes.items()):
+            if mode == "rolling_window":
+                roll_counter_map[key] = 0
+        return roll_counter_map
+
+    def get_period_timesets(self, db: "DatabaseMapping") -> defaultdict:
+        """Read ``period_timeset`` parameters for every active solve.
+
+        May call :meth:`duplicate_solve` when a solve carries a
+        2D-Map-shaped ``period_timeset`` parameter (one input solve fans
+        out into one solve per outer-Map key).
+
+        Mirrors ``flextoolrunner/solve_config.py:286-322``.
+        """
+        entities = db.find_entities(entity_class_name="solve")
+        params = db.find_parameter_values(
+            entity_class_name="solve",
+            parameter_definition_name="period_timeset",
+        )
+        timesets_used_by_solves: defaultdict = defaultdict(list)
+        solves_in_model = [
+            item
+            for sublist in (
+                list(self.model_solve.values())
+                + list(self.contains_solves.values())
+            )
+            for item in sublist
+        ]
+        for entity in entities:
+            if entity["name"] not in solves_in_model:
+                continue
+            for param in params:
+                if param["entity_name"] != entity["name"]:
+                    continue
+                param_value = api.from_database(param["value"], param["type"])
+                for i, _row in enumerate(param_value.indexes):
+                    if isinstance(param_value.values[i], api.Map):
+                        new_name = (
+                            param["entity_name"] + "_" + param_value.indexes[i]
+                        )
+                        self.duplicate_solve(param["entity_name"], new_name)
+                        timesets_used_by_solves[new_name].append(
+                            (
+                                param_value.values[i].indexes[i],
+                                param_value.values[i].values[i],
+                            )
+                        )
+                    else:
+                        timesets_used_by_solves[param["entity_name"]].append(
+                            (
+                                param_value.indexes[i],
+                                param_value.values[i],
+                            )
+                        )
+        return timesets_used_by_solves
+
+    def duplicate_solve(
+        self,
+        old_solve: str,
+        new_name: str,
+        update_model_solves: bool = True,
+    ) -> None:
+        """Duplicate every solve-level dict entry from *old_solve* under
+        *new_name*.
+
+        Mutates 15 sibling defaultdicts (and ``model_solve`` when
+        *update_model_solves* is set) so downstream readers can address
+        the duplicated solve transparently.  See
+        ``flextoolrunner/solve_config.py:324-364``.
+
+        ``update_model_solves=False`` is used by the rolling builder
+        (Γ.8.C) where roll-named sub-solves should NOT replace their
+        parent in ``model_solve``.
+        """
+        if (
+            new_name not in self.model_solve.values()
+            and new_name not in self.contains_solves.values()
+        ):
+            dup_map_list = [
+                self.solve_modes,
+                self.roll_counter,
+                self.highs.presolve,
+                self.highs.method,
+                self.highs.parallel,
+                self.solve_period_years_represented,
+                self.solver_settings.solvers,
+                self.solver_settings.precommand,
+                self.solver_settings.arguments,
+                self.contains_solves,
+                self.rolling_times,
+                self.realized_periods,
+                self.realized_invest_periods,
+                self.invest_periods,
+                self.fix_storage_periods,
+            ]
+            for dup_map in dup_map_list:
+                if old_solve in dup_map.keys():
+                    dup_map[new_name] = dup_map[old_solve]
+            if update_model_solves:
+                for model, solves in list(self.model_solve.items()):
+                    if old_solve in solves:
+                        solves.remove(old_solve)
+                    if new_name not in solves:
+                        solves.append(new_name)
+                    self.model_solve[model] = solves
+
+    def periods_to_tuples(
+        self,
+        db: "DatabaseMapping",
+        cl: str,
+        par: str,
+    ) -> defaultdict:
+        """Read period-shaped solve parameters as ``[(p_from, p_in), …]``.
+
+        For 1D Array values (e.g. ``realized_periods=["p2020","p2025"]``)
+        each element ``p`` becomes ``(p, p)``.
+
+        For 2D Map values (e.g. ``invest_periods`` under the
+        ``invest_twoYears4Times_5weeks`` scenario where one solve ladders
+        an "invest in p2020 covers p2020+p2025" pattern) the outer Map
+        triggers :meth:`duplicate_solve` and per-(outer, inner) tuples
+        flow into the new solve's entry.  Inner shape is required to be
+        Map-of-scalars; mixed 1D/2D with the same name raises.
+
+        Mirrors ``flextoolrunner/solve_config.py:366-426``.
+        """
+        entities = db.find_entities(entity_class_name=cl)
+        params = db.find_parameter_values(
+            entity_class_name=cl,
+            parameter_definition_name=par,
+        )
+        result_dict: defaultdict = defaultdict(list)
+        for entity in entities:
+            for param in params:
+                if param["entity_name"] != entity["name"]:
+                    continue
+                param_value = api.from_database(param["value"], param["type"])
+                for i, row in enumerate(param_value.values):
+                    if isinstance(param_value.values[i], api.Map):
+                        # 2D Map: outer index → inner Map of (p, "yes")-ish.
+                        for j, _row2 in enumerate(row.values):
+                            if isinstance(param_value.values[j], api.Map):
+                                new_name = (
+                                    param["entity_name"]
+                                    + "_"
+                                    + param_value.indexes[i]
+                                )
+                                self.duplicate_solve(
+                                    param["entity_name"], new_name
+                                )
+                                result_dict[new_name].append(
+                                    (
+                                        param_value.indexes[i],
+                                        param_value.values[i].indexes[j],
+                                    )
+                                )
+                                # Re-shape ``timesets_used_by_solves`` for
+                                # the duplicated solve: keep only entries
+                                # whose period matches the inner index.
+                                new_period_timeset_list = []
+                                for solve, period__timeset_list in list(
+                                    self.timesets_used_by_solves.items()
+                                ):
+                                    if solve != param["entity_name"]:
+                                        continue
+                                    for period__timeset in period__timeset_list:
+                                        if (
+                                            period__timeset[0]
+                                            == param_value.values[i].indexes[j]
+                                        ):
+                                            new_period_timeset_list.append(
+                                                period__timeset
+                                            )
+                                if (
+                                    new_name
+                                    not in self.timesets_used_by_solves.keys()
+                                ):
+                                    self.timesets_used_by_solves[new_name] = (
+                                        new_period_timeset_list
+                                    )
+                                else:
+                                    for item in new_period_timeset_list:
+                                        if (
+                                            item
+                                            not in self.timesets_used_by_solves[
+                                                new_name
+                                            ]
+                                        ):
+                                            self.timesets_used_by_solves[
+                                                new_name
+                                            ].append(item)
+                            else:
+                                raise FlexToolConfigError(
+                                    "periods_to_tuple function handles only "
+                                    f"arrays or 2d maps: {entity}, {param}"
+                                )
+                    else:
+                        result_dict[param["entity_name"]].append((row, row))
+        return result_dict
+
+
+__all__ = [
+    "DictMode",
+    "HiGHSConfig",
+    "SolverSettings",
+    "SolveConfig",
+    "get_single_entities",
+    "params_to_dict",
+]
