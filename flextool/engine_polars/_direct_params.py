@@ -484,6 +484,793 @@ def p_commodity_unitsize_from_source(source: "InputSource") -> Param | None:
     return _entity_scalar_explicit(source, "commodity", "unitsize", "c")
 
 
+# ---------------------------------------------------------------------------
+# Δ.4b — third wave Direct Param helpers.
+#
+# Patterns covered below:
+#
+#   1. Indexed (1d_map) entity-class scalars — e.g. ``unit.invest_max_period``
+#      (``ed_invest_max_period``) which unrolls to ``[entity, period, value]``.
+#   2. Indexed Map(period→time) parameters — e.g. ``node.availability``
+#      (``p_node_availability``) which unrolls to ``[entity, period, t,
+#      value]``.
+#   3. Per-(entity, side) relationship scalars — e.g.
+#      ``unit__inputNode.ramp_speed_up`` (``p_ramp_speed_up_source``).
+#   4. Multi-class union 1d_map — e.g. invest/divest period caps spanning
+#      ``unit`` ∪ ``node`` ∪ ``connection``.
+#   5. Multi-class union Map — e.g. ``other_operational_cost`` for var-cost.
+#
+# All helpers honour the CSV path's "drop zero rows" + "explicit rows
+# only" semantics — failing loudly if the underlying parameter shape
+# doesn't match the expected schema.
+
+def _filter_param_by_periods(p: Param | None,
+                                period_filter: pl.DataFrame | None
+                                ) -> Param | None:
+    """If ``period_filter`` is non-empty, restrict ``p.frame`` to rows
+    whose ``d`` column is in ``period_filter['d'].unique()``.  Returns
+    ``None`` when no rows survive (or when input is None).
+
+    When the param has both ``d`` and ``t`` index columns AND the
+    ``period_filter`` carries both ``d`` and ``t`` (i.e. it's the
+    ``dt`` frame), the join is on the (d, t) pair — mirroring the CSV
+    path's `solve_data/pdtNode.csv inner-join with steps_in_use`
+    semantic.  Otherwise we fall back to a period-only restriction.
+    """
+    if p is None or period_filter is None or period_filter.height == 0:
+        return p
+    fr = p.frame
+    if "d" not in fr.columns:
+        return p
+    pf_cols = set(period_filter.columns)
+    if "t" in fr.columns and {"d", "t"}.issubset(pf_cols):
+        keep = period_filter.select("d", "t").unique()
+        out = fr.lazy().join(keep.lazy(), on=["d", "t"], how="inner").collect()
+    else:
+        keep = period_filter.select("d").unique()
+        out = fr.lazy().join(keep.lazy(), on="d", how="inner").collect()
+    if out.height == 0:
+        return None
+    return Param(p.dims, out)
+
+
+def _entity_period_scalar(source: "InputSource", entity_class: str,
+                            parameter_name: str,
+                            entity_dim: str,
+                            *,
+                            filter_zero: bool = False,
+                            filter_null: bool = True,
+                            period_filter: pl.DataFrame | None = None
+                            ) -> Param | None:
+    """Return ``Param((entity_dim, "d"), [<entity_dim>, d, value])`` for a
+    ``1d_map(period)`` parameter on the given entity class.
+
+    Mirrors the CSV path's slice of ``pdGroup.csv`` / ``pdProcess.csv``
+    style files: explicit rows only, optionally filtering out zero /
+    null values.  Returns ``None`` when no rows survive.
+
+    ``period_filter``: optional ``[d]`` frame restricting the output to
+    a subset of periods (mirrors flextool preprocessing's per-solve
+    period filter — Spine ``invest_max_period`` / ``co2_max_period``
+    Maps cover ALL declared periods, but the CSV path's
+    ``pd_group.csv`` etc. is pre-filtered to the active solve's
+    periods).  Pass ``flex_data.dt`` (already restricted to the active
+    solve) to mirror that semantic.
+    """
+    try:
+        df = source.parameter_explicit(entity_class, parameter_name)
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter(entity_class, parameter_name)
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    cols = df.columns
+    if "period" not in cols or "value" not in cols:
+        return None
+    lf = df.lazy().rename({"name": entity_dim, "period": "d"})
+    if filter_null:
+        lf = lf.filter(pl.col("value").is_not_null())
+    if filter_zero:
+        lf = lf.filter(pl.col("value") != 0.0)
+    if period_filter is not None and period_filter.height > 0:
+        lf = lf.join(period_filter.lazy().select("d").unique(), on="d",
+                       how="inner")
+    out = lf.select(entity_dim, "d", "value").collect()
+    if out.height == 0:
+        return None
+    return Param((entity_dim, "d"), out.lazy())
+
+
+def _entity_period_time_param(source: "InputSource", entity_class: str,
+                                parameter_name: str,
+                                entity_dim: str,
+                                *,
+                                filter_zero: bool = False,
+                                period_filter: pl.DataFrame | None = None
+                                ) -> Param | None:
+    """Return ``Param((entity_dim, "d", "t"), [...])`` for a
+    ``Map(period→time)`` parameter.  CSV slice of ``pdtNode.csv`` /
+    ``pdtCommodity.csv`` / ``pdtGroup.csv`` files.
+
+    ``period_filter`` restricts the output to a subset of periods (per
+    the active solve), mirroring CSV preprocessing.
+    """
+    try:
+        df = source.parameter_explicit(entity_class, parameter_name)
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter(entity_class, parameter_name)
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    cols = df.columns
+    if "period" not in cols or "t" not in cols or "value" not in cols:
+        return None
+    lf = (df.lazy()
+            .rename({"name": entity_dim, "period": "d"})
+            .filter(pl.col("value").is_not_null()))
+    if filter_zero:
+        lf = lf.filter(pl.col("value") != 0.0)
+    if period_filter is not None and period_filter.height > 0:
+        lf = lf.join(period_filter.lazy().select("d").unique(), on="d",
+                       how="inner")
+    out = lf.select(entity_dim, "d", "t", "value").collect()
+    if out.height == 0:
+        return None
+    return Param((entity_dim, "d", "t"), out.lazy())
+
+
+# §5.14 — group scalars sliced from input/p_group.csv
+def _g_scalar(source: "InputSource", parameter_name: str,
+                *, filter_zero: bool = True) -> Param | None:
+    """Group scalar Param ``Param(("g",), [g, value])``, dropping zero
+    rows by default (mirrors ``_slice_pgroup``'s ``!= 0`` filter).
+    """
+    try:
+        df = source.parameter_explicit("group", parameter_name)
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter("group", parameter_name)
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    if "value" not in df.columns:
+        return None
+    lf = df.lazy().rename({"name": "g"}).filter(pl.col("value").is_not_null())
+    if filter_zero:
+        lf = lf.filter(pl.col("value") != 0.0)
+    # Indexed (period) shapes don't belong here — guard.
+    if "period" in df.columns or "t" in df.columns:
+        return None
+    out = lf.select("g", "value").collect()
+    if out.height == 0:
+        return None
+    return Param(("g",), out.lazy())
+
+
+# §1.16 — pdGroup_* (1d_map period) — dropping zeros and nulls
+def pdGroup_capacity_margin_from_source(source: "InputSource") -> Param | None:
+    """``group.capacity_margin`` 1d_map(period) → ``Param(("g","d"))``.
+    CSV path drops zero rows; we mirror.
+    """
+    return _entity_period_scalar(source, "group", "capacity_margin", "g",
+                                    filter_zero=True)
+
+
+def pdGroup_penalty_capacity_margin_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "penalty_capacity_margin", "g",
+                                    filter_zero=True)
+
+
+def pdGroup_inertia_limit_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "inertia_limit", "g",
+                                    filter_zero=True)
+
+
+def pdGroup_penalty_inertia_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "penalty_inertia", "g",
+                                    filter_zero=True)
+
+
+def pdGroup_non_synchronous_limit_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "non_synchronous_limit", "g",
+                                    filter_zero=True)
+
+
+def pdGroup_penalty_non_synchronous_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "penalty_non_synchronous", "g",
+                                    filter_zero=True)
+
+
+# §1.16 — group invest/divest 1d_map(period) — drop zeros to match CSV
+def p_group_invest_max_period_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "invest_max_period", "g",
+                                    filter_zero=True)
+
+
+def p_group_invest_min_period_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "invest_min_period", "g",
+                                    filter_zero=True)
+
+
+def p_group_retire_max_period_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "retire_max_period", "g",
+                                    filter_zero=True)
+
+
+def p_group_retire_min_period_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "retire_min_period", "g",
+                                    filter_zero=True)
+
+
+def pd_max_cumulative_flow_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "max_cumulative_flow", "g",
+                                    filter_zero=True)
+
+
+def pd_min_cumulative_flow_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_scalar(source, "group", "min_cumulative_flow", "g",
+                                    filter_zero=True)
+
+
+# §1.16 — group scalar Direct Params (no period dimension)
+def p_group_invest_max_total_from_source(source: "InputSource") -> Param | None:
+    return _g_scalar(source, "invest_max_total")
+
+
+def p_group_invest_min_total_from_source(source: "InputSource") -> Param | None:
+    return _g_scalar(source, "invest_min_total")
+
+
+def p_group_retire_max_total_from_source(source: "InputSource") -> Param | None:
+    return _g_scalar(source, "retire_max_total")
+
+
+def p_group_retire_min_total_from_source(source: "InputSource") -> Param | None:
+    return _g_scalar(source, "retire_min_total")
+
+
+def p_group_invest_max_cumulative_from_source(source: "InputSource") -> Param | None:
+    return _g_scalar(source, "invest_max_cumulative")
+
+
+def p_group_invest_min_cumulative_from_source(source: "InputSource") -> Param | None:
+    return _g_scalar(source, "invest_min_cumulative")
+
+
+def p_group_max_cumulative_flow_from_source(source: "InputSource") -> Param | None:
+    return _g_scalar(source, "max_cumulative_flow")
+
+
+def p_group_min_cumulative_flow_from_source(source: "InputSource") -> Param | None:
+    return _g_scalar(source, "min_cumulative_flow")
+
+
+# §1.16 — pdtGroup (Map period→time) instant flow caps
+def pdt_max_instant_flow_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_time_param(source, "group", "max_instant_flow", "g",
+                                        filter_zero=True)
+
+
+def pdt_min_instant_flow_from_source(source: "InputSource") -> Param | None:
+    return _entity_period_time_param(source, "group", "min_instant_flow", "g",
+                                        filter_zero=True)
+
+
+# ---------------------------------------------------------------------------
+# Multi-class union helpers — params declared on each of unit/node/connection
+# (or unit/connection) and merged into one frame keyed on the generic
+# ``e`` (entity) or ``p`` (process) dim.
+
+def _e_period_param_union(source: "InputSource",
+                            parameter_name: str,
+                            *,
+                            classes: tuple[str, ...] = ("unit", "node",
+                                                          "connection"),
+                            filter_zero: bool = False,
+                            period_filter: pl.DataFrame | None = None
+                            ) -> Param | None:
+    """Union ``parameter_name`` across the supplied entity classes into a
+    single ``Param(("e", "d"), [...])`` frame.
+
+    ``period_filter`` restricts the output to a subset of periods (per
+    the active solve), mirroring flextool preprocessing.
+    """
+    parts: list[pl.LazyFrame] = []
+    for cls in classes:
+        try:
+            df = source.parameter_explicit(cls, parameter_name)
+        except (KeyError, AttributeError):
+            try:
+                df = source.parameter(cls, parameter_name)
+            except KeyError:
+                continue
+        if df is None or df.height == 0:
+            continue
+        cols = df.columns
+        if "period" not in cols or "value" not in cols:
+            continue
+        lf = (df.lazy()
+                .rename({"name": "e", "period": "d"})
+                .filter(pl.col("value").is_not_null()))
+        if filter_zero:
+            lf = lf.filter(pl.col("value") != 0.0)
+        parts.append(lf.select("e", "d", "value"))
+    if not parts:
+        return None
+    out = pl.concat(parts)
+    if period_filter is not None and period_filter.height > 0:
+        out = out.join(period_filter.lazy().select("d").unique(), on="d",
+                          how="inner")
+    out = out.collect()
+    if out.height == 0:
+        return None
+    return Param(("e", "d"), out.lazy().sort("e", "d"))
+
+
+def ed_invest_max_period_from_source(source: "InputSource") -> Param | None:
+    """``unit/node/connection.invest_max_period`` 1d_map(period) →
+    ``Param(("e", "d"))``.  CSV path keeps zero rows (per
+    ``_read_period_cap``); we preserve that.
+    """
+    return _e_period_param_union(source, "invest_max_period",
+                                    filter_zero=False)
+
+
+def ed_divest_max_period_from_source(source: "InputSource") -> Param | None:
+    return _e_period_param_union(source, "retire_max_period",
+                                    filter_zero=False)
+
+
+def ed_invest_min_period_from_source(source: "InputSource") -> Param | None:
+    """CSV path drops zero rows (``_read_e_d_param``)."""
+    return _e_period_param_union(source, "invest_min_period",
+                                    filter_zero=True)
+
+
+def ed_divest_min_period_from_source(source: "InputSource") -> Param | None:
+    return _e_period_param_union(source, "retire_min_period",
+                                    filter_zero=True)
+
+
+def ed_cumulative_max_capacity_from_source(source: "InputSource") -> Param | None:
+    return _e_period_param_union(source, "cumulative_max_capacity",
+                                    filter_zero=True)
+
+
+def ed_cumulative_min_capacity_from_source(source: "InputSource") -> Param | None:
+    return _e_period_param_union(source, "cumulative_min_capacity",
+                                    filter_zero=True)
+
+
+# ---------------------------------------------------------------------------
+# §1.9, §1.14 — relationship scalars (sink / source side params).
+#
+# CSV path (``_read_p_process_side``) reads ``input/p_process_sink.csv`` /
+# ``input/p_process_source.csv`` and filters ``value != 0``.  We mirror.
+
+def _p_side_scalar(source: "InputSource", entity_class: str,
+                     parameter_name: str, side_dim: str,
+                     entity_col: str = "unit",
+                     *,
+                     filter_zero: bool = True) -> Param | None:
+    """``unit__inputNode`` / ``unit__outputNode`` per-(p, side) scalar.
+    ``entity_col`` is the Spine column name for the unit ('unit' or
+    'connection'); ``side_dim`` is 'source' or 'sink'.
+    """
+    try:
+        df = source.parameter_explicit(entity_class, parameter_name)
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter(entity_class, parameter_name)
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    if "value" not in df.columns or entity_col not in df.columns \
+            or "node" not in df.columns:
+        return None
+    lf = (df.lazy()
+            .rename({entity_col: "p", "node": side_dim})
+            .filter(pl.col("value").is_not_null()))
+    if filter_zero:
+        lf = lf.filter(pl.col("value") != 0.0)
+    out = lf.select("p", side_dim, "value").collect()
+    if out.height == 0:
+        return None
+    return Param(("p", side_dim), out.lazy())
+
+
+# ramp_speed (§1.9) — relationship scalar, CSV filters zero
+def p_ramp_speed_up_sink_from_source(source: "InputSource") -> Param | None:
+    return _p_side_scalar(source, "unit__outputNode", "ramp_speed_up", "sink")
+
+
+def p_ramp_speed_down_sink_from_source(source: "InputSource") -> Param | None:
+    return _p_side_scalar(source, "unit__outputNode", "ramp_speed_down", "sink")
+
+
+def p_ramp_speed_up_source_from_source(source: "InputSource") -> Param | None:
+    return _p_side_scalar(source, "unit__inputNode", "ramp_speed_up", "source")
+
+
+def p_ramp_speed_down_source_from_source(source: "InputSource") -> Param | None:
+    return _p_side_scalar(source, "unit__inputNode", "ramp_speed_down", "source")
+
+
+# inertia_constant (§1.14) — relationship scalar, CSV filters zero
+def p_process_sink_inertia_constant_from_source(source: "InputSource") -> Param | None:
+    return _p_side_scalar(source, "unit__outputNode", "inertia_constant", "sink")
+
+
+def p_process_source_inertia_constant_from_source(source: "InputSource") -> Param | None:
+    return _p_side_scalar(source, "unit__inputNode", "inertia_constant", "source")
+
+
+# ---------------------------------------------------------------------------
+# §1.10 — UC: startup_cost (1d_map period)
+
+def p_startup_cost_from_source(source: "InputSource") -> Param | None:
+    """``unit.startup_cost`` 1d_map(period) → ``Param(("p", "d"))``.
+
+    CSV path filters zero rows (``_load_online``: ``filter(value != 0)``).
+    """
+    return _entity_period_scalar(source, "unit", "startup_cost", "p",
+                                    filter_zero=True)
+
+
+# ---------------------------------------------------------------------------
+# §1.11 — Storage: Map(period→time) parameters
+
+def p_node_availability_from_source(source: "InputSource") -> Param | None:
+    """``node.availability`` Map(period→time) → ``Param(("n", "d", "t"))``.
+
+    CSV path slices ``pdtNode.csv`` and filters to nodeState entities at
+    the apply site; the helper here returns ALL availability rows.  The
+    nodeState filter is applied downstream by ``_load_storage`` — the
+    DB-direct path receives the unfiltered Param and the same filter
+    runs at the consumer (no parity divergence on already-filtered
+    fixtures: every node referenced by the parameter is a node).
+    """
+    return _entity_period_time_param(source, "node", "availability", "n")
+
+
+def p_storage_state_reference_value_from_source(source: "InputSource") -> Param | None:
+    """``node.storage_state_reference_value`` Map(period→time) →
+    ``Param(("n", "d", "t"))``.
+
+    CSV path (``_load_storage``) gates on ``use_reference_value`` set;
+    the gate stays on the consumer side.
+    """
+    return _entity_period_time_param(source, "node",
+                                        "storage_state_reference_value", "n")
+
+
+# ---------------------------------------------------------------------------
+# §1.4 — CO2: group price + period cap
+
+def p_co2_price_from_source(source: "InputSource") -> Param | None:
+    """``group.co2_price`` Map(period→time) → ``Param(("g", "d", "t"))``.
+
+    CSV path slices ``pdtGroup.csv`` (param='co2_price').  None default
+    on the schema — explicit rows only.
+    """
+    return _entity_period_time_param(source, "group", "co2_price", "g")
+
+
+def p_co2_max_period_from_source(source: "InputSource") -> Param | None:
+    """``group.co2_max_period`` 1d_map(period) → ``Param(("g", "d"))``.
+
+    CSV path keys this off ``inp/pd_group.csv`` slice.  None default on
+    the schema; the CSV path emits when at least one (g, d) row.
+
+    Gate-coupled note: at the consumer site this Param is only emitted
+    into the LP when the (g, c, n) join with ``commodity_node_co2`` ×
+    ``group__node`` is non-empty (see ``_load_co2_cap``).  We return the
+    Param unconditionally — the consumer decides whether to wire it.
+    """
+    return _entity_period_scalar(source, "group", "co2_max_period", "g")
+
+
+# ---------------------------------------------------------------------------
+# §1.12 — Variable cost (other_operational_cost) Map(period→time)
+
+def p_pdt_varCost_source_from_source(source: "InputSource") -> Param | None:
+    """``unit__inputNode.other_operational_cost`` Map(period→time) →
+    ``Param(("p", "source", "d", "t"))``.  CSV path filters zero.
+    """
+    try:
+        df = source.parameter_explicit("unit__inputNode", "other_operational_cost")
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter("unit__inputNode", "other_operational_cost")
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    cols = df.columns
+    if not {"unit", "node", "period", "t", "value"}.issubset(cols):
+        return None
+    lf = (df.lazy()
+            .rename({"unit": "p", "node": "source", "period": "d"})
+            .filter(pl.col("value").is_not_null())
+            .filter(pl.col("value") != 0.0))
+    out = lf.select("p", "source", "d", "t", "value").collect()
+    if out.height == 0:
+        return None
+    return Param(("p", "source", "d", "t"), out.lazy())
+
+
+def p_pdt_varCost_sink_from_source(source: "InputSource") -> Param | None:
+    """``unit__outputNode.other_operational_cost`` Map(period→time) →
+    ``Param(("p", "sink", "d", "t"))``.
+    """
+    try:
+        df = source.parameter_explicit("unit__outputNode", "other_operational_cost")
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter("unit__outputNode", "other_operational_cost")
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    cols = df.columns
+    if not {"unit", "node", "period", "t", "value"}.issubset(cols):
+        return None
+    lf = (df.lazy()
+            .rename({"unit": "p", "node": "sink", "period": "d"})
+            .filter(pl.col("value").is_not_null())
+            .filter(pl.col("value") != 0.0))
+    out = lf.select("p", "sink", "d", "t", "value").collect()
+    if out.height == 0:
+        return None
+    return Param(("p", "sink", "d", "t"), out.lazy())
+
+
+def p_pdt_varCost_process_from_source(source: "InputSource") -> Param | None:
+    """``unit/connection.other_operational_cost`` Map(period→time) →
+    ``Param(("p", "d", "t"))``.  Union across the two object classes.
+    """
+    parts: list[pl.LazyFrame] = []
+    for cls in ("unit", "connection"):
+        try:
+            df = source.parameter_explicit(cls, "other_operational_cost")
+        except (KeyError, AttributeError):
+            try:
+                df = source.parameter(cls, "other_operational_cost")
+            except KeyError:
+                continue
+        if df is None or df.height == 0:
+            continue
+        cols = df.columns
+        if not {"name", "period", "t", "value"}.issubset(cols):
+            continue
+        parts.append(df.lazy()
+                       .rename({"name": "p", "period": "d"})
+                       .filter(pl.col("value").is_not_null())
+                       .filter(pl.col("value") != 0.0)
+                       .select("p", "d", "t", "value"))
+    if not parts:
+        return None
+    out = pl.concat(parts).collect()
+    if out.height == 0:
+        return None
+    return Param(("p", "d", "t"), out.lazy().sort("p", "d", "t"))
+
+
+# ---------------------------------------------------------------------------
+# §1.15 — Reserves
+
+def pdtReserve_upDown_group_reservation_from_source(source: "InputSource") -> Param | None:
+    """``reserve__upDown__group.reservation`` Map(period→time) →
+    ``Param(("r", "ud", "g", "d", "t"))``.  Default 0.0 (schema) — CSV
+    path emits explicit rows only.
+    """
+    try:
+        df = source.parameter_explicit("reserve__upDown__group", "reservation")
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter("reserve__upDown__group", "reservation")
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    cols = df.columns
+    needed = {"reserve", "upDown", "group", "period", "t", "value"}
+    if not needed.issubset(cols):
+        return None
+    lf = (df.lazy()
+            .rename({"reserve": "r", "upDown": "ud",
+                      "group": "g", "period": "d"})
+            .filter(pl.col("value").is_not_null()))
+    out = lf.select("r", "ud", "g", "d", "t", "value").collect()
+    if out.height == 0:
+        return None
+    return Param(("r", "ud", "g", "d", "t"), out.lazy())
+
+
+def p_reserve_upDown_group_penalty_reserve_from_source(source: "InputSource") -> Param | None:
+    """``reserve__upDown__group.penalty_reserve`` scalar →
+    ``Param(("r", "ud", "g"))``.  None default — explicit rows only.
+    """
+    try:
+        df = source.parameter_explicit("reserve__upDown__group", "penalty_reserve")
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter("reserve__upDown__group", "penalty_reserve")
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    cols = df.columns
+    if not {"reserve", "upDown", "group", "value"}.issubset(cols):
+        return None
+    lf = (df.lazy()
+            .rename({"reserve": "r", "upDown": "ud", "group": "g"})
+            .filter(pl.col("value").is_not_null()))
+    out = lf.select("r", "ud", "g", "value").collect()
+    if out.height == 0:
+        return None
+    return Param(("r", "ud", "g"), out.lazy())
+
+
+def _process_reserve_node_param(source: "InputSource",
+                                  parameter_name: str) -> Param | None:
+    """Union ``reserve__upDown__unit__node`` ∪
+    ``reserve__upDown__connection__node`` for a per-(p, r, ud, n) scalar.
+
+    CSV path (``_read_p_process_reserve_node`` style) emits explicit rows
+    only; we preserve via ``parameter_explicit``.
+    """
+    parts: list[pl.LazyFrame] = []
+    for cls, ent in (("reserve__upDown__unit__node", "unit"),
+                       ("reserve__upDown__connection__node", "connection")):
+        try:
+            df = source.parameter_explicit(cls, parameter_name)
+        except (KeyError, AttributeError):
+            try:
+                df = source.parameter(cls, parameter_name)
+            except KeyError:
+                continue
+        if df is None or df.height == 0:
+            continue
+        cols = df.columns
+        if not {"reserve", "upDown", ent, "node", "value"}.issubset(cols):
+            continue
+        parts.append(df.lazy()
+                       .rename({ent: "p", "reserve": "r",
+                                 "upDown": "ud", "node": "n"})
+                       .filter(pl.col("value").is_not_null())
+                       .select("p", "r", "ud", "n", "value"))
+    if not parts:
+        return None
+    out = pl.concat(parts).collect()
+    if out.height == 0:
+        return None
+    return Param(("p", "r", "ud", "n"), out.lazy().sort("p", "r", "ud", "n"))
+
+
+def p_process_reserve_upDown_node_reliability_from_source(source: "InputSource") -> Param | None:
+    """``reserve__upDown__{unit,connection}__node.reliability`` →
+    ``Param(("p", "r", "ud", "n"))``.  Default 1.0 (schema) — broadcast.
+    The CSV path uses the broadcast default; here we delegate to
+    ``parameter`` (not ``parameter_explicit``) so the default-fill kicks
+    in.  Result is the same shape as the CSV path's
+    ``Param(("p", "r", "ud", "n"))``.
+    """
+    parts: list[pl.LazyFrame] = []
+    for cls, ent in (("reserve__upDown__unit__node", "unit"),
+                       ("reserve__upDown__connection__node", "connection")):
+        try:
+            df = source.parameter(cls, parameter_name="reliability")
+        except KeyError:
+            continue
+        if df is None or df.height == 0:
+            continue
+        cols = df.columns
+        if not {"reserve", "upDown", ent, "node", "value"}.issubset(cols):
+            continue
+        parts.append(df.lazy()
+                       .rename({ent: "p", "reserve": "r",
+                                 "upDown": "ud", "node": "n"})
+                       .filter(pl.col("value").is_not_null())
+                       .select("p", "r", "ud", "n", "value"))
+    if not parts:
+        return None
+    out = pl.concat(parts).collect()
+    if out.height == 0:
+        return None
+    return Param(("p", "r", "ud", "n"), out.lazy().sort("p", "r", "ud", "n"))
+
+
+def p_process_reserve_upDown_node_max_share_from_source(source: "InputSource") -> Param | None:
+    return _process_reserve_node_param(source, "max_share")
+
+
+def p_process_reserve_upDown_node_large_failure_ratio_value_from_source(
+    source: "InputSource") -> Param | None:
+    return _process_reserve_node_param(source, "large_failure_ratio")
+
+
+def p_process_reserve_upDown_node_increase_reserve_ratio_value_from_source(
+    source: "InputSource") -> Param | None:
+    return _process_reserve_node_param(source, "increase_reserve_ratio")
+
+
+# ---------------------------------------------------------------------------
+# §1.17 — Delayed processes (process_delayed__duration)
+
+def process_delayed__duration_from_source(source: "InputSource") -> pl.DataFrame | None:
+    """``unit/connection.delay`` 1d_map(td) → ``[p, td]`` set frame.
+
+    CSV path (``_delay.load_data``) reads ``solve_data/process_delayed__duration.csv``
+    and returns the (p, td) keys as a DataFrame (not a Param — it's a
+    set, since the duration values are 1.0 or absent).
+
+    Note: this is a *set* in flexpy's FlexData, not a Param — return
+    type matches the field declared on FlexData.
+    """
+    parts: list[pl.LazyFrame] = []
+    for cls in ("unit", "connection"):
+        try:
+            df = source.parameter_explicit(cls, "delay")
+        except (KeyError, AttributeError):
+            try:
+                df = source.parameter(cls, "delay")
+            except KeyError:
+                continue
+        if df is None or df.height == 0:
+            continue
+        cols = df.columns
+        if "name" not in cols:
+            continue
+        # 1d_map(td) — the index column may be 'td' or default 'period'/'i'.
+        # Detect by elimination: any column not in {name, value} is the index.
+        idx_cols = [c for c in cols if c not in ("name", "value")]
+        if len(idx_cols) != 1:
+            continue
+        idx = idx_cols[0]
+        lf = (df.lazy()
+                .rename({"name": "p", idx: "td"})
+                .filter(pl.col("value").is_not_null())
+                .filter(pl.col("value") != 0.0))
+        parts.append(lf.select("p", "td"))
+    if not parts:
+        return None
+    out = pl.concat(parts).unique().collect()
+    if out.height == 0:
+        return None
+    return out.sort("p", "td")
+
+
+# ---------------------------------------------------------------------------
+# Penalty / availability scalars (§1.2 / §1.7) — schema-default broadcast.
+#
+# These differ from the "explicit only" pattern: schema sentinel default
+# (e.g. 10000.0 for penalty_up) means the CSV path receives one row per
+# entity with the broadcast default.  ``SpineDbReader.parameter()``
+# already broadcasts when ``default is not None``; we just rename.
+
+def _entity_scalar_with_default(source: "InputSource", entity_class: str,
+                                  parameter_name: str,
+                                  dim: str) -> Param | None:
+    """Variant of :func:`_entity_scalar_explicit` that uses
+    :meth:`parameter` (default-broadcast) instead of ``parameter_explicit``.
+    """
+    try:
+        df = source.parameter(entity_class, parameter_name)
+    except KeyError:
+        return None
+    if df is None or df.height == 0:
+        return None
+    return Param((dim,),
+                 df.lazy().rename({"name": dim}).select(dim, "value"))
+
+
 def apply_direct_params(source: "InputSource",
                           flex_data: object) -> None:
     """Apply the DB-direct construction for the Direct Param wave,
@@ -568,3 +1355,151 @@ def apply_direct_params(source: "InputSource",
     p_cu = p_commodity_unitsize_from_source(source)
     if p_cu is not None:
         flex_data.p_commodity_unitsize = p_cu
+
+    # ─── Δ.4b — period filter (mirrors flextool's per-solve preprocessing) ─
+    # Spine Map(period→…) parameters cover ALL declared periods, but the
+    # CSV path's pd_group.csv / pdtNode.csv etc. is pre-filtered to the
+    # active solve's periods via flextool's preprocessing.  We mirror by
+    # restricting period-keyed Params to the active dt's periods.
+    dt = getattr(flex_data, "dt", None)
+
+    # ─── Δ.4b — group 1d_map(period) (capacity_margin / inertia / nonSync) ─
+    for fn, field in (
+        (pdGroup_capacity_margin_from_source, "pdGroup_capacity_margin"),
+        (pdGroup_penalty_capacity_margin_from_source,
+            "pdGroup_penalty_capacity_margin"),
+        (pdGroup_inertia_limit_from_source, "pdGroup_inertia_limit"),
+        (pdGroup_penalty_inertia_from_source, "pdGroup_penalty_inertia"),
+        (pdGroup_non_synchronous_limit_from_source,
+            "pdGroup_non_synchronous_limit"),
+        (pdGroup_penalty_non_synchronous_from_source,
+            "pdGroup_penalty_non_synchronous"),
+    ):
+        v = _filter_param_by_periods(fn(source), dt)
+        if v is not None:
+            setattr(flex_data, field, v)
+
+    # ─── Δ.4b — group 1d_map(period) (invest/divest/cumulative) ──────────
+    for fn, field in (
+        (p_group_invest_max_period_from_source, "p_group_invest_max_period"),
+        (p_group_invest_min_period_from_source, "p_group_invest_min_period"),
+        (p_group_retire_max_period_from_source, "p_group_retire_max_period"),
+        (p_group_retire_min_period_from_source, "p_group_retire_min_period"),
+        (pd_max_cumulative_flow_from_source, "pd_max_cumulative_flow"),
+        (pd_min_cumulative_flow_from_source, "pd_min_cumulative_flow"),
+    ):
+        v = _filter_param_by_periods(fn(source), dt)
+        if v is not None:
+            setattr(flex_data, field, v)
+
+    # ─── Δ.4b — group scalar (no period) ─────────────────────────────────
+    for fn, field in (
+        (p_group_invest_max_total_from_source, "p_group_invest_max_total"),
+        (p_group_invest_min_total_from_source, "p_group_invest_min_total"),
+        (p_group_retire_max_total_from_source, "p_group_retire_max_total"),
+        (p_group_retire_min_total_from_source, "p_group_retire_min_total"),
+        (p_group_invest_max_cumulative_from_source,
+            "p_group_invest_max_cumulative"),
+        (p_group_invest_min_cumulative_from_source,
+            "p_group_invest_min_cumulative"),
+        (p_group_max_cumulative_flow_from_source, "p_group_max_cumulative_flow"),
+        (p_group_min_cumulative_flow_from_source, "p_group_min_cumulative_flow"),
+    ):
+        v = fn(source)
+        if v is not None:
+            setattr(flex_data, field, v)
+
+    # ─── Δ.4b — group Map(period→time) instant flow caps ─────────────────
+    v = _filter_param_by_periods(pdt_max_instant_flow_from_source(source), dt)
+    if v is not None:
+        flex_data.pdt_max_instant_flow = v
+    v = _filter_param_by_periods(pdt_min_instant_flow_from_source(source), dt)
+    if v is not None:
+        flex_data.pdt_min_instant_flow = v
+
+    # ─── Δ.4b — multi-class union 1d_map(period): invest / divest ────────
+    for fn, field in (
+        (ed_invest_max_period_from_source, "ed_invest_max_period"),
+        (ed_divest_max_period_from_source, "ed_divest_max_period"),
+        (ed_invest_min_period_from_source, "ed_invest_min_period"),
+        (ed_divest_min_period_from_source, "ed_divest_min_period"),
+        (ed_cumulative_max_capacity_from_source, "ed_cumulative_max_capacity"),
+        (ed_cumulative_min_capacity_from_source, "ed_cumulative_min_capacity"),
+    ):
+        v = _filter_param_by_periods(fn(source), dt)
+        if v is not None:
+            setattr(flex_data, field, v)
+
+    # ─── Δ.4b — relationship scalars (ramp + inertia, sink/source) ───────
+    for fn, field in (
+        (p_ramp_speed_up_sink_from_source, "p_ramp_speed_up_sink"),
+        (p_ramp_speed_down_sink_from_source, "p_ramp_speed_down_sink"),
+        (p_ramp_speed_up_source_from_source, "p_ramp_speed_up_source"),
+        (p_ramp_speed_down_source_from_source, "p_ramp_speed_down_source"),
+        (p_process_sink_inertia_constant_from_source,
+            "p_process_sink_inertia_constant"),
+        (p_process_source_inertia_constant_from_source,
+            "p_process_source_inertia_constant"),
+    ):
+        v = fn(source)
+        if v is not None:
+            setattr(flex_data, field, v)
+
+    # ─── Δ.4b — UC: startup_cost (1d_map period) ─────────────────────────
+    v = _filter_param_by_periods(p_startup_cost_from_source(source), dt)
+    if v is not None:
+        flex_data.p_startup_cost = v
+
+    # ─── Δ.4b — storage Map(period→time) ─────────────────────────────────
+    v = _filter_param_by_periods(p_node_availability_from_source(source), dt)
+    if v is not None:
+        flex_data.p_node_availability = v
+    v = _filter_param_by_periods(
+        p_storage_state_reference_value_from_source(source), dt)
+    if v is not None:
+        flex_data.p_storage_state_reference_value = v
+
+    # ─── Δ.4b — CO2 (price + cap) ────────────────────────────────────────
+    v = _filter_param_by_periods(p_co2_price_from_source(source), dt)
+    if v is not None:
+        flex_data.p_co2_price = v
+    v = _filter_param_by_periods(p_co2_max_period_from_source(source), dt)
+    if v is not None:
+        flex_data.p_co2_max_period = v
+
+    # ─── Δ.4b — variable cost (Map period→time) ──────────────────────────
+    v = _filter_param_by_periods(p_pdt_varCost_source_from_source(source), dt)
+    if v is not None:
+        flex_data.p_pdt_varCost_source = v
+    v = _filter_param_by_periods(p_pdt_varCost_sink_from_source(source), dt)
+    if v is not None:
+        flex_data.p_pdt_varCost_sink = v
+    v = _filter_param_by_periods(p_pdt_varCost_process_from_source(source), dt)
+    if v is not None:
+        flex_data.p_pdt_varCost_process = v
+
+    # ─── Δ.4b — reserves ─────────────────────────────────────────────────
+    v = _filter_param_by_periods(
+        pdtReserve_upDown_group_reservation_from_source(source), dt)
+    if v is not None:
+        flex_data.pdtReserve_upDown_group_reservation = v
+    v = p_reserve_upDown_group_penalty_reserve_from_source(source)
+    if v is not None:
+        flex_data.p_reserve_upDown_group_penalty_reserve = v
+    v = p_process_reserve_upDown_node_reliability_from_source(source)
+    if v is not None:
+        flex_data.p_process_reserve_upDown_node_reliability = v
+    v = p_process_reserve_upDown_node_max_share_from_source(source)
+    if v is not None:
+        flex_data.p_process_reserve_upDown_node_max_share = v
+    v = p_process_reserve_upDown_node_large_failure_ratio_value_from_source(source)
+    if v is not None:
+        flex_data.p_process_reserve_upDown_node_large_failure_ratio_value = v
+    v = p_process_reserve_upDown_node_increase_reserve_ratio_value_from_source(source)
+    if v is not None:
+        flex_data.p_process_reserve_upDown_node_increase_reserve_ratio_value = v
+
+    # ─── Δ.4b — delayed processes (set, not Param) ───────────────────────
+    v = process_delayed__duration_from_source(source)
+    if v is not None:
+        flex_data.process_delayed__duration = v
