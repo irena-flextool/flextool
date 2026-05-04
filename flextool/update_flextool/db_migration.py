@@ -1004,13 +1004,16 @@ def migrate_database(database_path, up_to: int | None = None):
                 ])
 
                 # 5. Remove old value lists now that nothing references them.
+                # Use find_parameter_value_lists (plural) so a DB rebuilt from
+                # a JSON fixture that pre-dates these legacy lists (e.g.
+                # tests.json was exported after v38, never carrying the v8-era
+                # output_node_flows list) doesn't blow up on a strict ``db.item``
+                # lookup that raises when the row is absent.
                 for vl_name in ("output_node_flows", "output_results"):
-                    vl = db.item(
-                        db.mapped_table("parameter_value_list"), name=vl_name,
-                    )
-                    if vl:
+                    vls = list(db.find_parameter_value_lists(name=vl_name))
+                    if vls:
                         try:
-                            db.remove_items("parameter_value_list", vl["id"])
+                            db.remove_items("parameter_value_list", vls[0]["id"])
                         except SpineDBAPIError:
                             pass
 
