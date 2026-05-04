@@ -1271,6 +1271,125 @@ def _entity_scalar_with_default(source: "InputSource", entity_class: str,
                  df.lazy().rename({"name": dim}).select(dim, "value"))
 
 
+# ---------------------------------------------------------------------------
+# §1.7, §1.3 — additional Map(period→time) scalars on object classes.
+
+def p_process_availability_from_source(source: "InputSource") -> Param | None:
+    """``unit/connection.availability`` Map(period→time) →
+    ``Param(("p", "d", "t"))``.
+
+    Default 1.0 (schema).  CSV path slices ``pdtProcess.csv``
+    (param='availability') and emits explicit rows only.
+    """
+    parts: list[pl.LazyFrame] = []
+    for cls in ("unit", "connection"):
+        try:
+            df = source.parameter_explicit(cls, "availability")
+        except (KeyError, AttributeError):
+            try:
+                df = source.parameter(cls, "availability")
+            except KeyError:
+                continue
+        if df is None or df.height == 0:
+            continue
+        cols = df.columns
+        if not {"name", "period", "t", "value"}.issubset(cols):
+            continue
+        parts.append(df.lazy()
+                       .rename({"name": "p", "period": "d"})
+                       .filter(pl.col("value").is_not_null())
+                       .select("p", "d", "t", "value"))
+    if not parts:
+        return None
+    out = pl.concat(parts).collect()
+    if out.height == 0:
+        return None
+    return Param(("p", "d", "t"), out.lazy().sort("p", "d", "t"))
+
+
+def p_commodity_price_from_source(source: "InputSource") -> Param | None:
+    """``commodity.price`` Map(period→time) → ``Param(("c", "d", "t"))``.
+
+    None default (schema).  CSV path slices ``pdtCommodity.csv``
+    (param='price') and emits explicit rows only.
+    """
+    return _entity_period_time_param(source, "commodity", "price", "c")
+
+
+# ---------------------------------------------------------------------------
+# §1.19 — Commodity ladder split (price / quantity sub-frames).
+#
+# Spine schema: ``commodity.price_ladder_annual`` is a 3-level Map
+# ``(period → tier → {"price","quantity"} → f64)`` which the
+# SpineDbReader unrolls to ``[name, period, tier, x, value]`` where
+# ``x ∈ {"price", "quantity"}``.  We split it into two Params keyed
+# (c, i, d) with ``value`` being the price (resp. quantity) only.
+# ``commodity.price_ladder_cumulative`` mirrors but without period.
+
+def _ladder_split(source: "InputSource", parameter_name: str,
+                    *, with_period: bool) -> tuple[Param | None, Param | None]:
+    """Return ``(price_param, quantity_param)`` from the named ladder
+    parameter.  ``with_period=True`` means the unroll produces a
+    ``period`` column (annual ladder); ``False`` means tier-only
+    (cumulative ladder).
+    """
+    try:
+        df = source.parameter_explicit("commodity", parameter_name)
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter("commodity", parameter_name)
+        except KeyError:
+            return None, None
+    if df is None or df.height == 0:
+        return None, None
+    cols = df.columns
+    needed = {"name", "tier", "value"}
+    if with_period:
+        needed.add("period")
+    if not needed.issubset(cols):
+        return None, None
+    # Detect the leaf-discriminator column ("x" or whatever name carries
+    # the "price"/"quantity" tag).  All non-(name, period, tier, value)
+    # columns are candidates; pick the first.
+    keep_cols = ({"name", "period", "tier", "value"} if with_period
+                  else {"name", "tier", "value"})
+    leaf_cols = [c for c in cols if c not in keep_cols]
+    if len(leaf_cols) != 1:
+        return None, None
+    leaf = leaf_cols[0]
+    rename = {"name": "c", "tier": "i"}
+    if with_period:
+        rename["period"] = "d"
+    base = (df.lazy()
+              .rename(rename)
+              .filter(pl.col("value").is_not_null())
+              .with_columns(pl.col("i").cast(pl.Utf8)))
+    out_dims = ("c", "i", "d") if with_period else ("c", "i")
+    price_lf = base.filter(pl.col(leaf) == "price").select(*out_dims, "value")
+    qty_lf   = base.filter(pl.col(leaf) == "quantity").select(*out_dims, "value")
+    price_df = price_lf.collect()
+    qty_df = qty_lf.collect()
+    p_price = Param(out_dims, price_df) if price_df.height > 0 else None
+    p_qty = Param(out_dims, qty_df) if qty_df.height > 0 else None
+    return p_price, p_qty
+
+
+def p_ladder_ann_price_from_source(source: "InputSource") -> Param | None:
+    return _ladder_split(source, "price_ladder_annual", with_period=True)[0]
+
+
+def p_ladder_ann_quantity_from_source(source: "InputSource") -> Param | None:
+    return _ladder_split(source, "price_ladder_annual", with_period=True)[1]
+
+
+def p_ladder_cum_price_from_source(source: "InputSource") -> Param | None:
+    return _ladder_split(source, "price_ladder_cumulative", with_period=False)[0]
+
+
+def p_ladder_cum_quantity_from_source(source: "InputSource") -> Param | None:
+    return _ladder_split(source, "price_ladder_cumulative", with_period=False)[1]
+
+
 def apply_direct_params(source: "InputSource",
                           flex_data: object) -> None:
     """Apply the DB-direct construction for the Direct Param wave,
@@ -1503,3 +1622,25 @@ def apply_direct_params(source: "InputSource",
     v = process_delayed__duration_from_source(source)
     if v is not None:
         flex_data.process_delayed__duration = v
+
+    # ─── Δ.4b — additional Map(period→time) on object classes ───────────
+    v = _filter_param_by_periods(p_process_availability_from_source(source), dt)
+    if v is not None:
+        flex_data.p_process_availability = v
+    v = _filter_param_by_periods(p_commodity_price_from_source(source), dt)
+    if v is not None:
+        flex_data.p_commodity_price = v
+
+    # ─── Δ.4b — commodity ladder split (price / quantity) ────────────────
+    p_ann_price, p_ann_qty = _ladder_split(source, "price_ladder_annual",
+                                              with_period=True)
+    if p_ann_price is not None:
+        flex_data.p_ladder_ann_price = _filter_param_by_periods(p_ann_price, dt)
+    if p_ann_qty is not None:
+        flex_data.p_ladder_ann_quantity = _filter_param_by_periods(p_ann_qty, dt)
+    p_cum_price, p_cum_qty = _ladder_split(source, "price_ladder_cumulative",
+                                              with_period=False)
+    if p_cum_price is not None:
+        flex_data.p_ladder_cum_price = p_cum_price
+    if p_cum_qty is not None:
+        flex_data.p_ladder_cum_quantity = p_cum_qty

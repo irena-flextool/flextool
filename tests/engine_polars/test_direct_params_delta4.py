@@ -224,6 +224,12 @@ def _frame(x):
     "p_process_reserve_upDown_node_large_failure_ratio_value",
     "p_process_reserve_upDown_node_increase_reserve_ratio_value",
     "process_delayed__duration",
+    "p_process_availability",
+    "p_commodity_price",
+    "p_ladder_ann_price",
+    "p_ladder_ann_quantity",
+    "p_ladder_cum_price",
+    "p_ladder_cum_quantity",
 ])
 def test_delta4_field_csv_vs_db_parity(work_name: str, scenario: str,
                                           field: str):
