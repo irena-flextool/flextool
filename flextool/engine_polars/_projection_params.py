@@ -164,6 +164,47 @@ _EFF_CONVERSION_METHODS = ("min_load_efficiency", "constant_efficiency",
                             "method_X_LP")
 
 
+def process_source_sink_canonical(source: "InputSource",
+                                    pss: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Method-tagged canonical frame for the ``process_source_sink``
+    family.  Built once and projected to ``_eff`` / ``_noEff`` by the
+    consumers below — replaces the prior pattern of computing each
+    partition from scratch.
+
+    Schema: ``[p, source, sink, method]`` where ``method ∈ {'eff', 'noEff'}``.
+    Currently the partition is binary (efficiency-based vs not); future
+    method tags (``indirect``, ``connection``, etc.) can be added without
+    changing the .filter() consumer pattern.
+
+    Δ.3: this is the user-decided option (b)/(a-prime) hybrid — keep the
+    legacy 2-field FlexData surface (``process_source_sink_eff`` /
+    ``_noEff``) but compute them as projections of one canonical frame.
+    See progress.md (Δ.3 close stanza).
+    """
+    if pss is None:
+        pss = process_source_sink(source)
+    if pss.height == 0:
+        return _empty({"p": pl.Utf8, "source": pl.Utf8,
+                       "sink": pl.Utf8, "method": pl.Utf8})
+    cm = _try_param(source, "unit", "conversion_method")
+    if cm is None:
+        # No conversion_method data — every arc is noEff (connections +
+        # units without an efficiency partition).
+        return (pss.lazy()
+                  .with_columns(pl.lit("noEff").alias("method"))
+                  .sort("p", "source", "sink")
+                  .collect())
+    eff_p = (cm.lazy()
+                .filter(pl.col("value").is_in(_EFF_CONVERSION_METHODS))
+                .select(pl.col("name").alias("p")))
+    return (pss.lazy()
+              .join(eff_p.with_columns(pl.lit("eff").alias("method")),
+                    on="p", how="left")
+              .with_columns(method=pl.col("method").fill_null("noEff"))
+              .sort("p", "source", "sink")
+              .collect())
+
+
 def process_source_sink_eff(source: "InputSource",
                               pss: pl.DataFrame | None = None) -> pl.DataFrame:
     """``pss`` filtered to processes with an efficiency-based
@@ -171,19 +212,15 @@ def process_source_sink_eff(source: "InputSource",
     in eff).
 
     Schema: ``[p, source, sink]``.
+
+    Δ.3: thin filter over :func:`process_source_sink_canonical`.
     """
-    if pss is None:
-        pss = process_source_sink(source)
-    if pss.height == 0:
+    canonical = process_source_sink_canonical(source, pss)
+    if canonical.height == 0:
         return _empty({"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
-    cm = _try_param(source, "unit", "conversion_method")
-    if cm is None:
-        return _empty({"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
-    eff_p = (cm.lazy()
-                .filter(pl.col("value").is_in(_EFF_CONVERSION_METHODS))
-                .select(pl.col("name").alias("p")))
-    return (pss.lazy()
-              .join(eff_p, on="p", how="inner")
+    return (canonical.lazy()
+              .filter(pl.col("method") == "eff")
+              .select("p", "source", "sink")
               .sort("p", "source", "sink")
               .collect())
 
@@ -196,15 +233,19 @@ def process_source_sink_noEff(source: "InputSource",
     with ``conversion_method ∉ eff family``).
 
     Schema: ``[p, source, sink]``.
+
+    Δ.3: thin filter over :func:`process_source_sink_canonical`.  The
+    legacy ``pss_eff`` parameter is accepted for backward compatibility
+    but no longer used — the canonical frame already encodes the
+    partition via the ``method`` column.
     """
-    if pss is None:
-        pss = process_source_sink(source)
-    if pss_eff is None:
-        pss_eff = process_source_sink_eff(source, pss)
-    if pss.height == 0:
+    del pss_eff  # legacy parameter; see docstring
+    canonical = process_source_sink_canonical(source, pss)
+    if canonical.height == 0:
         return _empty({"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
-    return (pss.lazy()
-              .join(pss_eff.lazy(), on=["p", "source", "sink"], how="anti")
+    return (canonical.lazy()
+              .filter(pl.col("method") == "noEff")
+              .select("p", "source", "sink")
               .sort("p", "source", "sink")
               .collect())
 
