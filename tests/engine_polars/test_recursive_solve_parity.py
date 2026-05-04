@@ -38,9 +38,14 @@ from spinedb_api.filters.scenario_filter import (
     apply_scenario_filter_to_subqueries,
 )
 
-from flextool.engine_polars._solve_config import SolveConfig
+from flextool.engine_polars._solve_config import (
+    HiGHSConfig,
+    SolveConfig,
+    SolverSettings,
+)
 from flextool.engine_polars._solve_state import (
     ActiveTimeEntry,
+    FlexToolConfigError,
     PathConfig,
     RunnerState,
 )
@@ -514,14 +519,8 @@ def test_create_rolling_solves_handcooked_4period() -> None:
         model_solve=defaultdict(list, {"m": ["S"]}),
         solve_modes={"S": "rolling_window"},
         rolling_times=defaultdict(list, {"S": [1, 2, 4]}),
-        highs=__import__(
-            "flextool.engine_polars._solve_config",
-            fromlist=["HiGHSConfig"],
-        ).HiGHSConfig(presolve={}, method={}, parallel={}),
-        solver_settings=__import__(
-            "flextool.engine_polars._solve_config",
-            fromlist=["SolverSettings"],
-        ).SolverSettings(
+        highs=HiGHSConfig(presolve={}, method={}, parallel={}),
+        solver_settings=SolverSettings(
             solvers={}, precommand={}, arguments=defaultdict(list)
         ),
         solve_period_years_represented=defaultdict(list),
@@ -569,14 +568,8 @@ def test_create_rolling_solves_start_not_found_raises() -> None:
         model_solve=defaultdict(list, {"m": ["S"]}),
         solve_modes={"S": "rolling_window"},
         rolling_times=defaultdict(list, {"S": [1, 1, 1]}),
-        highs=__import__(
-            "flextool.engine_polars._solve_config",
-            fromlist=["HiGHSConfig"],
-        ).HiGHSConfig(presolve={}, method={}, parallel={}),
-        solver_settings=__import__(
-            "flextool.engine_polars._solve_config",
-            fromlist=["SolverSettings"],
-        ).SolverSettings(
+        highs=HiGHSConfig(presolve={}, method={}, parallel={}),
+        solver_settings=SolverSettings(
             solvers={}, precommand={}, arguments=defaultdict(list)
         ),
         solve_period_years_represented=defaultdict(list),
@@ -595,8 +588,6 @@ def test_create_rolling_solves_start_not_found_raises() -> None:
         timeline=None,
     )
     builder = RecursiveSolveBuilder(state)
-
-    from flextool.engine_polars._solve_state import FlexToolConfigError
 
     with pytest.raises(FlexToolConfigError, match="Start point not found"):
         builder.create_rolling_solves(
@@ -626,11 +617,13 @@ def test_regression_fixture_solve_count(work_name: str, expected_n_solves: int) 
     Reference: the CSV retirement agent surfaced parity gaps on these
     fixtures; this guards against a re-introduction.
     """
-    from test_solve_config_parity import _DIRNAME_TO_SCENARIO_OVERRIDES as _O
     sqlite = DATA / work_name / "tests.sqlite"
     if not sqlite.exists():
         pytest.skip(f"{work_name} fixture missing")
-    scenario = _O.get(work_name, work_name.removeprefix("work_"))
+    # Look up the scenario via the shared override table + dirname rule.
+    scenario = _DIRNAME_TO_SCENARIO_OVERRIDES.get(
+        work_name, work_name.removeprefix("work_")
+    )
     state = _setup_mine(sqlite, scenario)
     ms = _expand_mine(state)
     assert len(ms[0]) == expected_n_solves, (
