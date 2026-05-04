@@ -333,6 +333,7 @@ def p_period_share_from_source(
 def p_inflation_op_from_source(
     source: "InputSource",
     dt: pl.DataFrame,
+    active_solve: str | None = None,
 ) -> Param | None:
     """Period-level inflation factor for operations.
 
@@ -343,17 +344,23 @@ def p_inflation_op_from_source(
     where ``until_op[d, y] = base[d,y] + pyr[d,y] * offset_op``,
     ``base[d, y] = sum_{y'<y} pyr[d, y']``.
 
-    For Γ.3.A we cover only the **default-no-inflation** case:
-    when ``model.inflation_rate ∈ {None, 0}`` and ``years_represented``
-    is the canonical 1.0-per-period default, the factor collapses to
-    1.0 per realized period.  This matches every fixture in our parity
-    sweep that doesn't activate multi-year compounding.
+    Γ.8.E coverage:
+      * ``model.inflation_rate ∈ {None, 0}`` (the default) — formula
+        collapses to ``ops_factor[d] = Σ_y pyr[d, y] * 1 =
+        years_represented[solve, d]`` since each period has a single
+        flat scalar in the 1D-Map shape exposed by InputSource (each
+        scalar IS the total summed over the period's year-set).
+      * Multi-year-per-period (``years_represented`` set per solve,
+        rate=0) — handled here, mirrors the regression that
+        ``work_fullYear_roll`` exposes when CSV retirement Step 3 lands.
 
-    The full multi-year cascade is deferred to a Batch B/C/D Derived
-    pass — flagged in the spec's §3.1.3 algorithm reference (the line
-    range covers 144-330 which spans multiple sub-passes).
-    Multi-year fixtures retain their CSV-loaded inflation factor when
-    we can't reproduce the full cascade.
+    Non-trivial-rate (``rate != 0``) and ``inflation_offset`` cascade
+    are handled by :func:`p_inflation_op_multi_year_from_source`
+    (Γ.3.C, applied in :func:`derived_overrides_c`).
+
+    Returns ``None`` only when no solve / no dt is available; the
+    helper otherwise produces the canonical frame so CSV retirement
+    won't reintroduce the simple-1.0 regression.
     """
     if dt is None:
         return None
@@ -361,18 +368,66 @@ def p_inflation_op_from_source(
     rate_v = 0.0
     if rate is not None and rate.height > 0:
         rate_v = float(rate["value"][0])
-    if rate_v == 0.0:
-        # Trivial case: factor 1.0 per realized period.
-        out = (dt.lazy()
-                 .select("d").unique()
-                 .with_columns(value=pl.lit(1.0))
-                 .sort("d")
-                 .collect())
-        if out.height == 0:
-            return None
-        return Param(("d",), out)
-    # Non-trivial case — out of Γ.3.A scope; signal the caller.
-    return None
+    if rate_v != 0.0:
+        # Non-trivial rate handled in the multi-year cascade helper
+        # (which runs later in derived_overrides_c).  Returning None
+        # here lets the simple-default 1.0 stay in flex_data; the
+        # later helper overlays the correct factor.
+        return None
+
+    # Rate = 0.  ``ops_factor[d] = Σ_y pyr[d, y]``.  The 1D Map shape
+    # InputSource exposes for ``solve.years_represented`` already
+    # collapses the inner year axis into a per-period scalar — so
+    # that scalar IS the sum we need.
+    #
+    # Rolling solves: ``active_solve`` in the workdir is the per-roll
+    # name (e.g. ``dispatch_fullYear_roll_roll_71``) but the DB has
+    # ``years_represented`` keyed by the parent solve
+    # (``dispatch_fullYear_roll``).  flextool's preprocessing copies
+    # the parent's value down to every roll; flexpy mirrors that here
+    # by trying the roll name first, then the parent name (strip
+    # ``_roll_<N>`` suffix).
+    yr = None
+    if active_solve is not None:
+        yr_raw = _try_param(source, "solve", "years_represented")
+        if yr_raw is not None and "period" in yr_raw.columns:
+            candidate_names = [active_solve]
+            import re
+            parent = re.sub(r"_roll_\d+$", "", active_solve)
+            if parent != active_solve:
+                candidate_names.append(parent)
+            yr_lf = None
+            for cand in candidate_names:
+                lf = (yr_raw.lazy()
+                            .filter(pl.col("name") == cand)
+                            .select(pl.col("period").alias("d"),
+                                    pl.col("value").cast(pl.Float64).alias("yr_total")))
+                if lf.collect().height > 0:
+                    yr_lf = lf
+                    break
+            if yr_lf is not None:
+                d_unique_lf = dt.lazy().select("d").unique()
+                yr_joined = (d_unique_lf.join(yr_lf, on="d", how="left")
+                                         .with_columns(
+                                             value=pl.col("yr_total").fill_null(1.0)
+                                         )
+                                         .select("d", "value")
+                                         .sort("d"))
+                yr_collected = yr_joined.collect()
+                if yr_collected.height > 0:
+                    yr = yr_collected
+
+    if yr is None:
+        # Fallback: trivial 1.0 per realized period (no
+        # ``years_represented`` row → defaults to 1 year per period).
+        yr = (dt.lazy()
+                .select("d").unique()
+                .with_columns(value=pl.lit(1.0).cast(pl.Float64))
+                .sort("d")
+                .collect())
+    if yr.height == 0:
+        return None
+    return Param(("d",), yr)
 
 
 # ---------------------------------------------------------------------------
@@ -980,7 +1035,7 @@ def derived_overrides_a(
 
     # 3. p_inflation_op -------------------------------------------------
     try:
-        infl = p_inflation_op_from_source(source, usable_dt)
+        infl = p_inflation_op_from_source(source, usable_dt, active_solve)
     except Exception:
         infl = None
     if infl is not None:
@@ -6058,7 +6113,16 @@ def _years_for_period_from_source(source: "InputSource",
             out[d] = [(str(int(i)), 1.0)]
         return out
 
+    # Rolling solves: ``active_solve`` is the per-roll name
+    # (``<parent>_roll_<N>``) but the DB has the parameter on the parent
+    # solve.  flextool's preprocessing copies the parent value down to
+    # each roll.  Try the active_solve first, then the parent name.
     sub = yr_p.filter(pl.col("name") == active_solve)
+    if sub.height == 0:
+        import re
+        parent = re.sub(r"_roll_\d+$", "", active_solve)
+        if parent != active_solve:
+            sub = yr_p.filter(pl.col("name") == parent)
     if sub.height == 0:
         for i, d in enumerate(period_set):
             out[d] = [(str(int(i)), 1.0)]
