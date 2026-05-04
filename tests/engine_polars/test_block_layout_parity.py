@@ -633,6 +633,91 @@ def test_aligned_subsets_only_raises_on_non_aligned() -> None:
         _aggregate_timeline(rows, coarse_duration=3.0)
 
 
+def test_load_from_solve_data_bridge_work_lh2() -> None:
+    """``BlockLayout.load_from_solve_data`` reads the on-disk CSVs into
+    the same frame surface as the live ``build`` would produce.
+
+    Used as a transitional bridge while the orchestrator still drives
+    flextool's ``write_block_data_for_solve``.  This test pins the
+    invariant on a multi-block fixture so the bridge stays compatible
+    with the live builder (i.e., callers can swap one for the other).
+    """
+    workdir = DATA / "work_lh2_three_region"
+    if not (workdir / "solve_data" / "block_step_duration.csv").exists():
+        pytest.skip("lh2_three_region block CSVs missing")
+
+    inputs = _build_inputs_from_fixture(workdir)
+    built = _run_port(inputs)
+    loaded = BlockLayout.load_from_solve_data(workdir / "solve_data")
+
+    # Frames match (multiset comparison — row order in some frames is
+    # insertion-determined and not load-bearing).
+    def _eq(a: pl.DataFrame, b: pl.DataFrame) -> bool:
+        return sorted(a.iter_rows()) == sorted(b.iter_rows())
+
+    assert _eq(built.entity_block_frame, loaded.entity_block_frame)
+    assert _eq(built.process_side_block_frame, loaded.process_side_block_frame)
+    assert _eq(built.process_block_frame, loaded.process_block_frame)
+    assert _eq(built.block_step_duration_frame, loaded.block_step_duration_frame)
+    assert _eq(built.overlap_set_frame, loaded.overlap_set_frame)
+    assert _eq(built.block_period_time_first_frame,
+               loaded.block_period_time_first_frame)
+    assert _eq(built.block_period_time_last_frame,
+               loaded.block_period_time_last_frame)
+    assert _eq(built.block_step_previous_frame,
+               loaded.block_step_previous_frame)
+
+    # Reconstructed dicts.
+    assert built.node_block == loaded.node_block
+    assert built.process_block == loaded.process_block
+    assert built.block_step_duration == loaded.block_step_duration
+
+
+def test_load_from_solve_data_missing_directory_returns_empty() -> None:
+    """``missing_ok=True`` (default): a non-existent solve_data/
+    yields an empty BlockLayout (every frame height 0)."""
+    layout = BlockLayout.load_from_solve_data(
+        DATA / "no_such_directory_for_blockslayout",
+    )
+    assert layout.is_empty()
+
+
+def test_load_from_solve_data_block_compat_lh2() -> None:
+    """``block_compat`` returns the (b, b_f) compatibility set used to
+    filter flow_to_n / flow_from_n in input.py."""
+    workdir = DATA / "work_lh2_three_region"
+    if not (workdir / "solve_data" / "overlap_set.csv").exists():
+        pytest.skip("lh2_three_region overlap_set missing")
+
+    layout = BlockLayout.load_from_solve_data(workdir / "solve_data")
+    compat = layout.block_compat()
+    pairs = set(zip(compat["b"].to_list(), compat["b_f"].to_list()))
+
+    # daily_group → fine (hourly / default) emitted in both senses
+    # (coarse↔default symmetric, coarse↔fine canonical-direction).
+    assert ("daily_group", "hourly_group") in pairs
+    assert ("daily_group", "default") in pairs
+    # default↔coarse symmetric row exists (default→daily) so node-side
+    # filtering on a default-block node picks up daily-side arcs.
+    assert ("default", "daily_group") in pairs
+    # Self-identity for every block.
+    assert ("daily_group", "daily_group") in pairs
+    assert ("hourly_group", "hourly_group") in pairs
+    assert ("default", "default") in pairs
+
+
+def test_load_from_solve_data_coarse_blocks_lh2() -> None:
+    """``coarse_blocks`` selects blocks with step_duration > threshold."""
+    workdir = DATA / "work_lh2_three_region"
+    if not (workdir / "solve_data" / "block_step_duration.csv").exists():
+        pytest.skip("lh2_three_region block_step_duration missing")
+
+    layout = BlockLayout.load_from_solve_data(workdir / "solve_data")
+    coarse = set(layout.coarse_blocks(threshold=1.0))
+    # daily_group is the only block with step_duration > 1h.
+    assert coarse == {"daily_group"}
+
+
 def test_default_block_only_emits_identity_overlap() -> None:
     """A fixture with no resolution-groups produces identity-only
     overlap rows (degenerate case)."""

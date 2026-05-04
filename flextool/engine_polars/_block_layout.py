@@ -943,6 +943,191 @@ class BlockLayout:
         )
 
 
+    # ------------------------------------------------------------------
+    # CSV bridge — load from flextool's solve_data/ CSVs
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def load_from_solve_data(
+        cls, solve_data_dir, *, missing_ok: bool = True,
+    ) -> "BlockLayout":
+        """Load a ``BlockLayout`` from flextool's solve_data/ block CSVs.
+
+        Used as a transitional bridge: while the orchestrator still
+        drives flextool's ``write_block_data_for_solve``, downstream
+        helpers can consume a single in-memory ``BlockLayout`` instead
+        of re-reading the same CSVs over and over.
+
+        Only the *output frames* are populated — the internal
+        bookkeeping dicts (``node_block``, ``process_block``, etc.)
+        are reconstructed from the frames as a convenience for
+        callers that index by entity name.
+
+        Parameters
+        ----------
+        solve_data_dir : Path
+            Directory containing the block CSVs (``entity_block.csv``,
+            ``process_side_block.csv``, ``process_block.csv``,
+            ``block_step_duration.csv``, ``overlap_set.csv``,
+            ``block_step_previous.csv``, ``block_period_time_first.csv``,
+            ``block_period_time_last.csv``).
+        missing_ok : bool
+            When True (default), missing CSVs produce empty frames.
+            When False, raise FileNotFoundError on the first missing.
+
+        Returns
+        -------
+        BlockLayout
+            Populated from on-disk CSVs.  ``per_block_timeline`` is
+            reconstructed from ``block_step_duration_frame`` rows.
+        """
+        from pathlib import Path as _Path
+        sd = _Path(solve_data_dir)
+
+        def _read(name: str, schema: dict) -> pl.DataFrame:
+            p = sd / name
+            if not p.exists():
+                if missing_ok:
+                    return pl.DataFrame(schema=schema)
+                raise FileNotFoundError(p)
+            return pl.read_csv(p, schema_overrides=schema)
+
+        layout = cls()
+        layout.entity_block_frame = _read(
+            "entity_block.csv",
+            {"entity": pl.Utf8, "block": pl.Utf8},
+        )
+        layout.process_side_block_frame = _read(
+            "process_side_block.csv",
+            {"process": pl.Utf8, "side": pl.Utf8, "block": pl.Utf8},
+        )
+        layout.process_block_frame = _read(
+            "process_block.csv",
+            {"process": pl.Utf8, "block": pl.Utf8},
+        )
+        layout.block_step_duration_frame = _read(
+            "block_step_duration.csv",
+            {
+                "block": pl.Utf8, "period": pl.Utf8,
+                "step": pl.Utf8, "step_duration": pl.Float64,
+            },
+        )
+        layout.overlap_set_frame = _read(
+            "overlap_set.csv",
+            {
+                "period": pl.Utf8, "block_coarse": pl.Utf8,
+                "step_coarse": pl.Utf8, "block_fine": pl.Utf8,
+                "step_fine": pl.Utf8, "fraction": pl.Float64,
+            },
+        )
+        layout.block_step_previous_frame = _read(
+            "block_step_previous.csv",
+            {
+                "block": pl.Utf8, "period": pl.Utf8, "step": pl.Utf8,
+                "step_previous": pl.Utf8,
+                "step_previous_within_timeset": pl.Utf8,
+                "period_previous": pl.Utf8,
+                "step_previous_within_solve": pl.Utf8,
+            },
+        )
+        layout.block_period_time_first_frame = _read(
+            "block_period_time_first.csv",
+            {"block": pl.Utf8, "period": pl.Utf8, "step": pl.Utf8},
+        )
+        layout.block_period_time_last_frame = _read(
+            "block_period_time_last.csv",
+            {"block": pl.Utf8, "period": pl.Utf8, "step": pl.Utf8},
+        )
+
+        # Reconstruct internal bookkeeping dicts from frames so callers
+        # can index by entity name.
+        if layout.entity_block_frame.height > 0:
+            layout.node_block = dict(zip(
+                layout.entity_block_frame["entity"].to_list(),
+                layout.entity_block_frame["block"].to_list(),
+            ))
+        if layout.process_side_block_frame.height > 0:
+            for row in layout.process_side_block_frame.iter_rows(named=True):
+                if row["side"] == "source":
+                    layout.process_block_in[row["process"]] = row["block"]
+                elif row["side"] == "sink":
+                    layout.process_block_out[row["process"]] = row["block"]
+        if layout.process_block_frame.height > 0:
+            layout.process_block = dict(zip(
+                layout.process_block_frame["process"].to_list(),
+                layout.process_block_frame["block"].to_list(),
+            ))
+
+        # block_step_duration: dict[block → step_duration] uses the
+        # first step's duration for each block (every step in a block
+        # shares the same duration by construction).
+        bsd = layout.block_step_duration_frame
+        if bsd.height > 0:
+            layout.block_step_duration = dict(
+                bsd.group_by("block")
+                   .agg(pl.col("step_duration").first())
+                   .iter_rows()
+            )
+            # per_block_timeline reconstruction.
+            for row in bsd.iter_rows(named=True):
+                blk = row["block"]
+                period = row["period"]
+                layout.per_block_timeline.setdefault(blk, {}).setdefault(
+                    period, [],
+                ).append((row["step"], row["step_duration"]))
+        return layout
+
+    # ------------------------------------------------------------------
+    # Convenience accessors for downstream consumers
+    # ------------------------------------------------------------------
+
+    def block_compat(self) -> pl.DataFrame:
+        """Return the (b, b_f) → 1 compatibility set used by the
+        block-aware filtering of flow_to_n / flow_from_n.
+
+        Equivalent to::
+
+            overlap_set_frame
+                .rename({"block_coarse": "b", "block_fine": "b_f"})
+                .select("b", "b_f").unique()
+
+        Cached attribute would help on hot paths; the materialised set
+        is small (≤ |blocks|² ≈ tens of rows).
+        """
+        if self.overlap_set_frame.height == 0:
+            return pl.DataFrame(schema={"b": pl.Utf8, "b_f": pl.Utf8})
+        return (
+            self.overlap_set_frame
+            .rename({"block_coarse": "b", "block_fine": "b_f"})
+            .select("b", "b_f").unique()
+        )
+
+    def coarse_blocks(self, threshold: float = 1.0) -> list[str]:
+        """Return blocks with at least one row of ``step_duration >
+        threshold``.
+
+        Mirrors the ``coarse_blocks`` selection in
+        ``input.py``'s nodeStateBlock synthesis (lines 2013-2040).
+        """
+        if self.block_step_duration_frame.height == 0:
+            return []
+        return (
+            self.block_step_duration_frame
+            .filter(pl.col("step_duration") > threshold)
+            ["block"].unique().to_list()
+        )
+
+    def is_empty(self) -> bool:
+        """Return True if the layout carries no block data at all
+        (every frame is empty).  Useful for the ``missing_ok`` branch
+        of the CSV-loading bridge."""
+        return (
+            self.entity_block_frame.height == 0
+            and self.block_step_duration_frame.height == 0
+            and self.overlap_set_frame.height == 0
+        )
+
+
 __all__ = [
     "DEFAULT_BLOCK",
     "BlockLayout",
