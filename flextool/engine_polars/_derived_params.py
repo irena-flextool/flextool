@@ -973,27 +973,31 @@ DERIVED_A_FIELDS = (
 # ---------------------------------------------------------------------------
 
 
-def derived_overrides_a(
+def apply_derived_a(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
-) -> dict[str, object | None]:
-    """Compute the DB-direct override dict for Γ.3.A foundational
-    Derived Params.  Empty/unsafe results are *not* added to the dict
-    so the CSV-loaded value survives.
+) -> None:
+    """Apply Γ.3.A foundational Derived Params, mutating ``flex_data``
+    in place.
 
-    The integration ordering follows the foundational dependency chain
-    laid out in the task spec:
+    Each FlexData field is built by exactly one helper.  When the helper
+    returns ``None`` (no upstream data), the field is left untouched.
+
+    Δ.3: this replaces the previous ``derived_overrides_a`` dict-return
+    pattern.  The dict-overlay round-trip is gone — each helper writes
+    its field directly.
+
+    Dependency order:
         dt / p_step_duration → p_period_share, p_inflation_op,
         p_rp_cost_weight, pd_branch_weight, pdt_branch_weight, p_inflow
         → p_process_existing_count, p_profile_value (high-risk, last).
     """
-    out: dict[str, object | None] = {}
     active_solve = _read_active_solve(workdir)
     if active_solve is None:
         # Single-solve fixtures may omit solve_current.csv; fall back to
         # the FlexData's already-loaded dt (no override possible).
-        return out
+        return
 
     # 1. dt + p_step_duration -------------------------------------------
     dt_step = None
@@ -1004,36 +1008,29 @@ def derived_overrides_a(
         dt_step = None
     if dt_step is None:
         # Without dt we can't derive the dependent Params either; bail.
-        return out
+        return
     dt_db, step_dur_db = dt_step
-    # Γ.3.G gate sweep: no `_frame_equal_sorted` guard.  Helpers either
-    # produce the canonical frame or return None (single-solve fixtures
-    # that the simple algorithm can't reproduce hit None earlier).
     dt_csv = getattr(flex_data, "dt", None)
     if dt_db is not None:
-        out["dt"] = dt_db
-        out["p_step_duration"] = step_dur_db
+        flex_data.dt = dt_db
+        flex_data.p_step_duration = step_dur_db
         usable_dt = dt_db
+        sd_for_share = step_dur_db
     else:
         usable_dt = dt_csv
+        sd_for_share = getattr(flex_data, "p_step_duration", None)
 
     if usable_dt is None:
-        return out
+        return
 
     # 2. p_period_share -------------------------------------------------
-    # Per Γ.3.G architectural shift: no more `_param_matches` equality
-    # guards.  Helpers either produce the canonical frame or return None
-    # when they can't (no signal).  Mismatches surface as parity-test
-    # failures — that's the right signal.
-    sd_for_share = step_dur_db if dt_step and out.get("dt") is dt_db \
-                                  else getattr(flex_data, "p_step_duration", None)
     if sd_for_share is not None:
         try:
             psh = p_period_share_from_source(source, usable_dt, sd_for_share)
         except Exception:
             psh = None
         if psh is not None:
-            out["p_period_share"] = psh
+            flex_data.p_period_share = psh
 
     # 3. p_inflation_op -------------------------------------------------
     try:
@@ -1041,7 +1038,7 @@ def derived_overrides_a(
     except Exception:
         infl = None
     if infl is not None:
-        out["p_inflation_op"] = infl
+        flex_data.p_inflation_op = infl
 
     # 4. p_rp_cost_weight -----------------------------------------------
     try:
@@ -1049,7 +1046,7 @@ def derived_overrides_a(
     except Exception:
         rp = None
     if rp is not None:
-        out["p_rp_cost_weight"] = rp
+        flex_data.p_rp_cost_weight = rp
 
     # 5. pd_branch_weight + pdt_branch_weight ---------------------------
     # Γ.3.A's simple-1.0 helpers are always emitted; Γ.3.G's full multi-
@@ -1059,24 +1056,23 @@ def derived_overrides_a(
     except Exception:
         pd_bw = None
     if pd_bw is not None:
-        out["pd_branch_weight"] = pd_bw
+        flex_data.pd_branch_weight = pd_bw
 
     try:
         pdt_bw = pdt_branch_weight_from_source(source, usable_dt, pd_bw)
     except Exception:
         pdt_bw = None
     if pdt_bw is not None:
-        out["pdt_branch_weight"] = pdt_bw
+        flex_data.pdt_branch_weight = pdt_bw
 
     # 6. p_inflow -------------------------------------------------------
-    sd_for_inflow = sd_for_share
-    if sd_for_inflow is not None:
+    if sd_for_share is not None:
         try:
-            inflow = p_inflow_from_source(source, usable_dt, sd_for_inflow)
+            inflow = p_inflow_from_source(source, usable_dt, sd_for_share)
         except Exception:
             inflow = None
         if inflow is not None:
-            out["p_inflow"] = inflow
+            flex_data.p_inflow = inflow
 
     # 7. p_process_existing_count ---------------------------------------
     try:
@@ -1085,7 +1081,7 @@ def derived_overrides_a(
     except Exception:
         ec = None
     if ec is not None:
-        out["p_process_existing_count"] = ec
+        flex_data.p_process_existing_count = ec
 
     # 8. p_profile_value (high-risk, last) ------------------------------
     try:
@@ -1093,9 +1089,24 @@ def derived_overrides_a(
     except Exception:
         pv = None
     if pv is not None:
-        out["p_profile_value"] = pv
+        flex_data.p_profile_value = pv
 
-    return out
+
+# Deprecated alias scheduled for deletion in Δ.4 — preserved for any
+# external callers / docstring references.  Calls the new direct path.
+def derived_overrides_a(
+    flex_data: object,
+    source: "InputSource",
+    workdir: Path,
+) -> dict[str, object | None]:
+    """Deprecated.  Use :func:`apply_derived_a` instead.
+
+    Δ.3: this thin pass-through is preserved for one phase to keep
+    external callers compiling; it no longer participates in the
+    override-chain plumbing.  Slated for deletion in Δ.4.
+    """
+    apply_derived_a(flex_data, source, workdir)
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -2188,25 +2199,20 @@ DERIVED_B_FIELDS = (
 )
 
 
-def derived_overrides_b(
+def apply_derived_b(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
-) -> dict[str, object | None]:
-    """Compute the DB-direct override dict for Γ.3.B.
-
-    Each candidate frame is gated on a frame-equal precheck against the
-    CSV-loaded value (``_param_matches`` / ``_frame_equal_sorted``).  A
-    mismatch leaves the CSV value in place — the override never
-    introduces an LP corruption surface.
+) -> None:
+    """Apply Γ.3.B Derived Params, mutating ``flex_data`` in place.
 
     The classifier (``_classify_process_method``) is the single
     dependency for the reclassified ``process_indirect`` / ``flow_to_n``
     family; it's computed once per call and threaded through the
     per-Param helpers as a kwarg.
-    """
-    out: dict[str, object | None] = {}
 
+    Δ.3: replaces the previous ``derived_overrides_b`` dict-return.
+    """
     # Active solve (used for existing-period broadcast in some helpers).
     active_solve = _read_active_solve(workdir)
 
@@ -2224,14 +2230,6 @@ def derived_overrides_b(
     pss_frame = getattr(flex_data, "process_source_sink", None)
     dt_csv = getattr(flex_data, "dt", None)
 
-    # ─── Reclassified Projection-Derived overlays ──────────────────────
-    # Per Γ.3.G architectural shift: no `_frame_equal_sorted` equality
-    # guards.  Helpers either produce the canonical frame or return None
-    # (the block-aware filter remains a known gap for fixtures with
-    # non-default block compatibility — `flow_to_n` / `flow_from_n`
-    # returns the unfiltered frame and the parity test surfaces any
-    # divergence).
-
     # process_indirect / process_input_flows / process_output_flows /
     # process_indirect_dt.  Empty DB-side frames don't overlay (CSV path
     # leaves these fields as None for fixtures with no indirect units —
@@ -2243,7 +2241,7 @@ def derived_overrides_b(
         except Exception:
             pi_db = None
         if pi_db is not None and pi_db.height > 0:
-            out["process_indirect"] = pi_db
+            flex_data.process_indirect = pi_db
 
         if pss_frame is not None and pss_frame.height > 0:
             try:
@@ -2251,14 +2249,14 @@ def derived_overrides_b(
             except Exception:
                 pif_db = None
             if pif_db is not None and pif_db.height > 0:
-                out["process_input_flows"] = pif_db
+                flex_data.process_input_flows = pif_db
 
             try:
                 pof_db = process_output_flows(source, pss_frame, classified)
             except Exception:
                 pof_db = None
             if pof_db is not None and pof_db.height > 0:
-                out["process_output_flows"] = pof_db
+                flex_data.process_output_flows = pof_db
 
         if dt_csv is not None and dt_csv.height > 0:
             try:
@@ -2266,15 +2264,12 @@ def derived_overrides_b(
             except Exception:
                 pid_db = None
             if pid_db is not None and pid_db.height > 0:
-                out["process_indirect_dt"] = pid_db
+                flex_data.process_indirect_dt = pid_db
 
-    # flow_to_n / flow_from_n — Γ.3.B's helper does NOT yet implement
-    # the block-aware filter (process_side_block / entity_block /
-    # overlap_set; see input.py:703-762).  The CSV path's flow_to_n is
-    # filtered by block compatibility.  Only emit when the workdir's
-    # process_side_block.csv is absent or empty — otherwise the CSV
-    # path is canonical (the block filter happens upstream).  TODO:
-    # port the block filter into the helper.
+    # flow_to_n / flow_from_n — block-aware filter is in the CSV path
+    # (input.py:703-762).  Skip when the workdir's process_side_block
+    # is non-empty (CSV path is canonical there); the helper here does
+    # not implement the block-aware filter yet.
     skip_flow_n = False
     if workdir is not None:
         # Δ.2: consume process_side_block via the in-memory BlockLayout
@@ -2296,9 +2291,9 @@ def derived_overrides_b(
             ftn_db = None
             ffn_db = None
         if ftn_db is not None and ftn_db.height > 0:
-            out["flow_to_n"] = ftn_db
+            flex_data.flow_to_n = ftn_db
         if ffn_db is not None and ffn_db.height > 0:
-            out["flow_from_n"] = ffn_db
+            flex_data.flow_from_n = ffn_db
 
     # ─── §3.3.3 p_flow_upper_existing ──────────────────────────────────
     if pss_frame is not None and pss_frame.height > 0:
@@ -2308,7 +2303,7 @@ def derived_overrides_b(
         except Exception:
             pfue_db = None
         if pfue_db is not None:
-            out["p_flow_upper_existing"] = pfue_db
+            flex_data.p_flow_upper_existing = pfue_db
 
     # ─── §3.5.1 p_flow_constraint_coef ─────────────────────────────────
     if pss_frame is not None and pss_frame.height > 0:
@@ -2317,7 +2312,7 @@ def derived_overrides_b(
         except Exception:
             fcc_db = None
         if fcc_db is not None:
-            out["p_flow_constraint_coef"] = fcc_db
+            flex_data.p_flow_constraint_coef = fcc_db
 
     # ─── §3.10.1 p_pssdt_varCost ───────────────────────────────────────
     if (pss_frame is not None and pss_frame.height > 0
@@ -2327,7 +2322,7 @@ def derived_overrides_b(
         except Exception:
             pvc_db = None
         if pvc_db is not None:
-            out["p_pssdt_varCost"] = pvc_db
+            flex_data.p_pssdt_varCost = pvc_db
 
     # ─── §3.3.4 p_slope ────────────────────────────────────────────────
     if dt_csv is not None and dt_csv.height > 0 and classified.height > 0:
@@ -2336,9 +2331,18 @@ def derived_overrides_b(
         except Exception:
             slope_db = None
         if slope_db is not None:
-            out["p_slope"] = slope_db
+            flex_data.p_slope = slope_db
 
-    return out
+
+# Deprecated alias scheduled for deletion in Δ.4.
+def derived_overrides_b(
+    flex_data: object,
+    source: "InputSource",
+    workdir: Path,
+) -> dict[str, object | None]:
+    """Deprecated.  Use :func:`apply_derived_b` instead."""
+    apply_derived_b(flex_data, source, workdir)
+    return {}
 
 
 # ===========================================================================
@@ -3963,16 +3967,12 @@ def _set_eq_sorted(a: pl.DataFrame | None,
     return a.sort(sk).equals(b.sort(sk))
 
 
-def derived_overrides_c(
+def apply_derived_c(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
-) -> dict[str, object | None]:
-    """Compute the DB-direct override dict for Γ.3.C.
-
-    Each candidate frame is gated on a frame-equal precheck against the
-    CSV-loaded value (``_param_matches`` for Params, ``_set_eq_sorted``
-    for set-shaped frames).  A mismatch leaves the CSV value in place.
+) -> None:
+    """Apply Γ.3.C Derived Params, mutating ``flex_data`` in place.
 
     Order:
       1. Multi-year inflation (extends Γ.3.A's default-rate path).
@@ -3980,9 +3980,9 @@ def derived_overrides_c(
       3. §3.8 online/UC.
       4. §3.7 invest/divest cascade.
       5. §3.11 (capped by §3.7.5/6 — no separate Params).
-    """
-    out: dict[str, object | None] = {}
 
+    Δ.3: replaces the previous ``derived_overrides_c`` dict-return.
+    """
     active_solve = _read_active_solve(workdir)
     dt_csv = getattr(flex_data, "dt", None)
     sd_csv = getattr(flex_data, "p_step_duration", None)
@@ -3994,28 +3994,23 @@ def derived_overrides_c(
                 source, active_solve, dt_csv)
         except Exception:
             infl_my = None
-        # Γ.3.G gate sweep: no equality guard.  Γ.3.F's full multi-year
-        # cascade supersedes this simple-1-year-per-period helper.
         if infl_my is not None:
-            out["p_inflation_op"] = infl_my
+            flex_data.p_inflation_op = infl_my
 
     # ─── §3.12 group slack ────────────────────────────────────────────
-    # Per Γ.3.G architectural shift: no more `_param_matches` /
-    # `_set_eq_sorted` equality guards.  Helpers either produce the
-    # canonical frame or return None.
     try:
         gcs_db = p_group_capacity_for_scaling_from_source(
             source, active_solve, workdir)
     except Exception:
         gcs_db = None
     if gcs_db is not None:
-        out["p_group_capacity_for_scaling"] = gcs_db
+        flex_data.p_group_capacity_for_scaling = gcs_db
     try:
         igc_db = p_inv_group_cap_from_source(source, active_solve, workdir)
     except Exception:
         igc_db = None
     if igc_db is not None:
-        out["p_inv_group_cap"] = igc_db
+        flex_data.p_inv_group_cap = igc_db
 
     p_inflow_csv = getattr(flex_data, "p_inflow", None)
     try:
@@ -4024,16 +4019,16 @@ def derived_overrides_c(
     except Exception:
         ppi_db = pni_db = None
     if ppi_db is not None:
-        out["p_positive_inflow"] = ppi_db
+        flex_data.p_positive_inflow = ppi_db
     if pni_db is not None:
-        out["p_negative_inflow"] = pni_db
+        flex_data.p_negative_inflow = pni_db
 
     try:
         pis_db = pdtNodeInflow_per_step_from_inflow(p_inflow_csv, sd_csv)
     except Exception:
         pis_db = None
     if pis_db is not None:
-        out["pdtNodeInflow_per_step"] = pis_db
+        flex_data.pdtNodeInflow_per_step = pis_db
 
     # process_group_inside_nonSync — empty for all our covered fixtures.
     try:
@@ -4041,7 +4036,7 @@ def derived_overrides_c(
     except Exception:
         pgi_db = None
     if pgi_db is not None:
-        out["process_group_inside_nonSync"] = pgi_db
+        flex_data.process_group_inside_nonSync = pgi_db
 
     # ─── §3.8 online / UC ─────────────────────────────────────────────
     classified = None
@@ -4055,7 +4050,7 @@ def derived_overrides_c(
         except Exception:
             sec_db = None
         if sec_db is not None:
-            out["p_section"] = sec_db
+            flex_data.p_section = sec_db
 
     # uptime / downtime lookbacks + projected pdt_*_set.
     try:
@@ -4063,10 +4058,9 @@ def derived_overrides_c(
     except Exception:
         ulb_db = None
     if ulb_db is not None and ulb_db.height > 0:
-        out["uptime_lookback"] = ulb_db
-        # pdt_uptime_set is a strict projection.
+        flex_data.uptime_lookback = ulb_db
         try:
-            out["pdt_uptime_set"] = pdt_uptime_set_from_lookback(ulb_db)
+            flex_data.pdt_uptime_set = pdt_uptime_set_from_lookback(ulb_db)
         except Exception:
             pass
 
@@ -4075,9 +4069,9 @@ def derived_overrides_c(
     except Exception:
         dlb_db = None
     if dlb_db is not None and dlb_db.height > 0:
-        out["downtime_lookback"] = dlb_db
+        flex_data.downtime_lookback = dlb_db
         try:
-            out["pdt_downtime_set"] = pdt_downtime_set_from_lookback(dlb_db)
+            flex_data.pdt_downtime_set = pdt_downtime_set_from_lookback(dlb_db)
         except Exception:
             pass
 
@@ -4087,14 +4081,14 @@ def derived_overrides_c(
     except Exception:
         ed_inv_db = None
     if ed_inv_db is not None and ed_inv_db.height > 0:
-        out["ed_invest_set"] = ed_inv_db
+        flex_data.ed_invest_set = ed_inv_db
 
     try:
         ed_div_db = ed_divest_set_from_source(source, active_solve)
     except Exception:
         ed_div_db = None
     if ed_div_db is not None and ed_div_db.height > 0:
-        out["ed_divest_set"] = ed_div_db
+        flex_data.ed_divest_set = ed_div_db
 
     # Γ.6.D — ed_invest_forbidden_no_investment.  Built off the
     # (possibly-overridden) ed_invest_set so the helper sees the same
@@ -4107,14 +4101,12 @@ def derived_overrides_c(
     except Exception:
         forbidden_db = None
     if forbidden_db is not None:
-        out["ed_invest_forbidden_no_investment"] = (
+        flex_data.ed_invest_forbidden_no_investment = (
             forbidden_db if forbidden_db.height > 0 else None)
 
     # Dispatch-only gate: when neither ed_invest nor ed_divest carries
     # any (e, d) row, mirror ``input.py::_load_invest`` blank-out by
-    # nulling every invest-cascade Param (some were emitted by Γ.1
-    # ``first_wave_overrides`` or Γ.2 ``projection_overrides`` and need
-    # to be cleared since the active solve has no invest variables).
+    # nulling every invest-cascade Param.
     inv_empty = ed_inv_db is None or ed_inv_db.height == 0
     div_empty = ed_div_db is None or ed_div_db.height == 0
     if inv_empty and div_empty:
@@ -4126,20 +4118,19 @@ def derived_overrides_c(
             "ed_invest_period_set", "ed_divest_period_set",
             "ed_invest_max_period", "ed_divest_max_period",
         ):
-            out[blank_field] = None
-        return out
+            setattr(flex_data, blank_field, None)
+        return
 
     # edd_invest_lookback uses the (possibly-overlaid) ed_invest_set.
-    ed_inv_used = out.get("ed_invest_set")
-    if ed_inv_used is None:
-        ed_inv_used = getattr(flex_data, "ed_invest_set", None)
+    ed_inv_used = ed_inv_db if (ed_inv_db is not None and ed_inv_db.height > 0) \
+                   else getattr(flex_data, "ed_invest_set", None)
     try:
         eil_db = edd_invest_lookback_set_from_source(
             source, active_solve, ed_inv_used, workdir)
     except Exception:
         eil_db = None
     if eil_db is not None and eil_db.height > 0:
-        out["edd_invest_lookback_set"] = eil_db
+        flex_data.edd_invest_lookback_set = eil_db
 
     pd_div_used = getattr(flex_data, "pd_divest_set", None)
     try:
@@ -4148,14 +4139,10 @@ def derived_overrides_c(
     except Exception:
         edda_db = None
     if edda_db is not None and edda_db.height > 0:
-        out["edd_divest_active"] = edda_db
+        flex_data.edd_divest_active = edda_db
 
     # p_entity_max_units uses ed_invest plus the per-period-in-use grid
-    # and the unitsize cascade — it mirrors flextool's
-    # ``entity_period_calc_params.py:1718-1761``.  Pass the CSV-loaded
-    # ``p_entity_all_existing`` which carries the lifetime-cumulative
-    # chain for multi-year invest fixtures (raw entity.existing alone
-    # doesn't reproduce ``existing + previously_invested``).
+    # and the unitsize cascade.
     try:
         pae_for_max_units = getattr(flex_data, "p_entity_all_existing", None)
         pemu_db = p_entity_max_units_from_source(
@@ -4164,9 +4151,18 @@ def derived_overrides_c(
     except Exception:
         pemu_db = None
     if pemu_db is not None:
-        out["p_entity_max_units"] = pemu_db
+        flex_data.p_entity_max_units = pemu_db
 
-    return out
+
+# Deprecated alias scheduled for deletion in Δ.4.
+def derived_overrides_c(
+    flex_data: object,
+    source: "InputSource",
+    workdir: Path,
+) -> dict[str, object | None]:
+    """Deprecated.  Use :func:`apply_derived_c` instead."""
+    apply_derived_c(flex_data, source, workdir)
+    return {}
 
 
 # =============================================================================
@@ -4544,35 +4540,21 @@ D_PUBLIC_FIELDS: tuple[str, ...] = (
 )
 
 
-def derived_overrides_d(
+def apply_derived_d(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
-) -> dict[str, object | None]:
-    """Γ.3.D DB-direct override dict — narrow conservative scope.
+) -> None:
+    """Apply Γ.3.D Derived Params, mutating ``flex_data`` in place.
 
-    Each candidate overlay is gated on a frame-equal precheck against
-    the CSV-loaded value (``_param_matches`` for Params,
-    ``_set_eq_sorted`` for set-shaped frames).  A mismatch leaves the
-    CSV value in place — fixtures with multi-period cumulative
-    invest cascades / lifetime windows still flow through their
-    flextool-preprocessing-emitted CSVs.
-
-    Scope (per the Γ.3.D close): Tier-1 selected items only:
+    Scope (Tier-1 selected items):
       * §3.11 ``p_entity_all_existing`` (simple existing-only path).
       * §3.16 ``node_reference_angle`` (DC PF reference pick).
       * §3.13 ``process_reserve_upDown_node_active`` (reliability>0 set).
 
-    Storage block algebra, lifetime cascade, multi-year inflation
-    expansion, ladder/delay Params, and stochastic multi-branch
-    normalisation are **deferred to Γ.3.E**.
+    Δ.3: replaces the previous ``derived_overrides_d`` dict-return.
     """
-    out: dict[str, object | None] = {}
-
     active_solve = _read_active_solve(workdir)
-
-    # Per Γ.3.G architectural shift: no defensive gating.  Helpers
-    # either produce the canonical frame or return None.
 
     # ─── §3.11 p_entity_all_existing ─────────────────────────────────
     try:
@@ -4581,7 +4563,7 @@ def derived_overrides_d(
     except Exception:
         pae_db = None
     if pae_db is not None:
-        out["p_entity_all_existing"] = pae_db
+        flex_data.p_entity_all_existing = pae_db
 
     # ─── §3.16 node_reference_angle ──────────────────────────────────
     try:
@@ -4589,7 +4571,7 @@ def derived_overrides_d(
     except Exception:
         nra_db = None
     if nra_db is not None:
-        out["node_reference_angle"] = nra_db
+        flex_data.node_reference_angle = nra_db
 
     # ─── §3.13 process_reserve_upDown_node_active ────────────────────
     try:
@@ -4597,9 +4579,18 @@ def derived_overrides_d(
     except Exception:
         pruna_db = None
     if pruna_db is not None:
-        out["process_reserve_upDown_node_active"] = pruna_db
+        flex_data.process_reserve_upDown_node_active = pruna_db
 
-    return out
+
+# Deprecated alias scheduled for deletion in Δ.4.
+def derived_overrides_d(
+    flex_data: object,
+    source: "InputSource",
+    workdir: Path,
+) -> dict[str, object | None]:
+    """Deprecated.  Use :func:`apply_derived_d` instead."""
+    apply_derived_d(flex_data, source, workdir)
+    return {}
 
 
 # ===========================================================================
@@ -5833,18 +5824,13 @@ E_PUBLIC_FIELDS: tuple[str, ...] = (
 )
 
 
-def derived_overrides_e(
+def apply_derived_e(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
-) -> dict[str, object | None]:
-    """Γ.3.E DB-direct override dict — storage block algebra (§3.9).
-
-    Per the architectural shift documented in the task spec, this batch
-    drops defensive gating: helpers either produce the canonical frame
-    or the parity test fails loudly.  Each helper returns ``None`` only
-    when the underlying source data is absent (e.g. fixture without a
-    storage state, no nodeStateBlock entries).
+) -> None:
+    """Apply Γ.3.E storage block algebra (§3.9), mutating ``flex_data``
+    in place.
 
     Order — dependency-driven:
       1. dtttdt + auxiliary lag frames (§3.9.1).
@@ -5855,27 +5841,24 @@ def derived_overrides_e(
       6. storage_use_reference_value (§3.9.6).
       7. p_roll_continue_state / p_fix_storage_quantity (§3.9.7).
       8. dtt_timeline_matching / period_branch (§3.9.8).
+
+    Δ.3: replaces the previous ``derived_overrides_e`` dict-return.
     """
-    out: dict[str, object | None] = {}
     active_solve = _read_active_solve(workdir)
     nodeState_df = getattr(flex_data, "nodeState", None)
     has_state = (nodeState_df is not None
                   and getattr(nodeState_df, "height", 0) > 0)
 
     # 1. dtttdt -------------------------------------------------------
-    # dtttdt is broader than storage (used by ramps + online dynamics);
-    # always overlay when computable from the source.
     dtttdt_db = None
     try:
         dtttdt_db = dtttdt_from_source(source, active_solve, workdir)
     except Exception:
         dtttdt_db = None
     if dtttdt_db is not None:
-        out["dtttdt"] = dtttdt_db
+        flex_data.dtttdt = dtttdt_db
 
-    # 2. period_block family (storage-only).  CSV omits these frames
-    #    when nodeState is empty — replicate that.  Multi-resolution
-    #    synthesis is workdir-aware. -----------------------------------
+    # 2. period_block family (storage-only). --------------------------
     pb_family = None
     if has_state:
         try:
@@ -5886,16 +5869,14 @@ def derived_overrides_e(
     period_block_time_for_arc: pl.DataFrame | None = None
     if pb_family is not None:
         if pb_family["period_block"] is not None:
-            out["period_block"] = pb_family["period_block"]
+            flex_data.period_block = pb_family["period_block"]
         if pb_family["period_block_succ"] is not None:
-            out["period_block_succ"] = pb_family["period_block_succ"]
+            flex_data.period_block_succ = pb_family["period_block_succ"]
         if pb_family["period_block_time"] is not None:
-            out["period_block_time"] = pb_family["period_block_time"]
+            flex_data.period_block_time = pb_family["period_block_time"]
             period_block_time_for_arc = pb_family["period_block_time"]
 
-    # 1b. dtttdt-derived lag frames (storage-only — CSV gates on
-    #     nodeState).  Multi-resolution interior depends on
-    #     period_block_time. ---------------------------------------
+    # 1b. dtttdt-derived lag frames (storage-only). ------------------
     if has_state:
         fwd = dtttdt_forward_only_from_dtttdt(dtttdt_db)
         if fwd is not None:
@@ -5903,11 +5884,11 @@ def derived_overrides_e(
             if (sbm_full is not None
                     and sbm_full.filter(
                         pl.col("method") == "bind_forward_only").height > 0):
-                out["dtttdt_forward_only"] = fwd
+                flex_data.dtttdt_forward_only = fwd
         interior = dtttdt_block_interior_from_dtttdt(
             dtttdt_db, period_block_time_for_arc)
         if interior is not None:
-            out["dtttdt_block_interior"] = interior
+            flex_data.dtttdt_block_interior = interior
 
     # 3. nodeStateBlock synthesis (storage-only) ----------------------
     nsb_db = None
@@ -5917,12 +5898,11 @@ def derived_overrides_e(
         except Exception:
             nsb_db = None
         if nsb_db is not None:
-            out["nodeStateBlock"] = nsb_db
+            flex_data.nodeStateBlock = nsb_db
 
     # 4. arc block weights --------------------------------------------
     pss = getattr(flex_data, "pss", None)
     if pss is None:
-        # Use pss_eff or pss_noEff if pss not set — caller pre-merges.
         pss = getattr(flex_data, "pss_eff", None) or getattr(
             flex_data, "pss_noEff", None)
     if (nsb_db is not None and period_block_time_for_arc is not None
@@ -5936,7 +5916,7 @@ def derived_overrides_e(
             for k in ("arc_sink_block_dt", "arc_source_block_dt",
                        "p_arc_sink_weight", "p_arc_source_weight"):
                 if arc.get(k) is not None:
-                    out[k] = arc[k]
+                    setattr(flex_data, k, arc[k])
 
     # 5. p_state_existing_capacity / p_state_upper --------------------
     if has_state:
@@ -5946,13 +5926,13 @@ def derived_overrides_e(
         except Exception:
             pse = None
         if pse is not None:
-            out["p_state_existing_capacity"] = pse
+            flex_data.p_state_existing_capacity = pse
         try:
             psu = p_state_upper_from_source(source, pse, nodeState_df)
         except Exception:
             psu = None
         if psu is not None:
-            out["p_state_upper"] = psu
+            flex_data.p_state_upper = psu
 
     # 6. storage_use_reference_value (storage-only) -------------------
     if has_state:
@@ -5961,7 +5941,7 @@ def derived_overrides_e(
         except Exception:
             surv = None
         if surv is not None:
-            out["storage_use_reference_value"] = surv
+            flex_data.storage_use_reference_value = surv
 
     # 7. rolling-handoff (storage-only — read-from-disk handoff) ------
     if has_state:
@@ -5970,27 +5950,36 @@ def derived_overrides_e(
         except Exception:
             rcs = None
         if rcs is not None:
-            out["p_roll_continue_state"] = rcs
+            flex_data.p_roll_continue_state = rcs
         try:
             pfsq = p_fix_storage_quantity_from_workdir(workdir)
         except Exception:
             pfsq = None
         if pfsq is not None:
-            out["p_fix_storage_quantity"] = pfsq
+            flex_data.p_fix_storage_quantity = pfsq
         try:
             dttm = dtt_timeline_matching_from_workdir(workdir)
         except Exception:
             dttm = None
         if dttm is not None:
-            out["dtt_timeline_matching"] = dttm
+            flex_data.dtt_timeline_matching = dttm
         try:
             pbr = period_branch_from_source(source, workdir)
         except Exception:
             pbr = None
         if pbr is not None:
-            out["period_branch"] = pbr
+            flex_data.period_branch = pbr
 
-    return out
+
+# Deprecated alias scheduled for deletion in Δ.4.
+def derived_overrides_e(
+    flex_data: object,
+    source: "InputSource",
+    workdir: Path,
+) -> dict[str, object | None]:
+    """Deprecated.  Use :func:`apply_derived_e` instead."""
+    apply_derived_e(flex_data, source, workdir)
+    return {}
 
 
 # ===========================================================================
@@ -6932,29 +6921,22 @@ def ed_entity_annual_family_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
-def derived_overrides_f(
+def apply_derived_f(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
-) -> dict[str, object | None]:
-    """Γ.3.F DB-direct override dict — lifetime cascade family + handoff
-    state + multi-year inflation cascade.
+) -> None:
+    """Apply Γ.3.F lifetime cascade family + handoff state + multi-year
+    inflation cascade, mutating ``flex_data`` in place.
 
-    Per the Γ.3.E/F architectural shift, no defensive feature gating:
-    helpers either produce the canonical frame or the parity test
-    fails loudly.  Overrides applied in dependency order:
+    Order:
+      1. ``p_inflation_op`` full multi-year cascade.
+      2. ``p_entity_previously_invested_capacity`` / ``p_entity_invested``
+         / ``p_entity_divested`` (handoff state).
+      3. ``ed_entity_annual_*`` family (depends on (1) for inflation).
 
-      1. ``p_inflation_op`` full multi-year cascade (replaces Γ.3.A's
-         trivial path and Γ.3.C's simple-1-year subcase).
-      2. ``p_entity_previously_invested_capacity`` /
-         ``p_entity_invested`` / ``p_entity_divested`` (handoff state,
-         §3.7.7/8 — single-solve fixtures get None).
-      3. ``ed_entity_annual_discounted`` /
-         ``ed_entity_annual_divest_discounted`` /
-         ``ed_lifetime_fixed_cost`` / ``ed_lifetime_fixed_cost_divest``
-         (§3.7.5/6 — depends on (1) for the inflation factors).
+    Δ.3: replaces the previous ``derived_overrides_f`` dict-return.
     """
-    out: dict[str, object | None] = {}
     active_solve = _read_active_solve(workdir)
     dt_csv = getattr(flex_data, "dt", None)
 
@@ -6966,33 +6948,27 @@ def derived_overrides_f(
         except Exception:
             infl = None
         if infl is not None:
-            out["p_inflation_op"] = infl
+            flex_data.p_inflation_op = infl
 
     # 2. Handoff state -----------------------------------------------
     try:
         ppic = p_entity_previously_invested_capacity_from_workdir(workdir)
     except Exception:
         ppic = None
-    # Always overlay — None overlay leaves CSV value untouched (the
-    # current loader's read returns Param-or-None, identical shape).
-    # We only override if the source produced a result distinct from
-    # the CSV path (which itself reads from the same workdir).  In
-    # practice both paths read the same CSV; we still surface this
-    # via the override dict for completeness.
     if ppic is not None:
-        out["p_entity_previously_invested_capacity"] = ppic
+        flex_data.p_entity_previously_invested_capacity = ppic
     try:
         pei = p_entity_invested_from_workdir(workdir)
     except Exception:
         pei = None
     if pei is not None:
-        out["p_entity_invested"] = pei
+        flex_data.p_entity_invested = pei
     try:
         ped = p_entity_divested_from_workdir(workdir)
     except Exception:
         ped = None
     if ped is not None:
-        out["p_entity_divested"] = ped
+        flex_data.p_entity_divested = ped
 
     # 3. Lifetime cascade family --------------------------------------
     ed_invest = getattr(flex_data, "ed_invest_set", None)
@@ -7005,9 +6981,18 @@ def derived_overrides_f(
             fam = {}
         for k, v in fam.items():
             if v is not None:
-                out[k] = v
+                setattr(flex_data, k, v)
 
-    return out
+
+# Deprecated alias scheduled for deletion in Δ.4.
+def derived_overrides_f(
+    flex_data: object,
+    source: "InputSource",
+    workdir: Path,
+) -> dict[str, object | None]:
+    """Deprecated.  Use :func:`apply_derived_f` instead."""
+    apply_derived_f(flex_data, source, workdir)
+    return {}
 
 
 # ===========================================================================
@@ -7678,31 +7663,24 @@ G_PUBLIC_FIELDS: tuple[str, ...] = (
 )
 
 
-def derived_overrides_g(
+def apply_derived_g(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
-) -> dict[str, object | None]:
-    """Γ.3.G DB-direct override dict — residual Derived Params.
-
-    Per the §Γ.3.E architectural shift, no defensive feature gating:
-    helpers either produce the canonical frame or the parity test
-    fails loudly.  Override application is unconditional — when the
-    helper returns ``None`` the field falls through to the prior
-    overlay (CSV or earlier batch).
+) -> None:
+    """Apply Γ.3.G residual Derived Params, mutating ``flex_data``
+    in place.
 
     Scope:
-
       * §3.17 commodity ladder — ``p_f_d_k``,
         ``p_ladder_cum_realized_mwh``.
       * §3.13 reserves — ``prundt``.
-      * §3.15 delay — ``dtt__delay_duration``,
-        ``p_process_delay_weight``.
+      * §3.15 delay — ``dtt__delay_duration``, ``p_process_delay_weight``.
       * §3.18 multi-branch normalisation — full cascade for
-        ``pd_branch_weight`` and ``pdt_branch_weight`` (replaces
-        Γ.3.A's trivial 1.0 default in stochastic fixtures).
+        ``pd_branch_weight`` and ``pdt_branch_weight``.
+
+    Δ.3: replaces the previous ``derived_overrides_g`` dict-return.
     """
-    out: dict[str, object | None] = {}
     active_solve = _read_active_solve(workdir)
     dt = getattr(flex_data, "dt", None)
 
@@ -7712,7 +7690,7 @@ def derived_overrides_g(
     except Exception:
         fdk = None
     if fdk is not None:
-        out["p_f_d_k"] = fdk
+        flex_data.p_f_d_k = fdk
 
     # ─── §3.17.2 p_ladder_cum_realized_mwh ─────────────────────────
     try:
@@ -7720,7 +7698,7 @@ def derived_overrides_g(
     except Exception:
         cum_real = None
     if cum_real is not None:
-        out["p_ladder_cum_realized_mwh"] = cum_real
+        flex_data.p_ladder_cum_realized_mwh = cum_real
 
     # ─── §3.13.1 prundt ────────────────────────────────────────────
     try:
@@ -7728,7 +7706,7 @@ def derived_overrides_g(
     except Exception:
         prundt = None
     if prundt is not None:
-        out["prundt"] = prundt
+        flex_data.prundt = prundt
 
     # ─── §3.15.1 dtt__delay_duration ───────────────────────────────
     try:
@@ -7736,7 +7714,7 @@ def derived_overrides_g(
     except Exception:
         dtt_dd = None
     if dtt_dd is not None:
-        out["dtt__delay_duration"] = dtt_dd
+        flex_data.dtt__delay_duration = dtt_dd
 
     # ─── §3.15.2 p_process_delay_weight ────────────────────────────
     try:
@@ -7744,7 +7722,7 @@ def derived_overrides_g(
     except Exception:
         pdw = None
     if pdw is not None:
-        out["p_process_delay_weight"] = pdw
+        flex_data.p_process_delay_weight = pdw
 
     # ─── §3.18.1 multi-branch normalisation ────────────────────────
     try:
@@ -7753,7 +7731,7 @@ def derived_overrides_g(
     except Exception:
         pd_bw = None
     if pd_bw is not None:
-        out["pd_branch_weight"] = pd_bw
+        flex_data.pd_branch_weight = pd_bw
 
     try:
         pdt_bw = pdt_branch_weight_full_from_source(
@@ -7761,6 +7739,15 @@ def derived_overrides_g(
     except Exception:
         pdt_bw = None
     if pdt_bw is not None:
-        out["pdt_branch_weight"] = pdt_bw
+        flex_data.pdt_branch_weight = pdt_bw
 
-    return out
+
+# Deprecated alias scheduled for deletion in Δ.4.
+def derived_overrides_g(
+    flex_data: object,
+    source: "InputSource",
+    workdir: Path,
+) -> dict[str, object | None]:
+    """Deprecated.  Use :func:`apply_derived_g` instead."""
+    apply_derived_g(flex_data, source, workdir)
+    return {}
