@@ -383,27 +383,126 @@ def p_inflation_op_from_source(
 def p_rp_cost_weight_from_source(
     source: "InputSource",
     dt: pl.DataFrame,
+    active_solve: str | None = None,
 ) -> Param | None:
     """Per-(d, t) representative-period cost weight.
 
     Audit §3.1.2: defaults to 1.0 per (d, t); explicit overrides come
-    from solve-level ``rp_weights`` in flextool.  Currently the source
-    schema doesn't expose representative-period weights as a 2d_map on
-    a Spine class flexpy can read directly — the CSV path resolves
-    ``rp_cost_weight.csv`` populated by ``per_solve_sets.py``.
+    from solve-level ``timeset_weights`` (flat per-step weighting,
+    non-RP) and ``representative_period_weights`` (nested base→rep
+    Map, RP scenarios) in flextool.
 
-    For Γ.3.A: emit the dense default (1.0 over dt) when the dt frame
-    is available.  Representative-period overrides are deferred —
-    fixtures that activate them retain their CSV-loaded value
-    (``representative_periods`` family).
+    Algorithm (mirrors flextool's
+    :func:`flextool.flextoolrunner.solve_writers.write_timeset_cost_weight`
+    for the non-RP path and
+    :func:`flextool.flextoolrunner.solve_writers.write_rp_data` for the
+    RP path):
+
+    Non-RP path (``timeset_weights`` set on a timeset):
+      1. For each ``(period, timeset)`` pair from
+         ``solve.period_timeset`` filtered to *active_solve*, look up
+         ``timeset.timeset_weights[timeset]`` — a flat
+         ``{timestep: weight}`` mapping.
+      2. For each active timestep ``t`` in the period, emit
+         ``raw[t] = weights.get(t, 0.0)``.
+      3. Normalise to sum-to-n_active over the period's active steps:
+         ``scale = n_active / sum(raw)``, then per-(d, t)
+         ``value = raw[t] * scale``.  This makes a uniform input
+         reproduce the trivial default 1.0 per step.
+      4. Periods without a ``timeset_weights`` row keep the trivial
+         default 1.0.
+
+    RP path (``representative_period_weights`` set):
+      Currently deferred — RP fixtures don't appear in the regression
+      set this helper unblocks.  The CSV-loaded ``rp_cost_weight.csv``
+      already encodes the canonical weights; the helper emits ``None``
+      via the empty-frame fallback so the CSV value survives.
+
+    The ``active_solve`` argument was added in Γ.8.E so the helper can
+    filter ``solve.period_timeset`` to the right solve when running in
+    multi-solve cascades.  Backward-compat: ``None`` falls back to a
+    no-op (returns the dense 1.0 default) for any caller still on the
+    Γ.3.A signature.
     """
     if dt is None:
         return None
-    out = (dt.lazy()
-             .with_columns(value=pl.lit(1.0))
-             .select("d", "t", "value")
-             .sort("d", "t")
-             .collect())
+
+    # Build the dense default as the baseline; any per-(d, t) override
+    # from ``timeset_weights`` will replace it via a left-join.
+    default_lf = (dt.lazy()
+                    .select("d", "t")
+                    .with_columns(value=pl.lit(1.0).cast(pl.Float64))
+                    .sort("d", "t"))
+
+    # Discover ``solve.period_timeset`` and ``timeset.timeset_weights``;
+    # if either is unavailable / empty, fall through to the trivial
+    # default.
+    if active_solve is None:
+        out = default_lf.collect()
+        return Param(("d", "t"), out) if out.height > 0 else None
+
+    pt = _try_param(source, "solve", "period_timeset")
+    if pt is None:
+        out = default_lf.collect()
+        return Param(("d", "t"), out) if out.height > 0 else None
+    pt_cols = pt.columns
+    period_col = next((c for c in ("period", "x") if c in pt_cols), None)
+    if period_col is None:
+        out = default_lf.collect()
+        return Param(("d", "t"), out) if out.height > 0 else None
+    period_timeset_lf = (pt.lazy()
+                            .filter(pl.col("name") == active_solve)
+                            .select(pl.col(period_col).alias("d"),
+                                    pl.col("value").alias("ts")))
+
+    tw = _try_param_explicit(source, "timeset", "timeset_weights")
+    if tw is None or tw.height == 0:
+        out = default_lf.collect()
+        return Param(("d", "t"), out) if out.height > 0 else None
+    # ``timeset_weights`` shape: name (timeset), x (timestep), value (weight).
+    tw_cols = tw.columns
+    step_col = next((c for c in ("x", "time", "step") if c in tw_cols), None)
+    if step_col is None:
+        out = default_lf.collect()
+        return Param(("d", "t"), out) if out.height > 0 else None
+    weights_lf = (tw.lazy()
+                    .select(pl.col("name").alias("ts"),
+                            pl.col(step_col).alias("t"),
+                            pl.col("value").cast(pl.Float64).alias("w_raw")))
+
+    # Per-(d, t) raw weight: lookup via period_timeset → timeset_weights.
+    # Periods whose timeset has weights produce non-null ``w_raw``;
+    # periods without keep null and fall back to the trivial default 1.0.
+    dt_lf = dt.lazy().select("d", "t")
+    joined = (dt_lf
+              .join(period_timeset_lf, on="d", how="left")
+              .join(weights_lf, on=["ts", "t"], how="left"))
+
+    # Per-period sum of raw weights and active-step count for scaling.
+    # A period without any ``timeset_weights`` row sums to null/0 — the
+    # downstream branch leaves ``value=1.0`` for those rows.
+    by_period = (joined
+                 .group_by("d")
+                 .agg(pl.col("w_raw").fill_null(0.0).sum().alias("w_sum"),
+                      pl.len().alias("n_active")))
+
+    # Periods with weights: scale = n_active / w_sum, value = w_raw * scale.
+    # Periods without weights: value = 1.0 (default).
+    out_lf = (joined
+              .join(by_period, on="d", how="left")
+              .with_columns(
+                  value=pl.when(
+                      pl.col("w_sum").is_not_null() & (pl.col("w_sum") > 0)
+                  ).then(
+                      pl.col("w_raw").fill_null(0.0)
+                      * pl.col("n_active").cast(pl.Float64)
+                      / pl.col("w_sum")
+                  ).otherwise(pl.lit(1.0))
+              )
+              .select("d", "t", "value")
+              .sort("d", "t"))
+
+    out = out_lf.collect()
     if out.height == 0:
         return None
     return Param(("d", "t"), out)
@@ -889,7 +988,7 @@ def derived_overrides_a(
 
     # 4. p_rp_cost_weight -----------------------------------------------
     try:
-        rp = p_rp_cost_weight_from_source(source, usable_dt)
+        rp = p_rp_cost_weight_from_source(source, usable_dt, active_solve)
     except Exception:
         rp = None
     if rp is not None:
