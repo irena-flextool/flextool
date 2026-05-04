@@ -863,27 +863,35 @@ def _run_chain_native(
     work_folder: Path | str,
     *,
     chain: list[str] | None = None,
+    scenario: str | None = None,
 ) -> dict[str, ChainStep]:
     """Native orchestrator backend for :func:`run_chain`.
 
-    Discovers the scenario DB via either:
+    Discovers the scenario DB via:
 
     * an explicit ``tests.sqlite`` / ``input.sqlite`` under
-      ``work_folder``, OR
-    * an explicit ``chain`` argument naming the sub-solves (in which
-      case the function is a thin wrapper around the legacy file-based
-      driver but with the native solver path).
+      ``work_folder``.
 
-    When the DB is found, delegates to
+    Picks the scenario via, in priority order:
+
+    1. The explicit ``scenario`` kwarg (or the
+       ``FLEXPY_NATIVE_SCENARIO`` env var as a fallback).
+    2. The scenario whose name matches the directory's ``work_<S>``
+       suffix (with a small set of legacy-naming overrides — see
+       :data:`_NATIVE_SCENARIO_OVERRIDES`).
+    3. Failing both, raises :class:`ValueError` instead of guessing —
+       the native path is the consumer of a DB, not a snapshot tree;
+       silently picking the first scenario alphabetically silently
+       runs the wrong scenario in shared-DB fixtures.
+
+    When the DB is found AND a unique scenario is determined,
+    delegates to
     :func:`flextool.engine_polars._orchestration.run_chain_from_db`,
-    re-runs flextool's preprocessing into a fresh tempdir, and returns
-    the result as ``dict[str, ChainStep]`` (mapping each solve to its
-    Solution + handoff + ``warm_used=False``).
-
-    When the DB is NOT found, raises :class:`ValueError` since the
-    native path requires a DB scenario to drive (the legacy path is the
-    one that consumes a pre-built work folder).
+    re-runs flextool's preprocessing into the same work folder, and
+    returns the result as ``dict[str, ChainStep]`` (mapping each solve
+    to its Solution + handoff + ``warm_used=False``).
     """
+    import os
     work = Path(work_folder)
     db_path = None
     for cand in ("tests.sqlite", "input.sqlite"):
@@ -902,18 +910,29 @@ def _run_chain_native(
     # Late import to avoid a build-time cycle between chain and _orchestration.
     from flextool.engine_polars._orchestration import run_chain_from_db
 
-    # Discover the scenario from the DB (first scenario in alphabetical
-    # order if multiple exist — same convention as
-    # ``test_solve_config_parity._discover_fixtures``).
-    import spinedb_api as api
-    with api.DatabaseMapping("sqlite:///" + str(db_path)) as db:
-        scenarios = sorted(s.name for s in db.query(db.scenario_sq).all())
-    if not scenarios:
-        raise ValueError(f"_run_chain_native: no scenarios in {db_path}")
-    scenario = scenarios[0]
+    # Resolve the scenario.
+    if scenario is None:
+        scenario = os.environ.get("FLEXPY_NATIVE_SCENARIO") or None
+    if scenario is None:
+        scenario = _resolve_native_scenario(db_path, work)
+    if scenario is None:
+        raise ValueError(
+            f"_run_chain_native: cannot determine which scenario to "
+            f"run for {work}.  Pass scenario= explicitly, set "
+            f"FLEXPY_NATIVE_SCENARIO, or rename the work directory to "
+            f"match the scenario name (work_<scenario>).  "
+            f"work.name={work.name!r}"
+        )
 
+    # Critical: do NOT pass ``work`` directly as ``work_folder`` to
+    # ``run_chain_from_db``.  ``FlexToolRunner.write_input`` would
+    # overwrite the fixture's ``input/`` directory (rewriting
+    # ``input/model__solve.csv`` to whatever scenario we resolved,
+    # potentially shrinking a 4-solve cascade fixture down to a single
+    # solve).  Instead, run the orchestrator into a private tempdir;
+    # the work folder is consulted only for its DB.
     steps = run_chain_from_db(
-        db_path, scenario, work_folder=work,
+        db_path, scenario,
     )
     # Adapt to ChainStep shape so callers see the same return type.
     out: dict[str, ChainStep] = {}
@@ -925,6 +944,52 @@ def _run_chain_native(
             warm_used=False,
         )
     return out
+
+
+# Same overrides used by the parity-sweep fixtures — see
+# tests/engine_polars/test_solve_config_parity._discover_fixtures.  The
+# keys are work_folder dirnames; values are the scenario names that
+# produced those snapshots.
+_NATIVE_SCENARIO_OVERRIDES: dict[str, str] = {
+    "work_2day_stochastic_dispatch_full_storage": "2_day_stochastic_dispatch",
+    "work_commodity_ladder_annual": "coal_ladder_annual",
+    "work_commodity_ladder_cumulative": "coal_ladder_cumulative",
+    "work_delay_source_coef": "water_pump_delayed",
+    "work_inflation_check": "wind_battery_invest_lifetime_renew",
+}
+
+
+def _resolve_native_scenario(db_path: Path, work: Path) -> str | None:
+    """Map ``work/`` dirname → scenario name using the same convention
+    as the parity tests.  Returns ``None`` when no rule matches.
+    """
+    import re
+    import spinedb_api as api
+
+    if work.name in _NATIVE_SCENARIO_OVERRIDES:
+        return _NATIVE_SCENARIO_OVERRIDES[work.name]
+
+    scen_target = work.name.removeprefix("work_") if work.name.startswith("work_") else None
+    if scen_target is None:
+        return None
+
+    try:
+        with api.DatabaseMapping("sqlite:///" + str(db_path)) as db:
+            scenarios = sorted(s.name for s in db.query(db.scenario_sq).all())
+    except Exception:
+        return None
+
+    candidates = [scen_target]
+    candidates.append(re.sub(r"(^|_)(\d+)([a-z])", r"\1\2_\3", scen_target))
+    candidates.append(re.sub(r"(\d+)_([a-z])", r"\1\2", scen_target))
+    if scen_target.endswith("_full_storage"):
+        base = scen_target[: -len("_full_storage")]
+        candidates.append(re.sub(r"(^|_)(\d+)([a-z])", r"\1\2_\3", base))
+        candidates.append(base)
+    for cand in candidates:
+        if cand in scenarios:
+            return cand
+    return None
 
 
 def run_chain(

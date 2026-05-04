@@ -317,12 +317,20 @@ def _drive_cascade(
             )
             # Deposit so flextool's consume side picks it up on the next
             # iteration's preprocessing AND so we have it for the result
-            # dict.  Note that flextool's ``capture_post_solve`` ALSO
-            # runs after this returns and may further populate slots
-            # from the on-disk CSVs — we set our flexpy-derived carrier
-            # first so the file-based path doesn't overwrite the
-            # flexpy-extracted ``realized_invest`` (which is the truth
-            # for chain runs since flexpy is the actual solver).
+            # dict.
+            #
+            # IMPORTANT: flextool's ``orchestration.run_model`` also
+            # calls ``capture_post_solve(state, complete_solve[solve])``
+            # immediately after ``solver.run`` returns.  That helper
+            # reads the current ``solve_data/*.csv`` files and OVERWRITES
+            # the carriers on the same handoff object — which would
+            # silently replace our flexpy-derived ``realized_invest``
+            # with whatever the prior-handoff-seeded preprocessing
+            # wrote to disk for THIS solve (i.e., the prior solve's
+            # state, not our actual flexpy result).  We monkey-patch
+            # ``capture_post_solve`` to a no-op for the duration of
+            # this loop in ``_drive_cascade`` below — the override
+            # restores it on exit.
             self.state.handoffs[complete_solve_name] = handoff
             self._all_steps[complete_solve_name] = OrchestrationStep(
                 solve_name=complete_solve_name,
@@ -332,7 +340,16 @@ def _drive_cascade(
             )
             return 0
 
-    _flx_orch.run_model(runner.state, _FlexpyCascadeSolver(runner.state))
+    # Monkey-patch ``capture_post_solve`` at the orchestration module's
+    # binding so the file-based capture doesn't overwrite our flexpy-
+    # extracted handoffs.  The patch is restored on exit so other
+    # callers (legacy file-based path) keep their behaviour.
+    _real_capture = _flx_orch.capture_post_solve
+    _flx_orch.capture_post_solve = lambda state, solve_name: None
+    try:
+        _flx_orch.run_model(runner.state, _FlexpyCascadeSolver(runner.state))
+    finally:
+        _flx_orch.capture_post_solve = _real_capture
     # Mirror the in-memory handoff dict back onto our state in case
     # callers want to inspect it.
     state.handoffs = runner.state.handoffs
