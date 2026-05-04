@@ -3656,8 +3656,10 @@ def build_handoff_from_flexpy(
       present.
     * ``cum_sim_hours`` — per-period running sim-hour total, sourced
       from ``solve_data/ladder_cum_sim_hours.csv`` if present.
-    * ``periods_already_emitted`` — per-period bare-set, from
-      ``solve_data/period_capacity.csv`` if present.
+    (Δ.1 — ``periods_already_emitted`` was here; it moved to
+    ``_output_writer.OutputWriterState`` since it's a writer-side
+    emission gate, not a solver handoff carrier.  The on-disk source
+    ``solve_data/period_capacity.csv`` is unchanged.)
 
     The work folder must already have completed flextool's per-solve
     preprocessing for ``solve_name`` (so ``solve_data/`` carries
@@ -3947,30 +3949,10 @@ def build_handoff_from_flexpy(
                             .fill_null(0.0))
                    .select("period", "value"))
 
-    # ---- periods_already_emitted: bare set of period strings ----
-    # Each solve adds the periods it just emitted output rows for; the
-    # carrier accumulates across the chain so a downstream solve can
-    # gate re-emission.  Source: ``solve_data/period_capacity.csv``.
-    periods_already_emitted_df = None
-    prior_periods: set[str] = set()
-    if prior_handoff is not None and prior_handoff.periods_already_emitted is not None:
-        prior_periods = set(
-            str(p) for p in prior_handoff.periods_already_emitted["period"].to_list()
-        )
-    pae_path = sd / "period_capacity.csv"
-    new_periods: set[str] = set()
-    if pae_path.exists():
-        try:
-            pae_df = _read_csv_file(pae_path)
-        except pl.exceptions.NoDataError:
-            pae_df = None
-        if pae_df is not None and pae_df.height > 0 and "period" in pae_df.columns:
-            new_periods = set(str(p) for p in pae_df["period"].to_list())
-    all_periods = prior_periods | new_periods
-    if all_periods:
-        periods_already_emitted_df = pl.DataFrame(
-            {"period": sorted(all_periods)}
-        )
+    # Δ.1 — ``periods_already_emitted`` extraction removed.  The carrier
+    # moved to ``_output_writer.OutputWriterState`` (writer-side state).
+    # ``solve_data/period_capacity.csv`` is unchanged (handoff_writers
+    # still bumps it post-solve).
 
     # ---- fix_storage_price / fix_storage_usage extraction ----
     # The .csv reads above (sd / fix_storage_price.csv etc.) may already
@@ -4039,7 +4021,6 @@ def build_handoff_from_flexpy(
         cumulative_co2=cumulative_co2_df,
         cumulative_commodity=cumulative_commodity_df,
         cum_sim_hours=cum_sim_hours_df,
-        periods_already_emitted=periods_already_emitted_df,
     )
 
 

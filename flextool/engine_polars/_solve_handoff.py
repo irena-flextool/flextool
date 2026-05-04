@@ -30,7 +30,10 @@ carriers, named metric columns for multi-value):
     cumulative_co2         [group, period, value]
     cumulative_commodity   [commodity, tier, period, mwh]
     cum_sim_hours          [period, value]
-    periods_already_emitted [period]
+
+(Δ.1 — ``periods_already_emitted`` was previously listed here; it
+moved to ``_output_writer.OutputWriterState`` since it gates writer-
+side emission and isn't a true solver-handoff carrier.)
 
 ``fix_storage`` collapses the three file-based carriers
 (``fix_storage_quantity.csv``, ``..._price.csv``, ``..._usage.csv``)
@@ -112,16 +115,10 @@ class SolveHandoff:
     # File equivalent: solve_data/ladder_cum_sim_hours.csv.
     cum_sim_hours: pl.DataFrame | None = None
 
-    # Periods whose capacity outputs have already been dumped by an
-    # earlier solve — gates re-emission across rolls.
-    # File equivalent: solve_data/period_capacity.csv.
-    periods_already_emitted: pl.DataFrame | None = None
-
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
         "roll_end_state", "fix_storage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
-        "periods_already_emitted",
     )
 
     def is_empty(self) -> bool:
@@ -274,10 +271,12 @@ def capture_post_solve(state, solve_name: str) -> None:
                         .fill_null(0.0))
                .select("period", "value"))
 
-    # periods_already_emitted: bare set of period strings.
-    pae = _read("period_capacity.csv")
-    if pae is not None and "period" in pae.columns:
-        handoff.periods_already_emitted = pae.select("period").unique()
+    # Δ.1 — ``periods_already_emitted`` removed from SolveHandoff (lived
+    # at the wrong layer; relocated to OutputWriterState in the writer
+    # adapter).  The file ``solve_data/period_capacity.csv`` is still
+    # the on-disk source of truth, populated by
+    # ``handoff_writers._bump_period_capacity`` and read by the writer
+    # adapter (``_output_writer.write_outputs_for_solve``).
 
 
 def write_fix_storage_files_from_handoff(

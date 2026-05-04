@@ -200,14 +200,19 @@ def test_handoff_capture_roll_end_state(tmp_path):
     assert "battery" in h.roll_end_state["node"].to_list()
 
 
-def test_handoff_capture_periods_already_emitted(tmp_path):
-    """``period_capacity.csv`` is written by every solve, so
-    ``periods_already_emitted`` is always populated after a run."""
+def test_period_capacity_csv_populates(tmp_path):
+    """``period_capacity.csv`` is written by every solve.  Δ.1 moved the
+    in-memory mirror from ``SolveHandoff.periods_already_emitted`` to
+    :class:`OutputWriterState`; the on-disk file is unchanged.  This
+    test asserts the CSV-level invariant that flextool's writers still
+    bump the file (the in-memory carrier moves with the new home — see
+    ``test_output_writer.test_output_writer_state_periods_already_emitted``)."""
     state = _run("coal", tmp_path, handoffs_on=True)
-    h = next(iter(state.handoffs.values()))
-    assert h.periods_already_emitted is not None
-    # coal scenario solves p2020.
-    assert "p2020" in h.periods_already_emitted["period"].to_list()
+    pae = state.paths.work_folder / "solve_data" / "period_capacity.csv"
+    assert pae.exists(), "period_capacity.csv missing — handoff_writers regression"
+    df = pl.read_csv(pae)
+    assert "period" in df.columns
+    assert "p2020" in df["period"].to_list()
 
 
 def test_handoff_unexercised_carriers_are_none(tmp_path):

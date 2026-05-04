@@ -249,21 +249,27 @@ def test_run_chain_from_db_single_solve_smoke() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_handoff_from_flexpy_covers_nine_carriers() -> None:
-    """Γ.8.D extension: all nine carriers populated when their source
+def test_build_handoff_from_flexpy_covers_eight_carriers() -> None:
+    """Γ.8.D extension: all eight carriers populated when their source
     data is present.
 
-    Pre-Γ.8.D, ``build_handoff_from_flexpy`` filled 3 of 9 carriers
+    Pre-Γ.8.D, ``build_handoff_from_flexpy`` filled 3 of 8 carriers
     (``realized_invest``, ``realized_existing``, ``divest_cumulative``).
-    The remaining 6 (``roll_end_state``, ``fix_storage``,
-    ``cumulative_co2``, ``cumulative_commodity``, ``cum_sim_hours``,
-    ``periods_already_emitted``) now also populate when their source
-    files / variables are present.
+    The remaining 5 (``roll_end_state``, ``fix_storage``,
+    ``cumulative_co2``, ``cumulative_commodity``, ``cum_sim_hours``)
+    now also populate when their source files / variables are present.
 
-    This test asserts the 4 file-based carriers (cumulative_co2,
-    cumulative_commodity, cum_sim_hours, periods_already_emitted) plus
-    fix_storage_price/usage extraction populate from the handoff
-    CSVs that flextool's preprocessing already writes.
+    Δ.1 — the ninth carrier (``periods_already_emitted``) was retired
+    from :class:`SolveHandoff` and now lives on
+    :class:`flextool.engine_polars._output_writer.OutputWriterState`
+    (writer-side state, not a true solver handoff).  See
+    ``test_output_writer.test_output_writer_state_periods_already_emitted``
+    for the new home's coverage.
+
+    This test asserts the 3 file-based carriers (cumulative_co2,
+    cumulative_commodity, cum_sim_hours) plus fix_storage_price/usage
+    extraction populate from the handoff CSVs that flextool's
+    preprocessing already writes.
     """
     # Use a fixture whose solve_data has period_capacity.csv + at least
     # one of the cumulative carriers.
@@ -299,14 +305,12 @@ def test_build_handoff_from_flexpy_covers_nine_carriers() -> None:
 
         handoff = build_handoff_from_flexpy(sol, td, "test_solve")
 
-    # The four file-based carriers we extended for Γ.8.D — at least
-    # ``periods_already_emitted`` should populate (period_capacity.csv
-    # is present in this fixture's solve_data).
+    # The three file-based carriers we extended for Γ.8.D.  Δ.1 retired
+    # ``periods_already_emitted`` from SolveHandoff (see test docstring).
     fixture_carrier_files = {
         "cumulative_co2": "co2_cum_realized_tonnes.csv",
         "cumulative_commodity": "commodity_ladder_cumulative.csv",
         "cum_sim_hours": "ladder_cum_sim_hours.csv",
-        "periods_already_emitted": "period_capacity.csv",
     }
     for carrier_name, fname in fixture_carrier_files.items():
         sd = work / "solve_data" / fname
@@ -328,52 +332,10 @@ def test_build_handoff_from_flexpy_covers_nine_carriers() -> None:
         # file demonstrably has data.
 
 
-def test_build_handoff_from_flexpy_periods_already_emitted_propagates() -> None:
-    """Γ.8.D extension: ``periods_already_emitted`` accumulates across
-    handoffs, not just stamps the latest solve's set."""
-    work = DATA / "work_multi_year_one_solve_co2_limit"
-    if not work.exists():
-        pytest.skip("fixture not present")
-
-    from polar_high_opt import Problem
-    from flextool.engine_polars.input import (
-        build_handoff_from_flexpy,
-        load_flextool,
-    )
-    from flextool.engine_polars.model import build_flextool
-
-    import tempfile, os
-    with tempfile.TemporaryDirectory() as tmp:
-        td = Path(tmp)
-        for child in ("input", "solve_data", "output_raw"):
-            src = work / child
-            if src.exists():
-                os.symlink(src, td / child)
-        data = load_flextool(td)
-        pb = Problem()
-        build_flextool(pb, data)
-        sol = pb.solve()
-        if not sol.optimal:
-            pytest.skip("LP not optimal")
-
-        # First handoff: no prior.
-        h1 = build_handoff_from_flexpy(sol, td, "first")
-        # Second: pretend we have a prior with extra periods.
-        prior = SolveHandoff(
-            periods_already_emitted=pl.DataFrame(
-                {"period": ["p9999"]},
-            ),
-        )
-        h2 = build_handoff_from_flexpy(sol, td, "second", prior_handoff=prior)
-
-    if h2.periods_already_emitted is None:
-        pytest.skip("fixture's period_capacity.csv didn't yield data")
-    periods = set(h2.periods_already_emitted["period"].to_list())
-    assert "p9999" in periods, (
-        f"prior periods not propagated: {periods}.  "
-        f"Γ.8.D's periods_already_emitted carrier should accumulate "
-        f"across the chain."
-    )
+# Δ.1 — the legacy ``test_build_handoff_from_flexpy_periods_already_emitted_propagates``
+# test was retired; the carrier moved to ``OutputWriterState`` and
+# ``test_output_writer.test_output_writer_state_periods_already_emitted_accumulates``
+# covers the new home's accumulation across cascade rolls.
 
 
 # ---------------------------------------------------------------------------

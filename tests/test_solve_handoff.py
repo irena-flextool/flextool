@@ -137,38 +137,14 @@ def test_capture_post_solve_cumulative_commodity(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# capture_post_solve — periods_already_emitted (lines 267-270)
+# Δ.1 — periods_already_emitted relocation
 # ---------------------------------------------------------------------------
-
-
-def test_capture_post_solve_periods_already_emitted(tmp_path: Path) -> None:
-    """``period_capacity.csv`` → ``handoff.periods_already_emitted`` with
-    duplicates collapsed; missing file or missing ``period`` column → None."""
-    # Case A: file with duplicated period rows → deduped via ``.unique()``.
-    state_a = _make_state(tmp_path / "a")
-    (state_a.paths.work_folder / "solve_data" / "period_capacity.csv").write_text(
-        "period\np2020\np2025\np2020\n"
-    )
-    capture_post_solve(state_a, "s1")
-    pae_a = state_a.handoffs["s1"].periods_already_emitted
-    assert pae_a is not None
-    assert pae_a.columns == ["period"]
-    assert sorted(pae_a["period"].to_list()) == ["p2020", "p2025"]
-
-    # Case B: missing file → None (the ``_read`` helper returns None when
-    # the file doesn't exist; the guard at line 269 then short-circuits).
-    state_b = _make_state(tmp_path / "b")
-    capture_post_solve(state_b, "s1")
-    assert state_b.handoffs["s1"].periods_already_emitted is None
-
-    # Case C: file present but no ``period`` column → None (column-presence
-    # guard at line 269; without it the ``.select("period")`` would raise).
-    state_c = _make_state(tmp_path / "c")
-    (state_c.paths.work_folder / "solve_data" / "period_capacity.csv").write_text(
-        "wrong_col\np2020\n"
-    )
-    capture_post_solve(state_c, "s1")
-    assert state_c.handoffs["s1"].periods_already_emitted is None
+# The legacy ``capture_post_solve`` test for the
+# ``periods_already_emitted`` field on :class:`SolveHandoff` was retired
+# because the field moved to
+# :class:`flextool.engine_polars._output_writer.OutputWriterState`.  The
+# new home + its accumulation across a cascade is exercised by
+# ``tests/engine_polars/test_output_writer.py::test_output_writer_state_periods_already_emitted``.
 
 
 # ---------------------------------------------------------------------------
