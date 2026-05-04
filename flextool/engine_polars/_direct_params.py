@@ -399,9 +399,94 @@ def _e_total_param(source: "InputSource", parameter_name: str,
     return Param(("e",), out)
 
 
+# ---------------------------------------------------------------------------
+# Δ.4 — second-wave Direct Param helpers.
+#
+# Each helper below covers a single FlexData field whose CSV-loader path
+# in ``input.py`` is a one-CSV ``rename + select`` of an entity scalar /
+# Map / 1d_map parameter.  Helpers return ``Param | None`` (None when
+# the DB-side has no explicit row, matching the CSV path's "absent →
+# None" contract).  The CSV-side behaviour preserved verbatim — the
+# parity tests must continue to pass.
+
+def _entity_scalar_explicit(source: "InputSource", entity_class: str,
+                              parameter_name: str,
+                              dim: str) -> Param | None:
+    """Return ``Param((dim,), [<dim>, value])`` for an entity-class
+    scalar, mirroring the CSV path's "explicit rows only" semantics.
+
+    Tolerates a Spine schema that doesn't declare the parameter on the
+    class (older fixtures): ``KeyError`` from
+    :meth:`InputSource.parameter_explicit` / :meth:`parameter` is
+    treated as "no rows".
+    """
+    try:
+        df = source.parameter_explicit(entity_class, parameter_name)
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter(entity_class, parameter_name)
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    return Param((dim,),
+                 df.lazy().rename({"name": dim}).select(dim, "value"))
+
+
+# §5.2.5 — node scalars sliced from p_node.csv
+def p_state_self_discharge_from_source(source: "InputSource") -> Param | None:
+    """``node.self_discharge_loss`` → ``Param(("n",), [n, value])``.
+
+    Default 0.0 (schema).  CSV path
+    (``input.py::_load_storage::_node_param``) returns the explicit
+    rows only.  We mirror by reading via ``parameter_explicit``.
+    """
+    return _entity_scalar_explicit(source, "node", "self_discharge_loss", "n")
+
+
+def p_state_start_from_source(source: "InputSource") -> Param | None:
+    """``node.storage_state_start`` → ``Param(("n",), [n, value])``.
+
+    Default ``None`` (schema).  Returns explicit rows only.
+    """
+    return _entity_scalar_explicit(source, "node", "storage_state_start", "n")
+
+
+# §5.2.7 — process scalars sliced from p_process.csv
+def p_min_load_from_source(source: "InputSource") -> Param | None:
+    """``unit.min_load`` → ``Param(("p",), [p, value])``.
+
+    Default 0.0 (schema).  CSV path filters by processParam=='min_load'
+    and emits rows only when explicit; we mirror via ``parameter_explicit``.
+    """
+    return _entity_scalar_explicit(source, "unit", "min_load", "p")
+
+
+# §5.18 — connection scalars
+def p_connection_susceptance_from_source(source: "InputSource") -> Param | None:
+    """``connection.susceptance`` → ``Param(("p",), [p, value])``.
+
+    Default ``None``.  Used only for DC-power-flow scenarios.  Older
+    fixtures may not define ``susceptance`` on the class — treated as
+    "no rows".
+    """
+    return _entity_scalar_explicit(source, "connection", "susceptance", "p")
+
+
+# §5.19 — commodity scalars
+def p_commodity_unitsize_from_source(source: "InputSource") -> Param | None:
+    """``commodity.unitsize`` → ``Param(("c",), [c, value])``.
+
+    Default 1.0 (schema).  Used by the commodity-price-ladder feature
+    only.  CSV path emits explicit rows only — mirror that via
+    ``parameter_explicit``.
+    """
+    return _entity_scalar_explicit(source, "commodity", "unitsize", "c")
+
+
 def apply_direct_params(source: "InputSource",
                           flex_data: object) -> None:
-    """Apply the DB-direct construction for Γ.1 first-wave Direct Params,
+    """Apply the DB-direct construction for the Direct Param wave,
     mutating ``flex_data`` in place.
 
     Each FlexData field listed below is built by exactly one helper.
@@ -409,8 +494,10 @@ def apply_direct_params(source: "InputSource",
     left untouched; otherwise the helper's result replaces the field.
 
     Δ.3 collapsed the previous ``first_wave_overrides`` dict-return
-    pattern; Δ.4 deleted the deprecated wrapper alias.  Each helper
-    writes its field directly — no dict-overlay round-trip.
+    pattern; Δ.4 deleted the deprecated wrapper alias and added the
+    second-wave helpers covering scalar Direct Params previously read
+    by ``input.py``'s CSV loaders.  Each helper writes its field
+    directly — no dict-overlay round-trip.
     """
     # ─── §5.2.1 scalar Params with FlexData fields ──────────────────────
     p_co2 = p_co2_content_from_source(source)
@@ -458,3 +545,26 @@ def apply_direct_params(source: "InputSource",
                                 filter_zero=True)
     if e_div_min is not None:
         flex_data.e_divest_min_total = e_div_min
+
+    # ─── Δ.4 second wave — node scalars (storage feature) ───────────────
+    p_sd = p_state_self_discharge_from_source(source)
+    if p_sd is not None:
+        flex_data.p_state_self_discharge = p_sd
+    p_st = p_state_start_from_source(source)
+    if p_st is not None:
+        flex_data.p_state_start = p_st
+
+    # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
+    p_ml = p_min_load_from_source(source)
+    if p_ml is not None:
+        flex_data.p_min_load = p_ml
+
+    # ─── Δ.4 second wave — connection scalars (DC power flow feature) ───
+    p_sus = p_connection_susceptance_from_source(source)
+    if p_sus is not None:
+        flex_data.p_connection_susceptance = p_sus
+
+    # ─── Δ.4 second wave — commodity scalars (price ladder feature) ─────
+    p_cu = p_commodity_unitsize_from_source(source)
+    if p_cu is not None:
+        flex_data.p_commodity_unitsize = p_cu
