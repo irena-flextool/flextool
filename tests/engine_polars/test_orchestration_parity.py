@@ -483,3 +483,74 @@ def test_native_orchestration_obj_parity(work_name: str, scenario: str) -> None:
     last = next(reversed(steps.values()))
     assert last.solution is not None
     assert last.solution.optimal, f"{work_name}: not optimal"
+
+
+# ---------------------------------------------------------------------------
+# Storage-fixing handoff: in-memory write helper.
+# ---------------------------------------------------------------------------
+
+
+def test_write_fix_storage_files_from_handoff_in_memory(tmp_path) -> None:
+    """``write_fix_storage_files_from_handoff`` writes the three
+    fix_storage_*.csv files from a wide handoff frame.
+
+    This is the consume-side helper invoked from the orchestrator
+    when a parent solve fixes storage on a child (R-O2 in-memory
+    behaviour divergence).  Unit-level test ensuring the helper still
+    works after the engine_polars port + the legacy re-export shim.
+    """
+    from flextool.engine_polars._solve_handoff import (
+        write_fix_storage_files_from_handoff,
+    )
+
+    sd = tmp_path / "solve_data"
+    sd.mkdir()
+    fix_storage = pl.DataFrame({
+        "node":     ["battery", "battery", "tank"],
+        "period":   ["p2025",   "p2025",   "p2030"],
+        "time":     ["t0001",   "t0002",   "t0001"],
+        "quantity": [10.0, 20.0, None],
+        "price":    [None, 5.0,  None],
+        "usage":    [None, None, 0.7],
+    })
+    write_fix_storage_files_from_handoff(fix_storage, sd)
+    qty = pl.read_csv(sd / "fix_storage_quantity.csv")
+    assert qty.columns == ["node", "period", "step", "p_fix_storage_quantity"]
+    assert qty.height == 2
+    price = pl.read_csv(sd / "fix_storage_price.csv")
+    assert price.height == 1
+    assert price["step"][0] == "t0002"
+    usage = pl.read_csv(sd / "fix_storage_usage.csv")
+    assert usage.height == 1
+    assert usage["node"][0] == "tank"
+
+
+# ---------------------------------------------------------------------------
+# Roll-counter reset semantics — R-O5.
+# ---------------------------------------------------------------------------
+
+
+def test_roll_counter_resets_between_invocations(tmp_path) -> None:
+    """Calling ``run_orchestration`` twice with the same SolveConfig
+    must produce identical roll naming on both calls.  R-O5 in the
+    audit's risk register: ``state.solve.roll_counter[solve] += 1``
+    is a class-attribute mutation and must reset between top-level
+    invocations or sibling rolls collide on the second call.
+
+    We test the reset directly (no need to actually drive a full solve):
+    the orchestrator's first action is ``state.solve.roll_counter =
+    state.solve.make_roll_counter()`` which clears the counter.
+    """
+    state = _make_minimal_state(model_solve={"m": ["s1"]})
+    state.solve.solve_modes = {"s1": "rolling_window"}
+    # Pre-populate the counter as if a prior run had bumped it.
+    state.solve.roll_counter = {"s1": 5}
+
+    # We can't drive the full orchestration here without a proper
+    # state, but we can verify the reset semantics by calling the
+    # helper directly — same call the orchestrator makes at the top.
+    state.solve.roll_counter = state.solve.make_roll_counter()
+    assert state.solve.roll_counter == {"s1": 0}, (
+        "make_roll_counter must reset rolling_window solves to 0 — "
+        "R-O5 mitigation."
+    )
