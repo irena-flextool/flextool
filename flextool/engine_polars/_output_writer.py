@@ -34,12 +34,10 @@ time; Δ.1's job is to consume them via the writers, not to replace.
 ``periods_already_emitted`` carrier
 -----------------------------------
 ``handoff_writers._bump_period_capacity`` accumulates this set on disk
-into ``solve_data/period_capacity.csv``.  Per the dispatch instructions,
-the in-memory mirror of that set lives on the writer's per-cascade
-state (see :class:`OutputWriterState`) instead of on
-:class:`SolveHandoff`.  ``build_handoff_from_flexpy`` and the legacy
-``capture_post_solve`` continue to populate the field for backward
-compatibility, but new producers should consume the writer state.
+into ``solve_data/period_capacity.csv``.  Δ.1 removed the in-memory
+mirror that previously lived on :class:`SolveHandoff` and put it
+where it belongs — :class:`OutputWriterState`, this module's
+per-cascade scratch carrier.
 """
 from __future__ import annotations
 
