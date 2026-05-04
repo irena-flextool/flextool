@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from tests.conftest import DATA_DIR
-from tests.emission._helpers import (
+from tests.engine_polars.conftest import DATA_DIR
+from tests.engine_polars.emission._helpers import (
     assert_cstr_present,
     assert_cstr_row_count,
     build,

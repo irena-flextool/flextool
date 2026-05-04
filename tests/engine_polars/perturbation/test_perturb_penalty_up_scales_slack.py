@@ -38,7 +38,7 @@ import pytest
 
 from flextool.engine_polars import load_flextool
 
-from tests.perturbation._harness import (
+from tests.engine_polars.perturbation._harness import (
     scale_param,
     solve_full,
     assert_obj_changed_by,

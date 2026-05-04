@@ -16,8 +16,8 @@ import pytest
 
 from flextool.engine_polars import load_flextool
 
-from tests.decomposition._components import total_decomposed_obj
-from tests.perturbation._harness import solve_full
+from tests.engine_polars.decomposition._components import total_decomposed_obj
+from tests.engine_polars.perturbation._harness import solve_full
 
 
 WORK = Path(__file__).resolve().parents[1] / "data" / "work_wind_battery"
