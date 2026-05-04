@@ -3455,25 +3455,49 @@ def _read_realized_dispatch_periods(path: Path) -> set[str]:
 
 
 def _read_solve_first(work_folder: Path) -> bool:
-    """Read ``input/p_model.csv``'s ``solveFirst`` flag.  Default True."""
-    path = work_folder / "input" / "p_model.csv"
-    if not path.exists():
-        return True
+    """Read ``p_model.csv``'s ``solveFirst`` flag.
+
+    flextool's per-solve preprocessing writes ``solve_data/p_model.csv``
+    with the chain-position flag (``solveFirst=1`` only for the first
+    sub-solve in the multi-solve cascade, ``0`` for the rest).  The
+    static ``input/p_model.csv`` does not exist in DB-driven fixtures —
+    the file is purely a preprocessing-derived artifact.
+
+    Resolution order:
+    1. ``solve_data/p_model.csv`` — preferred (chain-aware).
+    2. ``input/p_model.csv`` — legacy fallback when a fixture predates
+       the preprocessing rewrite.
+    3. Default ``True`` when neither exists.
+
+    Bug-fix anchor: prior to Γ.8.E this only consulted ``input/`` which
+    in the native cascade path produced ``solveFirst=True`` for every
+    sub-solve, causing ``build_handoff_from_flexpy`` to add
+    ``pre_existing`` to ``realized_existing`` on every iteration —
+    inflating the chain's cumulative ``p_entity_period_existing_capacity``
+    by ``Σ pre_existing`` per extra sub-solve and zeroing out demand on
+    sub-solves 3+ of fixtures like ``wind_battery_invest_lifetime_renew_4solve``.
+    """
     csv = __import__("csv")
-    with path.open() as fh:
-        reader = csv.reader(fh)
-        header = next(reader, None) or []
-        try:
-            param_idx = header.index("modelParam")
-            value_idx = header.index("p_model")
-        except ValueError:
-            return True
-        for r in reader:
-            if len(r) > max(param_idx, value_idx) and r[param_idx] == "solveFirst":
-                try:
-                    return bool(int(r[value_idx]))
-                except (ValueError, TypeError):
-                    return True
+    for cand in ("solve_data/p_model.csv", "input/p_model.csv"):
+        path = work_folder / cand
+        if not path.exists():
+            continue
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            header = next(reader, None) or []
+            try:
+                param_idx = header.index("modelParam")
+                value_idx = header.index("p_model")
+            except ValueError:
+                return True
+            for r in reader:
+                if len(r) > max(param_idx, value_idx) and r[param_idx] == "solveFirst":
+                    try:
+                        return bool(int(r[value_idx]))
+                    except (ValueError, TypeError):
+                        return True
+        # File existed but didn't contain the flag — treat as default.
+        return True
     return True
 
 
