@@ -468,6 +468,22 @@ _FIXTURE_OBJ_TOLERANCE: dict[str, float] = {
 }
 
 
+# Fixtures the native path can't reproduce because they're derivative
+# fixtures: the recorded reference parquet was solved against a workdir
+# whose CSVs were patched AFTER flextool's preprocessing produced them.
+# The native path re-runs preprocessing from the DB, missing the patch,
+# so the obj cannot match.
+#
+# E.g. ``work_delay_source_coef`` patches
+# ``input/p_process_source_flow_coefficient.csv`` from 1.0 to 2.0 after
+# preprocessing (see ``tests/_gen_delay_source_coef.py``).  The DB
+# scenario (``water_pump_delayed``) carries the unpatched 1.0 value, so
+# native obj reproduces the unpatched LP, not the patched reference.
+_FIXTURES_DERIVATIVE_PATCH: set[str] = {
+    "work_delay_source_coef",
+}
+
+
 @pytest.mark.skipif(
     not NATIVE_SWEEP_ENABLED,
     reason=(
@@ -498,6 +514,11 @@ def test_native_orchestration_obj_parity(work_name: str, scenario: str) -> None:
     flx_obj_path = DATA / work_name / "flextool.sol"
     if not flx_obj_path.exists():
         pytest.skip(f"{work_name}: no flextool.sol reference")
+    if work_name in _FIXTURES_DERIVATIVE_PATCH:
+        pytest.skip(
+            f"{work_name}: derivative fixture (post-preprocessing CSV "
+            f"patch); native path cannot reproduce reference obj"
+        )
 
     steps = run_chain_from_db(sqlite, scenario)
     assert steps, f"{work_name}: no solve steps"
