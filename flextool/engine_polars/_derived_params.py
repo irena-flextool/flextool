@@ -30,7 +30,7 @@ Per-solve scope
 Several Params (``dt``, ``p_step_duration``, ``p_rp_cost_weight``,
 ``pdt_branch_weight``, ``pd_branch_weight``) are per-active-solve.  The
 helpers accept an explicit ``active_solve`` argument; the
-:func:`derived_overrides_a` integration entrypoint reads
+:func:`apply_derived_a` integration entrypoint reads
 ``solve_data/solve_current.csv`` from the workdir to pick the active
 solve, mirroring the established hand-off used by the CSV path.
 """
@@ -358,7 +358,7 @@ def p_inflation_op_from_source(
 
     Non-trivial-rate (``rate != 0``) and ``inflation_offset`` cascade
     are handled by :func:`p_inflation_op_multi_year_from_source`
-    (Γ.3.C, applied in :func:`derived_overrides_c`).
+    (Γ.3.C, applied in :func:`apply_derived_c`).
 
     Returns ``None`` only when no solve / no dt is available; the
     helper otherwise produces the canonical frame so CSV retirement
@@ -372,7 +372,7 @@ def p_inflation_op_from_source(
         rate_v = float(rate["value"][0])
     if rate_v != 0.0:
         # Non-trivial rate handled in the multi-year cascade helper
-        # (which runs later in derived_overrides_c).  Returning None
+        # (which runs later in apply_derived_c).  Returning None
         # here lets the simple-default 1.0 stay in flex_data; the
         # later helper overlays the correct factor.
         return None
@@ -984,9 +984,9 @@ def apply_derived_a(
     Each FlexData field is built by exactly one helper.  When the helper
     returns ``None`` (no upstream data), the field is left untouched.
 
-    Δ.3: this replaces the previous ``derived_overrides_a`` dict-return
-    pattern.  The dict-overlay round-trip is gone — each helper writes
-    its field directly.
+    Δ.3 collapsed the previous ``derived_overrides_a`` dict-return
+    pattern; Δ.4 deleted the deprecated wrapper alias.  Each helper
+    writes its field directly — no dict-overlay round-trip.
 
     Dependency order:
         dt / p_step_duration → p_period_share, p_inflation_op,
@@ -1092,23 +1092,6 @@ def apply_derived_a(
         flex_data.p_profile_value = pv
 
 
-# Deprecated alias scheduled for deletion in Δ.4 — preserved for any
-# external callers / docstring references.  Calls the new direct path.
-def derived_overrides_a(
-    flex_data: object,
-    source: "InputSource",
-    workdir: Path,
-) -> dict[str, object | None]:
-    """Deprecated.  Use :func:`apply_derived_a` instead.
-
-    Δ.3: this thin pass-through is preserved for one phase to keep
-    external callers compiling; it no longer participates in the
-    override-chain plumbing.  Slated for deletion in Δ.4.
-    """
-    apply_derived_a(flex_data, source, workdir)
-    return {}
-
-
 # ---------------------------------------------------------------------------
 # Internal: frame-equal guard for safe overlay
 # ---------------------------------------------------------------------------
@@ -1186,7 +1169,7 @@ def _param_matches(csv_val: object | None, db_val: object | None,
 # that mapping plus the dependent topology / cap / slope / varCost helpers.
 #
 # Each helper is gated on a frame-equal precheck against the CSV-loaded
-# value before being added to the override dict (``derived_overrides_b``).
+# value before being written to ``flex_data`` (``apply_derived_b``).
 # A mismatch leaves the CSV value in place — never an LP corruption surface.
 
 # (ct_method, startup_method, fork_method) → internal method.
@@ -2211,7 +2194,8 @@ def apply_derived_b(
     family; it's computed once per call and threaded through the
     per-Param helpers as a kwarg.
 
-    Δ.3: replaces the previous ``derived_overrides_b`` dict-return.
+    Δ.3 replaced the previous ``derived_overrides_b`` dict-return;
+    Δ.4 deleted the deprecated wrapper alias.
     """
     # Active solve (used for existing-period broadcast in some helpers).
     active_solve = _read_active_solve(workdir)
@@ -2334,17 +2318,6 @@ def apply_derived_b(
             flex_data.p_slope = slope_db
 
 
-# Deprecated alias scheduled for deletion in Δ.4.
-def derived_overrides_b(
-    flex_data: object,
-    source: "InputSource",
-    workdir: Path,
-) -> dict[str, object | None]:
-    """Deprecated.  Use :func:`apply_derived_b` instead."""
-    apply_derived_b(flex_data, source, workdir)
-    return {}
-
-
 # ===========================================================================
 # Γ.3.C — invest/divest + online/UC + group slack + existing fixed cost
 # ===========================================================================
@@ -2352,11 +2325,11 @@ def derived_overrides_b(
 # Per the audit doc §3.7 / §3.8 / §3.11 / §3.12.  Each helper composes a
 # lazy chain over ``InputSource`` reads and ``.collect()``s once at the
 # boundary.  Each overlay is gated on a frame-equal pre-check against the
-# CSV-loaded value (``derived_overrides_c``) so multi-year invest cascades
+# CSV-loaded value (``apply_derived_c``) so multi-year invest cascades
 # / scaling-active fixtures fall back to the CSV value instead of being
 # corrupted by a simple-path approximation.
 #
-# Integration: ``derived_overrides_c`` runs after Γ.3.A + Γ.3.B; see
+# Integration: ``apply_derived_c`` runs after Γ.3.A + Γ.3.B; see
 # ``input.py::load_flextool``.
 
 # ---------------------------------------------------------------------------
@@ -3981,7 +3954,8 @@ def apply_derived_c(
       4. §3.7 invest/divest cascade.
       5. §3.11 (capped by §3.7.5/6 — no separate Params).
 
-    Δ.3: replaces the previous ``derived_overrides_c`` dict-return.
+    Δ.3 replaced the previous ``derived_overrides_c`` dict-return;
+    Δ.4 deleted the deprecated wrapper alias.
     """
     active_solve = _read_active_solve(workdir)
     dt_csv = getattr(flex_data, "dt", None)
@@ -4154,15 +4128,6 @@ def apply_derived_c(
         flex_data.p_entity_max_units = pemu_db
 
 
-# Deprecated alias scheduled for deletion in Δ.4.
-def derived_overrides_c(
-    flex_data: object,
-    source: "InputSource",
-    workdir: Path,
-) -> dict[str, object | None]:
-    """Deprecated.  Use :func:`apply_derived_c` instead."""
-    apply_derived_c(flex_data, source, workdir)
-    return {}
 
 
 # =============================================================================
@@ -4552,7 +4517,8 @@ def apply_derived_d(
       * §3.16 ``node_reference_angle`` (DC PF reference pick).
       * §3.13 ``process_reserve_upDown_node_active`` (reliability>0 set).
 
-    Δ.3: replaces the previous ``derived_overrides_d`` dict-return.
+    Δ.3 replaced the previous ``derived_overrides_d`` dict-return;
+    Δ.4 deleted the deprecated wrapper alias.
     """
     active_solve = _read_active_solve(workdir)
 
@@ -4582,15 +4548,6 @@ def apply_derived_d(
         flex_data.process_reserve_upDown_node_active = pruna_db
 
 
-# Deprecated alias scheduled for deletion in Δ.4.
-def derived_overrides_d(
-    flex_data: object,
-    source: "InputSource",
-    workdir: Path,
-) -> dict[str, object | None]:
-    """Deprecated.  Use :func:`apply_derived_d` instead."""
-    apply_derived_d(flex_data, source, workdir)
-    return {}
 
 
 # ===========================================================================
@@ -5842,7 +5799,8 @@ def apply_derived_e(
       7. p_roll_continue_state / p_fix_storage_quantity (§3.9.7).
       8. dtt_timeline_matching / period_branch (§3.9.8).
 
-    Δ.3: replaces the previous ``derived_overrides_e`` dict-return.
+    Δ.3 replaced the previous ``derived_overrides_e`` dict-return;
+    Δ.4 deleted the deprecated wrapper alias.
     """
     active_solve = _read_active_solve(workdir)
     nodeState_df = getattr(flex_data, "nodeState", None)
@@ -5971,15 +5929,6 @@ def apply_derived_e(
             flex_data.period_branch = pbr
 
 
-# Deprecated alias scheduled for deletion in Δ.4.
-def derived_overrides_e(
-    flex_data: object,
-    source: "InputSource",
-    workdir: Path,
-) -> dict[str, object | None]:
-    """Deprecated.  Use :func:`apply_derived_e` instead."""
-    apply_derived_e(flex_data, source, workdir)
-    return {}
 
 
 # ===========================================================================
@@ -6917,7 +6866,7 @@ def ed_entity_annual_family_from_source(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# Integration: derived_overrides_f
+# Integration: apply_derived_f
 # ---------------------------------------------------------------------------
 
 
@@ -6935,7 +6884,8 @@ def apply_derived_f(
          / ``p_entity_divested`` (handoff state).
       3. ``ed_entity_annual_*`` family (depends on (1) for inflation).
 
-    Δ.3: replaces the previous ``derived_overrides_f`` dict-return.
+    Δ.3 replaced the previous ``derived_overrides_f`` dict-return;
+    Δ.4 deleted the deprecated wrapper alias.
     """
     active_solve = _read_active_solve(workdir)
     dt_csv = getattr(flex_data, "dt", None)
@@ -6984,15 +6934,6 @@ def apply_derived_f(
                 setattr(flex_data, k, v)
 
 
-# Deprecated alias scheduled for deletion in Δ.4.
-def derived_overrides_f(
-    flex_data: object,
-    source: "InputSource",
-    workdir: Path,
-) -> dict[str, object | None]:
-    """Deprecated.  Use :func:`apply_derived_f` instead."""
-    apply_derived_f(flex_data, source, workdir)
-    return {}
 
 
 # ===========================================================================
@@ -7679,7 +7620,8 @@ def apply_derived_g(
       * §3.18 multi-branch normalisation — full cascade for
         ``pd_branch_weight`` and ``pdt_branch_weight``.
 
-    Δ.3: replaces the previous ``derived_overrides_g`` dict-return.
+    Δ.3 replaced the previous ``derived_overrides_g`` dict-return;
+    Δ.4 deleted the deprecated wrapper alias.
     """
     active_solve = _read_active_solve(workdir)
     dt = getattr(flex_data, "dt", None)
@@ -7742,12 +7684,3 @@ def apply_derived_g(
         flex_data.pdt_branch_weight = pdt_bw
 
 
-# Deprecated alias scheduled for deletion in Δ.4.
-def derived_overrides_g(
-    flex_data: object,
-    source: "InputSource",
-    workdir: Path,
-) -> dict[str, object | None]:
-    """Deprecated.  Use :func:`apply_derived_g` instead."""
-    apply_derived_g(flex_data, source, workdir)
-    return {}

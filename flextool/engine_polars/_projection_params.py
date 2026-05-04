@@ -1380,7 +1380,7 @@ def commodity__tier_cum(source: "InputSource") -> pl.DataFrame:
 # These are still implemented in this module (taking pre-built ``pss`` /
 # ``process_indirect_set`` / ``process_delayed_set`` arguments) so they
 # can be invoked once the prerequisite Derived frames land in Γ.3 — but
-# they are NOT wired into ``projection_overrides``.
+# they are NOT wired into ``apply_projection_params``.
 
 # Mapping: FlexData field → callable taking only ``source``.  These are
 # clean, source-only Projections — no dependencies on Derived state.
@@ -1453,9 +1453,9 @@ def apply_projection_params(source: "InputSource",
     frame, the field is left untouched; otherwise the helper's result
     replaces the field.
 
-    Δ.3: this replaces the previous ``projection_overrides`` dict-return
-    pattern.  The dict-overlay round-trip is gone — each helper writes
-    its field directly.  See progress.md (Δ.3 close stanza).
+    Δ.3 collapsed the previous ``projection_overrides`` dict-return
+    pattern; Δ.4 deleted the deprecated wrapper alias.  Each helper
+    writes its field directly — no dict-overlay round-trip.
     """
     # First pass: simple no-deps projections.
     for field_name, fn in SIMPLE_PROJECTIONS.items():
@@ -1493,18 +1493,4 @@ def apply_projection_params(source: "InputSource",
         v = reserve_upDown_group_method(source, method)
         if v is not None and v.height > 0:
             setattr(flex_data, field_name, v)
-
-
-# Deprecated alias scheduled for deletion in Δ.4 — preserved for any
-# external callers / docstring references.  Calls the new direct path.
-def projection_overrides(source: "InputSource",
-                          flex_data: object) -> dict[str, object | None]:
-    """Deprecated.  Use :func:`apply_projection_params` instead.
-
-    Δ.3: this thin pass-through is preserved for one phase to keep
-    external callers compiling; it no longer participates in the
-    override-chain plumbing.  Prefer ``apply_projection_params`` which
-    mutates ``flex_data`` directly.  Slated for deletion in Δ.4.
-    """
-    apply_projection_params(source, flex_data)
     return {}

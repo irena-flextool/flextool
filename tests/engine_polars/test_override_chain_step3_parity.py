@@ -4,8 +4,8 @@ Validates that ``load_flextool(workdir, db_reader=SpineDbReader(...))``
 produces a ``FlexData`` whose LP solves to the same objective as the
 default CSV path.  This is the gating contract for CSV retirement
 Step 3 — when ``load_flextool`` auto-constructs a SpineDbReader, the
-override chain (``first_wave_overrides → projection_overrides →
-derived_overrides_a..g``) must populate every load-bearing field
+DB-direct apply chain (``apply_direct_params → apply_projection_params
+→ apply_derived_a..g``) must populate every load-bearing field
 correctly so the LP doesn't regress.
 
 The Γ.6.D handoff (``audit/handoff_csv_retirement.md``) and the

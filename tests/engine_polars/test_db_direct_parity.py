@@ -1406,7 +1406,7 @@ class TestDerivedCInvestOnlineGroupSlack:
     """Γ.3.C frame-level parity assertions per Param.
 
     Each test compares the CSV-loaded value against the DB-direct overlay
-    value (already merged into FlexData by ``derived_overrides_c``).  Per
+    value (already merged into FlexData by ``apply_derived_c``).  Per
     the spec, the bar is "for the CSV-listed indices, values match" —
     fixtures where the simple algorithm can't reproduce the CSV value
     fall through the gate so the CSV value survives and the test still
@@ -1618,7 +1618,7 @@ class TestDerivedCInvestOnlineGroupSlack:
 
         No covered fixture has a non-empty
         ``process__group_inside_group_nonSync``.  Implementation in
-        ``derived_overrides_c`` returns None unconditionally; revisit
+        ``apply_derived_c`` returns None unconditionally; revisit
         when an inertia / nested-group fixture lands.
         """
 
@@ -1714,7 +1714,7 @@ class TestDerivedDFinal:
 
     Each test compares the CSV-loaded value against the DB-direct
     overlay value (already merged into FlexData by
-    ``derived_overrides_d``).  Where the simple algorithm can't
+    ``apply_derived_d``).  Where the simple algorithm can't
     reproduce the CSV value (multi-period cumulative cascade, multi-
     block storage, rolling handoff state), the gate falls through and
     the CSV value survives — so the parity assertion still passes.
@@ -1883,7 +1883,7 @@ class TestDerivedEStorage:
 
     Each test compares the CSV-loaded value against the DB-direct
     overlay value (already merged into FlexData by
-    ``derived_overrides_e``).  No gate-on-equality fall-through —
+    ``apply_derived_e``).  No gate-on-equality fall-through —
     helpers must produce the canonical frame or the assertion fails.
     """
 

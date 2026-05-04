@@ -408,9 +408,9 @@ def apply_direct_params(source: "InputSource",
     When the helper returns ``None`` (no upstream data), the field is
     left untouched; otherwise the helper's result replaces the field.
 
-    Δ.3: this replaces the previous ``first_wave_overrides`` dict-return
-    pattern.  The dict-overlay round-trip is gone — each helper writes
-    its field directly.  See progress.md (Δ.3 close stanza).
+    Δ.3 collapsed the previous ``first_wave_overrides`` dict-return
+    pattern; Δ.4 deleted the deprecated wrapper alias.  Each helper
+    writes its field directly — no dict-overlay round-trip.
     """
     # ─── §5.2.1 scalar Params with FlexData fields ──────────────────────
     p_co2 = p_co2_content_from_source(source)
@@ -458,18 +458,3 @@ def apply_direct_params(source: "InputSource",
                                 filter_zero=True)
     if e_div_min is not None:
         flex_data.e_divest_min_total = e_div_min
-
-
-# Deprecated alias scheduled for deletion in Δ.4 — preserved for any
-# external callers / docstring references.  Calls the new direct path.
-def first_wave_overrides(source: "InputSource",
-                          flex_data: object) -> dict[str, object | None]:
-    """Deprecated.  Use :func:`apply_direct_params` instead.
-
-    Δ.3: this thin pass-through is preserved for one phase to keep
-    external callers compiling; it no longer participates in the
-    override-chain plumbing.  Prefer ``apply_direct_params`` which
-    mutates ``flex_data`` directly.  Slated for deletion in Δ.4.
-    """
-    apply_direct_params(source, flex_data)
-    return {}

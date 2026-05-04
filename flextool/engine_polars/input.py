@@ -3391,15 +3391,17 @@ def load_flextool(source: "Path | str | FlexInputSource",
         solver_options = _load_solver_options(sd),
     )
 
-    # Δ.3 — DB-direct construction.  Replaces the previous 3-pass
+    # Δ.3/Δ.4 — DB-direct construction.  Replaces the previous 3-pass
     # override layering (CSV → first_wave_overrides → projection_overrides
-    # → derived_overrides_a..g).  Each FlexData field that has a
+    # → derived_overrides_a..g).  Δ.3 collapsed the dict-overlay
+    # round-trip into linear ``apply_*`` mutations; Δ.4 deleted the nine
+    # deprecated wrapper aliases.  Each FlexData field that has a
     # DB-direct helper is now built by exactly one helper that mutates
     # ``flex_data`` directly — no dict-overlay round-trip, no "override"
-    # semantics.  See progress.md (Δ.3 close stanza).
+    # semantics.  See progress.md (Δ.3 / Δ.4 close stanzas).
     #
     # NOTE: the CSV path above still populates every field as the
-    # initial seed.  In Δ.4+, when every FlexData field has a DB-direct
+    # initial seed.  In Δ.5+, when every FlexData field has a DB-direct
     # helper, the CSV path will retire and these apply_* calls become
     # the primary loader.
     if db_reader is not None:
