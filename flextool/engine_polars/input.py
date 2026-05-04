@@ -2952,6 +2952,49 @@ def _assign_param_names(data: "FlexData") -> "FlexData":
     return data
 
 
+def _find_scenario(workdir: Path) -> str | None:
+    """Best-effort scenario discovery for ``load_flextool``'s Γ.8.F Step 3
+    auto-construction of a :class:`SpineDbReader`.
+
+    Strategy (single rule, kept narrow on purpose):
+
+    * Strip a leading ``work_`` from the workdir's basename and check
+      whether the resulting name appears as a scenario in
+      ``<workdir>/tests.sqlite``.  If yes, return it.
+    * Otherwise return ``None`` — the caller should fall back to the
+      CSV-only path.
+
+    This covers every fixture in ``tests/engine_polars/data/`` (each
+    of which is named ``work_<scenario>``) without forcing a scenario
+    name into workdirs that don't follow the convention (e.g. tempdirs
+    materialised by ``SpineDbSource``).  Production callers that build
+    their own workdirs without the ``work_`` prefix will continue to
+    use the CSV-only path until they pass an explicit ``db_reader=``.
+    """
+    sqlite_path = workdir / "tests.sqlite"
+    if not sqlite_path.exists():
+        return None
+    candidate = workdir.name
+    if candidate.startswith("work_"):
+        candidate = candidate[len("work_"):]
+    if not candidate:
+        return None
+    # Cheap probe: list scenarios via spinedb_api.  The probe is best-
+    # effort; any failure (DB locked, bad schema, missing scenario
+    # table) returns None and we fall back to CSV.
+    try:
+        import sqlite3
+        with sqlite3.connect(str(sqlite_path)) as con:
+            cur = con.cursor()
+            cur.execute("SELECT name FROM scenario")
+            scenarios = {row[0] for row in cur.fetchall()}
+    except Exception:  # noqa: BLE001 — best-effort discovery
+        return None
+    if candidate in scenarios:
+        return candidate
+    return None
+
+
 def load_flextool(source: "Path | str | FlexInputSource",
                    *,
                    db_reader: "object | None" = None) -> FlexData:
@@ -2973,6 +3016,15 @@ def load_flextool(source: "Path | str | FlexInputSource",
     ``FlexData`` field is still loaded via the CSV path; the full
     sweep into ``input.py`` happens in Γ.2/Γ.3.
 
+    Γ.8.F Step 3 — when ``source`` is a workdir-shaped path (Path / str)
+    AND ``db_reader`` is not supplied, ``load_flextool`` auto-constructs
+    a :class:`SpineDbReader` against ``<workdir>/tests.sqlite`` using
+    the scenario name derived from the workdir basename
+    (``work_<scenario>`` convention).  When the convention doesn't match
+    or ``tests.sqlite`` is absent, the loader falls back to the
+    CSV-only path (no override-chain).  Explicit ``db_reader=`` overrides
+    the auto-construction.
+
     See ``audit/db_direct_param_map.md §7.1`` for the migration plan.
     """
     # Late-import the Protocol + adapters to avoid a circular import
@@ -2980,7 +3032,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # module before flextool.__init__ finishes).
     from flextool.engine_polars._input_source import CsvSource, FlexInputSource, InputSource
 
+    workdir_for_db: Path | None = None
     if isinstance(source, (str, Path)):
+        workdir_for_db = Path(source)
         source = CsvSource(source)
     elif not isinstance(source, FlexInputSource):
         raise TypeError(
@@ -2992,6 +3046,20 @@ def load_flextool(source: "Path | str | FlexInputSource",
             f"load_flextool db_reader must implement InputSource, "
             f"got {type(db_reader).__name__}"
         )
+    # Γ.8.F Step 3 — auto-construct a SpineDbReader from the workdir
+    # when the caller didn't supply one and the workdir matches the
+    # ``work_<scenario>`` convention with a corresponding tests.sqlite.
+    if db_reader is None and workdir_for_db is not None:
+        scenario = _find_scenario(workdir_for_db)
+        if scenario is not None:
+            from flextool.engine_polars._spinedb_reader import SpineDbReader
+            sqlite_path = workdir_for_db / "tests.sqlite"
+            try:
+                db_reader = SpineDbReader(
+                    f"sqlite:///{sqlite_path}", scenario=scenario,
+                )
+            except Exception:  # noqa: BLE001 — best-effort auto-construction
+                db_reader = None
 
     inp = source.input_dir
     sd  = source.solve_data_dir
