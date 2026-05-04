@@ -399,44 +399,43 @@ def _e_total_param(source: "InputSource", parameter_name: str,
     return Param(("e",), out)
 
 
-def first_wave_overrides(source: "InputSource",
-                          flex_data: object) -> dict[str, object | None]:
-    """Compute the DB-direct override dict for Γ.1 first-wave Direct
-    Params.  Returns ``{FlexData_field: replacement_value}`` containing
-    only fields whose DB-direct equivalent is structurally well-defined
-    (column-rename trivial).  Fields whose CSV-side value is ``None``
-    (no upstream data) and whose DB-side equivalent is also empty are
-    omitted from the dict so the CSV-loaded ``None`` survives.
+def apply_direct_params(source: "InputSource",
+                          flex_data: object) -> None:
+    """Apply the DB-direct construction for Γ.1 first-wave Direct Params,
+    mutating ``flex_data`` in place.
 
-    The override is applied **after** the CSV path has populated every
-    field — so any field not in this dict keeps its CSV-loaded value.
+    Each FlexData field listed below is built by exactly one helper.
+    When the helper returns ``None`` (no upstream data), the field is
+    left untouched; otherwise the helper's result replaces the field.
+
+    Δ.3: this replaces the previous ``first_wave_overrides`` dict-return
+    pattern.  The dict-overlay round-trip is gone — each helper writes
+    its field directly.  See progress.md (Δ.3 close stanza).
     """
-    out: dict[str, object | None] = {}
-
     # ─── §5.2.1 scalar Params with FlexData fields ──────────────────────
     p_co2 = p_co2_content_from_source(source)
     if p_co2 is not None:
-        out["p_co2_content"] = p_co2
+        flex_data.p_co2_content = p_co2
     p_const = p_constraint_constant_from_source(source)
     if p_const is not None:
-        out["p_constraint_constant"] = p_const
+        flex_data.p_constraint_constant = p_const
 
     # ─── §5.2.3 relationship 1d_map (constraint coefficients) ───────────
     n_inv = _node_constraint_coef(source, "constraint_invested_capacity_coefficient")
     if n_inv is not None:
-        out["p_node_constraint_invested_capacity_coefficient"] = n_inv
+        flex_data.p_node_constraint_invested_capacity_coefficient = n_inv
     p_inv = _process_constraint_coef(source, "constraint_invested_capacity_coefficient")
     if p_inv is not None:
-        out["p_process_constraint_invested_capacity_coefficient"] = p_inv
+        flex_data.p_process_constraint_invested_capacity_coefficient = p_inv
     n_state = _node_constraint_coef(source, "constraint_state_coefficient")
     if n_state is not None:
-        out["p_node_constraint_state_coefficient"] = n_state
+        flex_data.p_node_constraint_state_coefficient = n_state
     n_pre = _node_constraint_coef(source, "constraint_cumulative_pre_built_capacity_coefficient")
     if n_pre is not None:
-        out["p_node_constraint_prebuilt_capacity_coefficient"] = n_pre
+        flex_data.p_node_constraint_prebuilt_capacity_coefficient = n_pre
     p_pre = _process_constraint_coef(source, "constraint_cumulative_pre_built_capacity_coefficient")
     if p_pre is not None:
-        out["p_process_constraint_prebuilt_capacity_coefficient"] = p_pre
+        flex_data.p_process_constraint_prebuilt_capacity_coefficient = p_pre
 
     # ─── §5.2.1 invest/divest total caps (entity-unioned) ───────────────
     # Max variants: keyed on entityInvest (resp. entityDivest), one row
@@ -445,19 +444,32 @@ def first_wave_overrides(source: "InputSource",
     # ``input.py::_e_total_param``.
     e_inv = _e_total_param(source, "invest_max_total", kind="invest")
     if e_inv is not None:
-        out["e_invest_max_total"] = e_inv
+        flex_data.e_invest_max_total = e_inv
     e_div = _e_total_param(source, "retire_max_total", kind="divest")
     if e_div is not None:
-        out["e_divest_max_total"] = e_div
+        flex_data.e_divest_max_total = e_div
     # Min variants: CSV path filters out zero rows (input.py::_read_e_param)
     # — None when no entity has an explicit non-zero min cap.
     e_inv_min = _e_total_param(source, "invest_min_total", kind="invest",
                                 filter_zero=True)
     if e_inv_min is not None:
-        out["e_invest_min_total"] = e_inv_min
+        flex_data.e_invest_min_total = e_inv_min
     e_div_min = _e_total_param(source, "retire_min_total", kind="divest",
                                 filter_zero=True)
     if e_div_min is not None:
-        out["e_divest_min_total"] = e_div_min
+        flex_data.e_divest_min_total = e_div_min
 
-    return out
+
+# Deprecated alias scheduled for deletion in Δ.4 — preserved for any
+# external callers / docstring references.  Calls the new direct path.
+def first_wave_overrides(source: "InputSource",
+                          flex_data: object) -> dict[str, object | None]:
+    """Deprecated.  Use :func:`apply_direct_params` instead.
+
+    Δ.3: this thin pass-through is preserved for one phase to keep
+    external callers compiling; it no longer participates in the
+    override-chain plumbing.  Prefer ``apply_direct_params`` which
+    mutates ``flex_data`` directly.  Slated for deletion in Δ.4.
+    """
+    apply_direct_params(source, flex_data)
+    return {}
