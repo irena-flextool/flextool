@@ -34,7 +34,11 @@ from spinedb_api.filters.scenario_filter import (
     apply_scenario_filter_to_subqueries,
 )
 
-from flextool.engine_polars._solve_config import SolveConfig
+from flextool.engine_polars._solve_config import (
+    HiGHSConfig,
+    SolveConfig,
+    SolverSettings,
+)
 from flextool.engine_polars._solve_state import (
     ActiveTimeEntry,
     FlexToolConfigError,
@@ -352,7 +356,6 @@ def _make_handcooked_state(
         new_step_durations={},
     )
 
-    from flextool.engine_polars._solve_config import HiGHSConfig, SolverSettings
 
     branches = ["branch_1", "branch_2", "branch_3"]
     info: list[tuple] = []
@@ -495,7 +498,6 @@ def test_stochastic_missing_realized_start_raises() -> None:
         new_step_durations={},
     )
 
-    from flextool.engine_polars._solve_config import HiGHSConfig, SolverSettings
 
     sc = SolveConfig(
         model=["m"],
@@ -574,7 +576,6 @@ def test_connect_two_timelines_returns_cumulative_durations() -> None:
         timeset_durations=defaultdict(list),
         new_step_durations={},
     )
-    from flextool.engine_polars._solve_config import HiGHSConfig, SolverSettings
 
     sc = SolveConfig(
         model=["m"],
@@ -639,7 +640,6 @@ def test_write_timeline_matching_map_in_memory_dict() -> None:
         timeset_durations=defaultdict(list),
         new_step_durations={},
     )
-    from flextool.engine_polars._solve_config import HiGHSConfig, SolverSettings
 
     sc = SolveConfig(
         model=["m"],
