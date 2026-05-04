@@ -470,7 +470,14 @@ def test_native_orchestration_obj_parity(work_name: str, scenario: str) -> None:
     """End-to-end parity: ``run_chain_from_db`` produces an obj
     matching flextool's reference at ``rel < 1e-6``.
 
-    Skipped unless ``FLEXPY_NATIVE_PARITY_SWEEP=1`` (slow).
+    Skipped unless ``FLEXPY_NATIVE_PARITY_SWEEP=1`` (slow — each fixture
+    runs flextool's preprocessing + flexpy's LP).
+
+    The parity bar: every per-solve obj produced by
+    ``run_chain_from_db`` matches the flextool reference at
+    ``output_raw/v_obj__<solve>.parquet``.  Pre-Γ.8.E this only
+    checked optimality; Γ.8.E's cascade-gap fix made the obj
+    comparison meaningful so the test now asserts numerical parity.
     """
     sqlite = DATA / work_name / "tests.sqlite"
     flx_obj_path = DATA / work_name / "flextool.sol"
@@ -479,10 +486,27 @@ def test_native_orchestration_obj_parity(work_name: str, scenario: str) -> None:
 
     steps = run_chain_from_db(sqlite, scenario)
     assert steps, f"{work_name}: no solve steps"
-    # Use the LAST solve's obj as the reference (multi-solve cascades).
-    last = next(reversed(steps.values()))
-    assert last.solution is not None
-    assert last.solution.optimal, f"{work_name}: not optimal"
+
+    output_raw = DATA / work_name / "output_raw"
+    failures: list[str] = []
+    for solve_name, step in steps.items():
+        assert step.solution is not None, f"{work_name}/{solve_name}: solution is None"
+        assert step.solution.optimal, f"{work_name}/{solve_name}: not optimal"
+        parq = output_raw / f"v_obj__{solve_name}.parquet"
+        if not parq.exists():
+            # Some fixtures don't preserve per-solve parquets (e.g. the
+            # base-weighted single-solve writes a single solve-name parquet).
+            continue
+        ft_obj = pl.read_parquet(parq)["objective"][0]
+        rel = abs(step.solution.obj - ft_obj) / max(1.0, abs(ft_obj))
+        if rel >= 1e-6:
+            failures.append(
+                f"  {solve_name}: flexpy={step.solution.obj}, "
+                f"flextool={ft_obj}, rel={rel}"
+            )
+    assert not failures, (
+        f"{work_name} obj-parity failures:\n" + "\n".join(failures)
+    )
 
 
 # ---------------------------------------------------------------------------
