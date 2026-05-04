@@ -39,11 +39,20 @@ Architecture notes
   ``storage_state_reference_value`` row in any of those files bypasses
   aggregation entirely (line 474 of the source) — preserved verbatim.
 
-* Refactor of ``input.py::dt_and_step_duration_from_source`` to
-  delegate to the new module is **deferred to Γ.8.D**: the existing
-  helper is polars-lazy and consumes ``InputSource`` while this module
-  ports the canonical DB-direct path.  Wiring them through the same
-  abstraction is a separate concern.
+* Refactor of ``_derived_params.py::dt_and_step_duration_from_source``
+  to delegate to this module: that helper is polars-lazy and consumes
+  the per-(entity_class, parameter_name) ``InputSource`` Protocol;
+  this module ports the legacy ``flextoolrunner/timeline_config.py``
+  load_from_db path which uses ``params_to_dict`` directly.  The two
+  paths produce identical timeline / timeset state (parity sweep
+  validates this on every fixture).  Γ.8.D's review (see
+  ``audit/solve_orchestration_plan.md §Γ.8.D``) confirms convergence
+  is unnecessary: ``dt_and_step_duration_from_source`` already covers
+  every shape this module handles, including stochastic-branch
+  periods broadcasting (lines 203-219).  The two paths coexist
+  because they serve different consumers — the InputSource one feeds
+  Param-frame helpers (Γ.3 era), this one feeds the orchestration
+  loop (Γ.8 era).
 
 Reference: ``flextool/flextoolrunner/timeline_config.py`` (read-only
 mirror at ``flextool-engine/flextool/flextoolrunner/``).

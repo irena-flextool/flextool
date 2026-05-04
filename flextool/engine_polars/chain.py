@@ -859,12 +859,81 @@ def _apply_warm_updates(warm: WarmProblem,
     return n_updates
 
 
+def _run_chain_native(
+    work_folder: Path | str,
+    *,
+    chain: list[str] | None = None,
+) -> dict[str, ChainStep]:
+    """Native orchestrator backend for :func:`run_chain`.
+
+    Discovers the scenario DB via either:
+
+    * an explicit ``tests.sqlite`` / ``input.sqlite`` under
+      ``work_folder``, OR
+    * an explicit ``chain`` argument naming the sub-solves (in which
+      case the function is a thin wrapper around the legacy file-based
+      driver but with the native solver path).
+
+    When the DB is found, delegates to
+    :func:`flextool.engine_polars._orchestration.run_chain_from_db`,
+    re-runs flextool's preprocessing into a fresh tempdir, and returns
+    the result as ``dict[str, ChainStep]`` (mapping each solve to its
+    Solution + handoff + ``warm_used=False``).
+
+    When the DB is NOT found, raises :class:`ValueError` since the
+    native path requires a DB scenario to drive (the legacy path is the
+    one that consumes a pre-built work folder).
+    """
+    work = Path(work_folder)
+    db_path = None
+    for cand in ("tests.sqlite", "input.sqlite"):
+        p = work / cand
+        if p.exists():
+            db_path = p
+            break
+    if db_path is None:
+        raise ValueError(
+            f"_run_chain_native: no DB found under {work} "
+            f"(looked for tests.sqlite, input.sqlite).  Native "
+            f"orchestration requires a DB scenario; for the file-based "
+            f"path call run_chain(..., native=False)."
+        )
+
+    # Late import to avoid a build-time cycle between chain and _orchestration.
+    from flextool.engine_polars._orchestration import run_chain_from_db
+
+    # Discover the scenario from the DB (first scenario in alphabetical
+    # order if multiple exist — same convention as
+    # ``test_solve_config_parity._discover_fixtures``).
+    import spinedb_api as api
+    with api.DatabaseMapping("sqlite:///" + str(db_path)) as db:
+        scenarios = sorted(s.name for s in db.query(db.scenario_sq).all())
+    if not scenarios:
+        raise ValueError(f"_run_chain_native: no scenarios in {db_path}")
+    scenario = scenarios[0]
+
+    steps = run_chain_from_db(
+        db_path, scenario, work_folder=work,
+    )
+    # Adapt to ChainStep shape so callers see the same return type.
+    out: dict[str, ChainStep] = {}
+    for name, step in steps.items():
+        out[name] = ChainStep(
+            solve_name=name,
+            solution=step.solution,
+            handoff=step.handoff,
+            warm_used=False,
+        )
+    return out
+
+
 def run_chain(
     work_folder: Path | str,
     *,
     use_handoff_overlay: bool = False,
     warm: bool = False,
     chain: list[str] | None = None,
+    native: bool | None = None,
 ) -> dict[str, ChainStep]:
     """Run a flextool multi-solve chain end-to-end in flexpy.
 
@@ -911,6 +980,18 @@ def run_chain(
         ``solve_data_<sub>/`` enumeration that the CSV doesn't cover
         (e.g. rolling-horizon snapshots whose ``model__solve.csv``
         names a parent solve rather than the per-roll snapshot dirs).
+    native : bool | None, default None
+        Γ.8.D feature flag.  ``True`` delegates to the native
+        orchestrator (``_orchestration.run_orchestration``) which
+        re-runs flextool's per-solve preprocessing under
+        ``work_folder`` and runs HiGHS for every solve in-process via
+        the in-memory handoff path.  ``False`` (default) preserves the
+        legacy file-symlink-based driver below — the behaviour every
+        existing test exercises.  ``None`` (default-default) consults
+        the ``FLEXPY_USE_NATIVE_ORCHESTRATION`` env var: ``"1"`` /
+        ``"true"`` / ``"yes"`` enable the native path, anything else
+        keeps legacy.  R-O7 mitigation: legacy path stays the default
+        so the existing test surface stays green.
 
     Returns
     -------
@@ -918,7 +999,20 @@ def run_chain(
         Mapping ``solve_name → ChainStep(solve_name, solution, handoff,
         warm_used)``.
     """
+    import os
     import tempfile
+
+    # Feature-flag gate.  ``native=True`` always uses the new path;
+    # ``native=False`` always uses legacy; ``native=None`` consults the
+    # env var (default ``False``).  See Γ.8.D in
+    # ``audit/solve_orchestration_plan.md``.
+    if native is None:
+        env_val = os.environ.get(
+            "FLEXPY_USE_NATIVE_ORCHESTRATION", ""
+        ).strip().lower()
+        native = env_val in ("1", "true", "yes", "on")
+    if native:
+        return _run_chain_native(work_folder, chain=chain)
 
     work = Path(work_folder)
     if chain is None:
