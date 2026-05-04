@@ -1402,37 +1402,29 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
 }
 
 
-def projection_overrides(source: "InputSource",
-                          flex_data: object) -> dict[str, object | None]:
-    """Compute the DB-direct override dict for Γ.2 Projection Params.
+def apply_projection_params(source: "InputSource",
+                              flex_data: object) -> None:
+    """Apply the DB-direct construction for Γ.2 Projection Params,
+    mutating ``flex_data`` in place.
 
-    Returns ``{FlexData_field: replacement_value}`` containing only
-    fields whose DB-direct equivalent is structurally well-defined and
-    *non-empty*.  When the DB-side computes an empty frame, the
-    CSV-loaded value is preserved (mirrors Γ.1's first_wave_overrides
-    behaviour: empty DB-side overlays should not blank-out CSV data).
+    Each FlexData field listed in :data:`SIMPLE_PROJECTIONS` is built by
+    its dedicated helper.  When the helper returns ``None`` or an empty
+    frame, the field is left untouched; otherwise the helper's result
+    replaces the field.
 
-    Per the Γ.3.G architectural shift, no defensive feature gating:
-    every overlay applies unconditionally.  The earlier ``_FEATURE_GATED``
-    map silenced "the DB path activates a feature the CSV path skipped"
-    cases by suppressing the override; that pattern is removed because
-    such mismatches signal real divergence between the two paths and
-    should fail loudly so Γ.3 helpers cover them.
-
-    The override is applied **after** the CSV path has populated every
-    field — so any field not in this dict keeps its CSV-loaded value.
+    Δ.3: this replaces the previous ``projection_overrides`` dict-return
+    pattern.  The dict-overlay round-trip is gone — each helper writes
+    its field directly.  See progress.md (Δ.3 close stanza).
     """
-    out: dict[str, object | None] = {}
-
     # First pass: simple no-deps projections.
-    for field, fn in SIMPLE_PROJECTIONS.items():
+    for field_name, fn in SIMPLE_PROJECTIONS.items():
         try:
             v = fn(source)
         except Exception:  # pragma: no cover — diagnostic surface
             continue
         if v is None or (hasattr(v, "height") and v.height == 0):
             continue
-        out[field] = v
+        setattr(flex_data, field_name, v)
 
     # Second pass: projections that need ``dt`` from the CSV-loaded
     # FlexData — they overlay the CSV value of the dependent fields.
@@ -1440,7 +1432,7 @@ def projection_overrides(source: "InputSource",
 
     # cdt_eq / cdt_le / cdt_ge — only emit when DB has constraints.
     if dt is not None:
-        for sense, field in (("equal", "cdt_eq"),
+        for sense, field_name in (("equal", "cdt_eq"),
                               ("less_than", "cdt_le"),
                               ("greater_than", "cdt_ge")):
             try:
@@ -1448,17 +1440,30 @@ def projection_overrides(source: "InputSource",
             except Exception:  # pragma: no cover
                 continue
             if cdt is not None and cdt.height > 0:
-                out[field] = cdt
+                setattr(flex_data, field_name, cdt)
 
     # Reserve-method partitions — applied unconditionally; emit only
     # when the DB-side computes a non-empty frame.
-    for method, field in (
+    for method, field_name in (
         ("timeseries", "reserve_upDown_group_method_timeseries"),
         ("dynamic", "reserve_upDown_group_method_dynamic"),
         ("n_1", "reserve_upDown_group_method_n_1"),
     ):
         v = reserve_upDown_group_method(source, method)
         if v is not None and v.height > 0:
-            out[field] = v
+            setattr(flex_data, field_name, v)
 
-    return out
+
+# Deprecated alias scheduled for deletion in Δ.4 — preserved for any
+# external callers / docstring references.  Calls the new direct path.
+def projection_overrides(source: "InputSource",
+                          flex_data: object) -> dict[str, object | None]:
+    """Deprecated.  Use :func:`apply_projection_params` instead.
+
+    Δ.3: this thin pass-through is preserved for one phase to keep
+    external callers compiling; it no longer participates in the
+    override-chain plumbing.  Prefer ``apply_projection_params`` which
+    mutates ``flex_data`` directly.  Slated for deletion in Δ.4.
+    """
+    apply_projection_params(source, flex_data)
+    return {}
