@@ -7,7 +7,7 @@ variable summand was added in model.py via the lookback-Sum-over-Var
 pattern (rename d→d_invest, join on edd_invest_lookback_set, Sum)."""
 from pathlib import Path
 import polars as pl
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
 WORK = Path(__file__).resolve().parent / "data" / "work_multi_year_wind_growth_cap"

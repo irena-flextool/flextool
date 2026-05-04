@@ -15,7 +15,7 @@ not the first sub-solve), which is the case for these fixtures.
 from pathlib import Path
 import polars as pl
 import pytest
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
 

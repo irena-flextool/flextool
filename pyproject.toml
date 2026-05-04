@@ -24,6 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 toolbox = ["spinetoolbox"]
 viewer = ["tsdownsample>=0.1.3", "networkx>=3.0"]
+engine-polars = ["polar-high-opt", "polars"]
 
 [project.scripts]
 flextool-gui = "flextool.gui.__main__:main"
@@ -44,6 +45,7 @@ testpaths = ["tests"]
 packages = [
     "flextool",
     "flextool.cli",
+    "flextool.engine_polars",
     "flextool.flextoolrunner",
     "flextool.process_inputs",
     "flextool.process_outputs",

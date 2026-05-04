@@ -62,10 +62,10 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flexpy import Param, Sum, Where
+from polar_high_opt import Param, Sum, Where
 
 if TYPE_CHECKING:
-    from flexpy.engine import Var
+    from polar_high_opt.engine import Var
 
 
 # .mod uses 1e30 as +Infinity sentinel; the constraint filter is

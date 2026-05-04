@@ -6,7 +6,7 @@ processes, availability factor on maxToSink RHS,
 bind_forward_only+fix_start in-balance term)."""
 from pathlib import Path
 import polars as pl
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
 WORK = Path(__file__).resolve().parent / "data" / "work_network_all_tech"

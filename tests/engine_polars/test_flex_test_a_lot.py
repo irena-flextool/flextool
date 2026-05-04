@@ -29,7 +29,7 @@ a tolerance of ``1e-4`` so it locks in the achieved parity without
 becoming flaky on the tail-end LP-degenerate dispatch differences."""
 from pathlib import Path
 import polars as pl
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
 

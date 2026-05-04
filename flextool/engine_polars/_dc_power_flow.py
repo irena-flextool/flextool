@@ -56,10 +56,10 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flexpy import Param, Where
+from polar_high_opt import Param, Where
 
 if TYPE_CHECKING:
-    from flexpy.engine import Var
+    from polar_high_opt.engine import Var
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +291,7 @@ def add_constraints(m, d, vars: dict, *,
     # ``source`` and once aliased as ``sink`` — so the join with the per-arc
     # ``over`` frame matches the right column on each side.  Build virtual
     # Vars sharing v_angle's column ids but with renamed dim columns.
-    from flexpy.engine import Var
+    from polar_high_opt.engine import Var
 
     v_angle_src = Var(
         name=v_angle.name + "__as_source",
@@ -353,7 +353,7 @@ def nodeBalance_back_flow_terms(d, vars: dict, p_unitsize, p_step_duration) -> d
     if v_flow_back is None or dc_arcs is None or dc_arcs.height == 0:
         return {}
 
-    from flexpy import Sum
+    from polar_high_opt import Sum
 
     # Sink side: back flow leaves the sink — subtract from sink balance.
     # Build ``flow_from_n_back`` = (p, source, sink, n=sink): same shape

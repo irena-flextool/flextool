@@ -94,7 +94,7 @@ from __future__ import annotations
 from pathlib import Path
 import polars as pl
 
-from flexpy import Sum, Where, Param
+from polar_high_opt import Sum, Where, Param
 # Engine imports kept light — we don't introduce new variable types.
 
 
@@ -343,7 +343,7 @@ def delayed_input_expr(d, v_flow):
     # renaming the v_flow frame, then Where it against full_map (which
     # has all those plus t and td).  The Where adds t and td as new
     # open dims.
-    from flexpy.engine import Var as _Var
+    from polar_high_opt.engine import Var as _Var
     v_flow_at_source = _Var(
         name=v_flow.name + "__at_t_source",
         dims=("p", "source", "sink", "d", "t_source"),

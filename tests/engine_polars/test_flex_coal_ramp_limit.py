@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import polars as pl
 
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
 

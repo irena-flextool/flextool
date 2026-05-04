@@ -15,7 +15,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from flexpy import Problem, WarmProblem
+from polar_high_opt import Problem, WarmProblem
 
 from flextool.engine_polars import build_flextool, load_flextool
 from flextool.engine_polars._lagrangian import (

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import build_flextool
 
 from flex_toy_capacity_margin import data, expected_obj

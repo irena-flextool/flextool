@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 import polars as pl
-from flexpy import Param
+from polar_high_opt import Param
 
 from . import _group_slack
 from . import _reserve
@@ -2938,7 +2938,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
 def _assign_param_names(data: "FlexData") -> "FlexData":
     """Stamp the FlexData attribute name onto every :class:`Param` field.
 
-    Enables :class:`flexpy.WarmProblem`'s Param-tracked auto-update by
+    Enables :class:`polar_high_opt.WarmProblem`'s Param-tracked auto-update by
     giving each Param a stable logical name (``"p_inflow"`` etc.) that
     flows through the algebra primitives' source-Param metadata.
     Anonymous (``name is None``) Params are not tracked.
@@ -3584,7 +3584,7 @@ def build_handoff_from_flexpy(
             for r in prior_handoff.divest_cumulative.iter_rows(named=True):
                 prior_divested[str(r["entity"])] = float(r["value"])
 
-    # ---- v_invest / v_divest from flexpy ----
+    # ---- v_invest / v_divest from polar_high_opt ----
     invest_by_ed: dict[tuple[str, str], float] = {}
     divest_by_e: dict[str, float] = {}
     for var_name, entity_col in (("v_invest_p", "p"), ("v_invest_n", "n")):
@@ -4040,7 +4040,7 @@ def load_flextool_from_db(input_db_url: str | Path,
             if self._count == self._total:
                 return 0  # caller solves the last one
             data = load_flextool(self.state.paths.work_folder)
-            from flexpy import Problem
+            from polar_high_opt import Problem
             from flextool.engine_polars.model import build_flextool as _build
             pb = Problem()
             _build(pb, data)

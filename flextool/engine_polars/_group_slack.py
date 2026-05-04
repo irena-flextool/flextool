@@ -116,8 +116,8 @@ from __future__ import annotations
 from pathlib import Path
 import polars as pl
 
-from flexpy import Sum, Where, Param
-from flexpy.engine import Var, Expr
+from polar_high_opt import Sum, Where, Param
+from polar_high_opt.engine import Var, Expr
 
 
 # ---------------------------------------------------------------------------

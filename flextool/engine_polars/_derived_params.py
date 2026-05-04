@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from flexpy import Param
+from polar_high_opt import Param
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

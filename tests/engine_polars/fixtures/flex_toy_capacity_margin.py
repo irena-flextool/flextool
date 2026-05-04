@@ -51,7 +51,7 @@ would fail this 6-line closed-form assertion.
 from __future__ import annotations
 
 import polars as pl
-from flexpy import Param
+from polar_high_opt import Param
 from flextool.engine_polars.input import FlexData
 
 

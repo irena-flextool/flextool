@@ -49,7 +49,7 @@ from typing import Any
 
 import polars as pl
 
-from flexpy import Param
+from polar_high_opt import Param
 
 
 # ---------------------------------------------------------------------------

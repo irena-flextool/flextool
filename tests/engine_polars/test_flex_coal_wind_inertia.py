@@ -3,7 +3,7 @@
 ``_group_slack`` feature module."""
 from pathlib import Path
 import polars as pl
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
 WORK = Path(__file__).resolve().parent / "data" / "work_coal_wind_inertia"

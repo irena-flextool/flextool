@@ -3,7 +3,7 @@ intraperiod-block storage handling that ``_cumulative_invest`` does
 not cover."""
 from pathlib import Path
 import polars as pl
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
 WORK = Path(__file__).resolve().parent / "data" / "work_5weeks_battery_intraperiod_blocks"

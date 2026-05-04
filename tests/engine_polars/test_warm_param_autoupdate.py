@@ -1,6 +1,6 @@
 """Param-tracked auto-update tests.
 
-Targeted tests for the :meth:`flexpy.WarmProblem.declare_mutable` /
+Targeted tests for the :meth:`polar_high_opt.WarmProblem.declare_mutable` /
 :meth:`update_param` plumbing introduced for handoff #2.  The wider
 ``run_chain``-level equivalence tests live in
 ``test_warm_chain_runner.py`` — these verify the engine-level
@@ -17,7 +17,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from flexpy import Param, Problem, Sum, WarmProblem
+from polar_high_opt import Param, Problem, Sum, WarmProblem
 
 
 def _toy_problem(p_cap: Param, p_price: Param, p_dur: Param) -> Problem:

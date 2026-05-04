@@ -40,8 +40,8 @@ import csv
 from pathlib import Path
 import polars as pl
 
-from flexpy import Sum, Where, Param
-from flexpy.engine import Var
+from polar_high_opt import Sum, Where, Param
+from polar_high_opt.engine import Var
 
 
 # ---------------------------------------------------------------------------

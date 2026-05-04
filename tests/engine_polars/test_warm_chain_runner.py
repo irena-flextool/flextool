@@ -1,7 +1,7 @@
 """Warm chain runner — equivalence, cold-fallback, and speedup tests.
 
 Three lightweight tests covering the new ``run_chain(..., warm=True)``
-codepath in ``flextool/chain.py`` (which wires :class:`flexpy.WarmProblem`
+codepath in ``flextool/chain.py`` (which wires :class:`polar_high_opt.WarmProblem`
 into the chain orchestrator):
 
 1. **Equivalence** — for every standard chain fixture, ``warm=True``

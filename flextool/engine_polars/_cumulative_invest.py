@@ -73,8 +73,8 @@ Deferred (require feature stack outside this module's scope):
 from __future__ import annotations
 
 import polars as pl
-from flexpy import Sum, Where, Param
-from flexpy.engine import Var
+from polar_high_opt import Sum, Where, Param
+from polar_high_opt.engine import Var
 
 
 # ---------------------------------------------------------------------------

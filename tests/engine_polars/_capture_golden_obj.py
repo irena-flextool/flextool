@@ -28,7 +28,7 @@ for sub in ("src", ".", "tests"):
 
 import polars as pl
 
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import SpineDbReader, build_flextool, load_flextool
 
 from _golden import write_golden, lookup_v_obj_parquet

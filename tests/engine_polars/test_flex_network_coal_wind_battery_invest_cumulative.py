@@ -5,7 +5,7 @@ the ``ed_invest_forbidden_no_investment`` pin that the
 the ~11% gap that the cumulative-cap constraint closes."""
 from pathlib import Path
 import polars as pl
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
 WORK = Path(__file__).resolve().parent / "data" / "work_network_coal_wind_battery_invest_cumulative"

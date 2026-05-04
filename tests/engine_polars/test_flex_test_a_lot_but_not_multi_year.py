@@ -10,7 +10,7 @@ this on test_a_lot* moved the gap from -1.21% to machine epsilon on
 this fixture.  See ``flextool/model.py`` _add_online_block."""
 from pathlib import Path
 import polars as pl
-from flexpy import Problem
+from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
 WORK = Path(__file__).resolve().parent / "data" / "work_test_a_lot_but_not_multi_year"
