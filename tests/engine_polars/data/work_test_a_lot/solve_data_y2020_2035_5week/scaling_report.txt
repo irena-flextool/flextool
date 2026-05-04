@@ -1,0 +1,100 @@
+==============================================================================
+FlexTool scaling diagnostic report
+==============================================================================
+Solve name      : y2020_2035_5week
+Report time     : 2026-04-30 18:47:46
+HiGHS version   : 1.14.0
+
+This report diagnoses numerical scaling of the LP/MIP matrix that HiGHS just
+solved.  It flags coefficient-range spread, bimodal coefficient distributions,
+composite-scale mismatches between directly-connected entities, near-duplicate
+parameter values, and slack activity.  See flextool/SLACK_CONVENTION.md and
+project_lp_scaling_2026-04.md for background.
+
+-- 2. Scaling decisions -----------------------------------------------------
+use_row_scaling        recommended=yes  applied=no
+scale_the_objective    recommended=1e-09  applied=1e-09
+rough_obj_estimate     1.02e+09
+unitsize_spread_log10  6.00 decades
+rhs_spread_log10       2.13 decades
+cost_spread_log10      10.95 decades
+Row scaling triggered by: unitsize (spread = 6.00 decades)
+Variable bound scaling: user_bound_scale=0 (bound range [1, 1e+06], spread 6.00 decades)
+
+-- 3. Coefficient-family ranges --------------------------------------------
+family                   n_nz   lg10_min     p10   median     p90   lg10_max    abs_min     abs_max
+entity_unitsize            14      +0.00   +0.51    +2.30   +3.00      +6.00          1       1e+06  !
+node_inflow               141      +0.81   +1.28    +2.64   +2.88      +2.94        6.5         872
+node_annual_flow            0        n/a     n/a      n/a     n/a        n/a        n/a         n/a
+vom_and_op_costs          192      -2.40   -0.79    -0.19   +1.48      +3.00    0.00397       1e+03  !
+capex_invest                5      +1.70   +1.82    +2.30   +5.08      +6.00         50       1e+06
+node_penalty               33      -4.00   -0.90    +2.30   +3.48      +6.95     0.0001       9e+06  !
+
+(! = log10 spread > 5 decades — family likely needs attention)
+
+-- 4. Bimodal coefficient distributions ------------------------------------
+(no bimodal distributions detected)
+
+-- 5. Composite-scale mismatch ---------------------------------------------
+Found 4 mismatched pair(s).  Top 4:
+
+node                 small entity                   size   large entity                   size          ratio
+water_sink           water_pump                      200   water_sink                  1000000        5e+03:1
+west                 battery_inverter                  1   west                           1000        1e+03:1
+west                 battery_inverter                  1   coal_chp                       1000        1e+03:1
+west                 battery_inverter                  1   wind_plant                     1000        1e+03:1
+
+Composite-scale mismatch detected: node water_sink connects entities of wildly different scales
+(e.g., water_pump at 200 MW and water_sink at 1000000 MW -- a ratio of 5e+03:1).
+No linear scaling can eliminate matrix coefficient spread arising from such connections.
+Recommendations:
+  (1) Aggregate the small-side units: e.g., use 1000 buildings instead of 1 to match
+      the order of magnitude of the connected system. Accept that aggregation introduces
+      some inaccuracy in the small-scale dynamics.
+  (2) Run the two subsystems as sequential models: optimise the large system first, then
+      use its results as boundary conditions for a detailed small-system run (invest ->
+      dispatch handoff, or whichever staging fits your use case).
+
+-- 6. Near-duplicate parameter clusters ------------------------------------
+near-dup [23x] p_connection.csv:east_north  value=0.0  spread=0  rel=0
+         entities: fixed_cost, discount_rate, invest_cost
+near-dup [23x] p_connection.csv:west_east  value=0.0  spread=0  rel=0
+         entities: fixed_cost, discount_rate, invest_cost
+near-dup [23x] p_connection.csv:west_north  value=0.0  spread=0  rel=0
+         entities: fixed_cost, discount_rate, invest_cost
+near-dup [23x] p_unit.csv:anti_energy_plant  value=0.0  spread=0  rel=0
+         entities: fixed_cost, discount_rate, invest_cost
+near-dup [23x] p_unit.csv:coal_chp  value=0.0  spread=0  rel=0
+         entities: fixed_cost, discount_rate, invest_cost
+near-dup [23x] p_unit.csv:ev_charger  value=0.0  spread=0  rel=0
+         entities: fixed_cost, discount_rate, invest_cost
+near-dup [19x] p_connection.csv:battery_inverter  value=0.0  spread=0  rel=0
+         entities: fixed_cost, invest_cost, salvage_value
+near-dup [19x] p_unit.csv:wind_plant  value=0.0  spread=0  rel=0
+         entities: fixed_cost, salvage_value, invest_max_period
+near-dup [15x] p_unit.csv:coal_plant  value=0.0  spread=0  rel=0
+         entities: salvage_value, invest_max_period, invest_min_period
+near-dup [10x] pt_profile.csv:pt_profile  value=0.49  spread=0  rel=0
+         entities: ev_minimum_storage | t0001, ev_minimum_storage | t0021, ev_minimum_storage | t0025
+[precision] 86 near-duplicate cluster(s) covering 529 value(s) (showing top 10, rel_tol=1e-06).
+
+-- 7. Escape-tier / slack activity -----------------------------------------
+Slack variables with total activity (in absolute user-facing units):
+
+slack name                      total    n_nonzero   top-5 offending cells
+vq_state_up                   2.1e+04           85   east@t0010=423.411; east@t0010=423.411; east@t0010=423.411; east@t0010=423.411; east@t0004=397.466
+vq_state_down                 1.9e+03           11   heat@t0002=366.667; heat@t0002=366.667; heat@t0002=366.667; water_source@t0002=100; water_source@t0001=100
+
+Any non-zero slack indicates saturation of physical constraints.
+Review the offending cells' inputs.
+
+-- 8. HiGHS matrix-range summary -------------------------------------------
+Matrix  range : [0.1, 1e+06]  (spread 7.0 decades)  !
+Cost    range : [0.06, 2e+03]  (spread 4.5 decades)
+Bound   range : [1, 1e+06]
+RHS     range : [1, 1e+06]
+
+(! = spread > 6 decades matrix / 8 decades cost)
+
+-- 9. Summary --------------------------------------------------------------
+Model poorly scaled: 7 warning(s) - matrix range [0.1, 1e+06], see composite-scale-mismatch section

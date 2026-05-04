@@ -1,0 +1,99 @@
+==============================================================================
+FlexTool scaling diagnostic report
+==============================================================================
+Solve name      : invest_5weeks_p2035
+Report time     : 2026-05-02 11:38:11
+HiGHS version   : 1.14.0
+
+This report diagnoses numerical scaling of the LP/MIP matrix that HiGHS just
+solved.  It flags coefficient-range spread, bimodal coefficient distributions,
+composite-scale mismatches between directly-connected entities, near-duplicate
+parameter values, and slack activity.  See flextool/SLACK_CONVENTION.md and
+project_lp_scaling_2026-04.md for background.
+
+-- 2. Scaling decisions -----------------------------------------------------
+use_row_scaling        recommended=yes  applied=no
+scale_the_objective    recommended=1e-09  applied=1e-09
+rough_obj_estimate     3.43e+08
+unitsize_spread_log10  3.00 decades
+rhs_spread_log10       4.37 decades
+cost_spread_log10      11.00 decades
+Row scaling triggered by: cost (spread = 11.00 decades)
+Variable bound scaling: user_bound_scale=0 (bound range [1e+03, 1e+06], spread 3.00 decades)
+
+-- 3. Coefficient-family ranges --------------------------------------------
+family                   n_nz   lg10_min     p10   median     p90   lg10_max    abs_min     abs_max
+entity_unitsize             6      +0.00   +0.00    +2.85   +3.00      +3.00          1       1e+03
+node_inflow                72      +2.63   +2.66    +2.78   +2.90      +2.94        423         872
+node_annual_flow            4      +6.85   +6.86    +6.93   +6.99      +7.00      7e+06       1e+07
+vom_and_op_costs           23      -1.40   -1.13    +1.40   +2.82      +3.00       0.04       1e+03
+capex_invest                0        n/a     n/a      n/a     n/a        n/a        n/a         n/a
+node_penalty               19      -4.00   -1.06    +2.30   +6.91      +7.00     0.0001       1e+07  !
+
+(! = log10 spread > 5 decades — family likely needs attention)
+
+-- 4. Bimodal coefficient distributions ------------------------------------
+[entity_unitsize]  ! bimodal: gap = 2.70 decades
+  lower cluster: 2 values (33%), center log10 = +0.00 (~1)
+  upper cluster: 4 values (67%), center log10 = +3.00 (~1e+03)
+  lower representatives: battery=1, battery_inverter=1
+  upper representatives: coal_market=1000, west=1000, wind_plant=1000
+
+[node_penalty]  ! bimodal: gap = 3.37 decades
+  lower cluster: 15 values (79%), center log10 = +1.48 (~30)
+  upper cluster: 4 values (21%), center log10 = +6.95 (~9e+06)
+  lower representatives: (names unavailable)
+  upper representatives: (names unavailable)
+
+-- 5. Composite-scale mismatch ---------------------------------------------
+Found 2 mismatched pair(s).  Top 2:
+
+node                 small entity                   size   large entity                   size          ratio
+west                 battery_inverter                  1   west                           1000        1e+03:1
+west                 battery_inverter                  1   wind_plant                     1000        1e+03:1
+
+Composite-scale mismatch detected: node west connects entities of wildly different scales
+(e.g., battery_inverter at 1 MW and west at 1000 MW -- a ratio of 1e+03:1).
+No linear scaling can eliminate matrix coefficient spread arising from such connections.
+Recommendations:
+  (1) Aggregate the small-side units: e.g., use 1000 buildings instead of 1 to match
+      the order of magnitude of the connected system. Accept that aggregation introduces
+      some inaccuracy in the small-scale dynamics.
+  (2) Run the two subsystems as sequential models: optimise the large system first, then
+      use its results as boundary conditions for a detailed small-system run (invest ->
+      dispatch handoff, or whichever staging fits your use case).
+
+-- 6. Near-duplicate parameter clusters ------------------------------------
+near-dup [20x] p_unit.csv:wind_plant  value=0.0  spread=0  rel=0
+         entities: fixed_cost, salvage_value, invest_max_period
+near-dup [19x] p_connection.csv:battery_inverter  value=0.0  spread=0  rel=0
+         entities: fixed_cost, invest_cost, salvage_value
+near-dup [18x] p_unit.csv:coal_plant  value=0.0  spread=0  rel=0
+         entities: salvage_value, invest_max_period, invest_min_period
+near-dup [5x] pt_profile.csv:pt_profile  value=0.79  spread=0  rel=0
+         entities: wind_profile | t0036, wind_profile | t0061, wind_profile | t0062
+near-dup [4x] pt_profile.csv:pt_profile  value=0.49  spread=0  rel=0
+         entities: wind_profile | t0006, wind_profile | t0007, wind_profile | t0051
+near-dup [4x] pt_profile.csv:pt_profile  value=0.66  spread=0  rel=0
+         entities: wind_profile | t0011, wind_profile | t0013, wind_profile | t0047
+near-dup [4x] pt_profile.csv:pt_profile  value=0.71  spread=0  rel=0
+         entities: wind_profile | t0014, wind_profile | t0017, wind_profile | t0032
+near-dup [3x] pt_profile.csv:pt_profile  value=0.59  spread=0  rel=0
+         entities: wind_profile | t0029, wind_profile | t0055, wind_profile | t0069
+near-dup [3x] pt_profile.csv:pt_profile  value=0.61  spread=0  rel=0
+         entities: wind_profile | t0019, wind_profile | t0030, wind_profile | t0048
+near-dup [3x] pt_profile.csv:pt_profile  value=0.73  spread=0  rel=0
+         entities: wind_profile | t0016, wind_profile | t0034, wind_profile | t0045
+[precision] 30 near-duplicate cluster(s) covering 125 value(s) (showing top 10, rel_tol=1e-06).
+
+-- 7. Escape-tier / slack activity -----------------------------------------
+(no slack activity above tolerance)
+
+-- 8. HiGHS matrix-range summary -------------------------------------------
+Matrix  range : [0.1, 1e+03]  (spread 4.0 decades)
+Cost    range : [0.1, 500]  (spread 3.7 decades)
+Bound   range : [1e+03, 1e+06]
+RHS     range : [5, 1e+03]
+
+-- 9. Summary --------------------------------------------------------------
+Model poorly scaled: 4 warning(s) - matrix range [0.1, 1e+03], see composite-scale-mismatch section

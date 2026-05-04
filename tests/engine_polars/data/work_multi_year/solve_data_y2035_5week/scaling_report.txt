@@ -1,0 +1,76 @@
+==============================================================================
+FlexTool scaling diagnostic report
+==============================================================================
+Solve name      : y2030_5week
+Report time     : 2026-05-02 11:35:18
+HiGHS version   : 1.14.0
+
+This report diagnoses numerical scaling of the LP/MIP matrix that HiGHS just
+solved.  It flags coefficient-range spread, bimodal coefficient distributions,
+composite-scale mismatches between directly-connected entities, near-duplicate
+parameter values, and slack activity.  See flextool/SLACK_CONVENTION.md and
+project_lp_scaling_2026-04.md for background.
+
+-- 2. Scaling decisions -----------------------------------------------------
+use_row_scaling        recommended=yes  applied=no
+scale_the_objective    recommended=1e-08  applied=1e-08
+rough_obj_estimate     7.63e+07
+unitsize_spread_log10  0.30 decades
+rhs_spread_log10       4.37 decades
+cost_spread_log10      8.30 decades
+Row scaling triggered by: cost (spread = 8.30 decades)
+Variable bound scaling: user_bound_scale=0 (bound range [1, 2.54], spread 0.40 decades)
+
+-- 3. Coefficient-family ranges --------------------------------------------
+family                   n_nz   lg10_min     p10   median     p90   lg10_max    abs_min     abs_max
+entity_unitsize             4      +2.70   +2.79    +3.00   +3.00      +3.00        500       1e+03
+node_inflow                72      +2.63   +2.66    +2.78   +2.90      +2.94        423         872
+node_annual_flow            4      +6.85   +6.86    +6.93   +6.99      +7.00      7e+06       1e+07
+vom_and_op_costs           14      -1.30   -0.45    +2.20   +2.80      +3.00       0.05       1e+03
+capex_invest                1      +1.70   +1.70    +1.70   +1.70      +1.70         50          50
+node_penalty                6      +2.90   +2.93    +6.87   +6.98      +7.00        800       1e+07
+
+-- 4. Bimodal coefficient distributions ------------------------------------
+[node_penalty]  ! bimodal: gap = 3.89 decades
+  lower cluster: 2 values (33%), center log10 = +2.95 (~900)
+  upper cluster: 4 values (67%), center log10 = +6.95 (~9e+06)
+  lower representatives: (names unavailable)
+  upper representatives: (names unavailable)
+
+-- 5. Composite-scale mismatch ---------------------------------------------
+(no directly-connected pairs span > 3 decades in unitsize)
+
+-- 6. Near-duplicate parameter clusters ------------------------------------
+near-dup [18x] p_unit.csv:coal_plant  value=0.0  spread=0  rel=0
+         entities: salvage_value, invest_max_period, invest_min_period
+near-dup [5x] pt_profile.csv:pt_profile  value=0.79  spread=0  rel=0
+         entities: wind_profile | t0036, wind_profile | t0061, wind_profile | t0062
+near-dup [4x] pt_profile.csv:pt_profile  value=0.49  spread=0  rel=0
+         entities: wind_profile | t0006, wind_profile | t0007, wind_profile | t0051
+near-dup [4x] pt_profile.csv:pt_profile  value=0.66  spread=0  rel=0
+         entities: wind_profile | t0011, wind_profile | t0013, wind_profile | t0047
+near-dup [4x] pt_profile.csv:pt_profile  value=0.71  spread=0  rel=0
+         entities: wind_profile | t0014, wind_profile | t0017, wind_profile | t0032
+near-dup [3x] pt_profile.csv:pt_profile  value=0.59  spread=0  rel=0
+         entities: wind_profile | t0029, wind_profile | t0055, wind_profile | t0069
+near-dup [3x] pt_profile.csv:pt_profile  value=0.61  spread=0  rel=0
+         entities: wind_profile | t0019, wind_profile | t0030, wind_profile | t0048
+near-dup [3x] pt_profile.csv:pt_profile  value=0.73  spread=0  rel=0
+         entities: wind_profile | t0016, wind_profile | t0034, wind_profile | t0045
+near-dup [3x] pt_profile.csv:pt_profile  value=0.77  spread=0  rel=0
+         entities: wind_profile | t0044, wind_profile | t0058, wind_profile | t0059
+near-dup [3x] pt_profile.csv:pt_profile  value=0.8  spread=0  rel=0
+         entities: wind_profile | t0037, wind_profile | t0038, wind_profile | t0043
+[precision] 21 near-duplicate cluster(s) covering 72 value(s) (showing top 10, rel_tol=1e-06).
+
+-- 7. Escape-tier / slack activity -----------------------------------------
+(no slack activity above tolerance)
+
+-- 8. HiGHS matrix-range summary -------------------------------------------
+Matrix  range : [1, 1e+03]  (spread 3.0 decades)
+Cost    range : [1, 500]  (spread 2.7 decades)
+Bound   range : [1, 2]
+RHS     range : [200, 1e+03]
+
+-- 9. Summary --------------------------------------------------------------
+Model scaled acceptably: 1 warning(s) - see sections above
