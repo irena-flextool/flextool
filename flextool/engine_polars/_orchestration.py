@@ -270,8 +270,16 @@ def _drive_cascade(
         load_flextool,
     )
     from flextool.engine_polars.model import build_flextool
+    from flextool.engine_polars._output_writer import (
+        OutputWriterState,
+        write_outputs_for_solve,
+    )
 
     results: dict[str, OrchestrationStep] = {}
+    # Δ.1: adapter that reuses flextool's process_outputs writers.  The
+    # state carrier collects ``periods_already_emitted`` across the
+    # cascade so we don't have to round-trip through SolveHandoff.
+    writer_state = OutputWriterState()
 
     # The runner_factory hook lets tests inject a mock; the default uses
     # FlexToolRunner constructed against the same DB the state was
@@ -311,6 +319,25 @@ def _drive_cascade(
                 self.state.handoffs.get(self.state.last_captured_solve)
                 if self.state.last_captured_solve is not None else None
             )
+            # Δ.1 — emit TIER A output_raw artefacts BEFORE the in-memory
+            # handoff is built.  ``write_all_handoffs`` (called by the
+            # adapter) refreshes ``solve_data/period_capacity.csv`` and
+            # other handoff CSVs; ``build_handoff_from_flexpy`` then
+            # reads those refreshed files for the in-memory handoff.
+            try:
+                write_outputs_for_solve(
+                    sol,
+                    work_folder=self.state.paths.work_folder,
+                    solve_name=complete_solve_name,
+                    prior_handoff=prior,
+                    writer_state=writer_state,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.state.logger.warning(
+                    f"write_outputs_for_solve failed for "
+                    f"{complete_solve_name}: {exc}"
+                )
+
             handoff = build_handoff_from_flexpy(
                 sol, self.state.paths.work_folder, complete_solve_name,
                 prior_handoff=prior,
