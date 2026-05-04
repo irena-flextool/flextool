@@ -3391,101 +3391,69 @@ def load_flextool(source: "Path | str | FlexInputSource",
         solver_options = _load_solver_options(sd),
     )
 
-    # Γ.1 — DB-direct override for the first-wave Direct Params.  The
-    # CSV path above produced every FlexData field; here we replace the
-    # subset that have a Direct equivalent in the source plugin so that
-    # downstream behaviour is unchanged but the data flows through the
-    # DB-direct port.  The full sweep happens in Γ.2 / Γ.3.
+    # Δ.3 — DB-direct construction.  Replaces the previous 3-pass
+    # override layering (CSV → first_wave_overrides → projection_overrides
+    # → derived_overrides_a..g).  Each FlexData field that has a
+    # DB-direct helper is now built by exactly one helper that mutates
+    # ``flex_data`` directly — no dict-overlay round-trip, no "override"
+    # semantics.  See progress.md (Δ.3 close stanza).
+    #
+    # NOTE: the CSV path above still populates every field as the
+    # initial seed.  In Δ.4+, when every FlexData field has a DB-direct
+    # helper, the CSV path will retire and these apply_* calls become
+    # the primary loader.
     if db_reader is not None:
-        from flextool.engine_polars import _direct_params as _dp
-        overrides = _dp.first_wave_overrides(db_reader, flex_data)
-        for field, value in overrides.items():
-            setattr(flex_data, field, value)
-        # Γ.2 — Projection Params over the same source.  Same overlay
-        # pattern: empty DB-side overlays don't blank out CSV data; only
-        # populated DB-side frames replace the CSV equivalent.
-        from flextool.engine_polars import _projection_params as _pp
-        proj = _pp.projection_overrides(db_reader, flex_data)
-        for field, value in proj.items():
-            setattr(flex_data, field, value)
-        # Γ.3.A — foundational Derived overrides (time / weighting,
-        # inflow, profiles, stochastic).  Applied after Direct +
-        # Projection so dependent helpers can read the (already-DB-
-        # overridden) FlexData.  Each overlay is gated on a frame-equal
-        # pre-check against the CSV-loaded value so we never overlay
-        # rows the simple algorithm can't reproduce (multi-block
-        # timelines, multi-year inflation, stochastic branches —
-        # those land in Batches B/C/D).
-        try:
-            workdir = source.workdir if hasattr(source, "workdir") \
-                       else source.input_dir.parent
-        except Exception:  # pragma: no cover — defensive
-            workdir = None
-        if workdir is not None:
-            from flextool.engine_polars import _derived_params as _drA
-            der = _drA.derived_overrides_a(flex_data, db_reader,
-                                            Path(workdir))
-            for field, value in der.items():
-                setattr(flex_data, field, value)
-            # Γ.3.B — process topology + reclassified method-derived
-            # overlays (§3.3 / §3.5 / §3.10).  Same overlay pattern: each
-            # field is gated on a frame-equal precheck against the CSV
-            # value so the simple algorithm never corrupts a multi-block
-            # / lifetime-cumulative / multi-method fixture.
-            der_b = _drA.derived_overrides_b(flex_data, db_reader,
-                                               Path(workdir))
-            for field, value in der_b.items():
-                setattr(flex_data, field, value)
-            # Γ.3.C — invest/divest + online/UC + group slack + multi-year
-            # inflation cascade overlays (§3.7 / §3.8 / §3.11 / §3.12).
-            # Each field is gated on a frame-equal precheck against the
-            # CSV value so multi-year invest cascades / scaling-active
-            # fixtures keep the CSV-loaded value when the simple path
-            # can't reproduce them.
-            der_c = _drA.derived_overrides_c(flex_data, db_reader,
-                                               Path(workdir))
-            for field, value in der_c.items():
-                setattr(flex_data, field, value)
-            # Γ.3.D — final batch of conservative narrow-scope overlays:
-            # §3.11 ``p_entity_all_existing``, §3.16 ``node_reference_angle``,
-            # §3.13 ``process_reserve_upDown_node_active``.  Storage block
-            # algebra, lifetime cascade, ladder, delay and multi-branch
-            # Params are deferred to Γ.3.E (see progress.md).  Same gate-
-            # on-equality discipline as earlier batches.
-            der_d = _drA.derived_overrides_d(flex_data, db_reader,
-                                               Path(workdir))
-            for field, value in der_d.items():
-                setattr(flex_data, field, value)
-            # Γ.3.E — storage block algebra (§3.9): dtttdt + period_block
-            # family + nodeStateBlock multi-resolution synthesis +
-            # arc-block weights + state caps + reference-value exclusion +
-            # rolling-handoff handoff carriers.  No defensive gating per
-            # the §Γ.3.E architectural shift — helpers either produce
-            # the canonical frame or the parity test fails loudly.
-            der_e = _drA.derived_overrides_e(flex_data, db_reader,
-                                               Path(workdir))
-            for field, value in der_e.items():
-                setattr(flex_data, field, value)
-            # Γ.3.F — lifetime cascade + handoff state + full multi-year
-            # inflation cascade (§3.1.3 / §3.7.5/6 / §3.7.7/8).  Helpers
-            # depend on the (already-overridden) ed_invest_set /
-            # ed_divest_set frames from Γ.3.C, hence run last.  Same
-            # no-defensive-gating discipline as Γ.3.E.
-            der_f = _drA.derived_overrides_f(flex_data, db_reader,
-                                               Path(workdir))
-            for field, value in der_f.items():
-                setattr(flex_data, field, value)
-            # Γ.3.G — residual Derived Params (commodity ladder §3.17,
-            # reserves §3.13 prundt, delay §3.15, full multi-branch
-            # normalisation §3.18).  No defensive gating per the §Γ.3.E
-            # architectural shift; helpers either produce the canonical
-            # frame or the parity test fails loudly.
-            der_g = _drA.derived_overrides_g(flex_data, db_reader,
-                                               Path(workdir))
-            for field, value in der_g.items():
-                setattr(flex_data, field, value)
+        _apply_db_overrides(flex_data, db_reader, source)
 
     return _assign_param_names(flex_data)
+
+
+def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
+                          source: "object") -> None:
+    """Apply the DB-direct construction passes to ``flex_data`` in
+    place.  Δ.3 consolidates the previous 9-wrapper override chain into
+    a single linear sequence; each ``apply_*`` callee mutates
+    ``flex_data`` directly via setattr (no dict round-trip).
+
+    Pass order (preserved from the legacy chain — each pass may depend
+    on fields written by earlier passes):
+      1. Direct Params — scalar + relationship 1d_map.
+      2. Projection Params — entity-instance + reserve-method partitions.
+      3. Derived A — dt / step duration / weighting / inflow / profiles.
+      4. Derived B — process topology + reclassified method-derived.
+      5. Derived C — invest/divest + online/UC + group slack.
+      6. Derived D — p_entity_all_existing, node_reference_angle, etc.
+      7. Derived E — storage block algebra.
+      8. Derived F — lifetime cascade + handoff state + full inflation.
+      9. Derived G — commodity ladder, reserves, delay, multi-branch.
+    """
+    from flextool.engine_polars import _direct_params as _dp
+    from flextool.engine_polars import _projection_params as _pp
+    from flextool.engine_polars import _derived_params as _drv
+
+    # Pass 1-2: source-only Params (no workdir needed).
+    _dp.apply_direct_params(db_reader, flex_data)
+    _pp.apply_projection_params(db_reader, flex_data)
+
+    # Pass 3-9: workdir-aware Params.  Resolve the workdir from the
+    # source object (CsvSource exposes ``input_dir.parent``;
+    # SpineDbSource exposes ``workdir``).
+    try:
+        workdir = source.workdir if hasattr(source, "workdir") \
+                   else source.input_dir.parent
+    except Exception:  # pragma: no cover — defensive
+        workdir = None
+    if workdir is None:
+        return
+    workdir_path = Path(workdir)
+
+    _drv.apply_derived_a(flex_data, db_reader, workdir_path)
+    _drv.apply_derived_b(flex_data, db_reader, workdir_path)
+    _drv.apply_derived_c(flex_data, db_reader, workdir_path)
+    _drv.apply_derived_d(flex_data, db_reader, workdir_path)
+    _drv.apply_derived_e(flex_data, db_reader, workdir_path)
+    _drv.apply_derived_f(flex_data, db_reader, workdir_path)
+    _drv.apply_derived_g(flex_data, db_reader, workdir_path)
 
 
 def _read_period_set(path: Path) -> set[str]:
