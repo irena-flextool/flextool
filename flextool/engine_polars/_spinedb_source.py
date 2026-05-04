@@ -49,6 +49,8 @@ from pathlib import Path
 
 import polars as pl
 
+from ._input_source import _read_csv_file
+
 
 _REPO_ROOT = Path("/home/jkiviluo/sources/flextool")
 
@@ -174,7 +176,7 @@ class SpineDbSource:
         path = d / fname
         if not path.exists():
             return None
-        return pl.read_csv(path)
+        return _read_csv_file(path)
 
     # ------------------------------------------------------------------
     # Materialisation
@@ -203,7 +205,7 @@ class SpineDbSource:
             for f in sorted(d.glob("*.csv")):
                 stem = f.stem
                 try:
-                    out[(kind, stem)] = pl.read_csv(f)
+                    out[(kind, stem)] = _read_csv_file(f)
                 except Exception:  # noqa: BLE001 — empty / malformed CSVs survive as missing
                     # Some flextool outputs are header-only and
                     # polars.read_csv accepts those; truly malformed

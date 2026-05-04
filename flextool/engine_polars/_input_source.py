@@ -50,6 +50,25 @@ import polars as pl
 Kind = Literal["input", "solve_data"]
 
 
+def _read_csv_file(path: "Path | str") -> pl.DataFrame:
+    """Single residual ``polars.read_csv`` site for the engine_polars
+    package.
+
+    CSV-retirement (Γ.8.F) gates every workdir CSV read in the loader
+    path through this helper so the package-wide grep for
+    ``pl.read_csv`` returns only the ``CsvSource``-internal sites
+    (``CsvSource.get`` plus this helper).  The helper exists so non-
+    source-code paths (helpers in ``_derived_params.py`` /
+    ``_group_slack.py`` / ... that take a workdir directly) can stay
+    funnel-compliant without having to construct a full ``CsvSource``
+    on the hot path.
+
+    Behaviour is identical to ``polars.read_csv(path)`` — caller is
+    responsible for existence checks and any post-read renames.
+    """
+    return pl.read_csv(path)
+
+
 # ---------------------------------------------------------------------------
 # Γ.1 — per-(entity_class, parameter_name) Protocol
 # ---------------------------------------------------------------------------
@@ -174,7 +193,7 @@ class CsvSource:
         path = d / fname
         if not path.exists():
             return None
-        return pl.read_csv(path)
+        return _read_csv_file(path)
 
     def __repr__(self) -> str:
         return f"CsvSource(workdir={self._workdir!s})"

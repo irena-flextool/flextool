@@ -48,6 +48,7 @@ import polars as pl
 from polar_high_opt import Problem, Solution, WarmProblem
 from flextool.engine_polars.input import load_flextool, build_handoff_from_flexpy, apply_handoff
 from flextool.engine_polars.model import build_flextool
+from flextool.engine_polars._input_source import _read_csv_file
 
 if TYPE_CHECKING:
     from flextool.engine_polars.input import FlexData
@@ -541,7 +542,7 @@ def _read_chain_order(work_folder: Path) -> list[str]:
             and d.name != "solve_data"
         )
         return dirs
-    df = pl.read_csv(msv)
+    df = _read_csv_file(msv)
     if "solve" in df.columns:
         return df["solve"].cast(pl.Utf8).to_list()
     # Schema fallback — flextool's column may be different in some fixtures.

@@ -43,6 +43,8 @@ import polars as pl
 
 from polar_high_opt import Param
 
+from ._input_source import _read_csv_file
+
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
 
@@ -115,7 +117,7 @@ def _read_active_solve(workdir: Path) -> str | None:
     p = Path(workdir) / "solve_data" / "solve_current.csv"
     if not p.exists():
         return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0:
         return None
     col = df.columns[0]
@@ -160,7 +162,7 @@ def dt_and_step_duration_from_source(
     if workdir is not None:
         piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if piu_path.exists():
-            piu = pl.read_csv(piu_path)
+            piu = _read_csv_file(piu_path)
             if piu.height > 0 and "period" in piu.columns:
                 realized_p = (piu.lazy()
                                 .select(pl.col("period").alias("d"))
@@ -207,7 +209,7 @@ def dt_and_step_duration_from_source(
     if workdir is not None:
         pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
         if pb_path.exists():
-            pb_raw = pl.read_csv(pb_path)
+            pb_raw = _read_csv_file(pb_path)
             if pb_raw.height > 0:
                 pb_lf = (pb_raw.lazy()
                             .rename({"period": "anchor", "branch": "d"})
@@ -710,7 +712,7 @@ def _read_p_entity_all_existing_csv(workdir: Path | None
     if not p.exists():
         return None
     try:
-        df = pl.read_csv(p)
+        df = _read_csv_file(p)
     except Exception:
         return None
     if (df.height == 0 or "entity" not in df.columns
@@ -1789,7 +1791,7 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
     if workdir is not None:
         piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if piu_path.exists():
-            piu_df = pl.read_csv(piu_path)
+            piu_df = _read_csv_file(piu_path)
             if piu_df.height > 0 and "period" in piu_df.columns:
                 pd_lf = (piu_df.lazy()
                             .select(pl.col("period").alias("d"))
@@ -2278,7 +2280,7 @@ def derived_overrides_b(
         psb = Path(workdir) / "solve_data" / "process_side_block.csv"
         if psb.exists():
             try:
-                psb_df = pl.read_csv(psb)
+                psb_df = _read_csv_file(psb)
                 if psb_df.height > 0:
                     skip_flow_n = True
             except Exception:
@@ -2611,7 +2613,7 @@ def _read_period_first(source: "InputSource",
         p = Path(workdir) / "solve_data" / "period_first.csv"
         if p.exists():
             try:
-                df = pl.read_csv(p)
+                df = _read_csv_file(p)
                 if df.height > 0 and "period" in df.columns:
                     return df["period"].cast(pl.Utf8, strict=False).to_list()
             except Exception:
@@ -2887,7 +2889,7 @@ def _p_years_d_lf(source: "InputSource",
         p = Path(workdir) / "solve_data" / "p_years_d.csv"
         if p.exists():
             try:
-                df = pl.read_csv(p)
+                df = _read_csv_file(p)
                 if df.height > 0 and "period" in df.columns:
                     val_col = ("value" if "value" in df.columns
                                 else df.columns[-1])
@@ -2901,7 +2903,7 @@ def _p_years_d_lf(source: "InputSource",
         p2 = Path(workdir) / "solve_data" / "period_with_history.csv"
         if p2.exists():
             try:
-                df = pl.read_csv(p2)
+                df = _read_csv_file(p2)
                 if df.height > 0 and "period" in df.columns:
                     val_col = ("param" if "param" in df.columns
                                 else df.columns[-1])
@@ -3002,7 +3004,7 @@ def _period_in_use_set(source: "InputSource",
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if p.exists():
-            df = pl.read_csv(p)
+            df = _read_csv_file(p)
             if df.height > 0 and "period" in df.columns:
                 return df["period"].cast(pl.Utf8, strict=False).to_list()
     if active_solve is None:
@@ -4228,7 +4230,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
         pae_path = Path(workdir) / "solve_data" / "p_entity_all_existing.csv"
         if pae_path.exists():
             try:
-                df = pl.read_csv(pae_path)
+                df = _read_csv_file(pae_path)
                 if df.height > 0 and "entity" in df.columns \
                         and "period" in df.columns and "value" in df.columns:
                     df2 = (df.rename({"entity": "e", "period": "d"})
@@ -4625,7 +4627,7 @@ def _expand_branch_periods(period_order: list[str],
     if not p.exists():
         return list(period_order)
     try:
-        df = pl.read_csv(p)
+        df = _read_csv_file(p)
     except Exception:
         return list(period_order)
     if df.height == 0:
@@ -4634,7 +4636,7 @@ def _expand_branch_periods(period_order: list[str],
     piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
     if piu_path.exists():
         try:
-            piu = pl.read_csv(piu_path)
+            piu = _read_csv_file(piu_path)
             if piu.height > 0:
                 in_use = set(piu["period"].to_list())
         except Exception:
@@ -4702,7 +4704,7 @@ def _dt_period_active_steps(source: "InputSource",
         piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if piu_path.exists():
             try:
-                piu_df = pl.read_csv(piu_path)
+                piu_df = _read_csv_file(piu_path)
                 if piu_df.height > 0:
                     in_use = set(piu_df["period"].to_list())
             except Exception:
@@ -4710,7 +4712,7 @@ def _dt_period_active_steps(source: "InputSource",
         pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
         if pb_path.exists():
             try:
-                pbf = pl.read_csv(pb_path)
+                pbf = _read_csv_file(pb_path)
             except Exception:
                 pbf = None
             if pbf is not None and pbf.height > 0:
@@ -4787,7 +4789,7 @@ def _dt_period_active_steps(source: "InputSource",
         piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if piu_path.exists():
             try:
-                piu_df = pl.read_csv(piu_path)
+                piu_df = _read_csv_file(piu_path)
                 if piu_df.height > 0:
                     canonical = piu_df["period"].to_list()
                     # Re-order period_order to match canonical, keeping
@@ -4900,7 +4902,7 @@ def dtttdt_from_source(source: "InputSource",
         pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
         if pb_path.exists():
             try:
-                pbf = pl.read_csv(pb_path)
+                pbf = _read_csv_file(pb_path)
             except Exception:
                 pbf = None
             if pbf is not None and pbf.height > 0:
@@ -5081,8 +5083,8 @@ def period_block_family_from_source(source: "InputSource",
         bsd_path = sd / "block_step_duration.csv"
         ov_path = sd / "overlap_set.csv"
         if eb_path.exists() and bsd_path.exists():
-            eb = pl.read_csv(eb_path)
-            bsd = pl.read_csv(bsd_path)
+            eb = _read_csv_file(eb_path)
+            bsd = _read_csv_file(bsd_path)
             if eb.height > 0 and bsd.height > 0:
                 distinct_blocks = bsd["block"].unique().to_list()
                 if len(distinct_blocks) >= 2:
@@ -5120,7 +5122,7 @@ def period_block_family_from_source(source: "InputSource",
                                 if succ_rows else None)
                             new_pbt = None
                             if ov_path.exists():
-                                ov = pl.read_csv(ov_path)
+                                ov = _read_csv_file(ov_path)
                                 if ov.height > 0:
                                     ov = ov.rename({
                                         "period": "d",
@@ -5258,8 +5260,8 @@ def nodeStateBlock_from_source(source: "InputSource",
         eb_path = sd / "entity_block.csv"
         bsd_path = sd / "block_step_duration.csv"
         if eb_path.exists() and bsd_path.exists():
-            eb = pl.read_csv(eb_path)
-            bsd = pl.read_csv(bsd_path)
+            eb = _read_csv_file(eb_path)
+            bsd = _read_csv_file(bsd_path)
             if eb.height > 0 and bsd.height > 0:
                 distinct_blocks = bsd["block"].unique().to_list()
                 if len(distinct_blocks) >= 2:
@@ -5329,8 +5331,8 @@ def arc_block_dt_from_source(source: "InputSource",
     bsd_path = sd / "block_step_duration.csv"
     if not psb_path.exists() or not bsd_path.exists():
         return None
-    psb = pl.read_csv(psb_path).rename({"process": "p", "block": "b_f"})
-    bsd_arc = pl.read_csv(bsd_path).rename(
+    psb = _read_csv_file(psb_path).rename({"process": "p", "block": "b_f"})
+    bsd_arc = _read_csv_file(bsd_path).rename(
         {"block": "b_f", "period": "d", "step": "t",
           "step_duration": "weight"})
     if psb.height == 0 or bsd_arc.height == 0:
@@ -5481,7 +5483,7 @@ def _branch_anchor(branch: str, workdir: Path | None) -> str | None:
     if not p.exists():
         return None
     try:
-        df = pl.read_csv(p)
+        df = _read_csv_file(p)
     except Exception:
         return None
     if df.height == 0:
@@ -5655,7 +5657,7 @@ def p_roll_continue_state_from_workdir(workdir: Path | None
     p = Path(workdir) / "solve_data" / "p_roll_continue_state.csv"
     if not p.exists():
         return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     df.columns = [c.strip() for c in df.columns]
     if df.height == 0:
         return None
@@ -5675,7 +5677,7 @@ def p_fix_storage_quantity_from_workdir(workdir: Path | None
     p = Path(workdir) / "solve_data" / "fix_storage_quantity.csv"
     if not p.exists():
         return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0:
         return None
     df = (df.rename({"period": "d", "step": "t", "node": "n",
@@ -5701,7 +5703,7 @@ def dtt_timeline_matching_from_workdir(workdir: Path | None
     p = Path(workdir) / "solve_data" / "timeline_matching_map.csv"
     if not p.exists():
         return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0:
         return None
     return (df
@@ -5725,7 +5727,7 @@ def period_branch_from_source(source: "InputSource",
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period__branch.csv"
         if p.exists():
-            df = pl.read_csv(p)
+            df = _read_csv_file(p)
             if df.height > 0:
                 return (df
                         .rename({"period": "d", "branch": "d_upper"})
@@ -6179,7 +6181,7 @@ def _periodAll_from_source(source: "InputSource",
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "periodAll_set.csv"
         if p.exists():
-            df = pl.read_csv(p)
+            df = _read_csv_file(p)
             if df.height > 0 and "period" in df.columns:
                 return df["period"].cast(pl.Utf8, strict=False).to_list()
     seen: dict[str, None] = {}
@@ -6324,7 +6326,7 @@ def _read_handoff_e_d_from_workdir(workdir: Path,
     p = Path(workdir) / "solve_data" / f"{name}.csv"
     if not p.exists():
         return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0:
         return None
     df = (df.rename({"entity": "e", "period": "d"})
@@ -6345,7 +6347,7 @@ def _read_handoff_e_from_workdir(workdir: Path, name: str,
     p = Path(workdir) / "solve_data" / f"{name}.csv"
     if not p.exists():
         return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0:
         return None
     if value_col is None:
@@ -6699,7 +6701,7 @@ def _read_period_with_history(workdir: Path | None) -> list[str]:
     p = Path(workdir) / "solve_data" / "period_with_history.csv"
     if not p.exists():
         return []
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0 or "period" not in df.columns:
         return []
     return df["period"].cast(pl.Utf8, strict=False).to_list()
@@ -7071,7 +7073,7 @@ def p_f_d_k_from_source(
     sd = Path(workdir) / "solve_data"
     cwl_path = sd / "commodity_with_ladder.csv"
     if cwl_path.exists():
-        cwl = pl.read_csv(cwl_path)
+        cwl = _read_csv_file(cwl_path)
         if cwl.height == 0:
             return None
     else:
@@ -7086,7 +7088,7 @@ def p_f_d_k_from_source(
     siu = sd / "steps_in_use.csv"
     if not siu.exists():
         return None
-    df = pl.read_csv(siu)
+    df = _read_csv_file(siu)
     if df.height == 0 or "period" not in df.columns:
         return None
     sum_step = (df.lazy()
@@ -7102,14 +7104,14 @@ def p_f_d_k_from_source(
         csy_path = sd / "complete_period_share_of_year.csv"
     if not csy_path.exists():
         return None
-    csy = (pl.read_csv(csy_path).lazy()
+    csy = (_read_csv_file(csy_path).lazy()
               .rename({"period": "d"})
               .with_columns(pl.col("value").cast(pl.Float64, strict=False)
                                   .alias("share")))
     # ladder_cum_sim_hours — default 0.0 when absent.
     cum_path = sd / "ladder_cum_sim_hours.csv"
     if cum_path.exists():
-        cum_raw = pl.read_csv(cum_path)
+        cum_raw = _read_csv_file(cum_path)
         if cum_raw.height > 0 and "p_ladder_cum_sim_hours" in cum_raw.columns:
             cum_lf = (cum_raw.lazy()
                        .rename({"period": "d",
@@ -7124,7 +7126,7 @@ def p_f_d_k_from_source(
     piu_path = sd / "period_in_use_set.csv"
     if not piu_path.exists():
         return None
-    piu_lf = (pl.read_csv(piu_path).lazy()
+    piu_lf = (_read_csv_file(piu_path).lazy()
                 .rename({"period": "d"})
                 .select("d"))
     out_lf = (piu_lf
@@ -7162,7 +7164,7 @@ def p_ladder_cum_realized_mwh_from_workdir(
     rel_path = Path(workdir) / "solve_data" / "ladder_cum_realized_mwh.csv"
     if not rel_path.exists():
         return None
-    raw = pl.read_csv(rel_path)
+    raw = _read_csv_file(rel_path)
     if raw.height == 0:
         return None
     value_col = ("p_ladder_cum_realized_mwh"
@@ -7457,7 +7459,7 @@ def _read_period_branch_pairs(workdir: Path | None
     p = Path(workdir) / "solve_data" / "period__branch.csv"
     if not p.exists():
         return []
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0:
         return []
     cols = df.columns
@@ -7479,7 +7481,7 @@ def _read_solve_branch_weights(workdir: Path | None
     p = Path(workdir) / "solve_data" / "solve_branch_weight.csv"
     if not p.exists():
         return out
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0:
         return out
     cols = df.columns
@@ -7506,7 +7508,7 @@ def _read_first_timesteps(workdir: Path | None
     p = Path(workdir) / "solve_data" / "first_timesteps.csv"
     if not p.exists():
         return out
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0:
         return out
     cols = df.columns

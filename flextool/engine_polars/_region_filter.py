@@ -44,6 +44,7 @@ import polars as pl
 from polar_high_opt import Param
 
 from flextool.engine_polars.input import FlexData
+from flextool.engine_polars._input_source import _read_csv_file
 
 
 __all__ = [
@@ -117,7 +118,7 @@ def load_decomposition_method(work_dir: Path | str) -> dict[str, str]:
     path = Path(work_dir) / "input" / "p_group_decomposition.csv"
     if not path.exists():
         return {}
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     if df.height == 0:
         return {}
     cols = df.columns

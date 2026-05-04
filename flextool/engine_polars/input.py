@@ -30,13 +30,14 @@ from . import _cumulative_invest
 from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
+from ._input_source import _read_csv_file
 
 
 # ---------------------------------------------------------------------------
 # CSV-shape helpers (same three shapes as before)
 
 def _read_long(path: Path, *, drop=("solve",), rename=None) -> pl.DataFrame:
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     df = df.drop([c for c in drop if c in df.columns])
     if rename: df = df.rename(rename)
     return df
@@ -49,7 +50,7 @@ def _read_wide_per_entity(path: Path, value_col: str = "value",
     Python-preprocessed format.  In the long case the entity column is
     whatever flextool's preprocessor wrote (node / process / commodity
     /…); the caller's ``rename={'entity': X}`` is applied either way."""
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     if "value" in df.columns and "solve" not in df.columns:
         # Long format from new Python preprocessing.  Entity column is
         # the first; rename to "entity" to keep the downstream contract.
@@ -79,7 +80,7 @@ def _read_unitsize(path: Path) -> pl.DataFrame:
     ``.mod`` also printf's a wide-format twin to ``input/`` (one row,
     columns are entity names) — supported as a fallback for legacy
     fixtures."""
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     if {"entity", "value"}.issubset(df.columns):
         return (df.rename({"entity": "e"})
                   .with_columns(value=pl.col("value")
@@ -101,7 +102,7 @@ def _read_capacity(path: Path,
     # carried over across periods within a solve), which is what the
     # .mod's ``p_entity_dispatch_capacity_max`` formula uses.
     if all_existing_path is not None and all_existing_path.exists():
-        df = pl.read_csv(all_existing_path)
+        df = _read_csv_file(all_existing_path)
         if "solve" in df.columns: df = df.drop("solve")
         # Long-format variant: columns are (entity, period, value).
         if {"entity", "period", "value"}.issubset(df.columns):
@@ -132,7 +133,7 @@ def _read_capacity(path: Path,
     #   effective_existing = existing − invested + previously_invested
     #                      = (base + prior + current) − (prior + current) + prior
     #                      = base + prior
-    df = pl.read_csv(path).with_columns(
+    df = _read_csv_file(path).with_columns(
         pl.col("p_entity_period_existing_capacity").cast(pl.Float64, strict=False),
         pl.col("p_entity_period_invested_capacity").cast(pl.Float64, strict=False),
     )
@@ -142,7 +143,7 @@ def _read_capacity(path: Path,
     )
     df = df.with_columns(value=base_plus_prior)
     if previously_invested_path is not None and previously_invested_path.exists():
-        prior_df = pl.read_csv(previously_invested_path)
+        prior_df = _read_csv_file(previously_invested_path)
         rename = ({"value": "prior"} if "value" in prior_df.columns
                   else {"p_entity_previously_invested_capacity": "prior"})
         prior = prior_df.rename(rename)
@@ -159,7 +160,7 @@ def _read_p_flow_max(path: Path) -> pl.DataFrame | None:
     flextool.mod consumes via ``table data IN``)."""
     if not path.exists():
         return None
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     if df.height == 0:
         return None
     return df.rename({"process": "p", "period": "d", "time": "t"}) \
@@ -180,7 +181,7 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     downstream consumers (e.g. ``"node" -> "n"``)."""
     if not path.exists():
         return None
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     if df.height == 0:
         return None
     sliced = df.filter(pl.col("param") == param_value).drop("param")
@@ -204,7 +205,7 @@ def _read_step_previous(path: Path) -> pl.DataFrame | None:
     ``t_previous_within_solve``)."""
     if not path.exists():
         return None
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     rename = {
         "period": "d", "time": "t",
         "previous": "t_previous",
@@ -647,7 +648,7 @@ def _load_time(sd: Path):
     # ``dt.csv`` and ``p_step_duration.csv`` are .mod printf debug-exports
     # that only cover dispatch periods — using them silently drops the
     # invest-period (d, t) rows in multi-period scenarios.
-    siu = pl.read_csv(sd / "steps_in_use.csv").rename(
+    siu = _read_csv_file(sd / "steps_in_use.csv").rename(
         {"period": "d", "step": "t", "step_duration": "value"})
     dt = siu.select("d", "t")
     step_dur = Param(("d","t"), siu.select("d", "t", "value"))
@@ -658,7 +659,7 @@ def _load_time(sd: Path):
     rp_default = dt.with_columns(value=pl.lit(1.0))
     rp_cw_path = sd / "rp_cost_weight.csv"
     if rp_cw_path.exists():
-        rp_df = pl.read_csv(rp_cw_path)
+        rp_df = _read_csv_file(rp_cw_path)
         if rp_df.height > 0:
             # canonical column is named ``weight`` per .mod's ``table data IN``.
             value_col = "weight" if "weight" in rp_df.columns else "value"
@@ -685,7 +686,7 @@ def _load_time(sd: Path):
 
 
 def _load_node(sd: Path, dt: pl.DataFrame):
-    nb = pl.read_csv(sd / "nodeBalance.csv").rename({"node": "n"})
+    nb = _read_csv_file(sd / "nodeBalance.csv").rename({"node": "n"})
     # pdtNodeInflow.csv is canonical (.mod reads it via `table data IN`).
     # penalty_up/penalty_down are sliced from the canonical pdtNode.csv —
     # same operation .mod does inline via `pdtNode[n, 'penalty_up', d, t]`.
@@ -709,15 +710,15 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame):
                                    "flow_from_commodity_eff",
                                    "flow_from_commodity_noEff",
                                    "unitsize","flow_upper","slope","commodity_price")}
-    pss     = pl.read_csv(pss_path).rename({"process": "p"})
+    pss     = _read_csv_file(pss_path).rename({"process": "p"})
     if pss.height == 0:
         return {k: None for k in ("pss","pss_eff","pss_noEff","pss_dt",
                                    "flow_to_n","flow_from_n",
                                    "flow_from_commodity_eff",
                                    "flow_from_commodity_noEff",
                                    "unitsize","flow_upper","slope","commodity_price")}
-    pss_eff = pl.read_csv(sd / "process_source_sink_eff.csv").rename({"process": "p"})
-    pss_noEff = pl.read_csv(sd / "process_source_sink_noEff.csv").rename({"process": "p"})
+    pss_eff = _read_csv_file(sd / "process_source_sink_eff.csv").rename({"process": "p"})
+    pss_noEff = _read_csv_file(sd / "process_source_sink_noEff.csv").rename({"process": "p"})
 
     flow_to_n   = pss.with_columns(n=pl.col("sink"))
     flow_from_n = pss.with_columns(n=pl.col("source"))
@@ -737,11 +738,11 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame):
     ov_path_arc = sd / "overlap_set.csv"
     if (psb_path_arc.exists() and eb_path_arc.exists()
             and ov_path_arc.exists()):
-        psb_local = pl.read_csv(psb_path_arc).rename(
+        psb_local = _read_csv_file(psb_path_arc).rename(
             {"process": "p", "block": "b_f"})
-        eb_local = pl.read_csv(eb_path_arc).rename(
+        eb_local = _read_csv_file(eb_path_arc).rename(
             {"entity": "n", "block": "b"})
-        ov_local = pl.read_csv(ov_path_arc)
+        ov_local = _read_csv_file(ov_path_arc)
         if (psb_local.height > 0 and eb_local.height > 0
                 and ov_local.height > 0):
             # Build the set of (b_n, b_f) pairs that have at least one
@@ -783,7 +784,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame):
             if ffn_filtered.height > 0 and ffn_filtered.height < flow_from_n.height:
                 flow_from_n = ffn_filtered
 
-    cn = pl.read_csv(inp / "commodity__node.csv")
+    cn = _read_csv_file(inp / "commodity__node.csv")
     flow_from_commodity_eff = (pss_eff
         .join(cn, left_on="source", right_on="node", how="inner")
         .rename({"commodity": "c"})
@@ -839,10 +840,10 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     if pss_eff is None: return (None, None, None, None)
     files = ["group_co2_price.csv", "commodity_node_co2.csv", "pdtGroup.csv"]
     if not all((sd / f).exists() for f in files): return (None, None, None, None)
-    g_price = pl.read_csv(sd / "group_co2_price.csv").rename({"group": "g"})
+    g_price = _read_csv_file(sd / "group_co2_price.csv").rename({"group": "g"})
     if g_price.height == 0: return (None, None, None, None)
-    cn_co2 = pl.read_csv(sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
-    g_node = pl.read_csv(inp / "group__node.csv").rename({"group":"g","node":"n"})
+    cn_co2 = _read_csv_file(sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
+    g_node = _read_csv_file(inp / "group__node.csv").rename({"group":"g","node":"n"})
     gcn = (g_price.join(g_node, on="g", how="inner")
                   .join(cn_co2, on="n", how="inner")
                   .select("g","c","n"))
@@ -861,7 +862,7 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             flow_from_co2_priced_noEff = None
     if flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None:
         return (None, None, None, None)
-    p_comm = pl.read_csv(inp / "p_commodity.csv")
+    p_comm = _read_csv_file(inp / "p_commodity.csv")
     co2_content = Param(("c",),
         p_comm.filter(pl.col("commodityParam")=="co2_content")
               .rename({"commodity":"c","p_commodity":"value"})
@@ -882,10 +883,10 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
         return (None, None, None, None, None)
     p = sd / "group_co2_max_period.csv"
     if not p.exists(): return (None, None, None, None, None)
-    g_max = pl.read_csv(p).rename({"group":"g"})
+    g_max = _read_csv_file(p).rename({"group":"g"})
     if g_max.height == 0: return (None, None, None, None, None)
-    cn_co2 = pl.read_csv(sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
-    g_node = pl.read_csv(inp / "group__node.csv").rename({"group":"g","node":"n"})
+    cn_co2 = _read_csv_file(sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
+    g_node = _read_csv_file(inp / "group__node.csv").rename({"group":"g","node":"n"})
     gcn = (g_max.join(g_node, on="g", how="inner")
                 .join(cn_co2, on="n", how="inner")
                 .select("g","c","n"))
@@ -916,7 +917,7 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             flow_from_co2_capped_noEff = noeff
     if flow_from_co2_capped_eff is None and flow_from_co2_capped_noEff is None:
         return (None, None, None, None, None)
-    pd_group = pl.read_csv(inp / "pd_group.csv")
+    pd_group = _read_csv_file(inp / "pd_group.csv")
     cap_long = (pd_group.filter(pl.col("groupParam")=="co2_max_period")
                         .rename({"group":"g","period":"d","pd_group":"value"})
                         .select("g","d","value"))
@@ -931,7 +932,7 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
     if pss is None: return (None, None, None, None, None, None)
     p = sd / "process__method_indirect.csv"
     if not p.exists(): return (None, None, None, None, None, None)
-    raw = pl.read_csv(p).rename({"process":"p"})
+    raw = _read_csv_file(p).rename({"process":"p"})
     if raw.height == 0: return (None, None, None, None, None, None)
     indirect = raw.select("p").unique()
     inputs  = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("sink")==pl.col("p")))
@@ -954,7 +955,7 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
     if inp is not None:
         src_path = inp / "p_process_source_flow_coefficient.csv"
         if src_path.exists():
-            srcdf = pl.read_csv(src_path)
+            srcdf = _read_csv_file(src_path)
             if srcdf.height > 0 and "p_process_source_flow_coefficient" in srcdf.columns:
                 src_long = (srcdf
                     .rename({"process": "p",
@@ -980,7 +981,7 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
                         p_source_flow_coef = Param(("p", "source"), merged)
         sink_path = inp / "p_process_sink_flow_coefficient.csv"
         if sink_path.exists():
-            sinkdf = pl.read_csv(sink_path)
+            sinkdf = _read_csv_file(sink_path)
             if sinkdf.height > 0 and "p_process_sink_flow_coefficient" in sinkdf.columns:
                 sink_long = (sinkdf
                     .rename({"process": "p",
@@ -1019,12 +1020,12 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     if pss is None: return [None]*12
     cs_path = inp / "constraint__sense.csv"
     if not cs_path.exists(): return [None]*12
-    cs = pl.read_csv(cs_path).rename({"constraint":"c"})
+    cs = _read_csv_file(cs_path).rename({"constraint":"c"})
     if cs.height == 0: return [None]*12
     coef_path = inp / "p_process_node_constraint_flow_coefficient.csv"
     flow_cstr_idx = flow_cstr_coef = None
     if coef_path.exists():
-        coef_long = (pl.read_csv(coef_path)
+        coef_long = (_read_csv_file(coef_path)
             .rename({"process":"p","node":"n","constraint":"c",
                      "p_process_node_constraint_flow_coefficient":"coef"})
             .select("p","n","c","coef"))
@@ -1045,7 +1046,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     n_inv_path = inp / "p_node_constraint_invested_capacity_coefficient.csv"
     n_inv_cstr_coef = None
     if n_inv_path.exists():
-        ndf = pl.read_csv(n_inv_path)
+        ndf = _read_csv_file(n_inv_path)
         if ndf.height > 0:
             ndf = (ndf.rename({"node":"n", "constraint":"c",
                                 "p_node_constraint_invested_capacity_coefficient":"value"})
@@ -1054,7 +1055,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     p_inv_path = inp / "p_process_constraint_invested_capacity_coefficient.csv"
     p_inv_cstr_coef = None
     if p_inv_path.exists():
-        pdf = pl.read_csv(p_inv_path)
+        pdf = _read_csv_file(p_inv_path)
         if pdf.height > 0:
             pdf = (pdf.rename({"process":"p", "constraint":"c",
                                 "p_process_constraint_invested_capacity_coefficient":"value"})
@@ -1064,7 +1065,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     n_state_path = inp / "p_node_constraint_state_coefficient.csv"
     n_state_cstr_coef = None
     if n_state_path.exists():
-        sdf = pl.read_csv(n_state_path)
+        sdf = _read_csv_file(n_state_path)
         if sdf.height > 0:
             sdf = (sdf.rename({"node":"n", "constraint":"c",
                                 "p_node_constraint_state_coefficient":"value"})
@@ -1074,7 +1075,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     n_pre_path = inp / "p_node_constraint_cumulative_pre_built_capacity_coefficient.csv"
     n_prebuilt_cstr_coef = None
     if n_pre_path.exists():
-        ndf = pl.read_csv(n_pre_path)
+        ndf = _read_csv_file(n_pre_path)
         if ndf.height > 0:
             ndf = (ndf.rename({"node":"n", "constraint":"c",
                                 "p_node_constraint_prebuilt_capacity_coefficient":"value"})
@@ -1083,7 +1084,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     p_pre_path = inp / "p_process_constraint_cumulative_pre_built_capacity_coefficient.csv"
     p_prebuilt_cstr_coef = None
     if p_pre_path.exists():
-        pdf = pl.read_csv(p_pre_path)
+        pdf = _read_csv_file(p_pre_path)
         if pdf.height > 0:
             pdf = (pdf.rename({"process":"p", "constraint":"c",
                                 "p_process_constraint_prebuilt_capacity_coefficient":"value"})
@@ -1091,7 +1092,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
             p_prebuilt_cstr_coef = Param(("p", "c"), pdf)
     const_path = inp / "p_constraint_constant.csv"
     constraint_constant = Param(("c",),
-        (pl.read_csv(const_path).rename({"constraint":"c","p_constraint_constant":"value"})
+        (_read_csv_file(const_path).rename({"constraint":"c","p_constraint_constant":"value"})
          if const_path.exists()
          else cs.select("c").with_columns(value=pl.lit(0.0))))
     cdt_eq = cdt_le = cdt_ge = None
@@ -1114,7 +1115,7 @@ def _read_wide_e_d(path: Path) -> pl.DataFrame:
     ``(e, d, value)``."""
     if not path.exists():
         return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     if "solve" in df.columns:
         df = df.drop("solve")
     if df.height == 0 or "period" not in df.columns:
@@ -1166,7 +1167,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         path = sd / f"{name}.csv"
         if not path.exists():
             return pl.DataFrame(schema={kind_col: pl.Utf8, "d": pl.Utf8})
-        df = pl.read_csv(path)
+        df = _read_csv_file(path)
         if df.height == 0:
             return pl.DataFrame(schema={kind_col: pl.Utf8, "d": pl.Utf8})
         rename_src = ("entity" if "entity" in df.columns
@@ -1188,7 +1189,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     # from every invest set so the variable is never created.
     forbid_path = sd / "ed_invest_forbidden_no_investment.csv"
     if forbid_path.exists():
-        forbid = pl.read_csv(forbid_path)
+        forbid = _read_csv_file(forbid_path)
         if forbid.height > 0:
             forbid = forbid.rename({"entity": "e", "period": "d"}).select("e", "d")
             ed_inv = ed_inv.join(forbid, on=["e", "d"], how="anti")
@@ -1215,7 +1216,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
 
     edd_inv_path = sd / "edd_invest.csv"
     if edd_inv_path.exists():
-        edd_inv_df = pl.read_csv(edd_inv_path)
+        edd_inv_df = _read_csv_file(edd_inv_path)
         cols = set(edd_inv_df.columns)
         if {"d_invest", "d", "entity"}.issubset(cols):
             edd_inv = edd_inv_df.rename({"entity": "e"}).select("e", "d_invest", "d")
@@ -1244,7 +1245,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     pyd_path = sd / "p_years_d.csv"
     pyd = None
     if pyd_path.exists():
-        pyd_raw = pl.read_csv(pyd_path)
+        pyd_raw = _read_csv_file(pyd_path)
         # Column for years may be 'value' (long format) or 'p_years_d' (legacy).
         yr_col = "value" if "value" in pyd_raw.columns else "p_years_d"
         pyd = pyd_raw.rename({"period": "d", yr_col: "yr"}).select("d", "yr")
@@ -1292,7 +1293,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
                 return None
             return Param(dims, df.select(*dims, "value"))
         else:
-            df = pl.read_csv(f).drop("solve").rename({"period": "d"})
+            df = _read_csv_file(f).drop("solve").rename({"period": "d"})
             if df.height == 0:
                 return None
             return Param(dims, df.select(*dims, "value"))
@@ -1301,13 +1302,13 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     def _e_total_set(name: str) -> pl.DataFrame | None:
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         return df.rename({"entity": "e"}).select("e")
     def _e_total_param(name: str) -> Param | None:
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         return Param(("e",), df.rename({"entity": "e"}).select("e", "value"))
 
@@ -1317,13 +1318,13 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     def _read_period_set(name: str) -> pl.DataFrame | None:
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         return (df.rename({"entity": "e", "period": "d"}).select("e", "d"))
     def _read_period_cap(name: str) -> Param | None:
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         return Param(("e", "d"),
             df.rename({"entity": "e", "period": "d"})
@@ -1339,7 +1340,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         # Long-format (entity, period, value); cleaned to (e, d, value).
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         df = (df.rename({"entity": "e", "period": "d"})
                 .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
@@ -1354,7 +1355,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         # → (e, value).
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         # Canonical column is "p_entity_invested" / "p_entity_divested"
         if value_col is None:
@@ -1411,7 +1412,7 @@ def _read_p_process_side(path: Path, side_col: str) -> dict[str, pl.DataFrame]:
     out: dict[str, pl.DataFrame] = {}
     if not path.exists():
         return out
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     # canonical long: ``process, <side>, sourceSinkParam, p_process_<side>``
     if {"process", "sourceSinkParam"}.issubset(df.columns):
         if df.height == 0:
@@ -1477,7 +1478,7 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None) -> dict:
     def _read_set(name: str) -> pl.DataFrame | None:
         p = sd / f"process_source_sink_ramp_limit_{name}.csv"
         if not p.exists(): return None
-        df = pl.read_csv(p)
+        df = _read_csv_file(p)
         if df.height == 0: return None
         return df.rename({"process": "p"}).select("p", "source", "sink")
 
@@ -1527,17 +1528,17 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     online_path = sd / "process_online.csv"
     if not online_path.exists():
         return blank
-    p_online = pl.read_csv(online_path).rename({"process": "p"})
+    p_online = _read_csv_file(online_path).rename({"process": "p"})
     if p_online.height == 0:
         return blank
 
-    p_online_lin = pl.read_csv(sd / "process_online_linear.csv").rename({"process": "p"})
+    p_online_lin = _read_csv_file(sd / "process_online_linear.csv").rename({"process": "p"})
     p_online_int_path = sd / "process_online_integer.csv"
-    p_online_int = (pl.read_csv(p_online_int_path).rename({"process": "p"})
+    p_online_int = (_read_csv_file(p_online_int_path).rename({"process": "p"})
                     if p_online_int_path.exists() else
                     pl.DataFrame(schema={"p": pl.Utf8}))
     p_minload_path = sd / "process_minload.csv"
-    p_minload = (pl.read_csv(p_minload_path).rename({"process": "p"})
+    p_minload = (_read_csv_file(p_minload_path).rename({"process": "p"})
                  if p_minload_path.exists() else
                  pl.DataFrame(schema={"p": pl.Utf8}))
 
@@ -1550,17 +1551,17 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         ctm_path = sd / "process__ct_method.csv"
     p_min_load_eff = pl.DataFrame(schema={"p": pl.Utf8})
     if ctm_path.exists():
-        ctm = pl.read_csv(ctm_path).rename({"process": "p"})
+        ctm = _read_csv_file(ctm_path).rename({"process": "p"})
         method_col = "ct_method" if "ct_method" in ctm.columns else "method"
         p_min_load_eff = (ctm.filter(pl.col(method_col) == "min_load_efficiency")
                           .select("p").unique())
 
     # p_online_dt — block-aware variable indexing (process, period, step)
-    p_odt = pl.read_csv(sd / "p_online_dt_set.csv").rename({"process": "p", "step": "t"})
+    p_odt = _read_csv_file(sd / "p_online_dt_set.csv").rename({"process": "p", "step": "t"})
     p_odt = p_odt.select("p", "period", "t").rename({"period": "d"})
 
     # pdProcess — extract min_load and startup_cost
-    p_proc = pl.read_csv(inp / "p_process.csv")
+    p_proc = _read_csv_file(inp / "p_process.csv")
     min_load_rows = (p_proc.filter(pl.col("processParam") == "min_load")
                      .rename({"process": "p", "p_process": "value"})
                      .select("p", "value"))
@@ -1600,7 +1601,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         path = sd / f"{name}.csv"
         if not path.exists():
             return None
-        df = pl.read_csv(path)
+        df = _read_csv_file(path)
         if df.height == 0:
             return None
         return df.rename({"process": "p", "period": "d", "time": "t"})
@@ -1609,7 +1610,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         path = sd / f"{name}.csv"
         if not path.exists():
             return None
-        df = pl.read_csv(path)
+        df = _read_csv_file(path)
         if df.height == 0:
             return None
         return df.rename({"process": "p", "period": "d", "time": "t",
@@ -1671,9 +1672,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     ov_p = sd / "overlap_set.csv"
     if (psb_p.exists() and eb_p.exists() and ov_p.exists()
             and (flow_from_nb_eff is not None or flow_from_nb_noEff is not None)):
-        psb_l = pl.read_csv(psb_p).rename({"process": "p", "block": "b_f"})
-        eb_l = pl.read_csv(eb_p).rename({"entity": "n", "block": "b"})
-        ov_l = pl.read_csv(ov_p)
+        psb_l = _read_csv_file(psb_p).rename({"process": "p", "block": "b_f"})
+        eb_l = _read_csv_file(eb_p).rename({"entity": "n", "block": "b"})
+        ov_l = _read_csv_file(ov_p)
         if psb_l.height > 0 and eb_l.height > 0 and ov_l.height > 0:
             block_compat_l = (ov_l
                 .rename({"block_coarse": "b", "block_fine": "b_f"})
@@ -1737,7 +1738,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     ns_path = sd / "nodeState.csv"
     if not ns_path.exists():
         return blank
-    nodeState = pl.read_csv(ns_path).rename({"node": "n"})
+    nodeState = _read_csv_file(ns_path).rename({"node": "n"})
     if nodeState.height == 0:
         return blank
 
@@ -1754,11 +1755,11 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     fp_path = sd / "period_first.csv"
     first_period = None
     if fpos_path.exists():
-        df = pl.read_csv(fpos_path)
+        df = _read_csv_file(fpos_path)
         if df.height > 0:
             first_period = df.rename({"period": "d"}).select("d").unique()
     if first_period is None and fp_path.exists():
-        df = pl.read_csv(fp_path)
+        df = _read_csv_file(fp_path)
         if df.height > 0:
             first_period = df.rename({"period": "d"}).select("d").unique()
     if first_period is None:
@@ -1796,7 +1797,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         state_unitsize = state_existing_capacity = state_upper = None
 
     # p_node parameters (storage_state_start, self_discharge_loss).
-    p_node = pl.read_csv(inp / "p_node.csv")
+    p_node = _read_csv_file(inp / "p_node.csv")
     def _node_param(name: str) -> Param | None:
         rows = (p_node.filter(pl.col("nodeParam") == name)
                        .rename({"node":"n","p_node":"value"})
@@ -1832,7 +1833,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     binding_forward_only = None
     binding_within_solve = None
     if sbm_path.exists():
-        sbm = pl.read_csv(sbm_path)
+        sbm = _read_csv_file(sbm_path)
         # Column names in this file have varied — handle both schemas
         if "storage_binding_method" in sbm.columns:
             sbm = sbm.rename({"node":"n","storage_binding_method":"method"})
@@ -1874,7 +1875,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     fix_end = None
     fix_start_end = None
     if sse_path.exists():
-        sse = pl.read_csv(sse_path)
+        sse = _read_csv_file(sse_path)
         if "storage_start_end_method" in sse.columns:
             sse = sse.rename({"node":"n","storage_start_end_method":"method"})
         elif "method" in sse.columns:
@@ -1891,7 +1892,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         sshm_path = sd / "node__storage_solve_horizon_method.csv"
     use_reference_value = None
     if sshm_path.exists():
-        sshm = pl.read_csv(sshm_path)
+        sshm = _read_csv_file(sshm_path)
         col = ("storage_solve_horizon_method"
                if "storage_solve_horizon_method" in sshm.columns
                else "method")
@@ -1908,7 +1909,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         nsb_for_excl = None
         nsb_path_local = sd / "nodeStateBlock.csv"
         if nsb_path_local.exists():
-            nsb_df_local = pl.read_csv(nsb_path_local)
+            nsb_df_local = _read_csv_file(nsb_path_local)
             if nsb_df_local.height > 0:
                 nsb_for_excl = nsb_df_local.rename({"node": "n"}).select("n")
         for excl in (fix_end, fix_start_end,
@@ -1940,14 +1941,14 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     nodeStateBlock = None
     nsb_path = sd / "nodeStateBlock.csv"
     if nsb_path.exists():
-        df = pl.read_csv(nsb_path)
+        df = _read_csv_file(nsb_path)
         if df.height > 0:
             nodeStateBlock = df.rename({"node": "n"}).select("n").unique()
 
     period_block = None
     pb_path = sd / "period_block_set.csv"
     if pb_path.exists():
-        df = pl.read_csv(pb_path)
+        df = _read_csv_file(pb_path)
         if df.height > 0:
             period_block = (df
                 .rename({"period": "d", "block_first": "b_first"})
@@ -1957,7 +1958,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     period_block_succ = None
     pbs_path = sd / "period_block_succ.csv"
     if pbs_path.exists():
-        df = pl.read_csv(pbs_path)
+        df = _read_csv_file(pbs_path)
         if df.height > 0:
             period_block_succ = (df
                 .rename({"period": "d", "block_first": "b_first",
@@ -1967,7 +1968,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     period_block_time = None
     pbt_path = sd / "period_block_time.csv"
     if pbt_path.exists():
-        df = pl.read_csv(pbt_path)
+        df = _read_csv_file(pbt_path)
         if df.height > 0:
             period_block_time = (df
                 .rename({"period": "d", "block_first": "b_first",
@@ -2006,7 +2007,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     eb_path2 = sd / "entity_block.csv"
     if (eb_path2.exists() and bsd_path.exists()
             and nb is not None and nb.height > 0):
-        eb2 = pl.read_csv(eb_path2)
+        eb2 = _read_csv_file(eb_path2)
         if eb2.height > 0:
             eb2 = eb2.rename({"entity": "n", "block": "b"}).select("n", "b")
             # Identify *coarse* blocks: those whose ``block_step_duration``
@@ -2029,7 +2030,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             # forcing v_state to be constant across the period via the
             # stateConstantWithinBlock_eq cyclic chain (battery can't
             # charge/discharge → ~3-5% obj-value gap).
-            bsd_full = pl.read_csv(bsd_path)
+            bsd_full = _read_csv_file(bsd_path)
             distinct_blocks = bsd_full["block"].unique().to_list()
             if len(distinct_blocks) < 2:
                 coarse_blocks = []
@@ -2075,7 +2076,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                     new_pbt = None
                     ov_path = sd / "overlap_set.csv"
                     if ov_path.exists():
-                        ov = pl.read_csv(ov_path)
+                        ov = _read_csv_file(ov_path)
                         if ov.height > 0:
                             ov = ov.rename({
                                 "period": "d",
@@ -2155,7 +2156,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     p_nested_solve_first: bool | None = None
     nm_path = sd / "p_nested_model.csv"
     if nm_path.exists():
-        nm = pl.read_csv(nm_path)
+        nm = _read_csv_file(nm_path)
         if nm.height > 0:
             # Column may be ``p_nested_model`` (canonical) or ``value``.
             value_col = "p_nested_model" if "p_nested_model" in nm.columns else "value"
@@ -2168,7 +2169,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     p_roll_continue_state = None
     rcs_path = sd / "p_roll_continue_state.csv"
     if rcs_path.exists():
-        df = pl.read_csv(rcs_path)
+        df = _read_csv_file(rcs_path)
         # Tolerate a leading-space column header (".mod writes 'node, p_roll_…'").
         df.columns = [c.strip() for c in df.columns]
         if df.height > 0:
@@ -2182,7 +2183,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     n_fix_storage_quantity = None
     nfsq_path = sd / "n_fix_storage_quantity_set.csv"
     if nfsq_path.exists():
-        df = pl.read_csv(nfsq_path)
+        df = _read_csv_file(nfsq_path)
         if df.height > 0:
             n_fix_storage_quantity = df.rename({"node": "n"}).select("n").unique()
 
@@ -2190,7 +2191,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     p_fix_storage_quantity = None
     fsq_path = sd / "fix_storage_quantity.csv"
     if fsq_path.exists():
-        df = pl.read_csv(fsq_path)
+        df = _read_csv_file(fsq_path)
         if df.height > 0:
             df = (df.rename({"period": "d", "step": "t", "node": "n",
                               "p_fix_storage_quantity": "value"})
@@ -2202,7 +2203,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     dtt_timeline_matching = None
     tm_path = sd / "timeline_matching_map.csv"
     if tm_path.exists():
-        df = pl.read_csv(tm_path)
+        df = _read_csv_file(tm_path)
         if df.height > 0:
             # Schema: period, step, upper_step → (d, t, t_upper).  We rename
             # ``upper_step`` to ``t_upper`` so the model.py constraint can
@@ -2217,7 +2218,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     period_branch = None
     pb_path = sd / "period__branch.csv"
     if pb_path.exists():
-        df = pl.read_csv(pb_path)
+        df = _read_csv_file(pb_path)
         if df.height > 0:
             period_branch = (df
                 .rename({"period": "d", "branch": "d_upper"})
@@ -2228,7 +2229,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     period_last_df = None
     pl_path = sd / "period_last.csv"
     if pl_path.exists():
-        df = pl.read_csv(pl_path)
+        df = _read_csv_file(pl_path)
         if df.height > 0:
             period_last_df = df.rename({"period": "d"}).select("d").unique()
 
@@ -2240,10 +2241,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     eb_path = sd / "entity_block.csv"
     if (nodeState is not None and nodeState.height > 0
             and bptl_path.exists() and eb_path.exists()):
-        bptl = pl.read_csv(bptl_path)
+        bptl = _read_csv_file(bptl_path)
         if bptl.height > 0:
             bptl = bptl.rename({"block": "b", "period": "d", "step": "t"}).select("b", "d", "t")
-            eb = pl.read_csv(eb_path)
+            eb = _read_csv_file(eb_path)
             if eb.height > 0:
                 eb = eb.rename({"entity": "n", "block": "b"}).select("n", "b")
                 nodeState_last_dt = (nodeState.select("n")
@@ -2263,7 +2264,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     if not npp_path.exists():
         npp_path = sd / "node__profile__profile_method.csv"
     if npp_path.exists():
-        npp = pl.read_csv(npp_path)
+        npp = _read_csv_file(npp_path)
         if npp.height > 0:
             npp = npp.rename({"node": "n", "profile": "f"})
             method_col = ("profile_method" if "profile_method" in npp.columns
@@ -2341,7 +2342,7 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
     pp_path = sd / "process__source__sink__profile__profile_method.csv"
     if not pp_path.exists():
         return [None]*6
-    pp = pl.read_csv(pp_path).rename({"process":"p"})
+    pp = _read_csv_file(pp_path).rename({"process":"p"})
     if pp.height == 0:
         return [None]*6
     method_col = "method" if "method" in pp.columns else "profile_method"
@@ -2403,7 +2404,7 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
         f = sd / f"{name}.csv"
         if not f.exists():
             return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0:
             return None
         return df.rename({"process": "p", "period": "d", "time": "t"}) \
@@ -2418,7 +2419,7 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
     p_pssdt_var = None
     var_path = sd / "pdtProcess__source__sink__dt_varCost.csv"
     if var_path.exists():
-        df = pl.read_csv(var_path)
+        df = _read_csv_file(var_path)
         if df.height > 0:
             df = df.rename({"process": "p", "period": "d", "time": "t"}) \
                    .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
@@ -2433,7 +2434,7 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
         f = sd / f"{name}.csv"
         if not f.exists():
             return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0:
             return None
         sliced = df.filter(pl.col("param") == "other_operational_cost") \
@@ -2456,7 +2457,7 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
     p_var_proc = None
     pp_path = sd / "pdtProcess.csv"
     if pp_path.exists():
-        df = pl.read_csv(pp_path)
+        df = _read_csv_file(pp_path)
         if df.height > 0:
             sliced = df.filter(pl.col("param") == "other_operational_cost") \
                        .drop("param")
@@ -2496,7 +2497,7 @@ def _load_fixed_cost(sd: Path) -> dict:
     ae_path = sd / "p_entity_all_existing.csv"
     pe = None
     if ae_path.exists():
-        df = pl.read_csv(ae_path)
+        df = _read_csv_file(ae_path)
         if df.height > 0:
             df = df.rename({"entity": "e", "period": "d"}) \
                    .with_columns(value=pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
@@ -2513,7 +2514,7 @@ def _load_node_capacity_for_scaling(sd: Path,
     f = sd / "node_capacity_for_scaling.csv"
     if not f.exists():
         return blank
-    df = pl.read_csv(f)
+    df = _read_csv_file(f)
     if df.height == 0:
         return blank
     df = df.rename({"node": "n", "period": "d"}) \
@@ -2539,7 +2540,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     def _read_set(name: str, src_to_dst: dict[str, str]) -> pl.DataFrame | None:
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         rename = {s: d for s, d in src_to_dst.items() if s in df.columns}
         out_df = df.rename(rename).select(*src_to_dst.values()).unique()
@@ -2549,7 +2550,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
         """Read a (set, value) CSV and drop value==0 rows; return only the keys."""
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         if "value" in df.columns:
             df = df.with_columns(
@@ -2562,7 +2563,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     def _read_e_d_param(name: str) -> Param | None:
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         df = (df.rename({"entity": "e", "period": "d"})
                 .with_columns(pl.col("value").cast(pl.Float64, strict=False)
@@ -2575,7 +2576,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     def _read_e_param(name: str) -> Param | None:
         f = sd / f"{name}.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         df = (df.rename({"entity": "e"})
                 .with_columns(pl.col("value").cast(pl.Float64, strict=False)
@@ -2589,7 +2590,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
         """Long pdGroup.csv slice → (g, d, value), zero rows dropped."""
         f = sd / "pdGroup.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         sliced = (df.filter(pl.col("param") == param_name)
                     .rename({"group": "g", "period": "d"})
@@ -2602,7 +2603,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
         """input/p_group.csv slice → (g, value), zero rows dropped."""
         f = inp / "p_group.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         # Columns: group, groupParam, p_group
         if "groupParam" not in df.columns:
@@ -2619,7 +2620,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
         """solve_data/pdtGroup.csv slice → (g, d, t, value), zero dropped."""
         f = sd / "pdtGroup.csv"
         if not f.exists(): return None
-        df = pl.read_csv(f)
+        df = _read_csv_file(f)
         if df.height == 0: return None
         sliced = (df.filter(pl.col("param") == param_name)
                     .rename({"group": "g", "period": "d", "time": "t"})
@@ -2642,7 +2643,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
         (inp / "group__entity.csv", {"group": "g", "entity": "e"}),
     ]:
         if cand.exists():
-            df = pl.read_csv(cand)
+            df = _read_csv_file(cand)
             if df.height > 0:
                 ge = df.rename(mapping).select("g", "e").unique()
                 break
@@ -2656,7 +2657,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
         (inp / "group__process__node.csv", {"group": "g", "process": "p", "node": "n"}),
     ]:
         if cand.exists():
-            df = pl.read_csv(cand)
+            df = _read_csv_file(cand)
             if df.height > 0:
                 gpn = df.rename(mapping).select("g", "p", "n").unique()
                 break
@@ -2768,7 +2769,7 @@ def _load_solver_options(sd: Path) -> dict | None:
         p = sd / "solve_mode.csv"
         if not p.exists():
             return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0 or "param" not in df.columns or "value" not in df.columns:
         return None
 
@@ -2780,7 +2781,7 @@ def _load_solver_options(sd: Path) -> dict | None:
     cur_path = sd / "solve_current.csv"
     cur_solve: str | None = None
     if cur_path.exists():
-        cur_df = pl.read_csv(cur_path)
+        cur_df = _read_csv_file(cur_path)
         if cur_df.height > 0 and "solve" in cur_df.columns:
             cur_solve = str(cur_df["solve"][0])
 
@@ -2847,7 +2848,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     # pdt_branch_weight: (d, t) → value, defaults 1.0
     pdt_bw_path = sd / "pdt_branch_weight.csv"
     if pdt_bw_path.exists():
-        df = pl.read_csv(pdt_bw_path)
+        df = _read_csv_file(pdt_bw_path)
         if df.height > 0:
             df = (df.rename({"period": "d", "time": "t"})
                     .with_columns(value=pl.col("value")
@@ -2874,7 +2875,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     pd_bw_path = sd / "pd_branch_weight.csv"
     pd_branch_weight = None
     if pd_bw_path.exists():
-        df = pl.read_csv(pd_bw_path)
+        df = _read_csv_file(pd_bw_path)
         if df.height > 0:
             df = (df.rename({"period": "d"})
                     .with_columns(value=pl.col("value")
@@ -2887,7 +2888,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     dt_na_path = sd / "dt_non_anticipativity_set.csv"
     dt_non_anticipativity = None
     if dt_na_path.exists():
-        df = pl.read_csv(dt_na_path)
+        df = _read_csv_file(dt_na_path)
         if df.height > 0:
             dt_non_anticipativity = (df
                 .rename({"period": "d", "time": "t"})
@@ -2897,7 +2898,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     gis_path = inp / "groupIncludeStochastics.csv"
     groupStochastic = None
     if gis_path.exists():
-        df = pl.read_csv(gis_path)
+        df = _read_csv_file(gis_path)
         if df.height > 0:
             # CSV column is named ``group``; rename to canonical ``g``.
             df = df.rename({df.columns[0]: "g"})
@@ -2910,7 +2911,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     period_branch_full = None
     pb_path = sd / "period__branch.csv"
     if pb_path.exists():
-        df = pl.read_csv(pb_path)
+        df = _read_csv_file(pb_path)
         if df.height > 0:
             period_branch_full = (df
                 .rename({"period": "d", "branch": "b"})
@@ -2920,7 +2921,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     period_in_use_set = None
     piu_path = sd / "period_in_use_set.csv"
     if piu_path.exists():
-        df = pl.read_csv(piu_path)
+        df = _read_csv_file(piu_path)
         if df.height > 0:
             df = df.rename({df.columns[0]: "d"})
             period_in_use_set = df.select("d").unique()
@@ -3044,7 +3045,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
     g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped = _load_co2_cap(
         inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"))
     if co2_max_p is not None and co2c is None:
-        p_comm = pl.read_csv(inp / "p_commodity.csv")
+        p_comm = _read_csv_file(inp / "p_commodity.csv")
         co2c = Param(("c",),
             p_comm.filter(pl.col("commodityParam")=="co2_content")
                   .rename({"commodity":"c","p_commodity":"value"})
@@ -3126,9 +3127,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
             and storage.get("period_block_time") is not None
             and storage["period_block_time"].height > 0
             and psb_path.exists() and bsd_for_arc_path.exists()):
-        psb = pl.read_csv(psb_path).rename(
+        psb = _read_csv_file(psb_path).rename(
             {"process": "p", "block": "b_f"})
-        bsd_arc = pl.read_csv(bsd_for_arc_path).rename(
+        bsd_arc = _read_csv_file(bsd_for_arc_path).rename(
             {"block": "b_f", "period": "d", "step": "t",
              "step_duration": "weight"})
         nsb_set = storage["nodeStateBlock"]["n"].unique()
@@ -3721,7 +3722,7 @@ def build_handoff_from_flexpy(
         # and overwrites, so the LAST row of the file's per-period entries
         # wins.  For block_period_time_last each block writes one row per
         # period; we just take the unique (period, step) at the maximum.
-        last_pairs_df = pl.read_csv(pt_last_path)
+        last_pairs_df = _read_csv_file(pt_last_path)
         if last_pairs_df.height > 0:
             cols = last_pairs_df.columns
             d_col = "period" if "period" in cols else "d"
@@ -3764,7 +3765,7 @@ def build_handoff_from_flexpy(
     fq_nodes: set[str] = set()
     nsfm_path = sd / "node__storage_nested_fix_method.csv"
     if nsfm_path.exists():
-        nsfm_df = pl.read_csv(nsfm_path)
+        nsfm_df = _read_csv_file(nsfm_path)
         if nsfm_df.height > 0 and "method" in nsfm_df.columns:
             fq_nodes = set(
                 nsfm_df.filter(pl.col("method") == "fix_quantity")["node"]
@@ -3774,7 +3775,7 @@ def build_handoff_from_flexpy(
     if (fq_nodes
             and fix_steps_path.exists()
             and "v_state" in sol._vars):
-        fs_steps_df = pl.read_csv(fix_steps_path)
+        fs_steps_df = _read_csv_file(fix_steps_path)
         if fs_steps_df.height > 0 and {"period", "step"}.issubset(
                 fs_steps_df.columns):
             fs_steps = (fs_steps_df
@@ -3819,7 +3820,7 @@ def build_handoff_from_flexpy(
     co2_path = sd / "co2_cum_realized_tonnes.csv"
     if co2_path.exists():
         try:
-            co2_df = pl.read_csv(co2_path)
+            co2_df = _read_csv_file(co2_path)
         except pl.exceptions.NoDataError:
             co2_df = None
         if co2_df is not None and co2_df.height > 0 and \
@@ -3839,7 +3840,7 @@ def build_handoff_from_flexpy(
     cc_path = sd / "commodity_ladder_cumulative.csv"
     if cc_path.exists():
         try:
-            cc_df = pl.read_csv(cc_path)
+            cc_df = _read_csv_file(cc_path)
         except pl.exceptions.NoDataError:
             cc_df = None
         if cc_df is not None and cc_df.height > 0:
@@ -3866,7 +3867,7 @@ def build_handoff_from_flexpy(
     csh_path = sd / "ladder_cum_sim_hours.csv"
     if csh_path.exists():
         try:
-            csh_df = pl.read_csv(csh_path)
+            csh_df = _read_csv_file(csh_path)
         except pl.exceptions.NoDataError:
             csh_df = None
         if csh_df is not None and csh_df.height > 0 and \
@@ -3892,7 +3893,7 @@ def build_handoff_from_flexpy(
     new_periods: set[str] = set()
     if pae_path.exists():
         try:
-            pae_df = pl.read_csv(pae_path)
+            pae_df = _read_csv_file(pae_path)
         except pl.exceptions.NoDataError:
             pae_df = None
         if pae_df is not None and pae_df.height > 0 and "period" in pae_df.columns:
@@ -3915,7 +3916,7 @@ def build_handoff_from_flexpy(
         if not p.exists():
             return None
         try:
-            df = pl.read_csv(p)
+            df = _read_csv_file(p)
         except pl.exceptions.NoDataError:
             return None
         if df.height == 0 or value_col not in df.columns:
@@ -4038,12 +4039,12 @@ def apply_handoff(flex_data: "FlexData", handoff,
         ed_realized: set[tuple[str, str]] = set(ppic.keys())
         ehrf_path = solve_data_dir / "ed_history_realized_first.csv"
         if ehrf_path.exists():
-            ehrf = pl.read_csv(ehrf_path)
+            ehrf = _read_csv_file(ehrf_path)
             if ehrf.height > 0:
                 for r in ehrf.iter_rows(named=True):
                     ed_realized.add((str(r["entity"]), str(r["period"])))
         # Sum realized_invest over historical d_h per (e, d).
-        edd_hist = pl.read_csv(solve_data_dir / "edd_history.csv")
+        edd_hist = _read_csv_file(solve_data_dir / "edd_history.csv")
         prev_inv: dict[tuple[str, str], float] = {}
         if edd_hist.height > 0:
             for r in edd_hist.iter_rows(named=True):

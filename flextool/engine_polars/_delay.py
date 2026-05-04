@@ -97,6 +97,8 @@ import polars as pl
 from polar_high_opt import Sum, Where, Param
 # Engine imports kept light — we don't introduce new variable types.
 
+from ._input_source import _read_csv_file
+
 
 # ---------------------------------------------------------------------------
 # Feature detection
@@ -150,7 +152,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     pd_path = sd / "process_delayed.csv"
     if not pd_path.exists():
         return blank
-    pd_df = pl.read_csv(pd_path)
+    pd_df = _read_csv_file(pd_path)
     if pd_df.height == 0:
         # Header-only file — flextool emits these even when no process is
         # delayed (e.g. on DR scenarios that don't use the delay feature).
@@ -163,7 +165,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     pdd_path = sd / "process_delayed__duration.csv"
     pdd_df = None
     if pdd_path.exists():
-        raw = pl.read_csv(pdd_path)
+        raw = _read_csv_file(pdd_path)
         if raw.height > 0:
             pdd_df = raw.rename(
                 {c: r for c, r in [("process", "p"), ("delay_duration", "td")]
@@ -174,7 +176,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     def _read_pse(name: str) -> pl.DataFrame | None:
         p = sd / f"{name}.csv"
         if not p.exists(): return None
-        df = pl.read_csv(p)
+        df = _read_csv_file(p)
         if df.height == 0: return None
         if "process" in df.columns: df = df.rename({"process": "p"})
         return df.select("p", "source")
@@ -186,7 +188,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     def _read_psse(name: str) -> pl.DataFrame | None:
         p = sd / f"{name}.csv"
         if not p.exists(): return None
-        df = pl.read_csv(p)
+        df = _read_csv_file(p)
         if df.height == 0: return None
         if "process" in df.columns: df = df.rename({"process": "p"})
         return df.select("p", "source", "sink")
@@ -205,7 +207,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     inp = Path(inp_dir)
     src_path = inp / "p_process_source_flow_coefficient.csv"
     if src_path.exists():
-        srcdf = pl.read_csv(src_path)
+        srcdf = _read_csv_file(src_path)
         if srcdf.height > 0 and "p_process_source_flow_coefficient" in srcdf.columns:
             zero_src = (srcdf
                 .rename({"process": "p",
@@ -225,7 +227,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     dtt_path = sd / "dtt__delay_duration.csv"
     dtt_df = None
     if dtt_path.exists():
-        raw = pl.read_csv(dtt_path)
+        raw = _read_csv_file(dtt_path)
         if raw.height > 0:
             rename_map = {}
             if "period" in raw.columns:      rename_map["period"] = "d"
@@ -238,7 +240,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     pw_path = sd / "p_process_delay_weight.csv"
     pw_param = None
     if pw_path.exists():
-        raw = pl.read_csv(pw_path)
+        raw = _read_csv_file(pw_path)
         if raw.height > 0:
             rename_map = {}
             if "process" in raw.columns: rename_map["process"] = "p"

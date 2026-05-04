@@ -64,6 +64,8 @@ import polars as pl
 
 from polar_high_opt import Param, Sum, Where
 
+from ._input_source import _read_csv_file
+
 if TYPE_CHECKING:
     from polar_high_opt.engine import Var
 
@@ -89,7 +91,7 @@ def has_feature(d) -> bool:
 def _read_single_col(path: Path, col_in: str, col_out: str) -> pl.DataFrame | None:
     if not path.exists():
         return None
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     if df.height == 0:
         return None
     if col_in in df.columns and col_in != col_out:
@@ -100,7 +102,7 @@ def _read_single_col(path: Path, col_in: str, col_out: str) -> pl.DataFrame | No
 def _read_long_csv(path: Path, rename: dict[str, str]) -> pl.DataFrame | None:
     if not path.exists():
         return None
-    df = pl.read_csv(path)
+    df = _read_csv_file(path)
     if df.height == 0:
         return None
     cols_present = {c: r for c, r in rename.items() if c in df.columns}
@@ -180,7 +182,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     ct_cum = None
     cum_inp_path = inp / "commodity_ladder_cumulative.csv"
     if cum_inp_path.exists():
-        cum_inp = pl.read_csv(cum_inp_path)
+        cum_inp = _read_csv_file(cum_inp_path)
         if cum_inp.height > 0:
             ct_cum = (cum_inp.rename({"commodity": "c", "tier": "i"})
                       .with_columns(pl.col("i").cast(pl.Utf8))
@@ -191,7 +193,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     p_ann_quantity = None
     ann_path = inp / "commodity_ladder_annual.csv"
     if ann_path.exists():
-        ann = pl.read_csv(ann_path)
+        ann = _read_csv_file(ann_path)
         if ann.height > 0:
             ann = (ann.rename({"commodity": "c", "tier": "i", "period": "d"})
                    .with_columns(pl.col("i").cast(pl.Utf8))
@@ -213,7 +215,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     p_cum_quantity = None
     cum_path = inp / "commodity_ladder_cumulative.csv"
     if cum_path.exists():
-        cum = pl.read_csv(cum_path)
+        cum = _read_csv_file(cum_path)
         if cum.height > 0:
             cum = (cum.rename({"commodity": "c", "tier": "i"})
                    .with_columns(pl.col("i").cast(pl.Utf8))
@@ -234,7 +236,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     p_unitsize = None
     cu_path = inp / "p_commodity_unitsize.csv"
     if cu_path.exists():
-        cu = pl.read_csv(cu_path)
+        cu = _read_csv_file(cu_path)
         if cu.height > 0:
             value_col = "p_commodity_unitsize" if "p_commodity_unitsize" in cu.columns else "value"
             cu = (cu.rename({"commodity": "c", value_col: "value"})
@@ -245,7 +247,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     p_f_d_k = None
     fdk_path = sd / "f_d_k.csv"
     if fdk_path.exists():
-        fdk = pl.read_csv(fdk_path)
+        fdk = _read_csv_file(fdk_path)
         if fdk.height > 0:
             fdk = fdk.rename({"period": "d"}).select("d", "value")
             p_f_d_k = Param(("d",), fdk)
@@ -254,7 +256,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     p_realized = None
     rel_path = sd / "ladder_cum_realized_mwh.csv"
     if rel_path.exists():
-        rel = pl.read_csv(rel_path)
+        rel = _read_csv_file(rel_path)
         if rel.height > 0:
             value_col = "p_ladder_cum_realized_mwh" if "p_ladder_cum_realized_mwh" in rel.columns else "value"
             rel = (rel.rename({"commodity": "c", "tier": "i", "period": "d",

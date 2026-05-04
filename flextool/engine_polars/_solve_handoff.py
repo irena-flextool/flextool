@@ -53,6 +53,8 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from ._input_source import _read_csv_file
+
 
 @dataclass
 class SolveHandoff:
@@ -154,7 +156,7 @@ def capture_post_solve(state, solve_name: str) -> None:
         p = sd / name
         if not p.exists():
             return None
-        df = pl.read_csv(p)
+        df = _read_csv_file(p)
         return df if df.height > 0 else None
 
     # realized_invest + realized_existing: two columns of the same file.

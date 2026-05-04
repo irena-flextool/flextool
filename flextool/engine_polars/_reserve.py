@@ -43,6 +43,8 @@ import polars as pl
 from polar_high_opt import Sum, Where, Param
 from polar_high_opt.engine import Var
 
+from ._input_source import _read_csv_file
+
 
 # ---------------------------------------------------------------------------
 # Field requirements
@@ -119,7 +121,7 @@ def load_data(inp: Path | str, sd: Path | str,
     rug_path = sd / "reserve__upDown__group.csv"
     if not rug_path.exists():
         return out
-    rug = pl.read_csv(rug_path)
+    rug = _read_csv_file(rug_path)
     if rug.height == 0:
         return out
     rug = rug.rename({"reserve": "r", "upDown": "ud", "group": "g"}) \
@@ -134,7 +136,7 @@ def load_data(inp: Path | str, sd: Path | str,
     ]:
         path = sd / f"reserve__upDown__group__method_{method}.csv"
         if path.exists():
-            df = pl.read_csv(path)
+            df = _read_csv_file(path)
             if df.height > 0:
                 df = df.rename({"reserve": "r", "upDown": "ud", "group": "g"}) \
                        .select("r", "ud", "g", "method")
@@ -149,7 +151,7 @@ def load_data(inp: Path | str, sd: Path | str,
     # ── prundt: v_reserve domain ───────────────────────────────────────
     prundt_path = sd / "prundt.csv"
     if prundt_path.exists():
-        prundt = pl.read_csv(prundt_path)
+        prundt = _read_csv_file(prundt_path)
         if prundt.height > 0:
             prundt = prundt.rename({"process": "p", "reserve": "r",
                                      "upDown": "ud", "node": "n",
@@ -164,7 +166,7 @@ def load_data(inp: Path | str, sd: Path | str,
     # ── process_reserve_upDown_node_active ─────────────────────────────
     pruna_path = sd / "process_reserve_upDown_node_active.csv"
     if pruna_path.exists():
-        pruna = pl.read_csv(pruna_path)
+        pruna = _read_csv_file(pruna_path)
         if pruna.height > 0:
             pruna = pruna.rename({"process": "p", "reserve": "r",
                                    "upDown": "ud", "node": "n"}) \
@@ -177,7 +179,7 @@ def load_data(inp: Path | str, sd: Path | str,
     # ── process_reserve_upDown_node_increase_reserve_ratio (dynamic RHS) ─
     irr_path = sd / "process_reserve_upDown_node_increase_reserve_ratio.csv"
     if irr_path.exists():
-        irr = pl.read_csv(irr_path)
+        irr = _read_csv_file(irr_path)
         if irr.height > 0:
             irr = irr.rename({"process": "p", "reserve": "r",
                                "upDown": "ud", "node": "n"}) \
@@ -190,7 +192,7 @@ def load_data(inp: Path | str, sd: Path | str,
     # ── process_reserve_upDown_node_large_failure_ratio (n-1 RHS) ──────
     lfr_path = sd / "process_reserve_upDown_node_large_failure_ratio.csv"
     if lfr_path.exists():
-        lfr = pl.read_csv(lfr_path)
+        lfr = _read_csv_file(lfr_path)
         if lfr.height > 0:
             lfr = lfr.rename({"process": "p", "reserve": "r",
                                "upDown": "ud", "node": "n"}) \
@@ -209,7 +211,7 @@ def load_data(inp: Path | str, sd: Path | str,
     gn = None
     for path in (sd / "group_node.csv", inp / "group__node.csv"):
         if path.exists():
-            df = pl.read_csv(path)
+            df = _read_csv_file(path)
             if df.height > 0:
                 gn = df.rename({"group": "g", "node": "n"}).select("g", "n").unique()
                 break
@@ -221,7 +223,7 @@ def load_data(inp: Path | str, sd: Path | str,
     # ── p_process_reserve_upDown_node_reliability ─────────────────────
     rel_path = sd / "p_process_reserve_upDown_node_reliability.csv"
     if rel_path.exists():
-        rel = pl.read_csv(rel_path)
+        rel = _read_csv_file(rel_path)
         if rel.height > 0:
             rel = rel.rename({"process": "p", "reserve": "r",
                                "upDown": "ud", "node": "n"})
@@ -238,7 +240,7 @@ def load_data(inp: Path | str, sd: Path | str,
     # ── pdtReserve_upDown_group: long-format reservation timeseries ───
     pdtR_path = sd / "pdtReserve_upDown_group.csv"
     if pdtR_path.exists():
-        pdtR = pl.read_csv(pdtR_path)
+        pdtR = _read_csv_file(pdtR_path)
         if pdtR.height > 0:
             pdtR = pdtR.rename({"reserve": "r", "upDown": "ud",
                                  "group": "g", "period": "d", "time": "t"})
@@ -255,7 +257,7 @@ def load_data(inp: Path | str, sd: Path | str,
     # ── p_reserve_upDown_group: penalty_reserve scalar(s) ─────────────
     pen_path = inp / "p_reserve__upDown__group.csv"
     if pen_path.exists():
-        prug = pl.read_csv(pen_path)
+        prug = _read_csv_file(pen_path)
         if prug.height > 0:
             prug = prug.rename({"reserve": "r", "upDown": "ud",
                                  "group": "g"})
@@ -273,7 +275,7 @@ def load_data(inp: Path | str, sd: Path | str,
     # ── p_process_reserve_upDown_node: per-(reserveParam) wide → long ──
     pprn_path = inp / "p_process__reserve__upDown__node.csv"
     if pprn_path.exists():
-        pprn = pl.read_csv(pprn_path)
+        pprn = _read_csv_file(pprn_path)
         if pprn.height > 0:
             pprn = pprn.rename({"process": "p", "reserve": "r",
                                  "upDown": "ud", "node": "n"})

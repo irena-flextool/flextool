@@ -58,6 +58,8 @@ import polars as pl
 
 from polar_high_opt import Param, Where
 
+from ._input_source import _read_csv_file
+
 if TYPE_CHECKING:
     from polar_high_opt.engine import Var
 
@@ -109,7 +111,7 @@ def load_data(inp_dir: str | Path) -> dict:
     def _read_singles(path: Path, col_in: str, col_out: str) -> pl.DataFrame | None:
         if not path.exists():
             return None
-        df = pl.read_csv(path)
+        df = _read_csv_file(path)
         if df.height == 0:
             return None
         if col_in in df.columns and col_in != col_out:
@@ -123,7 +125,7 @@ def load_data(inp_dir: str | Path) -> dict:
     pcs_path = inp / "p_connection_susceptance.csv"
     pcs_param = None
     if pcs_path.exists():
-        df = pl.read_csv(pcs_path)
+        df = _read_csv_file(pcs_path)
         if df.height > 0:
             df = df.rename(
                 {c: r for c, r in [

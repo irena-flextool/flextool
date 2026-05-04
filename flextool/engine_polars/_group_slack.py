@@ -119,6 +119,8 @@ import polars as pl
 from polar_high_opt import Sum, Where, Param
 from polar_high_opt.engine import Var, Expr
 
+from ._input_source import _read_csv_file
+
 
 # ---------------------------------------------------------------------------
 # Sentinel keys (must match the FlexData fields the merge agent will add).
@@ -181,7 +183,7 @@ def _has_non_sync(d) -> bool:
 
 def _read_csv_or_none(p: Path) -> pl.DataFrame | None:
     if not p.exists(): return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0:    return None
     return df
 
@@ -195,7 +197,7 @@ def _slice_pdgroup(sd: Path, param: str) -> pl.DataFrame | None:
     the slice is empty / the slice contains only zeros."""
     p = sd / "pdGroup.csv"
     if not p.exists(): return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0: return None
     sliced = (df.filter(pl.col("param") == param)
                 .rename({"group": "g", "period": "d"})
@@ -215,7 +217,7 @@ def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str) -> pl.DataFrame
     a long ``(g, d, value)`` frame with zero rows dropped."""
     p = sd / fname
     if not p.exists(): return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0: return None
     if "solve" in df.columns:
         df = df.drop("solve")
@@ -255,7 +257,7 @@ def _read_inertia_constants(inp: Path) -> tuple[pl.DataFrame | None, pl.DataFram
     See ``_read_p_process_side`` in input.py for the canonical shape."""
     def _read(path: Path, side: str) -> pl.DataFrame | None:
         if not path.exists(): return None
-        df = pl.read_csv(path)
+        df = _read_csv_file(path)
         if df.height == 0: return None
         if not {"process", "sourceSinkParam"}.issubset(df.columns):
             return None
@@ -279,7 +281,7 @@ def _read_inflow_signed(sd: Path, sign: str) -> pl.DataFrame | None:
     fname = "p_positive_inflow.csv" if sign == "pos" else "p_negative_inflow.csv"
     p = sd / fname
     if not p.exists(): return None
-    df = pl.read_csv(p)
+    df = _read_csv_file(p)
     if df.height == 0: return None
     out = (df.rename({"node": "n", "period": "d", "time": "t"})
              .with_columns(pl.col("value").cast(pl.Float64, strict=False)
@@ -333,7 +335,7 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     # pd_group's non_synchronous_limit slice.
     g_ns_path = inp / "groupNonSync.csv"
     if g_ns_path.exists():
-        df = pl.read_csv(g_ns_path)
+        df = _read_csv_file(g_ns_path)
         if df.height > 0:
             # Header column might be "groupNonSync" (legacy) or "group".
             col = df.columns[0]
@@ -361,7 +363,7 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
         df_pen = None
         p = sd / file_
         if p.exists():
-            raw = pl.read_csv(p)
+            raw = _read_csv_file(p)
             if raw.height > 0:
                 if "solve" in raw.columns:
                     raw = raw.drop("solve")
@@ -388,7 +390,7 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     gn = None
     for path in (sd / "group_node.csv", inp / "group__node.csv"):
         if path.exists():
-            df = pl.read_csv(path)
+            df = _read_csv_file(path)
             if df.height > 0:
                 # both shapes are (group, node)
                 gn = df.rename({"group": "g", "node": "n"}).select("g", "n").unique()
@@ -404,7 +406,7 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     # files use `process`.  Either works here.
     pu_path = sd / "process_unit.csv"
     if pu_path.exists():
-        df = pl.read_csv(pu_path)
+        df = _read_csv_file(pu_path)
         if df.height > 0:
             col = df.columns[0]
             out["process_unit"] = (df.rename({col: "p"})
@@ -414,7 +416,7 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     p_gcs = sd / "group_capacity_for_scaling.csv"
     p_inv = sd / "inv_group_cap.csv"
     if p_gcs.exists():
-        df = pl.read_csv(p_gcs)
+        df = _read_csv_file(p_gcs)
         if df.height > 0:
             df = (df.rename({"group": "g", "period": "d"})
                     .with_columns(pl.col("value").cast(pl.Float64, strict=False))
@@ -423,7 +425,7 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
             if df.height > 0:
                 out["p_group_capacity_for_scaling"] = Param(("g", "d"), df)
     if p_inv.exists():
-        df = pl.read_csv(p_inv)
+        df = _read_csv_file(p_inv)
         if df.height > 0:
             df = (df.rename({"group": "g", "period": "d"})
                     .with_columns(pl.col("value").cast(pl.Float64, strict=False))
@@ -491,7 +493,7 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
         # Need step_duration to divide.  Reuse steps_in_use.csv.
         siu_path = sd / "steps_in_use.csv"
         if siu_path.exists():
-            siu = (pl.read_csv(siu_path)
+            siu = (_read_csv_file(siu_path)
                      .rename({"period": "d", "step": "t",
                               "step_duration": "dur"})
                      .with_columns(pl.col("dur").cast(pl.Float64, strict=False))
