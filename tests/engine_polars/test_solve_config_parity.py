@@ -471,6 +471,55 @@ def test_duplicate_solve_idempotent_on_repeat_call() -> None:
 
 
 # ---------------------------------------------------------------------------
+# load_from_source — SpineDbReader-backed entry
+# ---------------------------------------------------------------------------
+
+
+def test_load_from_source_via_spinedb_reader() -> None:
+    """``load_from_source`` accepts a :class:`SpineDbReader` and produces
+    a SolveConfig field-equivalent to ``load_from_db`` on the same DB.
+
+    Other source types (InMemoryReader for solve params) are deliberately
+    out of Γ.8.A scope — Γ.8.D wires them once chain.run_chain needs the
+    in-memory path.
+    """
+    from flextool.engine_polars._spinedb_reader import SpineDbReader
+
+    sqlite = DATA / "work_multi_fullYear_battery_nested_multi_invest" / "tests.sqlite"
+    if not sqlite.exists():
+        pytest.skip("nested-multi-invest fixture missing")
+    scenario = "multi_fullYear_battery_nested_multi_invest"
+
+    reader = SpineDbReader("sqlite:///" + str(sqlite), scenario)
+    via_source = SolveConfig.load_from_source(reader)
+    via_db = SolveConfig.load_from_db_url(
+        "sqlite:///" + str(sqlite), scenario
+    )
+
+    # Same fields end-to-end (sanity: both call into the same load_from_db).
+    assert via_source.model == via_db.model
+    assert dict(via_source.model_solve) == dict(via_db.model_solve)
+    assert dict(via_source.timesets_used_by_solves) == dict(
+        via_db.timesets_used_by_solves
+    )
+    assert dict(via_source.invest_periods) == dict(via_db.invest_periods)
+
+
+def test_load_from_source_unknown_source_raises() -> None:
+    """Non-SpineDbReader sources raise NotImplementedError with a clear
+    message pointing at the Γ.8.D wiring task.  No defensive silent
+    fallback — see ``audit/handoff_post_split_todo.md`` "no defensive
+    gating" invariant.
+    """
+
+    class FakeSource:
+        pass
+
+    with pytest.raises(NotImplementedError, match="Γ.8.D"):
+        SolveConfig.load_from_source(FakeSource())
+
+
+# ---------------------------------------------------------------------------
 # State module sanity
 # ---------------------------------------------------------------------------
 

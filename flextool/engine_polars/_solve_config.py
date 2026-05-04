@@ -445,6 +445,36 @@ class SolveConfig:
             apply_scenario_filter_to_subqueries(db, scenario)
             return cls.load_from_db(db, logger)
 
+    @classmethod
+    def load_from_source(
+        cls,
+        source: object,
+        logger: logging.Logger | None = None,
+    ) -> "SolveConfig":
+        """Load via the :class:`InputSource` Protocol.
+
+        Currently only :class:`flextool.engine_polars._spinedb_reader.SpineDbReader`
+        sources are supported — they expose the underlying ``db_url`` and
+        ``scenario`` so the canonical :meth:`load_from_db_url` path can
+        be reused.  In-memory and CSV-backed sources for solve-class
+        parameters are out of Γ.8.A scope; Γ.8.D wires those once the
+        chain.run_chain integration needs them.
+        """
+        # Late import: SpineDbReader brings spinedb_api into the import
+        # graph, but we only need it for the isinstance check.
+        from flextool.engine_polars._spinedb_reader import SpineDbReader
+
+        if isinstance(source, SpineDbReader):
+            return cls.load_from_db_url(
+                source.db_url, source.scenario, logger=logger
+            )
+        raise NotImplementedError(
+            f"SolveConfig.load_from_source does not yet support "
+            f"{type(source).__name__!r} sources.  Use load_from_db / "
+            f"load_from_db_url with a Spine DB for now; the in-memory and "
+            f"CSV adapters land in Γ.8.D when chain.run_chain is rewired."
+        )
+
     # ------------------------------------------------------------------
     # Methods (1:1 port from ``flextoolrunner/solve_config.py``)
     # ------------------------------------------------------------------
