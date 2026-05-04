@@ -3544,12 +3544,27 @@ def build_handoff_from_flexpy(
     ``write_p_entity_period_existing_capacity`` + ``write_p_entity_divested``
     logic but in-memory.
 
-    Covers the three carriers needed for the per-solve preprocessing
-    consume side: ``realized_invest``, ``realized_existing``,
-    ``divest_cumulative``.  The other six carriers stay ``None``
-    (they're either .mod-side consumers whose files are persistent
-    on disk, or unexercised by the multi-solve scenarios available
-    today — when one becomes relevant, extend this builder).
+    Covers all 9 carriers (Γ.8.D extension — was 3 of 9 before the
+    Γ.8.D port):
+
+    * ``realized_invest`` — per-(entity, period) chain-cumulative invest.
+    * ``realized_existing`` — per-(entity, period) chain-cumulative existing.
+    * ``divest_cumulative`` — per-entity chain-cumulative divest.
+    * ``roll_end_state`` — last-step v_state per nodeState node.
+    * ``fix_storage`` — wide [node, period, time, quantity, price, usage]
+      with NULL columns for inactive metrics.  ``quantity`` is populated
+      from v_state at fix_storage_timesteps for fix_quantity nodes; the
+      price (dual-based) and usage (flow-based) variants stay NULL until
+      a fixture exercises them and the dual / flow extraction lands.
+    * ``cumulative_co2`` — per-(group, period), summed from
+      ``solve_data/co2_cum_realized_tonnes.csv`` if present.
+    * ``cumulative_commodity`` — per-(commodity, tier, period),
+      summed from ``solve_data/commodity_ladder_cumulative.csv`` if
+      present.
+    * ``cum_sim_hours`` — per-period running sim-hour total, sourced
+      from ``solve_data/ladder_cum_sim_hours.csv`` if present.
+    * ``periods_already_emitted`` — per-period bare-set, from
+      ``solve_data/period_capacity.csv`` if present.
 
     The work folder must already have completed flextool's per-solve
     preprocessing for ``solve_name`` (so ``solve_data/`` carries
@@ -3557,10 +3572,12 @@ def build_handoff_from_flexpy(
     ``realized_invest_periods_of_current_solve.csv``, etc.).
     """
     import polars as pl  # local — keep this helper's import surface narrow
-    REPO = Path("/home/jkiviluo/sources/flextool")
-    if str(REPO) not in sys.path:
-        sys.path.append(str(REPO))
-    from flextool.flextoolrunner.solve_handoff import SolveHandoff
+    # Native import — Γ.8.D moved SolveHandoff into engine_polars; the
+    # legacy ``flextool.flextoolrunner.solve_handoff`` path re-exports
+    # the same class for source compatibility (see R-O2 mitigation in
+    # ``audit/solve_orchestration_plan.md`` and the shim header in
+    # ``flextool/flextoolrunner/solve_handoff.py``).
+    from flextool.engine_polars._solve_handoff import SolveHandoff
 
     sd = work_folder / "solve_data"
     first_solve = _read_solve_first(work_folder)
@@ -3766,6 +3783,154 @@ def build_handoff_from_flexpy(
                     if fq_rows.height > 0:
                         fix_storage_df = fq_rows
 
+    # ---- cumulative_co2: per-(group, period) running total ----
+    # Producer: written by flextool's preprocessing into
+    # ``solve_data/co2_cum_realized_tonnes.csv`` between solves.  When the
+    # snapshot already carries the file, propagate it; when prior_handoff
+    # has the carrier, prefer that (in-memory beats disk).  When neither
+    # is present, leave None so unexercised fixtures don't pay the cost.
+    cumulative_co2_df = None
+    if prior_handoff is not None and prior_handoff.cumulative_co2 is not None:
+        cumulative_co2_df = prior_handoff.cumulative_co2
+    co2_path = sd / "co2_cum_realized_tonnes.csv"
+    if co2_path.exists():
+        try:
+            co2_df = pl.read_csv(co2_path)
+        except pl.exceptions.NoDataError:
+            co2_df = None
+        if co2_df is not None and co2_df.height > 0 and \
+                "p_co2_cum_realized_tonnes" in co2_df.columns:
+            cumulative_co2_df = (
+                co2_df.with_columns(
+                    value=pl.col("p_co2_cum_realized_tonnes")
+                            .cast(pl.Float64, strict=False)
+                            .fill_null(0.0))
+                  .select("group", "period", "value"))
+
+    # ---- cumulative_commodity: per-(commodity, tier, period) running mwh ----
+    # Same propagation pattern as cumulative_co2.
+    cumulative_commodity_df = None
+    if prior_handoff is not None and prior_handoff.cumulative_commodity is not None:
+        cumulative_commodity_df = prior_handoff.cumulative_commodity
+    cc_path = sd / "commodity_ladder_cumulative.csv"
+    if cc_path.exists():
+        try:
+            cc_df = pl.read_csv(cc_path)
+        except pl.exceptions.NoDataError:
+            cc_df = None
+        if cc_df is not None and cc_df.height > 0:
+            # Tolerate either ``mwh`` or ``p_ladder_cum_realized_mwh`` as
+            # the value column name — the file's writer may use either.
+            if "mwh" in cc_df.columns:
+                value_col = "mwh"
+            elif "p_ladder_cum_realized_mwh" in cc_df.columns:
+                value_col = "p_ladder_cum_realized_mwh"
+            else:
+                value_col = None
+            if value_col is not None and {"commodity", "tier", "period"}.issubset(
+                    cc_df.columns):
+                cumulative_commodity_df = (
+                    cc_df.with_columns(
+                        mwh=pl.col(value_col).cast(pl.Float64, strict=False)
+                                .fill_null(0.0))
+                      .select("commodity", "tier", "period", "mwh"))
+
+    # ---- cum_sim_hours: per-period running sim-hour total ----
+    cum_sim_hours_df = None
+    if prior_handoff is not None and prior_handoff.cum_sim_hours is not None:
+        cum_sim_hours_df = prior_handoff.cum_sim_hours
+    csh_path = sd / "ladder_cum_sim_hours.csv"
+    if csh_path.exists():
+        try:
+            csh_df = pl.read_csv(csh_path)
+        except pl.exceptions.NoDataError:
+            csh_df = None
+        if csh_df is not None and csh_df.height > 0 and \
+                "p_ladder_cum_sim_hours" in csh_df.columns:
+            cum_sim_hours_df = (
+                csh_df.with_columns(
+                    value=pl.col("p_ladder_cum_sim_hours")
+                            .cast(pl.Float64, strict=False)
+                            .fill_null(0.0))
+                   .select("period", "value"))
+
+    # ---- periods_already_emitted: bare set of period strings ----
+    # Each solve adds the periods it just emitted output rows for; the
+    # carrier accumulates across the chain so a downstream solve can
+    # gate re-emission.  Source: ``solve_data/period_capacity.csv``.
+    periods_already_emitted_df = None
+    prior_periods: set[str] = set()
+    if prior_handoff is not None and prior_handoff.periods_already_emitted is not None:
+        prior_periods = set(
+            str(p) for p in prior_handoff.periods_already_emitted["period"].to_list()
+        )
+    pae_path = sd / "period_capacity.csv"
+    new_periods: set[str] = set()
+    if pae_path.exists():
+        try:
+            pae_df = pl.read_csv(pae_path)
+        except pl.exceptions.NoDataError:
+            pae_df = None
+        if pae_df is not None and pae_df.height > 0 and "period" in pae_df.columns:
+            new_periods = set(str(p) for p in pae_df["period"].to_list())
+    all_periods = prior_periods | new_periods
+    if all_periods:
+        periods_already_emitted_df = pl.DataFrame(
+            {"period": sorted(all_periods)}
+        )
+
+    # ---- fix_storage_price / fix_storage_usage extraction ----
+    # The .csv reads above (sd / fix_storage_price.csv etc.) may already
+    # carry parent-deposited values when this is a child of a
+    # storage-fixing parent.  When fix_storage_df is already non-None
+    # from the v_state-based quantity extraction, fold the price / usage
+    # rows in via outer-join.  When the quantity extraction yielded
+    # nothing, build the wide frame purely from the on-disk metric files.
+    def _read_fix_csv(name: str, value_col: str) -> "pl.DataFrame | None":
+        p = sd / name
+        if not p.exists():
+            return None
+        try:
+            df = pl.read_csv(p)
+        except pl.exceptions.NoDataError:
+            return None
+        if df.height == 0 or value_col not in df.columns:
+            return None
+        # On-disk schema is (period, step, node, value_col).  Rename to
+        # the carrier convention (node, period, time, metric).
+        return (df
+            .rename({"step": "time"})
+            .select("node", "period", "time", value_col))
+
+    fp = _read_fix_csv("fix_storage_price.csv", "p_fix_storage_price")
+    fu = _read_fix_csv("fix_storage_usage.csv", "p_fix_storage_usage")
+    if fp is not None or fu is not None:
+        merged = fix_storage_df  # may be None if no v_state quantity rows
+        for src, value_col, out_col in (
+            (fp, "p_fix_storage_price", "price"),
+            (fu, "p_fix_storage_usage", "usage"),
+        ):
+            if src is None:
+                continue
+            renamed = src.rename({value_col: out_col})
+            if merged is None:
+                merged = renamed
+            else:
+                merged = merged.join(
+                    renamed, on=["node", "period", "time"],
+                    how="full", coalesce=True,
+                )
+        # Backfill NULL columns for any of the three metrics still missing.
+        if merged is not None:
+            for c in ("quantity", "price", "usage"):
+                if c not in merged.columns:
+                    merged = merged.with_columns(
+                        pl.lit(None).cast(pl.Float64).alias(c)
+                    )
+            fix_storage_df = merged.select(
+                "node", "period", "time", "quantity", "price", "usage"
+            )
+
     return SolveHandoff(
         realized_invest=pl.DataFrame(
             inv_rows, schema=["entity", "period", "value"], orient="row",
@@ -3778,6 +3943,10 @@ def build_handoff_from_flexpy(
         ) if div_rows else None,
         roll_end_state=roll_end_state_df,
         fix_storage=fix_storage_df,
+        cumulative_co2=cumulative_co2_df,
+        cumulative_commodity=cumulative_commodity_df,
+        cum_sim_hours=cum_sim_hours_df,
+        periods_already_emitted=periods_already_emitted_df,
     )
 
 
