@@ -814,3 +814,68 @@ def test_invest_set_partition_lazy_vs_csv(
             f"  lazy ({lazy_df.height}):\n{lazy_df}\n"
             f"  csv  ({csv_df.height}):\n{csv_df}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Δ.7 — edd_invest_lookback_set consolidation parity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "work_name,scenario", PARITY_CASES,
+    ids=lambda v: v if isinstance(v, str) else "?",
+)
+def test_edd_invest_lookback_set_lazy_vs_eager(
+        work_name: str, scenario: str) -> None:
+    """Per-fixture: lazy ``edd_invest_lookback_set_lf`` vs the
+    equivalent eager wrapper output.
+
+    Δ.7 consolidation: the eager
+    :func:`._derived_params.edd_invest_lookback_set_from_source` was
+    refactored to delegate to the lazy port via the shared
+    :func:`._derived_walks.period_walk_iterator` walker
+    (``STRICT_LOOKBACK_BOUNDED`` / ``STRICT_LOOKBACK_UNBOUNDED``).
+
+    This test confirms the lazy port produces frame-identical output
+    to the eager wrapper across the cluster B fixture corpus.
+    """
+    work = DATA / work_name
+    sqlite = work / "tests.sqlite"
+    if not sqlite.exists():
+        pytest.skip("fixture missing tests.sqlite")
+
+    reader = SpineDbReader(sqlite, scenario)
+    data_eager = load_flextool(work, db_reader=reader)
+    active_solve = _read_active_solve(work)
+    period_in_use = _period_in_use_set(reader, active_solve, work)
+
+    # Eager via the consolidated wrapper.
+    from flextool.engine_polars._derived_params import (
+        edd_invest_lookback_set_from_source,
+    )
+    ed_invest = data_eager.ed_invest_set
+    eager = edd_invest_lookback_set_from_source(
+        reader, active_solve, ed_invest, work)
+
+    # Lazy port — reuse the same input frame.
+    if ed_invest is None or ed_invest.height == 0:
+        ed_invest_lf = pl.LazyFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+    else:
+        ed_invest_lf = ed_invest.lazy().select("e", "d")
+    lazy = _ex.edd_invest_lookback_set_lf(
+        reader, active_solve, ed_invest_lf, period_in_use, work).collect()
+
+    # Both frames have schema [e, d_invest, d].
+    if eager is None and lazy.height == 0:
+        return
+    if eager is None:
+        pytest.fail(
+            f"{work_name}: eager None but lazy has {lazy.height} rows")
+    eq, msg = _frames_equal(eager.sort("e", "d_invest", "d"),
+                                  lazy.sort("e", "d_invest", "d"),
+                                  ("e", "d_invest", "d"))
+    assert eq, (
+        f"edd_invest_lookback_set parity failed for {work_name}: {msg}\n"
+        f"  eager ({eager.height} rows):\n{eager}\n"
+        f"  lazy  ({lazy.height} rows):\n{lazy}\n"
+    )
