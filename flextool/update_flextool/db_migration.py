@@ -1833,9 +1833,9 @@ def _v44_build_parameter_group_map() -> dict[tuple[str, str], str]:
     m[("timeline", "timestep_duration")] = "timeline"
     for p in (
         "timeline", "timeset_duration", "new_stepduration",
-        "timeset_weights",
     ):
         m[("timeset", p)] = "timeline"
+    m[("timeset", "timeset_weights")] = "solve_advanced"
 
     # --- output --------------------------------------------------------
     for p in (
