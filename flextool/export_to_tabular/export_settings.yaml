@@ -252,6 +252,17 @@ advanced_sheets:
   - model_periods_available
   - solve_period_period
 
+# Parameter groups required for a functioning FlexTool model.  The GUI
+# group picker highlights these and ships them pre-checked.  A user can
+# still produce a valid input file without them by combining data from
+# multiple input sources in Spine Toolbox.  Order here is the display
+# order in the picker (most foundational first).
+required_groups:
+  - timeline
+  - model
+  - solve_basics
+  - basics
+
 # When --groups is used, sheets listed here are kept even if all their
 # parameters were filtered out, provided one of the listed parent groups
 # is in the selection.  Use this for structural sheets whose presence is
