@@ -886,9 +886,18 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             flow_from_co2_priced_noEff = None
     if flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None:
         return (None, None, None, None)
-    # Δ.12-drop: ``p_co2_content`` produced authoritatively by
-    # ``apply_direct_params.p_co2_content_from_source``.  Seed dropped.
-    co2_content = None
+    # ``p_co2_content`` is produced by ``apply_direct_params`` BUT some
+    # callers exercise the pure-CSV path (e.g. ``run_chain``-style
+    # tempdir without tests.sqlite — see
+    # test_orchestration_parity::test_build_handoff_from_flexpy_covers_eight_carriers).
+    # Keep the seed.
+    # TODO(Δ.12c+): retire when all callers either pass an explicit
+    # db_reader= or a workdir whose tests.sqlite + scenario auto-resolve.
+    p_comm = _read_csv_file(inp / "p_commodity.csv")
+    co2_content = Param(("c",),
+        p_comm.filter(pl.col("commodityParam")=="co2_content")
+              .rename({"commodity":"c","p_commodity":"value"})
+              .select("c","value"))
     # group co2_price sliced from canonical pdtGroup.csv —
     # `pdtGroup[g, 'co2_price', d, t]` in .mod.
     # TODO(Δ.12c+): retire pdtGroup.csv co2_price slice when
@@ -1266,9 +1275,15 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         edd_inv_lookback = pl.DataFrame(
             schema={"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
 
-    # Δ.12-drop: ``p_entity_max_units`` produced authoritatively by
-    # ``apply_derived_c.p_entity_max_units_from_source``.  Seed dropped.
-    p_max_units = None
+    # ``p_entity_max_units`` is produced by apply_derived_c BUT some
+    # callers exercise the pure-CSV path (e.g. tempdir-symlink-based
+    # tests in test_orchestration_parity.py).  Keep the seed.
+    # TODO(Δ.12c+): retire when all callers either pass an explicit
+    # db_reader= or a workdir whose tests.sqlite + scenario auto-resolve.
+    p_max_units = Param(("e", "d"),
+        _read_wide_e_d(sd / "p_entity_max_units.csv")
+            .filter(pl.col("value") > 0)
+            .select("e", "d", "value")) if (sd / "p_entity_max_units.csv").exists() else None
 
     def _cost_param(name: str, dims=("e", "d"), per_e: bool = True) -> Param | None:
         f = sd / f"{name}.csv"
@@ -3119,10 +3134,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
             inp, sd, proc["pss_eff"], proc.get("pss_noEff"))
         g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped = _load_co2_cap(
             inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"))
-        # Δ.12-drop: the inline p_commodity.csv co2_content fallback was a
-        # safety net for fixtures with a CO2 cap but no priced flows; now
-        # ``apply_direct_params.p_co2_content_from_source`` produces this
-        # field authoritatively.
+        if co2_max_p is not None and co2c is None:
+            p_comm = _read_csv_file(inp / "p_commodity.csv")
+            co2c = Param(("c",),
+                p_comm.filter(pl.col("commodityParam")=="co2_content")
+                      .rename({"commodity":"c","p_commodity":"value"})
+                      .select("c","value"))
 
         (indir_set, indir_in, indir_out, indir_dt,
          p_source_flow_coef, p_sink_flow_coef) = _load_indirect(sd, proc["pss"], dt, inp)
