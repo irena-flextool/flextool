@@ -579,6 +579,98 @@ def edd_invest_set_lf(source: "InputSource",
               .select("e", "d_invest", "d"))
 
 
+def edd_invest_lookback_set_lf(source: "InputSource",
+                                       active_solve: str | None,
+                                       ed_invest_lf: pl.LazyFrame,
+                                       period_in_use: list[str],
+                                       workdir: Path | None = None,
+                                       ) -> pl.LazyFrame:
+    """Lazy ``[e, d_invest, d]`` — ``edd_invest_lookback_set``.
+
+    The strict-lookback variant of :func:`edd_invest_set_lf`: tuples
+    where ``yr[d_invest] < yr[d]`` (strict) and, for entities in the
+    bounded lifetime cohort (``reinvest_choice`` / ``no_investment``),
+    ``yr[d] < yr[d_invest] + lifetime[e, d_invest]``.
+
+    Mirror of ``invest_divest_sets.py:227-262`` filtered with the
+    strict-lookback predicate.  Used by the prebuilt-capacity LHS in
+    user-constraint expressions (mod L2885-2898).
+
+    Δ.7 consolidation: the eager
+    :func:`._derived_params.edd_invest_lookback_set_from_source`
+    pre-dates the shared :func:`._derived_walks.period_walk_iterator`;
+    Δ.7 wraps the shared walker with the
+    :data:`._derived_walks.WindowMethod.STRICT_LOOKBACK_BOUNDED` /
+    :data:`._derived_walks.WindowMethod.STRICT_LOOKBACK_UNBOUNDED`
+    modes for bounded / unbounded entity cohorts respectively, then
+    unions the results.
+
+    The eager helper now delegates to this lazy port — the previous
+    Python ``for r in out.iter_rows`` lifetime gate is replaced with
+    a fully lazy join + filter on the shared walker.
+    """
+    if not period_in_use:
+        return pl.LazyFrame(schema={
+            "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,
+        })
+    inv_anchor = ed_invest_lf.select("e", pl.col("d").alias("d_invest"))
+    if inv_anchor.collect().height == 0:
+        return pl.LazyFrame(schema={
+            "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,
+        })
+
+    all_e_lf = _all_entities_lf(source)
+    elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
+    bounded_e = (elm_lf
+                    .filter(pl.col("method").is_in(
+                        list(_LIFETIME_BOUNDED_METHODS)))
+                    .select("e").unique())
+    unbounded_e = (elm_lf
+                      .filter(~pl.col("method").is_in(
+                          list(_LIFETIME_BOUNDED_METHODS)))
+                      .select("e").unique())
+
+    # Shape the anchor as ``[e, d]`` for the shared walker (it expects
+    # the anchor period column to be named ``d``).
+    anchor_lf = inv_anchor.rename({"d_invest": "d"})
+
+    # Bounded cohort.
+    bounded_anchor = anchor_lf.join(bounded_e, on="e", how="inner")
+    bounded_walk = pl.LazyFrame(schema={
+        "e": pl.Utf8, "d": pl.Utf8, "d_all": pl.Utf8,
+    })
+    if bounded_anchor.collect().height > 0:
+        life_per = _per_entity_param_lf(source, "lifetime")
+        life_lf = (_resolve_per_period_lf(life_per, bounded_anchor, fill=0.0)
+                       .rename({"value": "life"})
+                       .select("e", "d", "life"))
+        bounded_walk = period_walk_iterator(
+            source, active_solve, bounded_anchor,
+            period_in_use, period_in_use,
+            window_method=WindowMethod.STRICT_LOOKBACK_BOUNDED,
+            life_lf=life_lf, factor_side=None,
+            workdir=workdir)
+
+    # Unbounded cohort — strict-lookback only, no lifetime cap.
+    unbounded_anchor = anchor_lf.join(unbounded_e, on="e", how="inner")
+    unbounded_walk = pl.LazyFrame(schema={
+        "e": pl.Utf8, "d": pl.Utf8, "d_all": pl.Utf8,
+    })
+    if unbounded_anchor.collect().height > 0:
+        unbounded_walk = period_walk_iterator(
+            source, active_solve, unbounded_anchor,
+            period_in_use, period_in_use,
+            window_method=WindowMethod.STRICT_LOOKBACK_UNBOUNDED,
+            life_lf=None, factor_side=None,
+            workdir=workdir)
+
+    return (pl.concat([bounded_walk, unbounded_walk], how="vertical")
+              .rename({"d": "d_invest", "d_all": "d"})
+              .select("e", "d_invest", "d")
+              .unique()
+              .sort("e", "d_invest", "d"))
+
+
 # ---------------------------------------------------------------------------
 # §3.11 — p_entity_all_existing (existing-chain walk)
 # ---------------------------------------------------------------------------
@@ -936,7 +1028,7 @@ __all__ = [
     # Public lazy helpers — edd_history triple-set family.
     "edd_history_lf", "edd_history_choice_lf",
     "edd_history_automatic_lf", "edd_history_no_investment_lf",
-    "edd_invest_set_lf",
+    "edd_invest_set_lf", "edd_invest_lookback_set_lf",
     # Public lazy helpers — partitions.
     "pd_invest_set_lf", "nd_invest_set_lf",
     "pd_divest_set_lf", "nd_divest_set_lf",

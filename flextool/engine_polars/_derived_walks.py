@@ -38,7 +38,11 @@ and collect those that match the window predicate:
   ``pdy[d_all] ≥ pdy[d]``.
 * :data:`WindowMethod.STRICT_LOOKBACK_BOUNDED` —
   ``pdy[d_all] > pdy[d]`` AND ``pdy[d_all] < pdy[d] + life[e, d]``
-  (used by Cluster B's ``edd_invest_lookback_set``).
+  (used by Cluster B's ``edd_invest_lookback_set`` for bounded
+  ``reinvest_choice`` / ``no_investment`` entities).
+* :data:`WindowMethod.STRICT_LOOKBACK_UNBOUNDED` —
+  ``pdy[d_all] > pdy[d]`` (no lifetime cap; for unbounded
+  ``reinvest_automatic`` entities in Cluster B's lookback walk).
 
 The aggregation is configurable: callers can either pass a per-d_all
 weight column to sum (``factor_side``: ``"inv"`` / ``"ops"`` →
@@ -83,6 +87,7 @@ class WindowMethod(enum.Enum):
     BOUNDED = "bounded"
     UNBOUNDED_FORWARD = "unbounded_forward"
     STRICT_LOOKBACK_BOUNDED = "strict_lookback_bounded"
+    STRICT_LOOKBACK_UNBOUNDED = "strict_lookback_unbounded"
     BOUNDED_INCLUSIVE_LOOKBACK = "bounded_inclusive_lookback"
 
 
@@ -173,6 +178,8 @@ def period_walk_iterator(
         raise ValueError(
             f"life_lf is required for window_method={window_method.value}"
         )
+    # STRICT_LOOKBACK_UNBOUNDED is permitted with life_lf=None
+    # (the strict-lookback predicate doesn't reference lifetime).
 
     # Anchor years.
     pyd_anchor = pyd_lf.rename({"d": "d", "yr": "yr_d"})
@@ -193,6 +200,8 @@ def period_walk_iterator(
 
     if window_method == WindowMethod.UNBOUNDED_FORWARD:
         walk = walk.filter(pl.col("yr_dall") >= pl.col("yr_d"))
+    elif window_method == WindowMethod.STRICT_LOOKBACK_UNBOUNDED:
+        walk = walk.filter(pl.col("yr_dall") > pl.col("yr_d"))
     elif window_method == WindowMethod.STRICT_LOOKBACK_BOUNDED:
         walk = (walk
                   .join(life_lf, on=["e", "d"], how="left")

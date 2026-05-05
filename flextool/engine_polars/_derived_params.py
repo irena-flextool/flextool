@@ -3018,6 +3018,13 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
                                              lifetime_method limits the
                                              window — reinvest_choice /
                                              no_investment) }
+
+    Δ.7 consolidation: delegates to the lazy port
+    :func:`._derived_existing.edd_invest_lookback_set_lf` which
+    consumes :func:`._derived_walks.period_walk_iterator` with the
+    new ``STRICT_LOOKBACK_*`` modes.  The previous eager
+    ``for r in out.iter_rows`` lifetime gate is replaced with a fully
+    lazy join + filter on the shared walker.
     """
     if ed_invest is None or ed_invest.height == 0:
         return pl.DataFrame(schema={
@@ -3026,58 +3033,16 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
     pyd_lf = _p_years_d_lf(source, active_solve, workdir)
     if pyd_lf is None:
         return None
-    # All periods (use realized + invest as the dispatch domain).
     periods = _period_in_use_set(source, active_solve, workdir)
     if not periods:
         return pl.DataFrame(schema={
             "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,
         })
-    period_lf = pl.LazyFrame({"d": periods})
-    inv_lf = ed_invest.lazy().rename({"d": "d_invest"})
-    yr_inv = pyd_lf.rename({"d": "d_invest", "yr": "yr_invest"})
-    yr_d = pyd_lf.rename({"yr": "yr"})
-    out = (inv_lf
-              .join(period_lf, how="cross")
-              .join(yr_inv, on="d_invest", how="inner")
-              .join(yr_d, on="d", how="inner")
-              .filter(pl.col("yr_invest") < pl.col("yr"))
-              .select("e", "d_invest", "d", "yr_invest", "yr")
-              .collect())
-    if out.height == 0:
-        return out.select("e", "d_invest", "d")
-
-    # Γ.6.D — apply the per-entity lifetime gate.  Mirrors canonical
-    # ``edd_history`` filtering: for ``reinvest_choice`` /
-    # ``no_investment`` entities, drop tuples where the dispatch period
-    # year exceeds the invest period year + lifetime[e, d_invest].
-    all_e = _all_entities(source)
-    elm = _entity_lifetime_methods(source, all_e)
-    bounded = {e for e, ms in elm.items()
-                  if ("reinvest_choice" in ms) or ("no_investment" in ms)}
-    if not bounded:
-        return (out.select("e", "d_invest", "d")
-                   .sort("e", "d_invest", "d"))
-    per_p = _per_entity_period_value(source, "lifetime") or {}
-    scalar = _per_entity_scalar(source, "lifetime")
-
-    def _life(e: str, d_inv: str) -> float:
-        return _resolve_pdX(per_p, scalar, e, d_inv)
-
-    keep_rows: list[tuple[str, str, str]] = []
-    for r in out.iter_rows(named=True):
-        e = r["e"]; d_inv = r["d_invest"]; d = r["d"]
-        if e in bounded:
-            life = _life(e, d_inv)
-            if r["yr"] >= r["yr_invest"] + life:
-                continue
-        keep_rows.append((e, d_inv, d))
-    if not keep_rows:
-        return pl.DataFrame(schema={
-            "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,
-        })
-    return (pl.DataFrame(keep_rows, schema=["e", "d_invest", "d"],
-                            orient="row")
-              .sort("e", "d_invest", "d"))
+    # Δ.7 — delegate to the lazy port consuming the shared walker.
+    from ._derived_existing import edd_invest_lookback_set_lf
+    ed_invest_lf = ed_invest.lazy().select("e", "d")
+    return edd_invest_lookback_set_lf(
+        source, active_solve, ed_invest_lf, periods, workdir).collect()
 
 
 def edd_divest_active_from_source(source: "InputSource",
