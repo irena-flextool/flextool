@@ -588,15 +588,34 @@ class AddDialog(tk.Toplevel):
                 initialize_database,
             )
             from flextool.export_to_tabular.export_to_excel import export_to_excel
+            from flextool.export_to_tabular.db_reader import read_database
+            from flextool.export_to_tabular.sheet_config import load_settings
+            from flextool.gui.dialogs.group_picker import GroupPickerDialog
 
             # Create a temporary sqlite from the JSON template
             with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
                 tmp_sqlite = Path(tmp.name)
             initialize_database(str(json_template), str(tmp_sqlite))
 
-            # Export the sqlite to Excel
+            # Read parameter groups + required list, then ask the user
             db_url = f"sqlite:///{tmp_sqlite}"
-            export_to_excel(db_url, str(dest))
+            dc = read_database(db_url)
+            settings = load_settings()
+            groups = [
+                {"name": name, **meta}
+                for name, meta in dc.parameter_groups.items()
+            ]
+            required = settings.get("required_groups", []) or []
+
+            picker = GroupPickerDialog(self, groups, required)
+            if picker.result is None:
+                # Cancelled — abort silently, no output created
+                return
+
+            include_groups = (
+                None if picker.result == "all" else list(picker.result)
+            )
+            export_to_excel(db_url, str(dest), include_groups=include_groups)
         except ImportError as exc:
             messagebox.showerror(
                 "Missing dependency",
