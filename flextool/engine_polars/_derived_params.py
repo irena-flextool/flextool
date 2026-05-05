@@ -6879,26 +6879,23 @@ def apply_derived_f(
     inflation cascade, mutating ``flex_data`` in place.
 
     Order:
-      1. ``p_inflation_op`` full multi-year cascade.
+      1. Cluster A (Δ.5): ``p_inflation_op``, ``p_ed_fixed_cost``,
+         ``ed_entity_annual_discounted``, ``ed_entity_annual_divest_discounted``,
+         ``ed_lifetime_fixed_cost``, ``ed_lifetime_fixed_cost_divest``
+         — delegated to :func:`._derived_npv.apply_npv`, the lazy-polars
+         port.  Replaces the eager ``ed_entity_annual_family_from_source``
+         and ``p_inflation_op_full_cascade_from_source`` paths.
       2. ``p_entity_previously_invested_capacity`` / ``p_entity_invested``
          / ``p_entity_divested`` (handoff state).
-      3. ``ed_entity_annual_*`` family (depends on (1) for inflation).
 
     Δ.3 replaced the previous ``derived_overrides_f`` dict-return;
-    Δ.4 deleted the deprecated wrapper alias.
+    Δ.4 deleted the deprecated wrapper alias; Δ.5 ports the lifetime
+    cascade family to lazy polars.
     """
-    active_solve = _read_active_solve(workdir)
-    dt_csv = getattr(flex_data, "dt", None)
+    from . import _derived_npv
 
-    # 1. Multi-year inflation cascade ---------------------------------
-    if active_solve is not None and dt_csv is not None:
-        try:
-            infl = p_inflation_op_full_cascade_from_source(
-                source, active_solve, dt_csv, workdir)
-        except Exception:
-            infl = None
-        if infl is not None:
-            flex_data.p_inflation_op = infl
+    # 1. Cluster A (lazy NPV / inflation / fixed cost cascade).
+    _derived_npv.apply_npv(flex_data, source, workdir)
 
     # 2. Handoff state -----------------------------------------------
     try:
@@ -6919,19 +6916,6 @@ def apply_derived_f(
         ped = None
     if ped is not None:
         flex_data.p_entity_divested = ped
-
-    # 3. Lifetime cascade family --------------------------------------
-    ed_invest = getattr(flex_data, "ed_invest_set", None)
-    ed_divest = getattr(flex_data, "ed_divest_set", None)
-    if active_solve is not None:
-        try:
-            fam = ed_entity_annual_family_from_source(
-                source, active_solve, ed_invest, ed_divest, workdir)
-        except Exception:
-            fam = {}
-        for k, v in fam.items():
-            if v is not None:
-                setattr(flex_data, k, v)
 
 
 
