@@ -7527,21 +7527,22 @@ def apply_derived_g(
     if pdw is not None:
         flex_data.p_process_delay_weight = pdw
 
-    # ─── §3.18.1 multi-branch normalisation ────────────────────────
+    # ─── §3.18 cluster D — multi-branch normalisation + non-anticipativity ──
+    # Δ.8 consolidation: delegate the full cluster D port to
+    # ``_derived_branch.apply_branch_cluster``.  The helper covers
+    # ``pd_branch_weight``, ``pdt_branch_weight``, and (already
+    # CSV-loaded by ``input.py``) ``period_branch_full``,
+    # ``period_in_use_set``, ``dt_non_anticipativity`` — the latter
+    # three are kept as overrides so the lazy port becomes the single
+    # producer once the CSV cascade retires (Δ.12).  R-O6: the helper
+    # never touches ``invest_periods`` / ``v_invest``.
+    from flextool.engine_polars._derived_branch import apply_branch_cluster
     try:
-        pd_bw = pd_branch_weight_full_from_source(
-            source, active_solve, dt, workdir)
+        apply_branch_cluster(flex_data, source, workdir, active_solve)
     except Exception:
-        pd_bw = None
-    if pd_bw is not None:
-        flex_data.pd_branch_weight = pd_bw
-
-    try:
-        pdt_bw = pdt_branch_weight_full_from_source(
-            source, active_solve, dt, workdir)
-    except Exception:
-        pdt_bw = None
-    if pdt_bw is not None:
-        flex_data.pdt_branch_weight = pdt_bw
+        # Defensive: any failure in the lazy port falls through to the
+        # CSV-loaded fields ``input.py`` already populated.  Drop this
+        # gate when Δ.12 retires the CSV cascade.
+        pass
 
 
