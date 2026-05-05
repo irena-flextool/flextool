@@ -72,6 +72,7 @@ from ._input_source import _read_csv_file
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
+    from flextool.engine_polars._per_solve_sets import PerSolveAggregates
 
 
 __all__ = [
@@ -598,6 +599,7 @@ def p_inflow_with_scaling_from_source(
     *,
     workdir: Path | None = None,
     balance_set: pl.DataFrame | None = None,
+    per_solve_aggs: "PerSolveAggregates | None" = None,
 ) -> Param | None:
     """Compute the per-(n, d, t) scaled inflow Param.
 
@@ -618,6 +620,13 @@ def p_inflow_with_scaling_from_source(
     The value is the additive sum of whichever methods apply per node.
     For nodes with ``use_original``, the result is just
     ``ptNode_inflow[n, t]`` broadcast across the active periods.
+
+    Δ.13: when *per_solve_aggs* is supplied (the new
+    :mod:`flextool.engine_polars._per_solve_sets`-derived view of the
+    cpsoy / p_tdy / period_timeline frames + dt_complete), the helper
+    uses it directly and skips the workdir-CSV path entirely.  The
+    workdir path is preserved as a fallback for callers that don't
+    pass ``per_solve_aggs``.
     """
     if dt is None or dt.height == 0:
         return None
@@ -650,10 +659,15 @@ def p_inflow_with_scaling_from_source(
     dt_lf = dt.lazy()
     period_lf = dt_lf.select("d").unique()
     # dt_complete: per-period × full-timeline timesteps.  Used by the
-    # ``period_share_of_annual_flow`` sum (mod L1395).  Reads
-    # ``solve_data/steps_complete_solve.csv`` when available; falls back
-    # to dt for single-solve fixtures (dt_complete == dt).
-    dt_complete_lf = _dt_complete_lf(workdir, dt_lf)
+    # ``period_share_of_annual_flow`` sum (mod L1395).
+    #
+    # Δ.13: when ``per_solve_aggs`` is supplied, use its native
+    # dt_complete frame directly (no workdir CSV).  Otherwise prefer the
+    # workdir's ``solve_data/steps_complete_solve.csv``; falls back to dt.
+    if per_solve_aggs is not None and per_solve_aggs.dt_complete.height > 0:
+        dt_complete_lf = per_solve_aggs.dt_complete.lazy()
+    else:
+        dt_complete_lf = _dt_complete_lf(workdir, dt_lf)
     # time_lf must cover the FULL timeline so ``ptNode_inflow`` is
     # computed over every t (not just active dt).  flextool's
     # preprocessing iterates over ``time`` set (== union of timeline
@@ -679,13 +693,17 @@ def p_inflow_with_scaling_from_source(
     pk_lf = pk_lf.join(period_lf, on="d", how="inner")
 
     # ── complete_period_share_of_year + p_timeline_duration_in_years ─
-    # Computed lazily from the timeline data WHEN the source has them.
-    # When the workdir provides the preprocessing CSVs (the only
-    # in-tree path that emits ``complete_period_share_of_year_calc.csv``),
-    # we read them directly to avoid re-deriving the period/time fold.
-    cpsoy_lf, p_tdy_lf, period_timeline_lf = _timeline_aggregates(
-        source, workdir, dt_lf,
-    )
+    # Δ.13: when ``per_solve_aggs`` is supplied, use its frames directly
+    # (no workdir CSV).  Otherwise the legacy two-stage path applies:
+    # workdir CSVs first, source-side derivation as fallback.
+    if per_solve_aggs is not None:
+        cpsoy_lf = per_solve_aggs.complete_period_share_of_year.lazy()
+        p_tdy_lf = per_solve_aggs.p_timeline_duration_in_years.lazy()
+        period_timeline_lf = per_solve_aggs.period_timeline.lazy()
+    else:
+        cpsoy_lf, p_tdy_lf, period_timeline_lf = _timeline_aggregates(
+            source, workdir, dt_lf,
+        )
 
     # ── Per-(n, d) scaling parameters ─────────────────────────────────
 
@@ -967,6 +985,8 @@ def apply_p_inflow_with_scaling(
     source: "InputSource",
     workdir: Path | None,
     dt: pl.DataFrame,
+    *,
+    per_solve_aggs: "PerSolveAggregates | None" = None,
 ) -> bool:
     """Compute and assign ``flex_data.p_inflow`` via the scaling cascade.
 
@@ -997,7 +1017,8 @@ def apply_p_inflow_with_scaling(
     """
     nb = getattr(flex_data, "nodeBalance", None)
     p = p_inflow_with_scaling_from_source(source, dt, workdir=workdir,
-                                            balance_set=nb)
+                                            balance_set=nb,
+                                            per_solve_aggs=per_solve_aggs)
     if p is None:
         return False
 
