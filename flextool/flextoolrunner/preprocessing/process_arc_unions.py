@@ -1263,26 +1263,38 @@ def write_node_group_dispatch_sets(
         solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv"
     ))
 
+    # Index pss_always by source-node and sink-node so each helper call
+    # only walks arcs that actually touch the group's nodes — was an
+    # O(8 × G × A) full-cross-product scan, now O(8 × Σ_g |gnodes_g|
+    # × avg arcs per node). For models where each group covers a small
+    # fraction of the entity universe this collapses the dominant cost
+    # of write_node_group_dispatch_sets.
+    arcs_by_src: dict[str, list[tuple[str, ...]]] = {}
+    arcs_by_sink: dict[str, list[tuple[str, ...]]] = {}
+    for triple in pss_always:
+        p, src, sink = triple[0], triple[1], triple[2]
+        arcs_by_src.setdefault(src, []).append(triple)
+        arcs_by_sink.setdefault(sink, []).append(triple)
+
     def _emit_4tuple(*, kind: frozenset[str], side: str,
                      not_aggregated: bool) -> list[tuple[str, ...]]:
         """side ∈ {'sink', 'source'} — which leg must be in group_node."""
         out: list[tuple[str, ...]] = []
+        side_index = arcs_by_sink if side == "sink" else arcs_by_src
         for g in ngd:
-            gnodes = g_nodes.get(g, frozenset())
-            if not gnodes:
+            gnodes_dict = g_nodes_acc.get(g)
+            if not gnodes_dict:
                 continue
-            for p, src, sink in pss_always:
-                if p not in kind:
-                    continue
-                if (g, p) in fully_inside:
-                    continue
-                n = sink if side == "sink" else src
-                if n not in gnodes:
-                    continue
-                if not_aggregated:
-                    if (p, n) in pn_to_aggregators:
+            for n in gnodes_dict:
+                for triple in side_index.get(n, ()):
+                    p, src, sink = triple[0], triple[1], triple[2]
+                    if p not in kind:
                         continue
-                out.append((g, p, src, sink))
+                    if (g, p) in fully_inside:
+                        continue
+                    if not_aggregated and (p, n) in pn_to_aggregators:
+                        continue
+                    out.append((g, p, src, sink))
         return out
 
     def _emit_5tuple(*, kind: frozenset[str], side: str
@@ -1290,20 +1302,20 @@ def write_node_group_dispatch_sets(
         """5-tuple variant: include each ga ∈ flowAggregator with
         (ga, p, n_side) ∈ group_process_node."""
         out: list[tuple[str, ...]] = []
+        side_index = arcs_by_sink if side == "sink" else arcs_by_src
         for g in ngd:
-            gnodes = g_nodes.get(g, frozenset())
-            if not gnodes:
+            gnodes_dict = g_nodes_acc.get(g)
+            if not gnodes_dict:
                 continue
-            for p, src, sink in pss_always:
-                if p not in kind:
-                    continue
-                if (g, p) in fully_inside:
-                    continue
-                n = sink if side == "sink" else src
-                if n not in gnodes:
-                    continue
-                for ga in pn_to_aggregators.get((p, n), ()):
-                    out.append((g, ga, p, src, sink))
+            for n in gnodes_dict:
+                for triple in side_index.get(n, ()):
+                    p, src, sink = triple[0], triple[1], triple[2]
+                    if p not in kind:
+                        continue
+                    if (g, p) in fully_inside:
+                        continue
+                    for ga in pn_to_aggregators.get((p, n), ()):
+                        out.append((g, ga, p, src, sink))
         return out
 
     # Set 1: process__unit__to_node_Not_in_aggregate — sink ∈ group, no ga
