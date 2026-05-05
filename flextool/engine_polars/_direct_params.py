@@ -627,6 +627,19 @@ def _entity_period_time_param(source: "InputSource", entity_class: str,
 
     ``period_filter`` restricts the output to a subset of periods (per
     the active solve), mirroring CSV preprocessing.
+
+    Δ.12c-fix gap #1 — broadcast cascade.  In addition to the explicit
+    ``Map(period→time)`` shape (columns ``[name, period, t, value]``)
+    the helper now broadcasts:
+    * 1d_map(time)  — ``[name, t, value]``  → cross-join with periods.
+    * 1d_map(period) — ``[name, period, value]`` → cross-join with t.
+    * scalar — ``[name, value]`` → cross-join with (period, t).
+    Mirrors flextool preprocessing which writes one row per (entity,
+    period, t) into the ``pdtX.csv`` family.
+
+    Broadcast requires ``period_filter`` to carry the (d, t) pairs to
+    expand against (typically the active solve's ``dt`` frame).  Without
+    it the broadcast paths fall through to ``None``.
     """
     try:
         df = source.parameter_explicit(entity_class, parameter_name)
@@ -638,17 +651,52 @@ def _entity_period_time_param(source: "InputSource", entity_class: str,
     if df is None or df.height == 0:
         return None
     cols = df.columns
-    if "period" not in cols or "t" not in cols or "value" not in cols:
+    if "value" not in cols or "name" not in cols:
         return None
-    lf = (df.lazy()
-            .rename({"name": entity_dim, "period": "d"})
-            .filter(pl.col("value").is_not_null()))
+    has_period = "period" in cols
+    has_t = "t" in cols
+    if has_period and has_t:
+        lf = (df.lazy()
+                .rename({"name": entity_dim, "period": "d"})
+                .filter(pl.col("value").is_not_null()))
+        if filter_zero:
+            lf = lf.filter(pl.col("value") != 0.0)
+        if period_filter is not None and period_filter.height > 0:
+            lf = lf.join(period_filter.lazy().select("d").unique(), on="d",
+                           how="inner")
+        out = lf.select(entity_dim, "d", "t", "value").collect()
+        if out.height == 0:
+            return None
+        return Param((entity_dim, "d", "t"), out.lazy())
+    # Broadcast paths require period_filter to know the (d, t) axis.
+    if period_filter is None or period_filter.height == 0:
+        return None
+    pf_cols = set(period_filter.columns)
+    if not {"d", "t"}.issubset(pf_cols):
+        return None
+    lf = df.lazy().rename({"name": entity_dim}).filter(
+        pl.col("value").is_not_null())
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
-    if period_filter is not None and period_filter.height > 0:
-        lf = lf.join(period_filter.lazy().select("d").unique(), on="d",
-                       how="inner")
-    out = lf.select(entity_dim, "d", "t", "value").collect()
+    dt_lf = period_filter.lazy().select("d", "t").unique()
+    if has_period:
+        # 1d_map(period) → broadcast across t per (entity, d).
+        lf2 = lf.rename({"period": "d"}).select(entity_dim, "d", "value")
+        out = (lf2.join(dt_lf, on="d", how="inner")
+                  .select(entity_dim, "d", "t", "value")
+                  .collect())
+    elif has_t:
+        # 1d_map(time) → broadcast across d per (entity, t).
+        lf2 = lf.select(entity_dim, "t", "value")
+        out = (lf2.join(dt_lf, on="t", how="inner")
+                  .select(entity_dim, "d", "t", "value")
+                  .collect())
+    else:
+        # Scalar → broadcast across (d, t) per entity.
+        lf2 = lf.select(entity_dim, "value")
+        out = (lf2.join(dt_lf, how="cross")
+                  .select(entity_dim, "d", "t", "value")
+                  .collect())
     if out.height == 0:
         return None
     return Param((entity_dim, "d", "t"), out.lazy())
@@ -801,14 +849,20 @@ def p_group_min_cumulative_flow_from_source(source: "InputSource") -> Param | No
 
 
 # §1.16 — pdtGroup (Map period→time) instant flow caps
-def pdt_max_instant_flow_from_source(source: "InputSource") -> Param | None:
+def pdt_max_instant_flow_from_source(source: "InputSource",
+                                      period_filter: pl.DataFrame | None = None,
+                                      ) -> Param | None:
     return _entity_period_time_param(source, "group", "max_instant_flow", "g",
-                                        filter_zero=True)
+                                        filter_zero=True,
+                                        period_filter=period_filter)
 
 
-def pdt_min_instant_flow_from_source(source: "InputSource") -> Param | None:
+def pdt_min_instant_flow_from_source(source: "InputSource",
+                                      period_filter: pl.DataFrame | None = None,
+                                      ) -> Param | None:
     return _entity_period_time_param(source, "group", "min_instant_flow", "g",
-                                        filter_zero=True)
+                                        filter_zero=True,
+                                        period_filter=period_filter)
 
 
 # ---------------------------------------------------------------------------
@@ -964,19 +1018,26 @@ def p_process_source_inertia_constant_from_source(source: "InputSource") -> Para
 # ---------------------------------------------------------------------------
 # §1.10 — UC: startup_cost (1d_map period)
 
-def p_startup_cost_from_source(source: "InputSource") -> Param | None:
-    """``unit.startup_cost`` 1d_map(period) → ``Param(("p", "d"))``.
+def p_startup_cost_from_source(source: "InputSource",
+                                period_filter: pl.DataFrame | None = None,
+                                ) -> Param | None:
+    """``unit.startup_cost`` 1d_map(period) OR scalar → ``Param(("p", "d"))``.
 
     CSV path filters zero rows (``_load_online``: ``filter(value != 0)``).
+    Δ.12c-fix gap #3: scalar broadcast across periods via
+    ``period_filter``.
     """
     return _entity_period_scalar(source, "unit", "startup_cost", "p",
-                                    filter_zero=True)
+                                    filter_zero=True,
+                                    period_filter=period_filter)
 
 
 # ---------------------------------------------------------------------------
 # §1.11 — Storage: Map(period→time) parameters
 
-def p_node_availability_from_source(source: "InputSource") -> Param | None:
+def p_node_availability_from_source(source: "InputSource",
+                                     period_filter: pl.DataFrame | None = None,
+                                     ) -> Param | None:
     """``node.availability`` Map(period→time) → ``Param(("n", "d", "t"))``.
 
     CSV path slices ``pdtNode.csv`` and filters to nodeState entities at
@@ -985,11 +1046,16 @@ def p_node_availability_from_source(source: "InputSource") -> Param | None:
     DB-direct path receives the unfiltered Param and the same filter
     runs at the consumer (no parity divergence on already-filtered
     fixtures: every node referenced by the parameter is a node).
+    Δ.12c-fix gap #1: scalar / 1d_map(time) / 1d_map(period) broadcast
+    via ``period_filter``.
     """
-    return _entity_period_time_param(source, "node", "availability", "n")
+    return _entity_period_time_param(source, "node", "availability", "n",
+                                        period_filter=period_filter)
 
 
-def p_storage_state_reference_value_from_source(source: "InputSource") -> Param | None:
+def p_storage_state_reference_value_from_source(source: "InputSource",
+                                                period_filter: pl.DataFrame | None = None,
+                                                ) -> Param | None:
     """``node.storage_state_reference_value`` Map(period→time) →
     ``Param(("n", "d", "t"))``.
 
@@ -997,22 +1063,28 @@ def p_storage_state_reference_value_from_source(source: "InputSource") -> Param 
     the gate stays on the consumer side.
     """
     return _entity_period_time_param(source, "node",
-                                        "storage_state_reference_value", "n")
+                                        "storage_state_reference_value", "n",
+                                        period_filter=period_filter)
 
 
 # ---------------------------------------------------------------------------
 # §1.4 — CO2: group price + period cap
 
-def p_co2_price_from_source(source: "InputSource") -> Param | None:
+def p_co2_price_from_source(source: "InputSource",
+                             period_filter: pl.DataFrame | None = None,
+                             ) -> Param | None:
     """``group.co2_price`` Map(period→time) → ``Param(("g", "d", "t"))``.
 
     CSV path slices ``pdtGroup.csv`` (param='co2_price').  None default
     on the schema — explicit rows only.
     """
-    return _entity_period_time_param(source, "group", "co2_price", "g")
+    return _entity_period_time_param(source, "group", "co2_price", "g",
+                                        period_filter=period_filter)
 
 
-def p_co2_max_period_from_source(source: "InputSource") -> Param | None:
+def p_co2_max_period_from_source(source: "InputSource",
+                                  period_filter: pl.DataFrame | None = None,
+                                  ) -> Param | None:
     """``group.co2_max_period`` 1d_map(period) → ``Param(("g", "d"))``.
 
     CSV path keys this off ``inp/pd_group.csv`` slice.  None default on
@@ -1022,8 +1094,10 @@ def p_co2_max_period_from_source(source: "InputSource") -> Param | None:
     into the LP when the (g, c, n) join with ``commodity_node_co2`` ×
     ``group__node`` is non-empty (see ``_load_co2_cap``).  We return the
     Param unconditionally — the consumer decides whether to wire it.
+    Δ.12c-fix: ``period_filter`` enables scalar→(period) broadcast.
     """
-    return _entity_period_scalar(source, "group", "co2_max_period", "g")
+    return _entity_period_scalar(source, "group", "co2_max_period", "g",
+                                  period_filter=period_filter)
 
 
 # ---------------------------------------------------------------------------
@@ -1324,12 +1398,22 @@ def _entity_scalar_with_default(source: "InputSource", entity_class: str,
 # ---------------------------------------------------------------------------
 # §1.7, §1.3 — additional Map(period→time) scalars on object classes.
 
-def p_process_availability_from_source(source: "InputSource") -> Param | None:
+def p_process_availability_from_source(source: "InputSource",
+                                        period_filter: pl.DataFrame | None = None,
+                                        ) -> Param | None:
     """``unit/connection.availability`` Map(period→time) →
     ``Param(("p", "d", "t"))``.
 
     Default 1.0 (schema).  CSV path slices ``pdtProcess.csv``
     (param='availability') and emits explicit rows only.
+
+    Note: the unioned (unit + connection) parameter often arrives in
+    mixed Spine shapes (1d_map(time) reads as ``[name, x, value]``,
+    scalar as ``[name, value]``).  The Δ.12c-fix gap #1 broadcast
+    cascade is intentionally NOT enabled here — the mixed-shape /
+    ``x`` column path needs dedicated normalisation that's deferred
+    to a future delta.  The helper continues to emit only the canonical
+    Map(period→time) rows.
     """
     parts: list[pl.LazyFrame] = []
     for cls in ("unit", "connection"):
@@ -1357,13 +1441,16 @@ def p_process_availability_from_source(source: "InputSource") -> Param | None:
     return Param(("p", "d", "t"), out.lazy().sort("p", "d", "t"))
 
 
-def p_commodity_price_from_source(source: "InputSource") -> Param | None:
+def p_commodity_price_from_source(source: "InputSource",
+                                   period_filter: pl.DataFrame | None = None,
+                                   ) -> Param | None:
     """``commodity.price`` Map(period→time) → ``Param(("c", "d", "t"))``.
 
     None default (schema).  CSV path slices ``pdtCommodity.csv``
     (param='price') and emits explicit rows only.
     """
-    return _entity_period_time_param(source, "commodity", "price", "c")
+    return _entity_period_time_param(source, "commodity", "price", "c",
+                                        period_filter=period_filter)
 
 
 # ---------------------------------------------------------------------------
@@ -1559,16 +1646,17 @@ def apply_direct_params(source: "InputSource",
         setattr(flex_data, field, fn(source))
 
     # ─── Δ.4b — group Map(period→time) instant flow caps ─────────────────
-    # TODO(Δ.12b helper-fix): _entity_period_time_param helpers below
-    # only handle the Spine Map(period→time) shape; scalar / 1d_map(time)
-    # broadcast (where pdtX.csv is preprocessed by flextool) returns None
-    # and the seed value survives.  Until the helpers gain the
-    # scalar-broadcast cascade (Δ.12-drop preparation), keep the
-    # conditional assignment.
-    v = _filter_param_by_periods(pdt_max_instant_flow_from_source(source), dt)
+    # Δ.12c-fix gap #1: helpers now broadcast scalar / 1d_map(time) /
+    # 1d_map(period) shapes across the active solve's (d, t) axis when
+    # ``period_filter=dt`` is supplied.  Conditional assignment retained
+    # for fixtures with no Spine rows at all (helper returns None) where
+    # the seed-side preprocessing produces an empty/zero-broadcast Param.
+    v = _filter_param_by_periods(
+        pdt_max_instant_flow_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.pdt_max_instant_flow = v
-    v = _filter_param_by_periods(pdt_min_instant_flow_from_source(source), dt)
+    v = _filter_param_by_periods(
+        pdt_min_instant_flow_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.pdt_min_instant_flow = v
 
@@ -1597,34 +1685,39 @@ def apply_direct_params(source: "InputSource",
         setattr(flex_data, field, fn(source))
 
     # ─── Δ.4b — UC: startup_cost (1d_map period) ─────────────────────────
-    # TODO(Δ.12b helper-fix): _entity_period_scalar handles only the
-    # 1d_map(period) shape; scalar broadcast (which the seed handles
-    # via flextool's preprocessing) returns None.
-    v = _filter_param_by_periods(p_startup_cost_from_source(source), dt)
+    # Δ.12c-fix gap #3: ``_entity_period_scalar`` handles 1d_map(period)
+    # AND scalar shapes when ``period_filter=dt`` is supplied.
+    v = _filter_param_by_periods(
+        p_startup_cost_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.p_startup_cost = v
 
     # ─── Δ.4b — storage Map(period→time) ─────────────────────────────────
-    # TODO(Δ.12b helper-fix): see scalar-broadcast note above.
-    v = _filter_param_by_periods(p_node_availability_from_source(source), dt)
+    # Δ.12c-fix gap #1: helpers broadcast non-Map shapes via period_filter.
+    v = _filter_param_by_periods(
+        p_node_availability_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.p_node_availability = v
     v = _filter_param_by_periods(
-        p_storage_state_reference_value_from_source(source), dt)
+        p_storage_state_reference_value_from_source(source, period_filter=dt),
+        dt)
     if v is not None:
         flex_data.p_storage_state_reference_value = v
 
     # ─── Δ.4b — CO2 (price + cap) ────────────────────────────────────────
-    # TODO(Δ.12b helper-fix): see scalar-broadcast note above.
-    v = _filter_param_by_periods(p_co2_price_from_source(source), dt)
+    v = _filter_param_by_periods(
+        p_co2_price_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.p_co2_price = v
-    v = _filter_param_by_periods(p_co2_max_period_from_source(source), dt)
+    v = _filter_param_by_periods(
+        p_co2_max_period_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.p_co2_max_period = v
 
     # ─── Δ.4b — variable cost (Map period→time) ──────────────────────────
-    # TODO(Δ.12b helper-fix): see scalar-broadcast note above.
+    # TODO(Δ.12-d): the relationship-Param helpers below are inline (not
+    # via ``_entity_period_time_param``) and don't yet handle non-Map
+    # shapes.  Keep conditional assignment until they're refactored.
     v = _filter_param_by_periods(p_pdt_varCost_source_from_source(source), dt)
     if v is not None:
         flex_data.p_pdt_varCost_source = v
@@ -1636,8 +1729,9 @@ def apply_direct_params(source: "InputSource",
         flex_data.p_pdt_varCost_process = v
 
     # ─── Δ.4b — reserves ─────────────────────────────────────────────────
-    # TODO(Δ.12b helper-fix): pdtReserve... Map(period→time) — same
-    # scalar-broadcast caveat.  The relationship-scalar reserves
+    # TODO(Δ.12-d): pdtReserve... is a 5-dim relationship Map; keep
+    # conditional until the inline helper is refactored to follow
+    # the broadcast cascade pattern.  The relationship-scalar reserves
     # (penalty / reliability / max_share / failure-ratio /
     # increase-reserve-ratio) are unconditional — direct 1d_map.
     v = _filter_param_by_periods(
@@ -1659,11 +1753,13 @@ def apply_direct_params(source: "InputSource",
     flex_data.process_delayed__duration = process_delayed__duration_from_source(source)
 
     # ─── Δ.4b — additional Map(period→time) on object classes ───────────
-    # TODO(Δ.12b helper-fix): see scalar-broadcast note above.
-    v = _filter_param_by_periods(p_process_availability_from_source(source), dt)
+    # Δ.12c-fix gap #1: helpers broadcast non-Map shapes via period_filter.
+    v = _filter_param_by_periods(
+        p_process_availability_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.p_process_availability = v
-    v = _filter_param_by_periods(p_commodity_price_from_source(source), dt)
+    v = _filter_param_by_periods(
+        p_commodity_price_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.p_commodity_price = v
 
