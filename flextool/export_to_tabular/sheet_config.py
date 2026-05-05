@@ -726,8 +726,21 @@ def _filter_specs_by_groups(
         # Unknown layouts: keep as-is (defensive).
         kept.append(spec)
 
-    # Pass 2: link sheets — keep iff every dimension class still has a
-    # retained data sheet, or the sheet is in always_include.
+    # Pass 2: link sheets are kept when:
+    #   - the sheet is in always_include, or
+    #   - the link's own entity class has parameter definitions in the
+    #     schema AND those produced a retained data sheet (i.e. the
+    #     class is in retained_classes), or
+    #   - the link's own entity class has no parameter definitions at
+    #     all (pure topology) AND every dimension class still has a
+    #     retained data sheet.
+    #
+    # The first sub-rule is what drops e.g. ``connection_node`` when its
+    # only schema parameters live in a non-selected group such as
+    # ``constraint``.  The third covers pure relationships like
+    # ``commodity_node`` and ``group_node`` — they survive while their
+    # endpoint classes own data, and disappear together with the
+    # endpoint when the endpoint's params are all filtered out.
     class_dims: dict[str, tuple] = {
         ec["name"]: ec["dimension_name_list"] for ec in db_contents.entity_classes
     }
@@ -738,9 +751,15 @@ def _filter_specs_by_groups(
         cls = spec.entity_classes[0] if spec.entity_classes else None
         if cls is None:
             continue
-        dims = class_dims.get(cls, ())
-        if dims and all(d in retained_classes for d in dims):
-            kept.append(spec)
+        has_own_params = bool(db_contents.parameter_definitions.get(cls))
+        if has_own_params:
+            if cls not in retained_classes:
+                continue
+        else:
+            dims = class_dims.get(cls, ())
+            if not dims or not all(d in retained_classes for d in dims):
+                continue
+        kept.append(spec)
 
     # Preserve the prior sort order from build_sheet_specs (specs was already
     # sorted before this filter ran).  Re-running the same key keeps it stable.
