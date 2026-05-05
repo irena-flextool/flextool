@@ -1141,10 +1141,11 @@ def apply_npv(flex_data: object,
       5. ``ed_lifetime_fixed_cost``         (depends on ops_factor + period_with_history)
       6. ``ed_lifetime_fixed_cost_divest``  (depends on inv_factor + ed_divest)
 
-    Each helper is best-effort — exceptions log to debug and leave the
-    field at the CSV-loaded value.  This matches the existing
-    :func:`._derived_params.apply_derived_f` convention and lets the
-    parity sweep act as the gating test.
+    Δ.12b — assignment is unconditional (no silent fall-through to a
+    seed value).  Each helper raises on hard errors and returns
+    ``None`` only when the upstream feature is genuinely inactive
+    (no_invest short-circuit, no period_with_history, etc.) — that
+    ``None`` is the explicit "field stays default" signal.
     """
     from ._derived_params import (
         _read_active_solve, _solve_periods, _period_in_use_set,
@@ -1158,27 +1159,14 @@ def apply_npv(flex_data: object,
     period_with_history = (_read_period_with_history(workdir)
                               or list(period_in_use))
 
-    # 1. p_inflation_op
-    try:
-        infl = p_inflation_op_from_source(
-            source, active_solve, period_in_use, period_universe)
-    except Exception:
-        infl = None
-    if infl is not None:
-        flex_data.p_inflation_op = infl
+    # 1. p_inflation_op (None == no inflation data → field stays default).
+    flex_data.p_inflation_op = p_inflation_op_from_source(
+        source, active_solve, period_in_use, period_universe)
 
-    # 2. p_ed_fixed_cost — guard: only emit when the loader expects it.
-    #    The CSV path emits this field unconditionally (zero-filtered).
-    #    Match the "no_invest short-circuit" gate used downstream by
-    #    `ed_entity_annual_*` (input.py:1147-1150) — `p_ed_fixed_cost`
-    #    is the constant-existing-cost objective term and is always
-    #    safe to emit.
-    try:
-        fc_param = p_ed_fixed_cost_from_source(source, period_with_history)
-    except Exception:
-        fc_param = None
-    if fc_param is not None:
-        flex_data.p_ed_fixed_cost = fc_param
+    # 2. p_ed_fixed_cost — None == no period_with_history (single-solve
+    #    fixtures with no historical periods); legitimate "no data" outcome.
+    flex_data.p_ed_fixed_cost = p_ed_fixed_cost_from_source(
+        source, period_with_history)
 
     # 3-6. NPV / lifetime cascade family.  Mirrors the "no_invest"
     # short-circuit in :mod:`._derived_params.ed_entity_annual_family_from_source`
@@ -1195,41 +1183,24 @@ def apply_npv(flex_data: object,
     if no_invest or active_solve is None:
         return
 
-    try:
-        ann_disc = ed_entity_annual_discounted_from_source(
+    flex_data.ed_entity_annual_discounted = (
+        ed_entity_annual_discounted_from_source(
             source, active_solve,
-            period_invest, period_in_use, period_universe)
-    except Exception:
-        ann_disc = None
-    if ann_disc is not None:
-        flex_data.ed_entity_annual_discounted = ann_disc
+            period_invest, period_in_use, period_universe))
 
-    try:
-        ann_div = ed_entity_annual_divest_discounted_from_source(
+    flex_data.ed_entity_annual_divest_discounted = (
+        ed_entity_annual_divest_discounted_from_source(
             source, active_solve,
-            period_invest, period_in_use, period_universe)
-    except Exception:
-        ann_div = None
-    if ann_div is not None:
-        flex_data.ed_entity_annual_divest_discounted = ann_div
+            period_invest, period_in_use, period_universe))
 
-    try:
-        lfc = ed_lifetime_fixed_cost_from_source(
-            source, active_solve,
-            period_with_history, period_in_use, period_universe)
-    except Exception:
-        lfc = None
-    if lfc is not None:
-        flex_data.ed_lifetime_fixed_cost = lfc
+    flex_data.ed_lifetime_fixed_cost = ed_lifetime_fixed_cost_from_source(
+        source, active_solve,
+        period_with_history, period_in_use, period_universe)
 
-    try:
-        lfcd = ed_lifetime_fixed_cost_divest_from_source(
+    flex_data.ed_lifetime_fixed_cost_divest = (
+        ed_lifetime_fixed_cost_divest_from_source(
             source, active_solve,
-            period_invest, period_in_use, period_universe)
-    except Exception:
-        lfcd = None
-    if lfcd is not None:
-        flex_data.ed_lifetime_fixed_cost_divest = lfcd
+            period_invest, period_in_use, period_universe))
 
 
 __all__ = [

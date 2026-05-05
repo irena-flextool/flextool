@@ -751,15 +751,19 @@ def apply_profile_cascade(flex_data: object,
 
     Invoked after :func:`apply_derived_a` so ``flex_data.dt`` is
     populated.  Matches flextool's per-solve cascade: emits a Param
-    when at least one profile resolves, otherwise leaves the field
-    untouched (tier-5 / zero is implicit at the LP-build site).
+    when at least one profile resolves; the helper returns ``None``
+    when no profile is declared (tier-5 / zero is implicit at the
+    LP-build site).
+
+    Δ.12b — assignment is unconditional; ``None`` is the explicit
+    "no profile data" signal (no silent fall-through to a CSV-loaded
+    seed value).
     """
     dt = getattr(flex_data, "dt", None)
     if dt is None:
         return
-    pv = p_profile_value_from_source_v2(source, dt, workdir=workdir)
-    if pv is not None:
-        flex_data.p_profile_value = pv
+    flex_data.p_profile_value = p_profile_value_from_source_v2(
+        source, dt, workdir=workdir)
 
 
 __all__ = [

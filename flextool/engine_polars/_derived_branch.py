@@ -592,11 +592,11 @@ def apply_branch_cluster(
       5. ``pdt_branch_weight`` (depends on dt + period_branch_full +
          branch weights).
 
-    Honors the "skip on None" contract (no field is overwritten with
-    ``None``).  Per the architectural pattern: the lazy port co-exists
-    with the eager ``input.py`` CSV reader for now; ``input.py`` runs
-    first and sets the fields from CSV, then this helper overrides
-    when the lazy path produces a value.
+    Δ.12b — assignment is now unconditional.  Each helper returns
+    ``None`` when the corresponding CSV is missing/empty (e.g.
+    single-solve fixtures with no branches); ``None`` is the explicit
+    "feature inactive" signal — same outcome the seed produces.  No
+    silent fall-through to a CSV-loaded value.
 
     R-O6 invariant: this helper does NOT touch ``invest_periods`` or
     ``v_invest`` — only the operational dispatch-side weights and
@@ -604,45 +604,36 @@ def apply_branch_cluster(
     """
     dt = getattr(flex_data, "dt", None)
 
-    # 1-2. Set frames (may already be loaded by input.py; only override
-    # when we have a non-empty result).
-    pbf = period_branch_full_df(workdir)
-    if pbf is not None:
-        flex_data.period_branch_full = pbf
-
-    piu = period_in_use_set_df(workdir, source, active_solve)
-    if piu is not None:
-        flex_data.period_in_use_set = piu
-
-    dtna = dt_non_anticipativity_df(workdir)
-    if dtna is not None:
-        flex_data.dt_non_anticipativity = dtna
+    # 1-2. Set frames — None == "no branches / no realized periods" is
+    # the legitimate inactive-feature signal.
+    flex_data.period_branch_full = period_branch_full_df(workdir)
+    flex_data.period_in_use_set = period_in_use_set_df(workdir, source, active_solve)
+    flex_data.dt_non_anticipativity = dt_non_anticipativity_df(workdir)
 
     # 3-4. Branch-weight Params (lazy ports of the previous eager
     # helpers in ``_derived_params.py``).
-    pd_bw = pd_branch_weight_param(workdir, source, active_solve)
-    if pd_bw is not None:
-        flex_data.pd_branch_weight = pd_bw
+    flex_data.pd_branch_weight = pd_branch_weight_param(
+        workdir, source, active_solve)
 
     pdt_bw = pdt_branch_weight_param(workdir, source, active_solve, dt)
-    if pdt_bw is not None:
+    if pdt_bw is not None and dt is not None and dt.height > 0:
         # Match input.py's dense-dt semantics: when dt is supplied,
         # build a (d, t)-dense Param via left-join + coalesce default
         # of 1.0.  This mirrors the previous CSV-cascade behaviour at
         # input.py:2845-2870 (preserves exact frame shape).
-        if dt is not None and dt.height > 0:
-            base = (dt.lazy()
-                      .with_columns(value=pl.lit(1.0))
-                      .select("d", "t", "value"))
-            joined = (base
-                        .join(pdt_bw.lazy,
-                              on=["d", "t"], how="left", suffix="__r")
-                        .with_columns(value=pl.coalesce(
-                            pl.col("value__r"), pl.col("value")))
-                        .select("d", "t", "value")
-                        .collect())
-            pdt_bw = Param(("d", "t"), joined)
-        flex_data.pdt_branch_weight = pdt_bw
+        base = (dt.lazy()
+                  .with_columns(value=pl.lit(1.0))
+                  .select("d", "t", "value"))
+        joined = (base
+                    .join(pdt_bw.lazy,
+                          on=["d", "t"], how="left", suffix="__r")
+                    .with_columns(value=pl.coalesce(
+                        pl.col("value__r"), pl.col("value")))
+                    .select("d", "t", "value")
+                    .collect())
+        pdt_bw = Param(("d", "t"), joined)
+    # Δ.12b — assign unconditionally (None == "no branch weight" signal).
+    flex_data.pdt_branch_weight = pdt_bw
 
 
 __all__ = [

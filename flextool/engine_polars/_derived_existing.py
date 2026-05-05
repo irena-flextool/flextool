@@ -1152,19 +1152,19 @@ def apply_existing_chain(flex_data: object,
             if edd_hist_df is not None and edd_hist_df.height == 0:
                 edd_hist_df = None
 
-    try:
-        pae = p_entity_all_existing_from_handoff(
-            source, active_solve,
-            period_with_history, period_in_use,
-            p_entity_period_existing_capacity=ppec_param,
-            p_entity_previously_invested_capacity=ppic,
-            p_entity_divested=ped,
-            solve_first=solve_first,
-            edd_history=edd_hist_df)
-    except Exception:
-        pae = None
-    if pae is not None:
-        flex_data.p_entity_all_existing = pae
+    # Δ.12b — assign unconditionally.  The helper returns ``None`` only
+    # when there's no entity_invest_method-eligible row in the source,
+    # which is a legitimate "no-existing-capacity-to-track" outcome
+    # (matches the eager helper's empty-frame skip).  Hard errors
+    # propagate (no defensive try/except).
+    flex_data.p_entity_all_existing = p_entity_all_existing_from_handoff(
+        source, active_solve,
+        period_with_history, period_in_use,
+        p_entity_period_existing_capacity=ppec_param,
+        p_entity_previously_invested_capacity=ppic,
+        p_entity_divested=ped,
+        solve_first=solve_first,
+        edd_history=edd_hist_df)
 
 
 __all__ = [
