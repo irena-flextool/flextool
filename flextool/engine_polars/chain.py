@@ -8,11 +8,11 @@ sub-solve's ``FlexData`` via the loader's prior-handoff overlay.
 Two execution modes:
 
 * ``warm=False`` (default) — **cold rebuild** every sub-solve.  Each
-  sub-solve gets a fresh :class:`polar_high_opt.Problem` + HiGHS instance.
+  sub-solve gets a fresh :class:`polar_high.Problem` + HiGHS instance.
   Backward-compatible with the original ``run_chain`` behaviour.
 
 * ``warm=True`` — **solve-type-aware** runner.  Builds a
-  :class:`polar_high_opt.WarmProblem` on the first sub-solve and, on each
+  :class:`polar_high.WarmProblem` on the first sub-solve and, on each
   subsequent sub-solve, decides whether to warm-update the live LP
   (RHS / objective coefs only) or cold-rebuild from scratch.  The
   decision is made by comparing a structural fingerprint of each
@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from polar_high_opt import Problem, Solution, WarmProblem
+from polar_high import Problem, Solution, WarmProblem
 from flextool.engine_polars.input import load_flextool, build_handoff_from_flexpy
 from flextool.engine_polars.model import build_flextool
 from flextool.engine_polars._input_source import _read_csv_file
@@ -185,7 +185,7 @@ _WARM_PARAMS: tuple[tuple[str, str, str, str | None, str | None], ...] = (
 
 # Params that participate in composite LP cells (multi-Param products).
 # When ``run_chain(..., warm=True)`` is invoked, the WarmProblem is told to
-# track these via :meth:`polar_high_opt.WarmProblem.declare_mutable` so per-cell
+# track these via :meth:`polar_high.WarmProblem.declare_mutable` so per-cell
 # auto-update can fire on transitions where any of them differs between
 # sub-solves.  This widens the warm-compatible regime BEYOND the clean-RHS
 # subset above to cover:
@@ -713,7 +713,7 @@ def _apply_warm_updates(warm: WarmProblem,
     Raises :class:`_IncompatibleUpdate` if any Param in
     :data:`_WARM_PARAMS_DEFERRED` differs between ``prior`` and ``nxt``
     AND that Param is NOT in :data:`_MUTABLE_PARAMS`.  Mutable Params
-    are auto-updated via :meth:`polar_high_opt.WarmProblem.update_param`.
+    are auto-updated via :meth:`polar_high.WarmProblem.update_param`.
     Phantom diffs (Params whose consuming feature is dormant per
     :data:`_WARM_PARAM_GATES`) are skipped — those are the audit-proven
     no-effect cases on this LP.  Mutable Params with zero tracked cells
@@ -1037,7 +1037,7 @@ def run_chain(
     warm : bool, default False
         When True, attempt warm LP updates between consecutive
         structurally-compatible sub-solves using
-        :class:`polar_high_opt.WarmProblem`.  Decisions are recorded per-step
+        :class:`polar_high.WarmProblem`.  Decisions are recorded per-step
         on :attr:`ChainStep.warm_used`.  Default ``False`` preserves
         the original cold-rebuild behaviour for full backward
         compatibility.

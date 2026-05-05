@@ -49,7 +49,7 @@ from typing import Any
 
 import polars as pl
 
-from polar_high_opt import Param
+from polar_high import Param
 
 
 # ---------------------------------------------------------------------------

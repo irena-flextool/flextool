@@ -53,7 +53,7 @@ this 4-line closed-form.
 from __future__ import annotations
 
 import polars as pl
-from polar_high_opt import Param
+from polar_high import Param
 from flextool.engine_polars.input import FlexData
 
 

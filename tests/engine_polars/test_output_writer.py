@@ -1,7 +1,7 @@
 """Tests for the Δ.1 output writer adapter.
 
 The adapter (``flextool/engine_polars/_output_writer.py``) takes a
-:class:`polar_high_opt.Solution` from a polars-build LP solve and feeds
+:class:`polar_high.Solution` from a polars-build LP solve and feeds
 it into flextool's existing ``process_outputs`` writers.  Coverage:
 
 * Per-fixture parity: ``output_raw/`` from a native cascade run
@@ -222,7 +222,7 @@ def test_output_writer_state_starts_empty() -> None:
 def test_write_outputs_for_solve_skips_when_no_highs(tmp_path) -> None:
     """``Solution.highs is None`` → adapter logs and returns; no crash."""
     import numpy as np
-    from polar_high_opt.engine import Solution
+    from polar_high.engine import Solution
 
     sol = Solution(
         optimal=True, obj=0.0,

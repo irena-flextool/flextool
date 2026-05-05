@@ -41,7 +41,7 @@ from typing import Iterable
 
 import polars as pl
 
-from polar_high_opt import Param
+from polar_high import Param
 
 from flextool.engine_polars.input import FlexData
 from flextool.engine_polars._input_source import _read_csv_file

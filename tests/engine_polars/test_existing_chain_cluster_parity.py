@@ -229,7 +229,7 @@ def test_p_entity_all_existing_lazy_vs_csv(
     # ``solve_data/p_model.csv`` exactly the way the eager loader does.
     from flextool.engine_polars.input import _read_solve_first
     from flextool.engine_polars._input_source import _read_csv_file
-    from polar_high_opt import Param as _Param
+    from polar_high import Param as _Param
     solve_first = _read_solve_first(work)
 
     ped = getattr(data_eager, "p_entity_divested", None)

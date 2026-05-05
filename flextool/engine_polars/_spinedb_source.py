@@ -285,7 +285,7 @@ class SpineDbSource:
                 if self._count == self._total:
                     return 0  # caller solves the last one
                 # Local imports to avoid build-time cycles.
-                from polar_high_opt import Problem
+                from polar_high import Problem
                 from flextool.engine_polars.model import build_flextool as _build
                 data = load_flextool(self.state.paths.work_folder)
                 pb = Problem()

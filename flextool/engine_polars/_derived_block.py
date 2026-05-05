@@ -57,7 +57,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from polar_high_opt import Param
+from polar_high import Param
 
 from flextool.engine_polars._block_layout import (
     DEFAULT_BLOCK,

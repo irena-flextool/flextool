@@ -43,7 +43,7 @@ prompting removal of the xfail mark.
 from __future__ import annotations
 
 import polars as pl
-from polar_high_opt import Param
+from polar_high import Param
 from flextool.engine_polars.input import FlexData
 
 

@@ -5,7 +5,7 @@ the ``ed_invest_forbidden_no_investment`` pin that the
 the ~11% gap that the cumulative-cap constraint closes."""
 from pathlib import Path
 import polars as pl
-from polar_high_opt import Problem
+from polar_high import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 import pytest
 

@@ -62,12 +62,12 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from polar_high_opt import Param, Sum, Where
+from polar_high import Param, Sum, Where
 
 from ._input_source import _read_csv_file
 
 if TYPE_CHECKING:
-    from polar_high_opt.engine import Var
+    from polar_high.engine import Var
 
 
 # .mod uses 1e30 as +Infinity sentinel; the constraint filter is

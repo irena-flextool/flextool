@@ -1,11 +1,11 @@
 """Lagrangian decomposition wrapper (flextool side).
 
-Generic dual-subgradient algorithm lives in :mod:`polar_high_opt.lagrangian`.
+Generic dual-subgradient algorithm lives in :mod:`polar_high.lagrangian`.
 This module slices a whole-system :class:`flextool.input.FlexData` via
 :mod:`flextool._region_filter`, builds per-region
-:class:`polar_high_opt.Problem`s, translates half-flow pair metadata into
-:class:`polar_high_opt.CouplingSpec`s, and delegates to
-:class:`polar_high_opt.LagrangianProblem`.
+:class:`polar_high.Problem`s, translates half-flow pair metadata into
+:class:`polar_high.CouplingSpec`s, and delegates to
+:class:`polar_high.LagrangianProblem`.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import Callable
 import numpy as np
 import polars as pl
 
-from polar_high_opt import (CouplingEntry, CouplingSpec, LagrangianProblem,
+from polar_high import (CouplingEntry, CouplingSpec, LagrangianProblem,
                     Problem, WarmProblem)
 
 from flextool.engine_polars import _region_filter
@@ -102,7 +102,7 @@ def _identify_coupling_cols(splits: list[RegionSplit],
 def _build_coupling_specs(splits: list[RegionSplit], warm: list[WarmProblem],
                           couplings: list[Coupling]) -> list[CouplingSpec]:
     """Translate :class:`Coupling`s into 2-entry consensus
-    :class:`polar_high_opt.CouplingSpec`s (coefs +1 / -1, rhs 0)."""
+    :class:`polar_high.CouplingSpec`s (coefs +1 / -1, rhs 0)."""
     region_idx = {s.region: i for i, s in enumerate(splits)}
     specs: list[CouplingSpec] = []
     for cpl in couplings:

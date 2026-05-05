@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from polar_high_opt import Param
+from polar_high import Param
 
 from ._input_source import _read_csv_file
 

@@ -40,7 +40,7 @@ import pytest
 
 from flextool.engine_polars import InMemoryReader, SpineDbReader, load_flextool
 from flextool.engine_polars import _direct_params as dp
-from polar_high_opt import Param
+from polar_high import Param
 
 DATA = Path(__file__).resolve().parent / "data"
 
@@ -635,7 +635,7 @@ def test_load_flextool_with_db_reader_solves_correctly():
     first-wave Direct Params are CSV ≡ DB equal on this fixture, so
     the solve must agree to numerical tolerance.
     """
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars import build_flextool
     work = DATA / "work_coal"
     reader = SpineDbReader(work / "tests.sqlite", "coal")
@@ -1078,7 +1078,7 @@ def test_db_direct_solve_parity_with_derived_a(work, sqlite, scenario, parquet):
             "recorded objective omits it.  Fix is upstream — not "
             "regressing on the DB-direct side.  TODO Γ.4: rebuild fixture "
             "from a clean preprocessing run and re-enable.")
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars import build_flextool
     fixture = DATA / work
     parquets = sorted((fixture / "output_raw").glob(parquet))
@@ -1118,7 +1118,7 @@ def test_db_direct_solve_parity_with_projections(work, sqlite, scenario, parquet
     overlay corrupts a feature gate (e.g. accidentally activating the
     reserve subsystem on a fixture that doesn't model reserves).
     """
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars import build_flextool
     fixture = DATA / work
     reader = SpineDbReader(fixture / sqlite, scenario)
@@ -1326,7 +1326,7 @@ def test_db_direct_solve_parity_with_derived_b(work, sqlite, scenario, parquet):
             "Γ.3.G gate-sweep surfaced upstream CSV bug "
             "(e_invest_total mismatch between CSV and Spine).  See "
             "test_db_direct_solve_parity_with_derived_a for diagnosis.")
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars import build_flextool
     fixture = DATA / work
     parquets = sorted((fixture / "output_raw").glob(parquet))
@@ -1667,7 +1667,7 @@ def test_db_direct_solve_parity_with_derived_c(work, sqlite, scenario,
     to rel < 1e-6 with the full Γ.1 + Γ.2 + Γ.3.A + Γ.3.B + Γ.3.C
     overlay applied.
     """
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars import build_flextool
     fixture = DATA / work
     parquets = sorted((fixture / "output_raw").glob(parquet))
@@ -1835,7 +1835,7 @@ def test_db_direct_solve_parity_with_derived_d(work, sqlite, scenario,
     Γ.3.D adds: ``p_entity_all_existing`` (when simple), DC-PF reference
     angle, and the reserve relationship Projection.
     """
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars import build_flextool
     fixture = DATA / work
     parquets = sorted((fixture / "output_raw").glob(parquet))
@@ -2155,7 +2155,7 @@ def test_db_direct_solve_parity_with_derived_e(work, sqlite, scenario,
     multi-resolution synthesis + arc-block weights + state caps + the
     storage-use-reference-value exclusion + rolling-handoff carriers.
     """
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars import build_flextool
     fixture = DATA / work
     parquets = sorted((fixture / "output_raw").glob(parquet))
@@ -2369,7 +2369,7 @@ def test_db_direct_solve_parity_with_derived_f(work, sqlite, scenario,
     multi-year inflation cascade, and the rolling-handoff state read
     side.
     """
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars import build_flextool
     fixture = DATA / work
     parquets = sorted((fixture / "output_raw").glob(parquet))
@@ -2538,7 +2538,7 @@ def test_db_direct_solve_parity_with_derived_g(work, sqlite, scenario,
     Derived Params (commodity ladder, reserves, delay, full multi-
     branch normalisation).
     """
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars import build_flextool
     fixture = DATA / work
     parquets = sorted((fixture / "output_raw").glob(parquet))

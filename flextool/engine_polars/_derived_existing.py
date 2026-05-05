@@ -68,7 +68,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from polar_high_opt import Param
+from polar_high import Param
 
 from ._derived_walks import period_walk_iterator, WindowMethod
 
@@ -1078,7 +1078,7 @@ def apply_existing_chain(flex_data: object,
     )
     from .input import _read_solve_first
     from ._input_source import _read_csv_file
-    from polar_high_opt import Param as _Param
+    from polar_high import Param as _Param
 
     # Δ.12a — prefer the typed SolveContext fields (zero physical IO)
     # when the caller supplied one; fall back to direct workdir reads

@@ -3,7 +3,7 @@ n-1 reserve constraint family (``reserveBalance_up_n_1_eq`` /
 ``reserveBalance_down_n_1_eq``) from the ``_reserve`` feature module."""
 from pathlib import Path
 import polars as pl
-from polar_high_opt import Problem
+from polar_high import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 import pytest
 

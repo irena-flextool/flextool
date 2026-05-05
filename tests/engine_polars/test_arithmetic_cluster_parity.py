@@ -41,7 +41,7 @@ from flextool.engine_polars import (
     load_flextool,
 )
 from flextool.engine_polars import _derived_arithmetic as ar
-from polar_high_opt import Param
+from polar_high import Param
 
 
 HERE = Path(__file__).resolve().parent

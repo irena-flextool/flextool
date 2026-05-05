@@ -15,7 +15,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from polar_high_opt import Param
+from polar_high import Param
 from flextool.engine_polars import load_flextool
 from flextool.engine_polars._dump_csvs import DIRECT_WRITES
 

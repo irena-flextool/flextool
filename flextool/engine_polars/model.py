@@ -18,8 +18,8 @@ Yet to wire (in user-requested order):
 """
 
 import polars as pl
-from polar_high_opt import Sum, Where, Lag, Param
-from polar_high_opt.engine import Var
+from polar_high import Sum, Where, Lag, Param
+from polar_high.engine import Var
 
 from . import _group_slack
 from . import _reserve

@@ -10,7 +10,7 @@ The Γ.8.D port lands a flexpy-native driver that:
   preprocessing modules (the L0-L9 batch + ``preprocessing_solve_time``
   + ``solve_writers``) — those CSV writers stay the source of truth
   while flexpy's `load_flextool` continues to read them.
-* Runs the actual solve via ``polar_high_opt.Problem.solve`` (HiGHS)
+* Runs the actual solve via ``polar_high.Problem.solve`` (HiGHS)
   instead of glpsol/AMPL.
 * Captures :class:`SolveHandoff` per solve via the native
   :func:`build_handoff_from_flexpy`, threads it forward as
@@ -28,7 +28,7 @@ Design choices
   invocation, but with a **flexpy-as-inner-solver** wrapper that:
     - Reads the per-solve snapshot via ``load_flextool``.
     - Builds the LP via ``build_flextool``.
-    - Solves via ``polar_high_opt`` (HiGHS).
+    - Solves via ``polar_high`` (HiGHS).
     - Captures handoff via ``build_handoff_from_flexpy``.
     - Deposits handoff into ``state.handoffs`` for the next iteration's
       preprocessing.
@@ -76,7 +76,7 @@ from flextool.engine_polars._solve_state import (
 )
 
 if TYPE_CHECKING:
-    from polar_high_opt import Solution
+    from polar_high import Solution
 
     from flextool.engine_polars._solve_config import SolveConfig
     from flextool.engine_polars._timeline import TimelineConfig
@@ -264,7 +264,7 @@ def _drive_cascade(
     from flextool.flextoolrunner import orchestration as _flx_orch
     from flextool.flextoolrunner.solver_runner import SolverRunner
 
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars.input import (
         build_handoff_from_flexpy,
         load_flextool,

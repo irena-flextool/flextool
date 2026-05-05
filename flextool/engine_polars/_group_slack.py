@@ -116,8 +116,8 @@ from __future__ import annotations
 from pathlib import Path
 import polars as pl
 
-from polar_high_opt import Sum, Where, Param
-from polar_high_opt.engine import Var, Expr
+from polar_high import Sum, Where, Param
+from polar_high.engine import Var, Expr
 
 from ._input_source import _read_csv_file
 

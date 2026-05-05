@@ -24,7 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 toolbox = ["spinetoolbox"]
 viewer = ["tsdownsample>=0.1.3", "networkx>=3.0"]
-engine-polars = ["polar-high-opt", "polars"]
+engine-polars = ["polar-high", "polars"]
 
 [project.scripts]
 flextool-gui = "flextool.gui.__main__:main"

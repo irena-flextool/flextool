@@ -1,6 +1,6 @@
 """TIER A output writer adapter — Δ.1 dispatch.
 
-Bridges the polars-build :class:`polar_high_opt.Solution` to flextool's
+Bridges the polars-build :class:`polar_high.Solution` to flextool's
 existing post-solve writers in ``flextool.process_outputs``.  These
 writers are the same code paths flextool uses today; we feed them the
 live ``highspy.Highs`` instance the polars LP just produced + the work
@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from polar_high_opt import Solution
+    from polar_high import Solution
 
     from flextool.engine_polars._solve_handoff import SolveHandoff
 
@@ -175,7 +175,7 @@ def write_outputs_for_solve(
     No-ops gracefully when ``sol.highs is None`` (no live solver
     instance available — typically a synthesized Solution in a unit
     test); callers should pass solutions from a real
-    :func:`polar_high_opt.Problem.solve` call.
+    :func:`polar_high.Problem.solve` call.
     """
     h = getattr(sol, "highs", None)
     if h is None:

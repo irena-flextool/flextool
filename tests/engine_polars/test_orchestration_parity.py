@@ -278,7 +278,7 @@ def test_build_handoff_from_flexpy_covers_eight_carriers() -> None:
     if not work.exists():
         pytest.skip("work_multi_year_one_solve_co2_limit not present")
 
-    from polar_high_opt import Problem
+    from polar_high import Problem
     from flextool.engine_polars.input import (
         build_handoff_from_flexpy,
         load_flextool,

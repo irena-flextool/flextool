@@ -12,7 +12,7 @@ derivation that includes §8.1.
 """
 from __future__ import annotations
 
-from polar_high_opt import Problem
+from polar_high import Problem
 from flextool.engine_polars import build_flextool
 
 from flex_toy_existing_fixed_cost import data, expected_obj

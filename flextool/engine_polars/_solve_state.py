@@ -10,7 +10,7 @@ Direct 1:1 port of the relevant types from
 ``flextool/flextoolrunner/runner_state.py`` (lines 22-133).  Fields that are
 specific to the legacy orchestrator (file-source-only flags, mod-side
 phase capture, glpsol pathways) are intentionally absent here — flexpy
-runs natively on HiGHS via ``polar_high_opt`` and the per-CLI flags live
+runs natively on HiGHS via ``polar_high`` and the per-CLI flags live
 on the CLI wrapper rather than in shared state.
 """
 from __future__ import annotations

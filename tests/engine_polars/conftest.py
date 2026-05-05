@@ -1,7 +1,7 @@
 """Pytest sys.path setup for engine_polars integration tests.
 
 Layers:
-  * polar-high-opt is installed as a real dependency (``pip install -e``).
+  * polar-high is installed as a real dependency (``pip install -e``).
   * ``flextool.engine_polars`` is in the flextool-engine repo and importable
     via the repo's package layout (no path injection needed).
   * ``tests/engine_polars/fixtures/`` — synthetic flextool-flavoured fixtures

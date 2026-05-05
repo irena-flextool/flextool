@@ -56,12 +56,12 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from polar_high_opt import Param, Where
+from polar_high import Param, Where
 
 from ._input_source import _read_csv_file
 
 if TYPE_CHECKING:
-    from polar_high_opt.engine import Var
+    from polar_high.engine import Var
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +293,7 @@ def add_constraints(m, d, vars: dict, *,
     # ``source`` and once aliased as ``sink`` — so the join with the per-arc
     # ``over`` frame matches the right column on each side.  Build virtual
     # Vars sharing v_angle's column ids but with renamed dim columns.
-    from polar_high_opt.engine import Var
+    from polar_high.engine import Var
 
     v_angle_src = Var(
         name=v_angle.name + "__as_source",
@@ -355,7 +355,7 @@ def nodeBalance_back_flow_terms(d, vars: dict, p_unitsize, p_step_duration) -> d
     if v_flow_back is None or dc_arcs is None or dc_arcs.height == 0:
         return {}
 
-    from polar_high_opt import Sum
+    from polar_high import Sum
 
     # Sink side: back flow leaves the sink — subtract from sink balance.
     # Build ``flow_from_n_back`` = (p, source, sink, n=sink): same shape

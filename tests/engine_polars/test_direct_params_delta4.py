@@ -35,7 +35,7 @@ from flextool.engine_polars import (
     load_flextool,
 )
 from flextool.engine_polars import _direct_params as dp
-from polar_high_opt import Param
+from polar_high import Param
 
 DATA = Path(__file__).resolve().parent / "data"
 

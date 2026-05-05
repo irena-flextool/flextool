@@ -1,7 +1,7 @@
 """Δ.14 — CLI ``--engine`` flag wiring tests.
 
 Covers the dispatch glue that makes ``cmd_run_flextool`` route to either
-the legacy GMPL pipeline or the native polar-high-opt cascade, per the
+the legacy GMPL pipeline or the native polar-high cascade, per the
 precedence rules documented on the ``--engine`` help text:
 
 1. Explicit ``--engine=native|gmpl`` flag wins.

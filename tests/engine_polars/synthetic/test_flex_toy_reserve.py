@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from polar_high_opt import Problem
+from polar_high import Problem
 from flextool.engine_polars import build_flextool
 
 from flex_toy_reserve import data, expected_obj

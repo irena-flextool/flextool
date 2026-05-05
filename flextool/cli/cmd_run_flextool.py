@@ -113,7 +113,7 @@ def _warn_dropped_native_flags(args):
         logging.warning(
             "engine=native: ignoring GMPL-only flag(s) %s — these "
             "configure the glpsol/HiGHS legacy pipeline and have no "
-            "effect on the polar-high-opt cascade.  Re-run with "
+            "effect on the polar-high cascade.  Re-run with "
             "--engine=gmpl if you need them.",
             ', '.join(dropped),
         )
@@ -121,7 +121,7 @@ def _warn_dropped_native_flags(args):
 
 
 def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
-    """Δ.14 — Native (flexpy / polar-high-opt) cascade.
+    """Δ.14 — Native (flexpy / polar-high) cascade.
 
     Returns ``0`` on success, ``1`` on any non-optimal sub-solve.
     Output-tree emission (``write_outputs``, ``timings.csv`` finalize,
@@ -311,7 +311,7 @@ def main():
                              '``FlexToolRunner.run_model`` — the path the '
                              'GUI / Toolbox subprocess invocations have '
                              'always used.  ``native`` runs the in-process '
-                             'flexpy/polar-high-opt cascade via '
+                             'flexpy/polar-high cascade via '
                              '``flextool.engine_polars.run_chain_from_db``: '
                              'flextool''s preprocessing still emits the '
                              'snapshot CSVs, but each per-solve LP is built '
@@ -451,7 +451,7 @@ def main():
     # Resolve the orchestration backend once.  ``_resolve_engine``
     # encodes the precedence (CLI flag > env var > default 'gmpl').
     # ``--engine=native`` skips the legacy ``FlexToolRunner`` /
-    # ``run_model`` path entirely and runs the polar-high-opt cascade
+    # ``run_model`` path entirely and runs the polar-high cascade
     # via ``run_chain_from_db`` instead; ``--engine=gmpl`` (the default)
     # preserves the historical behaviour byte-for-byte for backward
     # compatibility with the Toolbox / GUI subprocess invocations.

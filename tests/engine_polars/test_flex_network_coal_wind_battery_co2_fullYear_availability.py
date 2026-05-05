@@ -6,7 +6,7 @@ Without it flexpy was under-pricing peak hours and running ~35% low.
 """
 from pathlib import Path
 import polars as pl
-from polar_high_opt import Problem
+from polar_high import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 import pytest
 

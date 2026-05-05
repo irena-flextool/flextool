@@ -1,7 +1,7 @@
 """First wave of Direct Param helpers (Γ.1).
 
 Each function in this module takes an :class:`InputSource` and returns
-a single :class:`polar_high_opt.Param` (or, for entity-only sets, a
+a single :class:`polar_high.Param` (or, for entity-only sets, a
 :class:`polars.DataFrame`) — the trivial Direct port of one Param's
 loader logic.  The body of each helper is at most:
 
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from polar_high_opt import Param
+from polar_high import Param
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
