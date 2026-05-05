@@ -64,6 +64,8 @@ from flextool.engine_polars import (
 
 from _golden import assert_obj_within
 
+pytestmark = pytest.mark.solver
+
 DATA = Path(__file__).resolve().parent / "data"
 WORK = DATA / "work_inflation_check"
 SQLITE = WORK / "tests.sqlite"

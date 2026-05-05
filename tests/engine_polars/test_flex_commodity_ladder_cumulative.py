@@ -13,6 +13,9 @@ import polars as pl
 
 from polar_high_opt import Problem
 from flextool.engine_polars import build_flextool, load_flextool
+import pytest
+
+pytestmark = pytest.mark.solver
 
 
 WORK = Path(__file__).resolve().parent / "data" / "work_commodity_ladder_cumulative"

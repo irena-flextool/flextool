@@ -7,6 +7,8 @@ import pytest
 from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
+pytestmark = pytest.mark.solver
+
 WORK = Path(__file__).resolve().parent / "data" / "work_capacity_margin"
 
 

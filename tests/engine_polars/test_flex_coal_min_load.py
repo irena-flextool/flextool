@@ -9,6 +9,8 @@ import polars as pl
 from polar_high_opt import Problem
 from flextool.engine_polars import load_flextool, build_flextool
 
+pytestmark = pytest.mark.solver
+
 
 DATA = Path(__file__).resolve().parent / "data"
 

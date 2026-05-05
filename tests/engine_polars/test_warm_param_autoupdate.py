@@ -19,6 +19,8 @@ import pytest
 
 from polar_high_opt import Param, Problem, Sum, WarmProblem
 
+pytestmark = pytest.mark.solver
+
 
 def _toy_problem(p_cap: Param, p_price: Param, p_dur: Param) -> Problem:
     """Tiny 2-time-step LP:

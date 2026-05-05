@@ -48,6 +48,8 @@ from polar_high_opt import Problem
 from flextool.engine_polars import build_flextool, load_flextool
 from flextool.engine_polars.input import build_handoff_from_flexpy
 
+pytestmark = pytest.mark.solver
+
 
 WORK = (
     Path(__file__).resolve().parent

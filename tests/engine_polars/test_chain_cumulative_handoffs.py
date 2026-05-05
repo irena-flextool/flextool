@@ -35,6 +35,8 @@ import pytest
 
 from flextool.engine_polars import run_chain
 
+pytestmark = pytest.mark.solver
+
 
 WORK = (
     Path(__file__).resolve().parent

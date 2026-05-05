@@ -33,6 +33,8 @@ import pytest
 from polar_high_opt import Problem
 from flextool.engine_polars import build_flextool, load_flextool
 
+pytestmark = pytest.mark.solver
+
 DATA = Path(__file__).resolve().parent / "data"
 WORK_HALF = DATA / "work_years_represented_half"
 WORK_2_5 = DATA / "work_years_represented_2_5"
