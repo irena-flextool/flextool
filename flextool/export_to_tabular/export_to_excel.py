@@ -47,6 +47,7 @@ def export_to_excel(
     include_advanced: bool = False,
     use_new_format: bool = True,
     include_stochastics: bool = False,  # deprecated alias for include_advanced
+    include_groups: list[str] | None = None,
 ) -> None:
     """Export a FlexTool Spine DB to an Excel (.xlsx) file.
 
@@ -58,6 +59,12 @@ def export_to_excel(
         use_new_format: If True, use the v2 self-describing format with embedded
             metadata.  If False, use the original v1 format.
         include_stochastics: Deprecated alias for include_advanced.
+        include_groups: When given, restrict output to parameters whose
+            ``parameter_group_name`` is in the list (e.g. ``['basics',
+            'model', 'timeline', 'solve_basics']``).  Parameters with no
+            group are dropped.  Sheets that lose all their columns are
+            dropped, unless listed under a selected group in
+            ``always_include_with_groups`` in ``export_settings.yaml``.
     """
     if include_stochastics:
         include_advanced = True
@@ -84,7 +91,11 @@ def export_to_excel(
     _ew._stochastic_index_names = settings.get("stochastic_index_names",
                                                 ["forecast", "branch_time", "time", "is_realized"])
     _ew._time_structure_classes = set(settings.get("time_structure_classes", []))
-    specs: list[SheetSpec] = build_sheet_specs(db_contents, settings)
+    specs: list[SheetSpec] = build_sheet_specs(
+        db_contents,
+        settings,
+        include_groups=set(include_groups) if include_groups else None,
+    )
     navigate_groups: list[dict[str, Any]] = settings.get("navigate_groups", [])
     tab_color_map = _build_tab_color_map(navigate_groups) if navigate_groups else {}
 

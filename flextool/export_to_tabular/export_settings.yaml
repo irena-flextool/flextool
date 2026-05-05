@@ -252,6 +252,17 @@ advanced_sheets:
   - model_periods_available
   - solve_period_period
 
+# When --groups is used, sheets listed here are kept even if all their
+# parameters were filtered out, provided one of the listed parent groups
+# is in the selection.  Use this for structural sheets whose presence is
+# needed to wire up a group's data even when the columns themselves live
+# in another group.
+#
+# Example:
+#   solve_basics:
+#     - solve_period
+always_include_with_groups: {}
+
 # INFO rows: optional information text shown at the top of specific sheets.
 # The reader ignores rows starting with "INFO:".
 info_rows:
