@@ -3440,7 +3440,17 @@ def load_flextool(source: "Path | str | FlexInputSource",
             ctx = None
 
     if db_reader is not None:
-        _apply_db_overrides(flex_data, db_reader, source, ctx=ctx)
+        # Activate the process-level CSV-read cache for the duration of
+        # the override pass — every ``_read_csv_file`` call inside
+        # ``_derived_params``/``_derived_existing``/``_derived_branch``/
+        # the helper modules deduplicates by absolute path so repeated
+        # reads of the same workdir CSV (``period_in_use_set.csv``,
+        # ``period__branch.csv``, ``edd_history.csv``, …) hit memory.
+        if ctx is not None:
+            with ctx:
+                _apply_db_overrides(flex_data, db_reader, source, ctx=ctx)
+        else:
+            _apply_db_overrides(flex_data, db_reader, source, ctx=ctx)
 
     # Δ.11 — overlay in-memory handoff carriers onto the FlexData
     # built so far.  Replaces the previous post-load ``apply_handoff``

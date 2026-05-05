@@ -50,6 +50,9 @@ import polars as pl
 Kind = Literal["input", "solve_data"]
 
 
+_active_cache: dict[Path, pl.DataFrame] | None = None
+
+
 def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     """Single residual ``polars.read_csv`` site for the engine_polars
     package.
@@ -63,10 +66,44 @@ def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     funnel-compliant without having to construct a full ``CsvSource``
     on the hot path.
 
-    Behaviour is identical to ``polars.read_csv(path)`` — caller is
-    responsible for existence checks and any post-read renames.
+    Δ.12a — when a per-solve cache is active (set via
+    :func:`_install_csv_cache` from the ``SolveContext`` constructor),
+    repeated reads of the same absolute path hit memory.  This is the
+    cheap, transparent way to deduplicate the dozens of
+    ``period_in_use_set.csv`` / ``period__branch.csv`` /
+    ``edd_history.csv`` reads that happen across the apply_derived_*
+    helpers.  Behaviour is otherwise identical to
+    ``polars.read_csv(path)``.
     """
+    if _active_cache is not None:
+        try:
+            key = Path(path).resolve()
+        except (OSError, RuntimeError):
+            key = Path(path)
+        cached = _active_cache.get(key)
+        if cached is not None:
+            return cached
+        df = pl.read_csv(path)
+        _active_cache[key] = df
+        return df
     return pl.read_csv(path)
+
+
+def _install_csv_cache(cache: "dict[Path, pl.DataFrame] | None") -> None:
+    """Δ.12a — install / clear the process-level CSV-read cache.
+
+    Called by ``SolveContext.__enter__`` / ``__exit__`` (or the
+    explicit ``activate_cache`` / ``deactivate_cache`` helpers) to
+    install the per-solve cache so :func:`_read_csv_file` calls in any
+    helper hit memory on repeats.
+
+    Pass ``None`` to disable caching (default).  Multiple
+    activate/deactivate cycles within a single process are supported;
+    nesting is the caller's responsibility (typically via the SolveContext
+    context-manager boundary which is one-deep per solve).
+    """
+    global _active_cache
+    _active_cache = cache
 
 
 # ---------------------------------------------------------------------------

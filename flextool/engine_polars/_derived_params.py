@@ -125,6 +125,43 @@ def _read_active_solve(workdir: Path) -> str | None:
     return df[col][0]
 
 
+def _ctx_read(
+    ctx: "SolveContext | None",
+    workdir: Path | str | None,
+    name: str,
+    *,
+    kind: str = "solve_data",
+) -> "pl.DataFrame | None":
+    """Δ.12a — single funnel for workdir CSV reads inside derived helpers.
+
+    When ``ctx`` is supplied, the call routes through
+    :meth:`SolveContext.read_csv` which caches by absolute path so
+    repeated reads of the same file (e.g. ``period_in_use_set.csv``,
+    ``period__branch.csv``) hit memory.  When ``ctx`` is None falls
+    back to direct ``_read_csv_file`` against the workdir — preserves
+    pre-Δ.12a behaviour for callers that haven't been wired up yet.
+
+    Returns ``None`` if the file is absent (matches the existing
+    pre-existence-check pattern most helper sites use).
+    """
+    if ctx is not None:
+        return ctx.read_csv(name, kind=kind)
+    if workdir is None:
+        return None
+    if kind == "solve_data":
+        path = Path(workdir) / "solve_data" / name
+    elif kind == "input":
+        path = Path(workdir) / "input" / name
+    else:
+        path = Path(workdir) / name
+    if not path.exists():
+        return None
+    try:
+        return _read_csv_file(path)
+    except pl.exceptions.NoDataError:
+        return pl.DataFrame()
+
+
 # ---------------------------------------------------------------------------
 # §3.1.1 — dt + p_step_duration
 # ---------------------------------------------------------------------------
@@ -134,6 +171,8 @@ def dt_and_step_duration_from_source(
     source: "InputSource",
     active_solve: str,
     workdir: Path | None = None,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> tuple[pl.DataFrame, Param] | None:
     """Compute the per-(d, t) ``dt`` set and ``p_step_duration`` Param
     for the active solve.
@@ -160,20 +199,15 @@ def dt_and_step_duration_from_source(
     # flextool's per_solve_sets.py:95-101 which writes branch periods on
     # top of realised + invest periods).  Otherwise fall back to the
     # union of realized_periods + invest_periods.
-    if workdir is not None:
-        piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-        if piu_path.exists():
-            piu = _read_csv_file(piu_path)
-            if piu.height > 0 and "period" in piu.columns:
-                realized_p = (piu.lazy()
-                                .select(pl.col("period").alias("d"))
-                                .unique())
-            else:
-                realized_p = None
-        else:
-            realized_p = None
-    else:
-        realized_p = None
+    realized_p = None
+    if ctx is not None and ctx.period_in_use.height > 0:
+        realized_p = ctx.period_in_use.lazy().select("d").unique()
+    elif workdir is not None:
+        piu = _ctx_read(ctx, workdir, "period_in_use_set.csv")
+        if piu is not None and piu.height > 0 and "period" in piu.columns:
+            realized_p = (piu.lazy()
+                            .select(pl.col("period").alias("d"))
+                            .unique())
     if realized_p is None:
         parts: list[pl.LazyFrame] = []
         for ec, par in (("solve", "realized_periods"),
@@ -207,19 +241,16 @@ def dt_and_step_duration_from_source(
     # use the anchor's timeset via ``period__branch.csv`` (anchor → branch
     # map; flextool's per_solve_sets.py:65-95 does this implicitly by
     # writing per-branch steps_in_use rows under the anchor's timeset).
-    if workdir is not None:
-        pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
-        if pb_path.exists():
-            pb_raw = _read_csv_file(pb_path)
-            if pb_raw.height > 0:
-                pb_lf = (pb_raw.lazy()
-                            .rename({"period": "anchor", "branch": "d"})
-                            .filter(pl.col("anchor") != pl.col("d")))
-                # Map branch d → anchor's timeset.
-                anchor_ts = (pt.rename({"d": "anchor"})
-                                .join(pb_lf, on="anchor", how="inner")
-                                .select("d", "ts"))
-                pt = pl.concat([pt, anchor_ts]).unique()
+    pb_raw = _ctx_read(ctx, workdir, "period__branch.csv") if workdir is not None or ctx is not None else None
+    if pb_raw is not None and pb_raw.height > 0:
+        pb_lf = (pb_raw.lazy()
+                    .rename({"period": "anchor", "branch": "d"})
+                    .filter(pl.col("anchor") != pl.col("d")))
+        # Map branch d → anchor's timeset.
+        anchor_ts = (pt.rename({"d": "anchor"})
+                        .join(pb_lf, on="anchor", how="inner")
+                        .select("d", "ts"))
+        pt = pl.concat([pt, anchor_ts]).unique()
 
     ts_timeline = _try_param(source, "timeset", "timeline")
     if ts_timeline is None:
@@ -992,7 +1023,7 @@ def apply_derived_a(
         p_rp_cost_weight, pd_branch_weight, pdt_branch_weight, p_inflow
         → p_process_existing_count, p_profile_value (high-risk, last).
     """
-    active_solve = _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
     if active_solve is None:
         # Single-solve fixtures may omit solve_current.csv; fall back to
         # the FlexData's already-loaded dt (no override possible).
@@ -1002,7 +1033,7 @@ def apply_derived_a(
     dt_step = None
     try:
         dt_step = dt_and_step_duration_from_source(source, active_solve,
-                                                       workdir)
+                                                       workdir, ctx=ctx)
     except Exception:
         dt_step = None
     if dt_step is None:
@@ -2226,7 +2257,7 @@ def apply_derived_b(
     Δ.4 deleted the deprecated wrapper alias.
     """
     # Active solve (used for existing-period broadcast in some helpers).
-    active_solve = _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
 
     # Build the classifier once.
     try:
@@ -3052,19 +3083,27 @@ def _edEntity_lifetime_lf(source: "InputSource",
 
 def _period_in_use_set(source: "InputSource",
                           active_solve: str | None,
-                          workdir: Path | None = None) -> list[str]:
+                          workdir: Path | None = None,
+                          *,
+                          ctx: "SolveContext | None" = None) -> list[str]:
     """Compute the canonical ``period_in_use`` set for the active solve.
 
     Mirrors flextool's ``preprocessing/per_solve_sets.py:95-101``:
     distinct periods in ``solve_data/steps_in_use.csv`` (a.k.a. the
-    realised ``dt`` set).  When ``workdir`` is provided AND the file is
-    present, prefer that — it's the authoritative set INCLUDING any
-    stochastic-branch periods.
+    realised ``dt`` set).  When ``ctx`` is supplied, the typed
+    :pyattr:`SolveContext.period_in_use` frame is consulted first — same
+    semantics as the workdir CSV path but served from cache.  When
+    ``workdir`` is provided AND the file is present (no ctx), the
+    authoritative CSV is read directly.
 
     Falls back to ``solve.realized_periods ∪ solve.invest_periods`` when
-    no workdir CSV is available — sufficient for non-stochastic
-    fixtures.
+    no in-memory / workdir source is available — sufficient for non-
+    stochastic fixtures.
     """
+    if ctx is not None:
+        piu = ctx.period_in_use
+        if piu.height > 0:
+            return piu["d"].cast(pl.Utf8, strict=False).to_list()
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if p.exists():
@@ -4008,7 +4047,7 @@ def apply_derived_c(
     Δ.3 replaced the previous ``derived_overrides_c`` dict-return;
     Δ.4 deleted the deprecated wrapper alias.
     """
-    active_solve = _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
     dt_csv = getattr(flex_data, "dt", None)
     sd_csv = getattr(flex_data, "p_step_duration", None)
 
@@ -4573,7 +4612,7 @@ def apply_derived_d(
     Δ.3 replaced the previous ``derived_overrides_d`` dict-return;
     Δ.4 deleted the deprecated wrapper alias.
     """
-    active_solve = _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
 
     # ─── §3.11 p_entity_all_existing ─────────────────────────────────
     try:
@@ -5884,7 +5923,7 @@ def apply_derived_e(
         flow_from_nodeBalance_block_filtered,
     )
 
-    active_solve = _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
     nodeState_df = getattr(flex_data, "nodeState", None)
     has_state = (nodeState_df is not None
                   and getattr(nodeState_df, "height", 0) > 0)
@@ -7648,7 +7687,7 @@ def apply_derived_g(
     Δ.3 replaced the previous ``derived_overrides_g`` dict-return;
     Δ.4 deleted the deprecated wrapper alias.
     """
-    active_solve = _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
     dt = getattr(flex_data, "dt", None)
 
     # ─── §3.17.1 p_f_d_k ───────────────────────────────────────────

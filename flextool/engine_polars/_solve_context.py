@@ -44,7 +44,7 @@ from typing import Any
 
 import polars as pl
 
-from ._input_source import _read_csv_file
+from ._input_source import _install_csv_cache, _read_csv_file
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +140,13 @@ class SolveContext:
     _csv_cache: dict[Path, pl.DataFrame | None] = field(
         default_factory=dict, repr=False
     )
+    # Internal: process-level cache view installed by ``activate`` —
+    # a strict subset of ``_csv_cache`` (None-valued entries excluded
+    # because the ``_read_csv_file`` cache only stores successfully-
+    # read frames).  ``None`` means caching is not currently active.
+    _active_cache: "dict[Path, pl.DataFrame] | None" = field(
+        default=None, repr=False
+    )
 
     # ------------------------------------------------------------------
     # Factories
@@ -223,6 +230,49 @@ class SolveContext:
             df = pl.DataFrame()
         self._csv_cache[path] = df
         return df
+
+    # ------------------------------------------------------------------
+    # Cache activation (process-level, scoped via context manager)
+    # ------------------------------------------------------------------
+
+    def activate(self) -> None:
+        """Δ.12a — install the read-cache so helper modules' direct
+        ``_read_csv_file`` calls hit this context's cache on repeat.
+
+        Idempotent: calling ``activate`` twice on the same context is
+        a no-op (the cache dict is shared with ``read_csv`` so the
+        typed-field load already populated it).  Pair with
+        :meth:`deactivate` to clear, or use the context-manager
+        protocol.
+        """
+        # Reuse the same dict that ``read_csv`` populates so the typed
+        # fields and ad-hoc reads share a cache.  Type widens from
+        # ``DataFrame | None`` to ``DataFrame``-only on the active-
+        # cache side (None entries don't get installed; absent paths
+        # take the slow path through ``_read_csv_file`` once and then
+        # populate normally).
+        cache_view: dict[Path, pl.DataFrame] = {
+            k: v for k, v in self._csv_cache.items() if v is not None
+        }
+        # Mutating ``cache_view`` propagates back via the dict identity
+        # — but ``_csv_cache`` and the active cache must remain
+        # synchronised.  Easiest: swap ``_csv_cache`` to the eager-
+        # only dict so subsequent reads land in both views.
+        self._csv_cache = {k: v for k, v in cache_view.items()}
+        _install_csv_cache(cache_view)
+        self._active_cache = cache_view
+
+    def deactivate(self) -> None:
+        """Δ.12a — uninstall the read-cache."""
+        _install_csv_cache(None)
+        self._active_cache = None
+
+    def __enter__(self) -> "SolveContext":
+        self.activate()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.deactivate()
 
     # ------------------------------------------------------------------
     # Typed-field convenience accessors
