@@ -2916,25 +2916,73 @@ def _assign_param_names(data: "FlexData") -> "FlexData":
     return data
 
 
+# Δ.12c — explicit fixture → (sqlite_filename, scenario_name) overrides
+# for fixtures whose workdir basename doesn't follow the
+# ``work_<scenario>`` convention (or whose DB lives in a non-default
+# sqlite file).  Each entry was validated against the fixture's
+# ``_gen_*.py`` script.
+_FIND_SCENARIO_OVERRIDES: "dict[str, tuple[str, str]]" = {
+    "work_2day_stochastic_dispatch_full_storage":
+        ("tests.sqlite", "2_day_stochastic_dispatch"),
+    "work_2day_stochastic_dispatch_no_storage":
+        ("tests.sqlite", "2_day_stochastic_dispatch_no_storage"),
+    "work_commodity_ladder_annual":
+        ("tests.sqlite", "coal_ladder_annual"),
+    "work_commodity_ladder_cumulative":
+        ("tests.sqlite", "coal_ladder_cumulative"),
+    "work_dc_power_flow":
+        ("case14.sqlite", "dc_opf_test"),
+    "work_delay_source_coef":
+        ("tests.sqlite", "water_pump_delayed"),
+    "work_inflation_check":
+        ("tests.sqlite", "wind_battery_invest_lifetime_renew"),
+}
+
+
 def _find_scenario(workdir: Path) -> str | None:
     """Best-effort scenario discovery for ``load_flextool``'s Γ.8.F Step 3
     auto-construction of a :class:`SpineDbReader`.
 
-    Strategy (single rule, kept narrow on purpose):
+    Strategy (in order):
 
-    * Strip a leading ``work_`` from the workdir's basename and check
-      whether the resulting name appears as a scenario in
-      ``<workdir>/tests.sqlite``.  If yes, return it.
-    * Otherwise return ``None`` — the caller should fall back to the
-      CSV-only path.
+    1. Explicit override map (``_FIND_SCENARIO_OVERRIDES``) — fixtures
+       whose workdir basename doesn't match the ``work_<scenario>``
+       convention.  Each entry maps to ``(sqlite_filename, scenario_name)``.
+    2. Strip a leading ``work_`` from the workdir's basename and check
+       whether the resulting name appears as a scenario in
+       ``<workdir>/tests.sqlite``.  If yes, return it.
+    3. Otherwise return ``None`` — the caller should fall back to the
+       CSV-only path.
 
-    This covers every fixture in ``tests/engine_polars/data/`` (each
-    of which is named ``work_<scenario>``) without forcing a scenario
-    name into workdirs that don't follow the convention (e.g. tempdirs
-    materialised by ``SpineDbSource``).  Production callers that build
-    their own workdirs without the ``work_`` prefix will continue to
-    use the CSV-only path until they pass an explicit ``db_reader=``.
+    This covers every fixture in ``tests/engine_polars/data/`` without
+    forcing a scenario name into workdirs that don't follow the
+    convention (e.g. tempdirs materialised by ``SpineDbSource``).
+    Production callers that build their own workdirs without the
+    ``work_`` prefix will continue to use the CSV-only path until they
+    pass an explicit ``db_reader=``.
     """
+    # 1. Explicit override map for the seven mismatch fixtures.
+    override = _FIND_SCENARIO_OVERRIDES.get(workdir.name)
+    if override is not None:
+        sqlite_filename, scenario_name = override
+        sqlite_path = workdir / sqlite_filename
+        if not sqlite_path.exists():
+            return None
+        # Verify the scenario actually exists in the DB before returning
+        # it — this guards against stale fixtures with renamed scenarios.
+        try:
+            import sqlite3
+            with sqlite3.connect(str(sqlite_path)) as con:
+                cur = con.cursor()
+                cur.execute("SELECT name FROM scenario")
+                scenarios = {row[0] for row in cur.fetchall()}
+        except Exception:  # noqa: BLE001 — best-effort discovery
+            return None
+        if scenario_name in scenarios:
+            return scenario_name
+        return None
+
+    # 2. Default ``work_<scenario>`` convention.
     sqlite_path = workdir / "tests.sqlite"
     if not sqlite_path.exists():
         return None
@@ -3035,11 +3083,15 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # Γ.8.F Step 3 — auto-construct a SpineDbReader from the workdir
     # when the caller didn't supply one and the workdir matches the
     # ``work_<scenario>`` convention with a corresponding tests.sqlite.
+    # Δ.12c — explicit overrides handle fixtures whose DB filename is
+    # not ``tests.sqlite`` (e.g. ``case14.sqlite`` for dc_power_flow).
     if db_reader is None and workdir_for_db is not None:
         scenario = _find_scenario(workdir_for_db)
         if scenario is not None:
             from flextool.engine_polars._spinedb_reader import SpineDbReader
-            sqlite_path = workdir_for_db / "tests.sqlite"
+            override = _FIND_SCENARIO_OVERRIDES.get(workdir_for_db.name)
+            sqlite_filename = override[0] if override is not None else "tests.sqlite"
+            sqlite_path = workdir_for_db / sqlite_filename
             try:
                 db_reader = SpineDbReader(
                     f"sqlite:///{sqlite_path}", scenario=scenario,
@@ -3509,6 +3561,16 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     _drv.apply_derived_e(flex_data, db_reader, workdir_path, ctx=ctx)
     _drv.apply_derived_f(flex_data, db_reader, workdir_path, ctx=ctx)
     _drv.apply_derived_g(flex_data, db_reader, workdir_path, ctx=ctx)
+
+    # Δ.12c — ``apply_existing_chain`` runs LAST (after ``apply_derived_f``)
+    # so that the handoff carriers ``p_entity_previously_invested_capacity``
+    # and ``p_entity_divested`` are populated before the chain summation
+    # consumes them.  Previously this was inside ``apply_derived_d``, which
+    # forced the call site to depend on a pre-seeded CSV value for those
+    # carriers.  Now that ``apply_derived_f`` is the authoritative producer
+    # of the carriers, the seed in ``_load_invest`` becomes redundant.
+    from flextool.engine_polars import _derived_existing as _ex
+    _ex.apply_existing_chain(flex_data, db_reader, workdir_path, ctx=ctx)
 
 
 def _read_period_set(path: Path) -> set[str]:
