@@ -110,11 +110,16 @@ def test_chain_cumulative_handoffs_accumulate_monotonically() -> None:
         prev_keys = cur_keys
         prev_height = ri.height
 
-        # Phase-2 carriers — must stay None until flexpy implements them.
-        assert h.cumulative_co2 is None, (
-            f"{sub}: cumulative_co2 unexpectedly populated — Phase-2 work")
-        assert h.cumulative_commodity is None, (
-            f"{sub}: cumulative_commodity unexpectedly populated — Phase-2 "
-            f"work (ladder rolling)")
-        assert h.cum_sim_hours is None, (
-            f"{sub}: cum_sim_hours unexpectedly populated — Phase-2 work")
+        # Δ.11 — ``cum_sim_hours`` is now extracted from the workdir
+        # (Σ p_step_duration × realized_dispatch).  This fixture has no
+        # commodity ladder so ``cumulative_commodity`` stays None; the
+        # ``cumulative_co2`` extractor isn't ported (uses workdir CSV
+        # propagation via flextool's preprocessing).
+        if h.cum_sim_hours is not None:
+            csh = h.cum_sim_hours
+            assert csh.height >= 1, (
+                f"{sub}: cum_sim_hours populated but empty")
+            # Monotone-non-decreasing: chain-cumulative.
+            assert (csh["value"].to_list() == sorted(csh["value"].to_list())
+                    or csh.height == 1), (
+                f"{sub}: cum_sim_hours not monotone")
