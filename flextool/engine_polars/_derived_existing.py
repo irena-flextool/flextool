@@ -74,6 +74,7 @@ from ._derived_walks import period_walk_iterator, WindowMethod
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
+    from flextool.engine_polars._solve_context import SolveContext
 
 
 # -- Method-enum constants (mirror flextool/flextool_base.dat:211-212) -------
@@ -1044,7 +1045,8 @@ def apply_existing_chain(flex_data: object,
                               source: "InputSource",
                               workdir: Path,
                               *,
-                              handoff: object | None = None) -> None:
+                              handoff: object | None = None,
+                              ctx: "SolveContext | None" = None) -> None:
     """Apply Cluster B helpers to ``flex_data`` (mutates in place).
 
     Wired-in fields:

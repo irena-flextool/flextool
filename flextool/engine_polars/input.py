@@ -3426,8 +3426,21 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # initial seed.  In Δ.5+, when every FlexData field has a DB-direct
     # helper, the CSV path will retire and these apply_* calls become
     # the primary loader.
+    # Δ.12a — build the per-solve in-memory state once, ahead of
+    # ``_apply_db_overrides`` so derived helpers can consume cached
+    # frames + typed fields rather than re-reading ``solve_data/*.csv``
+    # 119 times per solve.  Falls back to ``None`` when no workdir is
+    # known (handoff-only callers).
+    ctx = None
+    if workdir_for_db is not None:
+        from flextool.engine_polars._solve_context import SolveContext
+        try:
+            ctx = SolveContext.from_workdir(workdir_for_db)
+        except Exception:  # pragma: no cover — defensive
+            ctx = None
+
     if db_reader is not None:
-        _apply_db_overrides(flex_data, db_reader, source)
+        _apply_db_overrides(flex_data, db_reader, source, ctx=ctx)
 
     # Δ.11 — overlay in-memory handoff carriers onto the FlexData
     # built so far.  Replaces the previous post-load ``apply_handoff``
@@ -3440,20 +3453,21 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # below — db_reader is required for that path).
     if handoff is not None:
         sd_dir = workdir_for_db / "solve_data" if workdir_for_db is not None else None
-        flex_data = _overlay_handoff(flex_data, handoff, sd_dir)
+        flex_data = _overlay_handoff(flex_data, handoff, sd_dir, ctx=ctx)
         # Re-apply the cluster B chained-existing helper so
         # ``p_entity_all_existing`` reflects the in-memory handoff
         # carriers (rather than the workdir's pre-handoff CSV value).
         if db_reader is not None and workdir_for_db is not None:
             from flextool.engine_polars import _derived_existing as _ex
             _ex.apply_existing_chain(flex_data, db_reader, workdir_for_db,
-                                          handoff=handoff)
+                                          handoff=handoff, ctx=ctx)
 
     return _assign_param_names(flex_data)
 
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
-                          source: "object") -> None:
+                          source: "object",
+                          ctx: "object | None" = None) -> None:
     """Apply the DB-direct construction passes to ``flex_data`` in
     place.  Δ.3 consolidates the previous 9-wrapper override chain into
     a single linear sequence; each ``apply_*`` callee mutates
@@ -3470,6 +3484,14 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
       7. Derived E — storage block algebra.
       8. Derived F — lifetime cascade + handoff state + full inflation.
       9. Derived G — commodity ladder, reserves, delay, multi-branch.
+
+    Δ.12a — when *ctx* is supplied, helpers may consume the typed
+    in-memory state (``ctx.solve_name``, ``ctx.realized_periods``, …)
+    and the cached :meth:`SolveContext.read_csv` instead of issuing
+    fresh ``_read_csv_file`` calls per invocation.  The ctx is built by
+    :func:`load_flextool` from the workdir before this function runs;
+    helpers that don't yet consume it fall through to their pre-Δ.12a
+    direct-CSV path with no behavioural change.
     """
     from flextool.engine_polars import _direct_params as _dp
     from flextool.engine_polars import _projection_params as _pp
@@ -3491,13 +3513,13 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         return
     workdir_path = Path(workdir)
 
-    _drv.apply_derived_a(flex_data, db_reader, workdir_path)
-    _drv.apply_derived_b(flex_data, db_reader, workdir_path)
-    _drv.apply_derived_c(flex_data, db_reader, workdir_path)
-    _drv.apply_derived_d(flex_data, db_reader, workdir_path)
-    _drv.apply_derived_e(flex_data, db_reader, workdir_path)
-    _drv.apply_derived_f(flex_data, db_reader, workdir_path)
-    _drv.apply_derived_g(flex_data, db_reader, workdir_path)
+    _drv.apply_derived_a(flex_data, db_reader, workdir_path, ctx=ctx)
+    _drv.apply_derived_b(flex_data, db_reader, workdir_path, ctx=ctx)
+    _drv.apply_derived_c(flex_data, db_reader, workdir_path, ctx=ctx)
+    _drv.apply_derived_d(flex_data, db_reader, workdir_path, ctx=ctx)
+    _drv.apply_derived_e(flex_data, db_reader, workdir_path, ctx=ctx)
+    _drv.apply_derived_f(flex_data, db_reader, workdir_path, ctx=ctx)
+    _drv.apply_derived_g(flex_data, db_reader, workdir_path, ctx=ctx)
 
 
 def _read_period_set(path: Path) -> set[str]:
@@ -4270,7 +4292,9 @@ def build_handoff_from_flexpy(
 
 
 def _overlay_handoff(flex_data: "FlexData", handoff,
-                       solve_data_dir: Path | None = None) -> "FlexData":
+                       solve_data_dir: Path | None = None,
+                       *,
+                       ctx: "object | None" = None) -> "FlexData":
     """Δ.11 — internal helper used by :func:`load_flextool` to overlay an
     in-memory :class:`SolveHandoff` onto the FlexData built from disk.
 

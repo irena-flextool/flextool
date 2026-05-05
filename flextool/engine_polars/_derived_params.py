@@ -47,6 +47,7 @@ from ._input_source import _read_csv_file
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
+    from flextool.engine_polars._solve_context import SolveContext
 
 
 # ---------------------------------------------------------------------------
@@ -973,6 +974,8 @@ def apply_derived_a(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> None:
     """Apply Γ.3.A foundational Derived Params, mutating ``flex_data``
     in place.
@@ -2209,6 +2212,8 @@ def apply_derived_b(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> None:
     """Apply Γ.3.B Derived Params, mutating ``flex_data`` in place.
 
@@ -3988,6 +3993,8 @@ def apply_derived_c(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> None:
     """Apply Γ.3.C Derived Params, mutating ``flex_data`` in place.
 
@@ -4553,6 +4560,8 @@ def apply_derived_d(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> None:
     """Apply Γ.3.D Derived Params, mutating ``flex_data`` in place.
 
@@ -5844,6 +5853,8 @@ def apply_derived_e(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> None:
     """Apply Γ.3.E storage block algebra (§3.9), mutating ``flex_data``
     in place.
@@ -6989,6 +7000,8 @@ def apply_derived_f(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> None:
     """Apply Γ.3.F lifetime cascade family + handoff state + multi-year
     inflation cascade, mutating ``flex_data`` in place.
@@ -7618,6 +7631,8 @@ def apply_derived_g(
     flex_data: object,
     source: "InputSource",
     workdir: Path,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> None:
     """Apply Γ.3.G residual Derived Params, mutating ``flex_data``
     in place.
