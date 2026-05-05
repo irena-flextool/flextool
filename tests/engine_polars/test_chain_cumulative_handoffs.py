@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine_polars import run_chain
+from flextool.engine_polars import run_chain_from_db
 
 pytestmark = pytest.mark.solver
 
@@ -43,6 +43,7 @@ WORK = (
     / "data"
     / "work_wind_battery_invest_lifetime_renew_4solve"
 )
+SCENARIO_NAME = "wind_battery_invest_lifetime_renew_4solve"
 
 
 def test_chain_cumulative_handoffs_accumulate_monotonically() -> None:
@@ -66,8 +67,11 @@ def test_chain_cumulative_handoffs_accumulate_monotonically() -> None:
     """
     if not WORK.exists():
         pytest.skip(f"fixture {WORK} not present")
+    db_path = WORK / "tests.sqlite"
+    if not db_path.exists():
+        pytest.skip(f"DB {db_path} not present")
 
-    sols = run_chain(WORK)
+    sols = run_chain_from_db(db_path, scenario_name=SCENARIO_NAME)
     chain_order = list(sols)
     assert chain_order == [
         "y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week",

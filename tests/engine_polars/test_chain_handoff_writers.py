@@ -1,5 +1,4 @@
-"""Diagnostic for handoff-writer parity through ``run_chain`` +
-``apply_handoff``.
+"""Diagnostic for handoff-writer parity through ``run_chain_from_db``.
 
 Mirrors flextool's ``test_handoff_writers.py`` — which unit-tests
 flextool's CSV writers (``write_p_entity_divested``,
@@ -13,10 +12,13 @@ flexpy's analogue lives in :func:`flextool.input.build_handoff_from_flexpy`
 + :func:`flextool.input.apply_handoff` — the in-memory equivalents
 of those CSV writers.  Parity is asserted indirectly by
 ``test_flex_chain_apply_handoff.py`` (objective-level parity end-
-to-end with ``use_handoff_overlay=True``).  This test goes one
-layer deeper: it walks the chain with the snapshot CSVs as the
-source of truth (``use_handoff_overlay=False``) and inspects the
-in-memory handoff carriers FlexPy emits at each sub-solve.
+to-end).  This test goes one layer deeper: it walks the chain via
+the native cascade and inspects the in-memory handoff carriers
+flexpy emits at each sub-solve, comparing against flextool's
+committed reference snapshots in ``solve_data_<sub>/``.
+
+Δ.12e — migrated from the legacy ``run_chain(work)`` driver to the
+native ``run_chain_from_db`` cascade.
 
 Carriers exercised end-to-end:
 
@@ -41,7 +43,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine_polars import run_chain
+from flextool.engine_polars import run_chain_from_db
 
 pytestmark = pytest.mark.solver
 
@@ -51,6 +53,7 @@ WORK = (
     / "data"
     / "work_wind_battery_invest_lifetime_renew_4solve"
 )
+SCENARIO_NAME = "wind_battery_invest_lifetime_renew_4solve"
 
 
 def test_chain_handoff_writers_match_snapshots() -> None:
@@ -73,8 +76,11 @@ def test_chain_handoff_writers_match_snapshots() -> None:
     """
     if not WORK.exists():
         pytest.skip(f"fixture {WORK} not present")
+    db_path = WORK / "tests.sqlite"
+    if not db_path.exists():
+        pytest.skip(f"DB {db_path} not present")
 
-    sols = run_chain(WORK)
+    sols = run_chain_from_db(db_path, scenario_name=SCENARIO_NAME)
     chain_order = list(sols)
     assert len(chain_order) >= 2, (
         f"need ≥2 sub-solves for handoff parity; got {chain_order}")

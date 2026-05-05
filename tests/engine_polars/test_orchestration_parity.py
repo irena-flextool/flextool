@@ -10,11 +10,14 @@ produces objective values matching flextool's reference at
    the same class.
 2. ``model_solve`` validation raises ``FlexToolConfigError`` on empty /
    multi-model configurations.
-3. The legacy ``run_chain(work_folder)`` path is unchanged with the
-   default feature flag (R-O7 mitigation).
-4. The feature flag toggles between native and legacy correctly.
-5. ``build_handoff_from_flexpy`` populates all 9 carriers when the
+3. ``build_handoff_from_flexpy`` populates all 9 carriers when the
    underlying CSVs / variables are present.
+
+Δ.12e — the four feature-flag tests guarding the legacy
+file-symlink ``run_chain(native=False)`` driver were retired with
+the legacy code path.  ``run_chain`` is now a thin compat shim that
+always delegates to native; tests for legacy driver semantics no
+longer apply.
 
 The parity sweep uses the same fixture-discovery pattern as
 ``test_solve_config_parity._discover_fixtures`` so adding a new
@@ -37,7 +40,6 @@ from flextool.engine_polars import (
     SolveHandoff,
     run_chain_from_db,
     run_orchestration,
-    run_chain,
 )
 from flextool.engine_polars._solve_config import (
     HiGHSConfig,
@@ -151,65 +153,6 @@ def test_run_orchestration_empty_solves_raises(tmp_path) -> None:
     state = _make_minimal_state(model_solve={"m": []})
     with pytest.raises(FlexToolConfigError, match="No solves"):
         run_orchestration(state, tmp_path)
-
-
-# ---------------------------------------------------------------------------
-# Feature flag — env var gate.
-# ---------------------------------------------------------------------------
-
-
-def test_run_chain_legacy_default_feature_flag(monkeypatch) -> None:
-    """Default value for ``native`` must be False (env var unset).
-
-    R-O7 mitigation: the legacy ``run_chain(work_folder)`` path is the
-    default so existing tests stay green.
-    """
-    # Clear the env var to ensure the default branch fires.
-    monkeypatch.delenv("FLEXPY_USE_NATIVE_ORCHESTRATION", raising=False)
-
-    # We can't easily test the legacy code path without a real fixture —
-    # but we CAN test that ``native=False`` doesn't go through the new
-    # path by passing a bogus work_folder and verifying the error
-    # surfaces from the legacy code (which would fail on
-    # ``_read_chain_order``).  The native path errors with "no DB
-    # found" instead.
-    bogus = Path("/tmp/this_does_not_exist_run_chain_test")
-    # Native path raises ValueError("no DB found"); legacy path raises
-    # FileNotFoundError on the missing dir during iterdir (the legacy
-    # _read_chain_order falls back to scanning ``solve_data_*/`` dirs).
-    # Either way: legacy doesn't raise the "no DB found" message that
-    # the native path uses, which is the discriminator.
-    with pytest.raises((ValueError, FileNotFoundError)) as exc:
-        run_chain(bogus, native=False)
-    assert "no DB found" not in str(exc.value)
-
-
-def test_run_chain_native_flag_explicitly_true(tmp_path) -> None:
-    """``native=True`` requires a DB; otherwise raises ValueError."""
-    # No DB in this empty tmp_path → native path raises clearly.
-    with pytest.raises(ValueError, match="no DB found"):
-        run_chain(tmp_path, native=True)
-
-
-def test_run_chain_env_var_enables_native(monkeypatch, tmp_path) -> None:
-    """Setting the env var to ``"1"`` selects the native path."""
-    monkeypatch.setenv("FLEXPY_USE_NATIVE_ORCHESTRATION", "1")
-    with pytest.raises(ValueError, match="no DB found"):
-        run_chain(tmp_path)  # native=None → consults env var
-
-
-def test_run_chain_env_var_off_uses_legacy(monkeypatch, tmp_path) -> None:
-    """Env var unset / set to ``"0"`` keeps legacy default."""
-    monkeypatch.setenv("FLEXPY_USE_NATIVE_ORCHESTRATION", "0")
-    # Legacy path complains about missing input/ + no solve_data_* dirs;
-    # native would complain about missing DB.  Both raise some kind of
-    # error — distinguish by message: if the error mentions "no DB
-    # found" we went native; otherwise legacy.  An empty tmp_path has
-    # no model__solve.csv and no solve_data_* dirs → legacy raises
-    # ValueError("no sub-solves found").
-    with pytest.raises((ValueError, FileNotFoundError)) as exc:
-        run_chain(tmp_path)
-    assert "no DB found" not in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine_polars import run_chain
+from flextool.engine_polars import run_chain_from_db
 
 pytestmark = pytest.mark.solver
 
@@ -50,9 +50,11 @@ DATA = Path(__file__).resolve().parent / "data"
 # lifetime-renew is the canonical case in the suite (4 distinct
 # ``period`` realisations across 4 solves; each solve adds rows from
 # its own period to the cumulative carrier).
+# (work_dirname, scenario_name)
 SCENARIOS = (
-    "work_wind_battery_invest_lifetime_renew_4solve",
-    "work_multi_year",
+    ("work_wind_battery_invest_lifetime_renew_4solve",
+     "wind_battery_invest_lifetime_renew_4solve"),
+    ("work_multi_year", "multi_year"),
 )
 
 
@@ -69,58 +71,55 @@ def test_chain_realized_invest_handoff_is_unique_across_rolling_solves() -> None
     that the equivalent invariant holds on the IN-MEMORY carriers
     flexpy actually produces.
 
-    Also asserts the ``apply_handoff`` round-trip preserves uniqueness:
-    feeding solve N's handoff into solve N+1 via the overlay must not
-    introduce duplicate (e, d) rows in the post-overlay FlexData.
+    Δ.12e — the native cascade always threads handoff in-memory between
+    solves (the legacy ``use_handoff_overlay`` knob retired with the
+    file-symlink driver), so the equivalence between "cold" and
+    "overlay" modes the original test asserted is now structural: there
+    is only one mode.
     """
-    available = [s for s in SCENARIOS if (DATA / s).exists()]
+    available = [
+        (work_name, scen) for (work_name, scen) in SCENARIOS
+        if (DATA / work_name).exists()
+        and (DATA / work_name / "tests.sqlite").exists()
+    ]
     if not available:
         pytest.skip("no rolling-invest fixtures available")
 
-    for scenario in available:
-        work = DATA / scenario
-        # Run with default mode (snapshot CSVs as source of truth).
-        sols_cold = run_chain(work)
-        # Run with handoff-overlay mode (in-memory carriers fully
-        # drive solve N+1's prebuilt invest state).  The overlay
-        # path is what flextool's drop_levels test is structurally
-        # analogous to — flexpy's apply_handoff has to deduplicate
-        # the (e, d) → realized_invest map on its way into the
-        # next sub-solve's FlexData.
-        sols_overlay = run_chain(work, use_handoff_overlay=True)
+    for work_name, scenario_name in available:
+        work = DATA / work_name
+        db_path = work / "tests.sqlite"
+        sols = run_chain_from_db(db_path, scenario_name=scenario_name)
 
-        for mode_name, sols in (("cold", sols_cold),
-                                  ("overlay", sols_overlay)):
-            for sub, step in sols.items():
-                h = step.handoff
+        for sub, step in sols.items():
+            h = step.handoff
 
-                ri = h.realized_invest
-                if ri is not None:
-                    assert ri.unique(["entity", "period"]).height == ri.height, (
-                        f"{scenario}/{sub}/{mode_name}: realized_invest has "
-                        f"duplicate (entity, period) rows — equivalent of "
-                        f"flextool's drop_levels non-unique-index bug.\n"
-                        f"{ri}"
-                    )
-                    # Levels are exactly (entity, period) — no leftover
-                    # solve dim (analogue of "droplevel('solve')").
-                    assert set(ri.columns) >= {"entity", "period", "value"}, (
-                        f"{scenario}/{sub}/{mode_name}: realized_invest "
-                        f"columns unexpected: {ri.columns}")
+            ri = h.realized_invest
+            if ri is not None:
+                assert ri.unique(["entity", "period"]).height == ri.height, (
+                    f"{work_name}/{sub}: realized_invest has "
+                    f"duplicate (entity, period) rows — equivalent of "
+                    f"flextool's drop_levels non-unique-index bug.\n"
+                    f"{ri}"
+                )
+                # Levels are exactly (entity, period) — no leftover
+                # solve dim (analogue of "droplevel('solve')").
+                assert set(ri.columns) >= {"entity", "period", "value"}, (
+                    f"{work_name}/{sub}: realized_invest "
+                    f"columns unexpected: {ri.columns}")
 
-                re = h.realized_existing
-                if re is not None:
-                    assert re.unique(["entity", "period"]).height == re.height, (
-                        f"{scenario}/{sub}/{mode_name}: realized_existing "
-                        f"has duplicate (entity, period) rows.\n{re}"
-                    )
+            re = h.realized_existing
+            if re is not None:
+                assert re.unique(["entity", "period"]).height == re.height, (
+                    f"{work_name}/{sub}: realized_existing "
+                    f"has duplicate (entity, period) rows.\n{re}"
+                )
 
-                # divest_cumulative: keyed by entity only; uniqueness
-                # is the analogue of flextool's d_realize_invest dedup
-                # (one row per entity, never per-solve duplicates).
-                dc = h.divest_cumulative
-                if dc is not None:
-                    assert dc.unique(["entity"]).height == dc.height, (
-                        f"{scenario}/{sub}/{mode_name}: divest_cumulative "
-                        f"has duplicate entity rows.\n{dc}"
-                    )
+            # divest_cumulative: keyed by entity only; uniqueness
+            # is the analogue of flextool's d_realize_invest dedup
+            # (one row per entity, never per-solve duplicates).
+            dc = h.divest_cumulative
+            if dc is not None:
+                assert dc.unique(["entity"]).height == dc.height, (
+                    f"{work_name}/{sub}: divest_cumulative "
+                    f"has duplicate entity rows.\n{dc}"
+                )

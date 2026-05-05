@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine_polars import run_chain
+from flextool.engine_polars import run_chain_from_db
 
 pytestmark = pytest.mark.solver
 
@@ -45,10 +45,14 @@ DATA = Path(__file__).resolve().parent / "data"
 # Scenarios chained through both ``co2_method=period`` (5weeks) and
 # no-CO2-group (multi_year, 4solve) paths.  Use the first that's
 # locally available; bail early if none are.
+# (work_dirname, scenario_name) — the scenario inside each fixture's
+# ``tests.sqlite`` matches the work-dir suffix for these three.
 SCENARIOS = (
-    "work_5weeks_invest_fullYear_dispatch_coal_wind",  # has group__co2_method
-    "work_wind_battery_invest_lifetime_renew_4solve",  # no CO2 group
-    "work_multi_year",                                  # no CO2 group
+    ("work_5weeks_invest_fullYear_dispatch_coal_wind",
+     "5weeks_invest_fullYear_dispatch_coal_wind"),  # has group__co2_method
+    ("work_wind_battery_invest_lifetime_renew_4solve",
+     "wind_battery_invest_lifetime_renew_4solve"),   # no CO2 group
+    ("work_multi_year", "multi_year"),               # no CO2 group
 )
 
 
@@ -73,19 +77,24 @@ def test_chain_cumulative_co2_handoff_diagnostic() -> None:
     parts (1) and (2) will then need updating to assert the carrier's
     value-level correctness.
     """
-    available = [s for s in SCENARIOS if (DATA / s).exists()]
+    available = [
+        (work_name, scen) for (work_name, scen) in SCENARIOS
+        if (DATA / work_name).exists()
+        and (DATA / work_name / "tests.sqlite").exists()
+    ]
     if not available:
         pytest.skip("no multi-solve CO2-relevant fixtures available")
 
-    for scenario in available:
-        work = DATA / scenario
-        sols = run_chain(work)
-        assert sols, f"{scenario}: chain produced no sub-solves"
+    for work_name, scenario_name in available:
+        work = DATA / work_name
+        db_path = work / "tests.sqlite"
+        sols = run_chain_from_db(db_path, scenario_name=scenario_name)
+        assert sols, f"{work_name}: chain produced no sub-solves"
 
         # (1) Carrier is None — no fixture uses cumulative CO2 method.
         for sub_solve, step in sols.items():
             assert step.handoff.cumulative_co2 is None, (
-                f"{scenario}/{sub_solve}: cumulative_co2 unexpectedly "
+                f"{work_name}/{sub_solve}: cumulative_co2 unexpectedly "
                 f"populated ({step.handoff.cumulative_co2}). flexpy "
                 f"doesn't model rolling cumulative CO2 yet — see "
                 f"audit/handoff_full_parity_gaps.md §B3."
@@ -98,17 +107,17 @@ def test_chain_cumulative_co2_handoff_diagnostic() -> None:
                 continue
             lines = [ln for ln in text.strip().split("\n") if ln.strip()]
             assert len(lines) <= 1, (
-                f"{scenario}/{sub_solve}: co2_cum_realized_tonnes.csv has "
+                f"{work_name}/{sub_solve}: co2_cum_realized_tonnes.csv has "
                 f"{len(lines)} lines, expected header-only:\n{text}"
             )
 
         # (3) No-clobber: re-running the chain doesn't alter the file.
         pre = {sub: _co2_csv_text(work, sub) for sub in sols}
-        run_chain(work)
+        run_chain_from_db(db_path, scenario_name=scenario_name)
         post = {sub: _co2_csv_text(work, sub) for sub in sols}
         for sub in sols:
             assert pre[sub] == post[sub], (
-                f"{scenario}/{sub}: co2_cum_realized_tonnes.csv drifted "
-                f"across two run_chain invocations — flexpy must not write "
-                f"this file."
+                f"{work_name}/{sub}: co2_cum_realized_tonnes.csv drifted "
+                f"across two run_chain_from_db invocations — flexpy must "
+                f"not write this file."
             )
