@@ -1024,14 +1024,15 @@ def run_chain(
         Directory containing ``input/``, ``output_raw/`` and one
         ``solve_data_<sub>/`` per chained sub-solve.
     use_handoff_overlay : bool, default False
-        When True, every sub-solve except the first ignores the
-        snapshot's pre-written handoff CSVs and instead overlays the
-        prior sub-solve's flexpy-extracted ``SolveHandoff`` onto the
-        loaded ``FlexData`` via :func:`apply_handoff`.  This makes the
-        chain runner a TRUE standalone driver — flextool's per-sub-solve
-        snapshots are needed only for STRUCTURE (entity sets, methods,
-        profiles, …), and all multi-solve STATE flows in-memory between
-        flexpy invocations.  Default ``False`` preserves the original
+        When True, every sub-solve except the first passes the prior
+        sub-solve's flexpy-extracted ``SolveHandoff`` into
+        :func:`load_flextool` via the ``handoff=`` kwarg (Δ.11 — replaces
+        the prior post-load ``apply_handoff`` overlay).  The carrier-
+        derived FlexData fields are populated during the build directly
+        from the in-memory carriers; flextool's per-sub-solve snapshots
+        are needed only for STRUCTURE (entity sets, methods, profiles,
+        …), and all multi-solve STATE flows in-memory between flexpy
+        invocations.  Default ``False`` preserves the original
         behaviour: snapshot CSVs are the source of truth for handoff.
     warm : bool, default False
         When True, attempt warm LP updates between consecutive

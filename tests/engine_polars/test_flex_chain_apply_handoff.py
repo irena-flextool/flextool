@@ -3,11 +3,10 @@
 Companion to ``test_flex_chain_wind_battery_invest_lifetime_renew_4solve.py``
 which validates the chain runner's default mode (snapshot CSVs as the
 source of truth for handoff state).  This module flips
-``use_handoff_overlay=True`` so the chain runner ignores each
-sub-solve's pre-written handoff CSVs and instead overlays the prior
-flexpy solve's in-memory ``SolveHandoff`` onto the loaded ``FlexData``
-via :func:`flextool.apply_handoff` — making the runner a TRUE
-standalone driver of a multi-solve flextool scenario.
+``use_handoff_overlay=True`` so the chain runner passes each
+sub-solve's prior flexpy ``SolveHandoff`` to ``load_flextool(...,
+handoff=)`` — Δ.11 construct-with-handoff path — making the runner a
+TRUE standalone driver of a multi-solve flextool scenario.
 
 If parity holds at machine precision across all sub-solves of all
 covered scenarios, then flextool's per-sub-solve snapshots are
