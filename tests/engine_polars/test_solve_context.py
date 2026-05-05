@@ -194,7 +194,7 @@ def test_context_manager_protocol(workdir: Path) -> None:
 
 def test_install_csv_cache_clears(workdir: Path) -> None:
     """Direct assertion against the install / uninstall API."""
-    cache: dict[Path, pl.DataFrame] = {}
+    cache: dict[str, pl.DataFrame] = {}
     csv_path = workdir / "solve_data" / "solve_current.csv"
     _install_csv_cache(cache)
     try:

@@ -117,34 +117,49 @@ class SolveContext:
     solveFirst: bool = True
     realized_periods: set[str] = field(default_factory=set)
     realized_invest_periods: set[str] = field(default_factory=set)
-    period_in_use: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema={"d": pl.Utf8})
+    # ``period_in_use`` / ``period_branch`` / ``edd_history`` /
+    # ``p_entity_period_existing_capacity`` / ``p_entity_pre_existing``
+    # are populated on first access via the descriptor machinery below —
+    # they're DataFrame-shaped fields and each requires a CSV read.  Most
+    # parity tests only consume one or two of them, so deferring the
+    # reads until an attribute access asks for them avoids paying the
+    # IO cost upfront.
+    _period_in_use_loaded: bool = field(default=False, repr=False)
+    _period_in_use: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema={"d": pl.Utf8}),
+        repr=False,
     )
-    period_branch: pl.DataFrame = field(
+    _period_branch_loaded: bool = field(default=False, repr=False)
+    _period_branch: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(
             schema={"d_anchor": pl.Utf8, "b": pl.Utf8}
-        )
+        ),
+        repr=False,
     )
-    edd_history: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema={})
+    _edd_history_loaded: bool = field(default=False, repr=False)
+    _edd_history: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
     )
-    p_entity_period_existing_capacity: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema={})
+    _ppec_loaded: bool = field(default=False, repr=False)
+    _ppec: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
     )
-    p_entity_pre_existing: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema={})
+    _ppe_loaded: bool = field(default=False, repr=False)
+    _ppe: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
     )
 
-    # Internal: ad-hoc CSV cache.  Keyed by absolute path.  Values are
-    # ``None`` when the file is absent so we don't re-stat repeatedly.
-    _csv_cache: dict[Path, pl.DataFrame | None] = field(
+    # Internal: ad-hoc CSV cache.  Keyed by ``str(path)`` (no syscall).
+    # Values are ``None`` when the file is absent so we don't re-stat
+    # repeatedly.
+    _csv_cache: dict[str, pl.DataFrame | None] = field(
         default_factory=dict, repr=False
     )
     # Internal: process-level cache view installed by ``activate`` —
     # a strict subset of ``_csv_cache`` (None-valued entries excluded
     # because the ``_read_csv_file`` cache only stores successfully-
     # read frames).  ``None`` means caching is not currently active.
-    _active_cache: "dict[Path, pl.DataFrame] | None" = field(
+    _active_cache: "dict[str, pl.DataFrame] | None" = field(
         default=None, repr=False
     )
 
@@ -156,10 +171,18 @@ class SolveContext:
     def from_workdir(cls, workdir: Path | str) -> "SolveContext":
         """Construct a SolveContext from a flextool workdir.
 
-        Reads the typed fields once from the canonical CSV locations
-        under ``<workdir>/solve_data/``.  Missing files are tolerated —
-        the corresponding fields stay at their default-empty state and
-        helpers must check ``df.height > 0`` before consuming.
+        Eagerly reads only the cheap typed scalars
+        (``solve_name``, ``solveFirst``, ``realized_periods``,
+        ``realized_invest_periods``) — these come from small single-
+        column CSVs and are consumed by the apply_derived_* boundary
+        checks that gate the rest of the cascade.
+
+        The DataFrame-shaped fields (``period_in_use``, ``period_branch``,
+        ``edd_history``, ``p_entity_period_existing_capacity``,
+        ``p_entity_pre_existing``) are loaded **lazily** on first
+        attribute access.  Most parity tests only consume one or two,
+        so paying the IO cost upfront for a bag of frames the test
+        never touches dominates the cache savings on small fixtures.
         """
         wd = Path(workdir)
         sd = wd / "solve_data"
@@ -171,15 +194,6 @@ class SolveContext:
         )
         ctx.realized_invest_periods = _read_period_set(
             sd / "realized_invest_periods_of_current_solve.csv"
-        )
-        ctx.period_in_use = _load_period_in_use(sd / "period_in_use_set.csv")
-        ctx.period_branch = _load_period_branch(sd / "period__branch.csv")
-        ctx.edd_history = _load_edd_history(sd / "edd_history.csv")
-        ctx.p_entity_period_existing_capacity = _maybe_read(
-            sd / "p_entity_period_existing_capacity.csv"
-        )
-        ctx.p_entity_pre_existing = _maybe_read(
-            sd / "p_entity_pre_existing.csv"
         )
         return ctx
 
@@ -218,17 +232,21 @@ class SolveContext:
             path = self.workdir / "input" / rel
         else:
             path = self.workdir / rel
-        path = path.resolve() if path.is_absolute() else path
-        if path in self._csv_cache:
-            return self._csv_cache[path]
+        # Cache key = str(path).  Same key as ``_read_csv_file``'s active-
+        # cache so SolveContext.read_csv and direct ``_read_csv_file``
+        # calls share the cache when ``activate`` is in effect.  Avoids
+        # the per-call ``Path.resolve`` syscall.
+        key = str(path)
+        if key in self._csv_cache:
+            return self._csv_cache[key]
         if not path.exists():
-            self._csv_cache[path] = None
+            self._csv_cache[key] = None
             return None
         try:
             df = _read_csv_file(path)
         except pl.exceptions.NoDataError:
             df = pl.DataFrame()
-        self._csv_cache[path] = df
+        self._csv_cache[key] = df
         return df
 
     # ------------------------------------------------------------------
@@ -240,25 +258,18 @@ class SolveContext:
         ``_read_csv_file`` calls hit this context's cache on repeat.
 
         Idempotent: calling ``activate`` twice on the same context is
-        a no-op (the cache dict is shared with ``read_csv`` so the
-        typed-field load already populated it).  Pair with
-        :meth:`deactivate` to clear, or use the context-manager
-        protocol.
+        a no-op.  Pair with :meth:`deactivate` to clear, or use the
+        context-manager protocol.
         """
-        # Reuse the same dict that ``read_csv`` populates so the typed
-        # fields and ad-hoc reads share a cache.  Type widens from
-        # ``DataFrame | None`` to ``DataFrame``-only on the active-
-        # cache side (None entries don't get installed; absent paths
-        # take the slow path through ``_read_csv_file`` once and then
-        # populate normally).
-        cache_view: dict[Path, pl.DataFrame] = {
+        # Build the active-cache view (DataFrame-only; absent-file
+        # entries from ``read_csv`` are dropped because
+        # ``_read_csv_file`` doesn't track absences).  Subsequent
+        # cache misses populate ``cache_view`` directly through
+        # ``_read_csv_file``; ``read_csv`` continues to populate
+        # ``_csv_cache`` with the broader (None-included) shape.
+        cache_view: dict[str, pl.DataFrame] = {
             k: v for k, v in self._csv_cache.items() if v is not None
         }
-        # Mutating ``cache_view`` propagates back via the dict identity
-        # — but ``_csv_cache`` and the active cache must remain
-        # synchronised.  Easiest: swap ``_csv_cache`` to the eager-
-        # only dict so subsequent reads land in both views.
-        self._csv_cache = {k: v for k, v in cache_view.items()}
         _install_csv_cache(cache_view)
         self._active_cache = cache_view
 
@@ -273,6 +284,55 @@ class SolveContext:
 
     def __exit__(self, *exc) -> None:
         self.deactivate()
+
+    # ------------------------------------------------------------------
+    # Lazy DataFrame fields
+    # ------------------------------------------------------------------
+
+    @property
+    def period_in_use(self) -> pl.DataFrame:
+        if not self._period_in_use_loaded:
+            self._period_in_use = _load_period_in_use(
+                self.solve_data_dir / "period_in_use_set.csv"
+            )
+            self._period_in_use_loaded = True
+        return self._period_in_use
+
+    @property
+    def period_branch(self) -> pl.DataFrame:
+        if not self._period_branch_loaded:
+            self._period_branch = _load_period_branch(
+                self.solve_data_dir / "period__branch.csv"
+            )
+            self._period_branch_loaded = True
+        return self._period_branch
+
+    @property
+    def edd_history(self) -> pl.DataFrame:
+        if not self._edd_history_loaded:
+            self._edd_history = _load_edd_history(
+                self.solve_data_dir / "edd_history.csv"
+            )
+            self._edd_history_loaded = True
+        return self._edd_history
+
+    @property
+    def p_entity_period_existing_capacity(self) -> pl.DataFrame:
+        if not self._ppec_loaded:
+            self._ppec = _maybe_read(
+                self.solve_data_dir / "p_entity_period_existing_capacity.csv"
+            )
+            self._ppec_loaded = True
+        return self._ppec
+
+    @property
+    def p_entity_pre_existing(self) -> pl.DataFrame:
+        if not self._ppe_loaded:
+            self._ppe = _maybe_read(
+                self.solve_data_dir / "p_entity_pre_existing.csv"
+            )
+            self._ppe_loaded = True
+        return self._ppe
 
     # ------------------------------------------------------------------
     # Typed-field convenience accessors

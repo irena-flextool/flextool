@@ -76,10 +76,13 @@ def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     ``polars.read_csv(path)``.
     """
     if _active_cache is not None:
-        try:
-            key = Path(path).resolve()
-        except (OSError, RuntimeError):
-            key = Path(path)
+        # Use the str form as cache key — avoids the per-call ``Path.resolve``
+        # syscall (which adds ~50µs each and dominates the cache miss path
+        # for small fixtures with few duplicate reads).  Different string
+        # forms of the same file (e.g. ``./x.csv`` vs ``x.csv``) miss the
+        # cache but the loader path always constructs paths from the same
+        # workdir prefix so collisions are negligible in practice.
+        key = str(path)
         cached = _active_cache.get(key)
         if cached is not None:
             return cached
