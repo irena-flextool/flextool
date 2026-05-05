@@ -273,23 +273,6 @@ def _read_inertia_constants(inp: Path) -> tuple[pl.DataFrame | None, pl.DataFram
     return sink_df, src_df
 
 
-def _read_inflow_signed(sd: Path, sign: str) -> pl.DataFrame | None:
-    """Read flextool's ``p_positive_inflow.csv`` /
-    ``p_negative_inflow.csv``.  Long format (node, period, time, value).
-    Returns the long ``(n, d, t, value)`` frame; zero rows kept (the
-    constraint emitter Where-joins them to group_node so empties drop)."""
-    fname = "p_positive_inflow.csv" if sign == "pos" else "p_negative_inflow.csv"
-    p = sd / fname
-    if not p.exists(): return None
-    df = _read_csv_file(p)
-    if df.height == 0: return None
-    out = (df.rename({"node": "n", "period": "d", "time": "t"})
-             .with_columns(pl.col("value").cast(pl.Float64, strict=False)
-                                          .fill_null(0.0))
-             .select("n", "d", "t", "value"))
-    return out
-
-
 # ---------------------------------------------------------------------------
 # load_data
 
