@@ -889,19 +889,15 @@ def p_profile_value_from_source(
     if "branch" in cols:
         # Stochastic 3d_map (named branch column) — deferred.
         return None
-    # Map-shape detection: only proceed when the source's columns are
-    # canonical period/t names.  Generic `x` / `i` keys (from a 2d_map
-    # over branch×time, or unspecified-index Maps) signal a stochastic
-    # / non-canonical schema that the simple cascade can't disambiguate
-    # — fall through to None so the CSV path's correct values are
-    # preserved.  The full §3.6.1 alternative cascade lands as a
-    # follow-up Γ.3.G+ deferral; mirrored in the parity test as
-    # @pytest.mark.skip(reason="stochastic 3d_map cascade").
-    non_value_keys = [c for c in cols if c not in ("name", "value")]
-    canonical = {"period", "t"}
-    if any(c not in canonical for c in non_value_keys):
-        # Non-canonical (branch / generic-x) keys present — defer.
-        return None
+    # Δ.7: dropped the ``_check_canonical_keys`` predicate (per the
+    # Δ.6 close-stanza TODO #5).  The Δ.7 ``_derived_profile`` module
+    # owns the canonical cascade; this legacy helper is preserved as a
+    # ``parameter()``-only fast path that handles the deterministic
+    # period/t/scalar cases via column-name detection (still useful as
+    # a fallback when the new cascade can't be wired — eg. ad-hoc
+    # callers in the test suite).  Generic ``x`` / ``i`` keys are now
+    # tolerated and routed through the time-axis branch by the column
+    # detector below.
     dt_lf = dt.lazy()
     # Detect tier by which columns are present.
     has_period = "period" in cols
@@ -1083,13 +1079,18 @@ def apply_derived_a(
     if ec is not None:
         flex_data.p_process_existing_count = ec
 
-    # 8. p_profile_value (high-risk, last) ------------------------------
+    # 8. p_profile_value (Δ.7 cluster C — profile cascade) ------------
+    # Δ.7 lifts the helper into ``_derived_profile.apply_profile_cascade``
+    # — the new module ports flextool's full 5-branch cascade lazily and
+    # drops the Δ.5/Δ.6 canonical-keys gate.  We delegate here so the
+    # apply_derived_a entry stays the single integration point.
+    from ._derived_profile import apply_profile_cascade
     try:
-        pv = p_profile_value_from_source(source, usable_dt)
+        apply_profile_cascade(flex_data, source, workdir)
     except Exception:
-        pv = None
-    if pv is not None:
-        flex_data.p_profile_value = pv
+        # Conservative: any failure here leaves the CSV-loaded value in
+        # place.  Cluster C parity tests are the load-bearing oracle.
+        pass
 
 
 # ---------------------------------------------------------------------------
