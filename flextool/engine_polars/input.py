@@ -1338,39 +1338,11 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     # sub-solves; the .mod uses them as constants on the
     # max/min Invest/Divest_entity_total + cumulative-group
     # constraints.  Empty / missing → no prior-solve activity.
-    def _read_handoff_e_d(name: str) -> Param | None:
-        # Long-format (entity, period, value); cleaned to (e, d, value).
-        f = sd / f"{name}.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        df = (df.rename({"entity": "e", "period": "d"})
-                .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
-                                     .fill_null(0.0))
-                .filter(pl.col("value") != 0.0)
-                .select("e", "d", "value"))
-        if df.height == 0: return None
-        return Param(("e", "d"), df)
-
-    def _read_handoff_e(name: str, value_col: str | None = None) -> Param | None:
-        # Wide-format with single value column (entity, p_entity_invested)
-        # → (e, value).
-        f = sd / f"{name}.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        # Canonical column is "p_entity_invested" / "p_entity_divested"
-        if value_col is None:
-            non_entity = [c for c in df.columns if c != "entity"]
-            if not non_entity: return None
-            value_col = non_entity[0]
-        df = (df.rename({"entity": "e", value_col: "value"})
-                .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
-                                     .fill_null(0.0))
-                .filter(pl.col("value") != 0.0)
-                .select("e", "value"))
-        if df.height == 0: return None
-        return Param(("e",), df)
+    # Δ.12c — ``_read_handoff_e_d`` and ``_read_handoff_e`` retired:
+    # the handoff carriers (``p_entity_previously_invested_capacity`` /
+    # ``p_entity_invested`` / ``p_entity_divested``) are now produced by
+    # ``apply_derived_f`` BEFORE ``apply_existing_chain`` consumes them,
+    # so the CSV seed is no longer load-bearing.
 
     # Δ.12-drop: CSV seeds for fields whose override-chain helpers are
     # authoritative are set to None below.  The override chain repopulates
@@ -1383,15 +1355,12 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     #   * ``ed_invest_max_period`` / ``ed_divest_max_period``
     #     ← ``apply_direct_params`` via ``ed_*_max_period_from_source``.
     #
-    # ``p_entity_previously_invested_capacity`` / ``p_entity_invested`` /
-    # ``p_entity_divested`` are also re-set by ``apply_derived_f`` from the
-    # workdir, BUT ``apply_derived_d.apply_existing_chain`` runs BEFORE
-    # ``apply_derived_f`` and consumes those carriers (chain-summation).
-    # Keep the CSV seed so the chained-existing helper sees the prior
-    # solve's handoff state.
-    # TODO(Δ.12c+): retire when ``apply_existing_chain`` is moved after
-    # ``apply_derived_f`` in the override chain (or its dependence on
-    # those carriers is replaced with a direct workdir read).
+    # Δ.12c — handoff carriers (``p_entity_previously_invested_capacity`` /
+    # ``p_entity_invested`` / ``p_entity_divested``) dropped: now produced
+    # authoritatively by ``apply_derived_f``.  Since Δ.12c moved
+    # ``apply_existing_chain`` to run AFTER ``apply_derived_f`` (was inside
+    # ``apply_derived_d``), the chain summation sees the carriers populated
+    # by the override helper without the seed.
     return dict(
         ed_invest_set=ed_inv if ed_inv.height > 0 else None,
         ed_divest_set=ed_div if ed_div.height > 0 else None,
@@ -1415,10 +1384,9 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_divest_period_set=_read_period_set("ed_divest_period"),
         ed_invest_max_period=None,
         ed_divest_max_period=None,
-        p_entity_previously_invested_capacity=_read_handoff_e_d(
-            "p_entity_previously_invested_capacity"),
-        p_entity_invested=_read_handoff_e("p_entity_invested"),
-        p_entity_divested=_read_handoff_e("p_entity_divested"),
+        p_entity_previously_invested_capacity=None,
+        p_entity_invested=None,
+        p_entity_divested=None,
     )
 
 
@@ -2161,68 +2129,19 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             if row.height > 0:
                 p_nested_solve_first = bool(int(row[value_col][0]))
 
-    # ``p_roll_continue_state`` / ``p_fix_storage_quantity`` /
-    # ``dtt_timeline_matching`` / ``period_branch`` are produced by
-    # ``apply_derived_e`` when ``nodeState`` is non-empty AND the
-    # workdir's auto-resolved SpineDbReader fires.  Some fixtures'
-    # workdirs don't follow the ``work_<scenario>`` convention exactly
-    # (e.g. ``work_2day_stochastic_dispatch_full_storage`` vs DB scenario
-    # ``2_day_stochastic_dispatch``) — for those the auto-resolution
-    # returns None and the override chain is skipped.  Keep the CSV
-    # seeds.
-    # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
-    # variant fixtures or all fixtures explicitly pass db_reader=.
+    # Δ.12c — ``p_roll_continue_state`` / ``p_fix_storage_quantity`` /
+    # ``dtt_timeline_matching`` / ``period_branch`` are now produced by
+    # ``apply_derived_e`` for every fixture (the seven mismatch fixtures
+    # auto-resolve via the explicit ``_FIND_SCENARIO_OVERRIDES`` map).
+    # ``n_fix_storage_quantity`` / ``ndt_fix_storage_quantity`` are
+    # derived from ``p_fix_storage_quantity`` after the helper assigns it
+    # (see ``_finalise_fix_storage_index_sets`` below).  Seeds dropped.
     p_roll_continue_state = None
-    rcs_path = sd / "p_roll_continue_state.csv"
-    if rcs_path.exists():
-        df = _read_csv_file(rcs_path)
-        # Tolerate a leading-space column header (".mod writes 'node, p_roll_…'").
-        df.columns = [c.strip() for c in df.columns]
-        if df.height > 0:
-            df = (df.rename({"node": "n", "p_roll_continue_state": "value"})
-                    .with_columns(value=pl.col("value").cast(pl.Float64))
-                    .select("n", "value"))
-            p_roll_continue_state = Param(("n",), df)
-
     n_fix_storage_quantity = None
-    nfsq_path = sd / "n_fix_storage_quantity_set.csv"
-    if nfsq_path.exists():
-        df = _read_csv_file(nfsq_path)
-        if df.height > 0:
-            n_fix_storage_quantity = df.rename({"node": "n"}).select("n").unique()
-
     ndt_fix_storage_quantity = None
     p_fix_storage_quantity = None
-    fsq_path = sd / "fix_storage_quantity.csv"
-    if fsq_path.exists():
-        df = _read_csv_file(fsq_path)
-        if df.height > 0:
-            df = (df.rename({"period": "d", "step": "t", "node": "n",
-                              "p_fix_storage_quantity": "value"})
-                    .with_columns(value=pl.col("value").cast(pl.Float64))
-                    .select("n", "d", "t", "value"))
-            ndt_fix_storage_quantity = df.select("n", "d", "t").unique()
-            p_fix_storage_quantity = Param(("n", "d", "t"), df)
-
     dtt_timeline_matching = None
-    tm_path = sd / "timeline_matching_map.csv"
-    if tm_path.exists():
-        df = _read_csv_file(tm_path)
-        if df.height > 0:
-            dtt_timeline_matching = (df
-                .rename({"period": "d", "step": "t", "upper_step": "t_upper"})
-                .select("d", "t", "t_upper")
-                .unique())
-
     period_branch = None
-    pb_path = sd / "period__branch.csv"
-    if pb_path.exists():
-        df = _read_csv_file(pb_path)
-        if df.height > 0:
-            period_branch = (df
-                .rename({"period": "d", "branch": "d_upper"})
-                .select("d_upper", "d")
-                .unique())
 
     # period_last: (d,).
     period_last_df = None
