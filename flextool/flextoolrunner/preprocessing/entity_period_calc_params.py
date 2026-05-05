@@ -518,22 +518,35 @@ def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
     domain = _read_pairs(solve_data_dir / "process_TimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
     out_path = solve_data_dir / "pdtProcess.csv"
-    # Sparse-write: skip rows whose value is exactly 0.0.  mod has
-    # `default 0` for pdtProcess so missing rows resolve to 0 there;
-    # _read_pdt_at_param's downstream `dict.get(..., 0.0)` likewise
-    # defaults the same way.  PROCESS_PARAM_DEF1 (efficiency,
-    # availability) defaults to 1.0 when no input is present so those
-    # rows are still written.  Eliminates the dominant (entity ×
-    # period × time) cost previously reported by py-spy as the
-    # post-`Scenario:` hang.
+    # Sparse-write + static fast-path.  mod has `default 0` so missing
+    # rows resolve to 0 there.  When a (p, param) has no time- or period-
+    # varying entries (`lookup.is_static`), the per-(d, t) value is
+    # constant — compute once and emit |dt| rows of the same value
+    # without re-walking the lookup branches.  PROCESS_PARAM_DEF1
+    # ({efficiency, availability}) defaults to 1.0 for entities without
+    # explicit input, so static rows for those params are still written
+    # (1.0 ≠ 0.0); for the 0-default params (other_operational_cost) the
+    # static value is 0.0 → row is skipped, mod's default 0 fills.
+    sentinel_d, sentinel_t = (dt[0] if dt else ("", ""))
     with out_path.open("w") as fh:
         fh.write("process,param,period,time,value\n")
         for (p, param) in domain:
-            for (d, t) in dt:
-                v = lookup.get(p, param, d, t)
+            if lookup.is_static(p, param):
+                v = lookup.get(p, param, sentinel_d, sentinel_t)
                 if v == 0.0:
                     continue
-                fh.write(f"{p},{param},{d},{t},{repr(v)}\n")
+                repr_v = repr(v)
+                prefix = f"{p},{param},"
+                fh.write("".join(
+                    f"{prefix}{d},{t},{repr_v}\n" for (d, t) in dt
+                ))
+            else:
+                prefix = f"{p},{param},"
+                for (d, t) in dt:
+                    v = lookup.get(p, param, d, t)
+                    if v == 0.0:
+                        continue
+                    fh.write(f"{prefix}{d},{t},{repr(v)}\n")
 
 
 def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
@@ -567,18 +580,27 @@ def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
     domain = _read_pairs(solve_data_dir / "node__TimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
     out_path = solve_data_dir / "pdtNode.csv"
-    # Sparse-write: see write_pdtProcess for rationale.  NODE_PARAM_DEF1
-    # ({"availability"}) defaults to 1.0 when no input is present so
-    # those rows are still written; class_default_values may also
-    # produce non-zero defaults for specific (class, param) pairs.
+    # Sparse-write + static fast-path.  See write_pdtProcess.
+    sentinel_d, sentinel_t = (dt[0] if dt else ("", ""))
     with out_path.open("w") as fh:
         fh.write("node,param,period,time,value\n")
         for (n, param) in domain:
-            for (d, t) in dt:
-                v = lookup.get(n, param, d, t)
+            if lookup.is_static(n, param):
+                v = lookup.get(n, param, sentinel_d, sentinel_t)
                 if v == 0.0:
                     continue
-                fh.write(f"{n},{param},{d},{t},{repr(v)}\n")
+                repr_v = repr(v)
+                prefix = f"{n},{param},"
+                fh.write("".join(
+                    f"{prefix}{d},{t},{repr_v}\n" for (d, t) in dt
+                ))
+            else:
+                prefix = f"{n},{param},"
+                for (d, t) in dt:
+                    v = lookup.get(n, param, d, t)
+                    if v == 0.0:
+                        continue
+                    fh.write(f"{prefix}{d},{t},{repr(v)}\n")
 
 
 def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
@@ -1874,17 +1896,29 @@ def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path) -> None:
     domain = _read_triples(solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
     out_path = solve_data_dir / "pdtProcess_source.csv"
-    # Sparse-write: see write_pdtProcess for rationale.  PdtLookupPerSide
-    # has no per-param default-1 fallback, so missing data → 0.0; mod's
-    # `default 0` resolves the same way.
+    # Sparse-write + static fast-path.  PdtLookupPerSide has no per-
+    # param default-1 fallback, so missing data → 0.0 → row skipped;
+    # static rows with explicit non-zero values still get emitted.
+    sentinel_d, sentinel_t = (dt[0] if dt else ("", ""))
     with out_path.open("w") as fh:
         fh.write("process,source,param,period,time,value\n")
         for (p, src, param) in domain:
-            for (d, t) in dt:
-                v = lookup.get(p, src, param, d, t)
+            if lookup.is_static(p, src, param):
+                v = lookup.get(p, src, param, sentinel_d, sentinel_t)
                 if v == 0.0:
                     continue
-                fh.write(f"{p},{src},{param},{d},{t},{repr(v)}\n")
+                repr_v = repr(v)
+                prefix = f"{p},{src},{param},"
+                fh.write("".join(
+                    f"{prefix}{d},{t},{repr_v}\n" for (d, t) in dt
+                ))
+            else:
+                prefix = f"{p},{src},{param},"
+                for (d, t) in dt:
+                    v = lookup.get(p, src, param, d, t)
+                    if v == 0.0:
+                        continue
+                    fh.write(f"{prefix}{d},{t},{repr(v)}\n")
 
 
 def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
@@ -1906,15 +1940,27 @@ def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
     domain = _read_triples(solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
     out_path = solve_data_dir / "pdtProcess_sink.csv"
-    # Sparse-write: see write_pdtProcess for rationale.
+    # Sparse-write + static fast-path.  See write_pdtProcess_source.
+    sentinel_d, sentinel_t = (dt[0] if dt else ("", ""))
     with out_path.open("w") as fh:
         fh.write("process,sink,param,period,time,value\n")
         for (p, snk, param) in domain:
-            for (d, t) in dt:
-                v = lookup.get(p, snk, param, d, t)
+            if lookup.is_static(p, snk, param):
+                v = lookup.get(p, snk, param, sentinel_d, sentinel_t)
                 if v == 0.0:
                     continue
-                fh.write(f"{p},{snk},{param},{d},{t},{repr(v)}\n")
+                repr_v = repr(v)
+                prefix = f"{p},{snk},{param},"
+                fh.write("".join(
+                    f"{prefix}{d},{t},{repr_v}\n" for (d, t) in dt
+                ))
+            else:
+                prefix = f"{p},{snk},{param},"
+                for (d, t) in dt:
+                    v = lookup.get(p, snk, param, d, t)
+                    if v == 0.0:
+                        continue
+                    fh.write(f"{prefix}{d},{t},{repr(v)}\n")
 
 
 def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
