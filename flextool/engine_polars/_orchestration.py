@@ -162,6 +162,8 @@ def run_orchestration(
     work_folder: Path | str,
     *,
     runner_factory=None,
+    db_url: str | None = None,
+    scenario_name: str | None = None,
 ) -> dict[str, OrchestrationStep]:
     """Drive the master loop natively.
 
@@ -233,7 +235,8 @@ def run_orchestration(
     # encodes the recursive/rolling/stochastic expansion + per-solve
     # preprocessing chain we still consume.  Our cascade solver is the
     # `solver.run(...)` callback inside that loop.
-    return _drive_cascade(state, work_folder, solves, runner_factory)
+    return _drive_cascade(state, work_folder, solves, runner_factory,
+                          db_url=db_url, scenario_name=scenario_name)
 
 
 def _drive_cascade(
@@ -241,6 +244,9 @@ def _drive_cascade(
     work_folder: Path,
     solves: list[str],
     runner_factory,
+    *,
+    db_url: str | None = None,
+    scenario_name: str | None = None,
 ) -> dict[str, OrchestrationStep]:
     """Drive the flextool master loop with a flexpy cascade solver.
 
@@ -299,6 +305,22 @@ def _drive_cascade(
     runner.state.handoffs = state.handoffs
     runner.state.logger.setLevel(logger_level := logging.ERROR)
 
+    # Δ.12c — build a SpineDbReader once and reuse it across the cascade.
+    # When db_url + scenario_name are supplied (run_chain_from_db wires
+    # them), the override chain fires for every per-solve load — covering
+    # the seeds the workdir CSV path can't provide once Δ.12-drop /
+    # Δ.12c have retired the redundant CSVs.  When the caller didn't
+    # supply them, we fall back to load_flextool's per-call autoresolve
+    # (which works for fixtures whose work_folder follows the
+    # ``work_<scenario>`` convention).
+    cascade_db_reader = None
+    if db_url is not None and scenario_name is not None:
+        from flextool.engine_polars._spinedb_reader import SpineDbReader
+        try:
+            cascade_db_reader = SpineDbReader(db_url, scenario=scenario_name)
+        except Exception:  # noqa: BLE001
+            cascade_db_reader = None
+
     class _FlexpyCascadeSolver(SolverRunner):
         def __init__(self, runner_state):
             super().__init__(runner_state)
@@ -326,6 +348,7 @@ def _drive_cascade(
             data = load_flextool(
                 self.state.paths.work_folder,
                 handoff=prior_for_load,
+                db_reader=cascade_db_reader,
             )
             pb = Problem()
             build_flextool(pb, data)
@@ -512,6 +535,7 @@ def run_chain_from_db(
 
     return run_orchestration(
         state, work_folder, runner_factory=_runner_factory,
+        db_url=db_url, scenario_name=scenario_name,
     )
 
 
