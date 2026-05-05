@@ -35,7 +35,6 @@ non-anticipativity gate.
 """
 from __future__ import annotations
 
-from collections import defaultdict
 import logging
 from pathlib import Path
 
@@ -48,12 +47,9 @@ from flextool.engine_polars._derived_branch import (
     dt_non_anticipativity_df,
     dt_non_anticipativity_lf,
     pd_branch_weight_lf,
-    pd_branch_weight_param,
     pdt_branch_weight_lf,
-    pdt_branch_weight_param,
     period_branch_full_df,
     period_branch_pairs_lf,
-    period_in_use_set_df,
     period_in_use_set_lf,
 )
 from flextool.engine_polars._input_source import _read_csv_file
