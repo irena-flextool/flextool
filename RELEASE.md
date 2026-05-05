@@ -1,3 +1,78 @@
+## Release 3.32.0 (5.5.2026)
+**Bug fixes**
+- O(N²×T²) hot loop in `node_inflow_scaling_params.has_node_time_inflow` collapsed to O(N + |pairs|)
+- Quadratic linear scan in `blocks::derive_blocks::_assign_entity_to_group` replaced with a precomputed `(entity → group)` lookup
+- O(8 × G × A) cross-product scan in `process_arc_unions::write_node_group_dispatch_sets` replaced with side-node indexing
+- Excel template link-sheet retention: drop link sheets where the link's own class has no surviving data (e.g. `connection_node` when `constraint` is unselected)
+- `group.{include_stochastics, new_stepduration}` retagged from `model`/`timeline` to `solve_advanced`
+- `timeset.{timeset_weights, representative_period_weights}` retagged to `solve_advanced`
+
+**New features**
+- `--groups` CLI flag on `cmd_export_to_tabular` to restrict the Excel template to a parameter-group set; sheets with no surviving columns are dropped
+- GUI parameter-group picker on "Add empty FlexTool input Excel" — DB-driven checkbox tree, required groups (`timeline`, `model`, `solve_basics`, `basics`) highlighted with hover tooltip; theme-aware colours
+- Default-value row in v2 Excel sheets where any parameter on the sheet has a default (Map/Array defaults stringified)
+- `default 0` declarations on six dense `pdt*` parameters (`pdtProcess`, `pdtNode`, `pdtNodeInflow`, `pdtProfile`, `pdtProcess_source_sink`, `pdtProcess__source__sink__dt_varCost{,_alwaysProcess}`) — paired with sparse Python writers that skip zero rows
+- `is_static(entity, param)` fast-path in `PdtLookup`/`PdtLookupPerSide` — entries with no time-/period-varying source emit `|dt|` repeated rows from a single `lookup.get` call
+- `pandas.read_csv` + vectorised mask in `_read_pdt_at_param` and the `pdtProcess__source__sink__dt_varCost.csv` reader (5–10× over Python `csv.reader`)
+- `_write_5col` switched to `pd.DataFrame.to_csv` and the four `pssdt_varCost_*` filter builds now sparse-iterate via pre-built `(p, src, snk) → (d, t)` indices
+
+## Release 3.31.0 (4.5.2026)
+**Bug fixes**
+- Stochastic per-branch profile values previously lost in `pdtProfile` are restored
+- Plot dataframe fragmentation in dispatch column-alignment fixed
+- Dispatch view reads group flags from `nodeGroupDispatch` (not `nodeGroupIndicators`)
+- `solve.timeline_hole_multiplier` now declared in the v44 schema (default 1.0)
+- `db_migration` v42: robust legacy value-list cleanup via `find_parameter_value_lists`
+- Migration steps tolerate `NothingToCommit` so a second run doesn't abort the chain
+- RP clustering input: scalar-valued profiles/inflows dropped
+
+**New features**
+- `mod → Python` preprocessing migration: ~150+ sets and calculated parameters previously declared in `flextool.mod` now live under `flextool/flextoolrunner/preprocessing/`, written per-solve to `solve_data/`
+- Migration scaffolding: phase-0 inventory + MPS parity harness + lint rules + DAG of derivations
+- 70 incremental migration batches with MPS parity verified at 7-sig-fig precision across multiple baselines (rolling, multi-solve, contains_solve, h2_trade, test_a_lot)
+- Per-class param taxonomy in `_param_taxonomy.py` (PROCESS_TIME_PARAM, NODE_PERIOD_PARAM, etc.)
+- Order-determinism lint rule (`tests/test_preprocessing_ordered_set_lint.py`) — bare `set()` / set-literals / set-comprehensions blocked in `preprocessing/`
+- `templates/examples.sqlite` rebuilt from `tests.json` and migrated to v51
+
+## Release 3.30.0 (28.4.2026)
+**Bug fixes**
+- `read_highs_solution`: strip GLPSOL quotes from ISO 8601 timestamps in parsed variable names
+- `handoff_writers`: load resolved-set CSVs from `solve_data/` (Phase A follow-up)
+- `plot_canvas`: cap rendered DPI to keep figure pixmaps under X11's limit
+- `RP`: representative-period indices sorted into chronological order
+- `plot_bars`: bar thickness constant per row regardless of bar count
+- GUI memory-watchdog: kill only when BOTH free-RAM reserve AND swap allowance are breached
+- GUI: refuse to open the same input source twice (flash row red)
+
+**New features**
+- `result_viewer` Phases B–E: single rebuild path with filter-only tree toggles, per-scenario availability union, lazy plan-parquet union, comparison-only plans
+- GUI per-job memory budget + watchdog + admission control + status bar
+- GUI: drag-to-reorder + Alt+Up/Down on result-viewer scenarios tree
+- GUI: shared `CheckTreeController` for every check tree + generation tokens for comparison-data updates
+- GUI: View button always shown; opens single mode focused on the scenario
+- GUI: persist per-variant duration with template default + clamp-safe save
+- GUI: robust delete + prune dangling scenario state from `settings.yaml`
+- `.mod`-resolved set files moved from `input/` to `solve_data/`; `set_` prefix dropped
+- `--glpsol-timing` diagnostic flag for per-constraint matrix-gen timing
+- `nodeBalance_eq` and `conversion_indirect` use tuple binding instead of overlap equality-filters
+
+## Release 3.29.0 (24.4.2026)
+**Bug fixes**
+- v50 item-lookup bug fixed while restoring `unidirectional` in the master template
+- `export_to_tabular` whitelists synced with master template schema
+- Lagrangian: defensive name-map consistency check per iteration
+
+**New features**
+- **Flex-temporal decomposition**: per-entity temporal blocks for mixed-resolution dispatch (e.g. hourly power + daily hydrogen in the same solve)
+- v50 migration: `new_stepduration` moved from `timeset` to `solve`
+- v51 migration: group-level `new_stepduration` + `decomposition_method`
+- `blocks.py`: derive per-entity blocks + overlap set + block predecessors + boundaries
+- Generalised node balance via overlap-set (M-matrix) aggregation; constraints made block-aware (storage, conversion, flow capacity, DC flow, UC, ramp, profile, reserve)
+- Output writers expand coarse-block variables back to the fine timeline for the user
+- **Spatial Lagrangian decomposition**: regional input filter (cross-region flows as half-flows), `lagrangian.py` scaffolding + subgradient loop with primal recovery, CLI flag + docs
+- LH2 three-region fixture + golden integration test (Lagrangian vs monolithic)
+- `HighsModelHandle` persistence helper for repeated subgradient solves
+
 ## Release 3.28.0 (24.4.2026)
 **Bug fixes**
 - Default HiGHS to serial simplex (`parallel=off`, `threads=1`) to avoid non-determinism and occasional stalls on small models; defaults reinforced in `solver_runner` as belt-and-suspenders
