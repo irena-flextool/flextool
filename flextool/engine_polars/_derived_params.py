@@ -7401,72 +7401,33 @@ def pd_branch_weight_full_from_source(
     dt: pl.DataFrame | None,
     workdir: Path | None,
 ) -> "Param | None":
-    """Per-period branch weight — full multi-branch cascade
-    (audit §3.18.1, mirror of
-    ``preprocessing/period_calculated_params.py:write_branch_weights:364-451``).
+    """Per-period branch weight — full multi-branch cascade.
 
-    Algorithm::
+    Δ.8 consolidation: delegates to the lazy port
+    :func:`._derived_branch.pd_branch_weight_param`.  Behaviour
+    preserved: defaults to 1.0 when no ``period__branch`` rows exist
+    (deterministic fixtures), normalises across siblings otherwise.
 
-        pd_branch_weight[d] = w[d] / sum w[b] over branches b such that
-            (d2, b) ∈ period__branch
-            AND (b, ts) ∈ period__time_first    (b's first-step ts)
-            AND (d, ts) ∈ period__time_first    (same first-step ts as d)
-            AND (d2, d) ∈ period__branch        (same parent)
-
-    Inputs (workdir-side):
-
-    * ``period__branch.csv`` — (period, branch) pairs.
-    * ``solve_branch_weight.csv`` — branch → weight (default 1.0).
-    * ``first_timesteps.csv`` — period → first step.
-    * ``period_in_use_set.csv`` — output domain.
-
-    Default 1.0 when no period__branch rows exist (deterministic
-    fixtures).
+    See :mod:`._derived_branch` for the algorithm reference.
     """
-    pb_rows = _read_period_branch_pairs(workdir)
-    if not pb_rows:
-        # Fall through to deterministic path: 1.0 per realized period.
-        if dt is None or dt.height == 0:
-            return None
-        out = (dt.lazy()
-                  .select("d").unique()
-                  .with_columns(value=pl.lit(1.0))
-                  .sort("d")
-                  .collect())
-        if out.height == 0:
-            return None
-        return Param(("d",), out)
-    branch_weight = _read_solve_branch_weights(workdir)
-    first_ts = _read_first_timesteps(workdir)
-    # times_with_first_set: ts → set of branches whose first-step is ts.
-    times_with_first: dict[str, set[str]] = {}
-    for d, ts in first_ts.items():
-        times_with_first.setdefault(ts, set()).add(d)
-    pb_set = frozenset(pb_rows)
-    period_in_use = _period_in_use_set(source, active_solve, workdir)
-    rows: list[tuple[str, float]] = []
-    def w(b: str) -> float:
-        return branch_weight.get(b, 1.0)
-    for d in period_in_use:
-        ts = first_ts.get(d)
-        if ts is None:
-            continue
-        branches_at_ts = times_with_first.get(ts, set())
-        denom = 0.0
-        for d2, b in pb_rows:
-            if b not in branches_at_ts:
-                continue
-            if (d2, d) not in pb_set:
-                continue
-            denom += w(b)
-        if denom == 0.0:
-            continue
-        rows.append((d, w(d) / denom))
-    if not rows:
+    from flextool.engine_polars._derived_branch import pd_branch_weight_param
+    out = pd_branch_weight_param(workdir, source, active_solve)
+    if out is not None:
+        return out
+    # Match the historical "no period_in_use, but dt present →
+    # deterministic 1.0 per realised period" fallback path.  This
+    # keeps parity with the eager helper for chain-runner-less single
+    # solves where the workdir CSVs may be absent but dt is built.
+    if dt is None or dt.height == 0:
         return None
-    out = pl.DataFrame(rows, schema={"d": pl.Utf8, "value": pl.Float64},
-                       orient="row").sort("d")
-    return Param(("d",), out)
+    df = (dt.lazy()
+              .select("d").unique()
+              .with_columns(value=pl.lit(1.0))
+              .sort("d")
+              .collect())
+    if df.height == 0:
+        return None
+    return Param(("d",), df)
 
 
 def pdt_branch_weight_full_from_source(
@@ -7475,67 +7436,17 @@ def pdt_branch_weight_full_from_source(
     dt: pl.DataFrame | None,
     workdir: Path | None,
 ) -> "Param | None":
-    """Per-(d, t) branch weight — full multi-branch cascade
-    (audit §3.18.1).
+    """Per-(d, t) branch weight — full multi-branch cascade.
 
-    Algorithm::
+    Δ.8 consolidation: delegates to the lazy port
+    :func:`._derived_branch.pdt_branch_weight_param`.  Behaviour
+    preserved: dense over ``dt`` (every (d, t) gets a value;
+    denominator-zero rows fall through to 1.0).
 
-        pdt_branch_weight[d, t] = w[d] / sum w[b] over branches b such that
-            (d2, b) ∈ period__branch
-            AND (b, t) ∈ dt
-            AND (d2, d) ∈ period__branch
-
-    The output is dense over dt — mirrors flextool's mod declaration
-    ``param pdt_branch_weight {(d,t) in dt}``.
+    See :mod:`._derived_branch` for the algorithm reference.
     """
-    if dt is None or dt.height == 0:
-        return None
-    pb_rows = _read_period_branch_pairs(workdir)
-    if not pb_rows:
-        # Default: 1.0 per (d, t).
-        out = (dt.lazy()
-                  .with_columns(value=pl.lit(1.0))
-                  .select("d", "t", "value")
-                  .sort("d", "t")
-                  .collect())
-        if out.height == 0:
-            return None
-        return Param(("d", "t"), out)
-    branch_weight = _read_solve_branch_weights(workdir)
-    pb_set = frozenset(pb_rows)
-    # Branches present at each timestep — derive from dt (which maps
-    # (d, t) pairs).  When dt's d IS a branch, that's the candidate.
-    branches_for_t: dict[str, set[str]] = {}
-    dt_pairs: list[tuple[str, str]] = []
-    for r in dt.iter_rows(named=True):
-        d, t = str(r["d"]), str(r["t"])
-        dt_pairs.append((d, t))
-        branches_for_t.setdefault(t, set()).add(d)
-    def w(b: str) -> float:
-        return branch_weight.get(b, 1.0)
-    rows: list[tuple[str, str, float]] = []
-    for d, t in dt_pairs:
-        branches_with_t = branches_for_t.get(t, set())
-        denom = 0.0
-        for d2, b in pb_rows:
-            if b not in branches_with_t:
-                continue
-            if (d2, d) not in pb_set:
-                continue
-            denom += w(b)
-        if denom == 0.0:
-            # Fall through: density requires every (d, t) in dt to have
-            # a value.  Use 1.0 (mirrors mod's default declaration when
-            # no parent matches — which is the deterministic case).
-            rows.append((d, t, 1.0))
-        else:
-            rows.append((d, t, w(d) / denom))
-    if not rows:
-        return None
-    out = pl.DataFrame(rows, schema={"d": pl.Utf8, "t": pl.Utf8,
-                                       "value": pl.Float64},
-                       orient="row").sort("d", "t")
-    return Param(("d", "t"), out)
+    from flextool.engine_polars._derived_branch import pdt_branch_weight_param
+    return pdt_branch_weight_param(workdir, source, active_solve, dt)
 
 
 # ---------------------------------------------------------------------------
