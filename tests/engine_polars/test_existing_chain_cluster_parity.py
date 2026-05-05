@@ -672,6 +672,80 @@ def test_edd_invest_set_lazy_vs_csv(work_name: str, scenario: str) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Hand-cooked existing-chain spot test
+# ---------------------------------------------------------------------------
+
+
+def test_p_entity_pre_existing_lf_4period_lifetime_renew_choice():
+    """4-period scenario: pre_existing=10, lifetime=10, lifetime_method=
+    reinvest_choice, virtual_unitsize unset → existing*1 = existing.
+
+    Closed-form: pre_existing[d] = 10 for d ∈ p2020..p2050 (lifetime
+    window is 10 years from period_first p2020, and pdy[d] < 10 for
+    all 4 periods).
+    """
+    from flextool.engine_polars._inmemory_reader import InMemoryReader
+    from flextool.engine_polars import _derived_existing as _ex
+
+    periods = ["p2020", "p2025", "p2030", "p2035"]
+    reader = InMemoryReader(
+        entities={
+            "unit": pl.DataFrame({"name": ["wind"]}),
+            "node": pl.DataFrame({"name": [], "type": []}, schema={"name": pl.Utf8, "type": pl.Utf8}),
+            "connection": pl.DataFrame({"name": []}, schema={"name": pl.Utf8}),
+            "solve": pl.DataFrame({"name": ["s"]}),
+            "model": pl.DataFrame({"name": []}, schema={"name": pl.Utf8}),
+        },
+        parameters={
+            ("unit", "existing"): pl.DataFrame({"name": ["wind"], "value": [10.0]}),
+            ("unit", "lifetime"): pl.DataFrame({"name": ["wind"], "value": [10.0]}),
+            ("unit", "lifetime_method"): pl.DataFrame({"name": ["wind"], "value": ["reinvest_choice"]}),
+            ("unit", "virtual_unitsize"): pl.DataFrame(
+                {"name": [], "value": []},
+                schema={"name": pl.Utf8, "value": pl.Float64}),
+            ("unit", "invest_method"): pl.DataFrame(
+                {"name": [], "value": []},
+                schema={"name": pl.Utf8, "value": pl.Utf8}),
+            ("node", "existing"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Float64}),
+            ("node", "lifetime"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Float64}),
+            ("node", "lifetime_method"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Utf8}),
+            ("node", "virtual_unitsize"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Float64}),
+            ("node", "invest_method"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Utf8}),
+            ("connection", "existing"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Float64}),
+            ("connection", "lifetime"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Float64}),
+            ("connection", "lifetime_method"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Utf8}),
+            ("connection", "virtual_unitsize"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Float64}),
+            ("connection", "invest_method"): pl.DataFrame({"name": [], "value": []}, schema={"name": pl.Utf8, "value": pl.Utf8}),
+            ("solve", "realized_periods"): pl.DataFrame(
+                {"name": ["s"] * 4, "i": list(range(4)), "value": periods}),
+            ("solve", "invest_periods"): pl.DataFrame(
+                {"name": [], "i": [], "value": []},
+                schema={"name": pl.Utf8, "i": pl.Int64, "value": pl.Utf8}),
+            ("solve", "years_represented"): pl.DataFrame(
+                {"name": ["s"] * 4, "period": periods, "value": [5.0] * 4}),
+            ("solve", "years_from_start"): pl.DataFrame(
+                {"name": [], "period": [], "value": []},
+                schema={"name": pl.Utf8, "period": pl.Utf8, "value": pl.Float64}),
+        },
+    )
+
+    lazy = (_ex.p_entity_pre_existing_lf(reader, "s", periods)
+                .collect()
+                .sort("e", "d"))
+    # Lifetime gate: life_sum(wind) = pdy[p_first=p2020] + lifetime[wind, p2020]
+    #               = 0 + 10 = 10.
+    # pdy for periods: [0, 5, 10, 15] (cumulative widths of years_represented).
+    # Bounded: keep pdy[d] < 10 → p2020 (0) and p2025 (5) qualify.
+    # The other 2 periods (p2030, p2035) are gated out.
+    expected = pl.DataFrame({
+        "e": ["wind"] * 4,
+        "d": periods,
+        "value": [10.0, 10.0, 0.0, 0.0],
+    }).sort("e", "d")
+    assert lazy.equals(expected), f"\nlazy:\n{lazy}\nexpected:\n{expected}"
+
+
 @pytest.mark.parametrize(
     "work_name,scenario", PARITY_CASES,
     ids=lambda v: v if isinstance(v, str) else "?",
