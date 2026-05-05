@@ -1746,12 +1746,35 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         .agg(pl.col("t").min().alias("t"))
         .select("n", "d", "t"))
 
-    # Δ.12-drop: ``state_existing_capacity`` (``p_state_existing_capacity``),
-    # ``state_unitsize`` (``p_state_unitsize``), ``state_upper`` (``p_state_upper``)
-    # — all three produced authoritatively by ``apply_derived_e`` when
-    # ``nodeState`` is non-empty (helpers ``p_state_existing_capacity_from_source``
-    # / ``p_state_unitsize_from_source`` / ``p_state_upper_from_source``).
-    state_unitsize = state_existing_capacity = state_upper = None
+    # ``p_state_existing_capacity`` / ``p_state_unitsize`` / ``p_state_upper``
+    # are produced by ``apply_derived_e`` when ``nodeState`` is non-empty
+    # AND the workdir's auto-resolved SpineDbReader fires.  Fixtures whose
+    # workdir basename doesn't match the DB scenario (auto-resolution
+    # returns None) skip the override and rely on the seed.  Keep the seed.
+    # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
+    # variant fixtures or all fixtures explicitly pass db_reader=.
+    if unitsize is not None and cap_pd is not None:
+        # cap_pd from process side; for nodes we need a node-side capacity.
+        cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
+                                   sd / "p_entity_previously_invested_capacity.csv",
+                                   sd / "p_entity_all_existing.csv")
+        unitsize_long = _read_unitsize((sd / "p_entity_unitsize.csv") if (sd / "p_entity_unitsize.csv").exists() else (inp / "p_entity_unitsize.csv"))
+        state_existing = (cap_long.rename({"e":"n","value":"cap"})
+            .filter(pl.col("n").is_in(nodeState["n"]))
+            .select("n","d","cap"))
+        state_us_long = (unitsize_long.rename({"e":"n"})
+            .filter(pl.col("n").is_in(nodeState["n"]))
+            .select("n","value"))
+        state_existing_capacity = Param(("n","d"),
+            state_existing.rename({"cap":"value"}))
+        state_unitsize = Param(("n",), state_us_long)
+        state_upper_long = (state_existing
+            .join(state_us_long.rename({"value":"us"}), on="n", how="inner")
+            .with_columns(value=pl.col("cap")/pl.col("us"))
+            .select("n","d","value"))
+        state_upper = Param(("n","d"), state_upper_long)
+    else:
+        state_unitsize = state_existing_capacity = state_upper = None
 
     # Δ.12-drop: ``state_self_discharge`` (``p_state_self_discharge``) and
     # ``state_start`` (``p_state_start``) seeds dropped — both are now
@@ -2115,18 +2138,36 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             if row.height > 0:
                 p_nested_solve_first = bool(int(row[value_col][0]))
 
-    # Δ.12-drop: ``p_roll_continue_state`` / ``p_fix_storage_quantity`` /
-    # ``dtt_timeline_matching`` / ``period_branch`` seeds dropped — all
-    # produced authoritatively by ``apply_derived_e`` when ``nodeState``
-    # is non-empty (helpers ``p_roll_continue_state_from_workdir`` /
-    # ``p_fix_storage_quantity_from_workdir`` /
-    # ``dtt_timeline_matching_from_workdir`` / ``period_branch_from_source``).
+    # ``p_roll_continue_state`` / ``p_fix_storage_quantity`` /
+    # ``dtt_timeline_matching`` / ``period_branch`` are produced by
+    # ``apply_derived_e`` when ``nodeState`` is non-empty AND the
+    # workdir's auto-resolved SpineDbReader fires.  Some fixtures'
+    # workdirs don't follow the ``work_<scenario>`` convention exactly
+    # (e.g. ``work_2day_stochastic_dispatch_full_storage`` vs DB scenario
+    # ``2_day_stochastic_dispatch``) — for those the auto-resolution
+    # returns None and the override chain is skipped.  Keep the CSV
+    # seeds.
+    # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
+    # variant fixtures or all fixtures explicitly pass db_reader=.
     p_roll_continue_state = None
-    # ``ndt_fix_storage_quantity`` is the (n, d, t) index for
-    # ``p_fix_storage_quantity``; left as a CSV-only seed because the
-    # override doesn't synthesize the index frame separately.
-    # TODO(Δ.12c+): produce ndt_fix_storage_quantity inside
-    # ``apply_derived_e`` (derive from p_fix_storage_quantity index).
+    rcs_path = sd / "p_roll_continue_state.csv"
+    if rcs_path.exists():
+        df = _read_csv_file(rcs_path)
+        # Tolerate a leading-space column header (".mod writes 'node, p_roll_…'").
+        df.columns = [c.strip() for c in df.columns]
+        if df.height > 0:
+            df = (df.rename({"node": "n", "p_roll_continue_state": "value"})
+                    .with_columns(value=pl.col("value").cast(pl.Float64))
+                    .select("n", "value"))
+            p_roll_continue_state = Param(("n",), df)
+
+    n_fix_storage_quantity = None
+    nfsq_path = sd / "n_fix_storage_quantity_set.csv"
+    if nfsq_path.exists():
+        df = _read_csv_file(nfsq_path)
+        if df.height > 0:
+            n_fix_storage_quantity = df.rename({"node": "n"}).select("n").unique()
+
     ndt_fix_storage_quantity = None
     p_fix_storage_quantity = None
     fsq_path = sd / "fix_storage_quantity.csv"
@@ -2138,23 +2179,27 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                     .with_columns(value=pl.col("value").cast(pl.Float64))
                     .select("n", "d", "t", "value"))
             ndt_fix_storage_quantity = df.select("n", "d", "t").unique()
-            # p_fix_storage_quantity is overwritten by apply_derived_e —
-            # keep the empty placeholder None to signal "feature gated by
-            # ndt_fix_storage_quantity index" until the index is also
-            # produced in the override.
+            p_fix_storage_quantity = Param(("n", "d", "t"), df)
+
     dtt_timeline_matching = None
-    period_branch = None
-    # ``n_fix_storage_quantity`` (set frame) is in apply_projection_params'
-    # SIMPLE_PROJECTIONS — but the projection only fires when the source
-    # has a non-empty SET frame; absent in our DB schema for some fixtures.
-    # Keep CSV seed.
-    # TODO(Δ.12c+): retire when projection helper covers all fixtures.
-    n_fix_storage_quantity = None
-    nfsq_path = sd / "n_fix_storage_quantity_set.csv"
-    if nfsq_path.exists():
-        df = _read_csv_file(nfsq_path)
+    tm_path = sd / "timeline_matching_map.csv"
+    if tm_path.exists():
+        df = _read_csv_file(tm_path)
         if df.height > 0:
-            n_fix_storage_quantity = df.rename({"node": "n"}).select("n").unique()
+            dtt_timeline_matching = (df
+                .rename({"period": "d", "step": "t", "upper_step": "t_upper"})
+                .select("d", "t", "t_upper")
+                .unique())
+
+    period_branch = None
+    pb_path = sd / "period__branch.csv"
+    if pb_path.exists():
+        df = _read_csv_file(pb_path)
+        if df.height > 0:
+            period_branch = (df
+                .rename({"period": "d", "branch": "d_upper"})
+                .select("d_upper", "d")
+                .unique())
 
     # period_last: (d,).
     period_last_df = None
@@ -2598,49 +2643,56 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     out["gd_divest_period"]    = _read_set("gd_divest_period",
                                             {"group": "g", "period": "d"})
 
-    # ── Parameters (e, d) ────────────────────────────────────────────────
-    out["ed_invest_min_period"]       = _read_e_d_param("ed_invest_min_period")
-    out["ed_divest_min_period"]       = _read_e_d_param("ed_divest_min_period")
-    out["ed_cumulative_max_capacity"] = _read_e_d_param("ed_cumulative_max_capacity")
-    out["ed_cumulative_min_capacity"] = _read_e_d_param("ed_cumulative_min_capacity")
+    # Δ.12-drop: ``ed_invest_min_period`` / ``ed_divest_min_period`` /
+    # ``ed_cumulative_max_capacity`` / ``ed_cumulative_min_capacity`` /
+    # ``e_invest_min_total`` / ``e_divest_min_total`` /
+    # ``p_group_invest_max_period`` / ``p_group_invest_min_period`` /
+    # ``p_group_retire_max_period`` / ``p_group_retire_min_period`` /
+    # ``p_group_invest_max_total`` / ``p_group_invest_min_total`` /
+    # ``p_group_retire_max_total`` / ``p_group_retire_min_total`` /
+    # ``p_group_invest_max_cumulative`` / ``p_group_invest_min_cumulative`` /
+    # ``p_group_max_cumulative_flow`` / ``p_group_min_cumulative_flow`` /
+    # ``pd_max_cumulative_flow`` / ``pd_min_cumulative_flow``
+    # all produced authoritatively by ``apply_direct_params`` (Δ.4b).
+    # Seeds dropped.
+    out["ed_invest_min_period"]       = None
+    out["ed_divest_min_period"]       = None
+    out["ed_cumulative_max_capacity"] = None
+    out["ed_cumulative_min_capacity"] = None
+    out["e_invest_min_total"]         = None
+    out["e_divest_min_total"]         = None
 
-    # ── Parameters (e,) ──────────────────────────────────────────────────
-    out["e_invest_min_total"] = _read_e_param("e_invest_min_total")
-    out["e_divest_min_total"] = _read_e_param("e_divest_min_total")
-
-    # ── Group params from p_group / pdGroup / pdtGroup slices ────────────
-    def _g_param(slice_name: str) -> Param | None:
-        df = _slice_pgroup(slice_name)
-        return Param(("g",), df) if df is not None else None
-    def _gd_param(slice_name: str) -> Param | None:
-        df = _slice_pdgroup(slice_name)
-        return Param(("g", "d"), df) if df is not None else None
-    def _gdt_param(slice_name: str) -> Param | None:
-        df = _slice_pdtgroup(slice_name)
-        return Param(("g", "d", "t"), df) if df is not None else None
-
-    out["p_group_invest_max_period"]      = _gd_param("invest_max_period")
-    out["p_group_invest_min_period"]      = _gd_param("invest_min_period")
-    out["p_group_retire_max_period"]      = _gd_param("retire_max_period")
-    out["p_group_retire_min_period"]      = _gd_param("retire_min_period")
-    out["p_group_invest_max_total"]       = _g_param("invest_max_total")
-    out["p_group_invest_min_total"]       = _g_param("invest_min_total")
-    out["p_group_retire_max_total"]       = _g_param("retire_max_total")
-    out["p_group_retire_min_total"]       = _g_param("retire_min_total")
-    out["p_group_invest_max_cumulative"]  = _g_param("invest_max_cumulative")
-    out["p_group_invest_min_cumulative"]  = _g_param("invest_min_cumulative")
-    out["p_group_max_cumulative_flow"]    = _g_param("max_cumulative_flow")
-    out["p_group_min_cumulative_flow"]    = _g_param("min_cumulative_flow")
-    out["pd_max_cumulative_flow"]         = _gd_param("max_cumulative_flow")
-    out["pd_min_cumulative_flow"]         = _gd_param("min_cumulative_flow")
-    pdt_max = _gdt_param("max_instant_flow")
-    pdt_min = _gdt_param("min_instant_flow")
-    out["pdt_max_instant_flow"] = pdt_max
-    out["pdt_min_instant_flow"] = pdt_min
+    # ── Group params from pdtGroup slices (period+time) ──────────────────
+    # TODO(Δ.12c+): retire pdtGroup.csv slices for ``pdt_max_instant_flow`` /
+    # ``pdt_min_instant_flow`` when ``apply_direct_params`` covers the
+    # scalar-broadcast / 1d_map(time) cascade — today the helper handles
+    # only Map(period→time) and falls back to this seed.
+    def _slice_pdtgroup_local(name: str):
+        return _slice_pdtgroup(name)
+    pdt_max = _slice_pdtgroup_local("max_instant_flow")
+    pdt_min = _slice_pdtgroup_local("min_instant_flow")
+    out["p_group_invest_max_period"]      = None
+    out["p_group_invest_min_period"]      = None
+    out["p_group_retire_max_period"]      = None
+    out["p_group_retire_min_period"]      = None
+    out["p_group_invest_max_total"]       = None
+    out["p_group_invest_min_total"]       = None
+    out["p_group_retire_max_total"]       = None
+    out["p_group_retire_min_total"]       = None
+    out["p_group_invest_max_cumulative"]  = None
+    out["p_group_invest_min_cumulative"]  = None
+    out["p_group_max_cumulative_flow"]    = None
+    out["p_group_min_cumulative_flow"]    = None
+    out["pd_max_cumulative_flow"]         = None
+    out["pd_min_cumulative_flow"]         = None
+    out["pdt_max_instant_flow"]           = (Param(("g", "d", "t"), pdt_max)
+                                              if pdt_max is not None else None)
+    out["pdt_min_instant_flow"]           = (Param(("g", "d", "t"), pdt_min)
+                                              if pdt_min is not None else None)
     # Support of pdt_*_instant_flow (rows where param is non-null/non-zero)
-    out["gdt_maxInstantFlow"] = (pdt_max.frame.select("g", "d", "t")
+    out["gdt_maxInstantFlow"] = (pdt_max.select("g", "d", "t")
                                   if pdt_max is not None else None)
-    out["gdt_minInstantFlow"] = (pdt_min.frame.select("g", "d", "t")
+    out["gdt_minInstantFlow"] = (pdt_min.select("g", "d", "t")
                                   if pdt_min is not None else None)
 
     return out
