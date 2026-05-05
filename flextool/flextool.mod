@@ -1175,7 +1175,7 @@ table data IN 'CSV' 'solve_data/process_TimeParam_in_use.csv' : process_TimePara
 
 param pdProcess {(p, param) in process__PeriodParam_in_use, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdProcess.csv' : [process, param, period], pdProcess~value;
-param pdtProcess {(p, param) in process_TimeParam_in_use, (d,t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+param pdtProcess {(p, param) in process_TimeParam_in_use, (d,t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
 table data IN 'CSV' 'solve_data/pdtProcess.csv' : [process, param, period, time], pdtProcess~value;
 param pdtProfile {p in profile, (d,t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
 table data IN 'CSV' 'solve_data/pdtProfile.csv' : [profile, period, time], pdtProfile~value;
@@ -1198,10 +1198,10 @@ table data IN 'CSV' 'solve_data/process_sink_sourceSinkTimeParam_in_use.csv' : p
 table data IN 'CSV' 'solve_data/process_source_sourceSinkPeriodParam_in_use.csv' : process_source_sourceSinkPeriodParam_in_use <- [process, source, param];
 table data IN 'CSV' 'solve_data/process_sink_sourceSinkPeriodParam_in_use.csv' : process_sink_sourceSinkPeriodParam_in_use <- [process, sink, param];
 
-param pdtProcess_source {(p, source, param) in process_source_sourceSinkTimeParam_in_use, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+param pdtProcess_source {(p, source, param) in process_source_sourceSinkTimeParam_in_use, (d, t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
 table data IN 'CSV' 'solve_data/pdtProcess_source.csv' : [process, source, param, period, time], pdtProcess_source~value;
 
-param pdtProcess_sink {(p, sink, param) in process_sink_sourceSinkTimeParam_in_use, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+param pdtProcess_sink {(p, sink, param) in process_sink_sourceSinkTimeParam_in_use, (d, t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
 table data IN 'CSV' 'solve_data/pdtProcess_sink.csv' : [process, sink, param, period, time], pdtProcess_sink~value;
 
 param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
