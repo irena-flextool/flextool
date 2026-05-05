@@ -1078,13 +1078,20 @@ def apply_derived_a(
         source, usable_dt, pd_bw)
 
     # 6. p_inflow -------------------------------------------------------
-    # TODO(Δ.12b helper-fix): the helper returns None for
-    # ``inflow_method ∈ {scale_to_annual_flow, scale_to_peak_inflow,
-    # scale_to_annual_and_peak}`` and stochastic 3d_map shapes.  Until
-    # those branches are ported, we keep the conditional assignment so
-    # the seed-loaded CSV value (already scaled by flextool's
-    # preprocessing) survives.
-    if sd_for_share is not None:
+    # Δ.12c-fix2 gap #2 close — full scaling cascade for
+    # ``inflow_method ∈ {scale_to_*, scale_in_proportion, use_original}``
+    # ported into ``_inflow_scaling.py`` (mirrors flextool's
+    # ``preprocessing/node_inflow_scaling_params.py`` +
+    # ``entity_period_calc_params.write_pdtNodeInflow``).  The scaling
+    # helper returns None on stochastic 3d_map shapes (caller's
+    # branch 1/2 fold-in) — fall through to the simpler
+    # ``p_inflow_from_source`` (Γ.3.A use_original path) for
+    # non-scaling fixtures.  The legacy seed-loaded CSV value remains
+    # the safety net only for stochastic inflow (deferred to Δ.13+).
+    from ._inflow_scaling import apply_p_inflow_with_scaling
+    scaled = apply_p_inflow_with_scaling(flex_data, source, workdir,
+                                          usable_dt)
+    if not scaled and sd_for_share is not None:
         inflow = p_inflow_from_source(source, usable_dt, sd_for_share)
         if inflow is not None:
             flex_data.p_inflow = inflow
