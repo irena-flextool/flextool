@@ -816,10 +816,13 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     unitsize_p = (unitsize_long.rename({"e": "p"})
                        .filter(pl.col("p").is_in(pss["p"].unique())))
 
-    # Δ.12c — ``p_slope`` is produced authoritatively by
-    # ``apply_derived_b.p_slope_from_source``; auto-resolution covers
-    # all fixtures via ``_FIND_SCENARIO_OVERRIDES``.  Seed dropped.
-    slope_long = None
+    # ``p_slope`` is produced by ``apply_derived_b.p_slope_from_source``
+    # but the 7 mismatch fixtures (see Δ.12-drop close stanza in
+    # progress.md) skip auto-resolution and rely on the seed.  Keep
+    # CSV read.
+    # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
+    # variant fixtures or all fixtures explicitly pass db_reader=.
+    slope_long = _read_wide_per_entity(sd / "pdtProcess_slope.csv", rename={"entity":"p"})
     # commodity price sliced from canonical pdtCommodity.csv —
     # `pdtCommodity[c, 'price', d, t]` in .mod.
     # TODO(Δ.12c+): retire pdtCommodity.csv slice when
@@ -848,8 +851,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         flow_to_commodity = flow_to_commodity,
         unitsize = Param(("p",), unitsize_p.select("p","value")),
         flow_upper = Param(("p","source","sink","d","t"), flow_upper_psskdt),
-        # Δ.12c — slope dropped: produced by apply_derived_b.p_slope_from_source.
-        slope = None,
+        slope = Param(("p","d","t"), slope_long.select("p","d","t","value")),
         commodity_price = Param(("c","d","t"), cp_long),
     )
 
@@ -1735,11 +1737,35 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         .agg(pl.col("t").min().alias("t"))
         .select("n", "d", "t"))
 
-    # Δ.12c — ``p_state_existing_capacity`` / ``p_state_unitsize`` /
-    # ``p_state_upper`` are produced authoritatively by ``apply_derived_e``;
-    # auto-resolution covers all fixtures via ``_FIND_SCENARIO_OVERRIDES``.
-    # Seeds dropped.
-    state_unitsize = state_existing_capacity = state_upper = None
+    # ``p_state_existing_capacity`` / ``p_state_unitsize`` / ``p_state_upper``
+    # are produced by ``apply_derived_e`` when ``nodeState`` is non-empty
+    # AND the workdir's auto-resolved SpineDbReader fires.  Fixtures whose
+    # workdir basename doesn't match the DB scenario (auto-resolution
+    # returns None) skip the override and rely on the seed.  Keep the seed.
+    # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
+    # variant fixtures or all fixtures explicitly pass db_reader=.
+    if unitsize is not None and cap_pd is not None:
+        # cap_pd from process side; for nodes we need a node-side capacity.
+        cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
+                                   sd / "p_entity_previously_invested_capacity.csv",
+                                   sd / "p_entity_all_existing.csv")
+        unitsize_long = _read_unitsize((sd / "p_entity_unitsize.csv") if (sd / "p_entity_unitsize.csv").exists() else (inp / "p_entity_unitsize.csv"))
+        state_existing = (cap_long.rename({"e":"n","value":"cap"})
+            .filter(pl.col("n").is_in(nodeState["n"]))
+            .select("n","d","cap"))
+        state_us_long = (unitsize_long.rename({"e":"n"})
+            .filter(pl.col("n").is_in(nodeState["n"]))
+            .select("n","value"))
+        state_existing_capacity = Param(("n","d"),
+            state_existing.rename({"cap":"value"}))
+        state_unitsize = Param(("n",), state_us_long)
+        state_upper_long = (state_existing
+            .join(state_us_long.rename({"value":"us"}), on="n", how="inner")
+            .with_columns(value=pl.col("cap")/pl.col("us"))
+            .select("n","d","value"))
+        state_upper = Param(("n","d"), state_upper_long)
+    else:
+        state_unitsize = state_existing_capacity = state_upper = None
 
     # Δ.12-drop: ``state_self_discharge`` (``p_state_self_discharge``) and
     # ``state_start`` (``p_state_start``) seeds dropped — both are now
