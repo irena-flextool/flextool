@@ -1257,10 +1257,9 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         edd_inv_lookback = pl.DataFrame(
             schema={"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
 
-    p_max_units = Param(("e", "d"),
-        _read_wide_e_d(sd / "p_entity_max_units.csv")
-            .filter(pl.col("value") > 0)
-            .select("e", "d", "value")) if (sd / "p_entity_max_units.csv").exists() else None
+    # Δ.12-drop: ``p_entity_max_units`` produced authoritatively by
+    # ``apply_derived_c.p_entity_max_units_from_source``.  Seed dropped.
+    p_max_units = None
 
     def _cost_param(name: str, dims=("e", "d"), per_e: bool = True) -> Param | None:
         f = sd / f"{name}.csv"
