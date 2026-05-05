@@ -4607,6 +4607,136 @@ def _expand_branch_periods(period_order: list[str],
     return out
 
 
+def _dt_period_active_steps_from_workdir(
+    source: "InputSource",
+    workdir: Path,
+) -> dict | None:
+    """Δ.12c-fix2 gap #5 — preprocessing-only-timeline fallback.
+
+    Build ``per_period`` / ``period_order`` directly from the workdir's
+    preprocessing artefacts (``solve_data/steps_in_use.csv`` +
+    ``solve_data/period_in_use_set.csv``) when the source's
+    ``solve.period_timeset`` filter for the active solve is empty.
+
+    This handles **rolling-horizon sub-solves** and **nested-invest
+    sub-solves** whose synthetic solve names (e.g.
+    ``dispatch_fullYear_roll_roll_71``) aren't in the Spine DB — only
+    the parent solve is.  flextool's preprocessing pipeline writes
+    ``steps_in_use.csv`` per sub-solve; we leverage that CSV plus the
+    Spine ``timeline.timestep_duration`` for the rank/timeline lookup.
+
+    Returns ``None`` when the workdir doesn't have the required
+    preprocessing artefacts (caller stays on the seed-CSV path).
+    """
+    sd = workdir / "solve_data"
+    siu_path = sd / "steps_in_use.csv"
+    if not siu_path.exists():
+        return None
+    try:
+        siu = _read_csv_file(siu_path)
+    except Exception:
+        return None
+    if siu.height == 0:
+        return None
+    period_col = next((c for c in ("period", "d") if c in siu.columns), None)
+    step_col = next((c for c in ("step", "t", "time")
+                       if c in siu.columns), None)
+    if period_col is None or step_col is None:
+        return None
+    siu = siu.select(pl.col(period_col).alias("d"),
+                       pl.col(step_col).alias("t")).unique()
+    # Period order: prefer per_solve_sets.py's ``period_in_use_set.csv``
+    # (canonical insertion order); fall back to insertion order in
+    # steps_in_use.csv.
+    period_order: list[str] = []
+    seen: set[str] = set()
+    piu_path = sd / "period_in_use_set.csv"
+    if piu_path.exists():
+        try:
+            piu_df = _read_csv_file(piu_path)
+            if piu_df.height > 0 and "period" in piu_df.columns:
+                for d in piu_df["period"].to_list():
+                    if d and d not in seen:
+                        period_order.append(d)
+                        seen.add(d)
+        except Exception:
+            pass
+    for d in siu["d"].to_list():
+        if d and d not in seen:
+            period_order.append(d)
+            seen.add(d)
+    if not period_order:
+        return None
+    # Timeline lookup: per period, the timeline is whichever timeline
+    # contains the period's first step (per the Spine
+    # ``timeline.timestep_duration`` rank).  When multiple timelines
+    # match (rare; only for ambiguous step naming) pick the first.
+    tl_dur = _try_param(source, "timeline", "timestep_duration")
+    if tl_dur is None:
+        return None
+    tl_step_col = next((c for c in ("t", "step", "timestep", "x")
+                          if c in tl_dur.columns
+                          and c not in ("name", "value")),
+                         None)
+    if tl_step_col is None:
+        return None
+    tl_lf = (tl_dur.lazy()
+                    .select(pl.col("name").alias("timeline"),
+                            pl.col(tl_step_col).alias("t"),
+                            pl.col("value").cast(pl.Float64)
+                                            .alias("step_duration"))
+                    .sort("timeline", "t")
+                    .with_columns(rank=pl.col("t").cum_count()
+                                                  .over("timeline")
+                                                  .cast(pl.Int64)))
+    # Pick a single timeline per period via the first step of that period.
+    # Mirrors flextool's preprocessing: a period maps to exactly one
+    # timeset, which maps to exactly one timeline.  When the timeline
+    # is ambiguous (multiple timelines contain the same step name —
+    # shouldn't happen with t0001..t8760 naming), prefer the timeline
+    # whose first matching step has the smallest rank (i.e. earliest
+    # step in the timeline).
+    siu_e = siu.lazy().join(tl_lf, on="t", how="inner").collect()
+    if siu_e.height == 0:
+        return None
+    timeline_per_period: dict[str, str] = {}
+    per_period: dict[str, list[tuple[str, int]]] = {}
+    block_starts_per_period: dict[str, list[str]] = {}
+    for d in period_order:
+        rows = siu_e.filter(pl.col("d") == d)
+        if rows.height == 0:
+            per_period[d] = []
+            block_starts_per_period[d] = []
+            continue
+        # When multiple timelines match, pick the timeline with the
+        # smallest sum-of-ranks for this period (== smallest first step).
+        if rows["timeline"].n_unique() > 1:
+            best_tl = (rows.group_by("timeline")
+                           .agg(pl.col("rank").min().alias("min_rk"))
+                           .sort("min_rk")
+                           .select("timeline").to_series()[0])
+            rows = rows.filter(pl.col("timeline") == best_tl)
+        rows_sorted = rows.sort("rank")
+        timeline_per_period[d] = rows_sorted["timeline"][0]
+        per_period[d] = list(zip(rows_sorted["t"].to_list(),
+                                    rows_sorted["rank"].to_list()))
+        # Block starts: indices where the rank gap to the previous step
+        # is >1.  Mirrors ``make_period_block``'s detection rule.
+        ts = rows_sorted["t"].to_list()
+        rks = rows_sorted["rank"].to_list()
+        block_firsts: list[str] = [ts[0]] if ts else []
+        for j in range(1, len(rks)):
+            if rks[j] - rks[j - 1] > 1:
+                block_firsts.append(ts[j])
+        block_starts_per_period[d] = block_firsts
+    return dict(
+        per_period=per_period,
+        timeline_for_period=timeline_per_period,
+        period_order=period_order,
+        block_starts_per_period=block_starts_per_period,
+    )
+
+
 def _dt_period_active_steps(source: "InputSource",
                               active_solve: str,
                               workdir: Path | None = None,
@@ -4625,9 +4755,19 @@ def _dt_period_active_steps(source: "InputSource",
 
     Returns ``None`` when the active solve has no realized periods or any
     of the required Spine classes are absent.
+
+    Δ.12c-fix2 gap #5 — when the source-side path returns no rows for the
+    active solve (e.g. rolling-horizon / nested-invest synthetic solves
+    whose names aren't in Spine), falls back to
+    :func:`_dt_period_active_steps_from_workdir` which reads
+    ``steps_in_use.csv`` directly.  The fallback uses the Spine
+    ``timeline.timestep_duration`` for rank/timeline assignment.
     """
     p_ts = _try_param(source, "solve", "period_timeset")
     if p_ts is None:
+        # Try preprocessing-only fallback before bailing.
+        if workdir is not None:
+            return _dt_period_active_steps_from_workdir(source, workdir)
         return None
     period_col = next((c for c in ("period", "x")
                         if c in p_ts.columns), None)
@@ -4637,6 +4777,17 @@ def _dt_period_active_steps(source: "InputSource",
                        .filter(pl.col("name") == active_solve)
                        .rename({period_col: "d"})
                        .select("d", pl.col("value").alias("ts")))
+    if pt_eager_full.height == 0:
+        # Active solve isn't in the source's period_timeset (synthetic
+        # rolling-horizon / nested-invest sub-solve).  Try preprocessing-
+        # only fallback.
+        if workdir is not None:
+            wd_result = _dt_period_active_steps_from_workdir(source, workdir)
+            if wd_result is not None:
+                return wd_result
+        # No fallback available — caller will bail.
+        # (We continue with the empty pt_eager_full, which produces
+        # an empty anchor_to_ts and the function returns None below.)
     # Anchor → timeset map for the active solve.
     anchor_to_ts: dict[str, str] = dict(
         zip(pt_eager_full["d"].to_list(),
@@ -5828,12 +5979,14 @@ def apply_derived_e(
     # "feature inactive / no handoff state" signal.
 
     # 1. dtttdt -------------------------------------------------------
-    # TODO(Δ.12b helper-fix): dtttdt_from_source has gaps for fixtures
-    # whose timeline is preprocessed via flextool's
-    # ``solve_writers.write_dtttdt`` (uses preprocessing-only state).
-    # Until ported (Δ.13+), the seed-loaded ``flex_data.dtttdt`` (from
-    # _load_storage / pre-existing CSV) is preserved when the helper
-    # returns None.
+    # Δ.12c-fix2 gap #5 close — ``_dt_period_active_steps`` now falls
+    # back to reading ``solve_data/steps_in_use.csv`` for synthetic
+    # rolling-horizon / nested-invest sub-solves whose names aren't in
+    # the Spine DB.  The fallback uses ``timeline.timestep_duration``
+    # for rank/timeline assignment.  Conditional assignment is retained
+    # because fixtures genuinely lacking timeline data on the source AND
+    # the workdir CSV (very rare; not present in the engine_polars
+    # corpus) still need to fall through to the seed-loaded value.
     dtttdt_db = dtttdt_from_source(source, active_solve, workdir)
     if dtttdt_db is not None:
         flex_data.dtttdt = dtttdt_db
