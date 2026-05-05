@@ -109,12 +109,32 @@ class OrchestrationStep:
     Mirrors :class:`flextool.engine_polars.chain.ChainStep` but produced
     by the native orchestrator path.  ``handoff`` is the carrier used to
     seed the *next* solve's preprocessing.
+
+    Attributes
+    ----------
+    solve_name : str
+        The complete (sub-)solve identifier emitted by flextool's
+        orchestration loop (e.g. ``"y2025_5week"`` or
+        ``"dispatch_fullYear_roll_roll_3"``).
+    solution : polar_high.Solution | None
+        The HiGHS solution.  ``None`` only on the failed-solve path.
+    handoff : SolveHandoff
+        Flexpy-derived handoff carriers, threaded forward.
+    obj : float | None
+        Objective value (cached for quick comparison; equal to
+        ``solution.obj``).
+    warm_used : bool
+        Δ.12d — True if this solve was produced by warm-updating the
+        prior solve's :class:`polar_high.WarmProblem` instance; False
+        if it was a cold rebuild.  Always False for the first solve
+        and for ``warm=False`` runs.
     """
 
     solve_name: str
     solution: "Solution | None"
     handoff: SolveHandoff
     obj: float | None = None
+    warm_used: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +184,7 @@ def run_orchestration(
     runner_factory=None,
     db_url: str | None = None,
     scenario_name: str | None = None,
+    warm: bool = False,
 ) -> dict[str, OrchestrationStep]:
     """Drive the master loop natively.
 
@@ -199,6 +220,16 @@ def run_orchestration(
         :class:`FlexToolRunner` — used by tests that want to short-
         circuit flextool's preprocessing.  Default uses the canonical
         constructor.
+    warm : bool, default False
+        Δ.12d — when True, attempt warm LP updates between consecutive
+        structurally-compatible per-solve iterations using
+        :class:`polar_high.WarmProblem`.  Reuses one WarmProblem across
+        the cascade, applying ``_apply_warm_updates`` between solves
+        and falling back to a cold rebuild whenever the structural
+        fingerprint changes or any unmapped Param differs.  Decisions
+        are recorded per-step on :attr:`OrchestrationStep.warm_used`.
+        Default ``False`` preserves the original cold-rebuild
+        behaviour.
 
     Returns
     -------
@@ -236,7 +267,8 @@ def run_orchestration(
     # preprocessing chain we still consume.  Our cascade solver is the
     # `solver.run(...)` callback inside that loop.
     return _drive_cascade(state, work_folder, solves, runner_factory,
-                          db_url=db_url, scenario_name=scenario_name)
+                          db_url=db_url, scenario_name=scenario_name,
+                          warm=warm)
 
 
 def _drive_cascade(
@@ -247,17 +279,27 @@ def _drive_cascade(
     *,
     db_url: str | None = None,
     scenario_name: str | None = None,
+    warm: bool = False,
 ) -> dict[str, OrchestrationStep]:
     """Drive the flextool master loop with a flexpy cascade solver.
 
     For every per-solve iteration:
 
     1. Read the snapshot via ``load_flextool``.
-    2. Build the LP via ``build_flextool``.
+    2. Build the LP via ``build_flextool`` (cold rebuild) OR warm-update
+       the prior iteration's :class:`polar_high.WarmProblem`.
     3. Solve via HiGHS.
     4. Build the handoff via ``build_handoff_from_flexpy``.
     5. Deposit it into ``state.handoffs`` so the next iteration's
        preprocessing picks it up.
+
+    Parameter ``warm`` toggles per-iteration warm-LP updates: when True,
+    the cascade reuses one ``WarmProblem`` across consecutive
+    structurally-compatible iterations.  See
+    :mod:`flextool.engine_polars._warm` for the structural-fingerprint
+    + Param-classification machinery.  Cold rebuild (``warm=False``)
+    remains the default for backward compatibility with every existing
+    caller.
 
     This mirrors :func:`flextool.engine_polars.input.load_flextool_from_db`'s
     multi-solve cascade but emits an :class:`OrchestrationStep` per solve
@@ -270,7 +312,7 @@ def _drive_cascade(
     from flextool.flextoolrunner import orchestration as _flx_orch
     from flextool.flextoolrunner.solver_runner import SolverRunner
 
-    from polar_high import Problem
+    from polar_high import Problem, WarmProblem
     from flextool.engine_polars.input import (
         build_handoff_from_flexpy,
         load_flextool,
@@ -279,6 +321,12 @@ def _drive_cascade(
     from flextool.engine_polars._output_writer import (
         OutputWriterState,
         write_outputs_for_solve,
+    )
+    from flextool.engine_polars._warm import (
+        _IncompatibleUpdate,
+        _apply_warm_updates,
+        _build_warm_problem,
+        _fingerprint,
     )
 
     results: dict[str, OrchestrationStep] = {}
@@ -325,6 +373,17 @@ def _drive_cascade(
         def __init__(self, runner_state):
             super().__init__(runner_state)
             self._all_steps: dict[str, OrchestrationStep] = results
+            # Δ.12d — warm-LP carry-over state.  ``_warm_problem`` holds
+            # the live :class:`polar_high.WarmProblem` reused across
+            # consecutive structurally-compatible iterations; ``_prior_data``
+            # / ``_prior_fp`` snapshot the previous iteration's FlexData +
+            # fingerprint for the diff scan in
+            # :func:`_apply_warm_updates`.  All three stay None when
+            # ``warm=False`` (the existing cold-cascade behaviour) AND
+            # are reset to None on every cold rebuild.
+            self._warm_problem: "WarmProblem | None" = None
+            self._prior_data = None
+            self._prior_fp: "tuple | None" = None
 
         def run(self, complete_solve_name: str) -> int:
             # Δ.12 — wire ``handoff=`` through ``load_flextool`` so the
@@ -350,17 +409,57 @@ def _drive_cascade(
                 handoff=prior_for_load,
                 db_reader=cascade_db_reader,
             )
-            pb = Problem()
-            build_flextool(pb, data)
-            # Δ.12c-fix: ``keep_solver=True`` so ``sol.highs`` carries
-            # the live HiGHS instance the output writer adapter consumes
-            # (``write_all_variables`` / ``write_all_handoffs`` read MPS
-            # column / row names directly off the solver).  Without this
-            # the adapter no-ops and the native cascade emits zero
-            # parquets — the regression
-            # ``test_native_cascade_emits_reference_output_raw_files``
-            # surfaced in Δ.12c-fix.
-            sol = pb.solve(keep_solver=True)
+
+            # Δ.12d — warm-LP per-iteration decision.  When ``warm`` is
+            # True AND the prior iteration left a live WarmProblem
+            # whose fingerprint matches this iteration's data, attempt
+            # to push the Param diff into the live LP.  Any
+            # _IncompatibleUpdate (unmapped Param differs, gate
+            # transitions to inactive while Param contributed cells,
+            # …) drops back to a cold rebuild.  Cold rebuild also
+            # fires on the first iteration and on any structural
+            # fingerprint mismatch.
+            warm_used = False
+            if warm:
+                fp = _fingerprint(data)
+                tried_warm = (
+                    self._warm_problem is not None
+                    and self._prior_data is not None
+                    and self._prior_fp == fp
+                )
+                if tried_warm:
+                    try:
+                        _apply_warm_updates(self._warm_problem,
+                                            self._prior_data, data)
+                        warm_used = True
+                    except _IncompatibleUpdate:
+                        # Drop the stale warm problem so the next
+                        # branch builds a fresh one.
+                        self._warm_problem = None
+                if not warm_used:
+                    self._warm_problem = _build_warm_problem(data)
+                # ``WarmProblem.solve`` always keeps the HiGHS instance
+                # alive on ``Solution.highs`` — that's the whole point
+                # of warm reuse — so the output writer adapter
+                # (``write_all_variables`` / ``write_all_handoffs``)
+                # sees the live solver as it does for cold rebuilds
+                # under ``keep_solver=True``.  No extra kwarg required.
+                sol = self._warm_problem.solve()
+                self._prior_data = data
+                self._prior_fp = fp
+            else:
+                pb = Problem()
+                build_flextool(pb, data)
+                # Δ.12c-fix: ``keep_solver=True`` so ``sol.highs``
+                # carries the live HiGHS instance the output writer
+                # adapter consumes (``write_all_variables`` /
+                # ``write_all_handoffs`` read MPS column / row names
+                # directly off the solver).  Without this the adapter
+                # no-ops and the native cascade emits zero parquets —
+                # the regression
+                # ``test_native_cascade_emits_reference_output_raw_files``
+                # surfaced in Δ.12c-fix.
+                sol = pb.solve(keep_solver=True)
             if not sol.optimal:
                 self.state.logger.error(
                     f"flexpy non-optimal for {complete_solve_name}"
@@ -413,6 +512,7 @@ def _drive_cascade(
                 solution=sol,
                 handoff=handoff,
                 obj=sol.obj,
+                warm_used=warm_used,
             )
             return 0
 
@@ -445,6 +545,7 @@ def run_chain_from_db(
     flextool_dir: Path | str | None = None,
     bin_dir: Path | str | None = None,
     logger: logging.Logger | None = None,
+    warm: bool = False,
 ) -> dict[str, OrchestrationStep]:
     """Run a flextool multi-solve scenario end-to-end natively.
 
@@ -473,6 +574,12 @@ def run_chain_from_db(
         ``/home/jkiviluo/sources/flextool/{flextool,bin}``.
     logger : logging.Logger, optional
         Logger to use.  ``None`` constructs one named after the scenario.
+    warm : bool, default False
+        Δ.12d — when True, reuse one :class:`polar_high.WarmProblem`
+        across consecutive structurally-compatible per-solve iterations
+        in the cascade, applying ``_apply_warm_updates`` between solves
+        rather than cold-rebuilding.  See
+        :func:`run_orchestration` for full semantics.
 
     Returns
     -------
@@ -543,7 +650,7 @@ def run_chain_from_db(
 
     return run_orchestration(
         state, work_folder, runner_factory=_runner_factory,
-        db_url=db_url, scenario_name=scenario_name,
+        db_url=db_url, scenario_name=scenario_name, warm=warm,
     )
 
 
