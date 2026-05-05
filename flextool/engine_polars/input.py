@@ -2454,28 +2454,13 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
 
 
 def _load_fixed_cost(sd: Path) -> dict:
-    """Load (e, d) ed_fixed_cost and (e, d) p_entity_all_existing — both
-    needed for the constant existing-entity-fixed-cost objective term
-    (mod §8.1)."""
-    blank = dict(p_ed_fixed_cost=None, p_entity_all_existing=None)
-    fc_path = sd / "ed_fixed_cost.csv"
-    fc = None
-    if fc_path.exists():
-        df = _read_wide_e_d(fc_path).filter(pl.col("value") != 0)
-        if df.height > 0:
-            fc = Param(("e", "d"), df.select("e", "d", "value"))
-    # p_entity_all_existing per (e, d) — sum of existing+previously_invested
-    ae_path = sd / "p_entity_all_existing.csv"
-    pe = None
-    if ae_path.exists():
-        df = _read_csv_file(ae_path)
-        if df.height > 0:
-            df = df.rename({"entity": "e", "period": "d"}) \
-                   .with_columns(value=pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
-            pe = Param(("e", "d"), df.select("e", "d", "value"))
-    if fc is None and pe is None:
-        return blank
-    return dict(p_ed_fixed_cost=fc, p_entity_all_existing=pe)
+    """Load (e, d) ed_fixed_cost and (e, d) p_entity_all_existing.
+
+    Δ.12-drop: ``p_ed_fixed_cost`` produced authoritatively by
+    ``apply_derived_f`` (npv).  ``p_entity_all_existing`` produced by
+    ``apply_derived_d`` + ``apply_existing_chain``.  Seeds dropped.
+    """
+    return dict(p_ed_fixed_cost=None, p_entity_all_existing=None)
 
 
 def _load_node_capacity_for_scaling(sd: Path,
