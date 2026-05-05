@@ -691,6 +691,15 @@ def _load_node(sd: Path, dt: pl.DataFrame):
     # pdtNodeInflow.csv is canonical (.mod reads it via `table data IN`).
     # penalty_up/penalty_down are sliced from the canonical pdtNode.csv —
     # same operation .mod does inline via `pdtNode[n, 'penalty_up', d, t]`.
+    # TODO(Δ.12c+): retire pdtNodeInflow.csv read when ``apply_derived_a``
+    # extends ``p_inflow_from_source`` to cover ``inflow_method ∈ {scale_to_*}``
+    # and stochastic 3d_map shapes.
+    # TODO(Δ.12c+): retire pdtNode.csv penalty slices when
+    # ``apply_derived_a`` (via ``_derived_arithmetic.p_penalty_*_from_source``)
+    # produces a non-None Param for fixtures whose nodeBalance includes nodes
+    # without an explicit ``penalty_*`` row in the SpineDB source — today the
+    # helper returns None there and the seed survives via build_flextool's
+    # required-field gate.
     inflow_long = _read_wide_per_entity(sd / "pdtNodeInflow.csv", rename={"entity":"n"})
     pen_up_long = _slice_param(sd / "pdtNode.csv", "node", "penalty_up",   rename_entity_to="n")
     pen_dn_long = _slice_param(sd / "pdtNode.csv", "node", "penalty_down", rename_entity_to="n")
@@ -1037,61 +1046,19 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
             flow_cstr_idx  = joined.select("p","source","sink","c")
             flow_cstr_coef = Param(("p","source","sink","c"),
                 joined.select("p","source","sink","c","coef").rename({"coef":"value"}))
-    # Invest-capacity coefficient files — used to add v_invest_n and
-    # v_invest_p terms to user constraints.  Both files are optional;
-    # node-side and process-side are read independently.
-    n_inv_path = inp / "p_node_constraint_invested_capacity_coefficient.csv"
+    # Δ.12-drop: ``p_node_constraint_invested_capacity_coefficient`` /
+    # ``p_process_constraint_invested_capacity_coefficient`` /
+    # ``p_node_constraint_state_coefficient`` /
+    # ``p_node_constraint_prebuilt_capacity_coefficient`` /
+    # ``p_process_constraint_prebuilt_capacity_coefficient`` and
+    # ``p_constraint_constant`` produced authoritatively by
+    # ``apply_direct_params``.  Seeds dropped.
     n_inv_cstr_coef = None
-    if n_inv_path.exists():
-        ndf = _read_csv_file(n_inv_path)
-        if ndf.height > 0:
-            ndf = (ndf.rename({"node":"n", "constraint":"c",
-                                "p_node_constraint_invested_capacity_coefficient":"value"})
-                      .select("n", "c", "value"))
-            n_inv_cstr_coef = Param(("n", "c"), ndf)
-    p_inv_path = inp / "p_process_constraint_invested_capacity_coefficient.csv"
     p_inv_cstr_coef = None
-    if p_inv_path.exists():
-        pdf = _read_csv_file(p_inv_path)
-        if pdf.height > 0:
-            pdf = (pdf.rename({"process":"p", "constraint":"c",
-                                "p_process_constraint_invested_capacity_coefficient":"value"})
-                      .select("p", "c", "value"))
-            p_inv_cstr_coef = Param(("p", "c"), pdf)
-    # ─── State coefficient (user-cstr × v_state) ──────────────────────────
-    n_state_path = inp / "p_node_constraint_state_coefficient.csv"
     n_state_cstr_coef = None
-    if n_state_path.exists():
-        sdf = _read_csv_file(n_state_path)
-        if sdf.height > 0:
-            sdf = (sdf.rename({"node":"n", "constraint":"c",
-                                "p_node_constraint_state_coefficient":"value"})
-                      .select("n", "c", "value"))
-            n_state_cstr_coef = Param(("n", "c"), sdf)
-    # ─── Prebuilt-capacity coefficient (user-cstr × existing+prior_invest) ─
-    n_pre_path = inp / "p_node_constraint_cumulative_pre_built_capacity_coefficient.csv"
     n_prebuilt_cstr_coef = None
-    if n_pre_path.exists():
-        ndf = _read_csv_file(n_pre_path)
-        if ndf.height > 0:
-            ndf = (ndf.rename({"node":"n", "constraint":"c",
-                                "p_node_constraint_prebuilt_capacity_coefficient":"value"})
-                      .select("n", "c", "value"))
-            n_prebuilt_cstr_coef = Param(("n", "c"), ndf)
-    p_pre_path = inp / "p_process_constraint_cumulative_pre_built_capacity_coefficient.csv"
     p_prebuilt_cstr_coef = None
-    if p_pre_path.exists():
-        pdf = _read_csv_file(p_pre_path)
-        if pdf.height > 0:
-            pdf = (pdf.rename({"process":"p", "constraint":"c",
-                                "p_process_constraint_prebuilt_capacity_coefficient":"value"})
-                      .select("p", "c", "value"))
-            p_prebuilt_cstr_coef = Param(("p", "c"), pdf)
-    const_path = inp / "p_constraint_constant.csv"
-    constraint_constant = Param(("c",),
-        (_read_csv_file(const_path).rename({"constraint":"c","p_constraint_constant":"value"})
-         if const_path.exists()
-         else cs.select("c").with_columns(value=pl.lit(0.0))))
+    constraint_constant = None
     cdt_eq = cdt_le = cdt_ge = None
     for s, slot in [("equal","eq"), ("less_than","le"), ("greater_than","ge")]:
         cs_s = cs.filter(pl.col("sense")==s).select("c")
@@ -1367,6 +1334,18 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         if df.height == 0: return None
         return Param(("e",), df)
 
+    # Δ.12-drop: CSV seeds for fields whose override-chain helpers are
+    # authoritative are set to None below.  The override chain repopulates
+    # each field unconditionally:
+    #   * ``e_invest_max_total`` / ``e_divest_max_total`` / ``e_invest_min_total``
+    #     / ``e_divest_min_total``  ← ``apply_direct_params._e_total_param``.
+    #   * ``ed_lifetime_fixed_cost`` / ``ed_lifetime_fixed_cost_divest`` /
+    #     ``ed_entity_annual_discounted`` /
+    #     ``ed_entity_annual_divest_discounted`` ← ``apply_derived_f`` (npv).
+    #   * ``ed_invest_max_period`` / ``ed_divest_max_period``
+    #     ← ``apply_direct_params`` via ``ed_*_max_period_from_source``.
+    #   * ``p_entity_previously_invested_capacity`` / ``p_entity_invested``
+    #     / ``p_entity_divested`` ← ``apply_derived_f`` from workdir.
     return dict(
         ed_invest_set=ed_inv if ed_inv.height > 0 else None,
         ed_divest_set=ed_div if ed_div.height > 0 else None,
@@ -1378,22 +1357,21 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         edd_invest_lookback_set=edd_inv_lookback if edd_inv_lookback.height > 0 else None,
         edd_divest_active=edd_div if edd_div.height > 0 else None,
         p_entity_max_units=p_max_units,
-        ed_lifetime_fixed_cost=_cost_param("ed_lifetime_fixed_cost"),
-        ed_lifetime_fixed_cost_divest=_cost_param("ed_lifetime_fixed_cost_divest"),
-        ed_entity_annual_discounted=_cost_param("ed_entity_annual_discounted"),
-        ed_entity_annual_divest_discounted=_cost_param("ed_entity_annual_divest_discounted"),
+        ed_lifetime_fixed_cost=None,
+        ed_lifetime_fixed_cost_divest=None,
+        ed_entity_annual_discounted=None,
+        ed_entity_annual_divest_discounted=None,
         e_invest_total=_e_total_set("e_invest_total"),
         e_divest_total=_e_total_set("e_divest_total"),
-        e_invest_max_total=_e_total_param("e_invest_max_total"),
-        e_divest_max_total=_e_total_param("e_divest_max_total"),
+        e_invest_max_total=None,
+        e_divest_max_total=None,
         ed_invest_period_set=_read_period_set("ed_invest_period"),
         ed_divest_period_set=_read_period_set("ed_divest_period"),
-        ed_invest_max_period=_read_period_cap("ed_invest_max_period"),
-        ed_divest_max_period=_read_period_cap("ed_divest_max_period"),
-        p_entity_previously_invested_capacity=_read_handoff_e_d(
-            "p_entity_previously_invested_capacity"),
-        p_entity_invested=_read_handoff_e("p_entity_invested"),
-        p_entity_divested=_read_handoff_e("p_entity_divested"),
+        ed_invest_max_period=None,
+        ed_divest_max_period=None,
+        p_entity_previously_invested_capacity=None,
+        p_entity_invested=None,
+        p_entity_divested=None,
     )
 
 
@@ -1484,26 +1462,19 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None) -> dict:
     if not any(s is not None for s in sets.values()):
         return blank
 
-    # Canonical input lives in input/p_process_{sink,source}.csv (long
-    # format; .mod reads it via ``table data IN`` at flextool.mod:735).
-    # Fall back to the .mod-printf debug-export in solve_data/ for
-    # legacy fixtures.
-    def _pick(name: str) -> Path:
-        a = inp / name; b = sd / name
-        return a if a.exists() else b
-    sink_params = _read_p_process_side(_pick("p_process_sink.csv"), "sink")
-    src_params  = _read_p_process_side(_pick("p_process_source.csv"), "source")
-    def _param(d: dict, key: str, side: str) -> Param | None:
-        df = d.get(key)
-        if df is None or df.height == 0: return None
-        return Param(("p", side), df)
-
+    # Δ.12-drop: ``p_ramp_speed_*_{sink,source}`` Params produced
+    # authoritatively by ``apply_direct_params`` via
+    # ``p_ramp_speed_up_sink_from_source`` etc.  Seeds dropped (the
+    # ``_read_p_process_side`` reads of ``p_process_sink.csv`` /
+    # ``p_process_source.csv`` are removed).  The four ramp-limit set
+    # frames above remain CSV-loaded — apply_projection_params doesn't
+    # cover those set partitions today.
     return dict(
         **sets,
-        p_ramp_speed_up_sink   = _param(sink_params, "ramp_speed_up",   "sink"),
-        p_ramp_speed_down_sink = _param(sink_params, "ramp_speed_down", "sink"),
-        p_ramp_speed_up_source   = _param(src_params, "ramp_speed_up",   "source"),
-        p_ramp_speed_down_source = _param(src_params, "ramp_speed_down", "source"),
+        p_ramp_speed_up_sink   = None,
+        p_ramp_speed_down_sink = None,
+        p_ramp_speed_up_source = None,
+        p_ramp_speed_down_source = None,
     )
 
 
@@ -1557,16 +1528,16 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     p_odt = _read_csv_file(sd / "p_online_dt_set.csv").rename({"process": "p", "step": "t"})
     p_odt = p_odt.select("p", "period", "t").rename({"period": "d"})
 
-    # pdProcess — extract min_load and startup_cost
-    p_proc = _read_csv_file(inp / "p_process.csv")
-    min_load_rows = (p_proc.filter(pl.col("processParam") == "min_load")
-                     .rename({"process": "p", "p_process": "value"})
-                     .select("p", "value"))
-    p_min_load = (Param(("p",), min_load_rows)
-                  if min_load_rows.height > 0 else None)
+    # Δ.12-drop: ``p_min_load`` produced authoritatively by
+    # ``apply_direct_params.p_min_load_from_source``.  Seed dropped.
+    p_min_load = None
 
     # startup_cost is per (p, d) — sliced from canonical pdProcess.csv
     # (`pdProcess[p, 'startup_cost', d]` in .mod).
+    # TODO(Δ.12c+): retire pdProcess.csv slice for ``p_startup_cost`` when
+    # ``p_startup_cost_from_source`` covers the scalar-broadcast cascade
+    # (today the helper handles only the 1d_map(period) shape; scalar
+    # broadcast falls back to this seed).
     sc_long = _slice_param(sd / "pdProcess.csv", "process", "startup_cost",
                             has_time=False, rename_entity_to="p")
     p_startup_cost = None
@@ -1583,36 +1554,16 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
                 pdt_online_int = (p_odt.join(p_online_int, on="p", how="inner")
                                         .join(sc_p, on=["p", "d"], how="inner"))
 
-    # pdtProcess_section — wide-per-process file
-    sec_path = sd / "pdtProcess_section.csv"
+    # Δ.12-drop: ``p_section`` produced authoritatively by
+    # ``apply_derived_c.p_section_from_source`` when dt and classified
+    # processes are non-empty.  Seed dropped.
     p_section = None
-    if sec_path.exists():
-        sec_long = _read_wide_per_entity(sec_path, rename={"entity": "p"})
-        if sec_long.height > 0:
-            p_section = Param(("p", "d", "t"), sec_long.select("p", "d", "t", "value"))
 
-    # Minimum uptime / downtime: optional 3-col domain set + 5-col lookback
-    # frame.  Both files are emitted by .mod's preprocessing; absence means
-    # no min-up/down-time on any process in this scenario.
-    def _read_pdt_set(name: str) -> pl.DataFrame | None:
-        path = sd / f"{name}.csv"
-        if not path.exists():
-            return None
-        df = _read_csv_file(path)
-        if df.height == 0:
-            return None
-        return df.rename({"process": "p", "period": "d", "time": "t"})
-
-    def _read_lookback(name: str) -> pl.DataFrame | None:
-        path = sd / f"{name}.csv"
-        if not path.exists():
-            return None
-        df = _read_csv_file(path)
-        if df.height == 0:
-            return None
-        return df.rename({"process": "p", "period": "d", "time": "t",
-                           "period_back": "d_back", "time_back": "t_back"})
-
+    # Δ.12-drop: ``pdt_uptime_set`` / ``pdt_downtime_set`` /
+    # ``uptime_lookback`` / ``downtime_lookback`` produced authoritatively
+    # by ``apply_derived_c`` (helpers ``uptime_lookback_from_source`` /
+    # ``downtime_lookback_from_source`` + ``pdt_uptime_set_from_lookback``
+    # / ``pdt_downtime_set_from_lookback``).  Seeds dropped.
     return dict(
         process_online=p_online,
         process_online_linear=p_online_lin,
@@ -1625,10 +1576,10 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         p_min_load=p_min_load,
         p_startup_cost=p_startup_cost,
         p_section=p_section,
-        pdt_uptime_set=_read_pdt_set("pdt_uptime_set"),
-        pdt_downtime_set=_read_pdt_set("pdt_downtime_set"),
-        uptime_lookback=_read_lookback("uptime_lookback"),
-        downtime_lookback=_read_lookback("downtime_lookback"),
+        pdt_uptime_set=None,
+        pdt_downtime_set=None,
+        uptime_lookback=None,
+        downtime_lookback=None,
     )
 
 
@@ -1771,40 +1722,19 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         .agg(pl.col("t").min().alias("t"))
         .select("n", "d", "t"))
 
-    # state_upper = capacity / unitsize per (n, d)  (assume node unitsize)
-    if unitsize is not None and cap_pd is not None:
-        # cap_pd from process side; for nodes we need a node-side capacity.
-        cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
-                                   sd / "p_entity_previously_invested_capacity.csv",
-                                   sd / "p_entity_all_existing.csv")
-        unitsize_long = _read_unitsize((sd / "p_entity_unitsize.csv") if (sd / "p_entity_unitsize.csv").exists() else (inp / "p_entity_unitsize.csv"))
-        state_existing = (cap_long.rename({"e":"n","value":"cap"})
-            .filter(pl.col("n").is_in(nodeState["n"]))
-            .select("n","d","cap"))
-        state_us_long = (unitsize_long.rename({"e":"n"})
-            .filter(pl.col("n").is_in(nodeState["n"]))
-            .select("n","value"))
-        state_existing_capacity = Param(("n","d"),
-            state_existing.rename({"cap":"value"}))
-        state_unitsize = Param(("n",), state_us_long)
-        state_upper_long = (state_existing
-            .join(state_us_long.rename({"value":"us"}), on="n", how="inner")
-            .with_columns(value=pl.col("cap")/pl.col("us"))
-            .select("n","d","value"))
-        state_upper = Param(("n","d"), state_upper_long)
-    else:
-        state_unitsize = state_existing_capacity = state_upper = None
+    # Δ.12-drop: ``state_existing_capacity`` (``p_state_existing_capacity``),
+    # ``state_unitsize`` (``p_state_unitsize``), ``state_upper`` (``p_state_upper``)
+    # — all three produced authoritatively by ``apply_derived_e`` when
+    # ``nodeState`` is non-empty (helpers ``p_state_existing_capacity_from_source``
+    # / ``p_state_unitsize_from_source`` / ``p_state_upper_from_source``).
+    state_unitsize = state_existing_capacity = state_upper = None
 
-    # p_node parameters (storage_state_start, self_discharge_loss).
-    p_node = _read_csv_file(inp / "p_node.csv")
-    def _node_param(name: str) -> Param | None:
-        rows = (p_node.filter(pl.col("nodeParam") == name)
-                       .rename({"node":"n","p_node":"value"})
-                       .select("n","value"))
-        if rows.height == 0: return None
-        return Param(("n",), rows)
-    state_self_discharge = _node_param("self_discharge_loss")
-    state_start = _node_param("storage_state_start")
+    # Δ.12-drop: ``state_self_discharge`` (``p_state_self_discharge``) and
+    # ``state_start`` (``p_state_start``) seeds dropped — both are now
+    # produced authoritatively by ``apply_direct_params`` via
+    # ``p_state_self_discharge_from_source`` / ``p_state_start_from_source``.
+    state_self_discharge = None
+    state_start = None
 
     # Binding methods (sd-level, per node).
     # NOTE: the .mod attaches a (v_state[t] - v_state[t-1]) term in
@@ -2161,29 +2091,18 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             if row.height > 0:
                 p_nested_solve_first = bool(int(row[value_col][0]))
 
-    # p_roll_continue_state per node — values handed off from the previous
-    # sub-solve (.mod writes this at end-of-solve via fn_p_roll_continue_state).
+    # Δ.12-drop: ``p_roll_continue_state`` / ``p_fix_storage_quantity`` /
+    # ``dtt_timeline_matching`` / ``period_branch`` seeds dropped — all
+    # produced authoritatively by ``apply_derived_e`` when ``nodeState``
+    # is non-empty (helpers ``p_roll_continue_state_from_workdir`` /
+    # ``p_fix_storage_quantity_from_workdir`` /
+    # ``dtt_timeline_matching_from_workdir`` / ``period_branch_from_source``).
     p_roll_continue_state = None
-    rcs_path = sd / "p_roll_continue_state.csv"
-    if rcs_path.exists():
-        df = _read_csv_file(rcs_path)
-        # Tolerate a leading-space column header (".mod writes 'node, p_roll_…'").
-        df.columns = [c.strip() for c in df.columns]
-        if df.height > 0:
-            df = (df.rename({"node": "n", "p_roll_continue_state": "value"})
-                    .with_columns(value=pl.col("value").cast(pl.Float64))
-                    .select("n", "value"))
-            p_roll_continue_state = Param(("n",), df)
-
-    # n_fix_storage_quantity (set), ndt_fix_storage_quantity (n, d_upper, t_upper),
-    # p_fix_storage_quantity (Param), and dtt_timeline_matching (d, t, t_upper).
-    n_fix_storage_quantity = None
-    nfsq_path = sd / "n_fix_storage_quantity_set.csv"
-    if nfsq_path.exists():
-        df = _read_csv_file(nfsq_path)
-        if df.height > 0:
-            n_fix_storage_quantity = df.rename({"node": "n"}).select("n").unique()
-
+    # ``ndt_fix_storage_quantity`` is the (n, d, t) index for
+    # ``p_fix_storage_quantity``; left as a CSV-only seed because the
+    # override doesn't synthesize the index frame separately.
+    # TODO(Δ.12c+): produce ndt_fix_storage_quantity inside
+    # ``apply_derived_e`` (derive from p_fix_storage_quantity index).
     ndt_fix_storage_quantity = None
     p_fix_storage_quantity = None
     fsq_path = sd / "fix_storage_quantity.csv"
@@ -2195,32 +2114,23 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                     .with_columns(value=pl.col("value").cast(pl.Float64))
                     .select("n", "d", "t", "value"))
             ndt_fix_storage_quantity = df.select("n", "d", "t").unique()
-            p_fix_storage_quantity = Param(("n", "d", "t"), df)
-
+            # p_fix_storage_quantity is overwritten by apply_derived_e —
+            # keep the empty placeholder None to signal "feature gated by
+            # ndt_fix_storage_quantity index" until the index is also
+            # produced in the override.
     dtt_timeline_matching = None
-    tm_path = sd / "timeline_matching_map.csv"
-    if tm_path.exists():
-        df = _read_csv_file(tm_path)
-        if df.height > 0:
-            # Schema: period, step, upper_step → (d, t, t_upper).  We rename
-            # ``upper_step`` to ``t_upper`` so the model.py constraint can
-            # join on (d, t) and emit RHS via t_upper → t2 in p_fix_storage_quantity.
-            dtt_timeline_matching = (df
-                .rename({"period": "d", "step": "t", "upper_step": "t_upper"})
-                .select("d", "t", "t_upper")
-                .unique())
-
-    # period__branch: (d_upper, d).  Used to map sub-solve period d to
-    # upper-level branch d_upper (the "anchor" period of fix_storage_quantity).
     period_branch = None
-    pb_path = sd / "period__branch.csv"
-    if pb_path.exists():
-        df = _read_csv_file(pb_path)
+    # ``n_fix_storage_quantity`` (set frame) is in apply_projection_params'
+    # SIMPLE_PROJECTIONS — but the projection only fires when the source
+    # has a non-empty SET frame; absent in our DB schema for some fixtures.
+    # Keep CSV seed.
+    # TODO(Δ.12c+): retire when projection helper covers all fixtures.
+    n_fix_storage_quantity = None
+    nfsq_path = sd / "n_fix_storage_quantity_set.csv"
+    if nfsq_path.exists():
+        df = _read_csv_file(nfsq_path)
         if df.height > 0:
-            period_branch = (df
-                .rename({"period": "d", "branch": "d_upper"})
-                .select("d_upper", "d")
-                .unique())
+            n_fix_storage_quantity = df.rename({"node": "n"}).select("n").unique()
 
     # period_last: (d,).
     period_last_df = None
