@@ -27,12 +27,28 @@ def main() -> None:
         action="store_true",
         help="Use the old v1 format instead of the self-describing v2 format",
     )
+    parser.add_argument(
+        "--groups",
+        default=None,
+        help=(
+            "Comma-separated list of parameter_group names to keep "
+            "(e.g. 'basics,model,timeline,solve_basics').  Parameters "
+            "outside these groups are dropped, and sheets with no surviving "
+            "columns are removed unless listed in always_include_with_groups."
+        ),
+    )
     args = parser.parse_args()
+    include_groups = (
+        [g.strip() for g in args.groups.split(",") if g.strip()]
+        if args.groups
+        else None
+    )
     export_to_excel(
         args.db_url,
         args.output_path,
         include_advanced=args.include_advanced,
         use_new_format=not args.old_format,
+        include_groups=include_groups,
     )
 
 
