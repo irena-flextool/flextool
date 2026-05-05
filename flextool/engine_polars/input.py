@@ -806,19 +806,32 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         .rename({"commodity": "c"})
         .select("p","source","sink","c"))
 
+    # ``p_unitsize`` is overwritten by ``apply_derived_b.p_unitsize_from_source``
+    # but the returned ``unitsize`` Param is also consumed inline by
+    # ``_load_profiles`` (None → blank profile dict) and ``_load_storage``
+    # (used in cap_pd / state_unitsize cascades).  Keep the seed.
+    # TODO(Δ.12c+): when ``_load_profiles`` / ``_load_storage`` consume the
+    # source-driven p_unitsize via flex_data, drop this seed read.
     unitsize_long = _read_unitsize((sd / "p_entity_unitsize.csv") if (sd / "p_entity_unitsize.csv").exists() else (inp / "p_entity_unitsize.csv"))
     unitsize_p = (unitsize_long.rename({"e": "p"})
                        .filter(pl.col("p").is_in(pss["p"].unique())))
 
-    slope_long = _read_wide_per_entity(sd / "pdtProcess_slope.csv", rename={"entity":"p"})
+    # Δ.12-drop: ``p_slope`` produced authoritatively by
+    # ``apply_derived_b.p_slope_from_source``.  Seed dropped.
     # commodity price sliced from canonical pdtCommodity.csv —
     # `pdtCommodity[c, 'price', d, t]` in .mod.
+    # TODO(Δ.12c+): retire pdtCommodity.csv slice when
+    # ``p_commodity_price_from_source`` covers the scalar-broadcast / 1d_map
+    # cascade — today the helper only handles Map(period→time).
     cp_long = _slice_param(sd / "pdtCommodity.csv", "commodity", "price",
                             rename_entity_to="c")
 
     # flow_upper is the canonical ``p_flow_max.csv`` long-format file
     # the .mod reads via ``table data IN`` (`[process, source, sink,
     # period, time], p_flow_max~value`).
+    # TODO(Δ.12c+): no override-chain helper covers ``p_flow_upper`` yet —
+    # the preprocessed p_flow_max.csv bakes in invest_max_cum etc. that
+    # the source-driven path would have to recompute.
     flow_upper_psskdt = _read_p_flow_max(sd / "p_flow_max.csv")
 
     return dict(
@@ -833,7 +846,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         flow_to_commodity = flow_to_commodity,
         unitsize = Param(("p",), unitsize_p.select("p","value")),
         flow_upper = Param(("p","source","sink","d","t"), flow_upper_psskdt),
-        slope = Param(("p","d","t"), slope_long.select("p","d","t","value")),
+        slope = None,
         commodity_price = Param(("c","d","t"), cp_long),
     )
 
@@ -868,13 +881,15 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             flow_from_co2_priced_noEff = None
     if flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None:
         return (None, None, None, None)
-    p_comm = _read_csv_file(inp / "p_commodity.csv")
-    co2_content = Param(("c",),
-        p_comm.filter(pl.col("commodityParam")=="co2_content")
-              .rename({"commodity":"c","p_commodity":"value"})
-              .select("c","value"))
+    # Δ.12-drop: ``p_co2_content`` produced authoritatively by
+    # ``apply_direct_params.p_co2_content_from_source``.  Seed dropped.
+    co2_content = None
     # group co2_price sliced from canonical pdtGroup.csv —
     # `pdtGroup[g, 'co2_price', d, t]` in .mod.
+    # TODO(Δ.12c+): retire pdtGroup.csv co2_price slice when
+    # ``p_co2_price_from_source`` covers the scalar-broadcast / 1d_map(time)
+    # cascade — today the helper only handles Map(period→time) and falls
+    # back to this seed.
     cp = _slice_param(sd / "pdtGroup.csv", "group", "co2_price",
                        rename_entity_to="g")
     co2_price = Param(("g","d","t"), cp) if cp is not None else None
@@ -2267,6 +2282,11 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
     fixed = pp.filter(pl.col(method_col)=="fixed").select("p","source","sink","profile")
 
     # profile values - file is solve, period, time, p1, p2... — wide per profile.
+    # TODO(Δ.12c+): retire pdtProfile.csv read when
+    # ``apply_profile_cascade`` covers fixtures where the source carries
+    # the profile data via a different shape (e.g. fixtures whose pdtProfile
+    # rows arrive at flextool from preprocessing rather than from a Spine
+    # ``profile.profile_data`` parameter).
     pdt_profile = sd / "pdtProfile.csv"
     profile_value = None
     if pdt_profile.exists():
@@ -2331,19 +2351,10 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
     pssdt_ek = _read_pssdt_set("pssdt_varCost_eff_unit_sink")
     pssdt_ec = _read_pssdt_set("pssdt_varCost_eff_connection")
 
-    # pdtProcess__source__sink__dt_varCost.csv: long-format (p,source,sink,d,t,value)
+    # Δ.12-drop: ``p_pssdt_varCost`` produced authoritatively by
+    # ``apply_derived_b.p_pssdt_varCost_from_source`` when pss + dt are
+    # non-empty.  Seed dropped.
     p_pssdt_var = None
-    var_path = sd / "pdtProcess__source__sink__dt_varCost.csv"
-    if var_path.exists():
-        df = _read_csv_file(var_path)
-        if df.height > 0:
-            df = df.rename({"process": "p", "period": "d", "time": "t"}) \
-                   .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
-                                                          .fill_null(0.0)) \
-                   .filter(pl.col("value") != 0)
-            if df.height > 0:
-                p_pssdt_var = Param(("p","source","sink","d","t"),
-                                    df.select("p","source","sink","d","t","value"))
 
     # pdtProcess_source[p,source,'other_operational_cost',d,t] — wide param file
     def _slice_pds(name: str, side_col: str) -> Param | None:
@@ -3086,12 +3097,10 @@ def load_flextool(source: "Path | str | FlexInputSource",
             inp, sd, proc["pss_eff"], proc.get("pss_noEff"))
         g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped = _load_co2_cap(
             inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"))
-        if co2_max_p is not None and co2c is None:
-            p_comm = _read_csv_file(inp / "p_commodity.csv")
-            co2c = Param(("c",),
-                p_comm.filter(pl.col("commodityParam")=="co2_content")
-                      .rename({"commodity":"c","p_commodity":"value"})
-                      .select("c","value"))
+        # Δ.12-drop: the inline p_commodity.csv co2_content fallback was a
+        # safety net for fixtures with a CO2 cap but no priced flows; now
+        # ``apply_direct_params.p_co2_content_from_source`` produces this
+        # field authoritatively.
 
         (indir_set, indir_in, indir_out, indir_dt,
          p_source_flow_coef, p_sink_flow_coef) = _load_indirect(sd, proc["pss"], dt, inp)
