@@ -2251,27 +2251,25 @@ def apply_derived_b(
             if pid_db is not None and pid_db.height > 0:
                 flex_data.process_indirect_dt = pid_db
 
-    # flow_to_n / flow_from_n — block-aware filter is in the CSV path
-    # (input.py:703-762).  Skip when the workdir's process_side_block
-    # is non-empty (CSV path is canonical there); the helper here does
-    # not implement the block-aware filter yet.
-    skip_flow_n = False
-    if workdir is not None:
-        # Δ.2: consume process_side_block via the in-memory BlockLayout
-        # bridge instead of reading the CSV directly.
-        from flextool.engine_polars._block_layout import BlockLayout
+    # flow_to_n / flow_from_n — Δ.9 closes the Δ.3 gap: the lazy
+    # cluster E port now applies the block-aware filter on the source-
+    # driven path, mirroring ``input.py::_load_process_topology`` lines
+    # 728-782.  Single-block fixtures are no-ops; multi-block fixtures
+    # (work_lh2_three_region) drop arc rows incompatible with the
+    # destination node's block.
+    if pss_frame is not None and pss_frame.height > 0:
+        from flextool.engine_polars._derived_block import (
+            flow_to_n_block_filtered,
+            flow_from_n_block_filtered,
+            load_block_bundle,
+        )
         try:
-            bl = BlockLayout.load_from_solve_data(
-                Path(workdir) / "solve_data",
-            )
-            if bl.process_side_block_frame.height > 0:
-                skip_flow_n = True
+            bundle = load_block_bundle(workdir)
         except Exception:
-            pass
-    if pss_frame is not None and pss_frame.height > 0 and not skip_flow_n:
+            bundle = None
         try:
-            ftn_db = flow_to_n(source, pss_frame)
-            ffn_db = flow_from_n(source, pss_frame)
+            ftn_db = flow_to_n_block_filtered(pss_frame, bundle)
+            ffn_db = flow_from_n_block_filtered(pss_frame, bundle)
         except Exception:
             ftn_db = None
             ffn_db = None
@@ -5760,6 +5758,7 @@ def apply_derived_e(
       2. period_block / _succ / _time (§3.9.3).
       3. nodeStateBlock multi-resolution synthesis (§3.9.2).
       4. arc_sink_block_dt / arc_source_block_dt + weights (§3.9.4).
+      4b. nodeState_last_dt + flow_from_nodeBalance block filter (Δ.9).
       5. p_state_existing_capacity / p_state_upper (§3.9.5).
       6. storage_use_reference_value (§3.9.6).
       7. p_roll_continue_state / p_fix_storage_quantity (§3.9.7).
@@ -5767,11 +5766,27 @@ def apply_derived_e(
 
     Δ.3 replaced the previous ``derived_overrides_e`` dict-return;
     Δ.4 deleted the deprecated wrapper alias.
+    Δ.9 wires every cluster E consumer onto a single ``BlockBundle``
+    instance (replacing four separate ``BlockLayout.load_from_solve_data``
+    calls per solve) and lands the previously-CSV-only
+    ``nodeState_last_dt`` + ``flow_from_nodeBalance_*`` block filter on
+    the source-driven path.
     """
+    from flextool.engine_polars._derived_block import (
+        load_block_bundle,
+        nodeState_last_dt_lf,
+        flow_from_nodeBalance_block_filtered,
+    )
+
     active_solve = _read_active_solve(workdir)
     nodeState_df = getattr(flex_data, "nodeState", None)
     has_state = (nodeState_df is not None
                   and getattr(nodeState_df, "height", 0) > 0)
+    # Δ.9 — single BlockBundle per solve (replaces 4× CSV reads).
+    try:
+        block_bundle = load_block_bundle(workdir)
+    except Exception:
+        block_bundle = None
 
     # 1. dtttdt -------------------------------------------------------
     dtttdt_db = None
@@ -5841,6 +5856,36 @@ def apply_derived_e(
                        "p_arc_sink_weight", "p_arc_source_weight"):
                 if arc.get(k) is not None:
                     setattr(flex_data, k, arc[k])
+
+    # 4b. nodeState_last_dt — Δ.9: previously only set by ``input.py``'s
+    # ``_load_storage`` from the CSV path.  The lazy port lifts the
+    # algorithm onto the in-memory ``BlockBundle`` so source-driven
+    # parity holds for multi-block fixtures.
+    if has_state and block_bundle is not None:
+        try:
+            nsld = nodeState_last_dt_lf(
+                nodeState_df, block_bundle).collect()
+        except Exception:
+            nsld = None
+        if nsld is not None and nsld.height > 0:
+            flex_data.nodeState_last_dt = nsld
+
+    # 4c. flow_from_nodeBalance block filter — Δ.9: mirrors
+    # ``input.py::_load_storage`` lines 1664-1699.  Drops arc rows
+    # whose source block doesn't overlap the destination node's block.
+    if block_bundle is not None and block_bundle.has_block_data():
+        for fld in ("flow_from_nodeBalance_eff",
+                     "flow_from_nodeBalance_noEff"):
+            cur = getattr(flex_data, fld, None)
+            if cur is None or getattr(cur, "height", 0) == 0:
+                continue
+            try:
+                filtered = flow_from_nodeBalance_block_filtered(
+                    cur, block_bundle)
+            except Exception:
+                filtered = None
+            if filtered is not None and filtered.height > 0:
+                setattr(flex_data, fld, filtered)
 
     # 5. p_state_existing_capacity / p_state_upper --------------------
     if has_state:
