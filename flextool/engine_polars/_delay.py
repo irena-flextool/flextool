@@ -218,12 +218,34 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
                     psse_delayed = psse_delayed.join(
                         zero_src, on=["p", "source"], how="anti")
 
-    # Δ.12-drop: ``dtt__delay_duration`` / ``p_process_delay_weight``
-    # produced authoritatively by ``apply_derived_g`` (helpers
-    # ``dtt__delay_duration_from_source`` / ``p_process_delay_weight_from_source``).
-    # Seeds dropped.
+    # ``dtt__delay_duration`` / ``p_process_delay_weight`` are produced
+    # by ``apply_derived_g`` BUT the mismatch fixture
+    # ``work_delay_source_coef`` skips auto-resolution and relies on
+    # the seed.  Keep CSV reads.
+    # TODO(Δ.12c+): retire when ``_find_scenario`` covers the mismatch
+    # fixtures.
+    dtt_path = sd / "dtt__delay_duration.csv"
     dtt_df = None
+    if dtt_path.exists():
+        raw = _read_csv_file(dtt_path)
+        if raw.height > 0:
+            rename_map = {}
+            if "period" in raw.columns:      rename_map["period"] = "d"
+            if "time_source" in raw.columns: rename_map["time_source"] = "t_source"
+            if "time_sink" in raw.columns:   rename_map["time_sink"] = "t_sink"
+            if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
+            dtt_df = raw.rename(rename_map).select("d", "t_source", "t_sink", "td")
+
+    pw_path = sd / "p_process_delay_weight.csv"
     pw_param = None
+    if pw_path.exists():
+        raw = _read_csv_file(pw_path)
+        if raw.height > 0:
+            rename_map = {}
+            if "process" in raw.columns: rename_map["process"] = "p"
+            if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
+            pw_long = raw.rename(rename_map).select("p", "td", "value")
+            pw_param = Param(("p", "td"), pw_long)
 
     return dict(
         process_delayed              = pd_df.select("p"),
