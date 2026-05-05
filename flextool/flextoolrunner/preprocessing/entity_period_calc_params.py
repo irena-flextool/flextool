@@ -518,11 +518,21 @@ def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
     domain = _read_pairs(solve_data_dir / "process_TimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
     out_path = solve_data_dir / "pdtProcess.csv"
+    # Sparse-write: skip rows whose value is exactly 0.0.  mod has
+    # `default 0` for pdtProcess so missing rows resolve to 0 there;
+    # _read_pdt_at_param's downstream `dict.get(..., 0.0)` likewise
+    # defaults the same way.  PROCESS_PARAM_DEF1 (efficiency,
+    # availability) defaults to 1.0 when no input is present so those
+    # rows are still written.  Eliminates the dominant (entity ×
+    # period × time) cost previously reported by py-spy as the
+    # post-`Scenario:` hang.
     with out_path.open("w") as fh:
         fh.write("process,param,period,time,value\n")
         for (p, param) in domain:
             for (d, t) in dt:
                 v = lookup.get(p, param, d, t)
+                if v == 0.0:
+                    continue
                 fh.write(f"{p},{param},{d},{t},{repr(v)}\n")
 
 
@@ -1851,11 +1861,16 @@ def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path) -> None:
     domain = _read_triples(solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
     out_path = solve_data_dir / "pdtProcess_source.csv"
+    # Sparse-write: see write_pdtProcess for rationale.  PdtLookupPerSide
+    # has no per-param default-1 fallback, so missing data → 0.0; mod's
+    # `default 0` resolves the same way.
     with out_path.open("w") as fh:
         fh.write("process,source,param,period,time,value\n")
         for (p, src, param) in domain:
             for (d, t) in dt:
                 v = lookup.get(p, src, param, d, t)
+                if v == 0.0:
+                    continue
                 fh.write(f"{p},{src},{param},{d},{t},{repr(v)}\n")
 
 
@@ -1878,11 +1893,14 @@ def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
     domain = _read_triples(solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
     out_path = solve_data_dir / "pdtProcess_sink.csv"
+    # Sparse-write: see write_pdtProcess for rationale.
     with out_path.open("w") as fh:
         fh.write("process,sink,param,period,time,value\n")
         for (p, snk, param) in domain:
             for (d, t) in dt:
                 v = lookup.get(p, snk, param, d, t)
+                if v == 0.0:
+                    continue
                 fh.write(f"{p},{snk},{param},{d},{t},{repr(v)}\n")
 
 
