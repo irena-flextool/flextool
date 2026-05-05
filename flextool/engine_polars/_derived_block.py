@@ -105,6 +105,8 @@ class BlockBundle:
 
     layout: BlockLayout
     _block_compat_cached: pl.DataFrame | None = field(default=None, repr=False)
+    _coarse_blocks_cached: list[str] | None = field(default=None, repr=False)
+    _is_multi_block_cached: bool | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------
     # Lazy-frame surface (joins consume these)
@@ -172,11 +174,32 @@ class BlockBundle:
         return self._block_compat_cached
 
     def is_multi_block(self) -> bool:
-        """Return ``True`` when the layout exercises >1 distinct block."""
-        bsd = self.layout.block_step_duration_frame
-        if bsd.height == 0:
-            return False
-        return bsd["block"].n_unique() >= 2
+        """Return ``True`` when the layout exercises >1 distinct block.
+
+        Cached: layout is immutable for the bundle's lifetime.
+        """
+        if self._is_multi_block_cached is None:
+            bsd = self.layout.block_step_duration_frame
+            if bsd.height == 0:
+                self._is_multi_block_cached = False
+            else:
+                self._is_multi_block_cached = bsd["block"].n_unique() >= 2
+        return self._is_multi_block_cached
+
+    def coarse_blocks(self, threshold: float = 1.0) -> list[str]:
+        """Return blocks with at least one row of ``step_duration >
+        threshold``.
+
+        Cached for the canonical ``threshold=1.0`` (the schematic's
+        rule for "coarse" blocks).  Other thresholds bypass the cache.
+        """
+        if threshold == 1.0:
+            if self._coarse_blocks_cached is None:
+                self._coarse_blocks_cached = self.layout.coarse_blocks(
+                    threshold=1.0,
+                )
+            return self._coarse_blocks_cached
+        return self.layout.coarse_blocks(threshold=threshold)
 
     def has_block_data(self) -> bool:
         """Return ``True`` when any block frame has data."""
@@ -397,7 +420,7 @@ def nodeStateBlock_lf(
             explicit_intraperiod.select("n").unique()
         )
     if bundle is not None and bundle.is_multi_block():
-        coarse = bundle.layout.coarse_blocks(threshold=coarse_threshold)
+        coarse = bundle.coarse_blocks(threshold=coarse_threshold)
         if coarse:
             eb_lf = bundle.entity_block_lf
             picked = (
@@ -438,7 +461,7 @@ def period_block_multi_resolution_lf(
     """
     if bundle is None or not bundle.is_multi_block():
         return None
-    coarse = bundle.layout.coarse_blocks(threshold=coarse_threshold)
+    coarse = bundle.coarse_blocks(threshold=coarse_threshold)
     if not coarse:
         return None
     eb = bundle.layout.entity_block_frame
