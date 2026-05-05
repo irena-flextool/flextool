@@ -2352,7 +2352,14 @@ def apply_derived_b(
         new_pif = pif.join(z_src, on=["p", "source"], how="anti")
         if new_pif.height < pif.height:
             flex_data.process_input_flows = new_pif
-    flex_data.p_process_source_flow_coef = p_src_coef
+    # TODO(Δ.12b helper-fix): p_process_source_flow_coef_from_source
+    # returns None when no zero-coef rows exist in the source — but the
+    # seed-side _load_indirect builds the coefficient Param from a
+    # different code path (process__commodity__node_flow_coefficient.csv).
+    # Keep the conditional assignment until the helpers converge on a
+    # single producer.
+    if p_src_coef is not None:
+        flex_data.p_process_source_flow_coef = p_src_coef
 
     z_sink, p_sink_coef = p_process_sink_flow_coef_from_source(source, pof)
     if z_sink is not None and z_sink.height > 0 and pof is not None \
@@ -2360,7 +2367,8 @@ def apply_derived_b(
         new_pof = pof.join(z_sink, on=["p", "sink"], how="anti")
         if new_pof.height < pof.height:
             flex_data.process_output_flows = new_pof
-    flex_data.p_process_sink_flow_coef = p_sink_coef
+    if p_sink_coef is not None:
+        flex_data.p_process_sink_flow_coef = p_sink_coef
 
 
 # ===========================================================================

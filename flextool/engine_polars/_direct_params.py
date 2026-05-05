@@ -1395,85 +1395,65 @@ def apply_direct_params(source: "InputSource",
     """Apply the DB-direct construction for the Direct Param wave,
     mutating ``flex_data`` in place.
 
-    Each FlexData field listed below is built by exactly one helper.
-    When the helper returns ``None`` (no upstream data), the field is
-    left untouched; otherwise the helper's result replaces the field.
+    Δ.12b — assignment is unconditional for the scalar / 1d_map and
+    relationship-1d_map helpers (these read the source unchanged and
+    return None only when no upstream row exists, which is a
+    legitimate "feature inactive" outcome).
 
-    Δ.3 collapsed the previous ``first_wave_overrides`` dict-return
-    pattern; Δ.4 deleted the deprecated wrapper alias and added the
-    second-wave helpers covering scalar Direct Params previously read
-    by ``input.py``'s CSV loaders.  Each helper writes its field
-    directly — no dict-overlay round-trip.
+    Conditional assignment is retained for the
+    ``Map(period→time)``-shaped helpers (``_entity_period_time_param``
+    consumers) — these helpers only handle the explicit
+    ``Map(period→time)`` Spine shape and return None for scalar
+    broadcast / 1d_map(time) shapes, where the seed-loaded value
+    (preprocessed by flextool's per-solve cascade) survives.  See
+    TODO at each site for the helper-extension scope.
     """
-    # ─── §5.2.1 scalar Params with FlexData fields ──────────────────────
-    p_co2 = p_co2_content_from_source(source)
-    if p_co2 is not None:
-        flex_data.p_co2_content = p_co2
-    p_const = p_constraint_constant_from_source(source)
-    if p_const is not None:
-        flex_data.p_constraint_constant = p_const
+    # ─── §5.2.1 scalar Params with FlexData fields — Δ.12b unconditional
+    flex_data.p_co2_content = p_co2_content_from_source(source)
+    flex_data.p_constraint_constant = p_constraint_constant_from_source(source)
 
     # ─── §5.2.3 relationship 1d_map (constraint coefficients) ───────────
-    n_inv = _node_constraint_coef(source, "constraint_invested_capacity_coefficient")
-    if n_inv is not None:
-        flex_data.p_node_constraint_invested_capacity_coefficient = n_inv
-    p_inv = _process_constraint_coef(source, "constraint_invested_capacity_coefficient")
-    if p_inv is not None:
-        flex_data.p_process_constraint_invested_capacity_coefficient = p_inv
-    n_state = _node_constraint_coef(source, "constraint_state_coefficient")
-    if n_state is not None:
-        flex_data.p_node_constraint_state_coefficient = n_state
-    n_pre = _node_constraint_coef(source, "constraint_cumulative_pre_built_capacity_coefficient")
-    if n_pre is not None:
-        flex_data.p_node_constraint_prebuilt_capacity_coefficient = n_pre
-    p_pre = _process_constraint_coef(source, "constraint_cumulative_pre_built_capacity_coefficient")
-    if p_pre is not None:
-        flex_data.p_process_constraint_prebuilt_capacity_coefficient = p_pre
+    flex_data.p_node_constraint_invested_capacity_coefficient = (
+        _node_constraint_coef(source, "constraint_invested_capacity_coefficient"))
+    flex_data.p_process_constraint_invested_capacity_coefficient = (
+        _process_constraint_coef(source, "constraint_invested_capacity_coefficient"))
+    flex_data.p_node_constraint_state_coefficient = (
+        _node_constraint_coef(source, "constraint_state_coefficient"))
+    flex_data.p_node_constraint_prebuilt_capacity_coefficient = (
+        _node_constraint_coef(source,
+                              "constraint_cumulative_pre_built_capacity_coefficient"))
+    flex_data.p_process_constraint_prebuilt_capacity_coefficient = (
+        _process_constraint_coef(source,
+                                 "constraint_cumulative_pre_built_capacity_coefficient"))
 
     # ─── §5.2.1 invest/divest total caps (entity-unioned) ───────────────
     # Max variants: keyed on entityInvest (resp. entityDivest), one row
     # per entity with value defaulting to 0 — mirrors
     # ``entity_total_caps.py:_compute_entity_total`` and
     # ``input.py::_e_total_param``.
-    e_inv = _e_total_param(source, "invest_max_total", kind="invest")
-    if e_inv is not None:
-        flex_data.e_invest_max_total = e_inv
-    e_div = _e_total_param(source, "retire_max_total", kind="divest")
-    if e_div is not None:
-        flex_data.e_divest_max_total = e_div
+    flex_data.e_invest_max_total = _e_total_param(
+        source, "invest_max_total", kind="invest")
+    flex_data.e_divest_max_total = _e_total_param(
+        source, "retire_max_total", kind="divest")
     # Min variants: CSV path filters out zero rows (input.py::_read_e_param)
     # — None when no entity has an explicit non-zero min cap.
-    e_inv_min = _e_total_param(source, "invest_min_total", kind="invest",
-                                filter_zero=True)
-    if e_inv_min is not None:
-        flex_data.e_invest_min_total = e_inv_min
-    e_div_min = _e_total_param(source, "retire_min_total", kind="divest",
-                                filter_zero=True)
-    if e_div_min is not None:
-        flex_data.e_divest_min_total = e_div_min
+    flex_data.e_invest_min_total = _e_total_param(
+        source, "invest_min_total", kind="invest", filter_zero=True)
+    flex_data.e_divest_min_total = _e_total_param(
+        source, "retire_min_total", kind="divest", filter_zero=True)
 
     # ─── Δ.4 second wave — node scalars (storage feature) ───────────────
-    p_sd = p_state_self_discharge_from_source(source)
-    if p_sd is not None:
-        flex_data.p_state_self_discharge = p_sd
-    p_st = p_state_start_from_source(source)
-    if p_st is not None:
-        flex_data.p_state_start = p_st
+    flex_data.p_state_self_discharge = p_state_self_discharge_from_source(source)
+    flex_data.p_state_start = p_state_start_from_source(source)
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
-    p_ml = p_min_load_from_source(source)
-    if p_ml is not None:
-        flex_data.p_min_load = p_ml
+    flex_data.p_min_load = p_min_load_from_source(source)
 
     # ─── Δ.4 second wave — connection scalars (DC power flow feature) ───
-    p_sus = p_connection_susceptance_from_source(source)
-    if p_sus is not None:
-        flex_data.p_connection_susceptance = p_sus
+    flex_data.p_connection_susceptance = p_connection_susceptance_from_source(source)
 
     # ─── Δ.4 second wave — commodity scalars (price ladder feature) ─────
-    p_cu = p_commodity_unitsize_from_source(source)
-    if p_cu is not None:
-        flex_data.p_commodity_unitsize = p_cu
+    flex_data.p_commodity_unitsize = p_commodity_unitsize_from_source(source)
 
     # ─── Δ.4b — period filter (mirrors flextool's per-solve preprocessing) ─
     # Spine Map(period→…) parameters cover ALL declared periods, but the
@@ -1483,6 +1463,8 @@ def apply_direct_params(source: "InputSource",
     dt = getattr(flex_data, "dt", None)
 
     # ─── Δ.4b — group 1d_map(period) (capacity_margin / inertia / nonSync) ─
+    # Δ.12b: unconditional — _entity_period_scalar handles 1d_map(period)
+    # natively (this is the only Spine shape for these parameters).
     for fn, field in (
         (pdGroup_capacity_margin_from_source, "pdGroup_capacity_margin"),
         (pdGroup_penalty_capacity_margin_from_source,
@@ -1494,9 +1476,7 @@ def apply_direct_params(source: "InputSource",
         (pdGroup_penalty_non_synchronous_from_source,
             "pdGroup_penalty_non_synchronous"),
     ):
-        v = _filter_param_by_periods(fn(source), dt)
-        if v is not None:
-            setattr(flex_data, field, v)
+        setattr(flex_data, field, _filter_param_by_periods(fn(source), dt))
 
     # ─── Δ.4b — group 1d_map(period) (invest/divest/cumulative) ──────────
     for fn, field in (
@@ -1507,9 +1487,7 @@ def apply_direct_params(source: "InputSource",
         (pd_max_cumulative_flow_from_source, "pd_max_cumulative_flow"),
         (pd_min_cumulative_flow_from_source, "pd_min_cumulative_flow"),
     ):
-        v = _filter_param_by_periods(fn(source), dt)
-        if v is not None:
-            setattr(flex_data, field, v)
+        setattr(flex_data, field, _filter_param_by_periods(fn(source), dt))
 
     # ─── Δ.4b — group scalar (no period) ─────────────────────────────────
     for fn, field in (
@@ -1524,11 +1502,15 @@ def apply_direct_params(source: "InputSource",
         (p_group_max_cumulative_flow_from_source, "p_group_max_cumulative_flow"),
         (p_group_min_cumulative_flow_from_source, "p_group_min_cumulative_flow"),
     ):
-        v = fn(source)
-        if v is not None:
-            setattr(flex_data, field, v)
+        setattr(flex_data, field, fn(source))
 
     # ─── Δ.4b — group Map(period→time) instant flow caps ─────────────────
+    # TODO(Δ.12b helper-fix): _entity_period_time_param helpers below
+    # only handle the Spine Map(period→time) shape; scalar / 1d_map(time)
+    # broadcast (where pdtX.csv is preprocessed by flextool) returns None
+    # and the seed value survives.  Until the helpers gain the
+    # scalar-broadcast cascade (Δ.12-drop preparation), keep the
+    # conditional assignment.
     v = _filter_param_by_periods(pdt_max_instant_flow_from_source(source), dt)
     if v is not None:
         flex_data.pdt_max_instant_flow = v
@@ -1545,9 +1527,7 @@ def apply_direct_params(source: "InputSource",
         (ed_cumulative_max_capacity_from_source, "ed_cumulative_max_capacity"),
         (ed_cumulative_min_capacity_from_source, "ed_cumulative_min_capacity"),
     ):
-        v = _filter_param_by_periods(fn(source), dt)
-        if v is not None:
-            setattr(flex_data, field, v)
+        setattr(flex_data, field, _filter_param_by_periods(fn(source), dt))
 
     # ─── Δ.4b — relationship scalars (ramp + inertia, sink/source) ───────
     for fn, field in (
@@ -1560,16 +1540,18 @@ def apply_direct_params(source: "InputSource",
         (p_process_source_inertia_constant_from_source,
             "p_process_source_inertia_constant"),
     ):
-        v = fn(source)
-        if v is not None:
-            setattr(flex_data, field, v)
+        setattr(flex_data, field, fn(source))
 
     # ─── Δ.4b — UC: startup_cost (1d_map period) ─────────────────────────
+    # TODO(Δ.12b helper-fix): _entity_period_scalar handles only the
+    # 1d_map(period) shape; scalar broadcast (which the seed handles
+    # via flextool's preprocessing) returns None.
     v = _filter_param_by_periods(p_startup_cost_from_source(source), dt)
     if v is not None:
         flex_data.p_startup_cost = v
 
     # ─── Δ.4b — storage Map(period→time) ─────────────────────────────────
+    # TODO(Δ.12b helper-fix): see scalar-broadcast note above.
     v = _filter_param_by_periods(p_node_availability_from_source(source), dt)
     if v is not None:
         flex_data.p_node_availability = v
@@ -1579,6 +1561,7 @@ def apply_direct_params(source: "InputSource",
         flex_data.p_storage_state_reference_value = v
 
     # ─── Δ.4b — CO2 (price + cap) ────────────────────────────────────────
+    # TODO(Δ.12b helper-fix): see scalar-broadcast note above.
     v = _filter_param_by_periods(p_co2_price_from_source(source), dt)
     if v is not None:
         flex_data.p_co2_price = v
@@ -1587,6 +1570,7 @@ def apply_direct_params(source: "InputSource",
         flex_data.p_co2_max_period = v
 
     # ─── Δ.4b — variable cost (Map period→time) ──────────────────────────
+    # TODO(Δ.12b helper-fix): see scalar-broadcast note above.
     v = _filter_param_by_periods(p_pdt_varCost_source_from_source(source), dt)
     if v is not None:
         flex_data.p_pdt_varCost_source = v
@@ -1598,32 +1582,30 @@ def apply_direct_params(source: "InputSource",
         flex_data.p_pdt_varCost_process = v
 
     # ─── Δ.4b — reserves ─────────────────────────────────────────────────
+    # TODO(Δ.12b helper-fix): pdtReserve... Map(period→time) — same
+    # scalar-broadcast caveat.  The relationship-scalar reserves
+    # (penalty / reliability / max_share / failure-ratio /
+    # increase-reserve-ratio) are unconditional — direct 1d_map.
     v = _filter_param_by_periods(
         pdtReserve_upDown_group_reservation_from_source(source), dt)
     if v is not None:
         flex_data.pdtReserve_upDown_group_reservation = v
-    v = p_reserve_upDown_group_penalty_reserve_from_source(source)
-    if v is not None:
-        flex_data.p_reserve_upDown_group_penalty_reserve = v
-    v = p_process_reserve_upDown_node_reliability_from_source(source)
-    if v is not None:
-        flex_data.p_process_reserve_upDown_node_reliability = v
-    v = p_process_reserve_upDown_node_max_share_from_source(source)
-    if v is not None:
-        flex_data.p_process_reserve_upDown_node_max_share = v
-    v = p_process_reserve_upDown_node_large_failure_ratio_value_from_source(source)
-    if v is not None:
-        flex_data.p_process_reserve_upDown_node_large_failure_ratio_value = v
-    v = p_process_reserve_upDown_node_increase_reserve_ratio_value_from_source(source)
-    if v is not None:
-        flex_data.p_process_reserve_upDown_node_increase_reserve_ratio_value = v
+    flex_data.p_reserve_upDown_group_penalty_reserve = (
+        p_reserve_upDown_group_penalty_reserve_from_source(source))
+    flex_data.p_process_reserve_upDown_node_reliability = (
+        p_process_reserve_upDown_node_reliability_from_source(source))
+    flex_data.p_process_reserve_upDown_node_max_share = (
+        p_process_reserve_upDown_node_max_share_from_source(source))
+    flex_data.p_process_reserve_upDown_node_large_failure_ratio_value = (
+        p_process_reserve_upDown_node_large_failure_ratio_value_from_source(source))
+    flex_data.p_process_reserve_upDown_node_increase_reserve_ratio_value = (
+        p_process_reserve_upDown_node_increase_reserve_ratio_value_from_source(source))
 
     # ─── Δ.4b — delayed processes (set, not Param) ───────────────────────
-    v = process_delayed__duration_from_source(source)
-    if v is not None:
-        flex_data.process_delayed__duration = v
+    flex_data.process_delayed__duration = process_delayed__duration_from_source(source)
 
     # ─── Δ.4b — additional Map(period→time) on object classes ───────────
+    # TODO(Δ.12b helper-fix): see scalar-broadcast note above.
     v = _filter_param_by_periods(p_process_availability_from_source(source), dt)
     if v is not None:
         flex_data.p_process_availability = v
@@ -1632,6 +1614,7 @@ def apply_direct_params(source: "InputSource",
         flex_data.p_commodity_price = v
 
     # ─── Δ.4b — commodity ladder split (price / quantity) ────────────────
+    # _ladder_split returns (price, quantity) — both can be None.
     p_ann_price, p_ann_qty = _ladder_split(source, "price_ladder_annual",
                                               with_period=True)
     if p_ann_price is not None:

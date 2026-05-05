@@ -1448,21 +1448,20 @@ def apply_projection_params(source: "InputSource",
     """Apply the DB-direct construction for Γ.2 Projection Params,
     mutating ``flex_data`` in place.
 
-    Each FlexData field listed in :data:`SIMPLE_PROJECTIONS` is built by
-    its dedicated helper.  When the helper returns ``None`` or an empty
-    frame, the field is left untouched; otherwise the helper's result
-    replaces the field.
-
-    Δ.3 collapsed the previous ``projection_overrides`` dict-return
-    pattern; Δ.4 deleted the deprecated wrapper alias.  Each helper
-    writes its field directly — no dict-overlay round-trip.
+    Δ.12b — defensive ``try / except: continue`` removed; helper
+    exceptions propagate.  The
+    ``if v is None or v.height == 0: continue`` guard is retained:
+    SIMPLE_PROJECTIONS' SET-frame helpers may return empty when the
+    source has rows for a class but none match the projection's
+    membership filter, in which case we want to keep the seed's
+    populated value rather than zero it out.  Per-helper coverage
+    audits (Δ.12-drop preparation) will fold this into helper-side
+    "produce-or-raise" once each helper's empty-vs-None semantics
+    are pinned.
     """
     # First pass: simple no-deps projections.
     for field_name, fn in SIMPLE_PROJECTIONS.items():
-        try:
-            v = fn(source)
-        except Exception:  # pragma: no cover — diagnostic surface
-            continue
+        v = fn(source)
         if v is None or (hasattr(v, "height") and v.height == 0):
             continue
         setattr(flex_data, field_name, v)
@@ -1476,10 +1475,7 @@ def apply_projection_params(source: "InputSource",
         for sense, field_name in (("equal", "cdt_eq"),
                               ("less_than", "cdt_le"),
                               ("greater_than", "cdt_ge")):
-            try:
-                cdt = cdt_filter(source, sense, dt)
-            except Exception:  # pragma: no cover
-                continue
+            cdt = cdt_filter(source, sense, dt)
             if cdt is not None and cdt.height > 0:
                 setattr(flex_data, field_name, cdt)
 
