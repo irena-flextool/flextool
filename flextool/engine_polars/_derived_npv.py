@@ -489,96 +489,27 @@ def period_walk_iterator(
         life_lf: pl.LazyFrame,
         factor_side: str,
         ) -> pl.LazyFrame:
-    """The shared period-by-period walk used by all 4 NPV variants.
+    """Δ.5-era public alias delegating to :mod:`._derived_walks`.
 
-    Walks every ``(e, d, d_all)`` triple where ``e`` is in the entity
-    domain, ``d`` is the cost-anchor period, and ``d_all`` ranges over
-    ``period_in_use``.  Filters by the lifetime window:
+    Δ.6 lifted the canonical implementation into ``_derived_walks`` so
+    Cluster B's invest-history walk could re-use it.  This wrapper
+    preserves the boolean ``bounded`` signature for the existing NPV
+    callers while internally dispatching the new
+    :class:`._derived_walks.WindowMethod` enum.
 
-    * ``bounded=True`` → ``pdy[d_all] ∈ [pdy[d], pdy[d] + life[e, d])``.
-    * ``bounded=False`` → ``pdy[d_all] ≥ pdy[d]``.
-
-    Returns lazy frame with columns ``[e, d, factor]`` where
-    ``factor = Σ_{d_all matching} inflation_factor_side[d_all]``.
-
-    Parameters
-    ----------
-    ed_lf
-        Lazy frame ``[e, d, ...]`` enumerating entity-period anchor pairs.
-    period_in_use
-        Active-solve dispatch periods (where the inflation factor is
-        evaluated).
-    period_universe
-        Period universe for the inflation factor computation
-        (typically ``periodAll``).
-    bounded
-        If True, gate the sum on the per-(e, d) lifetime; otherwise
-        the sum is unbounded forward.
-    life_lf
-        Lazy ``[e, d, life]`` frame providing the lifetime per
-        entity-period (only consulted when ``bounded=True``).
-    factor_side
-        ``"inv"`` or ``"ops"`` — selects which inflation factor to sum.
-
-    Notes
-    -----
-    The walk reproduces the inner loop of
-    ``entity_annual_calc_params.py:235-251`` (and analogous blocks at
-    lines 268-285, 305-320, 328-346).  The loop's "if pdy ≥ pdy_d
-    [and pdy < pdy_d + life]" predicate becomes a join + filter in
-    polars.
+    See :func:`._derived_walks.period_walk_iterator` for the canonical
+    semantics.
     """
-    if not period_in_use:
-        return ed_lf.with_columns(factor=pl.lit(0.0, dtype=pl.Float64)).select(
-            "e", "d", "factor")
-    # p_years_d (lazy) — the cumulative-year offset per period.
-    from ._derived_params import _p_years_d_lf
-    pyd_lf = _p_years_d_lf(source, active_solve)
-    if pyd_lf is None:
-        # Without years offsets, the integral collapses to 0.
-        return ed_lf.with_columns(factor=pl.lit(0.0, dtype=pl.Float64)).select(
-            "e", "d", "factor")
-    # Inflation factor per d_all in period_in_use.
-    factors_lf = _inflation_factors_lf(source, active_solve, period_universe)
-    if factor_side == "inv":
-        factors_lf = factors_lf.select(
-            "d", pl.col("inv_factor").alias("factor"))
-    elif factor_side == "ops":
-        factors_lf = factors_lf.select(
-            "d", pl.col("ops_factor").alias("factor"))
-    else:  # pragma: no cover — defensive
-        raise ValueError(f"factor_side must be 'inv' or 'ops'; got {factor_side!r}")
-    # period_in_use lazy frame.
-    piu_lf = pl.LazyFrame({"d_all": period_in_use})
-    # Anchor years.
-    pyd_anchor = pyd_lf.rename({"d": "d", "yr": "yr_d"})
-    # d_all years.
-    pyd_all = pyd_lf.rename({"d": "d_all", "yr": "yr_dall"})
-    factor_dall = factors_lf.rename({"d": "d_all"})
-
-    walk = (ed_lf
-              .select("e", "d")
-              .join(piu_lf, how="cross")
-              .join(pyd_anchor, on="d", how="left")
-              .join(pyd_all, on="d_all", how="left")
-              .join(factor_dall, on="d_all", how="left")
-              # Default missing yr → 0; default missing factor → 1.0.
-              .with_columns(
-                  yr_d=pl.col("yr_d").fill_null(0.0),
-                  yr_dall=pl.col("yr_dall").fill_null(0.0),
-                  factor=pl.col("factor").fill_null(1.0),
-              )
-              .filter(pl.col("yr_dall") >= pl.col("yr_d"))
-            )
-    if bounded:
-        walk = (walk
-                  .join(life_lf, on=["e", "d"], how="left")
-                  .with_columns(life=pl.col("life").fill_null(0.0))
-                  .filter(pl.col("yr_dall") < pl.col("yr_d") + pl.col("life"))
-                )
-    return (walk
-              .group_by(["e", "d"])
-              .agg(pl.col("factor").sum().alias("factor")))
+    from ._derived_walks import (
+        period_walk_iterator as _walk,
+        WindowMethod,
+    )
+    method = WindowMethod.BOUNDED if bounded else WindowMethod.UNBOUNDED_FORWARD
+    return _walk(
+        source, active_solve, ed_lf,
+        period_in_use, period_universe,
+        window_method=method, life_lf=life_lf,
+        factor_side=factor_side)
 
 
 # ---------------------------------------------------------------------------
