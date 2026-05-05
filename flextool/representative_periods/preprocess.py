@@ -310,6 +310,17 @@ def _write_results_to_db(
                 print(f"  DB import error: {err}")
             raise RuntimeError(f"Failed to write results: {len(errors)} errors")
 
+        # Tag the lazily-created parameter so it lands under the
+        # solve_advanced group in group-filtered exports.  No-op on
+        # pre-v44 DBs that don't have parameter_groups yet.
+        if db.item(db.mapped_table("parameter_group"), name="solve_advanced") is not None:
+            db.add_update_item(
+                "parameter_definition",
+                entity_class_name="timeset",
+                name="representative_period_weights",
+                parameter_group_name="solve_advanced",
+            )
+
         db.commit_session(f"Add representative periods: {timeset_name}")
         print(f"Wrote {count} items to database")
 
