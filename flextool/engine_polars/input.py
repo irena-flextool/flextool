@@ -1044,7 +1044,13 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     cs = _read_csv_file(cs_path).rename({"constraint":"c"})
     if cs.height == 0: return [None]*12
     coef_path = inp / "p_process_node_constraint_flow_coefficient.csv"
-    flow_cstr_idx = flow_cstr_coef = None
+    flow_cstr_idx = None
+    # Δ.12-drop: ``p_flow_constraint_coef`` produced authoritatively by
+    # ``apply_derived_b.p_flow_constraint_coef_from_source`` when pss is
+    # non-empty.  We retain the CSV read because ``flow_constraint_idx``
+    # (the index frame, not a Param) is still needed by downstream
+    # constraint emission and isn't produced by an override-chain helper.
+    flow_cstr_coef = None
     if coef_path.exists():
         coef_long = (_read_csv_file(coef_path)
             .rename({"process":"p","node":"n","constraint":"c",
@@ -1059,8 +1065,6 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
                         .group_by(["p","source","sink","c"])
                         .agg(pl.col("coef").sum()))
             flow_cstr_idx  = joined.select("p","source","sink","c")
-            flow_cstr_coef = Param(("p","source","sink","c"),
-                joined.select("p","source","sink","c","coef").rename({"coef":"value"}))
     # Δ.12-drop: ``p_node_constraint_invested_capacity_coefficient`` /
     # ``p_process_constraint_invested_capacity_coefficient`` /
     # ``p_node_constraint_state_coefficient`` /
@@ -2847,15 +2851,14 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
                     .select("d", "value"))
             pd_branch_weight = Param(("d",), df)
 
-    # dt_non_anticipativity_set: (d, t)
-    dt_na_path = sd / "dt_non_anticipativity_set.csv"
+    # Δ.12-drop: ``dt_non_anticipativity`` / ``period_branch_full`` /
+    # ``period_in_use_set`` produced authoritatively by
+    # ``apply_branch_cluster`` in ``apply_derived_g`` (helpers
+    # ``dt_non_anticipativity_df`` / ``period_branch_full_df`` /
+    # ``period_in_use_set_df``).  Seeds dropped.
     dt_non_anticipativity = None
-    if dt_na_path.exists():
-        df = _read_csv_file(dt_na_path)
-        if df.height > 0:
-            dt_non_anticipativity = (df
-                .rename({"period": "d", "time": "t"})
-                .select("d", "t").unique())
+    period_branch_full = None
+    period_in_use_set = None
 
     # groupIncludeStochastics: (g,)
     gis_path = inp / "groupIncludeStochastics.csv"
@@ -2866,28 +2869,6 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
             # CSV column is named ``group``; rename to canonical ``g``.
             df = df.rename({df.columns[0]: "g"})
             groupStochastic = df.select("g").unique()
-
-    # period__branch.csv (anchor d → sibling b, dimen 2).  This is the
-    # FULL map.  flexpy already loads a *filtered* renamed version into
-    # ``period_branch`` for rolling-handoff.  We load the unfiltered raw
-    # form here for the non-anticipativity constraints.
-    period_branch_full = None
-    pb_path = sd / "period__branch.csv"
-    if pb_path.exists():
-        df = _read_csv_file(pb_path)
-        if df.height > 0:
-            period_branch_full = (df
-                .rename({"period": "d", "branch": "b"})
-                .select("d", "b").unique())
-
-    # period_in_use_set: (d,) — periods active in the active solve.
-    period_in_use_set = None
-    piu_path = sd / "period_in_use_set.csv"
-    if piu_path.exists():
-        df = _read_csv_file(piu_path)
-        if df.height > 0:
-            df = df.rename({df.columns[0]: "d"})
-            period_in_use_set = df.select("d").unique()
 
     return dict(
         pdt_branch_weight=pdt_branch_weight,
