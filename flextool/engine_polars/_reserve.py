@@ -148,33 +148,11 @@ def load_data(inp: Path | str, sd: Path | str,
                                       "g": pl.Utf8, "method": pl.Utf8})
         out[attr] = df
 
-    # ── prundt: v_reserve domain ───────────────────────────────────────
-    prundt_path = sd / "prundt.csv"
-    if prundt_path.exists():
-        prundt = _read_csv_file(prundt_path)
-        if prundt.height > 0:
-            prundt = prundt.rename({"process": "p", "reserve": "r",
-                                     "upDown": "ud", "node": "n",
-                                     "period": "d", "time": "t"}) \
-                            .select("p", "r", "ud", "n", "d", "t")
-        else:
-            prundt = pl.DataFrame(schema={
-                "p": pl.Utf8, "r": pl.Utf8, "ud": pl.Utf8,
-                "n": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
-        out["prundt"] = prundt
-
-    # ── process_reserve_upDown_node_active ─────────────────────────────
-    pruna_path = sd / "process_reserve_upDown_node_active.csv"
-    if pruna_path.exists():
-        pruna = _read_csv_file(pruna_path)
-        if pruna.height > 0:
-            pruna = pruna.rename({"process": "p", "reserve": "r",
-                                   "upDown": "ud", "node": "n"}) \
-                          .select("p", "r", "ud", "n")
-        else:
-            pruna = pl.DataFrame(schema={"p": pl.Utf8, "r": pl.Utf8,
-                                          "ud": pl.Utf8, "n": pl.Utf8})
-        out["process_reserve_upDown_node_active"] = pruna
+    # Δ.12-drop: ``prundt`` produced authoritatively by
+    # ``apply_derived_g.prundt_from_source``.  Seed dropped.
+    # Δ.12-drop: ``process_reserve_upDown_node_active`` produced
+    # authoritatively by ``apply_derived_d``
+    # (``process_reserve_upDown_node_active_from_source``).  Seed dropped.
 
     # ── process_reserve_upDown_node_increase_reserve_ratio (dynamic RHS) ─
     irr_path = sd / "process_reserve_upDown_node_increase_reserve_ratio.csv"
@@ -220,22 +198,8 @@ def load_data(inp: Path | str, sd: Path | str,
     elif (sd / "group_node.csv").exists() or (inp / "group__node.csv").exists():
         out["group_node"] = pl.DataFrame(schema={"g": pl.Utf8, "n": pl.Utf8})
 
-    # ── p_process_reserve_upDown_node_reliability ─────────────────────
-    rel_path = sd / "p_process_reserve_upDown_node_reliability.csv"
-    if rel_path.exists():
-        rel = _read_csv_file(rel_path)
-        if rel.height > 0:
-            rel = rel.rename({"process": "p", "reserve": "r",
-                               "upDown": "ud", "node": "n"})
-            # value column may have a different name in some preprocessor outputs
-            if "value" not in rel.columns and "p_process_reserve_upDown_node_reliability" in rel.columns:
-                rel = rel.rename({"p_process_reserve_upDown_node_reliability": "value"})
-            rel = rel.select("p", "r", "ud", "n", "value") \
-                     .with_columns(value=pl.col("value")
-                                    .cast(pl.Float64, strict=False)
-                                    .fill_null(1.0))
-            out["p_process_reserve_upDown_node_reliability"] = Param(
-                ("p", "r", "ud", "n"), rel)
+    # Δ.12-drop: ``p_process_reserve_upDown_node_reliability`` produced
+    # authoritatively by ``apply_direct_params`` (Δ.4b).  Seed dropped.
 
     # ── pdtReserve_upDown_group: long-format reservation timeseries ───
     pdtR_path = sd / "pdtReserve_upDown_group.csv"
@@ -254,47 +218,12 @@ def load_data(inp: Path | str, sd: Path | str,
             out["pdtReserve_upDown_group_reservation"] = Param(
                 ("r", "ud", "g", "d", "t"), res_only)
 
-    # ── p_reserve_upDown_group: penalty_reserve scalar(s) ─────────────
-    pen_path = inp / "p_reserve__upDown__group.csv"
-    if pen_path.exists():
-        prug = _read_csv_file(pen_path)
-        if prug.height > 0:
-            prug = prug.rename({"reserve": "r", "upDown": "ud",
-                                 "group": "g"})
-            value_col = ("p_reserve_upDown_group" if "p_reserve_upDown_group" in prug.columns
-                         else "value")
-            pen = (prug.filter(pl.col("reserveParam") == "penalty_reserve")
-                       .with_columns(value=pl.col(value_col)
-                                      .cast(pl.Float64, strict=False)
-                                      .fill_null(0.0))
-                       .select("r", "ud", "g", "value"))
-            if pen.height > 0:
-                out["p_reserve_upDown_group_penalty_reserve"] = Param(
-                    ("r", "ud", "g"), pen)
-
-    # ── p_process_reserve_upDown_node: per-(reserveParam) wide → long ──
-    pprn_path = inp / "p_process__reserve__upDown__node.csv"
-    if pprn_path.exists():
-        pprn = _read_csv_file(pprn_path)
-        if pprn.height > 0:
-            pprn = pprn.rename({"process": "p", "reserve": "r",
-                                 "upDown": "ud", "node": "n"})
-            value_col = ("p_process_reserve_upDown_node"
-                         if "p_process_reserve_upDown_node" in pprn.columns
-                         else "value")
-            pprn = pprn.with_columns(value=pl.col(value_col)
-                                          .cast(pl.Float64, strict=False)
-                                          .fill_null(0.0))
-            for param_name, attr in [
-                ("max_share",            "p_process_reserve_upDown_node_max_share"),
-                ("large_failure_ratio",  "p_process_reserve_upDown_node_large_failure_ratio_value"),
-                ("increase_reserve_ratio",
-                                          "p_process_reserve_upDown_node_increase_reserve_ratio_value"),
-            ]:
-                df = (pprn.filter(pl.col("reserveParam") == param_name)
-                          .select("p", "r", "ud", "n", "value"))
-                if df.height > 0:
-                    out[attr] = Param(("p", "r", "ud", "n"), df)
+    # Δ.12-drop: ``p_reserve_upDown_group_penalty_reserve`` /
+    # ``p_process_reserve_upDown_node_max_share`` /
+    # ``p_process_reserve_upDown_node_large_failure_ratio_value`` /
+    # ``p_process_reserve_upDown_node_increase_reserve_ratio_value``
+    # produced authoritatively by ``apply_direct_params`` (Δ.4b).
+    # Seeds dropped.
 
     return out
 
