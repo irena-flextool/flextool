@@ -471,3 +471,272 @@ def test_e_divest_total_lazy_vs_csv(work_name: str, scenario: str) -> None:
             f"  lazy: {sorted(lazy['e'].to_list())}\n"
             f"  csv:  {sorted(csv['e'].to_list())}"
         )
+
+
+# ---------------------------------------------------------------------------
+# edd_history triple-set + invest-set partitions
+# ---------------------------------------------------------------------------
+
+
+def _read_triple_csv(path: Path) -> pl.DataFrame:
+    """Read ``[entity, period_history, period]`` 3-col CSV → ``[e, d_history, d]``."""
+    df = pl.read_csv(path)
+    rename = {}
+    for c in df.columns:
+        if c == "entity":
+            rename[c] = "e"
+        elif c == "period_history":
+            rename[c] = "d_history"
+        elif c == "period":
+            rename[c] = "d"
+    return df.rename(rename).select("e", "d_history", "d").sort("e", "d_history", "d")
+
+
+@pytest.mark.parametrize(
+    "work_name,scenario", PARITY_CASES,
+    ids=lambda v: v if isinstance(v, str) else "?",
+)
+def test_edd_history_lazy_vs_csv(work_name: str, scenario: str) -> None:
+    """Per-fixture: lazy :func:`edd_history_lf` vs.
+    ``solve_data/edd_history.csv``.
+    """
+    work = DATA / work_name
+    sqlite = work / "tests.sqlite"
+    if not sqlite.exists():
+        pytest.skip("fixture missing tests.sqlite")
+    sd_candidates = sorted(work.glob("solve_data*"))
+    csv_path = None
+    pwh_path = None
+    for sd in sd_candidates:
+        cand = sd / "edd_history.csv"
+        if cand.exists():
+            csv_path = cand
+            pwh_path = sd / "period_with_history.csv"
+            break
+    if csv_path is None:
+        pytest.skip("no edd_history.csv (CSV oracle absent)")
+
+    reader = SpineDbReader(sqlite, scenario)
+    active_solve = _read_active_solve(work)
+    period_in_use = _period_in_use_set(reader, active_solve, work)
+    period_with_history = []
+    if pwh_path is not None and pwh_path.exists():
+        try:
+            df_pwh = pl.read_csv(pwh_path)
+            if "period" in df_pwh.columns:
+                period_with_history = df_pwh["period"].to_list()
+        except Exception:
+            pass
+    if not period_with_history:
+        period_with_history = list(period_in_use)
+
+    lazy_df = (_ex.edd_history_lf(
+                  reader, active_solve,
+                  period_with_history, period_in_use,
+                  workdir=work)
+                  .collect()
+                  .sort("e", "d_history", "d"))
+    csv_df = _read_triple_csv(csv_path)
+    if not lazy_df.equals(csv_df):
+        pytest.fail(
+            f"edd_history parity failed for {work_name}\n"
+            f"  lazy ({lazy_df.height}):\n{lazy_df}\n"
+            f"  csv  ({csv_df.height}):\n{csv_df}"
+        )
+
+
+@pytest.mark.parametrize(
+    "work_name,scenario", PARITY_CASES,
+    ids=lambda v: v if isinstance(v, str) else "?",
+)
+@pytest.mark.parametrize("kind", ["choice", "automatic", "no_investment"])
+def test_edd_history_cohort_lazy_vs_csv(
+        work_name: str, scenario: str, kind: str) -> None:
+    """Per-fixture × cohort: lazy
+    :func:`edd_history_choice_lf` / ``_automatic_lf`` /
+    ``_no_investment_lf`` vs the corresponding CSV.
+    """
+    work = DATA / work_name
+    sqlite = work / "tests.sqlite"
+    if not sqlite.exists():
+        pytest.skip("fixture missing tests.sqlite")
+    sd_candidates = sorted(work.glob("solve_data*"))
+    csv_path = None
+    pwh_path = None
+    for sd in sd_candidates:
+        cand = sd / f"edd_history_{kind}.csv"
+        if cand.exists():
+            csv_path = cand
+            pwh_path = sd / "period_with_history.csv"
+            break
+    if csv_path is None:
+        pytest.skip(f"no edd_history_{kind}.csv (CSV oracle absent)")
+
+    reader = SpineDbReader(sqlite, scenario)
+    active_solve = _read_active_solve(work)
+    period_in_use = _period_in_use_set(reader, active_solve, work)
+    period_with_history = []
+    if pwh_path is not None and pwh_path.exists():
+        try:
+            df_pwh = pl.read_csv(pwh_path)
+            if "period" in df_pwh.columns:
+                period_with_history = df_pwh["period"].to_list()
+        except Exception:
+            pass
+    if not period_with_history:
+        period_with_history = list(period_in_use)
+
+    fn = {
+        "choice": _ex.edd_history_choice_lf,
+        "automatic": _ex.edd_history_automatic_lf,
+        "no_investment": _ex.edd_history_no_investment_lf,
+    }[kind]
+    lazy_df = (fn(reader, active_solve, period_with_history, period_in_use,
+                     workdir=work)
+                  .collect()
+                  .sort("e", "d_history", "d"))
+    csv_df = _read_triple_csv(csv_path)
+    if not lazy_df.equals(csv_df):
+        pytest.fail(
+            f"edd_history_{kind} parity failed for {work_name}\n"
+            f"  lazy ({lazy_df.height}):\n{lazy_df}\n"
+            f"  csv  ({csv_df.height}):\n{csv_df}"
+        )
+
+
+@pytest.mark.parametrize(
+    "work_name,scenario", PARITY_CASES,
+    ids=lambda v: v if isinstance(v, str) else "?",
+)
+def test_edd_invest_set_lazy_vs_csv(work_name: str, scenario: str) -> None:
+    """Per-fixture: lazy :func:`edd_invest_set_lf` vs.
+    ``solve_data/edd_invest.csv``.
+    """
+    work = DATA / work_name
+    sqlite = work / "tests.sqlite"
+    if not sqlite.exists():
+        pytest.skip("fixture missing tests.sqlite")
+    sd_candidates = sorted(work.glob("solve_data*"))
+    csv_path = None
+    pwh_path = None
+    ed_invest_path = None
+    for sd in sd_candidates:
+        cand = sd / "edd_invest.csv"
+        if cand.exists():
+            csv_path = cand
+            pwh_path = sd / "period_with_history.csv"
+            ed_invest_path = sd / "ed_invest.csv"
+            break
+    if csv_path is None or ed_invest_path is None or not ed_invest_path.exists():
+        pytest.skip("no edd_invest.csv / ed_invest.csv (CSV oracle absent)")
+
+    reader = SpineDbReader(sqlite, scenario)
+    active_solve = _read_active_solve(work)
+    period_in_use = _period_in_use_set(reader, active_solve, work)
+    period_with_history = []
+    if pwh_path is not None and pwh_path.exists():
+        try:
+            df_pwh = pl.read_csv(pwh_path)
+            if "period" in df_pwh.columns:
+                period_with_history = df_pwh["period"].to_list()
+        except Exception:
+            pass
+    if not period_with_history:
+        period_with_history = list(period_in_use)
+
+    # Read ed_invest.csv to feed edd_invest_set_lf as input.
+    ed_invest = pl.read_csv(ed_invest_path)
+    rename = {}
+    for c in ed_invest.columns:
+        if c == "entity":
+            rename[c] = "e"
+        elif c == "period":
+            rename[c] = "d"
+    ed_invest_lf = (ed_invest.rename(rename)
+                                  .select("e", "d")
+                                  .lazy())
+
+    lazy_df = (_ex.edd_invest_set_lf(reader, active_solve, ed_invest_lf,
+                                            period_with_history, period_in_use,
+                                            workdir=work)
+                  .collect()
+                  .sort("e", "d_invest", "d"))
+    csv_df = (_read_triple_csv(csv_path)
+                  .rename({"d_history": "d_invest"})
+                  .sort("e", "d_invest", "d"))
+    if not lazy_df.equals(csv_df):
+        pytest.fail(
+            f"edd_invest parity failed for {work_name}\n"
+            f"  lazy ({lazy_df.height}):\n{lazy_df}\n"
+            f"  csv  ({csv_df.height}):\n{csv_df}"
+        )
+
+
+@pytest.mark.parametrize(
+    "work_name,scenario", PARITY_CASES,
+    ids=lambda v: v if isinstance(v, str) else "?",
+)
+@pytest.mark.parametrize(
+    "csv_name,kind_col,fn_name",
+    [
+        ("pd_invest.csv", "p", "pd_invest_set_lf"),
+        ("nd_invest.csv", "n", "nd_invest_set_lf"),
+        ("pd_divest.csv", "p", "pd_divest_set_lf"),
+        ("nd_divest.csv", "n", "nd_divest_set_lf"),
+    ]
+)
+def test_invest_set_partition_lazy_vs_csv(
+        work_name: str, scenario: str,
+        csv_name: str, kind_col: str, fn_name: str) -> None:
+    """Per-fixture × {pd, nd} × {invest, divest}: lazy partition
+    helpers vs. their CSV oracle.
+
+    The CSV oracle uses the long column names ``process`` / ``node``;
+    the lazy helper uses the short ``p`` / ``n`` flexpy convention.
+    Both are renamed to ``kind_col`` (``p`` / ``n``) for comparison.
+    """
+    work = DATA / work_name
+    sqlite = work / "tests.sqlite"
+    if not sqlite.exists():
+        pytest.skip("fixture missing tests.sqlite")
+    side = csv_name.replace(".csv", "").split("_")[1]  # "invest" or "divest"
+    src_csv = f"ed_{side}.csv"
+
+    sd_candidates = sorted(work.glob("solve_data*"))
+    target_path = None
+    src_path = None
+    for sd in sd_candidates:
+        c1 = sd / csv_name
+        c2 = sd / src_csv
+        if c1.exists() and c2.exists():
+            target_path = c1
+            src_path = c2
+            break
+    if target_path is None:
+        pytest.skip(f"no {csv_name} / {src_csv} (CSV oracle absent)")
+
+    reader = SpineDbReader(sqlite, scenario)
+    src_df = pl.read_csv(src_path)
+    rename = {}
+    for c in src_df.columns:
+        if c == "entity":
+            rename[c] = "e"
+        elif c == "period":
+            rename[c] = "d"
+    src_lf = src_df.rename(rename).select("e", "d").lazy()
+
+    fn = getattr(_ex, fn_name)
+    lazy_df = fn(reader, src_lf).collect().sort([kind_col, "d"])
+    csv_long = pl.read_csv(target_path)
+    csv_rename = {"period": "d"}
+    if "process" in csv_long.columns:
+        csv_rename["process"] = "p"
+    if "node" in csv_long.columns:
+        csv_rename["node"] = "n"
+    csv_df = csv_long.rename(csv_rename).sort([kind_col, "d"])
+    if not lazy_df.equals(csv_df):
+        pytest.fail(
+            f"{csv_name} parity failed for {work_name}\n"
+            f"  lazy ({lazy_df.height}):\n{lazy_df}\n"
+            f"  csv  ({csv_df.height}):\n{csv_df}"
+        )

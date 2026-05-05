@@ -96,6 +96,7 @@ def period_walk_iterator(
         window_method: WindowMethod,
         life_lf: pl.LazyFrame | None,
         factor_side: str | None,
+        workdir = None,
         ) -> pl.LazyFrame:
     """Lazy per-(e, d) walk over ``period_in_use``, gated by lifetime.
 
@@ -127,6 +128,14 @@ def period_walk_iterator(
         and aggregates ``Σ_{d_all matching} factor[d_all]`` per (e, d)
         (returns ``[e, d, factor]``).  ``None`` returns the unaggregated
         ``[e, d, d_all]`` triple frame (set-shape, used by Cluster B).
+    workdir
+        Optional ``Path`` for resolving ``p_years_d`` from
+        ``solve_data/p_years_d.csv`` (preferred when present — it's
+        the canonical post-preprocessing CSV that already encodes the
+        cumulative year offset for the active solve).  Cluster A's
+        callers don't pass this (they're called from the apply_npv
+        boundary which has consumed the workdir already); Cluster B's
+        invest-history callers do.
 
     Returns
     -------
@@ -145,7 +154,7 @@ def period_walk_iterator(
             factor=pl.lit(0.0, dtype=pl.Float64))
     # Lazy import to avoid circular dependency at module-load time.
     from ._derived_params import _p_years_d_lf
-    pyd_lf = _p_years_d_lf(source, active_solve)
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir)
     if pyd_lf is None:
         # Without years offsets, the integral collapses to 0 / no rows.
         if factor_side is None:

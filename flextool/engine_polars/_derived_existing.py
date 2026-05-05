@@ -322,80 +322,261 @@ def e_divest_total_lf(source: "InputSource") -> pl.LazyFrame:
 
 
 # ---------------------------------------------------------------------------
-# §3.7.2 — edd_history triple-set walk
+# §3.7.2 — edd_history triple-set walk + variants
 # ---------------------------------------------------------------------------
+
+
+def edd_history_choice_lf(source: "InputSource",
+                                  active_solve: str | None,
+                                  period_with_history: list[str],
+                                  period_in_use: list[str],
+                                  workdir: Path | None = None,
+                                  ) -> pl.LazyFrame:
+    """Lazy ``[e, d_history, d]`` for ``edd_history_choice``.
+
+    Mirror of ``invest_divest_sets.py:228-244`` for entities whose
+    ``lifetime_method = reinvest_choice``::
+
+        keep iff pdy[d] >= pdy[d_h] AND pdy[d] < pdy[d_h] + life[e, d_h]
+    """
+    return _edd_history_lf_for(
+        source, active_solve, period_with_history, period_in_use,
+        method="reinvest_choice", bounded=True, workdir=workdir)
+
+
+def edd_history_automatic_lf(source: "InputSource",
+                                       active_solve: str | None,
+                                       period_with_history: list[str],
+                                       period_in_use: list[str],
+                                       workdir: Path | None = None,
+                                       ) -> pl.LazyFrame:
+    """Lazy ``[e, d_history, d]`` for ``edd_history_automatic`` —
+    entities with ``lifetime_method = reinvest_automatic``.
+
+    Mirror of ``invest_divest_sets.py:245-246``::
+
+        keep iff pdy[d] >= pdy[d_h]
+    """
+    return _edd_history_lf_for(
+        source, active_solve, period_with_history, period_in_use,
+        method="reinvest_automatic", bounded=False, workdir=workdir)
+
+
+def edd_history_no_investment_lf(source: "InputSource",
+                                            active_solve: str | None,
+                                            period_with_history: list[str],
+                                            period_in_use: list[str],
+                                            workdir: Path | None = None,
+                                            ) -> pl.LazyFrame:
+    """Lazy ``[e, d_history, d]`` for ``edd_history_no_investment``.
+
+    Mirror of ``invest_divest_sets.py:247-248``: same predicate as
+    ``edd_history_choice`` but for the ``no_investment`` cohort.
+    """
+    return _edd_history_lf_for(
+        source, active_solve, period_with_history, period_in_use,
+        method="no_investment", bounded=True, workdir=workdir)
+
+
+def _edd_history_lf_for(source: "InputSource",
+                              active_solve: str | None,
+                              period_with_history: list[str],
+                              period_in_use: list[str],
+                              *,
+                              method: str,
+                              bounded: bool,
+                              workdir: Path | None = None,
+                              ) -> pl.LazyFrame:
+    """Internal helper: build edd_history sub-set for a single
+    lifetime_method cohort.
+    """
+    if not period_with_history or not period_in_use:
+        return pl.LazyFrame(schema={
+            "e": pl.Utf8, "d_history": pl.Utf8, "d": pl.Utf8,
+        })
+    all_e_lf = _all_entities_lf(source)
+    elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
+    cohort_e = (elm_lf
+                   .filter(pl.col("method") == method)
+                   .select("e").unique())
+    pwh_lf = pl.LazyFrame({"d": period_with_history})
+    anchor = cohort_e.join(pwh_lf, how="cross")
+    if anchor.collect().height == 0:
+        return pl.LazyFrame(schema={
+            "e": pl.Utf8, "d_history": pl.Utf8, "d": pl.Utf8,
+        })
+
+    if bounded:
+        life_per = _per_entity_param_lf(source, "lifetime")
+        life_lf = (_resolve_per_period_lf(life_per, anchor, fill=0.0)
+                       .rename({"value": "life"})
+                       .select("e", "d", "life"))
+        walk = period_walk_iterator(
+            source, active_solve, anchor,
+            period_in_use, period_in_use,
+            window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
+            life_lf=life_lf, factor_side=None,
+            workdir=workdir)
+    else:
+        walk = period_walk_iterator(
+            source, active_solve, anchor,
+            period_in_use, period_in_use,
+            window_method=WindowMethod.UNBOUNDED_FORWARD,
+            life_lf=None, factor_side=None,
+            workdir=workdir)
+    return walk.rename({"d": "d_history", "d_all": "d"})
 
 
 def edd_history_lf(source: "InputSource",
                        active_solve: str | None,
                        period_with_history: list[str],
                        period_in_use: list[str],
+                       workdir: Path | None = None,
                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for the union ``edd_history`` set.
 
     Algorithm (mirror of
-    ``invest_divest_sets.py:227-262``):
-
-      For each entity e with lifetime_method ∈ {reinvest_choice,
-      reinvest_automatic, no_investment}:
-        For d_h ∈ period_with_history, d ∈ period_in_use:
-          * reinvest_choice / no_investment:
-              keep iff pdy[d] ∈ [pdy[d_h], pdy[d_h] + life[e, d_h])
-          * reinvest_automatic:
-              keep iff pdy[d] ≥ pdy[d_h]
-
-    All bounded variants share the lifetime gate (life is the per-(e,
-    d_h) ``lifetime`` cascade), so we do two walks (bounded vs.
-    unbounded) and union them.
-
-    Returns lazy ``[e, d_history, d]``.
+    ``invest_divest_sets.py:227-262``): union of the three cohort
+    walks (:func:`edd_history_choice_lf`,
+    :func:`edd_history_automatic_lf`,
+    :func:`edd_history_no_investment_lf`).
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
             "e": pl.Utf8, "d_history": pl.Utf8, "d": pl.Utf8,
         })
+    parts = [
+        edd_history_choice_lf(source, active_solve,
+                                  period_with_history, period_in_use,
+                                  workdir),
+        edd_history_automatic_lf(source, active_solve,
+                                       period_with_history, period_in_use,
+                                       workdir),
+        edd_history_no_investment_lf(source, active_solve,
+                                            period_with_history, period_in_use,
+                                            workdir),
+    ]
+    return pl.concat(parts, how="vertical").unique()
 
-    all_e_lf = _all_entities_lf(source)
-    elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
-    bounded_e = (elm_lf
-                    .filter(pl.col("method").is_in(list(_LIFETIME_BOUNDED_METHODS)))
-                    .select("e").unique())
-    unbounded_e = (elm_lf
-                      .filter(pl.col("method").is_in(list(_LIFETIME_UNBOUNDED_METHODS)))
-                      .select("e").unique())
 
-    pwh_lf = pl.LazyFrame({"d": period_with_history})
+# ---------------------------------------------------------------------------
+# §3.7.1 — pd_invest_set / nd_invest_set partitions
+# ---------------------------------------------------------------------------
 
-    # Anchor frame for the bounded walk: bounded entities × period_with_history.
-    bounded_anchor = bounded_e.join(pwh_lf, how="cross")
-    # life_lf: per-(e, d_history) lifetime via _resolve_pdX cascade.
-    life_per = _per_entity_param_lf(source, "lifetime")
-    bounded_life = (_resolve_per_period_lf(life_per, bounded_anchor, fill=0.0)
-                       .rename({"value": "life"})
-                       .select("e", "d", "life"))
 
-    bounded_walk = period_walk_iterator(
-        source, active_solve, bounded_anchor,
-        period_in_use, period_in_use,
-        window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
-        life_lf=bounded_life,
-        factor_side=None)
+def _entity_class_partition_lf(source: "InputSource") -> pl.LazyFrame:
+    """Lazy ``[e, kind]`` where ``kind ∈ {process, node}``.
 
-    unbounded_anchor = unbounded_e.join(pwh_lf, how="cross")
-    unbounded_walk = period_walk_iterator(
-        source, active_solve, unbounded_anchor,
-        period_in_use, period_in_use,
-        window_method=WindowMethod.UNBOUNDED_FORWARD,
-        life_lf=None,
-        factor_side=None)
+    process = unit ∪ connection (processes); node = node.  Disjoint
+    classes — every entity falls in exactly one.
+    """
+    parts: list[pl.LazyFrame] = []
+    for ec, kind in (("unit", "process"),
+                       ("connection", "process"),
+                       ("node", "node")):
+        try:
+            df = source.entities(ec)
+        except KeyError:
+            continue
+        if df.height == 0:
+            continue
+        parts.append(df.lazy().select(
+            pl.col("name").alias("e"),
+            pl.lit(kind).alias("kind"),
+        ))
+    if not parts:
+        return pl.LazyFrame(schema={"e": pl.Utf8, "kind": pl.Utf8})
+    return pl.concat(parts, how="vertical").unique()
 
-    # period_walk_iterator returns columns [e, d, d_all]; rename d→d_history,
-    # d_all→d for the canonical schema.
-    bounded_triples = bounded_walk.rename({"d": "d_history", "d_all": "d"})
-    unbounded_triples = unbounded_walk.rename({"d": "d_history", "d_all": "d"})
 
-    return (pl.concat([bounded_triples, unbounded_triples], how="vertical")
+def pd_invest_set_lf(source: "InputSource",
+                            ed_invest_lf: pl.LazyFrame,
+                            ) -> pl.LazyFrame:
+    """Lazy ``[p, d]`` — ``ed_invest_set`` partitioned to processes
+    (``unit ∪ connection``).  Mirror of
+    ``invest_divest_sets.py:215-217``.
+    """
+    cls_lf = _entity_class_partition_lf(source)
+    return (ed_invest_lf
+              .join(cls_lf, on="e", how="inner")
+              .filter(pl.col("kind") == "process")
+              .rename({"e": "p"})
+              .select("p", "d")
               .unique())
+
+
+def nd_invest_set_lf(source: "InputSource",
+                            ed_invest_lf: pl.LazyFrame,
+                            ) -> pl.LazyFrame:
+    """Lazy ``[n, d]`` — ``ed_invest_set`` partitioned to nodes."""
+    cls_lf = _entity_class_partition_lf(source)
+    return (ed_invest_lf
+              .join(cls_lf, on="e", how="inner")
+              .filter(pl.col("kind") == "node")
+              .rename({"e": "n"})
+              .select("n", "d")
+              .unique())
+
+
+def pd_divest_set_lf(source: "InputSource",
+                            ed_divest_lf: pl.LazyFrame,
+                            ) -> pl.LazyFrame:
+    """Lazy ``[p, d]`` — ``ed_divest_set`` partitioned to processes."""
+    cls_lf = _entity_class_partition_lf(source)
+    return (ed_divest_lf
+              .join(cls_lf, on="e", how="inner")
+              .filter(pl.col("kind") == "process")
+              .rename({"e": "p"})
+              .select("p", "d")
+              .unique())
+
+
+def nd_divest_set_lf(source: "InputSource",
+                            ed_divest_lf: pl.LazyFrame,
+                            ) -> pl.LazyFrame:
+    """Lazy ``[n, d]`` — ``ed_divest_set`` partitioned to nodes."""
+    cls_lf = _entity_class_partition_lf(source)
+    return (ed_divest_lf
+              .join(cls_lf, on="e", how="inner")
+              .filter(pl.col("kind") == "node")
+              .rename({"e": "n"})
+              .select("n", "d")
+              .unique())
+
+
+# ---------------------------------------------------------------------------
+# §3.7.3 — edd_invest_set + edd_invest_lookback_set
+# ---------------------------------------------------------------------------
+
+
+def edd_invest_set_lf(source: "InputSource",
+                              active_solve: str | None,
+                              ed_invest_lf: pl.LazyFrame,
+                              period_with_history: list[str],
+                              period_in_use: list[str],
+                              workdir: Path | None = None,
+                              ) -> pl.LazyFrame:
+    """Lazy ``[e, d_invest, d]`` — ``edd_history_invest`` filtered to
+    ``(e, d_invest) ∈ ed_invest``.
+
+    Mirror of ``invest_divest_sets.py:267-270``::
+
+        edd_invest = { (e, d_inv, d) : (e, d_inv, d) ∈ edd_history,
+                                          (e, d_inv) ∈ ed_invest }
+
+    The ``edd_history`` triple-set carries history-period entries for
+    every entity with a recognised lifetime_method; this helper filters
+    to those whose ``d_history`` (renamed ``d_invest``) is also a
+    valid invest decision in the current solve.
+    """
+    edd = edd_history_lf(source, active_solve,
+                              period_with_history, period_in_use,
+                              workdir)
+    inv_pairs = ed_invest_lf.rename({"d": "d_history"})
+    return (edd
+              .join(inv_pairs, on=["e", "d_history"], how="inner")
+              .rename({"d_history": "d_invest"})
+              .select("e", "d_invest", "d"))
 
 
 # ---------------------------------------------------------------------------
@@ -749,10 +930,17 @@ __all__ = [
     "_INVEST_NOT_ALLOWED", "_DIVEST_NOT_ALLOWED",
     "_INVEST_TOTAL_METHODS", "_DIVEST_TOTAL_METHODS",
     "_INVEST_PERIOD_METHODS", "_DIVEST_PERIOD_METHODS",
-    # Public lazy helpers.
+    # Public lazy helpers — entity sets.
     "entity_invest_set_lf", "entity_divest_set_lf",
     "e_invest_total_lf", "e_divest_total_lf",
-    "edd_history_lf",
+    # Public lazy helpers — edd_history triple-set family.
+    "edd_history_lf", "edd_history_choice_lf",
+    "edd_history_automatic_lf", "edd_history_no_investment_lf",
+    "edd_invest_set_lf",
+    # Public lazy helpers — partitions.
+    "pd_invest_set_lf", "nd_invest_set_lf",
+    "pd_divest_set_lf", "nd_divest_set_lf",
+    # Public lazy helpers — existing chain.
     "p_entity_all_existing_from_handoff", "p_entity_pre_existing_lf",
     "apply_existing_chain",
 ]
