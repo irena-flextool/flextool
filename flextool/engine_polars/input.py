@@ -816,8 +816,13 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     unitsize_p = (unitsize_long.rename({"e": "p"})
                        .filter(pl.col("p").is_in(pss["p"].unique())))
 
-    # Δ.12-drop: ``p_slope`` produced authoritatively by
-    # ``apply_derived_b.p_slope_from_source``.  Seed dropped.
+    # ``p_slope`` is produced by ``apply_derived_b.p_slope_from_source``
+    # but the 7 mismatch fixtures (see Δ.12-drop close stanza in
+    # progress.md) skip auto-resolution and rely on the seed.  Keep
+    # CSV read.
+    # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
+    # variant fixtures or all fixtures explicitly pass db_reader=.
+    slope_long = _read_wide_per_entity(sd / "pdtProcess_slope.csv", rename={"entity":"p"})
     # commodity price sliced from canonical pdtCommodity.csv —
     # `pdtCommodity[c, 'price', d, t]` in .mod.
     # TODO(Δ.12c+): retire pdtCommodity.csv slice when
@@ -846,7 +851,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         flow_to_commodity = flow_to_commodity,
         unitsize = Param(("p",), unitsize_p.select("p","value")),
         flow_upper = Param(("p","source","sink","d","t"), flow_upper_psskdt),
-        slope = None,
+        slope = Param(("p","d","t"), slope_long.select("p","d","t","value")),
         commodity_price = Param(("c","d","t"), cp_long),
     )
 
