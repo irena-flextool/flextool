@@ -1,0 +1,742 @@
+"""Cluster E — block-layout consumers (Δ.9).
+
+Lazy-polars port of flextool's block-aware derived helpers.  Cluster E is
+the fifth of six derived-helper port phases per
+``audit/native_data_path_design_derived_clusters.md``.
+
+Cluster E fields (per the schematic):
+
+* ``nodeStateBlock`` — set: nodes pulling daily-aggregation balance.
+* ``period_block`` / ``period_block_succ`` / ``period_block_time``
+  — multi-resolution block decomposition for storage state.
+* ``arc_sink_block_dt`` / ``arc_source_block_dt`` — per-arc daily-block
+  aggregation index ``(p, source, sink, d, b_first, t, weight)``.
+* ``p_arc_sink_weight`` / ``p_arc_source_weight`` —
+  ``Param[(p, source, sink, d, t), weight]`` projected from the above.
+* ``dtttdt_block_interior`` — interior-of-block dtttdt rows.
+* ``nodeState_last_dt`` — ``(n, d, t)`` last fine-step of last block.
+* ``flow_to_n`` / ``flow_from_n`` — block-compatibility filtered.
+* ``flow_from_nodeBalance_eff`` / ``flow_from_nodeBalance_noEff`` —
+  block-compatibility filtered source-side nodeBalance arcs.
+
+All consumers read ``BlockLayout``'s in-memory frames; no helper
+re-reads ``solve_data/{entity_block,process_side_block,
+block_step_duration,overlap_set,block_period_time_*}.csv``.
+
+The single ``BlockLayout`` is built once per solve via
+``BlockLayout.load_from_solve_data`` (or, post-Γ.8, natively from
+``BlockLayout.build``).  ``BlockBundle`` wraps the layout with cached
+derived frames (``block_compat_frame``, ``process_side_block_lf`` etc.)
+that the cluster E helpers join against.
+
+Design decisions:
+
+* **One BlockLayout per solve.** Repeated CSV reads were the Δ.2 carry-
+  over; cluster E folds every consumer onto one shared layout.
+* **Cache ``block_compat`` and the rename'd join helpers.** Lazy frames
+  share the cached materialisation; downstream `.collect()` once at
+  the rim.
+* **Identity-trivial fast path.** Single-block fixtures (``work_base``
+  etc.) collapse the filter joins to no-ops because
+  ``block_compat`` carries only ``(default, default)``.
+* **Closes the Δ.3 `flow_to_n` / `flow_from_n` gap.** The block-aware
+  filter previously lived only in the CSV path
+  (``input.py::_load_process_topology``); the helper here mirrors it
+  on the source-driven path so multi-block fixtures' `db_direct_parity`
+  test stops being a known gap.
+
+Reference: ``flextool/engine_polars/input.py::_load_process_topology``
+(lines 703-783) and ``input.py::_load_storage`` (lines 1647-1699,
+2233-2253).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import polars as pl
+
+from polar_high_opt import Param
+
+from flextool.engine_polars._block_layout import (
+    DEFAULT_BLOCK,
+    BlockLayout,
+)
+
+if TYPE_CHECKING:  # pragma: no cover — typing only
+    from flextool.engine_polars._input_source import InputSource
+
+
+# ---------------------------------------------------------------------------
+# BlockBundle — BlockLayout + cached lazy join frames
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BlockBundle:
+    """Cached lazy-frame surface over a :class:`BlockLayout`.
+
+    The bundle wraps a single per-solve :class:`BlockLayout` and exposes
+    pre-renamed lazy frames keyed for cluster E consumers' joins.  The
+    rename + cache pattern matches the schematic's "cache ``overlap_set``
+    per (b_coarse, b_fine) pair" recommendation — every helper that
+    joins on ``block_compat`` shares the same materialised frame.
+
+    Attributes
+    ----------
+    layout : BlockLayout
+        The underlying per-solve block layout.
+    process_side_block_lf : pl.LazyFrame
+        Renamed ``(p, side, b_f)`` lazy frame for arc-side block lookups.
+    entity_block_lf : pl.LazyFrame
+        Renamed ``(n, b)`` lazy frame for node-side block lookups.
+    block_compat_frame : pl.DataFrame
+        Cached compatibility set ``(b, b_f)`` derived from
+        ``overlap_set`` — populated lazily on first access.
+    block_step_duration_arc_lf : pl.LazyFrame
+        Renamed ``(b_f, d, t, weight)`` lazy frame for per-arc weight
+        materialisation.
+    block_period_time_first_lf : pl.LazyFrame
+        Renamed ``(b, d, t)`` lazy frame for first-step boundaries.
+    block_period_time_last_lf : pl.LazyFrame
+        Renamed ``(b, d, t)`` lazy frame for last-step boundaries.
+    """
+
+    layout: BlockLayout
+    _block_compat_cached: pl.DataFrame | None = field(default=None, repr=False)
+
+    # ------------------------------------------------------------------
+    # Lazy-frame surface (joins consume these)
+    # ------------------------------------------------------------------
+
+    @property
+    def process_side_block_lf(self) -> pl.LazyFrame:
+        """Lazy ``(p, side, b_f)`` frame, or empty when no block data."""
+        f = self.layout.process_side_block_frame
+        if f.height == 0:
+            return pl.LazyFrame(schema={
+                "p": pl.Utf8, "side": pl.Utf8, "b_f": pl.Utf8,
+            })
+        return f.lazy().rename({"process": "p", "block": "b_f"})
+
+    @property
+    def entity_block_lf(self) -> pl.LazyFrame:
+        """Lazy ``(n, b)`` frame, or empty when no block data."""
+        f = self.layout.entity_block_frame
+        if f.height == 0:
+            return pl.LazyFrame(schema={"n": pl.Utf8, "b": pl.Utf8})
+        return f.lazy().rename({"entity": "n", "block": "b"})
+
+    @property
+    def block_step_duration_arc_lf(self) -> pl.LazyFrame:
+        """Lazy ``(b_f, d, t, weight)`` arc-keyed step duration."""
+        f = self.layout.block_step_duration_frame
+        if f.height == 0:
+            return pl.LazyFrame(schema={
+                "b_f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+                "weight": pl.Float64,
+            })
+        return f.lazy().rename({
+            "block": "b_f", "period": "d",
+            "step": "t", "step_duration": "weight",
+        })
+
+    @property
+    def block_period_time_first_lf(self) -> pl.LazyFrame:
+        f = self.layout.block_period_time_first_frame
+        if f.height == 0:
+            return pl.LazyFrame(schema={
+                "b": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+            })
+        return f.lazy().rename({"block": "b", "period": "d", "step": "t"})
+
+    @property
+    def block_period_time_last_lf(self) -> pl.LazyFrame:
+        f = self.layout.block_period_time_last_frame
+        if f.height == 0:
+            return pl.LazyFrame(schema={
+                "b": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+            })
+        return f.lazy().rename({"block": "b", "period": "d", "step": "t"})
+
+    @property
+    def block_compat_frame(self) -> pl.DataFrame:
+        """Cached ``(b, b_f)`` overlap-derived compatibility set.
+
+        Computed on first access from ``layout.overlap_set_frame``;
+        materialised once per :class:`BlockBundle` instance.
+        """
+        if self._block_compat_cached is None:
+            self._block_compat_cached = self.layout.block_compat()
+        return self._block_compat_cached
+
+    def is_multi_block(self) -> bool:
+        """Return ``True`` when the layout exercises >1 distinct block."""
+        bsd = self.layout.block_step_duration_frame
+        if bsd.height == 0:
+            return False
+        return bsd["block"].n_unique() >= 2
+
+    def has_block_data(self) -> bool:
+        """Return ``True`` when any block frame has data."""
+        return (
+            self.layout.process_side_block_frame.height > 0
+            or self.layout.entity_block_frame.height > 0
+            or self.layout.block_step_duration_frame.height > 0
+        )
+
+
+# ---------------------------------------------------------------------------
+# Workdir bridge — load BlockBundle from solve_data/ CSVs
+# ---------------------------------------------------------------------------
+
+
+def load_block_bundle(workdir: Path | None) -> BlockBundle | None:
+    """Load a :class:`BlockBundle` from ``workdir/solve_data``.
+
+    Returns ``None`` if *workdir* is None or the bundle would be empty.
+    Empty here means: no ``entity_block``, no ``process_side_block``,
+    no ``block_step_duration`` rows.  Callers fall back to no-op
+    behaviour when ``None`` is returned.
+    """
+    if workdir is None:
+        return None
+    sd = Path(workdir) / "solve_data"
+    if not sd.exists():
+        return None
+    layout = BlockLayout.load_from_solve_data(sd)
+    if layout.is_empty():
+        return None
+    return BlockBundle(layout=layout)
+
+
+# ---------------------------------------------------------------------------
+# §3.3.1 — flow_to_n / flow_from_n block-aware filter (Δ.3 gap closure)
+# ---------------------------------------------------------------------------
+
+
+def filter_flow_n_by_block(
+    flow_n: pl.DataFrame,
+    bundle: BlockBundle | None,
+    *,
+    side: str,
+) -> pl.DataFrame:
+    """Apply block-compatibility filter to ``flow_to_n`` / ``flow_from_n``.
+
+    Mirror of ``input.py::_load_process_topology`` lines 728-782.  An
+    arc ``(p, source, sink)`` contributes to node ``n``'s nodeBalance
+    iff ``(b_n, b_f)`` exists in :py:attr:`BlockBundle.block_compat_frame`,
+    where:
+
+    * ``b_n`` is the entity-block of the destination node ``n``
+      (default = ``DEFAULT_BLOCK`` when missing).
+    * ``b_f`` is the process-side block on *side* (default =
+      ``DEFAULT_BLOCK`` when missing).
+
+    Parameters
+    ----------
+    flow_n : pl.DataFrame
+        Schema ``[p, source, sink, n]``.
+    bundle : BlockBundle or None
+        When ``None`` or empty / single-block, filter is a no-op
+        (returns ``flow_n`` unchanged).
+    side : str
+        ``"sink"`` (for ``flow_to_n``) or ``"source"``
+        (for ``flow_from_n``).
+
+    Returns
+    -------
+    pl.DataFrame
+        The filtered frame.  Mirrors the reference's "only replace if
+        the filter actually drops rows" guard so empty-overlap fixtures
+        keep their pre-filter shape.
+    """
+    if flow_n is None or flow_n.height == 0:
+        return flow_n
+    if bundle is None:
+        return flow_n
+    psb_f = bundle.layout.process_side_block_frame
+    eb_f = bundle.layout.entity_block_frame
+    compat = bundle.block_compat_frame
+    if psb_f.height == 0 or eb_f.height == 0 or compat.height == 0:
+        return flow_n
+
+    psb_side = (
+        bundle.process_side_block_lf
+        .filter(pl.col("side") == side)
+        .select("p", "b_f")
+    )
+    eb_lf = bundle.entity_block_lf
+
+    with_blocks = (
+        flow_n.lazy()
+        .join(psb_side, on="p", how="left")
+        .join(eb_lf, on="n", how="left")
+        .with_columns(
+            b_f=pl.col("b_f").fill_null(DEFAULT_BLOCK),
+            b=pl.col("b").fill_null(DEFAULT_BLOCK),
+        )
+    )
+    filtered = (
+        with_blocks
+        .join(compat.lazy(), on=["b", "b_f"], how="inner")
+        .select("p", "source", "sink", "n")
+        .unique()
+        .collect()
+    )
+    # Match reference: only replace if filter dropped rows.  The
+    # ``filtered.height > 0`` guard preserves the pre-filter frame for
+    # fixtures whose overlap_set is degenerate-but-non-empty.
+    if 0 < filtered.height < flow_n.height:
+        return filtered
+    return flow_n
+
+
+def flow_to_n_block_filtered(
+    pss: pl.DataFrame,
+    bundle: BlockBundle | None,
+) -> pl.DataFrame:
+    """Build ``flow_to_n`` (``n = sink``) and apply the block-aware filter.
+
+    Schema: ``[p, source, sink, n]``.  The block-aware filter is the
+    Δ.3 gap closure — flextool's CSV path filters in
+    ``_load_process_topology``; the source-driven path now mirrors the
+    same filter.
+    """
+    if pss is None or pss.height == 0:
+        return pl.DataFrame(schema={
+            "p": pl.Utf8, "source": pl.Utf8,
+            "sink": pl.Utf8, "n": pl.Utf8,
+        })
+    base = (
+        pss.lazy()
+        .with_columns(n=pl.col("sink"))
+        .select("p", "source", "sink", "n")
+        .sort("p", "source", "sink", "n")
+        .collect()
+    )
+    return filter_flow_n_by_block(base, bundle, side="sink")
+
+
+def flow_from_n_block_filtered(
+    pss: pl.DataFrame,
+    bundle: BlockBundle | None,
+) -> pl.DataFrame:
+    """Build ``flow_from_n`` (``n = source``) with block-aware filter."""
+    if pss is None or pss.height == 0:
+        return pl.DataFrame(schema={
+            "p": pl.Utf8, "source": pl.Utf8,
+            "sink": pl.Utf8, "n": pl.Utf8,
+        })
+    base = (
+        pss.lazy()
+        .with_columns(n=pl.col("source"))
+        .select("p", "source", "sink", "n")
+        .sort("p", "source", "sink", "n")
+        .collect()
+    )
+    return filter_flow_n_by_block(base, bundle, side="source")
+
+
+# ---------------------------------------------------------------------------
+# §3.9 — flow_from_nodeBalance block filter
+# ---------------------------------------------------------------------------
+
+
+def flow_from_nodeBalance_block_filtered(
+    flow_from_nb: pl.DataFrame | None,
+    bundle: BlockBundle | None,
+) -> pl.DataFrame | None:
+    """Apply the block-compatibility filter to source-side nodeBalance arcs.
+
+    Mirror of ``input.py::_load_storage`` lines 1664-1699.  The
+    ``flow_from_nodeBalance_eff`` / ``flow_from_nodeBalance_noEff``
+    frames carry ``(p, source, sink, n=source)``; the filter drops arcs
+    whose source-block doesn't overlap the destination node's block.
+
+    Returns the filtered frame (possibly identical to input when no
+    filter applies).  ``None`` in → ``None`` out.
+    """
+    if flow_from_nb is None or flow_from_nb.height == 0:
+        return flow_from_nb
+    if bundle is None:
+        return flow_from_nb
+    return filter_flow_n_by_block(flow_from_nb, bundle, side="source")
+
+
+# ---------------------------------------------------------------------------
+# §3.9.2 — nodeStateBlock multi-resolution synthesis
+# ---------------------------------------------------------------------------
+
+
+def nodeStateBlock_lf(
+    bundle: BlockBundle | None,
+    explicit_intraperiod: pl.LazyFrame | None,
+    node_set: set[str] | None = None,
+    *,
+    coarse_threshold: float = 1.0,
+) -> pl.LazyFrame:
+    """Synthesise ``nodeStateBlock`` per audit §3.9.2.
+
+    Two contributing branches:
+
+    1. **Explicit method**: nodes whose
+       ``storage_binding_method == 'bind_intraperiod_blocks'`` enter
+       the set verbatim.
+    2. **Multi-resolution synthesis**: when ``bundle`` carries >=2
+       distinct blocks AND a node entity is assigned a coarse block
+       (``step_duration > coarse_threshold``), that node is folded
+       into the set so the daily-aggregation balance fires.
+
+    Returns a lazy ``[n]`` frame, possibly empty.
+    """
+    parts: list[pl.LazyFrame] = []
+    if explicit_intraperiod is not None:
+        parts.append(
+            explicit_intraperiod.select("n").unique()
+        )
+    if bundle is not None and bundle.is_multi_block():
+        coarse = bundle.layout.coarse_blocks(threshold=coarse_threshold)
+        if coarse:
+            eb_lf = bundle.entity_block_lf
+            picked = (
+                eb_lf
+                .filter(pl.col("b").is_in(coarse))
+                .select(pl.col("n"))
+            )
+            if node_set is not None:
+                picked = picked.filter(
+                    pl.col("n").is_in(list(node_set)))
+            parts.append(picked.unique())
+    if not parts:
+        return pl.LazyFrame(schema={"n": pl.Utf8})
+    out = pl.concat(parts).unique().sort("n")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# §3.9.3 — period_block / period_block_succ / period_block_time
+# ---------------------------------------------------------------------------
+
+
+def period_block_multi_resolution_lf(
+    bundle: BlockBundle | None,
+    *,
+    coarse_threshold: float = 1.0,
+) -> dict[str, pl.LazyFrame] | None:
+    """Build the multi-resolution synthesis branch of period_block_*.
+
+    Returns a dict ``{"period_block": LF, "period_block_succ": LF,
+    "period_block_time": LF}`` when *bundle* exercises multiple blocks
+    AND at least one block is coarse (per *coarse_threshold*).  Returns
+    ``None`` when the synthesis branch doesn't fire (caller falls back
+    to the timeset-based default branch).
+
+    Mirror of ``input.py:1985-2126`` and the multi-resolution path of
+    ``period_block_family_from_source`` in ``_derived_params.py``.
+    """
+    if bundle is None or not bundle.is_multi_block():
+        return None
+    coarse = bundle.layout.coarse_blocks(threshold=coarse_threshold)
+    if not coarse:
+        return None
+    eb = bundle.layout.entity_block_frame
+    coarse_use_set = set(
+        eb.filter(pl.col("block").is_in(coarse))["block"]
+        .unique().to_list()
+    )
+    if not coarse_use_set:
+        return None
+    coarse_use = sorted(coarse_use_set)
+
+    bsd = bundle.layout.block_step_duration_frame
+    bsd_c = bsd.filter(pl.col("block").is_in(coarse_use))
+    if bsd_c.height == 0:
+        return None
+
+    # period_block: (d, b_first) — coarse block step list.
+    new_pb = (
+        bsd_c
+        .rename({"period": "d", "step": "b_first"})
+        .select("d", "b_first")
+        .unique()
+    )
+
+    # period_block_succ: cyclic per (block, period).
+    succ_rows: list[tuple[str, str, str]] = []
+    bsd_sorted = (
+        bsd_c
+        .rename({"period": "d", "step": "b_first"})
+        .sort("block", "d", "b_first")
+    )
+    for (_blk, dval), grp in bsd_sorted.group_by(
+        ["block", "d"], maintain_order=True
+    ):
+        bfs = grp["b_first"].to_list()
+        n = len(bfs)
+        for i in range(n):
+            succ_rows.append((dval, bfs[i], bfs[(i + 1) % n]))
+    new_pbs = (
+        pl.DataFrame(
+            succ_rows,
+            schema=["d", "b_first", "b_next"],
+            orient="row",
+        ) if succ_rows else pl.DataFrame(schema={
+            "d": pl.Utf8, "b_first": pl.Utf8, "b_next": pl.Utf8,
+        })
+    )
+
+    # period_block_time: (d, b_first, t) — overlap_set rows where
+    # b_coarse=coarse, b_fine=default.
+    ov = bundle.layout.overlap_set_frame
+    if ov.height == 0:
+        return None
+    ov_renamed = ov.rename({
+        "period": "d",
+        "block_coarse": "b",
+        "step_coarse": "b_first",
+        "block_fine": "b_fine",
+        "step_fine": "t",
+    })
+    ov_keep = ov_renamed.filter(
+        pl.col("b").is_in(coarse_use)
+        & (pl.col("b_fine") == DEFAULT_BLOCK)
+    )
+    if ov_keep.height == 0:
+        new_pbt = pl.DataFrame(schema={
+            "d": pl.Utf8, "b_first": pl.Utf8, "t": pl.Utf8,
+        })
+    else:
+        new_pbt = ov_keep.select("d", "b_first", "t").unique()
+
+    return {
+        "period_block": new_pb.lazy(),
+        "period_block_succ": new_pbs.lazy(),
+        "period_block_time": new_pbt.lazy(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# §3.9.4 — arc_sink_block_dt / arc_source_block_dt + weights
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ArcBlockFrames:
+    """Container for the cluster E arc-block aggregation frames."""
+
+    arc_sink_block_dt: pl.DataFrame | None = None
+    arc_source_block_dt: pl.DataFrame | None = None
+    p_arc_sink_weight: Param | None = None
+    p_arc_source_weight: Param | None = None
+
+
+def arc_block_dt(
+    pss: pl.DataFrame | None,
+    nodeStateBlock: pl.DataFrame | None,
+    period_block_time: pl.DataFrame | None,
+    bundle: BlockBundle | None,
+) -> ArcBlockFrames:
+    """Build per-arc daily-block aggregation frames.
+
+    For each arc ``(p, source, sink)`` whose nodeStateBlock side participates
+    in ``nodeStateBlock``, project to ``(p, source, sink, d, b_first, t,
+    weight)`` with ``weight = block_step_duration`` of the arc-side block
+    at fine ``(d, t)``.
+
+    Returns an :class:`ArcBlockFrames` with up to four populated fields;
+    any may be ``None`` when the corresponding side has no rows.
+    """
+    out = ArcBlockFrames()
+    if (bundle is None
+            or not bundle.has_block_data()
+            or pss is None or pss.height == 0
+            or nodeStateBlock is None or nodeStateBlock.height == 0
+            or period_block_time is None or period_block_time.height == 0):
+        return out
+
+    psb_f = bundle.layout.process_side_block_frame
+    bsd_f = bundle.layout.block_step_duration_frame
+    if psb_f.height == 0 or bsd_f.height == 0:
+        return out
+
+    psb = bundle.process_side_block_lf
+    bsd_arc = bundle.block_step_duration_arc_lf
+    nsb_set = nodeStateBlock["n"].unique().to_list()
+    pbt = period_block_time
+
+    psb_sink = psb.filter(pl.col("side") == "sink").select("p", "b_f")
+    sink_arcs = (
+        pss.lazy()
+        .filter(pl.col("sink").is_in(nsb_set))
+        .join(psb_sink, on="p", how="inner")
+    )
+    sink_ab = (
+        sink_arcs
+        .join(bsd_arc, on="b_f", how="inner")
+        .join(pbt.lazy(), on=["d", "t"], how="inner")
+        .select("p", "source", "sink", "d", "b_first", "t", "weight")
+        .unique()
+        .collect()
+    )
+    if sink_ab.height > 0:
+        out.arc_sink_block_dt = sink_ab
+        wf = (
+            sink_ab.select("p", "source", "sink", "d", "t", "weight")
+            .unique()
+            .rename({"weight": "value"})
+        )
+        out.p_arc_sink_weight = Param(
+            ("p", "source", "sink", "d", "t"), wf,
+        )
+
+    psb_src = psb.filter(pl.col("side") == "source").select("p", "b_f")
+    src_arcs = (
+        pss.lazy()
+        .filter(pl.col("source").is_in(nsb_set))
+        .join(psb_src, on="p", how="inner")
+    )
+    src_ab = (
+        src_arcs
+        .join(bsd_arc, on="b_f", how="inner")
+        .join(pbt.lazy(), on=["d", "t"], how="inner")
+        .select("p", "source", "sink", "d", "b_first", "t", "weight")
+        .unique()
+        .collect()
+    )
+    if src_ab.height > 0:
+        out.arc_source_block_dt = src_ab
+        wf = (
+            src_ab.select("p", "source", "sink", "d", "t", "weight")
+            .unique()
+            .rename({"weight": "value"})
+        )
+        out.p_arc_source_weight = Param(
+            ("p", "source", "sink", "d", "t"), wf,
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# §3.9 — nodeState_last_dt
+# ---------------------------------------------------------------------------
+
+
+def nodeState_last_dt_lf(
+    nodeState: pl.DataFrame | None,
+    bundle: BlockBundle | None,
+) -> pl.LazyFrame:
+    """Build ``nodeState_last_dt`` ``(n, d, t)``.
+
+    Last-fine-step-of-last-block per node.  Built from
+    ``block_period_time_last`` × ``entity_block`` × ``nodeState``.
+    Mirror of ``input.py:2233-2253``.
+    """
+    empty = pl.LazyFrame(schema={
+        "n": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+    })
+    if nodeState is None or nodeState.height == 0:
+        return empty
+    if bundle is None:
+        return empty
+    bptl_f = bundle.layout.block_period_time_last_frame
+    eb_f = bundle.layout.entity_block_frame
+    if bptl_f.height == 0 or eb_f.height == 0:
+        return empty
+    return (
+        nodeState.lazy().select("n")
+        .join(bundle.entity_block_lf, on="n", how="inner")
+        .join(bundle.block_period_time_last_lf, on="b", how="inner")
+        .select("n", "d", "t")
+        .unique()
+    )
+
+
+# ---------------------------------------------------------------------------
+# §3.9 — dtttdt_block_interior
+# ---------------------------------------------------------------------------
+
+
+def dtttdt_block_interior_lf(
+    dtttdt: pl.DataFrame | None,
+    period_block_time: pl.DataFrame | None,
+) -> pl.LazyFrame:
+    """Interior-of-block dtttdt rows.
+
+    Two paths matching ``input.py``'s branching:
+
+    1. **Default** (timeset-block decomposition): keep dtttdt rows where
+       ``t_previous_within_timeset == t_previous`` (jump=1 interior).
+    2. **Synthesised (multi-resolution)**: when *period_block_time* has
+       multiple ``b_first`` per period, rebuild interior pairs from the
+       coarse block decomposition: per (d, b_first), consecutive sorted
+       fine t's give intra-day predecessor pairs.
+
+    The caller distinguishes via *period_block_time*'s shape; this
+    helper detects automatically.
+    """
+    empty = pl.LazyFrame(schema={
+        "d": pl.Utf8, "t": pl.Utf8, "t_previous": pl.Utf8,
+    })
+    if dtttdt is None or dtttdt.height == 0:
+        return empty
+    multi_res = False
+    if period_block_time is not None and period_block_time.height > 0:
+        nb = (
+            period_block_time
+            .group_by("d")
+            .agg(pl.col("b_first").n_unique().alias("nb"))
+            ["nb"].max()
+        )
+        if nb is not None and nb > 1:
+            multi_res = True
+    if multi_res and period_block_time is not None:
+        rows: list[tuple[str, str, str]] = []
+        pbt_sorted = period_block_time.sort("d", "b_first", "t")
+        for (dval, _bf), grp in pbt_sorted.group_by(
+            ["d", "b_first"], maintain_order=True
+        ):
+            ts = grp["t"].to_list()
+            for i in range(1, len(ts)):
+                rows.append((dval, ts[i], ts[i - 1]))
+        if not rows:
+            return empty
+        return (
+            pl.DataFrame(
+                rows,
+                schema=["d", "t", "t_previous"],
+                orient="row",
+            )
+            .unique()
+            .lazy()
+        )
+    if "t_previous_within_timeset" not in dtttdt.columns:
+        return empty
+    return (
+        dtttdt.lazy()
+        .filter(pl.col("t_previous_within_timeset")
+                == pl.col("t_previous"))
+        .select("d", "t", "t_previous")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public — apply_block_cluster: single-pass entry for apply_derived_e.
+# ---------------------------------------------------------------------------
+
+
+__all__ = [
+    "BlockBundle",
+    "load_block_bundle",
+    "filter_flow_n_by_block",
+    "flow_to_n_block_filtered",
+    "flow_from_n_block_filtered",
+    "flow_from_nodeBalance_block_filtered",
+    "nodeStateBlock_lf",
+    "period_block_multi_resolution_lf",
+    "arc_block_dt",
+    "ArcBlockFrames",
+    "nodeState_last_dt_lf",
+    "dtttdt_block_interior_lf",
+]
