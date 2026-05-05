@@ -320,8 +320,18 @@ def write_node_inflow_scaling_params(input_dir: Path, solve_data_dir: Path) -> N
     rows_npopinflow: list[tuple[str, str, float]] = []
     rows_npis: list[tuple[str, str, float]] = []
 
-    has_node_time_inflow = {n: any(t in time_set for (nn, t) in node__time_inflow if nn == n)
-                            for n in nodes}
+    # Was O(N² × T²) — the original comprehension scanned the full
+    # node__time_inflow set for every n and tested membership in the
+    # list-typed time_set per pair.  Equivalent semantics in O(N + |pairs|):
+    # build the set of nodes that have at least one inflow timestep falling
+    # inside the active time_set, then look each node up by membership.
+    # dict.fromkeys keeps the preprocessing-lint rule (no bare set comps)
+    # while still giving O(1) `in` lookup.
+    time_set_lookup = frozenset(time_set)
+    nodes_with_active_inflow = dict.fromkeys(
+        nn for (nn, t) in node__time_inflow if t in time_set_lookup
+    )
+    has_node_time_inflow = {n: n in nodes_with_active_inflow for n in nodes}
 
     for n in nodes:
         for d in period_in_use:
