@@ -438,21 +438,9 @@ class SpineDbReader:
         cur = v
         while True:
             if isinstance(cur, Map):
-                # Δ.16 — spinedb_api defaults ``index_name`` to ``'x'`` when
-                # the JSON map literal has no annotation.  Treat that
-                # generic sentinel the same as empty so the canonical
-                # _DEFAULT_INDEX_NAMES fallback fires (e.g., depth 0 →
-                # 'period').  Without this, helpers that probe for a
-                # 'period' column miss the frame entirely (observed on
-                # ``cumulative_max_capacity`` /
-                # ``cumulative_min_capacity`` whose tests.sqlite values
-                # lack ``index_name``).
-                idx_name = cur.index_name
-                if not idx_name or idx_name == "x":
-                    idx_name = _DEFAULT_INDEX_NAMES[
-                        depth if depth < len(_DEFAULT_INDEX_NAMES) else -1
-                    ]
-                name = idx_name
+                name = cur.index_name or _DEFAULT_INDEX_NAMES[
+                    depth if depth < len(_DEFAULT_INDEX_NAMES) else -1
+                ]
                 # Map's "time" index is conventionally 't' in flextool.
                 if name == "time":
                     name = "t"

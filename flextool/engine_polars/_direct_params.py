@@ -896,10 +896,16 @@ def _e_period_param_union(source: "InputSource",
         if df is None or df.height == 0:
             continue
         cols = df.columns
-        if "period" not in cols or "value" not in cols:
+        # Δ.16 — accept ``x`` as a synonym for ``period`` when the
+        # source's parameter Map literal lacked an ``index_name`` annotation
+        # (spinedb_api defaults to ``'x'``).  Observed on
+        # ``cumulative_max_capacity`` / ``cumulative_min_capacity``.
+        period_col = "period" if "period" in cols else (
+            "x" if "x" in cols else None)
+        if period_col is None or "value" not in cols:
             continue
         lf = (df.lazy()
-                .rename({"name": "e", "period": "d"})
+                .rename({"name": "e", period_col: "d"})
                 .filter(pl.col("value").is_not_null()))
         if filter_zero:
             lf = lf.filter(pl.col("value") != 0.0)
