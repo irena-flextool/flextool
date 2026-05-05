@@ -3,10 +3,12 @@
 CWD notes (Task 1 findings)
 ---------------------------
 FlexToolRunner writes several files relative to CWD:
-  solve_data/          — auto-created by __init__; holds solve progress CSVs
+  solve_data/          — auto-created by __init__; holds intermediate
+                         per-solve CSVs and timings.csv (the unified
+                         phase-timing log; replaces the legacy
+                         solve_progress.csv files)
   output_raw/          — created by glpsol Phase 3; holds raw solver output CSVs
   HiGHS.log            — written by HiGHS
-  output/              — created by write_outputs; holds output solve_progress.csv
 
 Intermediate solver files go to root_dir (not CWD):
   flextool.mps, flextool.sol, glpsol_solution.txt
@@ -52,6 +54,27 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers", "smoke: fast Layer-1 scenarios for the per-commit gate"
+    )
+    config.addinivalue_line(
+        "markers", "solver: tests that invoke a real solver (glpsol/HiGHS)"
+    )
+    config.addinivalue_line(
+        "markers", "slow: tests that take more than ~30 seconds"
+    )
+    config.addinivalue_line(
+        "markers", "decomposition: Tier 8 obj-decomposition parity tests"
+    )
+    config.addinivalue_line(
+        "markers", "perturbation: Tier 6 single-multiplier perturbation tests"
+    )
+    config.addinivalue_line(
+        "markers", "emission: Tier 7 MPS row-count emission tests"
+    )
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
@@ -76,6 +99,46 @@ def test_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     """Import JSON fixture → fresh SQLite DB once per test session."""
     db_path = tmp_path_factory.mktemp("db") / "tests.sqlite"
     return json_to_db(FIXTURES_DIR / "tests.json", db_path)
+
+
+@pytest.fixture(scope="session")
+def stochastic_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Stochastic-feature scenarios DB.
+
+    Built from ``tests/fixtures/stochastics.json`` (a JSON dump of the
+    user-facing ``how to example databases/stochastics.sqlite``).  The
+    JSON was exported at FlexTool DB v25 — this fixture migrates to the
+    current ``FLEXTOOL_DB_VERSION`` so scenarios resolve against the
+    same schema as the main test DB.
+    """
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_path = tmp_path_factory.mktemp("db_stoch") / "stochastics.sqlite"
+    url = json_to_db(FIXTURES_DIR / "stochastics.json", db_path)
+    migrate_database(url)
+    return url
+
+
+# Map scenarios.yaml ``db_fixture`` values to fixture names — kept in
+# conftest so adding a new fixture requires touching exactly two
+# places: the fixture definition above and this map.
+_DB_FIXTURE_NAMES: dict[str, str] = {
+    "main": "test_db_url",
+    "stochastic": "stochastic_db_url",
+}
+
+
+@pytest.fixture
+def scenario_db_url(request: pytest.FixtureRequest, db_fixture: str) -> str:
+    """Resolve the per-scenario DB url according to ``db_fixture`` field
+    in scenarios.yaml.  Defaults to ``main`` (== ``test_db_url``)."""
+    fixture_name = _DB_FIXTURE_NAMES.get(db_fixture)
+    if fixture_name is None:
+        raise ValueError(
+            f"Unknown db_fixture {db_fixture!r}; "
+            f"valid: {sorted(_DB_FIXTURE_NAMES)}"
+        )
+    return request.getfixturevalue(fixture_name)
 
 
 @pytest.fixture(scope="session")

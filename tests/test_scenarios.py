@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -34,10 +35,78 @@ from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
 from flextool.process_outputs.write_outputs import write_outputs
 
 
-def _load_scenarios() -> list[tuple[str, list[str]]]:
+def _load_scenarios() -> list:
+    """Load scenarios from YAML, applying ``smoke`` marker where requested.
+
+    Each entry may set ``smoke: true`` to be included in the per-commit
+    smoke gate (``pytest -m smoke``). Returns a list of ``pytest.param``
+    objects so markers can be attached per-parametrize-case.
+
+    Optional ``expected_objective`` and ``expected_objective_tolerance``
+    fields enable hand-derived objective-value assertions: a regression
+    that produces a consistently-wrong objective (but still writes
+    self-consistent CSVs that the golden-comparison would lock in) is
+    caught here.
+
+    Optional ``time_budget_seconds`` field enables a per-scenario timing
+    assertion: the test body (write_input → run_model → write_outputs)
+    must finish within the given budget. Catches large performance
+    regressions in the writer/runner/post-process layers.
+    """
     with open(TEST_DIR / "scenarios.yaml") as f:
         entries = yaml.safe_load(f)
-    return [(e["scenario"], e["csvs"]) for e in entries]
+    params = []
+    for e in entries:
+        marks = []
+        if e.get("smoke"):
+            marks.append(pytest.mark.smoke)
+        params.append(
+            pytest.param(
+                e["scenario"],
+                e["csvs"],
+                e.get("expected_objective"),
+                e.get("expected_objective_tolerance", 1e-3),
+                e.get("time_budget_seconds"),
+                e.get("db_fixture", "main"),
+                marks=marks,
+                id=e["scenario"],
+            )
+        )
+    return params
+
+
+def _parse_summary_solve_objective(summary_path: Path) -> float:
+    """Extract the full-horizon total cost from ``summary_solve.csv``.
+
+    The file's format (see tests/expected/base/summary_solve.csv) is a
+    free-form CSV with this row near the top:
+
+        "Total cost (calculated) full horizon (M CUR)",4780.16775,...
+
+    This row is the most stable single-number summary across single-
+    and multi-solve scenarios — for rolling/multi-solve runs the
+    ``Solve,Objective`` rows are per-roll while this row aggregates the
+    full horizon.
+    """
+    label = "Total cost (calculated) full horizon"
+    for raw in summary_path.read_text().splitlines():
+        if label in raw:
+            # Format: "<label> (M CUR)",<value>,...
+            parts = raw.split(",")
+            for part in parts[1:]:
+                cleaned = part.strip().strip('"')
+                if not cleaned:
+                    continue
+                try:
+                    return float(cleaned)
+                except ValueError:
+                    continue
+            raise ValueError(
+                f"Could not parse objective value from row: {raw!r}"
+            )
+    raise ValueError(
+        f"No '{label}' row found in {summary_path}"
+    )
 
 
 # CSVs with non-standard formatting that pd.read_csv cannot parse.
@@ -57,25 +126,35 @@ def _strip_timestamps(text: str) -> str:
 SCENARIOS = _load_scenarios()
 
 
-@pytest.mark.parametrize("scenario,csvs", SCENARIOS, ids=[s[0] for s in SCENARIOS])
+@pytest.mark.parametrize(
+    "scenario,csvs,expected_objective,expected_objective_tolerance,time_budget_seconds,db_fixture",
+    SCENARIOS,
+)
 def test_scenario(
     scenario: str,
     csvs: list[str],
-    test_db_url: str,
+    expected_objective: float | None,
+    expected_objective_tolerance: float,
+    time_budget_seconds: float | None,
+    db_fixture: str,
+    scenario_db_url: str,
     test_bin_dir: Path,
     workdir: Path,
     request: pytest.FixtureRequest,
 ) -> None:
     regenerate = request.config.getoption("--regenerate")
 
-    # Run the model
+    # Run the model — wrap write_input → run_model → write_outputs in a
+    # perf_counter so the optional time_budget_seconds assertion (below)
+    # measures the actual scenario work, not pytest fixture setup.
+    t_start = time.perf_counter()
     runner = FlexToolRunner(
-        input_db_url=test_db_url,
+        input_db_url=scenario_db_url,
         scenario_name=scenario,
         root_dir=workdir,
         bin_dir=test_bin_dir,
     )
-    runner.write_input(test_db_url, scenario)
+    runner.write_input(scenario_db_url, scenario)
     return_code = runner.run_model()
     assert return_code == 0, f"Model run failed for scenario '{scenario}'"
 
@@ -88,6 +167,7 @@ def test_scenario(
         write_methods=["csv"],
         fallback_output_location=str(workdir),
     )
+    elapsed_seconds = time.perf_counter() - t_start
 
     # Compare (or regenerate) each expected CSV
     if regenerate == scenario:
@@ -134,3 +214,33 @@ def test_scenario(
                     rtol=1e-4,
                     obj=f"{scenario}/{csv_name}",
                 )
+
+        # Optional hand-derived objective check. Catches a class of bugs
+        # where outputs are self-consistent (golden CSV diff passes) but
+        # the underlying objective is wrong.
+        if expected_objective is not None:
+            summary_path = workdir / "output_csv" / scenario / "summary_solve.csv"
+            assert summary_path.exists(), (
+                f"summary_solve.csv missing for scenario '{scenario}' "
+                f"— required for expected_objective check"
+            )
+            actual_objective = _parse_summary_solve_objective(summary_path)
+            denom = max(abs(expected_objective), 1e-9)
+            rel_err = abs(actual_objective - expected_objective) / denom
+            assert rel_err <= expected_objective_tolerance, (
+                f"objective drift: scenario={scenario} "
+                f"expected={expected_objective} got={actual_objective} "
+                f"rel_err={rel_err:.3e} tolerance={expected_objective_tolerance:.3e}"
+            )
+
+    # Optional timing budget. Budgets are set to ~1.5x the observed max
+    # over a small sample of clean runs (see tests/README.md), so a
+    # tripped assertion indicates a real performance regression rather
+    # than CI noise. Placed last so a CSV/objective regression is
+    # reported first; pytest stops at the first failed assertion.
+    if time_budget_seconds is not None:
+        assert elapsed_seconds <= time_budget_seconds, (
+            f"timing regression: scenario={scenario} "
+            f"observed={elapsed_seconds:.2f}s budget={time_budget_seconds:.2f}s "
+            f"(set in tests/scenarios.yaml; bump if the increase is intended)"
+        )

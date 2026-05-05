@@ -1,0 +1,2051 @@
+{
+  "n_items": 351,
+  "n_layers": 12,
+  "adjacency": {
+    "solve_period": [
+      "period_solve"
+    ],
+    "period_from_period_time": [
+      "period"
+    ],
+    "period": [
+      "period__timeline"
+    ],
+    "timeline": [
+      "period__timeline"
+    ],
+    "def_optional_yes": [
+      "enable_optional_outputs"
+    ],
+    "optional_yes": [
+      "enable_optional_outputs"
+    ],
+    "branch": [
+      "periodAll"
+    ],
+    "period_commodity": [
+      "periodAll"
+    ],
+    "period_group": [
+      "periodAll"
+    ],
+    "period_node": [
+      "periodAll"
+    ],
+    "period_process": [
+      "periodAll"
+    ],
+    "period_solve": [
+      "periodAll"
+    ],
+    "entityInvest": [
+      "e_invest_total",
+      "ed_invest",
+      "edd_history_invest",
+      "investableEntities",
+      "node__PeriodParam_in_use",
+      "p_entity_dispatch_capacity_max",
+      "process__PeriodParam_in_use"
+    ],
+    "balance": [
+      "nodeBalance"
+    ],
+    "nodeState": [
+      "nodeSelfDischarge",
+      "nodeStateBlock",
+      "nodeState_rp",
+      "node__TimeParam_in_use"
+    ],
+    "node__storage_binding_method": [
+      "nodeStateBlock",
+      "nodeState_rp"
+    ],
+    "commodity__tier_ann": [
+      "cndi_ladder_ann",
+      "commodity__tier"
+    ],
+    "commodity__tier": [
+      "tier"
+    ],
+    "enable_optional_outputs": [
+      "dt_realize_dispatch"
+    ],
+    "dt_realize_dispatch": [
+      "d_realized_period",
+      "hours_in_realized_period"
+    ],
+    "d_realized_period": [
+      "d_realize_dispatch_or_invest",
+      "ed_history_realized_first"
+    ],
+    "timeline_steps": [
+      "p_timeline_duration_in_years"
+    ],
+    "time": [
+      "_node_cap_inflow_fallback",
+      "old_peak_max",
+      "old_peak_min",
+      "old_peak_sign",
+      "period_flow_proportional_multiplier",
+      "startNext_index"
+    ],
+    "connection__param__time": [
+      "connection__param_t",
+      "pdtProcess_source_sink"
+    ],
+    "d_fix_storage_period": [
+      "ed_history_realized_first"
+    ],
+    "ed_history_realized_first": [
+      "ed_history_realized"
+    ],
+    "process_delayed__duration": [
+      "process_delayed"
+    ],
+    "process__profileProcess__toSink__profile__profile_method": [
+      "process__profileProcess__toSink",
+      "process__source__sink__profile__profile_method"
+    ],
+    "process__source__toProfileProcess__profile__profile_method": [
+      "process__source__sink__profile__profile_method",
+      "process__source__toProfileProcess"
+    ],
+    "process__profileProcess__toSink": [
+      "process_process_toSink",
+      "process_profile",
+      "process_source_sink",
+      "process_source_sink_alwaysProcess",
+      "process_source_sink_noEff"
+    ],
+    "process__source__toProfileProcess": [
+      "process_profile",
+      "process_source_sink",
+      "process_source_sink_alwaysProcess",
+      "process_source_sink_noEff",
+      "process_source_toProcess"
+    ],
+    "process_source_toSink": [
+      "process__source__sink__profile__profile_method_direct",
+      "process_source_sink",
+      "process_source_sink_eff"
+    ],
+    "process_process_toSink": [
+      "process_source_sink",
+      "process_source_sink_alwaysProcess",
+      "process_source_sink_noEff"
+    ],
+    "process_process_toSink_noConversion": [
+      "process_source_sink",
+      "process_source_sink_alwaysProcess",
+      "process_source_sink_noEff"
+    ],
+    "process_process_toSource": [
+      "process_source_sink",
+      "process_source_sink_alwaysProcess",
+      "process_source_sink_noEff"
+    ],
+    "process_sink_toProcess": [
+      "process_source_sink",
+      "process_source_sink_alwaysProcess",
+      "process_source_sink_noEff"
+    ],
+    "process_sink_toSource": [
+      "process_source_sink",
+      "process_source_sink_eff"
+    ],
+    "process_source_toProcess": [
+      "process_source_sink",
+      "process_source_sink_alwaysProcess",
+      "process_source_sink_noEff"
+    ],
+    "process_source_toProcess_noConversion": [
+      "process_source_sink",
+      "process_source_sink_alwaysProcess",
+      "process_source_sink_noEff"
+    ],
+    "process_process_toSink_direct": [
+      "process_source_sink_alwaysProcess"
+    ],
+    "process_process_toSource_direct": [
+      "process_source_sink_alwaysProcess"
+    ],
+    "process_sink_toProcess_direct": [
+      "process_source_sink_alwaysProcess"
+    ],
+    "process_source_toProcess_direct": [
+      "process_source_sink_alwaysProcess"
+    ],
+    "process_source_sink": [
+      "_node_cap_unitsize_sum",
+      "nodeGroupDispatch__process_fully_inside",
+      "pdtProcess__source__sink__dt_varCost",
+      "peedt",
+      "process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source",
+      "process__source__sinkIsNode",
+      "process__source__sinkIsNode_2way1var",
+      "process__source__sinkIsNode_2way2var",
+      "process__source__sinkIsNode_not2way1var",
+      "process__source__sink__param",
+      "process__source__sink__param_t",
+      "process__source__sink__profile__profile_method_connection",
+      "process__source__sink__ramp_method",
+      "process_method_sources_sinks",
+      "process_source_sink_coeff_zero",
+      "process_source_sink_delayed",
+      "process_source_sink_ramp_cost",
+      "process_source_sink_ramp_limit_sink_down",
+      "process_source_sink_ramp_limit_sink_up",
+      "process_source_sink_ramp_limit_source_down",
+      "process_source_sink_ramp_limit_source_up",
+      "process_source_sink_undelayed"
+    ],
+    "process_source_sink_alwaysProcess": [
+      "nodeGroupDispatch__group_aggregate__process__connection__to_node",
+      "nodeGroupDispatch__group_aggregate__process__node__to_connection",
+      "nodeGroupDispatch__group_aggregate__process__node__to_unit",
+      "nodeGroupDispatch__group_aggregate__process__unit__to_node",
+      "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate",
+      "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate",
+      "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate",
+      "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate",
+      "pdtProcess__source__sink__dt_varCost_alwaysProcess",
+      "process_method_sources_sinks",
+      "r_storage_usage_dt"
+    ],
+    "process__source__sink__profile__profile_method_connection": [
+      "process__source__sink__profile__profile_method"
+    ],
+    "process__source__sink__profile__profile_method_direct": [
+      "process__source__sink__profile__profile_method"
+    ],
+    "process_online_integer": [
+      "pdt_online_integer",
+      "process_online"
+    ],
+    "process_online_linear": [
+      "pdt_online_linear",
+      "process_online"
+    ],
+    "process_delayed": [
+      "process_source_delayed",
+      "process_source_sink_delayed",
+      "process_source_sink_undelayed",
+      "process_source_undelayed"
+    ],
+    "process__source__sinkIsNode_2way1var": [
+      "p_flow_min",
+      "process_sinkIsNode_2way1var"
+    ],
+    "pdtGroup": [
+      "gcndt_co2_price",
+      "gdt_maxInstantFlow",
+      "gdt_minInstantFlow"
+    ],
+    "process__source__param_t": [
+      "process__source__sink__param_t",
+      "process__source__timeParam"
+    ],
+    "process__sink__param_t": [
+      "process__sink__timeParam",
+      "process__source__sink__param_t"
+    ],
+    "process__param_t": [
+      "process__source__sink__param_t",
+      "process__timeParam",
+      "process_source_sink_param_t"
+    ],
+    "process_source_sink_eff": [
+      "process_source_sink_param_t",
+      "pssdt_varCost_eff_connection",
+      "pssdt_varCost_eff_unit_sink",
+      "pssdt_varCost_eff_unit_source"
+    ],
+    "entityDivest": [
+      "e_divest_total",
+      "ed_divest",
+      "node__PeriodParam_in_use",
+      "p_entity_all_existing",
+      "process__PeriodParam_in_use"
+    ],
+    "nodeBalance": [
+      "node__TimeParam_in_use",
+      "pdtNodeInflow"
+    ],
+    "nodeBalancePeriod": [
+      "node__TimeParam_in_use",
+      "pdtNodeInflow"
+    ],
+    "pdtNode": [
+      "nodeSelfDischarge"
+    ],
+    "process_online": [
+      "p_online_dt",
+      "process__PeriodParam_in_use"
+    ],
+    "process__ct_method": [
+      "p_flow_max",
+      "process_TimeParam_in_use",
+      "process_minload",
+      "process_sink_sourceSinkPeriodParam_in_use",
+      "process_sink_sourceSinkTimeParam_in_use",
+      "process_source_sourceSinkPeriodParam_in_use",
+      "process_source_sourceSinkTimeParam_in_use"
+    ],
+    "pdNode": [
+      "edEntity_lifetime",
+      "ed_cumulative_max_capacity",
+      "ed_cumulative_min_capacity",
+      "ed_divest_max_period",
+      "ed_divest_min_period",
+      "ed_entity_annual",
+      "ed_entity_annual_divest",
+      "ed_entity_annual_divest_discounted",
+      "ed_fixed_cost",
+      "ed_invest_max_period",
+      "ed_invest_min_period",
+      "ed_lifetime_fixed_cost_divest",
+      "new_old_multiplier",
+      "new_old_section",
+      "new_peak_divided_by_old_peak",
+      "new_peak_inflow_sum",
+      "new_peak_sign",
+      "p_entity_pre_existing",
+      "p_storage_state_reference_price",
+      "pdtNodeInflow",
+      "period_flow_proportional_multiplier",
+      "period_share_of_annual_flow"
+    ],
+    "pdProcess": [
+      "edEntity_lifetime",
+      "ed_cumulative_max_capacity",
+      "ed_cumulative_min_capacity",
+      "ed_divest_max_period",
+      "ed_divest_min_period",
+      "ed_entity_annual",
+      "ed_entity_annual_divest",
+      "ed_entity_annual_divest_discounted",
+      "ed_fixed_cost",
+      "ed_invest_max_period",
+      "ed_invest_min_period",
+      "ed_lifetime_fixed_cost_divest",
+      "p_entity_pre_existing",
+      "pdt_online_integer",
+      "pdt_online_linear"
+    ],
+    "connection__param": [
+      "pdtProcess_source_sink"
+    ],
+    "pdtReserve_upDown_group": [
+      "process_reserve_upDown_node_active"
+    ],
+    "reserve__upDown__group": [
+      "process_reserve_upDown_node_active"
+    ],
+    "process_reserve_upDown_node_active": [
+      "process_reserve_upDown_node_increase_reserve_ratio",
+      "process_reserve_upDown_node_large_failure_ratio",
+      "prundt"
+    ],
+    "hours_in_period": [
+      "period_share_of_year"
+    ],
+    "hours_in_solve": [
+      "solve_share_of_year"
+    ],
+    "year": [
+      "p_inflation_factor_investment_yearly",
+      "p_inflation_factor_operations_yearly",
+      "p_years_represented_d",
+      "p_years_until_dispatch",
+      "p_years_until_invest"
+    ],
+    "complete_hours_in_period": [
+      "complete_period_share_of_year"
+    ],
+    "complete_period_share_of_year": [
+      "f_d_k",
+      "new_peak_divide_by_old_peak_sum_inflow",
+      "period_flow_annual_multiplier"
+    ],
+    "ptNode_inflow": [
+      "_node_cap_inflow_fallback",
+      "old_peak_max",
+      "old_peak_min",
+      "orig_flow_sum",
+      "pdtNodeInflow",
+      "period_flow_proportional_multiplier",
+      "period_share_of_annual_flow"
+    ],
+    "period_share_of_annual_flow": [
+      "period_flow_annual_multiplier"
+    ],
+    "complete_time_in_use": [
+      "orig_flow_sum"
+    ],
+    "p_timeline_duration_in_years": [
+      "period_flow_proportional_multiplier"
+    ],
+    "period__timeline": [
+      "period_flow_proportional_multiplier"
+    ],
+    "old_peak_max": [
+      "old_peak",
+      "old_peak_sign"
+    ],
+    "old_peak_min": [
+      "old_peak",
+      "old_peak_sign"
+    ],
+    "old_peak_sign": [
+      "new_old_multiplier",
+      "old_peak"
+    ],
+    "old_peak": [
+      "new_peak_divided_by_old_peak"
+    ],
+    "new_peak_divided_by_old_peak": [
+      "new_old_slope",
+      "new_peak_divide_by_old_peak_sum_inflow"
+    ],
+    "orig_flow_sum": [
+      "new_peak_divide_by_old_peak_sum_inflow"
+    ],
+    "new_peak_divide_by_old_peak_sum_inflow": [
+      "new_old_multiplier"
+    ],
+    "new_peak_inflow_sum": [
+      "new_old_multiplier"
+    ],
+    "new_old_multiplier": [
+      "new_old_section",
+      "new_old_slope"
+    ],
+    "new_old_section": [
+      "pdtNodeInflow"
+    ],
+    "new_old_slope": [
+      "pdtNodeInflow"
+    ],
+    "node__inflow_method": [
+      "pdtNodeInflow"
+    ],
+    "period_flow_annual_multiplier": [
+      "pdtNodeInflow"
+    ],
+    "period_flow_proportional_multiplier": [
+      "pdtNodeInflow"
+    ],
+    "p_entity_unitsize": [
+      "_node_cap_unitsize_sum",
+      "p_entity_existing_count",
+      "p_entity_max_units",
+      "p_flow_max",
+      "p_flow_min"
+    ],
+    "_node_cap_inflow_fallback": [
+      "_node_cap_raw"
+    ],
+    "_node_cap_unitsize_sum": [
+      "_node_cap_raw"
+    ],
+    "_node_cap_raw": [
+      "_node_cap_pow10"
+    ],
+    "_node_cap_pow10": [
+      "node_capacity_for_scaling"
+    ],
+    "node_capacity_for_scaling": [
+      "_group_cap_raw",
+      "inv_node_cap"
+    ],
+    "_group_cap_raw": [
+      "_group_cap_pow10"
+    ],
+    "_group_cap_pow10": [
+      "group_capacity_for_scaling"
+    ],
+    "group_capacity_for_scaling": [
+      "inv_group_cap"
+    ],
+    "p_infl_offset_operations": [
+      "p_years_until_dispatch"
+    ],
+    "p_infl_offset_investment": [
+      "p_years_until_invest"
+    ],
+    "p_inflation": [
+      "p_inflation_factor_investment_yearly",
+      "p_inflation_factor_operations_yearly"
+    ],
+    "p_years_until_invest": [
+      "p_inflation_factor_investment_yearly"
+    ],
+    "p_years_until_dispatch": [
+      "p_inflation_factor_operations_yearly"
+    ],
+    "edEntity_lifetime": [
+      "ed_entity_annual_discounted",
+      "ed_invest_forbidden_no_investment",
+      "ed_lifetime_fixed_cost",
+      "edd_history_choice",
+      "edd_history_no_investment",
+      "p_entity_pre_existing"
+    ],
+    "ed_entity_annual": [
+      "ed_entity_annual_discounted",
+      "ed_invest"
+    ],
+    "entity__lifetime_method": [
+      "ed_entity_annual_discounted",
+      "ed_invest_forbidden_no_investment",
+      "ed_lifetime_fixed_cost",
+      "edd_history_automatic",
+      "edd_history_choice",
+      "edd_history_no_investment",
+      "p_entity_pre_existing"
+    ],
+    "p_inflation_factor_investment_yearly": [
+      "ed_entity_annual_discounted",
+      "ed_entity_annual_divest_discounted",
+      "ed_lifetime_fixed_cost_divest"
+    ],
+    "period_in_use": [
+      "cnd_ladder",
+      "cndi_ladder_ann",
+      "cndi_ladder_cum",
+      "ed_entity_annual_discounted",
+      "ed_entity_annual_divest_discounted",
+      "ed_lifetime_fixed_cost",
+      "ed_lifetime_fixed_cost_divest",
+      "edd_history_automatic",
+      "edd_history_choice",
+      "edd_history_no_investment",
+      "gcndt_co2_price",
+      "group_commodity_node_period_co2_period"
+    ],
+    "ed_entity_annual_divest": [
+      "ed_divest",
+      "ed_entity_annual_divest_discounted"
+    ],
+    "ed_fixed_cost": [
+      "ed_lifetime_fixed_cost",
+      "ed_lifetime_fixed_cost_divest"
+    ],
+    "p_inflation_factor_operations_yearly": [
+      "ed_lifetime_fixed_cost"
+    ],
+    "pdtProcess": [
+      "pdtConversion_rate",
+      "pdtProcess__source__sink__dt_varCost",
+      "pdtProcess__source__sink__dt_varCost_alwaysProcess",
+      "pdtProcess_section",
+      "pssdt_varCost_eff_connection"
+    ],
+    "pdtConversion_rate": [
+      "pdtProcess_section",
+      "pdtProcess_slope"
+    ],
+    "pdtProcess_section": [
+      "p_flow_max",
+      "pdtProcess_slope"
+    ],
+    "process_minload": [
+      "pdtProcess_slope"
+    ],
+    "pdtProcess_sink": [
+      "pdtProcess__source__sink__dt_varCost",
+      "pdtProcess__source__sink__dt_varCost_alwaysProcess",
+      "pssdt_varCost_eff_unit_sink"
+    ],
+    "pdtProcess_source": [
+      "pdtProcess__source__sink__dt_varCost",
+      "pdtProcess__source__sink__dt_varCost_alwaysProcess",
+      "pssdt_varCost_eff_unit_source"
+    ],
+    "pdtProcess__source__sink__dt_varCost": [
+      "pssdt_varCost_noEff"
+    ],
+    "process_source_sink_noEff": [
+      "pssdt_varCost_noEff"
+    ],
+    "ed_invest": [
+      "ed_divest_period",
+      "ed_invest_cumulative",
+      "ed_invest_forbidden_no_investment",
+      "ed_invest_period",
+      "edd_invest",
+      "gd_divest",
+      "gd_invest",
+      "nd_invest",
+      "pd_invest"
+    ],
+    "p_years_d": [
+      "ed_invest_forbidden_no_investment",
+      "edd_history_automatic",
+      "edd_history_choice",
+      "edd_history_no_investment",
+      "p_entity_divest_cumulative_max",
+      "p_entity_pre_existing"
+    ],
+    "edd_history_automatic": [
+      "edd_history"
+    ],
+    "edd_history_choice": [
+      "edd_history"
+    ],
+    "edd_history_no_investment": [
+      "edd_history"
+    ],
+    "edd_history": [
+      "edd_history_invest",
+      "p_entity_existing_capacity_later_solves",
+      "p_entity_previously_invested_capacity"
+    ],
+    "edd_history_invest": [
+      "edd_invest"
+    ],
+    "ed_divest": [
+      "nd_divest",
+      "pd_divest"
+    ],
+    "group_entity": [
+      "gd_divest",
+      "gd_invest"
+    ],
+    "group_invest": [
+      "g_invest_cumulative",
+      "g_invest_total",
+      "gd_divest",
+      "gd_invest"
+    ],
+    "gd_invest": [
+      "gd_divest_period",
+      "gd_invest_period"
+    ],
+    "group_divest": [
+      "g_divest_total"
+    ],
+    "process_source_sink_ramp_cost": [
+      "process_source_sink_ramp"
+    ],
+    "process_source_sink_ramp_limit_sink_down": [
+      "process_source_sink_dtttdt_ramp_limit_sink_down",
+      "process_source_sink_ramp"
+    ],
+    "process_source_sink_ramp_limit_sink_up": [
+      "process_source_sink_dtttdt_ramp_limit_sink_up",
+      "process_source_sink_ramp"
+    ],
+    "process_source_sink_ramp_limit_source_down": [
+      "process_source_sink_dtttdt_ramp_limit_source_down",
+      "process_source_sink_ramp"
+    ],
+    "process_source_sink_ramp_limit_source_up": [
+      "process_source_sink_dtttdt_ramp_limit_source_up",
+      "process_source_sink_ramp"
+    ],
+    "process_reserve_upDown_node_large_failure_ratio": [
+      "process_large_failure"
+    ],
+    "group_co2_price": [
+      "gcndt_co2_price"
+    ],
+    "time_in_use": [
+      "gcndt_co2_price"
+    ],
+    "group_co2_max_period": [
+      "group_commodity_node_period_co2_period"
+    ],
+    "group_co2_max_total": [
+      "group_commodity_node_period_co2_total"
+    ],
+    "commodity_with_ladder": [
+      "cnd_ladder"
+    ],
+    "commodity_with_ladder_cumulative": [
+      "ci_ladder_cumulative",
+      "cndi_ladder_cum"
+    ],
+    "tier": [
+      "cndi_ladder_ann",
+      "cndi_ladder_cum"
+    ],
+    "commodity_with_ladder_annual": [
+      "cndi_ladder_ann"
+    ],
+    "cndi_ladder_ann": [
+      "cndi_ladder"
+    ],
+    "cndi_ladder_cum": [
+      "cndi_ladder"
+    ],
+    "commodity_node_co2": [
+      "process__commodity__node_co2"
+    ],
+    "process__commodity__node_co2": [
+      "process_co2"
+    ],
+    "nodeGroupDispatch__process_fully_inside": [
+      "nodeGroupDispatch__group_aggregate__process__connection__to_node",
+      "nodeGroupDispatch__group_aggregate__process__node__to_connection",
+      "nodeGroupDispatch__group_aggregate__process__node__to_unit",
+      "nodeGroupDispatch__group_aggregate__process__unit__to_node",
+      "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate",
+      "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate",
+      "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate",
+      "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate"
+    ],
+    "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate": [
+      "nodeGroupDispatch__connection_Not_in_aggregate"
+    ],
+    "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate": [
+      "nodeGroupDispatch__connection_Not_in_aggregate"
+    ],
+    "nodeGroupDispatch__group_aggregate__process__connection__to_node": [
+      "nodeGroupDispatch__group_aggregate_Connection"
+    ],
+    "nodeGroupDispatch__group_aggregate__process__node__to_connection": [
+      "nodeGroupDispatch__group_aggregate_Connection"
+    ],
+    "nodeGroupDispatch__group_aggregate__process__unit__to_node": [
+      "nodeGroupDispatch__group_aggregate_Unit_to_group"
+    ],
+    "nodeGroupDispatch__group_aggregate__process__node__to_unit": [
+      "nodeGroupDispatch__group_aggregate_Group_to_unit"
+    ],
+    "pdtNodeInflow": [
+      "p_negative_inflow",
+      "p_positive_inflow",
+      "p_state_slack_share"
+    ],
+    "ed_history_realized": [
+      "p_entity_existing_capacity_later_solves",
+      "p_entity_previously_invested_capacity"
+    ],
+    "p_entity_existing_capacity_later_solves": [
+      "p_entity_all_existing"
+    ],
+    "p_entity_pre_existing": [
+      "p_entity_all_existing"
+    ],
+    "p_entity_all_existing": [
+      "p_entity_dispatch_capacity_max",
+      "p_entity_existing_count",
+      "p_entity_invest_cumulative_max",
+      "p_entity_max_capacity"
+    ],
+    "p_entity_existing_count": [
+      "p_entity_existing_integer_count"
+    ],
+    "e_invest_max_total": [
+      "p_entity_invest_cumulative_max",
+      "p_entity_max_capacity"
+    ],
+    "e_invest_total": [
+      "p_entity_invest_cumulative_max",
+      "p_entity_max_capacity"
+    ],
+    "ed_cumulative_max_capacity": [
+      "p_entity_invest_cumulative_max",
+      "p_entity_max_capacity"
+    ],
+    "ed_invest_cumulative": [
+      "p_entity_invest_cumulative_max",
+      "p_entity_max_capacity"
+    ],
+    "ed_invest_max_period": [
+      "p_entity_invest_cumulative_max",
+      "p_entity_max_capacity"
+    ],
+    "ed_invest_period": [
+      "p_entity_invest_cumulative_max",
+      "p_entity_max_capacity"
+    ],
+    "p_unconstrained_flow_cap": [
+      "p_entity_invest_cumulative_max",
+      "p_entity_max_capacity",
+      "p_flow_max"
+    ],
+    "p_entity_max_capacity": [
+      "p_entity_max_units"
+    ],
+    "ed_invest_forbidden_no_investment": [
+      "p_entity_invest_cumulative_max"
+    ],
+    "edd_invest": [
+      "p_entity_invest_cumulative_max"
+    ],
+    "e_divest_max_total": [
+      "p_entity_divest_cumulative_max"
+    ],
+    "e_divest_total": [
+      "p_entity_divest_cumulative_max"
+    ],
+    "ed_divest_max_period": [
+      "p_entity_divest_cumulative_max"
+    ],
+    "ed_divest_period": [
+      "p_entity_divest_cumulative_max"
+    ],
+    "p_entity_invest_cumulative_max": [
+      "p_entity_dispatch_capacity_max"
+    ],
+    "process_sink_coeff_zero": [
+      "process_source_sink_coeff_zero"
+    ],
+    "process_source_coeff_zero": [
+      "process_source_sink_coeff_zero"
+    ],
+    "p_entity_dispatch_capacity_max": [
+      "p_flow_max",
+      "p_flow_min"
+    ],
+    "pdtProcess_slope": [
+      "p_flow_max"
+    ],
+    "process__method_indirect": [
+      "p_flow_max"
+    ],
+    "process_source_sink_coeff_zero": [
+      "p_flow_max"
+    ],
+    "hours_in_realized_period": [
+      "realized_period_share_of_year"
+    ]
+  },
+  "reverse_adjacency": {
+    "period_solve": [
+      "solve_period"
+    ],
+    "period": [
+      "period_from_period_time"
+    ],
+    "period__timeline": [
+      "period",
+      "timeline"
+    ],
+    "enable_optional_outputs": [
+      "def_optional_yes",
+      "optional_yes"
+    ],
+    "periodAll": [
+      "branch",
+      "period_commodity",
+      "period_group",
+      "period_node",
+      "period_process",
+      "period_solve"
+    ],
+    "investableEntities": [
+      "entityInvest"
+    ],
+    "node__PeriodParam_in_use": [
+      "entityDivest",
+      "entityInvest"
+    ],
+    "process__PeriodParam_in_use": [
+      "entityDivest",
+      "entityInvest",
+      "process_online"
+    ],
+    "ed_invest": [
+      "ed_entity_annual",
+      "entityInvest"
+    ],
+    "e_invest_total": [
+      "entityInvest"
+    ],
+    "edd_history_invest": [
+      "edd_history",
+      "entityInvest"
+    ],
+    "p_entity_dispatch_capacity_max": [
+      "entityInvest",
+      "p_entity_all_existing",
+      "p_entity_invest_cumulative_max"
+    ],
+    "nodeBalance": [
+      "balance"
+    ],
+    "nodeState_rp": [
+      "nodeState",
+      "node__storage_binding_method"
+    ],
+    "nodeStateBlock": [
+      "nodeState",
+      "node__storage_binding_method"
+    ],
+    "node__TimeParam_in_use": [
+      "nodeBalance",
+      "nodeBalancePeriod",
+      "nodeState"
+    ],
+    "nodeSelfDischarge": [
+      "nodeState",
+      "pdtNode"
+    ],
+    "commodity__tier": [
+      "commodity__tier_ann"
+    ],
+    "cndi_ladder_ann": [
+      "commodity__tier_ann",
+      "commodity_with_ladder_annual",
+      "period_in_use",
+      "tier"
+    ],
+    "tier": [
+      "commodity__tier"
+    ],
+    "dt_realize_dispatch": [
+      "enable_optional_outputs"
+    ],
+    "d_realized_period": [
+      "dt_realize_dispatch"
+    ],
+    "hours_in_realized_period": [
+      "dt_realize_dispatch"
+    ],
+    "d_realize_dispatch_or_invest": [
+      "d_realized_period"
+    ],
+    "ed_history_realized_first": [
+      "d_fix_storage_period",
+      "d_realized_period"
+    ],
+    "p_timeline_duration_in_years": [
+      "timeline_steps"
+    ],
+    "startNext_index": [
+      "time"
+    ],
+    "period_flow_proportional_multiplier": [
+      "p_timeline_duration_in_years",
+      "pdNode",
+      "period__timeline",
+      "ptNode_inflow",
+      "time"
+    ],
+    "old_peak_max": [
+      "ptNode_inflow",
+      "time"
+    ],
+    "old_peak_min": [
+      "ptNode_inflow",
+      "time"
+    ],
+    "old_peak_sign": [
+      "old_peak_max",
+      "old_peak_min",
+      "time"
+    ],
+    "_node_cap_inflow_fallback": [
+      "ptNode_inflow",
+      "time"
+    ],
+    "connection__param_t": [
+      "connection__param__time"
+    ],
+    "pdtProcess_source_sink": [
+      "connection__param",
+      "connection__param__time"
+    ],
+    "ed_history_realized": [
+      "ed_history_realized_first"
+    ],
+    "process_delayed": [
+      "process_delayed__duration"
+    ],
+    "process__profileProcess__toSink": [
+      "process__profileProcess__toSink__profile__profile_method"
+    ],
+    "process__source__sink__profile__profile_method": [
+      "process__profileProcess__toSink__profile__profile_method",
+      "process__source__sink__profile__profile_method_connection",
+      "process__source__sink__profile__profile_method_direct",
+      "process__source__toProfileProcess__profile__profile_method"
+    ],
+    "process__source__toProfileProcess": [
+      "process__source__toProfileProcess__profile__profile_method"
+    ],
+    "process_profile": [
+      "process__profileProcess__toSink",
+      "process__source__toProfileProcess"
+    ],
+    "process_process_toSink": [
+      "process__profileProcess__toSink"
+    ],
+    "process_source_sink": [
+      "process__profileProcess__toSink",
+      "process__source__toProfileProcess",
+      "process_process_toSink",
+      "process_process_toSink_noConversion",
+      "process_process_toSource",
+      "process_sink_toProcess",
+      "process_sink_toSource",
+      "process_source_toProcess",
+      "process_source_toProcess_noConversion",
+      "process_source_toSink"
+    ],
+    "process_source_sink_alwaysProcess": [
+      "process__profileProcess__toSink",
+      "process__source__toProfileProcess",
+      "process_process_toSink",
+      "process_process_toSink_direct",
+      "process_process_toSink_noConversion",
+      "process_process_toSource",
+      "process_process_toSource_direct",
+      "process_sink_toProcess",
+      "process_sink_toProcess_direct",
+      "process_source_toProcess",
+      "process_source_toProcess_direct",
+      "process_source_toProcess_noConversion"
+    ],
+    "process_source_sink_noEff": [
+      "process__profileProcess__toSink",
+      "process__source__toProfileProcess",
+      "process_process_toSink",
+      "process_process_toSink_noConversion",
+      "process_process_toSource",
+      "process_sink_toProcess",
+      "process_source_toProcess",
+      "process_source_toProcess_noConversion"
+    ],
+    "process_source_toProcess": [
+      "process__source__toProfileProcess"
+    ],
+    "process__source__sink__profile__profile_method_direct": [
+      "process_source_toSink"
+    ],
+    "process_source_sink_eff": [
+      "process_sink_toSource",
+      "process_source_toSink"
+    ],
+    "process_method_sources_sinks": [
+      "process_source_sink",
+      "process_source_sink_alwaysProcess"
+    ],
+    "process__source__sink__profile__profile_method_connection": [
+      "process_source_sink"
+    ],
+    "process__source__sinkIsNode": [
+      "process_source_sink"
+    ],
+    "peedt": [
+      "process_source_sink"
+    ],
+    "process_source_sink_undelayed": [
+      "process_delayed",
+      "process_source_sink"
+    ],
+    "process_source_sink_delayed": [
+      "process_delayed",
+      "process_source_sink"
+    ],
+    "process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source": [
+      "process_source_sink"
+    ],
+    "process__source__sinkIsNode_not2way1var": [
+      "process_source_sink"
+    ],
+    "process__source__sinkIsNode_2way1var": [
+      "process_source_sink"
+    ],
+    "process__source__sinkIsNode_2way2var": [
+      "process_source_sink"
+    ],
+    "process__source__sink__param": [
+      "process_source_sink"
+    ],
+    "process__source__sink__param_t": [
+      "process__param_t",
+      "process__sink__param_t",
+      "process__source__param_t",
+      "process_source_sink"
+    ],
+    "process__source__sink__ramp_method": [
+      "process_source_sink"
+    ],
+    "_node_cap_unitsize_sum": [
+      "p_entity_unitsize",
+      "process_source_sink"
+    ],
+    "pdtProcess__source__sink__dt_varCost": [
+      "pdtProcess",
+      "pdtProcess_sink",
+      "pdtProcess_source",
+      "process_source_sink"
+    ],
+    "process_source_sink_ramp_limit_source_up": [
+      "process_source_sink"
+    ],
+    "process_source_sink_ramp_limit_sink_up": [
+      "process_source_sink"
+    ],
+    "process_source_sink_ramp_limit_source_down": [
+      "process_source_sink"
+    ],
+    "process_source_sink_ramp_limit_sink_down": [
+      "process_source_sink"
+    ],
+    "process_source_sink_ramp_cost": [
+      "process_source_sink"
+    ],
+    "nodeGroupDispatch__process_fully_inside": [
+      "process_source_sink"
+    ],
+    "process_source_sink_coeff_zero": [
+      "process_sink_coeff_zero",
+      "process_source_coeff_zero",
+      "process_source_sink"
+    ],
+    "pdtProcess__source__sink__dt_varCost_alwaysProcess": [
+      "pdtProcess",
+      "pdtProcess_sink",
+      "pdtProcess_source",
+      "process_source_sink_alwaysProcess"
+    ],
+    "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate": [
+      "nodeGroupDispatch__process_fully_inside",
+      "process_source_sink_alwaysProcess"
+    ],
+    "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate": [
+      "nodeGroupDispatch__process_fully_inside",
+      "process_source_sink_alwaysProcess"
+    ],
+    "nodeGroupDispatch__group_aggregate__process__unit__to_node": [
+      "nodeGroupDispatch__process_fully_inside",
+      "process_source_sink_alwaysProcess"
+    ],
+    "nodeGroupDispatch__group_aggregate__process__node__to_unit": [
+      "nodeGroupDispatch__process_fully_inside",
+      "process_source_sink_alwaysProcess"
+    ],
+    "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate": [
+      "nodeGroupDispatch__process_fully_inside",
+      "process_source_sink_alwaysProcess"
+    ],
+    "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate": [
+      "nodeGroupDispatch__process_fully_inside",
+      "process_source_sink_alwaysProcess"
+    ],
+    "nodeGroupDispatch__group_aggregate__process__connection__to_node": [
+      "nodeGroupDispatch__process_fully_inside",
+      "process_source_sink_alwaysProcess"
+    ],
+    "nodeGroupDispatch__group_aggregate__process__node__to_connection": [
+      "nodeGroupDispatch__process_fully_inside",
+      "process_source_sink_alwaysProcess"
+    ],
+    "r_storage_usage_dt": [
+      "process_source_sink_alwaysProcess"
+    ],
+    "process_online": [
+      "process_online_integer",
+      "process_online_linear"
+    ],
+    "pdt_online_integer": [
+      "pdProcess",
+      "process_online_integer"
+    ],
+    "pdt_online_linear": [
+      "pdProcess",
+      "process_online_linear"
+    ],
+    "process_source_undelayed": [
+      "process_delayed"
+    ],
+    "process_source_delayed": [
+      "process_delayed"
+    ],
+    "process_sinkIsNode_2way1var": [
+      "process__source__sinkIsNode_2way1var"
+    ],
+    "p_flow_min": [
+      "p_entity_dispatch_capacity_max",
+      "p_entity_unitsize",
+      "process__source__sinkIsNode_2way1var"
+    ],
+    "gdt_maxInstantFlow": [
+      "pdtGroup"
+    ],
+    "gdt_minInstantFlow": [
+      "pdtGroup"
+    ],
+    "gcndt_co2_price": [
+      "group_co2_price",
+      "pdtGroup",
+      "period_in_use",
+      "time_in_use"
+    ],
+    "process__source__timeParam": [
+      "process__source__param_t"
+    ],
+    "process__sink__timeParam": [
+      "process__sink__param_t"
+    ],
+    "process__timeParam": [
+      "process__param_t"
+    ],
+    "process_source_sink_param_t": [
+      "process__param_t",
+      "process_source_sink_eff"
+    ],
+    "pssdt_varCost_eff_unit_source": [
+      "pdtProcess_source",
+      "process_source_sink_eff"
+    ],
+    "pssdt_varCost_eff_unit_sink": [
+      "pdtProcess_sink",
+      "process_source_sink_eff"
+    ],
+    "pssdt_varCost_eff_connection": [
+      "pdtProcess",
+      "process_source_sink_eff"
+    ],
+    "ed_divest": [
+      "ed_entity_annual_divest",
+      "entityDivest"
+    ],
+    "e_divest_total": [
+      "entityDivest"
+    ],
+    "p_entity_all_existing": [
+      "entityDivest",
+      "p_entity_existing_capacity_later_solves",
+      "p_entity_pre_existing"
+    ],
+    "pdtNodeInflow": [
+      "new_old_section",
+      "new_old_slope",
+      "nodeBalance",
+      "nodeBalancePeriod",
+      "node__inflow_method",
+      "pdNode",
+      "period_flow_annual_multiplier",
+      "period_flow_proportional_multiplier",
+      "ptNode_inflow"
+    ],
+    "p_online_dt": [
+      "process_online"
+    ],
+    "process_TimeParam_in_use": [
+      "process__ct_method"
+    ],
+    "process_source_sourceSinkTimeParam_in_use": [
+      "process__ct_method"
+    ],
+    "process_sink_sourceSinkTimeParam_in_use": [
+      "process__ct_method"
+    ],
+    "process_source_sourceSinkPeriodParam_in_use": [
+      "process__ct_method"
+    ],
+    "process_sink_sourceSinkPeriodParam_in_use": [
+      "process__ct_method"
+    ],
+    "process_minload": [
+      "process__ct_method"
+    ],
+    "p_flow_max": [
+      "p_entity_dispatch_capacity_max",
+      "p_entity_unitsize",
+      "p_unconstrained_flow_cap",
+      "pdtProcess_section",
+      "pdtProcess_slope",
+      "process__ct_method",
+      "process__method_indirect",
+      "process_source_sink_coeff_zero"
+    ],
+    "edEntity_lifetime": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "period_share_of_annual_flow": [
+      "pdNode",
+      "ptNode_inflow"
+    ],
+    "new_peak_sign": [
+      "pdNode"
+    ],
+    "new_peak_divided_by_old_peak": [
+      "old_peak",
+      "pdNode"
+    ],
+    "new_peak_inflow_sum": [
+      "pdNode"
+    ],
+    "new_old_multiplier": [
+      "new_peak_divide_by_old_peak_sum_inflow",
+      "new_peak_inflow_sum",
+      "old_peak_sign",
+      "pdNode"
+    ],
+    "new_old_section": [
+      "new_old_multiplier",
+      "pdNode"
+    ],
+    "ed_entity_annual": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "ed_entity_annual_divest": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "ed_entity_annual_divest_discounted": [
+      "ed_entity_annual_divest",
+      "p_inflation_factor_investment_yearly",
+      "pdNode",
+      "pdProcess",
+      "period_in_use"
+    ],
+    "ed_fixed_cost": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "ed_lifetime_fixed_cost_divest": [
+      "ed_fixed_cost",
+      "p_inflation_factor_investment_yearly",
+      "pdNode",
+      "pdProcess",
+      "period_in_use"
+    ],
+    "ed_invest_max_period": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "ed_divest_max_period": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "ed_invest_min_period": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "ed_divest_min_period": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "ed_cumulative_max_capacity": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "ed_cumulative_min_capacity": [
+      "pdNode",
+      "pdProcess"
+    ],
+    "p_entity_pre_existing": [
+      "edEntity_lifetime",
+      "entity__lifetime_method",
+      "p_years_d",
+      "pdNode",
+      "pdProcess"
+    ],
+    "p_storage_state_reference_price": [
+      "pdNode"
+    ],
+    "process_reserve_upDown_node_active": [
+      "pdtReserve_upDown_group",
+      "reserve__upDown__group"
+    ],
+    "prundt": [
+      "process_reserve_upDown_node_active"
+    ],
+    "process_reserve_upDown_node_increase_reserve_ratio": [
+      "process_reserve_upDown_node_active"
+    ],
+    "process_reserve_upDown_node_large_failure_ratio": [
+      "process_reserve_upDown_node_active"
+    ],
+    "period_share_of_year": [
+      "hours_in_period"
+    ],
+    "solve_share_of_year": [
+      "hours_in_solve"
+    ],
+    "p_years_represented_d": [
+      "year"
+    ],
+    "p_years_until_dispatch": [
+      "p_infl_offset_operations",
+      "year"
+    ],
+    "p_years_until_invest": [
+      "p_infl_offset_investment",
+      "year"
+    ],
+    "p_inflation_factor_investment_yearly": [
+      "p_inflation",
+      "p_years_until_invest",
+      "year"
+    ],
+    "p_inflation_factor_operations_yearly": [
+      "p_inflation",
+      "p_years_until_dispatch",
+      "year"
+    ],
+    "complete_period_share_of_year": [
+      "complete_hours_in_period"
+    ],
+    "f_d_k": [
+      "complete_period_share_of_year"
+    ],
+    "period_flow_annual_multiplier": [
+      "complete_period_share_of_year",
+      "period_share_of_annual_flow"
+    ],
+    "new_peak_divide_by_old_peak_sum_inflow": [
+      "complete_period_share_of_year",
+      "new_peak_divided_by_old_peak",
+      "orig_flow_sum"
+    ],
+    "orig_flow_sum": [
+      "complete_time_in_use",
+      "ptNode_inflow"
+    ],
+    "old_peak": [
+      "old_peak_max",
+      "old_peak_min",
+      "old_peak_sign"
+    ],
+    "new_old_slope": [
+      "new_old_multiplier",
+      "new_peak_divided_by_old_peak"
+    ],
+    "p_entity_existing_count": [
+      "p_entity_all_existing",
+      "p_entity_unitsize"
+    ],
+    "p_entity_max_units": [
+      "p_entity_max_capacity",
+      "p_entity_unitsize"
+    ],
+    "_node_cap_raw": [
+      "_node_cap_inflow_fallback",
+      "_node_cap_unitsize_sum"
+    ],
+    "_node_cap_pow10": [
+      "_node_cap_raw"
+    ],
+    "node_capacity_for_scaling": [
+      "_node_cap_pow10"
+    ],
+    "_group_cap_raw": [
+      "node_capacity_for_scaling"
+    ],
+    "inv_node_cap": [
+      "node_capacity_for_scaling"
+    ],
+    "_group_cap_pow10": [
+      "_group_cap_raw"
+    ],
+    "group_capacity_for_scaling": [
+      "_group_cap_pow10"
+    ],
+    "inv_group_cap": [
+      "group_capacity_for_scaling"
+    ],
+    "ed_entity_annual_discounted": [
+      "edEntity_lifetime",
+      "ed_entity_annual",
+      "entity__lifetime_method",
+      "p_inflation_factor_investment_yearly",
+      "period_in_use"
+    ],
+    "ed_lifetime_fixed_cost": [
+      "edEntity_lifetime",
+      "ed_fixed_cost",
+      "entity__lifetime_method",
+      "p_inflation_factor_operations_yearly",
+      "period_in_use"
+    ],
+    "edd_history_choice": [
+      "edEntity_lifetime",
+      "entity__lifetime_method",
+      "p_years_d",
+      "period_in_use"
+    ],
+    "edd_history_no_investment": [
+      "edEntity_lifetime",
+      "entity__lifetime_method",
+      "p_years_d",
+      "period_in_use"
+    ],
+    "ed_invest_forbidden_no_investment": [
+      "edEntity_lifetime",
+      "ed_invest",
+      "entity__lifetime_method",
+      "p_years_d"
+    ],
+    "edd_history_automatic": [
+      "entity__lifetime_method",
+      "p_years_d",
+      "period_in_use"
+    ],
+    "group_commodity_node_period_co2_period": [
+      "group_co2_max_period",
+      "period_in_use"
+    ],
+    "cnd_ladder": [
+      "commodity_with_ladder",
+      "period_in_use"
+    ],
+    "cndi_ladder_cum": [
+      "commodity_with_ladder_cumulative",
+      "period_in_use",
+      "tier"
+    ],
+    "pdtConversion_rate": [
+      "pdtProcess"
+    ],
+    "pdtProcess_section": [
+      "pdtConversion_rate",
+      "pdtProcess"
+    ],
+    "pdtProcess_slope": [
+      "pdtConversion_rate",
+      "pdtProcess_section",
+      "process_minload"
+    ],
+    "pssdt_varCost_noEff": [
+      "pdtProcess__source__sink__dt_varCost",
+      "process_source_sink_noEff"
+    ],
+    "ed_invest_period": [
+      "ed_invest"
+    ],
+    "ed_invest_cumulative": [
+      "ed_invest"
+    ],
+    "edd_invest": [
+      "ed_invest",
+      "edd_history_invest"
+    ],
+    "pd_invest": [
+      "ed_invest"
+    ],
+    "nd_invest": [
+      "ed_invest"
+    ],
+    "ed_divest_period": [
+      "ed_invest"
+    ],
+    "gd_invest": [
+      "ed_invest",
+      "group_entity",
+      "group_invest"
+    ],
+    "gd_divest": [
+      "ed_invest",
+      "group_entity",
+      "group_invest"
+    ],
+    "p_entity_divest_cumulative_max": [
+      "e_divest_max_total",
+      "e_divest_total",
+      "ed_divest_max_period",
+      "ed_divest_period",
+      "p_years_d"
+    ],
+    "edd_history": [
+      "edd_history_automatic",
+      "edd_history_choice",
+      "edd_history_no_investment"
+    ],
+    "p_entity_existing_capacity_later_solves": [
+      "ed_history_realized",
+      "edd_history"
+    ],
+    "p_entity_previously_invested_capacity": [
+      "ed_history_realized",
+      "edd_history"
+    ],
+    "pd_divest": [
+      "ed_divest"
+    ],
+    "nd_divest": [
+      "ed_divest"
+    ],
+    "g_invest_total": [
+      "group_invest"
+    ],
+    "g_invest_cumulative": [
+      "group_invest"
+    ],
+    "gd_invest_period": [
+      "gd_invest"
+    ],
+    "gd_divest_period": [
+      "gd_invest"
+    ],
+    "g_divest_total": [
+      "group_divest"
+    ],
+    "process_source_sink_ramp": [
+      "process_source_sink_ramp_cost",
+      "process_source_sink_ramp_limit_sink_down",
+      "process_source_sink_ramp_limit_sink_up",
+      "process_source_sink_ramp_limit_source_down",
+      "process_source_sink_ramp_limit_source_up"
+    ],
+    "process_source_sink_dtttdt_ramp_limit_sink_down": [
+      "process_source_sink_ramp_limit_sink_down"
+    ],
+    "process_source_sink_dtttdt_ramp_limit_sink_up": [
+      "process_source_sink_ramp_limit_sink_up"
+    ],
+    "process_source_sink_dtttdt_ramp_limit_source_down": [
+      "process_source_sink_ramp_limit_source_down"
+    ],
+    "process_source_sink_dtttdt_ramp_limit_source_up": [
+      "process_source_sink_ramp_limit_source_up"
+    ],
+    "process_large_failure": [
+      "process_reserve_upDown_node_large_failure_ratio"
+    ],
+    "group_commodity_node_period_co2_total": [
+      "group_co2_max_total"
+    ],
+    "ci_ladder_cumulative": [
+      "commodity_with_ladder_cumulative"
+    ],
+    "cndi_ladder": [
+      "cndi_ladder_ann",
+      "cndi_ladder_cum"
+    ],
+    "process__commodity__node_co2": [
+      "commodity_node_co2"
+    ],
+    "process_co2": [
+      "process__commodity__node_co2"
+    ],
+    "nodeGroupDispatch__connection_Not_in_aggregate": [
+      "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate",
+      "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate"
+    ],
+    "nodeGroupDispatch__group_aggregate_Connection": [
+      "nodeGroupDispatch__group_aggregate__process__connection__to_node",
+      "nodeGroupDispatch__group_aggregate__process__node__to_connection"
+    ],
+    "nodeGroupDispatch__group_aggregate_Unit_to_group": [
+      "nodeGroupDispatch__group_aggregate__process__unit__to_node"
+    ],
+    "nodeGroupDispatch__group_aggregate_Group_to_unit": [
+      "nodeGroupDispatch__group_aggregate__process__node__to_unit"
+    ],
+    "p_positive_inflow": [
+      "pdtNodeInflow"
+    ],
+    "p_negative_inflow": [
+      "pdtNodeInflow"
+    ],
+    "p_state_slack_share": [
+      "pdtNodeInflow"
+    ],
+    "p_entity_max_capacity": [
+      "e_invest_max_total",
+      "e_invest_total",
+      "ed_cumulative_max_capacity",
+      "ed_invest_cumulative",
+      "ed_invest_max_period",
+      "ed_invest_period",
+      "p_entity_all_existing",
+      "p_unconstrained_flow_cap"
+    ],
+    "p_entity_invest_cumulative_max": [
+      "e_invest_max_total",
+      "e_invest_total",
+      "ed_cumulative_max_capacity",
+      "ed_invest_cumulative",
+      "ed_invest_forbidden_no_investment",
+      "ed_invest_max_period",
+      "ed_invest_period",
+      "edd_invest",
+      "p_entity_all_existing",
+      "p_unconstrained_flow_cap"
+    ],
+    "p_entity_existing_integer_count": [
+      "p_entity_existing_count"
+    ],
+    "realized_period_share_of_year": [
+      "hours_in_realized_period"
+    ]
+  },
+  "layers": [
+    [
+      "balance",
+      "block",
+      "branch",
+      "commodity__tier_ann",
+      "commodity_node_co2",
+      "commodity_with_ladder",
+      "commodity_with_ladder_annual",
+      "commodity_with_ladder_cumulative",
+      "complete_hours_in_period",
+      "complete_time_in_use",
+      "connection__param",
+      "connection__param__time",
+      "d_fix_storage_period",
+      "datetime0",
+      "def_optional_yes",
+      "dt_non_anticipativity",
+      "dtdt_next",
+      "dtt",
+      "e_divest_max_total",
+      "e_divest_min_total",
+      "e_invest_max_total",
+      "e_invest_min_total",
+      "entityDivest",
+      "entityInvest",
+      "entity__lifetime_method",
+      "fn_connection_capacity",
+      "fn_entity_divested",
+      "fn_entity_period_existing_capacity",
+      "fn_fix_price_nodeState__dt",
+      "fn_fix_quantity_nodeState__dt",
+      "fn_fix_usage_nodeState__dt",
+      "fn_node_capacity",
+      "fn_p_roll_continue_state",
+      "fn_unit_capacity",
+      "group_co2_max_period",
+      "group_co2_max_total",
+      "group_co2_price",
+      "group_divest",
+      "group_entity",
+      "group_invest",
+      "group_loss_share",
+      "hours_in_period",
+      "hours_in_solve",
+      "n_fix_storage_price",
+      "n_fix_storage_quantity",
+      "n_fix_storage_usage",
+      "nodeBalancePeriod",
+      "nodeCommodity",
+      "nodeGroupDispatch_node",
+      "nodeState",
+      "node__inflow_method",
+      "node__storage_binding_method",
+      "optional_yes",
+      "pProcess_source_sink",
+      "p_angle_lower",
+      "p_angle_upper",
+      "p_entity_unitsize",
+      "p_infl_offset_investment",
+      "p_infl_offset_operations",
+      "p_inflation",
+      "p_process_delay_weight",
+      "p_process_reserve_upDown_node_reliability",
+      "p_shutdown_cap_reduction_sink",
+      "p_shutdown_cap_reduction_source",
+      "p_startup_cap_reduction_sink",
+      "p_startup_cap_reduction_source",
+      "p_unconstrained_flow_cap",
+      "p_years_d",
+      "pdCommodity",
+      "pdGroup",
+      "pdNode",
+      "pdProcess",
+      "pd_branch_weight",
+      "pdtCommodity",
+      "pdtGroup",
+      "pdtNode",
+      "pdtProcess",
+      "pdtProcess_sink",
+      "pdtProcess_source",
+      "pdtProfile",
+      "pdtReserve_upDown_group",
+      "pdt_branch_weight",
+      "pdt_downtime",
+      "pdt_uptime",
+      "period_block",
+      "period_commodity",
+      "period_from_period_time",
+      "period_group",
+      "period_in_use",
+      "period_node",
+      "period_process",
+      "process_VRE",
+      "process__commodity__node",
+      "process__ct_method",
+      "process__group_inside_group_nonSync",
+      "process__method_indirect",
+      "process__param_t",
+      "process__profileProcess__toSink__profile__profile_method",
+      "process__sink__param_t",
+      "process__sink_nonSync",
+      "process__source__param_t",
+      "process__source__toProfileProcess__profile__profile_method",
+      "process__startup_method",
+      "process_delayed__duration",
+      "process_online_integer",
+      "process_online_linear",
+      "process_process_toSink_direct",
+      "process_process_toSink_noConversion",
+      "process_process_toSource",
+      "process_process_toSource_direct",
+      "process_side",
+      "process_sink_coeff_zero",
+      "process_sink_toProcess",
+      "process_sink_toProcess_direct",
+      "process_sink_toSource",
+      "process_source_coeff_zero",
+      "process_source_toProcess_direct",
+      "process_source_toProcess_noConversion",
+      "process_source_toSink",
+      "ptNode_inflow",
+      "r_solution",
+      "reserve",
+      "reserveParam_defaults",
+      "reserve__upDown__group",
+      "reserve__upDown__group__method_dynamic",
+      "reserve__upDown__group__method_n_1",
+      "reserve__upDown__group__method_timeseries",
+      "reserves",
+      "rest",
+      "rp_base_period",
+      "rp_rep_period",
+      "scale_the_objective",
+      "scale_the_state",
+      "solve_period",
+      "solve_progress",
+      "time",
+      "time_in_use",
+      "timeline",
+      "timeline_steps",
+      "total_obj_cost",
+      "year"
+    ],
+    [
+      "_node_cap_inflow_fallback",
+      "ci_ladder_cumulative",
+      "cnd_ladder",
+      "commodity__tier",
+      "complete_period_share_of_year",
+      "connection__param_t",
+      "e_divest_total",
+      "e_invest_total",
+      "edEntity_lifetime",
+      "ed_cumulative_max_capacity",
+      "ed_cumulative_min_capacity",
+      "ed_divest_max_period",
+      "ed_divest_min_period",
+      "ed_entity_annual",
+      "ed_entity_annual_divest",
+      "ed_fixed_cost",
+      "ed_invest_max_period",
+      "ed_invest_min_period",
+      "edd_history_automatic",
+      "enable_optional_outputs",
+      "g_divest_total",
+      "g_invest_cumulative",
+      "g_invest_total",
+      "gcndt_co2_price",
+      "gdt_maxInstantFlow",
+      "gdt_minInstantFlow",
+      "group_commodity_node_period_co2_period",
+      "group_commodity_node_period_co2_total",
+      "investableEntities",
+      "new_peak_inflow_sum",
+      "new_peak_sign",
+      "nodeBalance",
+      "nodeSelfDischarge",
+      "nodeStateBlock",
+      "nodeState_rp",
+      "node__PeriodParam_in_use",
+      "old_peak_max",
+      "old_peak_min",
+      "orig_flow_sum",
+      "p_storage_state_reference_price",
+      "p_timeline_duration_in_years",
+      "p_years_represented_d",
+      "p_years_until_dispatch",
+      "p_years_until_invest",
+      "pdtConversion_rate",
+      "pdtProcess_source_sink",
+      "pdt_online_integer",
+      "pdt_online_linear",
+      "period",
+      "period_share_of_annual_flow",
+      "period_share_of_year",
+      "period_solve",
+      "process_TimeParam_in_use",
+      "process__commodity__node_co2",
+      "process__profileProcess__toSink",
+      "process__sink__timeParam",
+      "process__source__sink__profile__profile_method_direct",
+      "process__source__timeParam",
+      "process__source__toProfileProcess",
+      "process__timeParam",
+      "process_delayed",
+      "process_minload",
+      "process_online",
+      "process_reserve_upDown_node_active",
+      "process_sink_sourceSinkPeriodParam_in_use",
+      "process_sink_sourceSinkTimeParam_in_use",
+      "process_source_sink_eff",
+      "process_source_sourceSinkPeriodParam_in_use",
+      "process_source_sourceSinkTimeParam_in_use",
+      "solve_share_of_year",
+      "startNext_index"
+    ],
+    [
+      "dt_realize_dispatch",
+      "ed_divest",
+      "ed_invest",
+      "edd_history_choice",
+      "edd_history_no_investment",
+      "f_d_k",
+      "node__TimeParam_in_use",
+      "old_peak_sign",
+      "p_entity_pre_existing",
+      "p_inflation_factor_investment_yearly",
+      "p_inflation_factor_operations_yearly",
+      "p_online_dt",
+      "pdtProcess_section",
+      "periodAll",
+      "period__timeline",
+      "period_flow_annual_multiplier",
+      "process__PeriodParam_in_use",
+      "process_co2",
+      "process_process_toSink",
+      "process_profile",
+      "process_reserve_upDown_node_increase_reserve_ratio",
+      "process_reserve_upDown_node_large_failure_ratio",
+      "process_source_delayed",
+      "process_source_sink_param_t",
+      "process_source_toProcess",
+      "process_source_undelayed",
+      "prundt",
+      "pssdt_varCost_eff_connection",
+      "pssdt_varCost_eff_unit_sink",
+      "pssdt_varCost_eff_unit_source",
+      "tier"
+    ],
+    [
+      "cndi_ladder_ann",
+      "cndi_ladder_cum",
+      "d_realized_period",
+      "ed_divest_period",
+      "ed_entity_annual_discounted",
+      "ed_entity_annual_divest_discounted",
+      "ed_invest_cumulative",
+      "ed_invest_forbidden_no_investment",
+      "ed_invest_period",
+      "ed_lifetime_fixed_cost",
+      "ed_lifetime_fixed_cost_divest",
+      "edd_history",
+      "gd_divest",
+      "gd_invest",
+      "hours_in_realized_period",
+      "nd_divest",
+      "nd_invest",
+      "old_peak",
+      "pd_divest",
+      "pd_invest",
+      "pdtProcess_slope",
+      "period_flow_proportional_multiplier",
+      "process_large_failure",
+      "process_source_sink",
+      "process_source_sink_alwaysProcess",
+      "process_source_sink_noEff"
+    ],
+    [
+      "_node_cap_unitsize_sum",
+      "cndi_ladder",
+      "d_realize_dispatch_or_invest",
+      "ed_history_realized_first",
+      "edd_history_invest",
+      "gd_divest_period",
+      "gd_invest_period",
+      "new_peak_divided_by_old_peak",
+      "nodeGroupDispatch__process_fully_inside",
+      "p_entity_divest_cumulative_max",
+      "pdtProcess__source__sink__dt_varCost",
+      "pdtProcess__source__sink__dt_varCost_alwaysProcess",
+      "peedt",
+      "process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source",
+      "process__source__sinkIsNode",
+      "process__source__sinkIsNode_2way1var",
+      "process__source__sinkIsNode_2way2var",
+      "process__source__sinkIsNode_not2way1var",
+      "process__source__sink__param",
+      "process__source__sink__param_t",
+      "process__source__sink__profile__profile_method_connection",
+      "process__source__sink__ramp_method",
+      "process_method_sources_sinks",
+      "process_source_sink_coeff_zero",
+      "process_source_sink_delayed",
+      "process_source_sink_ramp_cost",
+      "process_source_sink_ramp_limit_sink_down",
+      "process_source_sink_ramp_limit_sink_up",
+      "process_source_sink_ramp_limit_source_down",
+      "process_source_sink_ramp_limit_source_up",
+      "process_source_sink_undelayed",
+      "r_storage_usage_dt",
+      "realized_period_share_of_year"
+    ],
+    [
+      "_node_cap_raw",
+      "ed_history_realized",
+      "edd_invest",
+      "new_peak_divide_by_old_peak_sum_inflow",
+      "nodeGroupDispatch__group_aggregate__process__connection__to_node",
+      "nodeGroupDispatch__group_aggregate__process__node__to_connection",
+      "nodeGroupDispatch__group_aggregate__process__node__to_unit",
+      "nodeGroupDispatch__group_aggregate__process__unit__to_node",
+      "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate",
+      "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate",
+      "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate",
+      "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate",
+      "process__source__sink__profile__profile_method",
+      "process_sinkIsNode_2way1var",
+      "process_source_sink_dtttdt_ramp_limit_sink_down",
+      "process_source_sink_dtttdt_ramp_limit_sink_up",
+      "process_source_sink_dtttdt_ramp_limit_source_down",
+      "process_source_sink_dtttdt_ramp_limit_source_up",
+      "process_source_sink_ramp",
+      "pssdt_varCost_noEff"
+    ],
+    [
+      "_node_cap_pow10",
+      "new_old_multiplier",
+      "nodeGroupDispatch__connection_Not_in_aggregate",
+      "nodeGroupDispatch__group_aggregate_Connection",
+      "nodeGroupDispatch__group_aggregate_Group_to_unit",
+      "nodeGroupDispatch__group_aggregate_Unit_to_group",
+      "p_entity_existing_capacity_later_solves",
+      "p_entity_previously_invested_capacity"
+    ],
+    [
+      "new_old_section",
+      "new_old_slope",
+      "node_capacity_for_scaling",
+      "p_entity_all_existing"
+    ],
+    [
+      "_group_cap_raw",
+      "inv_node_cap",
+      "p_entity_existing_count",
+      "p_entity_invest_cumulative_max",
+      "p_entity_max_capacity",
+      "pdtNodeInflow"
+    ],
+    [
+      "_group_cap_pow10",
+      "p_entity_dispatch_capacity_max",
+      "p_entity_existing_integer_count",
+      "p_entity_max_units",
+      "p_negative_inflow",
+      "p_positive_inflow",
+      "p_state_slack_share"
+    ],
+    [
+      "group_capacity_for_scaling",
+      "p_flow_max",
+      "p_flow_min"
+    ],
+    [
+      "inv_group_cap"
+    ]
+  ]
+}

@@ -28,6 +28,23 @@ WHITELIST_EXEMPT_PARAMS: dict[str, set[str]] = {
 }
 
 
+def _find_def_row(ws: "openpyxl.worksheet.worksheet.Worksheet") -> int:
+    """Return the row number of the v2 parameter-name header row.
+
+    The header sits at row 3 by default but shifts to row 4 when any
+    parameter on the sheet has a default value (an optional 'default'
+    metadata row is inserted between data type and the header).
+    """
+    for r in (3, 4):
+        if ws.cell(row=r, column=1).value == "alternative":
+            return r
+    raise AssertionError(
+        f"Could not locate parameter-name header row in sheet '{ws.title}': "
+        f"row 3 col A = {ws.cell(row=3, column=1).value!r}, "
+        f"row 4 col A = {ws.cell(row=4, column=1).value!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -181,12 +198,15 @@ class TestNodeCContent:
 
     def test_header_row_structure(self, exported_workbook: openpyxl.Workbook) -> None:
         ws = exported_workbook["node_c"]
-        # Row 3 has the column headers in v2 format
-        assert ws.cell(row=3, column=1).value == "alternative", (
-            f"Row 3, Col 1 should be 'alternative', got '{ws.cell(row=3, column=1).value}'"
+        # Definition row is 3 by default, 4 when an optional 'default' row is inserted.
+        def_row = _find_def_row(ws)
+        assert ws.cell(row=def_row, column=1).value == "alternative", (
+            f"Row {def_row}, Col 1 should be 'alternative', "
+            f"got '{ws.cell(row=def_row, column=1).value}'"
         )
-        assert ws.cell(row=3, column=2).value == "entity: node", (
-            f"Row 3, Col 2 should be 'entity: node', got '{ws.cell(row=3, column=2).value}'"
+        assert ws.cell(row=def_row, column=2).value == "entity: node", (
+            f"Row {def_row}, Col 2 should be 'entity: node', "
+            f"got '{ws.cell(row=def_row, column=2).value}'"
         )
 
     def test_navigate_in_row_1(self, exported_workbook: openpyxl.Workbook) -> None:

@@ -284,14 +284,17 @@ def format_constant_sheet_v2(
     def_col: int = 3,
     index_cols: set[int] | None = None,
     last_data_col: int = 0,
+    def_row: int = 3,
 ) -> None:
     """Apply formatting to a v2 constant-layout sheet.
 
-    Row layout:
-        1   description / navigate (from def_col onward)
-        2   data type row (from def_col onward)
-        3   definition row (alternative, entity: X, parameter, param names)
-        4+  data
+    Row layout (1-based):
+        1 .. def_row-1      metadata rows (description, data type, optional
+                            default — same dark/light fill pair regardless
+                            of which slot they occupy)
+        def_row             definition row (alternative, entity: X, parameter,
+                            param names)
+        def_row+1 ..        data
 
     Column layout (1-based):
         1                       alternative
@@ -304,6 +307,9 @@ def format_constant_sheet_v2(
         index_cols: 1-based column numbers that are index dimensions
             (period, time, constraint) — these get a light green fill
             instead of entity fill.
+        def_row: Row of the definition / parameter-name header.  Each
+            metadata row above it (description, data type, optionally
+            default) shares the same fill pair.
     """
     if index_cols is None:
         index_cols = set()
@@ -314,46 +320,38 @@ def format_constant_sheet_v2(
     for col in range(1, max_col + 1):
         is_index = col in index_cols
 
-        # --- Row 1: description row (from def_col onward) ---
-        cell_r1 = ws.cell(row=1, column=col)
-        if col == 1:
-            pass  # navigate link
-        elif col == def_col and cell_r1.value is not None:
-            # Label cell ("description") — dark
-            cell_r1.fill = FILL_DESC_ROW
-            cell_r1.font = FONT_DESC_ROW
-        elif col > def_col and cell_r1.value is not None:
-            # Data cells (actual descriptions) — lighter
-            cell_r1.fill = FILL_DESC_DATA
-            cell_r1.font = FONT_DESC_DATA
+        # --- Metadata rows: 1..(def_row-1) ---
+        # Each one paints a label cell at def_col and data cells from
+        # def_col+1 onward.  Row 1 column 1 is reserved for the navigate
+        # hyperlink and stays unfilled.
+        for meta_row in range(1, def_row):
+            cell = ws.cell(row=meta_row, column=col)
+            if col == 1 and meta_row == 1:
+                continue  # navigate link
+            if col == def_col and cell.value is not None:
+                cell.fill = FILL_DESC_ROW
+                cell.font = FONT_DESC_ROW
+            elif col > def_col and cell.value is not None:
+                cell.fill = FILL_DESC_DATA
+                cell.font = FONT_DESC_DATA
 
-        # --- Row 2: data type row (from def_col onward) ---
-        cell_r2 = ws.cell(row=2, column=col)
-        if col == def_col and cell_r2.value is not None:
-            # Label cell ("data type") — dark
-            cell_r2.fill = FILL_DESC_ROW
-            cell_r2.font = FONT_DESC_ROW
-        elif col > def_col and cell_r2.value is not None:
-            # Data cells (actual types) — lighter
-            cell_r2.fill = FILL_DESC_DATA
-            cell_r2.font = FONT_DESC_DATA
-
-        # --- Row 3: definition row ---
-        cell_r3 = ws.cell(row=3, column=col)
+        # --- Definition row: def_row ---
+        cell_def = ws.cell(row=def_row, column=col)
         if col == 1:
-            cell_r3.fill = FILL_ALT_HEADER
+            cell_def.fill = FILL_ALT_HEADER
         elif is_index:
-            cell_r3.fill = FILL_INDEX_HEADER
+            cell_def.fill = FILL_INDEX_HEADER
         elif col < def_col:
-            cell_r3.fill = FILL_ENTITY_HEADER
+            cell_def.fill = FILL_ENTITY_HEADER
         elif col == def_col:
-            cell_r3.fill = FILL_PARAM_LABEL
+            cell_def.fill = FILL_PARAM_LABEL
         else:
-            cell_r3.fill = FILL_PARAM_HEADER
+            cell_def.fill = FILL_PARAM_HEADER
 
-    # --- Rows 4+: data row fills via conditional formatting (range-based, fast) ---
-    # Extend 100 rows beyond data so new user entries get the right colors
-    if max_row >= 4:
+    # --- Data rows: from def_row+1 onward ---
+    # Conditional formatting paints a 100-row buffer past the actual data.
+    data_start = def_row + 1
+    if max_row >= data_start:
         from openpyxl.formatting.rule import CellIsRule
 
         _always = ['"§§§NEVER§§§"']
@@ -362,7 +360,7 @@ def format_constant_sheet_v2(
         for col in range(1, (last_data_col if last_data_col > 0 else max_col) + 1):
             is_index = col in index_cols
             cl = get_column_letter(col)
-            rng = f"{cl}4:{cl}{data_range_end}"
+            rng = f"{cl}{data_start}:{cl}{data_range_end}"
 
             if col == 1:
                 fill = FILL_ALT_DATA
@@ -389,12 +387,16 @@ def format_periodic_sheet_v2(
     def_col: int = 3,
     index_cols: set[int] | None = None,
     last_data_col: int = 0,
+    def_row: int = 3,
 ) -> None:
     """Apply formatting to a v2 periodic-layout sheet.
 
     Same structure as format_constant_sheet_v2 but for periodic sheets.
     """
-    format_constant_sheet_v2(ws, n_entity_cols, n_extra_cols, def_col, index_cols, last_data_col)
+    format_constant_sheet_v2(
+        ws, n_entity_cols, n_extra_cols, def_col, index_cols,
+        last_data_col, def_row=def_row,
+    )
 
 
 def format_timeseries_sheet_v2(
@@ -426,6 +428,7 @@ def format_timeseries_sheet_v2(
     type_fills = {
         "description": (FILL_DESC_ROW, FILL_DESC_DATA, FONT_DESC_ROW, FONT_DESC_DATA),
         "data_type":   (FILL_DESC_ROW, FILL_DESC_DATA, FONT_DESC_ROW, FONT_DESC_DATA),
+        "default":     (FILL_DESC_ROW, FILL_DESC_DATA, FONT_DESC_ROW, FONT_DESC_DATA),
         "alternative": (FILL_ALT_HEADER, FILL_ALT_DATA, None, None),
         "parameter":   (FILL_PARAM_LABEL, FILL_PARAM_HEADER, None, None),
         "entity":      (FILL_ENTITY_HEADER, FILL_ENTITY_DATA, None, None),

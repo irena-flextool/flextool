@@ -938,7 +938,7 @@ def _load_inflation_factor(work_folder: Path) -> dict[str, float]:
     Written by the model during phase 1 (derived parameter moved above
     ``solve;``).
     """
-    path = work_folder / "solve_data" / "p_inflation_factor_operations_yearly.csv"
+    path = work_folder / "solve_data" / "solve__p_inflation_factor_operations_yearly.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path)
@@ -968,7 +968,7 @@ def _load_row_scaler(
     kind: str,
     solve_name: str,
 ) -> pd.DataFrame | None:
-    """Read ``solve_data/{node,group}_capacity_for_scaling.csv``.
+    """Read ``solve_data/solve__{node,group}_capacity_for_scaling.csv``.
 
     Format (wide, produced by the AMPL phase-1 printf block at
     ``flextool.mod:4805``)::
@@ -986,7 +986,7 @@ def _load_row_scaler(
     """
     if work_folder is None:
         return None
-    path = Path(work_folder) / "solve_data" / f"{kind}_capacity_for_scaling.csv"
+    path = Path(work_folder) / "solve_data" / f"solve__{kind}_capacity_for_scaling.csv"
     if not path.exists():
         return None
     try:
@@ -1182,11 +1182,11 @@ def _apply_unscale(
 
     Handles two scaler kinds:
 
-    * ``"node_cap"`` — ``solve_data/node_capacity_for_scaling.csv`` keyed
+    * ``"node_cap"`` — ``solve_data/solve__node_capacity_for_scaling.csv`` keyed
       by (period, node).  ``df`` row index is ``(solve, period[, time])``
       and columns are node names; we broadcast the period row of the
       scaler across the time dimension.
-    * ``"group_cap"`` — ``solve_data/group_capacity_for_scaling.csv``
+    * ``"group_cap"`` — ``solve_data/solve__group_capacity_for_scaling.csv``
       keyed by (period, group).  Columns = group names.  Same
       period-broadcast for time-indexed frames; for the no-t case (only
       ``vq_capacity_margin`` today) the row index is just ``(solve,
@@ -1501,8 +1501,8 @@ def write_v_dual_reserve_balance(
 
 
 def _is_first_solve_from_p_model(work_folder: Path) -> bool:
-    """True iff ``input/p_model.csv`` says ``solveFirst`` is 1 (or missing)."""
-    path = work_folder / "input" / "p_model.csv"
+    """True iff ``solve_data/p_model.csv`` says ``solveFirst`` is 1 (or missing)."""
+    path = work_folder / "solve_data" / "p_model.csv"
     if not path.exists():
         return True
     df = pd.read_csv(path)

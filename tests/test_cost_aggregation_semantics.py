@@ -760,17 +760,79 @@ def test_storage_state_reference_price_credit() -> None:
     assert False, "Needs user decision"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "TODO(user): pdt_branch_weight is computed in the mod but never "
-        "written to CSV.  Python does not load branch weights.  Manifests "
-        "in stochastic branching scenarios.  To fix: add a writer in "
-        "flextool.mod for solve_data/pdt_branch_weight.csv, a loader in "
-        "read_parameters.py, and a _PAR_DROP entry in drop_levels.py, "
-        "then apply branch_weight to all per-(d,t) cost terms.  No "
-        "fixture in tests.json currently exercises stochastic branches."
-    ),
-    strict=False,
-)
-def test_stochastic_branch_weight() -> None:
-    assert False, "Needs branching fixture"
+def test_stochastic_branch_weight(
+    stochastic_db_url: str,
+    test_bin_dir: Path,
+    workdir: Path,
+) -> None:
+    """LP objective applies ``pdt_branch_weight`` to per-(d, t) cost terms
+    (mod objective ~line 2007); Python's
+    ``Total cost (calculated) full horizon`` does NOT apply it (calc_costs
+    sums per-step costs unweighted across periods — see L110, L133 of
+    ``flextool/process_outputs/calc_costs.py`` where branch_weight is
+    only mentioned in comments).
+
+    For ``2_day_stochastic_dispatch`` (4 branches, each at uniform
+    ``pd_branch_weight = 0.25``) this gives a clean structural identity:
+
+        LP_obj ≈ python_total_calc × avg(pd_branch_weight)
+
+    or equivalently ``python_total_calc / LP_obj ≈ 1 / avg_weight = 4``.
+
+    Regressions caught:
+
+    * LP-side regression (mod stops applying ``pdt_branch_weight`` —
+      e.g. a future Python migration of the objective drops it): LP_obj
+      jumps to ≈ python_total_calc, ratio falls to 1.0.
+    * Python-side regression (someone fixes the calc_costs TODO and
+      multiplies cost terms by ``pdt_branch_weight``): python_total_calc
+      drops to ≈ LP_obj, ratio falls to 1.0.
+
+    Either side moving without the other is a real semantic shift that
+    deserves an update of this test (and probably summary_solve labels).
+    The original ``test_stochastic_branch_weight`` xfail predicted the
+    Python-side fix is still pending; this passing test now stands as a
+    tripwire for either side moving.
+    """
+    csv_dir = _run_scenario(
+        "2_day_stochastic_dispatch",
+        stochastic_db_url,
+        test_bin_dir,
+        workdir,
+    )
+    summary = _read_summary_solve(csv_dir)
+
+    # Pull pd_branch_weight from solve_data — no Python loader exists, so
+    # read the CSV directly. It's the writer's own output (Python migration
+    # batch 63) so the file is guaranteed to exist for any solve.
+    weights: dict[str, float] = {}
+    with open(workdir / "solve_data" / "pd_branch_weight.csv") as f:
+        next(f)  # header
+        for row in csv.reader(f):
+            if len(row) >= 2 and row[0]:
+                weights[row[0]] = float(row[1])
+
+    assert len(weights) >= 2, (
+        f"Fixture must produce ≥ 2 branches to exercise stochastic "
+        f"weighting; got {weights}"
+    )
+    avg_weight = sum(weights.values()) / len(weights)
+    assert avg_weight < 1.0, (
+        f"Branch weights should normalise to < 1 per branch; got "
+        f"avg_weight={avg_weight} from {weights}"
+    )
+
+    expected_lp = summary["total_calc"] * avg_weight
+    rel_err = abs(summary["objective"] - expected_lp) / max(
+        abs(expected_lp), 1e-9
+    )
+    assert rel_err <= 1e-3, (
+        f"branch-weight identity broken: "
+        f"LP_obj={summary['objective']:.6f}, "
+        f"python_total_calc={summary['total_calc']:.6f}, "
+        f"avg_pd_branch_weight={avg_weight:.6f}, "
+        f"expected LP ≈ total_calc × avg = {expected_lp:.6f}, "
+        f"rel_err={rel_err:.3e}.  Either the LP stopped applying "
+        f"pdt_branch_weight or Python started applying it — see the "
+        f"docstring above for which side moved."
+    )

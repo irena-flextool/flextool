@@ -26,13 +26,37 @@ def _read_time_series(
     Returns:
         Tuple of (profiles, inflows) where each is a dict mapping
         entity name to a list of (timestep_key, value) pairs.
+
+    Drops entries whose value isn't a list of ``(timestep, value)`` pairs
+    — ``params_to_dict`` returns scalar floats as a *string* (see
+    ``db_reader.py`` ``params_to_dict`` line ~117), and the downstream
+    clustering matrix builder iterates each entry's value as
+    ``for k, v in ts_data:`` which crashes on the per-character unpack.
+    A constant-inflow node has zero variance so it would be skipped by
+    the constant-series filter further down anyway; dropping it here
+    makes the skip explicit and matches the existing
+    "no matching timesteps" semantics.
     """
-    profiles: dict[str, list[tuple[str, float]]] = params_to_dict(
+    raw_profiles = params_to_dict(
         db=db, cl="profile", par="profile", mode=DictMode.DICT
     )
-    inflows: dict[str, list[tuple[str, float]]] = params_to_dict(
+    raw_inflows = params_to_dict(
         db=db, cl="node", par="inflow", mode=DictMode.DICT
     )
+    profiles: dict[str, list[tuple[str, float]]] = {
+        k: v for k, v in raw_profiles.items() if isinstance(v, list)
+    }
+    inflows: dict[str, list[tuple[str, float]]] = {
+        k: v for k, v in raw_inflows.items() if isinstance(v, list)
+    }
+    dropped_profiles = len(raw_profiles) - len(profiles)
+    dropped_inflows = len(raw_inflows) - len(inflows)
+    if dropped_profiles or dropped_inflows:
+        print(
+            f"  Skipping {dropped_profiles} scalar profile(s) and "
+            f"{dropped_inflows} scalar inflow(s) — clustering only "
+            f"considers time-varying series."
+        )
     return profiles, inflows
 
 
@@ -285,6 +309,17 @@ def _write_results_to_db(
             for err in errors:
                 print(f"  DB import error: {err}")
             raise RuntimeError(f"Failed to write results: {len(errors)} errors")
+
+        # Tag the lazily-created parameter so it lands under the
+        # solve_advanced group in group-filtered exports.  No-op on
+        # pre-v44 DBs that don't have parameter_groups yet.
+        if db.item(db.mapped_table("parameter_group"), name="solve_advanced") is not None:
+            db.add_update_item(
+                "parameter_definition",
+                entity_class_name="timeset",
+                name="representative_period_weights",
+                parameter_group_name="solve_advanced",
+            )
 
         db.commit_session(f"Add representative periods: {timeset_name}")
         print(f"Wrote {count} items to database")

@@ -29,6 +29,7 @@ PLOT_FIELD_NAMES = {
     'multiply_by', 'full_timeline', 'subplots_by_magnitudes',
     'variant',  # used by plot_config_reader to override variant letter derivation
     'color_category', 'color_entity_class',  # color-template hints (chunk D)
+    'scenario_rule', 'comparison_overrides',  # comparison-mode add-ons
 }
 
 
@@ -63,6 +64,23 @@ class PlotConfig:
     # Default None means "no hint" — fall back to the tab10/tab20 palette as today.
     color_category: str | None = None
     color_entity_class: str | None = None
+
+    # --- Comparison-mode add-ons ---
+    # The unioned plan parquet at comparison-view time has the post-single-rules
+    # shape with `scenario` prepended as the outermost column-MultiIndex level.
+    # `scenario_rule` is the dim-rule character applied to that scenario level
+    # when building the comparison PlotPlan (see
+    # flextool.scenario_comparison.plan_union.compute_comparison_plan_from_single).
+    # Common choices: 'g' (grouped/coloured bars), 'l' (line series), 'u'
+    # (subplot per scenario), 'f' (file per scenario), 's' (stack — rare).
+    # When None, the config has no comparison rendering — comparison view
+    # surfaces "no comparison rule defined" for this plot.
+    scenario_rule: str | None = None
+    # Optional per-mode overrides applied on top of the single-mode values when
+    # rendering the comparison view (e.g. fewer ``max_subplots_per_file``
+    # because each subplot now has scenario-many more bars).  Any field listed
+    # in PLOT_FIELD_NAMES is allowed.  Plain dict so the YAML stays terse.
+    comparison_overrides: dict | None = None
 
 
 def _is_single_config(d: dict) -> bool:

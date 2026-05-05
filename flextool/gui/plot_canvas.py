@@ -173,11 +173,14 @@ class PlotCanvas(ttk.Frame):
             w_in, h_in = fig.get_size_inches()
         except Exception:
             w_in = h_in = 0.0
-        if w_in and w_in * target_dpi > self._MAX_PIXMAP_PX:
-            target_dpi = min(target_dpi, self._MAX_PIXMAP_PX / w_in)
-        if h_in and h_in * target_dpi > self._MAX_PIXMAP_PX:
-            target_dpi = min(target_dpi, self._MAX_PIXMAP_PX / h_in)
+        # Floor first for legibility, then cap by the pixmap limit — the
+        # cap must win, since exceeding it crashes the X server with
+        # BadValue on X_CreatePixmap, while sub-50-DPI is merely fuzzy.
         target_dpi = max(50.0, target_dpi)
+        if w_in and w_in * target_dpi > self._MAX_PIXMAP_PX:
+            target_dpi = self._MAX_PIXMAP_PX / w_in
+        if h_in and h_in * target_dpi > self._MAX_PIXMAP_PX:
+            target_dpi = self._MAX_PIXMAP_PX / h_in
         if fig.get_dpi() != target_dpi:
             fig.set_dpi(target_dpi)
 

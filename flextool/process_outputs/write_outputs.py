@@ -57,280 +57,23 @@ def _read_outputs(output_dir):
     return p, s, v
 
 
-def _resolve_comparison_config_path(output_config_path):
-    """Resolve the comparison plot config path for write_outputs.
+def log_time(log_string, start, timing_recorder=None):
+    """Print and record one ``write_outputs`` sub-phase.
 
-    Mirrors the GUI's resolution order (see ``result_viewer._resolve_config_path``
-    and ``scenario_comparison.orchestrator``): if the single-mode config
-    sits beside a ``default_comparison_plots.yaml`` (i.e. the user has
-    overridden both in a project-local ``templates/``), use that.
-    Otherwise fall back to ``templates/default_comparison_plots.yaml``
-    in the flextool root.
+    Refactored to feed the new TimingRecorder when supplied; the legacy
+    append to ``output/solve_progress.csv`` (CWD-relative, append-mode,
+    never cleared) has been removed.  The ``print(...)`` line is kept
+    for human-readable stdout — that's the file most operators eyeball.
     """
-    candidate_dir = os.path.dirname(output_config_path) if output_config_path else None
-    if candidate_dir:
-        candidate = os.path.join(candidate_dir, 'default_comparison_plots.yaml')
-        if os.path.isfile(candidate):
-            return candidate
-    _flextool_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(_flextool_root, 'templates', 'default_comparison_plots.yaml')
-
-
-def _snapshot_plan_dir(plan_dir):
-    """Capture all files currently in ``plan_dir`` as ``{name: bytes}``.
-
-    Used to overlay the single-config plans back after the comparison
-    pass wipes the directory.  Returns ``{}`` if the dir doesn't exist.
-    """
-    if not os.path.isdir(plan_dir):
-        return {}
-    snapshot: dict[str, bytes] = {}
-    for name in os.listdir(plan_dir):
-        path = os.path.join(plan_dir, name)
-        if os.path.isfile(path):
-            try:
-                with open(path, 'rb') as f:
-                    snapshot[name] = f.read()
-            except OSError:
-                continue
-    return snapshot
-
-
-def _restore_plan_files(plan_dir, snapshot, prefer_existing_files=None):
-    """Write *snapshot* files back into ``plan_dir``.
-
-    Files in *prefer_existing_files* (a set of basenames) are skipped —
-    used for the single ``_availability.json`` we synthesise as a union
-    of both passes' availability lists.
-    """
-    if not snapshot:
-        return
-    os.makedirs(plan_dir, exist_ok=True)
-    skip = prefer_existing_files or set()
-    for name, blob in snapshot.items():
-        if name in skip:
-            continue
-        try:
-            with open(os.path.join(plan_dir, name), 'wb') as f:
-                f.write(blob)
-        except OSError as exc:
-            logging.warning(
-                "Failed to restore plan file %s: %s", name, exc,
-            )
-
-
-def _merge_availability_manifests(plan_dir, snapshot):
-    """Merge the snapshot's ``_availability.json`` with the current one.
-
-    The current file (just written by the comparison pass) lists
-    comparison-only ``(result_key, sub_config)`` pairs.  The snapshot's
-    file (from the single pass) lists single-config pairs.  We union
-    them and rewrite ``_availability.json`` so the viewer's manifest
-    reflects every plan that survives on disk.
-    """
-    import json as _json
-    avail_name = "_availability.json"
-    current_pairs: list[list[str]] = []
-    avail_path = os.path.join(plan_dir, avail_name)
-    try:
-        if os.path.isfile(avail_path):
-            with open(avail_path, "r", encoding="utf-8") as f:
-                current_pairs = list(_json.load(f).get("available", []))
-    except (OSError, ValueError) as exc:
-        logging.warning(
-            "Failed to read current availability manifest %s: %s",
-            avail_path, exc,
+    elapsed = time.perf_counter() - start
+    print(f"---{log_string}: {elapsed:.4f} seconds")
+    if timing_recorder is not None:
+        timing_recorder.record(
+            'write_outputs',
+            subphase=log_string,
+            seconds=elapsed,
+            t_start=start,
         )
-        current_pairs = []
-    snapshot_pairs: list[list[str]] = []
-    if avail_name in snapshot:
-        try:
-            snapshot_pairs = list(_json.loads(snapshot[avail_name]).get("available", []))
-        except ValueError as exc:
-            logging.warning(
-                "Failed to parse snapshot availability manifest: %s", exc,
-            )
-    # Union, preserving order: snapshot (single) first, then comparison-only.
-    seen: set[tuple[str, str]] = set()
-    merged: list[list[str]] = []
-    for pair in list(snapshot_pairs) + list(current_pairs):
-        if not isinstance(pair, list) or len(pair) != 2:
-            continue
-        key = (str(pair[0]), str(pair[1]))
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append([key[0], key[1]])
-    try:
-        with open(avail_path, "w", encoding="utf-8") as f:
-            _json.dump({"available": merged}, f)
-    except OSError as exc:
-        logging.warning(
-            "Failed to write merged availability manifest %s: %s",
-            avail_path, exc,
-        )
-
-
-def _normalize_comparison_settings_for_per_scenario(
-    plot_settings: dict, normalize_fn,
-) -> dict:
-    """Walk a comparison plots-settings dict and normalise every leaf config.
-
-    Comparison settings can be in either layout:
-
-    - **New format** (entry-name grouping): ``entry_name -> {group, order,
-      result_key -> {sub_name -> setting_dict}}``.
-    - **Flat format**: ``result_key -> {sub_name -> setting_dict}`` or
-      ``result_key -> setting_dict`` (single-config shortcut).
-
-    For each leaf ``setting_dict`` we call ``normalize_fn``; ``None``
-    returned by the normaliser indicates a config that should be skipped
-    entirely (e.g. column-only-scenario configs with no per-scenario
-    plot dim left after stripping).  The original ``plot_settings`` is
-    not mutated; a new dict is built.
-    """
-    out: dict = {}
-    for entry_key, entry_val in plot_settings.items():
-        if not isinstance(entry_val, dict):
-            out[entry_key] = entry_val
-            continue
-        # Detect entry-name format vs flat result_key format.
-        # Entry-name format has 'group' and 'order' keys.
-        is_entry = 'group' in entry_val and 'order' in entry_val
-        if is_entry:
-            new_entry = {k: v for k, v in entry_val.items() if k in ('group', 'order')}
-            for rk, rk_val in entry_val.items():
-                if rk in ('group', 'order'):
-                    continue
-                new_entry[rk] = _normalize_result_key_dict(rk_val, normalize_fn)
-            out[entry_key] = new_entry
-        else:
-            out[entry_key] = _normalize_result_key_dict(entry_val, normalize_fn)
-    return out
-
-
-def _normalize_result_key_dict(rk_val, normalize_fn):
-    """Apply ``normalize_fn`` to each sub-config under a result_key.
-
-    Handles both the dict-of-sub-configs layout
-    (``{sub_name -> setting_dict}``) and the single-config shortcut
-    (``{plot_field -> value, ...}``) — the latter is detected by the
-    presence of any ``PLOT_FIELD_NAMES`` key directly in the dict.
-    Configs for which ``normalize_fn`` returns ``None`` are dropped.
-    """
-    from flextool.plot_outputs.config import PLOT_FIELD_NAMES
-    if not isinstance(rk_val, dict):
-        return rk_val
-    # Single-config shortcut: keys are plot field names directly.
-    if any(k in PLOT_FIELD_NAMES for k in rk_val):
-        normalized = normalize_fn(rk_val)
-        if normalized is None:
-            logging.debug(
-                "Skipping comparison config (column-only-scenario, no "
-                "per-scenario plot dim after normalisation)",
-            )
-            return {}
-        return normalized
-    # Dict of sub-configs.
-    new_sub: dict = {}
-    for sub_name, setting in rk_val.items():
-        if not isinstance(setting, dict):
-            new_sub[sub_name] = setting
-            continue
-        normalized = normalize_fn(setting)
-        if normalized is None:
-            logging.debug(
-                "Skipping comparison sub-config '%s' (column-only-scenario)",
-                sub_name,
-            )
-            continue
-        new_sub[sub_name] = normalized
-    return new_sub
-
-
-def _compute_comparison_only_plot_plans(
-    *, plan_results, single_plot_settings, parquet_dir,
-    output_config_path, active_configs, plot_rows, plan_break_times,
-):
-    """Compute per-scenario plans for comparison-only result_keys.
-
-    Strategy:
-      1. Snapshot the existing ``plot_plans/`` dir (single-config plans).
-      2. Call ``compute_all_plot_plans`` with the comparison config —
-         this wipes the dir and writes plans for whatever result_keys
-         the comparison config can resolve.
-      3. Overlay the snapshot back, so single-config plans win on
-         overlapping ``(result_key, sub_config)`` pairs.
-      4. Merge the two ``_availability.json`` files into a union.
-
-    Logs WARNING for comparison-only result_keys we expected to fill
-    but had no in-memory data for.
-    """
-    from flextool.plot_outputs.orchestrator import compute_all_plot_plans
-    from flextool.plot_outputs.config import flatten_new_format
-    from flextool.scenario_comparison.plan_union import (
-        normalize_config_for_per_scenario_compute,
-    )
-
-    comparison_config_path = _resolve_comparison_config_path(output_config_path)
-    if not os.path.isfile(comparison_config_path):
-        logging.debug(
-            "Comparison config not found at %s — skipping second-pass plan compute.",
-            comparison_config_path,
-        )
-        return
-
-    with open(comparison_config_path, 'r', encoding='utf-8') as f:
-        comparison_settings = yaml.safe_load(f) or {}
-    comparison_plot_settings = comparison_settings.get('plots', {}) or {}
-
-    # Comparison configs were written for unioned data with ``scenario`` as
-    # the outermost column-MultiIndex level.  At single-scenario-run time
-    # (this code path), the per-scenario DataFrame has no scenario level,
-    # so we strip the column-part ``s`` rule from every config before
-    # feeding to ``compute_all_plot_plans``.  The viewer's union path
-    # recovers the scenario dim at view time.
-    comparison_plot_settings = _normalize_comparison_settings_for_per_scenario(
-        comparison_plot_settings, normalize_config_for_per_scenario_compute,
-    )
-
-    # Find result_keys present in comparison but NOT in single (so we
-    # can warn if they have no in-memory data).
-    single_keys = set(flatten_new_format(single_plot_settings).keys())
-    comparison_keys = set(flatten_new_format(comparison_plot_settings).keys())
-    comparison_only = comparison_keys - single_keys
-    missing_data = [k for k in comparison_only if k not in plan_results or plan_results[k].empty]
-    if missing_data:
-        logging.warning(
-            "Comparison-only plot result_keys with no available data "
-            "(plans will be missing for these in the viewer): %s",
-            sorted(missing_data),
-        )
-
-    plan_dir = os.path.join(parquet_dir, "plot_plans")
-    snapshot = _snapshot_plan_dir(plan_dir)
-    avail_name = "_availability.json"
-
-    # Run the comparison-config pass.  This wipes plan_dir and writes
-    # only what the comparison config resolves.
-    compute_all_plot_plans(
-        plan_results, comparison_plot_settings, parquet_dir,
-        active_settings=active_configs, plot_rows=plot_rows,
-        break_times=plan_break_times,
-    )
-
-    # Restore single-config plan files (parquet + json) over the
-    # comparison-pass output.  Skip _availability.json — that gets
-    # merged separately so the union of pairs is preserved.
-    _restore_plan_files(plan_dir, snapshot, prefer_existing_files={avail_name})
-    _merge_availability_manifests(plan_dir, snapshot)
-
-
-def log_time(log_string, start):
-    print(f"---{log_string}: {time.perf_counter() - start:.4f} seconds")
-    os.makedirs('output', exist_ok=True)
-    with open("output/solve_progress.csv", "a") as solve_progress:
-        solve_progress.write(log_string + ',' + str(round(time.perf_counter() - start, 4)) + '\n')
     return time.perf_counter()
 
 
@@ -406,11 +149,19 @@ def write_summary_csv(par, s, v, r, csv_dir):
         for row_idx in v.obj.index:
             f.write(f'{row_idx},{v.obj.loc[row_idx, "objective"] / 1000000:.12g}\n')
 
-        # Total cost (calculated) full horizon (M CUR)
+        # Total cost (calculated) full horizon (M CUR).  Mirrors the LP
+        # objective: oper + penalty + invest + divest + fixed (pre-existing
+        # + invested + divested).  Fixed-cost terms are in the LP obj at
+        # flextool.mod:2107-2126; omitting them here would under-report
+        # the objective for any scenario with non-zero existing capacity
+        # or a non-zero lifetime_fixed_cost on invest/divest entities.
         total_cost_full = (
             r.costOper_and_penalty_d
                 .add(r.costInvest_d, fill_value=0.0)
                 .add(r.costDivest_d, fill_value=0.0)
+                .add(r.costFixedPreExisting_d, fill_value=0.0)
+                .add(r.costFixedInvested_d, fill_value=0.0)
+                .add(r.costFixedDivested_d, fill_value=0.0)
         ).sum(axis=0) / 1000000
 
         f.write(f'"Total cost (calculated) full horizon (M CUR)",{total_cost_full:.12g},"Annualized operational, penalty and investment costs"\n')
@@ -609,6 +360,19 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
         output_config_path = os.path.join(_flextool_root, 'templates', 'default_plots.yaml')
     elif not os.path.isabs(output_config_path):
         output_config_path = os.path.join(_flextool_root, output_config_path)
+    # Self-heal for stale settings DBs that still point at the deleted
+    # ``default_comparison_plots.yaml`` (comparison rules now live inside
+    # default_plots.yaml via per-leaf ``scenario_rule``).
+    if (os.path.basename(output_config_path) == 'default_comparison_plots.yaml'
+            or not os.path.isfile(output_config_path)):
+        merged = os.path.join(_flextool_root, 'templates', 'default_plots.yaml')
+        if os.path.isfile(merged):
+            if output_config_path != merged:
+                logging.info(
+                    "output-config-path %s not found or superseded — using "
+                    "merged %s instead.", output_config_path, merged,
+                )
+            output_config_path = merged
     if active_configs is None:
         active_configs = ['default']
     if plot_rows is None:
@@ -621,7 +385,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -701,7 +465,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         plot_dir = os.path.join(output_location, 'output_plots')
 
     # Read and process data
-    start = log_time("Read configuration files", start)
+    start = log_time("Read configuration files", start, timing_recorder)
 
     # If results already exist as parquet files, read them
     if read_parquet_dir:
@@ -715,16 +479,16 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     results[key] = results[key].squeeze()
                 else:
                     results[key] = results[key].droplevel('scenario', axis=1)
-        start = log_time("Read parquet files", start)
+        start = log_time("Read parquet files", start, timing_recorder)
 
     # Read original raw outputs from FlexTool
     else:
         par, s, v = _read_outputs(raw_output_dir or 'output_raw')
-        start = log_time("Read flextool outputs", start)
+        start = log_time("Read flextool outputs", start, timing_recorder)
 
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
-        start = log_time("Post-processed outputs", start)
+        start = log_time("Post-processed outputs", start, timing_recorder)
 
         # Call the final processing functions for each category of outputs
         # and make a dict of dataframes to hold final results
@@ -745,7 +509,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 all_results[table_name] = result_df
 
         results = all_results
-        start = log_time("Formatted for output", start)
+        start = log_time("Formatted for output", start, timing_recorder)
 
     # Write files for debugging purposes
     if debug:
@@ -754,7 +518,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         print_namespace_structure(s, 's')
         print_namespace_structure(v, 'v')
         print_namespace_structure(par, 'par')
-        start = log_time("Wrote debugging files", start)
+        start = log_time("Wrote debugging files", start, timing_recorder)
 
     # Write to parquet
     if 'parquet' in write_methods and not read_parquet_dir:
@@ -779,7 +543,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             breaks_df = pd.read_csv(breaks_csv)
             write_lean_parquet(breaks_df, f'{parquet_dir}/timeline_breaks.parquet', index=False)
 
-        start = log_time("Wrote to parquet", start)
+        start = log_time("Wrote to parquet", start, timing_recorder)
 
     # Compute plot plans for the viewer (always, when parquets exist)
     if 'parquet' in write_methods or read_parquet_dir:
@@ -794,40 +558,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 active_settings=active_configs, plot_rows=plot_rows,
                 break_times=plan_break_times,
             )
-            start = log_time("Computed plot plans", start)
+            start = log_time("Computed plot plans", start, timing_recorder)
         except Exception as exc:
             logging.warning("Plot plan computation failed (non-fatal): %s", exc)
-
-        # Also compute per-scenario plans for any result_keys that only
-        # appear in the comparison config (e.g. ``costs_discounted_p_``,
-        # which is referenced from default_comparison_plots.yaml but not
-        # from default_plots.yaml).  Without this second pass the
-        # comparison view's lazy plan-union path fails for those keys
-        # ("No per-scenario plan for <rk> in viewer scenarios").
-        #
-        # ``compute_all_plot_plans`` wipes its plan_dir at entry, so
-        # we snapshot the single-config plans first and overlay them
-        # back afterwards; on overlapping (result_key, sub_config)
-        # pairs the *single* config's layout wins (it's the
-        # authoritative one for single-mode rendering, and the
-        # comparison view tolerates the same parquet shape).
-        if 'parquet' in write_methods or read_parquet_dir:
-            try:
-                _compute_comparison_only_plot_plans(
-                    plan_results=plan_results,
-                    single_plot_settings=single_plot_settings,
-                    parquet_dir=parquet_dir,
-                    output_config_path=output_config_path,
-                    active_configs=active_configs,
-                    plot_rows=plot_rows,
-                    plan_break_times=plan_break_times,
-                )
-                start = log_time("Computed comparison-only plot plans", start)
-            except Exception as exc:
-                logging.warning(
-                    "Comparison-only plot plan computation failed (non-fatal): %s",
-                    exc,
-                )
 
         # Phase D: write per-scenario dispatch metadata so the viewer can
         # union ylims across scenarios on demand (without waiting for the
@@ -876,7 +609,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             meta_path = os.path.join(parquet_dir, "_dispatch_metadata.json")
             with open(meta_path, "w", encoding="utf-8") as f:
                 _json.dump(disp_meta, f, indent=2)
-            start = log_time("Wrote dispatch metadata", start)
+            start = log_time("Wrote dispatch metadata", start, timing_recorder)
         except Exception as exc:
             logging.warning(
                 "Per-scenario dispatch metadata computation failed (non-fatal): %s",
@@ -896,7 +629,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         break_times = load_timeline_breaks(parquet_dir)
         plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_times)
 
-        start = log_time('Plotted figures', start)
+        start = log_time('Plotted figures', start, timing_recorder)
 
     # Write to csv
     if 'csv' in write_methods:
@@ -977,7 +710,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 df.columns.names = [None] * df.columns.nlevels
                 df.to_csv(csv_path, index=False, float_format='%.8g')
 
-        start = log_time('Wrote to csv', start)
+        start = log_time('Wrote to csv', start, timing_recorder)
 
     # Write to excel
     if 'excel' in write_methods:
@@ -1011,4 +744,4 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             for sheet_name, df in sheets:
                 df.to_excel(writer, sheet_name=sheet_name)
 
-        start = log_time('Wrote to Excel', start)
+        start = log_time('Wrote to Excel', start, timing_recorder)

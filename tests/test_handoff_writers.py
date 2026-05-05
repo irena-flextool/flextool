@@ -62,8 +62,8 @@ def _make_workfolder(tmp_path: Path, *, first_solve: bool = True) -> Path:
     (tmp_path / "output_raw").mkdir()
     (tmp_path / "solve_data").mkdir()
 
-    # solveFirst flag — input/p_model.csv (long format).
-    (tmp_path / "input" / "p_model.csv").write_text(
+    # solveFirst flag — solve_data/p_model.csv (long format).
+    (tmp_path / "solve_data" / "p_model.csv").write_text(
         f"modelParam,p_model\nsolveFirst,{1 if first_solve else 0}\nsolveLast,1\n"
     )
     return tmp_path
@@ -79,7 +79,7 @@ def _write_unitsize(work: Path, unitsize: dict[str, float]) -> None:
 
 
 def _write_entity_set(work: Path, entities: list[str]) -> None:
-    (work / "solve_data" / "entity.csv").write_text(
+    (work / "input" / "entity.csv").write_text(
         "entity\n" + "\n".join(entities) + "\n"
     )
 
@@ -99,14 +99,14 @@ def test_is_first_solve_reads_p_model(tmp_path: Path) -> None:
     work = _make_workfolder(tmp_path, first_solve=True)
     assert _is_first_solve(work) is True
 
-    (work / "input" / "p_model.csv").write_text(
+    (work / "solve_data" / "p_model.csv").write_text(
         "modelParam,p_model\nsolveFirst,0\nsolveLast,0\n"
     )
     assert _is_first_solve(work) is False
 
 
 def test_is_first_solve_defaults_true_when_missing(tmp_path: Path) -> None:
-    (tmp_path / "input").mkdir()
+    (tmp_path / "solve_data").mkdir()
     assert _is_first_solve(tmp_path) is True
 
 
@@ -246,7 +246,7 @@ def test_p_entity_period_existing_capacity_first_solve(tmp_path: Path) -> None:
     _write_unitsize(work, {"battery": 1.0, "wind_plant": 1000.0})
     _write_entity_set(work, ["battery", "wind_plant"])
     # pre_existing layout: solve, period, entity1, entity2, ...
-    (work / "solve_data" / "p_entity_pre_existing.csv").write_text(
+    (work / "solve_data" / "solve__p_entity_pre_existing.csv").write_text(
         "solve,period,battery,wind_plant\ns1,p2020,50,1000\n"
     )
     (work / "solve_data" / "realized_invest_periods_of_current_solve.csv").write_text(
@@ -254,7 +254,7 @@ def test_p_entity_period_existing_capacity_first_solve(tmp_path: Path) -> None:
     )
     (work / "solve_data" / "period_first.csv").write_text("period\np2020\n")
     # ed_invest covers (battery, p2020) only — wind_plant has no invest.
-    (work / "solve_data" / "ed_invest.csv").write_text(
+    (work / "solve_data" / "solve__ed_invest.csv").write_text(
         "solve,entity,period\ns1,battery,p2020\n"
     )
     h = _fake_highs(
@@ -326,6 +326,84 @@ def test_fix_storage_usage_preserves_prior_when_no_matching_node(tmp_path: Path)
     h = _fake_highs(variable_names=[], col_values=[])
     write_fix_storage_usage(h, solve_name="s2", work_folder=work)
     assert (work / "solve_data" / "fix_storage_usage.csv").read_text() == prior
+
+
+# ---------------------------------------------------------------------------
+# write_fix_storage_price
+# ---------------------------------------------------------------------------
+
+
+def test_fix_storage_price_writes_only_for_target_method(tmp_path: Path) -> None:
+    """``price = -dual / inflation × period_share × inv_scale`` for fix_price
+    nodes only; other-method nodes drop out even when their dual is present."""
+    work = _make_workfolder(tmp_path)
+    _write_unitsize(work, {"battery_fp": 1.0, "tank_fq": 1.0})
+    # battery_fp uses fix_price → should be written; tank_fq uses fix_quantity
+    # → must be filtered out even though we'll mock duals for both.
+    (work / "input" / "node__storage_nested_fix_method.csv").write_text(
+        "node,storage_nested_fix_method\n"
+        "battery_fp,fix_price\n"
+        "tank_fq,fix_quantity\n"
+    )
+    (work / "solve_data" / "fix_storage_timesteps.csv").write_text(
+        "period,step\np2020,t0024\n"
+    )
+    # inflation, period_share, scale_the_objective drive the dual transform.
+    (work / "solve_data" / "solve__p_inflation_factor_operations_yearly.csv").write_text(
+        "solve,period,value\ns1,p2020,1.25\n"
+    )
+    (work / "solve_data" / "complete_period_share_of_year.csv").write_text(
+        "solve,period,value\ns1,p2020,0.5\n"
+    )
+    (work / "solve_data" / "scale_the_objective.csv").write_text(
+        "value\n0.001\n"
+    )
+    # nodeBalance_eq[c, n, bn, d, t, t_prev, t_prev_within_timeset, d_prev,
+    #                t_prev_within_solve] → 9 indices.  Two rows at the
+    # in-fix-steps (period, time) — one per node — exercise the per-node
+    # filter (tank_fq must drop out).  A third row at t0048 sits OUTSIDE
+    # fix_storage_timesteps and must be dropped by the (period, time)
+    # filter; sharing the t_prev tuple with the t0024 battery_fp row keeps
+    # the wide-frame to one battery_fp column so we don't accidentally
+    # emit a stray zero-dual row at t0024.
+    h = _fake_highs(
+        variable_names=[],
+        col_values=[],
+        row_names=[
+            "nodeBalance_eq[s1,battery_fp,default,p2020,t0024,t0023,t0023,p2020,t0023]",
+            "nodeBalance_eq[s1,tank_fq,default,p2020,t0024,t0023,t0023,p2020,t0023]",
+            "nodeBalance_eq[s1,battery_fp,default,p2020,t0048,t0023,t0023,p2020,t0023]",
+        ],
+        row_duals=[4.0, 99.0, 7.0],
+    )
+    write_fix_storage_price(h, solve_name="s1", work_folder=work)
+
+    rows = list(csv.DictReader(open(work / "solve_data" / "fix_storage_price.csv")))
+    # Hand-derived: price = -4.0 / 1.25 × 0.5 × (1 / 0.001) = -1600.0
+    assert len(rows) == 1
+    only = rows[0]
+    assert only["period"] == "p2020"
+    assert only["step"] == "t0024"
+    assert only["node"] == "battery_fp"
+    assert float(only["p_fix_storage_price"]) == pytest.approx(-1600.0)
+
+
+def test_fix_storage_price_preserves_prior_when_no_matching_node(tmp_path: Path) -> None:
+    """Non-first solve with no fix_price entries must not clobber prior content
+    (matches the empty short-circuit at handoff_writers.py:627-634, 681-686)."""
+    work = _make_workfolder(tmp_path, first_solve=False)
+    _write_unitsize(work, {"any_node": 1.0})
+    prior = "period,step,node,p_fix_storage_price\np2020,t0001,battery_fp,-42\n"
+    (work / "solve_data" / "fix_storage_price.csv").write_text(prior)
+    # No node has fix_price method → early return at line 627-634.
+    (work / "input" / "node__storage_nested_fix_method.csv").write_text(
+        "node,storage_nested_fix_method\n"
+    )
+    (work / "solve_data" / "fix_storage_timesteps.csv").write_text("period,step\n")
+
+    h = _fake_highs(variable_names=[], col_values=[], row_names=[], row_duals=[])
+    write_fix_storage_price(h, solve_name="s2", work_folder=work)
+    assert (work / "solve_data" / "fix_storage_price.csv").read_text() == prior
 
 
 # ---------------------------------------------------------------------------

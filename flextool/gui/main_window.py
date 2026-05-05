@@ -148,8 +148,13 @@ class MainWindow(tk.Tk):
         self._bold_font = bold_font
 
         # ── Treeview row height and selection visibility ──────────
+        # Add ~25% vertical padding so rows don't touch the row above —
+        # otherwise large fonts (high-DPI) clip and small fonts make
+        # the trees look cramped.  Min of 24px keeps trees readable on
+        # setups where DPI auto-detection underreports or where the
+        # user has chosen a small font size.
         style = ttk.Style()
-        row_height = self._line_height
+        row_height = max(24, int(self._line_height * 1.25))
         style.configure("Treeview", rowheight=row_height)
 
         # Make LabelFrame titles the same font size as everything else
@@ -309,7 +314,7 @@ class MainWindow(tk.Tk):
             command=self._sort_input_by_number,
         )
         self.input_sources_tree.heading("status", text="")
-        self.input_sources_tree.column("check", width=cw * 2, minwidth=cw * 2, stretch=False)
+        self.input_sources_tree.column("check", width=int(cw * 2.3), minwidth=int(cw * 2.3), stretch=False)
         self.input_sources_tree.column("name", width=cw * 25, minwidth=cw * 12)
         self.input_sources_tree.column("number", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.input_sources_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
@@ -564,7 +569,7 @@ class MainWindow(tk.Tk):
             "scenario_name", text="Scenario \u25b2",
             command=self._sort_available_by_name,
         )
-        self.available_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.available_tree.column("check", width=int(cw * 3.45), minwidth=int(cw * 3.45), stretch=False)
         self.available_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.available_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
         self.available_tree.grid(row=0, column=0, sticky="nsew")
@@ -613,11 +618,11 @@ class MainWindow(tk.Tk):
             "timestamp", text="Timestamp",
             command=self._sort_executed_by_timestamp,
         )
-        self.executed_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.executed_tree.column("check", width=int(cw * 3.45), minwidth=int(cw * 3.45), stretch=False)
         self.executed_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.executed_tree.column("scenario_name", width=cw * 29, minwidth=cw * 12, stretch=True)
         self.executed_tree.column("view", width=cw * 3, minwidth=cw * 3, stretch=False, anchor="center")
-        self.executed_tree.column("timestamp", width=cw * 13, minwidth=cw * 13, stretch=False)
+        self.executed_tree.column("timestamp", width=int(cw * 24.7), minwidth=int(cw * 24.7), stretch=False)
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
 
         # No row-level tag for View — Treeview tags color the entire row.

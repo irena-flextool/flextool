@@ -64,6 +64,7 @@ from flextool.process_outputs.read_highs_solution import (
 
 if TYPE_CHECKING:
     import highspy
+    from flextool.flextoolrunner.solve_handoff import SolveHandoff
 
 _logger = logging.getLogger(__name__)
 
@@ -97,12 +98,12 @@ def _load_unitsize(work_folder: Path) -> dict[str, float]:
 
 
 def _load_pre_existing(work_folder: Path) -> dict[tuple[str, str], float]:
-    """Return ``{(period, entity): value}`` from ``p_entity_pre_existing.csv``.
+    """Return ``{(period, entity): value}`` from ``solve__p_entity_pre_existing.csv``.
 
     CSV layout: rows indexed by (solve, period); entity columns.  Solve
     level is collapsed — the same value applies for any solve.
     """
-    path = work_folder / "solve_data" / "p_entity_pre_existing.csv"
+    path = work_folder / "solve_data" / "solve__p_entity_pre_existing.csv"
     df = pd.read_csv(path, index_col=[0, 1])
     if df.empty:
         return {}
@@ -117,20 +118,37 @@ def _load_pre_existing(work_folder: Path) -> dict[tuple[str, str], float]:
 
 def _load_prior_existing(
     work_folder: Path,
+    *, prior_handoff: "SolveHandoff | None" = None,
 ) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float]]:
     """Return prior ``p_entity_period_existing_capacity`` + ``_invested_capacity``.
 
-    Source: the previous solve's ``solve_data/p_entity_period_existing_capacity.csv``.
-    For the first solve this file does not yet exist — return empty dicts.
+    With ``prior_handoff`` populated, read the two dicts from
+    ``realized_existing`` / ``realized_invest`` (in-memory consume side).
+    Else fall back to the previous solve's
+    ``solve_data/p_entity_period_existing_capacity.csv`` (file fallback).
+    For the first solve neither is available → return empty dicts.
     """
+    if prior_handoff is not None and (
+        prior_handoff.realized_existing is not None
+        or prior_handoff.realized_invest is not None
+    ):
+        existing: dict[tuple[str, str], float] = {}
+        invested: dict[tuple[str, str], float] = {}
+        if prior_handoff.realized_existing is not None:
+            for r in prior_handoff.realized_existing.iter_rows(named=True):
+                existing[(str(r["entity"]), str(r["period"]))] = float(r["value"])
+        if prior_handoff.realized_invest is not None:
+            for r in prior_handoff.realized_invest.iter_rows(named=True):
+                invested[(str(r["entity"]), str(r["period"]))] = float(r["value"])
+        return existing, invested
     path = work_folder / "solve_data" / "p_entity_period_existing_capacity.csv"
     if not path.exists():
         return {}, {}
     df = pd.read_csv(path)
     if df.empty:
         return {}, {}
-    existing: dict[tuple[str, str], float] = {}
-    invested: dict[tuple[str, str], float] = {}
+    existing = {}
+    invested = {}
     for _, row in df.iterrows():
         key = (str(row["entity"]), str(row["period"]))
         existing[key] = float(row["p_entity_period_existing_capacity"])
@@ -138,8 +156,19 @@ def _load_prior_existing(
     return existing, invested
 
 
-def _load_prior_divested(work_folder: Path) -> dict[str, float]:
-    """Return ``{entity: cumulative_divested}`` from prior solve, or empty."""
+def _load_prior_divested(
+    work_folder: Path,
+    *, prior_handoff: "SolveHandoff | None" = None,
+) -> dict[str, float]:
+    """Return ``{entity: cumulative_divested}`` from prior solve, or empty.
+
+    Reads from ``prior_handoff.divest_cumulative`` when populated; else
+    falls back to ``solve_data/p_entity_divested.csv``."""
+    if prior_handoff is not None and prior_handoff.divest_cumulative is not None:
+        return {
+            str(r["entity"]): float(r["value"])
+            for r in prior_handoff.divest_cumulative.iter_rows(named=True)
+        }
     path = work_folder / "solve_data" / "p_entity_divested.csv"
     if not path.exists():
         return {}
@@ -192,8 +221,8 @@ def _load_node_state(work_folder: Path) -> set[str]:
 
 
 def _load_entity(work_folder: Path) -> set[str]:
-    """Return the full ``entity`` set from ``solve_data/entity.csv``."""
-    path = work_folder / "solve_data" / "entity.csv"
+    """Return the full ``entity`` set from ``input/entity.csv``."""
+    path = work_folder / "input" / "entity.csv"
     if not path.exists():
         return set()
     df = pd.read_csv(path)
@@ -260,8 +289,8 @@ def _load_inflation_factor_operations_yearly(
     work_folder: Path,
 ) -> dict[str, float]:
     """Return ``{period: inflation_factor}`` from
-    ``solve_data/p_inflation_factor_operations_yearly.csv``."""
-    path = work_folder / "solve_data" / "p_inflation_factor_operations_yearly.csv"
+    ``solve_data/solve__p_inflation_factor_operations_yearly.csv``."""
+    path = work_folder / "solve_data" / "solve__p_inflation_factor_operations_yearly.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path)
@@ -287,11 +316,11 @@ def _load_step_duration(work_folder: Path) -> dict[tuple[str, str], float]:
 def _is_first_solve(work_folder: Path) -> bool:
     """True iff this is the first solve in the model.
 
-    Source: ``input/p_model.csv`` (long ``modelParam,p_model`` pairs)
+    Source: ``solve_data/p_model.csv`` (long ``modelParam,p_model`` pairs)
     written by ``write_solve_status``.  Same flag the GMPL writer reads
     via ``p_model['solveFirst']``.
     """
-    path = work_folder / "input" / "p_model.csv"
+    path = work_folder / "solve_data" / "p_model.csv"
     if not path.exists():
         return True
     df = pd.read_csv(path)
@@ -308,17 +337,25 @@ def _is_first_solve(work_folder: Path) -> bool:
 
 def write_p_entity_divested(
     h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
 ) -> Path:
     """Write ``solve_data/p_entity_divested.csv`` from v_divest + prior.
 
     ``cumulative_divested[e] = prior_divested[e] + sum_d v_divest[e,d] * unitsize[e]``
     over every divest period (sum_d means all (e,d) declared in ed_divest).
+
+    ``prior_handoff`` (when populated) replaces the on-disk read of the
+    parent solve's ``p_entity_divested.csv`` with the in-memory
+    ``divest_cumulative`` carrier.
     """
     out_path = work_folder / "solve_data" / "p_entity_divested.csv"
 
     entities = _load_entity_divest(work_folder)
     unitsize = _load_unitsize(work_folder)
-    prior = {} if _is_first_solve(work_folder) else _load_prior_divested(work_folder)
+    prior = (
+        {} if _is_first_solve(work_folder)
+        else _load_prior_divested(work_folder, prior_handoff=prior_handoff)
+    )
     divest_df = extract_variable(
         h, "v_divest", ("entity",), solve_name=solve_name, has_time=False,
     )
@@ -433,6 +470,7 @@ def write_p_roll_continue_state(
 
 def write_p_entity_period_existing_capacity(
     h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
 ) -> Path:
     """Write ``solve_data/p_entity_period_existing_capacity.csv``.
 
@@ -446,7 +484,7 @@ def write_p_entity_period_existing_capacity(
                  + ((e,d) in ed_invest & d in d_realize_invest → v_invest[e,d] * unitsize[e])
 
     The ``ed_history_realized`` set is read from
-    ``solve_data/ed_invest.csv`` (entity, period) for the
+    ``solve_data/solve__ed_invest.csv`` (entity, period) for the
     "(e,d) in ed_invest" predicate, plus the prior history file's keys.
     """
     out_path = work_folder / "solve_data" / "p_entity_period_existing_capacity.csv"
@@ -455,7 +493,7 @@ def write_p_entity_period_existing_capacity(
     pre_existing = _load_pre_existing(work_folder)
     prior_existing, prior_invested = (
         ({}, {}) if _is_first_solve(work_folder)
-        else _load_prior_existing(work_folder)
+        else _load_prior_existing(work_folder, prior_handoff=prior_handoff)
     )
     first_solve = _is_first_solve(work_folder)
 
@@ -497,7 +535,7 @@ def write_p_entity_period_existing_capacity(
     # ed_invest set (entity, period) — phase-1 dump.  CSV layout is
     # ``solve, entity, period`` (3 columns); we drop the solve column.
     ed_invest: set[tuple[str, str]] = set()
-    ei_path = work_folder / "solve_data" / "ed_invest.csv"
+    ei_path = work_folder / "solve_data" / "solve__ed_invest.csv"
     if ei_path.exists():
         ei_df = pd.read_csv(ei_path)
         if not ei_df.empty and {"entity", "period"}.issubset(ei_df.columns):
@@ -743,17 +781,18 @@ def write_fix_storage_usage(
 
 
 def _load_entity_class_set(work_folder: Path, set_name: str) -> list[str]:
-    """Return the ordered list of entities in ``solve_data/<set_name>.csv``.
+    """Return the ordered list of entities in ``input/<set_name>.csv``.
 
-    Column order in the dump file must match the order phase 3 would
-    use, which is the order entities appear in this set file.  The
-    resolved-set CSVs (``entity.csv``, ``process_unit.csv``,
-    ``process_connection.csv``) are written by ``flextool.mod``'s
-    ``printf`` blocks during phase 1.
+    The resolved-set CSVs (``entity.csv``, ``process_unit.csv``,
+    ``process_connection.csv``) are written by ``input_writer`` from
+    the DB and live in ``input/``.  The mod previously also re-emitted
+    them under ``solve_data/`` via ``printf`` blocks; that redundant
+    write was retired in the post-solve cleanup, so all consumers now
+    read directly from ``input/``.
 
-    Special case: ``nodeState`` is no longer dumped by the mod —
-    it's derived from ``input/p_node_type.csv`` (rows with
-    ``p_node_type == 'storage'``), preserving the original node order.
+    Special case: ``nodeState`` is derived from ``input/p_node_type.csv``
+    (rows with ``p_node_type == 'storage'``), preserving the original
+    node order.
     """
     if set_name == "nodeState":
         path = work_folder / "input" / "p_node_type.csv"
@@ -763,7 +802,7 @@ def _load_entity_class_set(work_folder: Path, set_name: str) -> list[str]:
         if df.empty or "p_node_type" not in df.columns:
             return []
         return df.loc[df["p_node_type"].astype(str) == "storage", "node"].astype(str).tolist()
-    path = work_folder / "solve_data" / f"{set_name}.csv"
+    path = work_folder / "input" / f"{set_name}.csv"
     if not path.exists():
         return []
     df = pd.read_csv(path)
@@ -801,7 +840,7 @@ def _load_edd_invest(
     work_folder: Path, roll: str,
 ) -> list[tuple[str, str, str]]:
     """Return ``[(entity, d_invest, d), ...]`` for this roll."""
-    path = work_folder / "solve_data" / "edd_invest.csv"
+    path = work_folder / "solve_data" / "solve__edd_invest.csv"
     if not path.exists():
         return []
     df = pd.read_csv(path, dtype=str)
@@ -819,7 +858,7 @@ def _load_p_entity_all_existing(
 ) -> dict[tuple[str, str], float]:
     """Return ``{(entity, period): p_entity_all_existing[e, d]}`` for the
     given roll (``solve`` column filtered)."""
-    path = work_folder / "solve_data" / "p_entity_all_existing.csv"
+    path = work_folder / "solve_data" / "solve__p_entity_all_existing.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path, index_col=[0, 1]).astype(float)
@@ -999,8 +1038,8 @@ def _write_capacity_per_period(
 
     unitsize = _load_unitsize_map(work_folder)
     existing = _load_p_entity_all_existing(work_folder, roll)
-    pd_invest = _load_pd_map(work_folder, "ed_invest.csv", roll)
-    pd_divest = _load_pd_map(work_folder, "ed_divest.csv", roll)
+    pd_invest = _load_pd_map(work_folder, "solve__ed_invest.csv", roll)
+    pd_divest = _load_pd_map(work_folder, "solve__ed_divest.csv", roll)
     edd_invest = _load_edd_invest(work_folder, roll)
     years_map = _load_years_map(work_folder, roll)
 
@@ -1115,7 +1154,7 @@ def write_entity_all_capacity(
     unitsize = _load_unitsize_map(work_folder)
     existing = _load_p_entity_all_existing(work_folder, roll)
     edd_invest = _load_edd_invest(work_folder, roll)
-    ed_divest_set = _load_pd_map(work_folder, "ed_divest.csv", roll)
+    ed_divest_set = _load_pd_map(work_folder, "solve__ed_divest.csv", roll)
     years_map = _load_years_map(work_folder, roll)
     drdi = _load_drdi(work_folder, roll)
 
@@ -1175,12 +1214,25 @@ def _bump_period_capacity(work_folder: Path, solve_name: str) -> None:
 
 def write_all_handoffs(
     h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
 ) -> list[Path]:
     """Write all six handoff files.
 
     Each writer is independent — failure on one is logged and does not
     abort the rest, mirroring :func:`write_all_variables`.
+
+    ``prior_handoff`` (when provided) sources the prior-roll state
+    (``realized_existing`` / ``realized_invest`` / ``divest_cumulative``)
+    from the in-memory ``SolveHandoff`` instead of re-reading the
+    parent solve's CSV outputs.  Forwarded to the two writers that
+    consume prior state; the remainder ignore it.
     """
+    # Writers that take ``prior_handoff`` as a kwarg.  The rest read
+    # only this-solve's state from the highs instance + work_folder.
+    _PRIOR_AWARE = (
+        write_p_entity_divested,
+        write_p_entity_period_existing_capacity,
+    )
     written: list[Path] = []
     for fn in (
         write_p_entity_divested,
@@ -1195,7 +1247,13 @@ def write_all_handoffs(
         write_node_capacity,
     ):
         try:
-            written.append(fn(h, solve_name=solve_name, work_folder=work_folder))
+            if fn in _PRIOR_AWARE:
+                written.append(fn(
+                    h, solve_name=solve_name, work_folder=work_folder,
+                    prior_handoff=prior_handoff,
+                ))
+            else:
+                written.append(fn(h, solve_name=solve_name, work_folder=work_folder))
         except Exception as exc:  # noqa: BLE001
             _logger.warning("handoff writer %s failed: %s", fn.__name__, exc)
     # Accumulate this solve's realized periods for the next roll's

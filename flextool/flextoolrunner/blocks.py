@@ -387,11 +387,39 @@ def _assign_entity_to_group(
     memberships: Iterable[tuple[str, str]],
     resolution_groups: dict[str, float],
 ) -> str | None:
-    """Return the resolution-group *entity* belongs to, or None."""
+    """Return the resolution-group *entity* belongs to, or None.
+
+    Linear scan kept for backwards compatibility with callers that pass a
+    raw membership iterable.  Hot per-entity-loop callers should build a
+    lookup once via :func:`_build_membership_index` instead — the linear
+    scan is O(M) per entity and turns the surrounding loop into O(N × M)
+    when called inside a `for entity in entities:` block.
+    """
     for g, e in memberships:
         if e == entity and g in resolution_groups:
             return g
     return None
+
+
+def _build_membership_index(
+    memberships: Iterable[tuple[str, str]],
+    resolution_groups: dict[str, float],
+) -> dict[str, str]:
+    """Pre-build {entity -> first resolution_group} so per-entity lookups
+    in `derive_blocks` go from O(M) linear scan to O(1) dict lookup.
+
+    Preserves :func:`_assign_entity_to_group`'s "first match wins"
+    semantics: when an entity appears in multiple resolution-groups, the
+    first occurrence in *memberships* iteration order wins, matching the
+    behaviour of the linear-scan helper.
+    """
+    idx: dict[str, str] = {}
+    for g, e in memberships:
+        if e in idx:
+            continue
+        if g in resolution_groups:
+            idx[e] = g
+    return idx
 
 
 def derive_blocks(
@@ -454,9 +482,13 @@ def derive_blocks(
             continue
 
     # --- Node block ----------------------------------------------------
+    # Pre-build node→group lookup once: was O(|nodes| × |gn|) linear scans
+    # per node (quadratic in entity count for models where ~every node is
+    # tagged).  Now O(|gn|) once + O(|nodes|) lookups.
+    node_membership_index = _build_membership_index(gn, resolution_groups)
     node_block: dict[str, str] = {}
     for n in nodes:
-        g = _assign_entity_to_group(n, gn, resolution_groups)
+        g = node_membership_index.get(n)
         node_block[n] = g if g is not None else DEFAULT_BLOCK
 
     # --- Process block(s) ----------------------------------------------
@@ -481,13 +513,18 @@ def derive_blocks(
         db = block_step_duration.get(b, default_step_duration)
         return a if da <= db else b
 
+    # Pre-build process→group lookup once across both unit and connection
+    # membership tables.  Was an O((|units|+|connections|) × (|gu|+|gc|))
+    # nested scan with `list(gu) + list(gc)` rebuilt every iteration.
+    process_memberships: list[tuple[str, str]] = list(gu) + list(gc)
+    process_membership_index = _build_membership_index(
+        process_memberships, resolution_groups
+    )
+
     for p in list(units) + list(connections):
-        memberships = gu if p in first_source or p in first_sink else gu
         # Check explicit unit / connection membership first (same code path —
         # both lists get scanned).
-        explicit_block = _assign_entity_to_group(
-            p, list(gu) + list(gc), resolution_groups
-        )
+        explicit_block = process_membership_index.get(p)
         if explicit_block is not None:
             process_block_in[p] = explicit_block
             process_block_out[p] = explicit_block

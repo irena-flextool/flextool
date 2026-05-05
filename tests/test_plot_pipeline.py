@@ -710,6 +710,107 @@ class TestColorTemplateForwardedToBuildFigures:
         )
 
 
+class TestSingleColLevelStackUnstack:
+    """Regression for the single-col-level stack-then-unstack quirk.
+
+    When ``_apply_dimension_rules`` stacks the only column level into the
+    row index (because a ``b/t/i`` rule lands on it), pandas collapses the
+    result to a Series; the code wraps it back via ``to_frame()`` which
+    introduces a default-named placeholder column.  If a subsequent
+    ``unstack`` adds a real col level, the placeholder lingers — leaving
+    the processed_df with one more column level than the rules string
+    accounts for, which silently strips downstream ``s``/``g``/``u`` etc.
+    rules from rendering.
+
+    The fix tags the placeholder with a sentinel level name and drops it
+    once a real col level is alongside.
+    """
+
+    def test_stack_then_unstack_preserves_single_target_col_level(self):
+        """A 1-row × 1-col config like ``[d_s, s_b]`` must produce a
+        clean 1-row × 1-col processed shape, not a phantom extra level.
+
+        Mirrors costs_discounted_p_ (category × scenario): bars per
+        scenario, categories rendered as stacks within each bar.
+        """
+        from flextool.plot_outputs.orchestrator import _apply_dimension_rules
+
+        df = pd.DataFrame(
+            {"scenA": [10.0, 20.0, 30.0], "scenB": [11.0, 22.0, 33.0]},
+            index=pd.Index(["catA", "catB", "catC"], name="category"),
+        )
+        df.columns.name = "scenario"
+
+        cfg = PlotConfig(
+            plot_name="t",
+            map_dimensions_for_plots=["d_s", "s_b"],
+        )
+        result = _apply_dimension_rules(df, cfg, (0, len(df)))
+        assert result is not None
+        processed_df, rules, chart_type, _, _ = result
+
+        # row=scenario (1 level), col=category (1 level) — no placeholder.
+        assert processed_df.index.nlevels == 1
+        assert processed_df.columns.nlevels == 1
+        assert processed_df.index.names == ["scenario"]
+        assert processed_df.columns.names == ["category"]
+        # Rules string must match the new level count (1+1=2 chars).
+        assert len(rules) == 2
+
+    def test_compute_live_plan_keeps_stack_level(self):
+        """End-to-end: the surviving col level retains its stack rule.
+
+        With the fix, ``_compute_bar_plan`` sees ``stack_levels=[0]`` and
+        renders categories as visible stacks; without the fix, the
+        phantom level shifted positions and stack_levels was empty.
+        """
+        from flextool.plot_outputs.plan import compute_live_plan
+
+        df = pd.DataFrame(
+            {"scenA": [10.0, 20.0, 30.0], "scenB": [11.0, 22.0, 33.0]},
+            index=pd.Index(["catA", "catB", "catC"], name="category"),
+        )
+        df.columns.name = "scenario"
+
+        cfg = PlotConfig(
+            plot_name="costs",
+            map_dimensions_for_plots=["d_s", "s_b"],
+        )
+        plan = compute_live_plan(df, cfg, "costs")
+        assert plan is not None
+        assert plan.chart_type == "bar"
+        # The 's' rule on category (now in col after the unstack) must
+        # be picked up as a stack level.
+        assert plan.stack_levels == [0]
+
+    def test_no_unstack_keeps_placeholder_when_safe(self):
+        """If only ``stack`` runs (no real col added by unstack), the
+        sentinel-tagged level stays — dropping it would leave 0 col
+        levels, which the figure builder doesn't expect.
+
+        This case isn't a real shipped config, but the safeguard
+        protects against future ones.
+        """
+        from flextool.plot_outputs.orchestrator import _apply_dimension_rules
+
+        df = pd.DataFrame(
+            {"scenA": [10.0, 20.0]},
+            index=pd.Index(["catA", "catB"], name="category"),
+        )
+        df.columns.name = "scenario"
+
+        cfg = PlotConfig(
+            plot_name="t",
+            map_dimensions_for_plots=["d_s", "b_b"],   # 'b' on row d → stays; 'b' on col → stack to row
+        )
+        result = _apply_dimension_rules(df, cfg, (0, len(df)))
+        # The function may return None or a valid frame — what matters
+        # is that we don't crash with a level mismatch.
+        if result is not None:
+            processed_df, *_ = result
+            assert processed_df.columns.nlevels >= 1
+
+
 class TestResolveSharedAxisBounds:
     """Regression: comparison-mode shared bounds must sum only over stack_levels.
 

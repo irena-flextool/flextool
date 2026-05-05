@@ -196,12 +196,18 @@ def _sheet_name_in_order(name: str, sheet_order: list[str]) -> bool:
 def build_sheet_specs(
     db_contents: DatabaseContents,
     settings: dict | None = None,
+    include_groups: set[str] | None = None,
 ) -> list[SheetSpec]:
     """Build the ordered list of SheetSpec objects for all Excel sheets.
 
     Args:
         db_contents: Database contents from :func:`db_reader.read_database`.
         settings: Parsed YAML settings dict, or *None* to load from disk.
+        include_groups: When given, restrict output to parameters whose
+            ``parameter_group_name`` is in the set.  Parameters without a
+            group are dropped.  Sheets whose column set goes empty are
+            dropped, unless listed under a selected group in
+            ``always_include_with_groups``.
 
     Returns:
         Ordered list of :class:`SheetSpec` objects.
@@ -642,4 +648,119 @@ def build_sheet_specs(
 
     specs.sort(key=sort_key)
 
+    # ---- 10. Optional parameter-group filter ----
+    if include_groups is not None:
+        always_include_cfg: dict[str, list[str]] = settings.get(
+            "always_include_with_groups", {}
+        ) or {}
+        specs = _filter_specs_by_groups(
+            specs, db_contents, include_groups, always_include_cfg,
+        )
+
     return specs
+
+
+def _filter_specs_by_groups(
+    specs: list[SheetSpec],
+    db_contents: DatabaseContents,
+    include_groups: set[str],
+    always_include_with_groups: dict[str, list[str]],
+) -> list[SheetSpec]:
+    """Filter specs so only parameters belonging to *include_groups* survive.
+
+    - Drops names from ``parameter_names`` and ``pre_ea_params`` whose
+      ``(class, name)`` group (per ``db_contents.param_to_group``) is not
+      in ``include_groups``.  For multi-class specs (merge / unpack), a
+      column is kept if ANY class places it in an allowed group.
+    - Drops any data-layout spec that ends up with no surviving columns,
+      unless its sheet name is listed under a selected group in
+      ``always_include_with_groups``.
+    - Keeps ``navigate``, ``scenario``, ``version`` untouched.
+    - Keeps ``link`` sheets only when every dimension class still owns a
+      retained data sheet (or the link sheet itself is force-kept).
+    """
+    always_include: set[str] = set()
+    for g in include_groups:
+        for sheet_name in always_include_with_groups.get(g, []):
+            always_include.add(sheet_name)
+
+    def _allowed(class_names: list[str], param_name: str) -> bool:
+        for c in class_names:
+            g = db_contents.param_to_group.get((c, param_name))
+            if g is not None and g in include_groups:
+                return True
+        return False
+
+    data_layouts = {"constant", "periodic", "timeseries", "stochastic", "nested_periodic"}
+    structural_layouts = {"navigate", "scenario", "version"}
+
+    # Pass 1: filter data-layout specs; defer link sheets to pass 2.
+    kept: list[SheetSpec] = []
+    deferred_links: list[SheetSpec] = []
+    retained_classes: set[str] = set()
+
+    for spec in specs:
+        if spec.layout in structural_layouts:
+            kept.append(spec)
+            continue
+        if spec.layout == "link":
+            deferred_links.append(spec)
+            continue
+        if spec.layout in data_layouts:
+            spec.parameter_names = [
+                p for p in spec.parameter_names
+                if _allowed(spec.entity_classes, p)
+            ]
+            spec.pre_ea_params = [
+                p for p in spec.pre_ea_params
+                if _allowed(spec.entity_classes, p)
+            ]
+            if (
+                spec.parameter_names
+                or spec.pre_ea_params
+                or spec.sheet_name in always_include
+            ):
+                kept.append(spec)
+                retained_classes.update(spec.entity_classes)
+            continue
+        # Unknown layouts: keep as-is (defensive).
+        kept.append(spec)
+
+    # Pass 2: link sheets are kept when:
+    #   - the sheet is in always_include, or
+    #   - the link's own entity class has parameter definitions in the
+    #     schema AND those produced a retained data sheet (i.e. the
+    #     class is in retained_classes), or
+    #   - the link's own entity class has no parameter definitions at
+    #     all (pure topology) AND every dimension class still has a
+    #     retained data sheet.
+    #
+    # The first sub-rule is what drops e.g. ``connection_node`` when its
+    # only schema parameters live in a non-selected group such as
+    # ``constraint``.  The third covers pure relationships like
+    # ``commodity_node`` and ``group_node`` — they survive while their
+    # endpoint classes own data, and disappear together with the
+    # endpoint when the endpoint's params are all filtered out.
+    class_dims: dict[str, tuple] = {
+        ec["name"]: ec["dimension_name_list"] for ec in db_contents.entity_classes
+    }
+    for spec in deferred_links:
+        if spec.sheet_name in always_include:
+            kept.append(spec)
+            continue
+        cls = spec.entity_classes[0] if spec.entity_classes else None
+        if cls is None:
+            continue
+        has_own_params = bool(db_contents.parameter_definitions.get(cls))
+        if has_own_params:
+            if cls not in retained_classes:
+                continue
+        else:
+            dims = class_dims.get(cls, ())
+            if not dims or not all(d in retained_classes for d in dims):
+                continue
+        kept.append(spec)
+
+    # Preserve the prior sort order from build_sheet_specs (specs was already
+    # sorted before this filter ran).  Re-running the same key keeps it stable.
+    return kept

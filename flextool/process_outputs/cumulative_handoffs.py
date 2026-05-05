@@ -86,6 +86,7 @@ from flextool.process_outputs.read_highs_solution import (
 
 if TYPE_CHECKING:
     import highspy
+    from flextool.flextoolrunner.solve_handoff import SolveHandoff
 
 _logger = logging.getLogger(__name__)
 
@@ -215,17 +216,32 @@ def _load_commodity_unitsize(work_folder: Path) -> dict[str, float]:
 
 def _load_prior_cum_realized_mwh(
     path: Path,
+    *, prior_handoff: "SolveHandoff | None" = None,
 ) -> dict[tuple[str, int, str], float]:
     """Return ``{(commodity, tier, period): cum_mwh}`` from the previous
-    roll's accumulator CSV.  Header-only seed → empty.
+    roll's accumulator.  Header-only seed → empty.
+
+    When ``prior_handoff`` carries a populated ``cumulative_commodity``
+    frame, that frame is the source of truth (in-memory consume side);
+    otherwise read from ``path`` (file fallback).
     """
+    if prior_handoff is not None and prior_handoff.cumulative_commodity is not None:
+        out: dict[tuple[str, int, str], float] = {}
+        for r in prior_handoff.cumulative_commodity.iter_rows(named=True):
+            try:
+                tier = int(r["tier"])
+                val = float(r["mwh"])
+            except (ValueError, TypeError):
+                continue
+            out[(str(r["commodity"]), tier, str(r["period"]))] = val
+        return out
     if not path.exists():
         return {}
     df = pd.read_csv(path)
     needed = {"commodity", "tier", "period", "p_ladder_cum_realized_mwh"}
     if df.empty or not needed.issubset(df.columns):
         return {}
-    out: dict[tuple[str, int, str], float] = {}
+    out = {}
     for _, row in df.iterrows():
         try:
             tier = int(row["tier"])
@@ -236,8 +252,18 @@ def _load_prior_cum_realized_mwh(
     return out
 
 
-def _load_prior_cum_sim_hours(path: Path) -> dict[str, float]:
-    """Return ``{period: cum_hours}`` from the previous roll's accumulator."""
+def _load_prior_cum_sim_hours(
+    path: Path,
+    *, prior_handoff: "SolveHandoff | None" = None,
+) -> dict[str, float]:
+    """Return ``{period: cum_hours}`` from the previous roll's accumulator.
+
+    Reads ``prior_handoff.cum_sim_hours`` when populated; else file fallback."""
+    if prior_handoff is not None and prior_handoff.cum_sim_hours is not None:
+        return {
+            str(r["period"]): float(r["value"])
+            for r in prior_handoff.cum_sim_hours.iter_rows(named=True)
+        }
     if not path.exists():
         return {}
     df = pd.read_csv(path)
@@ -257,16 +283,28 @@ def _load_prior_cum_sim_hours(path: Path) -> dict[str, float]:
 
 def _load_prior_co2_cum_realized_tonnes(
     path: Path,
+    *, prior_handoff: "SolveHandoff | None" = None,
 ) -> dict[tuple[str, str], float]:
     """Return ``{(group, period): cum_tonnes}`` from the previous roll's
-    CO2 accumulator CSV.  Header-only seed → empty."""
+    CO2 accumulator.  Header-only seed → empty.
+
+    Reads ``prior_handoff.cumulative_co2`` when populated; else file fallback."""
+    if prior_handoff is not None and prior_handoff.cumulative_co2 is not None:
+        out: dict[tuple[str, str], float] = {}
+        for r in prior_handoff.cumulative_co2.iter_rows(named=True):
+            try:
+                val = float(r["value"])
+            except (ValueError, TypeError):
+                continue
+            out[(str(r["group"]), str(r["period"]))] = val
+        return out
     if not path.exists():
         return {}
     df = pd.read_csv(path)
     needed = {"group", "period", "p_co2_cum_realized_tonnes"}
     if df.empty or not needed.issubset(df.columns):
         return {}
-    out: dict[tuple[str, str], float] = {}
+    out = {}
     for _, row in df.iterrows():
         try:
             val = float(row["p_co2_cum_realized_tonnes"])
@@ -444,9 +482,9 @@ def _load_pdtProcess_slope(
     work_folder: Path,
 ) -> dict[tuple[str, str], dict[str, float]]:
     """Return ``{(period, time): {process: slope}}`` from
-    ``solve_data/pdtProcess_slope.csv``.  Wide format: cols after
+    ``solve_data/solve__pdtProcess_slope.csv``.  Wide format: cols after
     (solve, period, time) are process names.  Missing → empty."""
-    path = work_folder / "solve_data" / "pdtProcess_slope.csv"
+    path = work_folder / "solve_data" / "solve__pdtProcess_slope.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path)
@@ -607,6 +645,7 @@ def write_ladder_rolling_accumulators(
     *,
     solve_name: str,
     work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
 ) -> list[Path]:
     """Write both ladder rolling accumulator CSVs.
 
@@ -637,8 +676,14 @@ def write_ladder_rolling_accumulators(
         return [mwh_path, hrs_path]
 
     first_solve = _is_first_solve(work_folder)
-    prior_mwh = {} if first_solve else _load_prior_cum_realized_mwh(mwh_path)
-    prior_hrs = {} if first_solve else _load_prior_cum_sim_hours(hrs_path)
+    prior_mwh = (
+        {} if first_solve
+        else _load_prior_cum_realized_mwh(mwh_path, prior_handoff=prior_handoff)
+    )
+    prior_hrs = (
+        {} if first_solve
+        else _load_prior_cum_sim_hours(hrs_path, prior_handoff=prior_handoff)
+    )
 
     step_duration = _load_step_duration(work_folder)
     realized_set = _load_realized_set(
@@ -885,6 +930,7 @@ def write_co2_rolling_accumulators(
     *,
     solve_name: str,
     work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
 ) -> list[Path]:
     """Write ``solve_data/co2_cum_realized_tonnes.csv`` — the CO2 cap
     rolling-window realized-emissions accumulator.
@@ -914,7 +960,9 @@ def write_co2_rolling_accumulators(
     first_solve = _is_first_solve(work_folder)
     prior = (
         {} if first_solve
-        else _load_prior_co2_cum_realized_tonnes(out_path)
+        else _load_prior_co2_cum_realized_tonnes(
+            out_path, prior_handoff=prior_handoff,
+        )
     )
 
     co2_content = _load_commodity_co2_content(work_folder)
@@ -1008,6 +1056,7 @@ def write_cumulative_handoffs(
     *,
     solve_name: str,
     work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
 ) -> list[Path]:
     """Write every cumulative-quota handoff CSV.
 
@@ -1018,12 +1067,17 @@ def write_cumulative_handoffs(
       cumulative/annual cap partitions), and
     * the CO2 rolling accumulator (v_flow-based per-period
       ``co2_max_total`` cap partition).
+
+    ``prior_handoff`` (when provided) sources the prior-roll accumulator
+    state from the in-memory ``SolveHandoff`` instead of the persistent
+    on-disk CSVs.  Default ``None`` preserves the file-based path.
     """
     written: list[Path] = []
     try:
         written.extend(
             write_ladder_rolling_accumulators(
                 h, solve_name=solve_name, work_folder=work_folder,
+                prior_handoff=prior_handoff,
             )
         )
     except Exception as exc:  # noqa: BLE001
@@ -1034,6 +1088,7 @@ def write_cumulative_handoffs(
         written.extend(
             write_co2_rolling_accumulators(
                 h, solve_name=solve_name, work_folder=work_folder,
+                prior_handoff=prior_handoff,
             )
         )
     except Exception as exc:  # noqa: BLE001

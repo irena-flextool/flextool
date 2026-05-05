@@ -1,0 +1,3 @@
+# Override the repo-wide *.csv exclusion for migration inputs.
+# These are tracked because agents read them as input.
+!*.csv

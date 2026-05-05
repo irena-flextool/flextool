@@ -1,6 +1,6 @@
 """Solve creation-order helper.
 
-Reads ``solve_data/p_entity_pre_existing.csv`` (a per-solve parameter
+Reads ``solve_data/solve__p_entity_pre_existing.csv`` (a per-solve parameter
 that's appended on every solve and that's present for every realistic
 model) to recover the order in which solves were executed.
 
@@ -21,15 +21,12 @@ import pandas as pd
 def load_solve_order(work_folder: Path | str) -> dict[str, int]:
     """Map solve names to their creation order (0-indexed).
 
-    Source: ``solve_data/p_entity_pre_existing.csv`` — appended on
+    Source: ``solve_data/solve__p_entity_pre_existing.csv`` — appended on
     every solve; unique solves in row order = creation order.
-    ``solve_progress.csv`` would be more direct but it interleaves
-    header rows (``Init time,...``) with the per-solve table, which
-    trips ``pd.read_csv``.
 
     Returns ``{}`` if the file is absent.
     """
-    path = Path(work_folder) / "solve_data" / "p_entity_pre_existing.csv"
+    path = Path(work_folder) / "solve_data" / "solve__p_entity_pre_existing.csv"
     if not path.exists():
         return {}
     df = pd.read_csv(path, usecols=["solve"])

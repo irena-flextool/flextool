@@ -30,7 +30,14 @@ def cost_summaries(par, s, v, r, debug):
     costs_dt = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
     costs_dt.columns.name = 'category'
     costs_dt['commodity_cost'] = r.cost_commodity_dt.sum(axis=1)
-    costs_dt['commodity_sales'] = r.sales_commodity_dt.sum(axis=1)
+    # Sign convention: store the LP obj contribution.  flextool.mod's
+    # commodity term is `+ price × BUY - price × SELL` (lines ~1985-2000),
+    # so the obj contribution from sales is `-r.sales_commodity_dt`
+    # — revenue shows as a negative value, matching costOper_dt's
+    # `- r.sales_commodity_dt` (calc_costs.py:158-163).  Without the
+    # negation, sum(costs_dt categories) ≠ costOper_dt + costPenalty_dt
+    # by 2×|sales|, which propagates into costs_discounted_p_.
+    costs_dt['commodity_sales'] = -r.sales_commodity_dt.sum(axis=1)
     costs_dt['co2'] = r.cost_co2_dt
     costs_dt['other operational'] = r.cost_process_other_operational_cost_dt.sum(axis=1)
     costs_dt['starts'] = r.cost_startup_dt.sum(axis=1)
@@ -52,16 +59,27 @@ def cost_summaries(par, s, v, r, debug):
     # 2. Annualized, inflation adjusted and years represented (derived from costs_dt)
     dispatch_costs_pure_period = costs_dt.groupby(level='period').sum()
     dispatch_costs_annualized_period = dispatch_costs_pure_period.div(period_share, axis=0) / to_millions
-    # Horizon-weighted NPV (discount × years_represented) — matches investment_costs
-    # so that costs_discounted_d_p can be summed across periods for the horizon total.
+    # discount_ops = inflation_factor_operations_yearly already sums
+    # (1+r)^y × p_years_represented[d,y] over the represented years of d
+    # (preprocessing/period_calculated_params.py:287-301), so multiplying
+    # by it produces the horizon-weighted NPV directly.  Multiplying by
+    # par.years_represented_d on top of that double-counts the year
+    # weighting and shows up as sum(costs_discounted) = obj × years_rep.
     dispatch_costs_inflation_adjusted = (
         dispatch_costs_annualized_period
         .mul(discount_ops, axis=0)
-        .mul(par.years_represented_d, axis=0)
     )
 
-    # 3. Discounted and inflation adjusted (with years represented) investment costs (d_realize_invest only)
-    investment_costs = pd.DataFrame(index=s.d_realize_invest, dtype=float)
+    # 3. Discounted and inflation adjusted (with years represented) investment costs.
+    # Indexed by d_realize_invest ∪ d_realized_period: invest/divest and
+    # fixed_invested/fixed_divested only have rows in d_realize_invest, but
+    # fixed-cost-pre-existing applies in every realized period (its r-series
+    # is per-period).  A bare d_realize_invest index would silently drop
+    # fixed-pre-existing for any realized period that isn't an invest period
+    # (e.g. y2020_2029_2x5y has p2020 invest + p2025 dispatch-only, and the
+    # 50/period fixed-pre-existing for p2025 was being dropped on assignment).
+    investment_index = s.d_realize_invest.union(s.d_realized_period)
+    investment_costs = pd.DataFrame(index=investment_index, dtype=float)
     investment_costs.columns.name = 'category'
     investment_costs['unit investment & retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / to_millions
     investment_costs['connection investment & retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / to_millions
@@ -70,6 +88,7 @@ def cost_summaries(par, s, v, r, debug):
     investment_costs['fixed cost invested'] = r.costFixedInvested_d / to_millions
     investment_costs['fixed cost reduction of divestments'] = r.costFixedDivested_d / to_millions
     investment_costs['capacity margin penalty'] = r.costPenalty_capacity_margin_d / to_millions
+    investment_costs = investment_costs.fillna(0.0)
 
     # Annualize back: Remove inflation adjustment and years represented
     annual_invest_costs = investment_costs.div(discount_invs, axis=0)
@@ -87,12 +106,28 @@ def cost_summaries(par, s, v, r, debug):
     summary_annualized = annual_invest_costs.join(dispatch_costs_annualized_period)
     results.append((summary_annualized, 'annualized_costs_d_p'))
 
-    # With years_represented adjusted with inflation (same as model)
-    summary_inflation_years = investment_costs.join(dispatch_costs_inflation_adjusted)
+    # With years_represented adjusted with inflation (same as model).
+    # Outer join: investment_costs is indexed by d_realize_invest (only
+    # periods where invest/divest is realized), but dispatch_costs covers
+    # d_realized_period (every realized period).  A left join on
+    # investment_costs would silently drop dispatch costs for periods
+    # without investment activity (e.g. y2020_2029_2x5y dispatches in
+    # both p2020 and p2025 but only realizes invest in p2020).
+    summary_inflation_years = investment_costs.join(
+        dispatch_costs_inflation_adjusted, how='outer'
+    ).fillna(0.0)
     results.append((summary_inflation_years, 'costs_discounted_d_p'))
 
-    # With years_represented adjusted with inflation (same as model)
-    summary_inflation_years = investment_costs.join(dispatch_costs_inflation_adjusted)
+    # With years_represented adjusted with inflation (same as model).
+    # Outer join: investment_costs is indexed by d_realize_invest (only
+    # periods where invest/divest is realized), but dispatch_costs covers
+    # d_realized_period (every realized period).  A left join on
+    # investment_costs would silently drop dispatch costs for periods
+    # without investment activity (e.g. y2020_2029_2x5y dispatches in
+    # both p2020 and p2025 but only realizes invest in p2020).
+    summary_inflation_years = investment_costs.join(
+        dispatch_costs_inflation_adjusted, how='outer'
+    ).fillna(0.0)
     results.append((summary_inflation_years.sum(axis=0), 'costs_discounted_p_'))
 
     return results

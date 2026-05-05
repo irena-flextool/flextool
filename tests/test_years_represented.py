@@ -54,15 +54,15 @@ def _run_scenario(
 
 
 def _read_inflation_factor_operations(workdir: Path) -> pd.DataFrame:
-    """Read p_inflation_factor_operations_yearly.csv from solve_data/."""
-    csv_path = workdir / "solve_data" / "p_inflation_factor_operations_yearly.csv"
+    """Read solve__p_inflation_factor_operations_yearly.csv from solve_data/."""
+    csv_path = workdir / "solve_data" / "solve__p_inflation_factor_operations_yearly.csv"
     assert csv_path.exists(), f"Missing {csv_path}"
     return pd.read_csv(csv_path)
 
 
 def _read_inflation_factor_investment(workdir: Path) -> pd.DataFrame:
-    """Read p_inflation_factor_investment_yearly.csv from solve_data/."""
-    csv_path = workdir / "solve_data" / "p_inflation_factor_investment_yearly.csv"
+    """Read solve__p_inflation_factor_investment_yearly.csv from solve_data/."""
+    csv_path = workdir / "solve_data" / "solve__p_inflation_factor_investment_yearly.csv"
     assert csv_path.exists(), f"Missing {csv_path}"
     return pd.read_csv(csv_path)
 
@@ -409,22 +409,6 @@ class TestCostScalingHalfYear:
         workdir = tmp_path_factory.mktemp("cost_half")
         os.chdir(workdir)
         return _run_scenario("coal_half_year", half_year_db_url, test_bin_dir, workdir)
-
-    def _read_objective(self, workdir: Path) -> float:
-        """Read the objective value from the solve progress CSV."""
-        csv_path = workdir / "output_raw" / "solve_progress.csv"
-        if csv_path.exists():
-            df = pd.read_csv(csv_path)
-            # Look for objective value
-            if "objective" in df.columns:
-                return df["objective"].iloc[-1]
-        # Fallback: read from the raw GLPK output
-        csv_path = workdir / "solve_data" / "solve_progress.csv"
-        if csv_path.exists():
-            df = pd.read_csv(csv_path)
-            if "objective" in df.columns:
-                return df["objective"].iloc[-1]
-        pytest.skip("Could not find objective value in solve output")
 
     def test_half_year_cost_is_half(
         self, coal_workdir: Path, half_year_workdir: Path

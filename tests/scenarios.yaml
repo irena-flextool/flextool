@@ -12,11 +12,19 @@
 
 # --- Barebone ---
 - scenario: base
+  smoke: true
   csvs:
     - node__d.csv
     - costs__dt.csv
     - summary_solve.csv
     - slack__upward__node_state__dt.csv
+  # Pure slack-penalty 2-day dispatch (no generators). Hand-derivation:
+  #   sum of `upward slack penalty` column in costs__dt.csv = 26,192,700 CUR
+  #   annualization factor = 365 / 2 (years_in_use = 2/365)
+  #   objective (M CUR) = 26,192,700 * 365/2 / 1e6 = 4780.16775
+  expected_objective: 4780.16775
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 4.0
 
 # Base + non-uniform timeset_weights = {t0001:0.25, t0002:0.75}. After
 # normalization the per-step cost weights become 0.5 and 1.5, shifting
@@ -29,6 +37,12 @@
     - node__d.csv
     - costs__dt.csv
     - summary_solve.csv
+  # Same dispatch as base, but timeset weights redistribute costs.
+  #   sum of `upward slack penalty` column in costs__dt.csv = 27,909,360 CUR
+  #   objective (M CUR) = 27,909,360 * 365/2 / 1e6 = 5093.4582
+  expected_objective: 5093.4582
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 4.0
 
 # lifetime_method = no_investment: wind_plant with lifetime 10y in a
 # multi-year horizon (p2020, p2025, p2030, p2035). The first-period
@@ -39,21 +53,35 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - summary_solve.csv
+  time_budget_seconds: 4.0
 
 - scenario: scale_to_peak_flow
   csvs:
     - node__d.csv
     - node__dt.csv
     - summary_solve.csv
+  time_budget_seconds: 4.0
 
 - scenario: capacity_margin
   csvs:
     - slack__capacity_margin__d.csv
     - summary_solve.csv
+  # Capacity-margin shortfall priced in M CUR via a high penalty.
+  # The per-period capacity-margin slack value times the penalty gives
+  # the objective (no per-time-step costs). Locked to the observed
+  # value; large magnitude (~1.6 M CUR) makes 1e-5 tolerance still tight.
+  expected_objective: 1585705.0485
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 4.0
 
 - scenario: fullYear
   csvs:
     - summary_solve.csv
+  # Full-year (8760-hour) dispatch with no generators — pure slack.
+  # Locked to observed solver objective.
+  expected_objective: 4952.685
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 4.0
 
 - scenario: fullYear_roll
   csvs:
@@ -62,15 +90,18 @@
 # --- Basic thermal dispatch ---
 
 - scenario: coal
+  smoke: true
   csvs:
     - unit__outputNode__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_chp
   csvs:
     - unit__outputNode__dt.csv
     - unit__inputNode__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 # Extraction CHP with flow_coefficient / max_capacity_coefficient split.
 # efficiency = 0.9, flow_coef {elec: 2, heat: 0.2},
@@ -84,76 +115,90 @@
     - unit__outputNode__dt.csv
     - unit__inputNode__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_co2_limit
   csvs:
     - unit__outputNode__dt.csv
     - costs__dt.csv
     - co2.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_co2_price
   csvs:
     - unit__outputNode__dt.csv
     - costs__dt.csv
     - co2.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_min_load
+  smoke: true
   csvs:
     - unit__outputNode__dt.csv
     - unit_online__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_min_load_MIP_wind
   csvs:
     - unit__outputNode__dt.csv
     - unit_online__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_min_load_wind
   csvs:
     - unit__outputNode__dt.csv
     - unit_online__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_wind_min_uptime
   csvs:
     - unit__outputNode__dt.csv
     - unit_online__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_wind_min_uptime_MIP
   csvs:
     - unit__outputNode__dt.csv
     - unit_online__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_ramp_limit
   csvs:
     - unit__outputNode__dt.csv
     - unit_ramp__outputNode__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_retire
   csvs:
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_unit_size_MIP_wind
   csvs:
     - unit__outputNode__dt.csv
     - unit_online__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_wind_ev
   csvs:
     - unit__outputNode__dt.csv
     - node_state__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: coal_wind_inertia
   csvs:
     - unit__outputNode__dt.csv
     - group_inertia__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 # --- Wind / battery / storage ---
 
@@ -162,36 +207,43 @@
     - unit__outputNode__dt.csv
     - unit_outputNode_VRE_potential__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: wind_battery
   csvs:
     - unit__outputNode__dt.csv
     - node_state__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: wind_battery_invest
+  smoke: true
   csvs:
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: wind_battery_invest_lifetime_choice
   csvs:
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: wind_battery_invest_lifetime_renew
   csvs:
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: wind_battery_invest_lifetime_renew_4solve
   csvs:
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 # --- Network scenarios ---
 
@@ -201,6 +253,7 @@
     - node__dt.csv
     - connection__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: network_all_tech
   csvs:
@@ -208,6 +261,7 @@
     - node__dt.csv
     - connection__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.5
 
 - scenario: network_coal_wind_battery_co2_fullYear_availability
   csvs:
@@ -216,6 +270,7 @@
     - connection__dt.csv
     - co2.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: network_coal_wind_battery_invest_cumulative
   csvs:
@@ -224,6 +279,7 @@
     - node_state__dt.csv
     - connection__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: network_coal_wind_capacity_margin
   csvs:
@@ -231,6 +287,7 @@
     - connection__dt.csv
     - slack__capacity_margin__d.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: network_coal_wind_reserve
   csvs:
@@ -238,6 +295,7 @@
     - connection__dt.csv
     - process__reserve__upDown__node__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: network_coal_wind_reserve_co2_capacity_margin
   csvs:
@@ -247,6 +305,7 @@
     - slack__capacity_margin__d.csv
     - co2.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: network_coal_wind_reserve_n_1
   csvs:
@@ -254,6 +313,7 @@
     - connection__dt.csv
     - process__reserve__upDown__node__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: network_wind_coal_battery_fullYear_invest
   csvs:
@@ -262,6 +322,7 @@
     - node_state__dt.csv
     - connection__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 # --- Demand response ---
 
@@ -270,18 +331,21 @@
     - unit__outputNode__dt.csv
     - node__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: dr_increase_demand
   csvs:
     - unit__outputNode__dt.csv
     - node__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: dr_shift_demand
   csvs:
     - unit__outputNode__dt.csv
     - node__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 # --- Multi-year / multi-period ---
 
@@ -291,13 +355,16 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+  time_budget_seconds: 4.0
 
 - scenario: multi_year_one_solve
+  smoke: true
   csvs:
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+  time_budget_seconds: 4.0
 
 - scenario: multi_year_one_solve_battery
   csvs:
@@ -306,6 +373,7 @@
     - node_state__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+  time_budget_seconds: 4.0
 
 - scenario: multi_year_one_solve_co2_limit
   csvs:
@@ -314,6 +382,7 @@
     - co2.csv
     - costs__dt.csv
     - costs_discounted.csv
+  time_budget_seconds: 4.0
 
 - scenario: multi_fullYear_battery
   csvs:
@@ -321,6 +390,7 @@
     - node_state__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+  time_budget_seconds: 4.0
 
 - scenario: multi_fullYear_battery_nested_24h_invest_one_solve
   csvs:
@@ -352,6 +422,16 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+  # 1x10y multi-period investment with discounting. Optimal investment
+  # in wind_plant: 0.3132 MW at p2020. Locked to observed full-horizon
+  # total cost — operational + invest + divest + fixed (pre-existing,
+  # invested, divested), same as the 2x5y variant since both cover the
+  # same 10-year horizon. Decomposition: 46.005522 commodity + 221.4396
+  # unit invest + 100 fixed pre-existing + 80.5094 fixed invested
+  # = 447.9545.
+  expected_objective: 447.954518702
+  expected_objective_tolerance: 1.0e-4
+  time_budget_seconds: 4.0
 
 - scenario: y2020_2029_2x5y
   csvs:
@@ -359,6 +439,11 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+  # 2x5y split of the same 10-year horizon as y2020_2029_1x10y; same
+  # full-horizon objective since the underlying economics are identical.
+  expected_objective: 447.954518702
+  expected_objective_tolerance: 1.0e-4
+  time_budget_seconds: 4.0
 
 # --- Full year / rolling ---
 
@@ -367,6 +452,7 @@
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 
 # --- Water / hydro ---
@@ -376,12 +462,14 @@
     - unit__outputNode__dt.csv
     - node_state__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: water_pump_delayed
   csvs:
     - unit__outputNode__dt.csv
     - node_state__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 # --- Special ---
 
@@ -389,6 +477,7 @@
   csvs:
     - unit__outputNode__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: aggregate_outputs_network_coal_wind_chp
   csvs:
@@ -396,6 +485,7 @@
     - group_flows__dt.csv
     - connection__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 # --- Comprehensive / base ---
 
@@ -404,6 +494,7 @@
     - unit__outputNode__dt.csv
     - node__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 - scenario: test_a_lot
   csvs:
@@ -413,6 +504,7 @@
     - connection__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+  time_budget_seconds: 4.0
 
 - scenario: test_a_lot_but_not_multi_year
   csvs:
@@ -421,6 +513,7 @@
     - node__dt.csv
     - connection__dt.csv
     - costs__dt.csv
+  time_budget_seconds: 4.0
 
 # --- bind_intraperiod_blocks (LTS-style block storage binding) ---
 # Battery on 5weeks (multi-block) timeset with bind_intraperiod_blocks.
@@ -433,6 +526,7 @@
     - node__dt.csv
     - costs__dt.csv
     - summary_solve.csv
+  time_budget_seconds: 4.0
 
 # --- constraint_cumulative_pre_built_capacity_coefficient + invested ---
 # Multi-year wind with a period-over-period growth cap:
@@ -449,3 +543,102 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - summary_solve.csv
+  time_budget_seconds: 4.0
+
+# --- Promoted Layer-3 regressions (2026-04-30) ---
+
+# Regression guard: hyphens in entity names (e.g. ``BRA_ARG-H2``) survived
+# DB → solve → CSV when combined with non-zero ``other_operational_cost``
+# (which forces the connection into ``pssdt_varCost_eff_connection``).
+# The original report blamed the hyphen colliding with MathProg's
+# subtraction operator; the validator that rejected hyphens was a false
+# positive. This scenario adds a parallel ``west-east-aux`` connection
+# with VOM=0.1 to ``network_coal_wind`` and locks the dispatch CSVs.
+- scenario: hyphenated_entity_names
+  csvs:
+    - connection__dt.csv
+    - costs__dt.csv
+  # network_coal_wind + west-east-aux connection with VOM=0.1.
+  #   sum(costs__dt.csv all numeric columns) = 3,004,895.90 CUR
+  #   objective (M CUR) = 3,004,895.90 * 365/2 / 1e6 = 548.39350
+  # Slightly larger tolerance — connection routing across parallel
+  # links has multiple equally-optimal solutions in dispatch.
+  expected_objective: 548.39350
+  expected_objective_tolerance: 1.0e-4
+  time_budget_seconds: 4.0
+
+# Regression guard: ``years_represented = 0.5`` correctly halves the
+# inflation factor (and therefore all annualized cost terms in the
+# objective). Before the write_years_represented fix, the factor came
+# out as 1.0 instead of 0.5.
+- scenario: years_represented_half
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+  # Hand-derivation:
+  #   sum(costs__dt.csv numeric columns) = 6,268,700 CUR
+  #   annualization (years_represented=0.5, 24h block) = 365/4
+  #   objective (M CUR) = 6,268,700 * 365/4 / 1e6 = 572.018875
+  expected_objective: 572.018875
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 4.0
+
+# Regression guard: ``years_represented = 2.5`` emits 3 width rows
+# (1, 1, 0.5) summing to 2.5. Before the ceil-based fix the trailing
+# 0.5-year row was dropped (``int(max(1.0, 2.5))`` = 2) so the factor
+# came out as 2.0 instead of 2.5.
+- scenario: years_represented_2_5
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+  # Same dispatch as years_represented_half but years_represented=2.5
+  # (5x larger). Objective therefore 5x: 572.018875 * 5 = 2860.094375.
+  expected_objective: 2860.094375
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 4.0
+
+# Regression guard: ``transfer_method = unidirectional`` resolves to
+# ``method_1way_1var_off`` end-to-end. Setting all three transmission
+# connections of ``network_coal_wind`` to unidirectional restricts each
+# to source → sink only. The ``connection__dt.csv`` golden locks the
+# directionality (no negative flows on any connection).
+- scenario: unidirectional_connection
+  csvs:
+    - connection__dt.csv
+    - costs__dt.csv
+  # network_coal_wind with all three connections unidirectional.
+  #   sum(costs__dt.csv numeric columns) = 3,209,383.27 CUR
+  #   objective (M CUR) = 3,209,383.27 * 365/2 / 1e6 = 585.71245
+  expected_objective: 585.71245
+  expected_objective_tolerance: 1.0e-4
+  time_budget_seconds: 4.0
+
+# --- Stochastic ---
+# Smoke coverage for the include_stochastics / stochastic_branches
+# pipeline. Built from the user-facing
+# ``how to example databases/stochastics.sqlite`` (exported to
+# tests/fixtures/stochastics.json). 2_day_stochastic_dispatch activates
+# stochastic branching on hydro_reservoir + wind_plant via the
+# ``add_stochastics`` group; populates period__branch with a non-trivial
+# topology and exercises the pbt_* parameter family, pd_branch_weight
+# / pdt_branch_weight normalisation, and the non-anticipativity
+# constraints. Without this entry, none of those code paths are
+# exercised by the scenario suite.
+#
+- scenario: 2_day_stochastic_dispatch
+  smoke: true
+  db_fixture: stochastic
+  csvs:
+    - costs__dt.csv
+    - summary_solve.csv
+  # Was 182.903 when pdtProfile silently dropped per-branch values
+  # (entity_period_calc_params.py read solve_data/group_process.csv
+  # which never existed; stoch_profile = {} → all branches got the
+  # realised profile). After the path fix to input/group__process.csv,
+  # the LP is constrained by min(per-branch wind profile) per step,
+  # raising thermal dispatch by ~47%.
+  expected_objective: 269.406895209
+  expected_objective_tolerance: 1.0e-4
+  time_budget_seconds: 30.0

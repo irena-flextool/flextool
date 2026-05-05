@@ -35,6 +35,8 @@ flextool-read-matpower = "flextool.cli.cmd_read_matpower:main"
 pythonpath = ["."]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "solver: marks tests that invoke a real solver (5-60s each); deselect with '-m \"not solver\"'",
+    "smoke: fast Layer-1 scenarios for the per-commit gate",
 ]
 testpaths = ["tests"]
 

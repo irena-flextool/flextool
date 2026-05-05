@@ -25,27 +25,177 @@ from flextool.gui.scenario_key import choose_output_subdir_for_write
 logger = logging.getLogger(__name__)
 
 
+_slice_probe_cache: dict[str, bool] = {}
+
+
+def _slice_exists(name: str) -> bool:
+    """Return True if a user-level systemd slice with this name is loaded.
+
+    Result is cached for the process lifetime so repeated job spawns don't
+    re-probe. Probe failures (missing systemctl, timeout) cache as False.
+    """
+    if name in _slice_probe_cache:
+        return _slice_probe_cache[name]
+    loaded = False
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "show", name, "--property=LoadState"],
+            capture_output=True, text=True, timeout=2.0, check=False,
+        )
+        loaded = "LoadState=loaded" in result.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        loaded = False
+    _slice_probe_cache[name] = loaded
+    if not loaded:
+        logger.warning(
+            "FLEXTOOL_SLICE=%s requested but slice is not loaded; "
+            "running without slice isolation.", name,
+        )
+    return loaded
+
+
+def _wrap_linux(
+    cmd: list[str],
+    estimate_gb: float,
+) -> tuple[list[str], dict, Callable[[subprocess.Popen], object | None] | None]:
+    """Wrap via systemd-run user scope with MemoryHigh/MemoryMax + slice."""
+    if not shutil.which("systemd-run"):
+        return cmd, {}, None
+    wrapped = ["systemd-run", "--user", "--scope", "--quiet"]
+    slice_name = os.environ.get("FLEXTOOL_SLICE")
+    if slice_name and _slice_exists(slice_name):
+        wrapped.append(f"--slice={slice_name}")
+    if estimate_gb > 0:
+        cap_mb = int(estimate_gb * 1024)
+        wrapped.extend([
+            "-p", f"MemoryHigh={int(cap_mb * 0.9)}M",
+            "-p", f"MemoryMax={cap_mb}M",
+        ])
+    wrapped.append("--")
+    wrapped.extend(cmd)
+    return wrapped, {}, None
+
+
+def _wrap_windows(
+    cmd: list[str],
+    estimate_gb: float,
+) -> tuple[list[str], dict, Callable[[subprocess.Popen], object | None] | None]:
+    """Wrap via Windows Job Object with JobMemoryLimit (hard kill on overrun).
+
+    The Job Object handle returned by the post-spawn callback MUST be kept
+    alive (stored on the ExecutionJob) until the child exits — closing the
+    last handle releases the limit.
+    """
+    if estimate_gb <= 0:
+        return cmd, {}, None
+    try:
+        import win32job  # noqa: F401  (probe import; real use inside post_spawn)
+    except ImportError:
+        logger.warning(
+            "pywin32 not available; Windows JobObject memory cap disabled "
+            "(MemoryWatchdog still applies)."
+        )
+        return cmd, {}, None
+
+    cap_bytes = int(estimate_gb * (1024 ** 3))
+
+    def post_spawn(proc: subprocess.Popen) -> object | None:
+        try:
+            import win32api
+            import win32con
+            import win32job
+            job = win32job.CreateJobObject(None, "")
+            info = win32job.QueryInformationJobObject(
+                job, win32job.JobObjectExtendedLimitInformation,
+            )
+            info["BasicLimitInformation"]["LimitFlags"] |= (
+                win32job.JOB_OBJECT_LIMIT_JOB_MEMORY
+            )
+            info["JobMemoryLimit"] = cap_bytes
+            win32job.SetInformationJobObject(
+                job, win32job.JobObjectExtendedLimitInformation, info,
+            )
+            handle = win32api.OpenProcess(
+                win32con.PROCESS_SET_QUOTA | win32con.PROCESS_TERMINATE,
+                False, proc.pid,
+            )
+            try:
+                win32job.AssignProcessToJobObject(job, handle)
+            finally:
+                win32api.CloseHandle(handle)
+            return job
+        except Exception:
+            logger.exception(
+                "Failed to apply Windows JobObject memory cap to pid %d", proc.pid
+            )
+            return None
+
+    return cmd, {}, post_spawn
+
+
+def _wrap_macos(
+    cmd: list[str],
+    estimate_gb: float,
+) -> tuple[list[str], dict, Callable[[subprocess.Popen], object | None] | None]:
+    """Wrap via setrlimit(RLIMIT_AS) in the child preexec.
+
+    RLIMIT_AS caps the child's *virtual address space* — approximate compared
+    to RSS, but it is the best built-in mechanism on macOS. The watchdog
+    remains the cross-platform safety net for cases this misses.
+    """
+    if estimate_gb <= 0:
+        return cmd, {}, None
+    cap_bytes = int(estimate_gb * (1024 ** 3))
+
+    def _set_rlimit() -> None:
+        try:
+            import resource
+            resource.setrlimit(resource.RLIMIT_AS, (cap_bytes, cap_bytes))
+        except (ValueError, OSError, ImportError):
+            # preexec runs after fork before exec; logging here is unsafe.
+            # Failure just means watchdog is the only line of defence.
+            pass
+
+    return cmd, {"preexec_fn": _set_rlimit}, None
+
+
 def _wrap_for_memory_cap(
     cmd: list[str],
     estimate_gb: float,
 ) -> tuple[list[str], dict, Callable[[subprocess.Popen], object | None] | None]:
-    """Wrap a command for cgroup-scoped soft memory pressure (Linux only).
+    """Wrap a command so the OS enforces a per-job memory cap.
 
-    On Linux, runs the command inside a transient systemd user scope so it
-    can be monitored as a unit. If estimate_gb > 0, sets MemoryHigh (soft
-    throttle) at that level. There is no MemoryMax / hard cap — actual
-    enforcement is global, via MemoryWatchdog.
+    Returns a triple ``(wrapped_cmd, popen_extras, post_spawn)``:
 
-    On macOS and Windows, returns the command unchanged (watchdog enforces).
+    * ``wrapped_cmd`` — argv to hand to ``subprocess.Popen``.
+    * ``popen_extras`` — kwargs to merge into the ``Popen`` call (e.g.
+      ``preexec_fn`` on macOS).
+    * ``post_spawn`` — optional callable invoked with the spawned ``Popen``;
+      its return value (e.g. a Windows JobObject handle) MUST be retained
+      by the caller until the child exits, or the cap is released.
+
+    Per-platform mechanism:
+
+    * Linux: transient ``systemd-run --user --scope`` with
+      ``MemoryHigh`` (soft throttle, 90% of cap) + ``MemoryMax`` (hard kill).
+      When ``FLEXTOOL_SLICE`` names a loaded user slice, the scope is placed
+      in that slice for additional isolation (e.g. ``heavy.slice``).
+    * Windows: Job Object with ``JOB_OBJECT_LIMIT_JOB_MEMORY`` set to the
+      cap; kernel terminates the job when the limit is exceeded. Requires
+      pywin32; without it, falls back to watchdog-only.
+    * macOS: ``setrlimit(RLIMIT_AS)`` in the child preexec — caps virtual
+      address space rather than RSS, so it is approximate.
+
+    ``MemoryWatchdog`` is the cross-platform backstop in every case.
     """
-    if sys.platform.startswith("linux") and shutil.which("systemd-run"):
-        wrapped = ["systemd-run", "--user", "--scope", "--quiet"]
-        if estimate_gb > 0:
-            wrapped.extend(["-p", f"MemoryHigh={int(estimate_gb * 1024)}M"])
-        wrapped.append("--")
-        wrapped.extend(cmd)
-        return wrapped, {}, None
-
+    if estimate_gb < 0:
+        estimate_gb = 0
+    if sys.platform.startswith("linux"):
+        return _wrap_linux(cmd, estimate_gb)
+    if sys.platform == "win32":
+        return _wrap_windows(cmd, estimate_gb)
+    if sys.platform == "darwin":
+        return _wrap_macos(cmd, estimate_gb)
     return cmd, {}, None
 
 
@@ -215,6 +365,10 @@ class ExecutionJob:
     peak_rss_mb: float = 0.0         # high-water mark, fed by MemoryWatchdog
     killed_for_memory: bool = False  # set by watchdog just before SIGTERM
     kill_reason: str = ""  # populated by watchdog: "exceeded estimate" / "global memory pressure" / "global swap pressure"
+    # Opaque per-platform handle returned by `_wrap_for_memory_cap` post_spawn
+    # (e.g. Windows Job Object). Must outlive the Popen, else the cap is
+    # released when the last handle closes. None on platforms that don't need it.
+    memory_cap_handle: object | None = None
 
 
 class ExecutionManager:
@@ -702,6 +856,7 @@ class ExecutionManager:
             )
             popen_kwargs.update(popen_extras)
             proc = subprocess.Popen(wrapped_cmd, **popen_kwargs)
+            cap_handle = post_spawn(proc) if post_spawn is not None else None
             killed = False
             with self._lock:
                 # Check if killed while we were setting up
@@ -709,6 +864,7 @@ class ExecutionManager:
                     killed = True
                 else:
                     job.process = proc
+                    job.memory_cap_handle = cap_handle
 
             if killed:
                 proc.kill()
@@ -883,13 +1039,22 @@ class ExecutionManager:
 
         comp = settings.comparison_plot_settings
 
-        if comp.config_file:
-            cmd.extend(["--output-config-path", comp.config_file])
+        # Self-heal stale settings still pointing at the removed
+        # default_comparison_plots.yaml — comparison rendering now lives
+        # in default_plots.yaml.
+        cfg_file = comp.config_file
+        if cfg_file and cfg_file.endswith("default_comparison_plots.yaml"):
+            cfg_file = cfg_file.replace(
+                "default_comparison_plots.yaml", "default_plots.yaml",
+            )
+
+        if cfg_file:
+            cmd.extend(["--output-config-path", cfg_file])
 
         active = comp.active_configs
         if not active:
             from flextool.gui.config_parser import parse_plot_configs
-            config_file = comp.config_file or "templates/default_comparison_plots.yaml"
+            config_file = cfg_file or "templates/default_plots.yaml"
             config_path = Path(config_file)
             if not config_path.is_absolute():
                 config_path = Path(__file__).resolve().parent.parent.parent / config_file
@@ -944,8 +1109,10 @@ class ExecutionManager:
             )
             popen_kwargs.update(popen_extras)
             proc = subprocess.Popen(wrapped_cmd, **popen_kwargs)
+            cap_handle = post_spawn(proc) if post_spawn is not None else None
             with self._lock:
                 job.process = proc
+                job.memory_cap_handle = cap_handle
             assert proc.stdout is not None
             for line in proc.stdout:
                 stripped = line.rstrip("\n")

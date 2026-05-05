@@ -1860,6 +1860,95 @@ def write_input(
         _validate_ladder_methods(db, logger)
         _write_commodity_ladder_cumulative(db, wf, logger)
         _write_commodity_ladder_annual(db, wf, logger)
+        # Migrated from flextool.mod:468-470 — commodity_with_ladder*
+        # filtered subsets used to be derived inside MathProg via setof
+        # filters on p_commodity_price_method. Computed in Python for
+        # cheaper matrix generation; loaded back via table data IN.
+        from flextool.flextoolrunner.preprocessing import (
+            commodity_ladder_sets,
+            period_param_sets,
+            invest_method_sets,
+            co2_method_sets,
+            simple_projections,
+            node_type_sets,
+            method_with_fallback_sets,
+            nonsync_sets,
+        )
+        input_dir = wf / "input"
+        solve_data_dir = wf / "solve_data"
+        commodity_ladder_sets.write_commodity_ladder_sets(
+            _get_commodity_price_methods(db), solve_data_dir,
+        )
+        # L0 Batch 1: simple projections / filters of already-written
+        # input/*.csv tables. Each function reads a CSV that the spec-
+        # driven write_parameter loop above produced and writes a
+        # solve_data/*.csv that flextool.mod loads via table data IN.
+        period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
+        invest_method_sets.write_invest_method_sets(input_dir, solve_data_dir)
+        co2_method_sets.write_co2_method_sets(input_dir, solve_data_dir)
+        simple_projections.write_optional_yes(input_dir, solve_data_dir)
+        simple_projections.write_reserve_upDown_group(input_dir, solve_data_dir)
+        simple_projections.write_group_loss_share(input_dir, solve_data_dir)
+        # L0 Batch 2: harder operation types — defaults flow, joining
+        # with global-empty fallback, quadratic-style joining.
+        node_type_sets.write_node_type_sets(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_entity_lifetime_method(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_process_ct_method(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_process_startup_method(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_node_inflow_method(input_dir, solve_data_dir)
+        method_with_fallback_sets.write_node_storage_binding_method(input_dir, solve_data_dir)
+        nonsync_sets.write_process_group_inside_group_nonsync(input_dir, solve_data_dir)
+        nonsync_sets.write_process__sink_nonSync(input_dir, solve_data_dir)
+        # L0 Batch 3: union sets + first calculated-param migration.
+        from flextool.flextoolrunner.preprocessing import (
+            union_sets, entity_total_caps,
+        )
+        union_sets.write_group_entity(input_dir, solve_data_dir)
+        union_sets.write_process_delayed__duration(input_dir, solve_data_dir)
+        entity_total_caps.write_entity_total_caps(input_dir, solve_data_dir)
+        # L0 Batch 4: bulk simple/method-driven sets — process_*_to_*
+        # family, profile-method joins, reserve-method partitions,
+        # structural filters, and the remaining trivial setof projections.
+        # All upstream sources live in input/ so these run at write_input
+        # time alongside the earlier batches.
+        from flextool.flextoolrunner.preprocessing import (
+            process_method_sets,
+            reserve_method_partitions,
+            structural_filters,
+        )
+        process_method_sets.write_process_method_projections(input_dir, solve_data_dir)
+        process_method_sets.write_process_VRE(input_dir, solve_data_dir)
+        process_method_sets.write_process_arc_method_joins(input_dir, solve_data_dir)
+        process_method_sets.write_process_profile_method_joins(input_dir, solve_data_dir)
+        reserve_method_partitions.write_reserve_partitions(input_dir, solve_data_dir)
+        structural_filters.write_connection_param(input_dir, solve_data_dir)
+        structural_filters.write_nodegroup_dispatch_node(input_dir, solve_data_dir)
+        structural_filters.write_commodity_node_co2(input_dir, solve_data_dir)
+        structural_filters.write_process__commodity__node(input_dir, solve_data_dir)
+        structural_filters.write_process_coeff_zero_sets(input_dir, solve_data_dir)
+        simple_projections.write_def_optional_yes(input_dir, solve_data_dir)
+        simple_projections.write_process_delayed(input_dir, solve_data_dir)
+        simple_projections.write_process_side(solve_data_dir)
+        simple_projections.write_simple_setof_projections(input_dir, solve_data_dir)
+        # L0 batch 6: late projections that depend on already-Python-driven
+        # solve_data CSVs (must run AFTER the calls above).
+        simple_projections.write_period_solve(solve_data_dir)
+        simple_projections.write_time_set(input_dir, solve_data_dir)
+        simple_projections.write_enable_optional_outputs(solve_data_dir)
+        simple_projections.write_node_state_subsets(solve_data_dir)
+        simple_projections.write_commodity_tier_sets(input_dir, solve_data_dir)
+        # L0 batch 9: DC angle bounds (calculated per-DC-node param).
+        from flextool.flextoolrunner.preprocessing import dc_angle_bounds, invest_total_sets
+        dc_angle_bounds.write_dc_angle_bounds(input_dir, solve_data_dir)
+        # L1 batch 10: invest/divest *_total filters + cumulative ladder index.
+        invest_total_sets.write_invest_total_sets(input_dir, solve_data_dir)
+        invest_total_sets.write_ci_ladder_cumulative(input_dir, solve_data_dir)
+        # L1 batch 11: process arc unions + co2/group set.
+        from flextool.flextoolrunner.preprocessing import process_arc_unions
+        process_arc_unions.write_process_arc_unions(input_dir, solve_data_dir)
+        process_arc_unions.write_group_commodity_node_period_co2_total(input_dir, solve_data_dir)
+        # L1 batch 12: *_in_use sets driven by per-class param taxonomy.
+        process_arc_unions.write_param_in_use_sets(input_dir, solve_data_dir)
 
         # Validate capacity margin groups: storage nodes are excluded from capacity margin
         capacity_margin_groups: dict[str, list[str]] = {}

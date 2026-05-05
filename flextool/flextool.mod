@@ -26,26 +26,26 @@ set period_time '(d, t) - Time steps in the time periods of the whole timeline' 
 set period__time_first within period_time;
 set period__time_last within period_time;
 set solve_period_timeset '(solve, d, tb) - All solve, period, timeset combinations in the model instance' dimen 3;
-set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeset} (s, d);
+set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' dimen 2;  # Migrated to Python (preprocessing/simple_projections.py).
 set period_capacity;  # Periods for which capacities have been already been output
-set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
+set period_solve 'picking up periods from solve_period';  # Migrated to Python (preprocessing/simple_projections.py).
 set solve_current 'current solve name' dimen 1;
 set period_from_model dimen 1;
-set period_from_period_time := setof {(d, t) in period_time} (d);
-set period 'd - Time periods in the current solve' := period_from_model union period_from_period_time;
+set period_from_period_time;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set period 'd - Time periods in the current solve';  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period_first dimen 1 within period;
 set period_last dimen 1 within period;
 set branch_all dimen 1;
 set time_branch_all dimen 1;
 set period__branch dimen 2 within {period, period};
-set branch := setof{(d,b) in period__branch}(b);
+set branch;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period__year dimen 2;
-set year 'y - Years for discount calculations' := setof{(d, y) in period__year}(y);
+set year 'y - Years for discount calculations';  # Migrated to Python (preprocessing/per_solve_sets.py).
 set timeline__timestep__duration dimen 3;
-set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline__timestep__duration} (t);
+set time 't - Time steps in the current timelines';  # Migrated to Python (preprocessing/simple_projections.py).
 set timeset__timeline dimen 2;
-set timeline := setof{(tb, tl) in timeset__timeline} (tl);
-set period__timeline := {d in period, tl in timeline : sum{(s, d, tb) in solve_period_timeset : s in solve_current && (tb, tl) in timeset__timeline} 1};
+set timeline;  # Migrated to Python (preprocessing/simple_projections.py).
+set period__timeline dimen 2;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
 set ct_method;
@@ -104,13 +104,13 @@ set groupTimeParam within groupParam;
 set exclude_entity_outputs;
 set def_optional_outputs dimen 2;
 set optional_outputs dimen 2;
-set optional_yes:= setof{(output,value) in optional_outputs: value == 'yes'}(output);
-set def_optional_yes := setof{(output,value) in def_optional_outputs: value == 'yes' && (output,'no') not in optional_outputs}(output);
-set enable_optional_outputs := optional_yes union def_optional_yes;
+set optional_yes;  # Migrated to Python (preprocessing/simple_projections.py); loaded via table data IN below.
+set def_optional_yes;  # Migrated to Python (preprocessing/simple_projections.py).
+set enable_optional_outputs;  # Migrated to Python (preprocessing/simple_projections.py).
 
 set reserve__upDown__group__method dimen 4;
-set reserve__upDown__group := setof {(r, ud, g, m) in reserve__upDown__group__method : m <> 'no_reserve'} (r, ud, g);
-set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng, r_m) in reserve__upDown__group__method} (r);
+set reserve__upDown__group dimen 3;  # Migrated to Python (preprocessing/simple_projections.py); loaded via table data IN below.
+set reserve 'r - Categories for the reservation of capacity_existing';  # Migrated to Python (preprocessing/reserve_method_partitions.py).
 set reserve__upDown__group__reserveParam__time dimen 5 within {reserve, upDown, group, reserveTimeParam, time};
 
 set group__param dimen 2 within {group, groupParam};
@@ -121,12 +121,15 @@ set commodity__param__period dimen 3; # within {commodity, commodityPeriodParam,
 set commodity__param__time dimen 3; # within {commodity, commodityTimeParam, time};
 set process__param__period dimen 3; # within {process, processPeriodParam, periodAll};
 
-set period_group 'picking up periods from group data' := setof {(n, param, d) in group__param__period} (d);
-set period_node 'picking up periods from node data' := setof {(n, param, d) in node__param__period} (d);
-set period_commodity 'picking up periods from commodity data' := setof {(n, param, d) in commodity__param__period} (d);
-set period_process 'picking up periods from process data' := setof {(n, param, d) in process__param__period} (d);
+# period_* sets migrated to Python (preprocessing/period_param_sets.py).
+# Each is the projection of the period column out of the corresponding
+# pd_<class>.csv file written by input_writer.write_parameter.
+set period_group 'picking up periods from group data';
+set period_node 'picking up periods from node data';
+set period_commodity 'picking up periods from commodity data';
+set period_process 'picking up periods from process data';
 
-set periodAll 'd - Time periods in data (including those currently in use)' := period_group union period_node union period_commodity union period_process union period_solve union branch;
+set periodAll 'd - Time periods in data (including those currently in use)';  # Migrated to Python (preprocessing/per_solve_sets.py).
 
 
 param p_group {g in group, groupParam} default 0;
@@ -172,35 +175,35 @@ set co2_max_period_method within co2_method;
 set co2_max_total_method within co2_method;
 set price_method 'methods available for commodity price/ladder';
 set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
-set entityDivest := setof {(e, m) in entity__invest_method : m not in divest_method_not_allowed} (e);
-set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
+set entityDivest;  # Migrated to Python (preprocessing/invest_method_sets.py).
+set entityInvest;  # Migrated to Python (preprocessing/invest_method_sets.py).
 set entity__lifetime_method_read dimen 2 within {entity, lifetime_method};
-set entity__lifetime_method 'the lifetime method applied to an entity' :=
-    {e in entity, m in lifetime_method : (e, m) in entity__lifetime_method_read || (sum{(e, m2) in entity__lifetime_method_read} 1 = 0 && m in lifetime_method_default)};
-param investableEntities := sum{e in entityInvest} 1;
+set entity__lifetime_method 'the lifetime method applied to an entity' dimen 2;  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 set group__invest_method 'the investment method applied to a group' dimen 2 within {group, invest_method};
-set group_invest := setof {(g, m) in group__invest_method : m not in invest_method_not_allowed} (g);
-set group_divest := setof {(g, m) in group__invest_method : m not in divest_method_not_allowed} (g);
+set group_invest;  # Migrated to Python (preprocessing/invest_method_sets.py).
+set group_divest;  # Migrated to Python (preprocessing/invest_method_sets.py).
 set group__co2_method 'the investment method applied to a group' dimen 2 within {group, co2_method};
-set group_co2_price := setof {(g, m) in group__co2_method : m in co2_price_method} (g);
-set group_co2_max_period := setof {(g, m) in group__co2_method : m in co2_max_period_method} (g);
-set group_co2_max_total := setof {(g, m) in group__co2_method : m in co2_max_total_method} (g);
+set group_co2_price;       # Migrated to Python (preprocessing/co2_method_sets.py).
+set group_co2_max_period;  # Migrated to Python (preprocessing/co2_method_sets.py).
+set group_co2_max_total;   # Migrated to Python (preprocessing/co2_method_sets.py).
 set node_type 'enum universe of node_type values';
 param p_node_type {n in node} symbolic in node_type, default 'balance';
-set nodeCommodity      := {n in node : p_node_type[n] = 'commodity'};
-set nodeBalance        := {n in node : p_node_type[n] = 'balance' || p_node_type[n] = 'storage'};
-set nodeState          := {n in node : p_node_type[n] = 'storage'};
-set nodeBalancePeriod  := {n in node : p_node_type[n] = 'balance_within_period'};
+# node-type partitions migrated to Python (preprocessing/node_type_sets.py).
+# Default 'balance' on p_node_type is materialized in Python — every node
+# in input/node.csv is assigned its explicit type or 'balance' before the
+# four sets below are written to solve_data/.
+set nodeCommodity;
+set nodeBalance;
+set nodeState;
+set nodeBalancePeriod;
 set inflow_method 'method for scaling the inflow';
 set inflow_method_default within inflow_method;
 set node__inflow_method_read 'method for scaling the inflow applied to a node' within {node, inflow_method};
-set node__inflow_method dimen 2 within {node, inflow_method} :=
-    {n in node, m in inflow_method : (n, m) in node__inflow_method_read || (sum{(n, m2) in node__inflow_method_read} 1 = 0 && m in inflow_method_default)};
+set node__inflow_method dimen 2 within {node, inflow_method};  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 set storage_binding_method 'methods for binding storage state between periods';
 set storage_binding_method_default within storage_binding_method;
 set node__storage_binding_method_read within {node, storage_binding_method};
-set node__storage_binding_method dimen 2 within {node, storage_binding_method} :=
-    {n in node, m in storage_binding_method : (n, m) in node__storage_binding_method_read || (sum{(n, m2) in node__storage_binding_method_read} 1 = 0 && m in storage_binding_method_default)};
+set node__storage_binding_method dimen 2 within {node, storage_binding_method};  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 set storage_start_end_method 'method to fix start and/or end value of storage in a model run';
 set node__storage_start_end_method within {node, storage_start_end_method};
 set storage_solve_horizon_method 'methods to set reference value or price for the end of horizon storage state';
@@ -215,9 +218,9 @@ set rp_base_first 'first base period start timestep' dimen 1;
 set rp_base_last 'last base period start timestep' dimen 1;
 set rp_block_first 'first timestep of each RP block (period, step)' dimen 2;
 set rp_block_last 'last timestep of each RP block (period, step)' dimen 2;
-set rp_base_period := setof{(b, r) in rp_base__rep}(b);
-set rp_rep_period := setof{(b, r) in rp_base__rep}(r);
-set nodeState_rp := {n in nodeState : (n, 'bind_using_blended_weights') in node__storage_binding_method};
+set rp_base_period;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set rp_rep_period;   # Migrated to Python (preprocessing/per_solve_sets.py).
+set nodeState_rp;  # Migrated to Python (preprocessing/simple_projections.py::write_node_state_subsets).
 
 # Intraperiod-blocks sets (bind_intraperiod_blocks storage binding method).
 # Block = maximal contiguous run of active timesteps in the timeline. The Python
@@ -226,8 +229,8 @@ set nodeState_rp := {n in nodeState : (n, 'bind_using_blended_weights') in node_
 # within its period).
 set period_block_time 'active timestep tagged with its block (period, block_first, step)' dimen 3;
 set period_block_succ 'cyclic block successor within a period (period, block_first, block_first_next)' dimen 3;
-set period_block := setof {(d, b, t) in period_block_time} (d, b);
-set nodeStateBlock := {n in nodeState : (n, 'bind_intraperiod_blocks') in node__storage_binding_method};
+set period_block dimen 2;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set nodeStateBlock;  # Migrated to Python (preprocessing/simple_projections.py::write_node_state_subsets).
 
 # Temporal-resolution block abstraction (Agents 1.1/1.2): per-entity resolution
 # classes.  A node's balance equation is emitted at the node's block; a
@@ -236,7 +239,7 @@ set nodeStateBlock := {n in nodeState : (n, 'bind_intraperiod_blocks') in node__
 # case (no group has new_stepduration set) everything maps to block "default".
 # Declarations are inert in this agent — Agents 1.3+ consume them.
 set node__block 'per-node block assignment' dimen 2;
-set process_side 'source/sink side label' := {'source', 'sink'};
+set process_side 'source/sink side label';  # Migrated to Python (preprocessing/simple_projections.py).
 set process__side__block 'per-process per-side block assignment' dimen 3;
 # Agent 1.6: per-process unified block used by UC (online/startup/shutdown),
 # ramp and profile constraints.  Equals the process's explicit resolution-
@@ -266,43 +269,31 @@ set block_dtttdt 'per-block predecessor relations' dimen 7;
 set block__period__time_first 'per-block period first step' dimen 3;
 set block__period__time_last 'per-block period last step' dimen 3;
 # Block set derived from the union of blocks referenced in the four CSVs.
-set block 'temporal-resolution classes for nodes and processes'
-    := setof {(n, b) in node__block} (b)
-       union setof {(p, s, b) in process__side__block} (b)
-       union setof {(p, b) in process__block} (b)
-       union setof {(b, d, t) in block__period__step} (b)
-       union setof {(d, bc, tc, bf, tf) in overlap} (bc)
-       union setof {(d, bc, tc, bf, tf) in overlap} (bf);
+set block 'temporal-resolution classes for nodes and processes';  # Migrated to Python (preprocessing/per_solve_sets.py).
 
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
 set group_process_node 'process__nodes of a particular group' dimen 3 within {group, process, node};
-set group_entity := group_process union group_node;
+set group_entity dimen 2;  # Migrated to Python (preprocessing/union_sets.py).
 set groupInertia 'node groups with an inertia constraint' within group;
 set groupNonSync 'node groups with a non-synchronous constraint' within group;
 set groupCapacityMargin 'node groups with a capacity margin' within group;
 set nodeGroupIndicators 'groups that output node-group indicators' within group;
 set flowGroupIndicators 'groups that output flow-group indicators' within group;
 set nodeGroupDispatch 'groups that will output the node-group dispatch table' within group;
-set nodeGroupDispatch_node 'dispatch groups with node members' :=
-    {g in nodeGroupDispatch : sum{(g, n) in group_node} 1 };
+set nodeGroupDispatch_node 'dispatch groups with node members';  # Migrated to Python (preprocessing/structural_filters.py).
 set flowAggregator 'groups that aggregate flows into a node-group dispatch' within group;
 
 set group__loss_share_type dimen 2;
-set group_loss_share 'group that share the loss of load (upward penalty)' := setof {(g, loss_share_type) in group__loss_share_type} (g);
+set group_loss_share 'group that share the loss of load (upward penalty)';  # Migrated to Python (preprocessing/simple_projections.py).
 
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
 set process__ct_method_read dimen 2 within {process, ct_method};
-set process__ct_method dimen 2 within {process, ct_method} :=
-    {p in process, m in ct_method
-	   : (p, m) in process__ct_method_read
-	   || (sum{(p, m2) in process__ct_method_read} 1 = 0 && p in process_connection && m in ct_method_regular)
-	   || (sum{(p, m2) in process__ct_method_read} 1 = 0 && p in process_unit && m in ct_method_constant)};
+set process__ct_method dimen 2 within {process, ct_method};  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 set process__startup_method_read dimen 2 within {process, startup_method} default {p in process, 'no_startup'} ;
-set process__startup_method dimen 2 within {process, startup_method}:=
-    {p in process, m in startup_method : (p, m) in process__startup_method_read || (sum{(p, m2) in process__startup_method_read} 1 = 0 && m in startup_method_no)};
+set process__startup_method dimen 2 within {process, startup_method};  # Migrated to Python (preprocessing/method_with_fallback_sets.py).
 set process_node_ramp_method dimen 3 within {process, node, ramp_method};
 set methods dimen 4;
 set process__profile__profile_method dimen 3 within {process, profile, profile_method};
@@ -312,6 +303,10 @@ set process_sink dimen 2 within {process, entity};
 
 set process__sink_nonSync_unit dimen 2 within {process, node};
 set process_nonSync_connection dimen 1 within {process};
+# Migrated to Python (preprocessing/nonsync_sets.py); original derivation
+# replaced with this forward declaration so it precedes its table data IN
+# reader. See flextool.mod:2017+ comment for the original mod logic.
+set process__group_inside_group_nonSync dimen 2;
 
 set node_dc_power_flow 'nodes participating in DC power flow' within node;
 set connection_dc_power_flow 'connections with DC power flow angle constraints' within process_connection;
@@ -342,43 +337,44 @@ set commodity__tier_cum dimen 2;
 # reader can safely emit multiple rows per (c, tier) without triggering
 # a "duplicate tuple" error.
 set commodity__tier__period_ann dimen 3;
-set commodity__tier_ann := setof {(c, i, d) in commodity__tier__period_ann} (c, i);
-set commodity__tier := commodity__tier_cum union commodity__tier_ann;
-set tier := setof {(c, i) in commodity__tier} (i);
+set commodity__tier_ann dimen 2;  # Migrated to Python (preprocessing/simple_projections.py::write_simple_setof_projections).
+set commodity__tier dimen 2;  # Migrated to Python (preprocessing/simple_projections.py::write_commodity_tier_sets).
+set tier;                     # Migrated to Python (preprocessing/simple_projections.py::write_commodity_tier_sets).
 
 set dt dimen 2 within period_time;
 param dt_jump {(d, t) in dt};
 set dtttdt dimen 6;
-set dtt := setof {(d, t, t_previous, previous_within_timeset, previous_period, previous_within_solve) in dtttdt} (d, t, t_previous);
+set dtt dimen 3;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period_invest dimen 1 within period;
 set d_realize_invest dimen 1 within period;
 set period_with_history dimen 1 within periodAll;
 param p_period_from_solve{period_with_history};
-set time_in_use := setof {(d, t) in dt} (t);
-set period_in_use := setof {(d, t) in dt} (d);
+set time_in_use;    # Migrated to Python (preprocessing/per_solve_sets.py).
+set period_in_use;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set period_first_of_solve dimen 1 within period;
 
 set dt_realize_dispatch_input dimen 2 within period_time;
-set dt_realize_dispatch := if 'output_horizon' in enable_optional_outputs then dt else dt_realize_dispatch_input;
-set d_realized_period := setof {(d, t) in dt_realize_dispatch} (d);
+set dt_realize_dispatch dimen 2;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set d_realized_period;            # Migrated to Python (preprocessing/per_solve_sets.py).
 set realized_period__time_last dimen 2 within period_time;
-set d_realize_dispatch_or_invest := d_realized_period union d_realize_invest;
+set d_realize_dispatch_or_invest;  # Migrated to Python (preprocessing/per_solve_sets.py).
 #dt_complete is the timesteps of the whole rolling_window set, not just single roll. For single_solve it is the same as dt
 set dt_complete dimen 2 within period_time;
-set complete_time_in_use := setof {(d, t) in dt_complete} (t);
+set complete_time_in_use;  # Migrated to Python (preprocessing/per_solve_sets.py).
 param complete_step_duration{(d, t) in dt_complete};
-set timeline_steps := setof{(tl, t, duration) in timeline__timestep__duration}(tl, t);
+set timeline_steps dimen 2;  # Migrated to Python (preprocessing/simple_projections.py).
 param p_timeline_step_duration{timeline_steps};
-param p_timeline_duration_in_years{tl in timeline}:= sum{(tl,t) in timeline_steps} p_timeline_step_duration[tl,t] /8760;
+param p_timeline_duration_in_years{tl in timeline};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/p_timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years~value;
 
 set dt_fix_storage_timesteps dimen 2 within period_time;
-set d_fix_storage_period := setof {(d, t) in dt_fix_storage_timesteps} (d);
+set d_fix_storage_period;  # Migrated to Python (preprocessing/per_solve_sets.py).
 set ndt_fix_storage_price dimen 3 within  {node, period_solve, time};
 set ndt_fix_storage_quantity dimen 3 within  {node, period_solve, time};
 set ndt_fix_storage_usage dimen 3 within  {node, period_solve, time};
-set n_fix_storage_quantity := setof{(n,d,t) in ndt_fix_storage_quantity}(n);
-set n_fix_storage_price := setof{(n,d,t) in ndt_fix_storage_price}(n);
-set n_fix_storage_usage := setof{(n,d,t) in ndt_fix_storage_usage}(n);
+set n_fix_storage_quantity;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set n_fix_storage_price;     # Migrated to Python (preprocessing/per_solve_sets.py).
+set n_fix_storage_usage;     # Migrated to Python (preprocessing/per_solve_sets.py).
 set dtt_timeline_matching dimen 3 within {period,time,time};
 
 param p_fix_storage_price {node, period_solve, time};
@@ -388,25 +384,29 @@ param p_roll_continue_state {node};
 
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
-param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startNext} 1;
 set modelParam;
 
 set process__param dimen 2 within {process, processParam};
 set process__param__time dimen 3 within {process, processTimeParam, time};
-set process__param_t := setof {(p, param, t) in process__param__time} (p, param);
+set process__param_t dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__param_t.csv' : process__param_t <- [process, param];
 set profile_param dimen 1 within {profile};
 set profile_param__time dimen 2 within {profile, time};
 
-set connection__param := {(p, param) in process__param : p in process_connection};
-set connection__param__time := { (p, param, t) in process__param__time : (p in process_connection)};
-set connection__param_t := setof {(connection, param, t) in connection__param__time} (connection, param);
+set connection__param dimen 2;  # Migrated to Python (preprocessing/structural_filters.py).
+set connection__param__time dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set connection__param_t     dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/connection__param__time.csv' : connection__param__time <- [connection, param, time];
+table data IN 'CSV' 'solve_data/connection__param_t.csv'     : connection__param_t     <- [connection, param];
 set process__source__param dimen 3 within {process_source, sourceSinkParam};
 set process__source__param__time dimen 4 within {process_source, sourceSinkTimeParam, time};
 set process__source__param__period dimen 4 within {process_source, sourceSinkPeriodParam, period};
-set process__source__param_t := setof {(p, source, param, t) in process__source__param__time} (p, source, param);
+set process__source__param_t dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__param_t.csv' : process__source__param_t <- [process, source, param];
 set process__sink__param dimen 3 within {process_sink, sourceSinkParam};
 set process__sink__param__time dimen 4 within {process_sink, sourceSinkTimeParam, time};
-set process__sink__param_t := setof {(p, sink, param, t) in process__sink__param__time} (p, sink, param);
+set process__sink__param_t dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__sink__param_t.csv' : process__sink__param_t <- [process, sink, param];
 set process__sink__param__period dimen 4 within {process_sink, sourceSinkPeriodParam, period};
 
 set node__param dimen 2 within {node, nodeParam};
@@ -465,9 +465,11 @@ param p_co2_cum_realized_tonnes {g in group, d in periodAll} default 0;
 # Commodity-ladder derived sets (used by v_trade and the ladder constraints).
 # 'price' is the default scalar-price behaviour; the two ladder methods route
 # into v_trade / tier caps and replace the pdtCommodity price objective term.
-set commodity_with_ladder            := {c in commodity : p_commodity_price_method[c] != 'price'};
-set commodity_with_ladder_annual     := {c in commodity : p_commodity_price_method[c] == 'price_ladder_annual'};
-set commodity_with_ladder_cumulative := {c in commodity : p_commodity_price_method[c] == 'price_ladder_cumulative'};
+# Computed in Python (flextool/flextoolrunner/preprocessing/commodity_ladder_sets.py)
+# and loaded via table data IN below — see solve_data/commodity_with_ladder*.csv.
+set commodity_with_ladder;
+set commodity_with_ladder_annual;
+set commodity_with_ladder_cumulative;
 
 param p_node {node, nodeParam} default 0;
 param pd_node {node, nodePeriodParam, periodAll} default 0;
@@ -561,13 +563,12 @@ set groupStochastic dimen 1 within {group};
 set solve_branch__time_branch dimen 2 within {branch_all, time_branch_all};
 param p_branch_weight_input {b in branch} default 1;
 #normalize the branches with the same starting time to add up to 1
-param pd_branch_weight {d in period_in_use} :=
-p_branch_weight_input[d] /(sum{(d2,b) in period__branch, (b, ts) in period__time_first: (d,ts) in period__time_first && (d2,d) in period__branch} p_branch_weight_input[b]);
+param pd_branch_weight {d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+param pdt_branch_weight {(d,t) in dt};        # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/pd_branch_weight.csv'  : [period],          pd_branch_weight~value;
+table data IN 'CSV' 'solve_data/pdt_branch_weight.csv' : [period, time],    pdt_branch_weight~value;
 
-param pdt_branch_weight {(d,t) in dt} :=
-p_branch_weight_input[d] /(sum{(d2,b) in period__branch: (b,t) in dt && (d2,d) in period__branch} p_branch_weight_input[b]);
-
-set dt_non_anticipativity := dt_realize_dispatch_input union dt_fix_storage_timesteps;
+set dt_non_anticipativity dimen 2;  # Migrated to Python (preprocessing/per_solve_sets.py).
 
 #stochastic versions of timeseries
 set process__param__branch__time dimen 5 within {process, processTimeParam, time_branch_all, time, time};
@@ -596,14 +597,13 @@ param pbt_process {process, processTimeParam, time_branch_all, time, time} defau
 # CSV is empty / absent (e.g. AMPL invoked outside the Python harness).
 set _scale_obj_keys dimen 1 default {};
 param _scale_obj_from_csv {_scale_obj_keys} default 0;
-set _scale_state_keys dimen 1 default {};
-param _scale_state_from_csv {_scale_state_keys} default 0;
 param scale_the_objective := (if card(_scale_obj_keys) > 0
     then sum {k in _scale_obj_keys} _scale_obj_from_csv[k]
     else 1e-6);
-param scale_the_state := (if card(_scale_state_keys) > 0
-    then sum {k in _scale_state_keys} _scale_state_from_csv[k]
-    else 1);
+# scale_the_state was an unused twin of scale_the_objective —
+# declared, written by Python in solve_data/scale_the_state.csv,
+# but no constraint or other expression ever read its value.
+# Removed in batch 69 along with its _scale_state_* helper sets.
 
 set param_costs dimen 1;
 param costs_discounted {param_costs} default 0;
@@ -778,7 +778,6 @@ table data IN 'CSV' 'solve_data/p_use_row_scaling.csv' : [solve], p_use_row_scal
 # from the Agent-8 ScaleTable analyser.  The default 1e-6 / 1 clauses on
 # the param declarations apply only if the CSVs are empty or absent.
 table data IN 'CSV' 'solve_data/scale_the_objective.csv' : _scale_obj_keys <- [key], _scale_obj_from_csv~value;
-table data IN 'CSV' 'solve_data/scale_the_state.csv' : _scale_state_keys <- [key], _scale_state_from_csv~value;
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step], step_duration~step_duration;
 table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
 table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
@@ -789,7 +788,7 @@ table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jum
 table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period], p_period_from_solve~param;
 table data IN 'CSV' 'solve_data/realized_invest_periods_of_current_solve.csv' : d_realize_invest <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
-table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
+table data IN 'CSV' 'solve_data/p_model.csv' : [modelParam], p_model;
 
 # Clear some files in the first solve
 if p_model["solveFirst"] == 1 and 'read' in phase then {
@@ -906,529 +905,333 @@ table data IN 'CSV' 'solve_data/costs_discounted.csv' : [param_costs], costs_dis
 table data IN 'CSV' 'solve_data/co2.csv' : [param_co2], model_co2~model_wide;
 table data IN 'CSV' 'solve_data/period_capacity.csv' : period_capacity <- [period];
 
-#check
-set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
-set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
+# Migrated derived sets (Python preprocessing — see
+# flextool/flextoolrunner/preprocessing/<module>.py for each family).
+table data IN 'CSV' 'solve_data/commodity_with_ladder.csv' : commodity_with_ladder <- [commodity];
+table data IN 'CSV' 'solve_data/commodity_with_ladder_annual.csv' : commodity_with_ladder_annual <- [commodity];
+table data IN 'CSV' 'solve_data/commodity_with_ladder_cumulative.csv' : commodity_with_ladder_cumulative <- [commodity];
+# L0 batch 1 — period_param_sets, invest_method_sets, co2_method_sets, simple_projections
+table data IN 'CSV' 'solve_data/period_group.csv' : period_group <- [period];
+table data IN 'CSV' 'solve_data/period_node.csv' : period_node <- [period];
+table data IN 'CSV' 'solve_data/period_commodity.csv' : period_commodity <- [period];
+table data IN 'CSV' 'solve_data/period_process.csv' : period_process <- [period];
+table data IN 'CSV' 'solve_data/entityInvest.csv' : entityInvest <- [entity];
+table data IN 'CSV' 'solve_data/entityDivest.csv' : entityDivest <- [entity];
+table data IN 'CSV' 'solve_data/group_invest.csv' : group_invest <- [group];
+table data IN 'CSV' 'solve_data/group_divest.csv' : group_divest <- [group];
+table data IN 'CSV' 'solve_data/group_co2_price.csv' : group_co2_price <- [group];
+table data IN 'CSV' 'solve_data/group_co2_max_period.csv' : group_co2_max_period <- [group];
+table data IN 'CSV' 'solve_data/group_co2_max_total.csv' : group_co2_max_total <- [group];
+table data IN 'CSV' 'solve_data/optional_yes.csv' : optional_yes <- [output];
+table data IN 'CSV' 'solve_data/reserve__upDown__group.csv' : reserve__upDown__group <- [reserve, upDown, group];
+table data IN 'CSV' 'solve_data/group_loss_share.csv' : group_loss_share <- [group];
+# L0 batch 2 — node_type_sets, method_with_fallback_sets, nonsync_sets
+table data IN 'CSV' 'solve_data/nodeCommodity.csv' : nodeCommodity <- [node];
+table data IN 'CSV' 'solve_data/nodeBalance.csv' : nodeBalance <- [node];
+table data IN 'CSV' 'solve_data/nodeState.csv' : nodeState <- [node];
+table data IN 'CSV' 'solve_data/nodeBalancePeriod.csv' : nodeBalancePeriod <- [node];
+table data IN 'CSV' 'solve_data/entity__lifetime_method.csv' : entity__lifetime_method <- [entity, lifetime_method];
+table data IN 'CSV' 'solve_data/process__ct_method.csv' : process__ct_method <- [process, ct_method];
+table data IN 'CSV' 'solve_data/process__startup_method.csv' : process__startup_method <- [process, startup_method];
+table data IN 'CSV' 'solve_data/process__group_inside_group_nonSync.csv' : process__group_inside_group_nonSync <- [process, group];
+# L0 batch 3 — union_sets, entity_total_caps. group_entity is declared at L287
+# so its reader belongs here; process_delayed__duration and e_*_total are
+# declared later (L950, L1825+) so their readers live alongside the declarations.
+table data IN 'CSV' 'solve_data/group_entity.csv' : group_entity <- [group, entity];
+# L0 batch 4 — readers for sets whose declarations precede this block.
+table data IN 'CSV' 'solve_data/def_optional_yes.csv' : def_optional_yes <- [output];
+table data IN 'CSV' 'solve_data/reserve.csv' : reserve <- [reserve];
+table data IN 'CSV' 'solve_data/process_side.csv' : process_side <- [side];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch_node.csv' : nodeGroupDispatch_node <- [group];
+table data IN 'CSV' 'solve_data/commodity__tier_ann.csv' : commodity__tier_ann <- [commodity, tier];
+table data IN 'CSV' 'solve_data/connection__param.csv' : connection__param <- [process, processParam];
+table data IN 'CSV' 'solve_data/solve_period.csv' : solve_period <- [solve, period];
+table data IN 'CSV' 'solve_data/timeline.csv' : timeline <- [timeline];
+table data IN 'CSV' 'solve_data/timeline_steps.csv' : timeline_steps <- [timeline, step];
+# L0 batch 5 — node-method fallbacks (declarations precede this block).
+table data IN 'CSV' 'solve_data/node__inflow_method.csv' : node__inflow_method <- [node, inflow_method];
+table data IN 'CSV' 'solve_data/node__storage_binding_method.csv' : node__storage_binding_method <- [node, storage_binding_method];
+# L0 batch 6 — final write_input-scope sets.
+table data IN 'CSV' 'solve_data/period_solve.csv' : period_solve <- [period];
+table data IN 'CSV' 'solve_data/time.csv' : time <- [time];
+table data IN 'CSV' 'solve_data/enable_optional_outputs.csv' : enable_optional_outputs <- [output];
+table data IN 'CSV' 'solve_data/nodeState_rp.csv' : nodeState_rp <- [node];
+table data IN 'CSV' 'solve_data/nodeStateBlock.csv' : nodeStateBlock <- [node];
+table data IN 'CSV' 'solve_data/commodity__tier.csv' : commodity__tier <- [commodity, tier];
+table data IN 'CSV' 'solve_data/tier.csv' : tier <- [tier];
+# Per-solve preprocessing (preprocessing/per_solve_sets.py via the
+# orchestration hook). Filenames use a `_set` suffix to avoid clashing
+# with mod's `if p_model['solveFirst']` printf-to-CSV blocks for the
+# same-named files (which write a different schema for output use).
+table data IN 'CSV' 'solve_data/branch_set.csv' : branch <- [branch];
+table data IN 'CSV' 'solve_data/year_set.csv' : year <- [year];
+table data IN 'CSV' 'solve_data/period_from_period_time_set.csv' : period_from_period_time <- [period];
+table data IN 'CSV' 'solve_data/period_in_use_set.csv' : period_in_use <- [period];
+table data IN 'CSV' 'solve_data/time_in_use_set.csv' : time_in_use <- [time];
+table data IN 'CSV' 'solve_data/complete_time_in_use_set.csv' : complete_time_in_use <- [time];
+table data IN 'CSV' 'solve_data/rp_base_period_set.csv' : rp_base_period <- [period];
+table data IN 'CSV' 'solve_data/rp_rep_period_set.csv' : rp_rep_period <- [period];
+table data IN 'CSV' 'solve_data/period_block_set.csv' : period_block <- [period, block_first];
+table data IN 'CSV' 'solve_data/dtt_set.csv' : dtt <- [period, time, time_previous];
+table data IN 'CSV' 'solve_data/d_fix_storage_period_set.csv' : d_fix_storage_period <- [period];
+table data IN 'CSV' 'solve_data/n_fix_storage_quantity_set.csv' : n_fix_storage_quantity <- [node];
+table data IN 'CSV' 'solve_data/n_fix_storage_price_set.csv' : n_fix_storage_price <- [node];
+table data IN 'CSV' 'solve_data/n_fix_storage_usage_set.csv' : n_fix_storage_usage <- [node];
+# L0 batch 8 — additional per-solve sets (block, periodAll, conditional/union variants).
+table data IN 'CSV' 'solve_data/period_set.csv' : period <- [period];
+table data IN 'CSV' 'solve_data/period__timeline_set.csv' : period__timeline <- [period, timeline];
+table data IN 'CSV' 'solve_data/periodAll_set.csv' : periodAll <- [period];
+table data IN 'CSV' 'solve_data/block_set.csv' : block <- [block];
+table data IN 'CSV' 'solve_data/dt_realize_dispatch_set.csv' : dt_realize_dispatch <- [period, time];
+table data IN 'CSV' 'solve_data/d_realized_period_set.csv' : d_realized_period <- [period];
+table data IN 'CSV' 'solve_data/d_realize_dispatch_or_invest_set.csv' : d_realize_dispatch_or_invest <- [period];
+table data IN 'CSV' 'solve_data/dt_non_anticipativity_set.csv' : dt_non_anticipativity <- [period, time];
+# pdt_uptime, pdt_downtime, dtdt_next are declared at L1124+ — readers
+# co-located with the declarations below to avoid forward-reference.
 
-set process_delayed__duration := process_delay_weighted__delay_duration union process_delay_single__delay_duration;
-set process_delayed := setof {(p, td) in process_delayed__duration} (p);
+#check
+set ed_history_realized_first dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/ed_history_realized_first.csv' : ed_history_realized_first <- [entity, period];
+set ed_history_realized dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/ed_history_realized.csv' : ed_history_realized <- [entity, period];
+
+set process_delayed__duration dimen 2;  # Migrated to Python (preprocessing/union_sets.py).
+table data IN 'CSV' 'solve_data/process_delayed__duration.csv' : process_delayed__duration <- [process, delay_duration];
+set process_delayed;  # Migrated to Python (preprocessing/simple_projections.py).
+table data IN 'CSV' 'solve_data/process_delayed.csv' : process_delayed <- [process];
 
 # process_method is now resolved in Python (input_writer.py) and read from CSV
 set process_method dimen 2 within {process, method};
 table data IN 'CSV' 'input/process_method.csv' : process_method <- [process,method];
-set process__profileProcess__toSink__profile__profile_method :=
-    { p in process, (p2, sink, f, fm) in process__node__profile__profile_method
-	    :  p = p2
-		&& (p, sink) in process_sink
-	    && (sum{(p, m) in process_method : m in method_indirect} 1
-		    || sum{(p, source) in process_source} 1 < 1)
-	};
-set process__profileProcess__toSink := setof {(p, p2, sink, f, m) in process__profileProcess__toSink__profile__profile_method} (p, p2, sink);
-set process__source__toProfileProcess__profile__profile_method :=
-    { (p, source) in process_source, (p2, source, f, fm) in process__node__profile__profile_method
-	    :  p = p2
-	    && (sum{(p, m) in process_method : m in method_indirect} 1
-		    || sum{(p, sink) in process_sink} 1 < 1)
-	};
-set process__source__toProfileProcess := setof {(p, source, p2, f, m) in process__source__toProfileProcess__profile__profile_method} (p, source, p2);
-set process_profile := setof {(p, source, p2) in process__source__toProfileProcess} (p) union setof {(p, p2, sink) in process__profileProcess__toSink} (p);
-set process_source_toProcess :=
-    { (p, source) in process_source, p2 in process
-	    :  p = p2
-	    && (p2, source) in process_source
-	    && (    ( sum{(p, m) in process_method : m in method_indirect} 1 )
-		     || ( sum{(p, m) in process_method : m in method_direct} 1 && sum{(p, sink) in process_sink} 1 < 1 && not (p, source, p2) in process__source__toProfileProcess )
-		   )
-	};
-set process_process_toSink :=
-    { p in process, (p2, sink) in process_sink
-	    :  p = p2
-	    && (p, sink) in process_sink
-	    && (    ( sum{(p, m) in process_method : m in method_indirect} 1 )
-		     || ( sum{(p, m) in process_method : m in method_direct} 1 && sum{(p, source) in process_source} 1 < 1 && not (p, p2, sink) in process__profileProcess__toSink )
-		   )
-	};
-set process_sink_toProcess :=
-	{ (p, sink) in process_sink, p2 in process
-	    :  p = p2
-	    && (p, sink) in process_sink
-	    && sum{(p, m) in process_method : m in method_2way_nvar} 1
-	};
-set process_process_toSource :=
-    { p in process, (p2, source) in process_source
-	    :  p = p2
-	    && (p, source) in process_source
-	    && sum{(p, m) in process_method : m in method_2way_nvar} 1
-	};
-set process_source_toSink :=
-    { (p, source) in process_source, sink in node
-	    :  (p, sink) in process_sink
-        && sum{(p, m) in process_method : m in method_direct} 1
-	};
-set process_source_toProcess_direct :=
-    { (p, source) in process_source, p2 in process
-	    :  p = p2
-        && sum{(p, m) in process_method : m in method_direct} 1
-	};
-set process_process_toSink_direct :=
-    { p in process, p2 in process, sink in node
-	    :  p = p2
-		&& (p, sink) in process_sink
-        && sum{(p, m) in process_method : m in method_direct} 1
-	};
-set process_sink_toProcess_direct :=
-	{ (p, sink) in process_sink, p2 in process
-	    :  p = p2
-		&& (p, sink) in process_sink
-	    && sum{(p, m) in process_method : m in method_2way_2var} 1
-	};
-set process_process_toSource_direct :=
-	{ p in process, p2 in process, source in node
-	    :  p = p2
-		&& (p, source) in process_source
-	    && sum{(p, m) in process_method : m in method_2way_2var} 1
-	};
-set process_sink_toSource :=
-	{ (p, sink) in process_sink, source in node
-	    :  (p, source) in process_source
-	    && (p, sink) in process_sink
-	    && sum{(p, m) in process_method : m in method_2way_2var} 1
-	};
-set process__source__sink__profile__profile_method_direct :=
-    { (p, source, sink) in process_source_toSink, f in profile, fm in profile_method
-	    :  sum{(p, m) in process_method : m in method_direct} 1
-		&& ( (p, source, f, fm) in process__node__profile__profile_method
-		     || (p, sink, f, fm) in process__node__profile__profile_method
-		   )
-	};
-set process_process_toSink_noConversion :=
-    { p in process, (p2, sink) in process_sink
-	    :  p = p2
-	    && (p, sink) in process_sink
-	    && sum{(p, m) in process_method : m in method_1way_1var && not sum{(p, source) in process_source} 1} 1
-	};
-set process_source_toProcess_noConversion :=
-    { (p, source) in process_source, p2 in process
-	    :  p = p2
-	    && (p2, source) in process_source
-	    && sum{(p, m) in process_method : m in method_1way_1var && not sum{(p, sink) in process_sink} 1} 1
-	};
+set process__profileProcess__toSink__profile__profile_method dimen 5;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process__profileProcess__toSink__profile__profile_method.csv' : process__profileProcess__toSink__profile__profile_method <- [process_outer, process, sink, profile, profile_method];
+set process__profileProcess__toSink dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__profileProcess__toSink.csv' : process__profileProcess__toSink <- [process_outer, process, sink];
+set process__source__toProfileProcess__profile__profile_method dimen 5;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process__source__toProfileProcess__profile__profile_method.csv' : process__source__toProfileProcess__profile__profile_method <- [process, source, process_aux, profile, profile_method];
+set process__source__toProfileProcess dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__toProfileProcess.csv' : process__source__toProfileProcess <- [process, source, process_aux];
+set process_profile;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_profile.csv' : process_profile <- [process];
+set process_source_toProcess dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_process_toSink dimen 3;    # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_toProcess.csv' : process_source_toProcess <- [process, source, process_aux];
+table data IN 'CSV' 'solve_data/process_process_toSink.csv' : process_process_toSink <- [process_outer, process, sink];
+set process_sink_toProcess dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_sink_toProcess.csv' : process_sink_toProcess <- [process, sink, process_aux];
+set process_process_toSource dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_process_toSource.csv' : process_process_toSource <- [process_outer, process, source];
+set process_source_toSink dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_source_toSink.csv' : process_source_toSink <- [process, source, sink];
+set process_source_toProcess_direct dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_source_toProcess_direct.csv' : process_source_toProcess_direct <- [process, source, process_aux];
+set process_process_toSink_direct dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_process_toSink_direct.csv' : process_process_toSink_direct <- [process_outer, process, sink];
+set process_sink_toProcess_direct dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_sink_toProcess_direct.csv' : process_sink_toProcess_direct <- [process, sink, process_aux];
+set process_process_toSource_direct dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_process_toSource_direct.csv' : process_process_toSource_direct <- [process_outer, process, source];
+set process_sink_toSource dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_sink_toSource.csv' : process_sink_toSource <- [process, sink, source];
+set process__source__sink__profile__profile_method_direct dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__profile__profile_method_direct.csv' : process__source__sink__profile__profile_method_direct <- [process, source, sink, profile, profile_method];
+set process_process_toSink_noConversion dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_process_toSink_noConversion.csv' : process_process_toSink_noConversion <- [process_outer, process, sink];
+set process_source_toProcess_noConversion dimen 3;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_source_toProcess_noConversion.csv' : process_source_toProcess_noConversion <- [process, source, process_aux];
 
-set process_source_sink :=
-    process_source_toSink union    # Direct 1-variable
-	process_sink_toSource union    # Direct 1-variable, but the other way
-	process_source_toProcess union # First step for indirect (from source to process)
-	process_process_toSink union   # Second step for indirect (from process to sink)
-	process_sink_toProcess union   # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process_process_toSource union # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process__profileProcess__toSink union   # Add profile based inputs to process
-	process__source__toProfileProcess union # Add profile based inputs to process
-	process_process_toSink_noConversion union  # Add other operational cost only units
-    process_source_toProcess_noConversion;     # Add other operational cost only units
+set process_source_sink dimen 3;                # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_alwaysProcess dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink.csv' : process_source_sink <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_alwaysProcess.csv' : process_source_sink_alwaysProcess <- [process, source, sink];
 
-set process_source_sink_alwaysProcess :=
-    process_source_toProcess_direct union  # Direct 1-variable, but showing the process in between
-	process_process_toSink_direct union
-	process_sink_toProcess_direct union
-	process_process_toSource_direct union
-	process_source_toProcess union # First step for indirect (from source to process)
-	process_process_toSink union   # Second step for indirect (from process to sink)
-	process_sink_toProcess union   # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process_process_toSource union # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process__profileProcess__toSink union   # Add profile based inputs to process
-	process__source__toProfileProcess union # Add profile based inputs to process
-	process_process_toSink_noConversion union  # Add other operational cost only units
-    process_source_toProcess_noConversion;     # Add other operational cost only units
+set process_method_sources_sinks dimen 6;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_method_sources_sinks.csv' : process_method_sources_sinks <- [process, method, orig_source, orig_sink, always_source, always_sink];
 
-set process_method_sources_sinks :=
-    setof {(p, always_src, always_snk) in process_source_sink_alwaysProcess,
-           (p, orig_src, orig_snk) in process_source_sink,
-           (p, m) in process_method
-           : (always_src = orig_src || always_src = p)
-             && (always_snk = orig_snk || always_snk = p)
-             && not (always_src = p && always_snk = p)}
-        (p, m, orig_src, orig_snk, always_src, always_snk);
+set process_source_sink_noEff dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_eff dimen 3;    # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_noEff.csv' : process_source_sink_noEff <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_eff.csv' : process_source_sink_eff <- [process, source, sink];
 
-set process_source_sink_noEff :=
-	process_source_toProcess union # First step for indirect (from source to process)
-	process_process_toSink union   # Second step for indirect (from process to sink)
-	process_sink_toProcess union   # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process_process_toSource union # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process__profileProcess__toSink union   # Add profile based inputs to process
-	process__source__toProfileProcess union # Add profile based inputs to process
-	process_process_toSink_noConversion union  # Add other operational cost only units
-    process_source_toProcess_noConversion;     # Add other operational cost only units
+set process__source__sink__profile__profile_method_connection dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__profile__profile_method_connection.csv' : process__source__sink__profile__profile_method_connection <- [process, source, sink, profile, profile_method];
+set process__source__sink__profile__profile_method dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__profile__profile_method.csv' : process__source__sink__profile__profile_method <- [process, source, sink, profile, profile_method];
 
-set process_source_sink_eff :=
-    process_source_toSink union    # Direct 1-variable
-	process_sink_toSource;         # Direct 1-variable, but the other way
+set process__source__sinkIsNode dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sinkIsNode.csv' : process__source__sinkIsNode <- [process, source, sink];
 
-set process__source__sink__profile__profile_method_connection :=
-    { (p, sink, source) in process_source_sink, f in profile, m in profile_method
-	    : (p, f, m) in process__profile__profile_method
-	};
-set process__source__sink__profile__profile_method :=
-    process__profileProcess__toSink__profile__profile_method union
-	process__source__toProfileProcess__profile__profile_method union
-	process__source__sink__profile__profile_method_connection union
-	process__source__sink__profile__profile_method_direct
-;
-
-set process__source__sinkIsNode := {(p, source, sink) in process_source_sink : (p, sink) in process_sink};
-
-set process_online_linear 'processes with an online status using linear variable' := setof {(p, m) in process_method : m in method_LP} p;
-set process_online_integer 'processes with an online status using integer variable' := setof {(p, m) in process_method : m in method_MIP} p;
-set process_online := process_online_linear union process_online_integer;
+set process_online_linear 'processes with an online status using linear variable';  # Migrated to Python (preprocessing/process_method_sets.py).
+set process_online_integer 'processes with an online status using integer variable';  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_online_linear.csv' : process_online_linear <- [process];
+table data IN 'CSV' 'solve_data/process_online_integer.csv' : process_online_integer <- [process];
+set process_online;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_online.csv' : process_online <- [process];
 
 # Timestep sets that have at least one lookback entry (for min up/downtime constraint indexing)
-set pdt_uptime := setof{(p, d, t, d2, t2) in uptime_lookback} (p, d, t);
-set pdt_downtime := setof{(p, d, t, d2, t2) in downtime_lookback} (p, d, t);
+set pdt_uptime dimen 3;    # Migrated to Python (preprocessing/per_solve_sets.py).
+set pdt_downtime dimen 3;  # Migrated to Python (preprocessing/per_solve_sets.py).
+table data IN 'CSV' 'solve_data/pdt_uptime_set.csv' : pdt_uptime <- [process, period, time];
+table data IN 'CSV' 'solve_data/pdt_downtime_set.csv' : pdt_downtime <- [process, period, time];
 
 # Next-timestep mapping (inverse of dtttdt) for shutdown tightening
-set dtdt_next := setof{(d, t, t_prev, t_prev_ws, d_prev, t_prev_solve) in dtttdt} (d_prev, t_prev_solve, d, t);
+set dtdt_next dimen 4;  # Migrated to Python (preprocessing/per_solve_sets.py).
+table data IN 'CSV' 'solve_data/dtdt_next_set.csv' : dtdt_next <- [period_prev, time_prev_solve, period, time];
 
-set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
+set peedt dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/peedt.csv' : peedt <- [process, source, sink, period, time];
 
-set process_source_undelayed := {(p, e) in process_source : p not in process_delayed};
-set process_source_delayed := {(p, e) in process_source : p in process_delayed};
-set process_source_sink_undelayed := {(p, source, sink) in process_source_sink : p not in process_delayed};
-set process_source_sink_delayed := {(p, source, sink) in process_source_sink : p in process_delayed};
+set process_source_undelayed dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_delayed   dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_undelayed.csv' : process_source_undelayed <- [process, source];
+table data IN 'CSV' 'solve_data/process_source_delayed.csv'   : process_source_delayed   <- [process, source];
+set process_source_sink_undelayed dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_delayed   dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_undelayed.csv' : process_source_sink_undelayed <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_delayed.csv'   : process_source_sink_delayed   <- [process, source, sink];
 
-param p_process_delay_weight {(p, td) in process_delayed__duration} :=
-  + if (p, td) in process_delay_single__delay_duration
-    then 1
-    else p_process_delay_weighted[p, td];
+param p_process_delay_weight {(p, td) in process_delayed__duration};  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/p_process_delay_weight.csv' : [process, delay_duration], p_process_delay_weight~value;
 
-param pdCommodity {c in commodity, param in commodityPeriodParam, d in period_in_use} :=
-        + if (c, param, d) in commodity__param__period
-		  then pd_commodity[c, param, d]
-		  else if exists{(c, param, db) in commodity__param__period: (db, d) in period__branch} 1
-      then sum{(db, d) in period__branch} pd_commodity[c, param, db]
-      else p_commodity[c, param];
+param pdCommodity {c in commodity, param in commodityPeriodParam, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdCommodity.csv' : [commodity, param, period], pdCommodity~value;
 
-param pdtCommodity {c in commodity, param in commodityTimeParam, (d, t) in dt} :=
-        + if (c, param, t) in commodity__param__time
-		     then pt_commodity[c, param, t]
-        else if (c, param, d) in commodity__param__period
-		     then pd_commodity[c, param, d]
-	      else p_commodity[c, param];
+param pdtCommodity {c in commodity, param in commodityTimeParam, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtCommodity.csv' : [commodity, param, period, time], pdtCommodity~value;
 
-param pdGroup {g in group, param in groupPeriodParam, d in period_in_use} :=
-        + if (g, param, d) in group__param__period
-		  then pd_group[g, param, d]
-      else if exists{(g, param, db) in group__param__period : (db,d) in period__branch} 1
-      then sum{(db, d) in period__branch} pd_group[g, param, db]
-		  else if (g, param) in group__param
-      then p_group[g, param]
-      else if param == 'penalty_inertia' || param == 'penalty_capacity_margin' || param == 'penalty_non_synchronous'
-      then 5000
-		  else 0;
+param pdGroup {g in group, param in groupPeriodParam, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdGroup.csv' : [group, param, period], pdGroup~value;
 
-param pdtGroup {g in group, param in groupTimeParam, (d, t) in dt} :=
-        + if (g, param, t) in group__param__time
-		     then pt_group[g, param, t]
-        else if (g, param, d) in group__param__period
-		     then pd_group[g, param, d]
-	      else if (g, param) in group__param
-		     then p_group[g, param]
-        else 0;
+param pdtGroup {g in group, param in groupTimeParam, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtGroup.csv' : [group, param, period, time], pdtGroup~value;
 
-set reserve__upDown__group__method_timeseries := {(r, ud, ng, r_m) in reserve__upDown__group__method
-                                                       : r_m = 'timeseries_only'
-													   || r_m = 'timeseries_and_dynamic'
-													   || r_m = 'timeseries_and_large_failure'
-													   || r_m = 'all'};
-set reserve__upDown__group__method_dynamic := {(r, ud, ng, r_m) in reserve__upDown__group__method
-                                                       : r_m = 'dynamic_only'
-													   || r_m = 'timeseries_and_dynamic'
-													   || r_m = 'dynamic_and_large_failure'
-													   || r_m = 'all'};
-set reserve__upDown__group__method_n_1 := {(r, ud, ng, r_m) in reserve__upDown__group__method
-                                                       : r_m = 'large_failure_only'
-													   || r_m = 'timeseries_and_large_failure'
-													   || r_m = 'dynamic_and_large_failure'
-													   || r_m = 'all'};
+# Reserve method partitions migrated to Python (preprocessing/reserve_method_partitions.py).
+set reserve__upDown__group__method_timeseries dimen 4;
+set reserve__upDown__group__method_dynamic dimen 4;
+set reserve__upDown__group__method_n_1 dimen 4;
+table data IN 'CSV' 'solve_data/reserve__upDown__group__method_timeseries.csv' : reserve__upDown__group__method_timeseries <- [reserve, upDown, group, method];
+table data IN 'CSV' 'solve_data/reserve__upDown__group__method_dynamic.csv' : reserve__upDown__group__method_dynamic <- [reserve, upDown, group, method];
+table data IN 'CSV' 'solve_data/reserve__upDown__group__method_n_1.csv' : reserve__upDown__group__method_n_1 <- [reserve, upDown, group, method];
 
-set process__method_indirect := {(p, m) in process_method : m in method_indirect};
+set process__method_indirect dimen 2;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process__method_indirect.csv' : process__method_indirect <- [process, method];
 
-set process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source := {(p, source, sink) in process_source_sink
-										   : sum{(p,m) in process_method : m in method_1way} 1
-										   && (p, source) in process_source
-										   && ( sum{(p, sink2) in process_sink} 1 = 0 || ( sum{(p, source2) in process_source} 1 >= 2) )};
-set process__source__sinkIsNode_not2way1var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink
-	                                       && sum{(p,m) in process_method : m not in method_2way_1var} 1};
-set process__source__sinkIsNode_2way1var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink
-	                                       && sum{(p,m) in process_method : m in method_2way_1var} 1};
-set process_sinkIsNode_2way1var := setof {(p, source, sink) in process__source__sinkIsNode_2way1var} p;
-set process__source__sinkIsNode_2way2var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink
-	                                       && sum{(p,m) in process_method : m in method_2way_2var } 1};
+set process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.csv' : process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source <- [process, source, sink];
+set process__source__sinkIsNode_not2way1var dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process__source__sinkIsNode_2way1var    dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sinkIsNode_not2way1var.csv' : process__source__sinkIsNode_not2way1var <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process__source__sinkIsNode_2way1var.csv'    : process__source__sinkIsNode_2way1var    <- [process, source, sink];
+set process_sinkIsNode_2way1var dimen 1;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_sinkIsNode_2way1var.csv' : process_sinkIsNode_2way1var <- [process];
+set process__source__sinkIsNode_2way2var dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sinkIsNode_2way2var.csv' : process__source__sinkIsNode_2way2var <- [process, source, sink];
 
-set gdt_maxInstantFlow := {g in group, (d, t) in dt : pdtGroup[g, 'max_instant_flow', d, t]};
-set gdt_minInstantFlow := {g in group, (d, t) in dt : pdtGroup[g, 'min_instant_flow', d, t]};
+set gdt_maxInstantFlow dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set gdt_minInstantFlow dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/gdt_maxInstantFlow.csv' : gdt_maxInstantFlow <- [group, period, time];
+table data IN 'CSV' 'solve_data/gdt_minInstantFlow.csv' : gdt_minInstantFlow <- [group, period, time];
 
-set process__source__timeParam :=
-    { (p, source) in process_source, param in sourceSinkTimeParam
-	    :  (p, source, param) in process__source__param
-	    || (p, source, param) in process__source__param_t
-	};
+set process__source__timeParam dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process__sink__timeParam   dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process__timeParam         dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__timeParam.csv' : process__source__timeParam <- [process, source, param];
+table data IN 'CSV' 'solve_data/process__sink__timeParam.csv'   : process__sink__timeParam   <- [process, sink, param];
+table data IN 'CSV' 'solve_data/process__timeParam.csv'         : process__timeParam         <- [process, param];
 
-set process__sink__timeParam :=
-    { (p, sink) in process_sink, param in sourceSinkTimeParam
-	    :  (p, sink, param) in process__sink__param
-	    || (p, sink, param) in process__sink__param_t
-	};
-
-set process__timeParam :=
-    { p in process, param in sourceSinkTimeParam
-	   :  ((p, param) in process__param && p in process_connection)
-	   || ((p, param) in process__param_t && p in process_connection)
-	};
-
-set process__source__sink__param :=
-    { (p, source, sink) in process_source_sink, param in sourceSinkParam
-	    :  (p, source, param) in process__source__param
-	    || (p, sink, param) in process__sink__param
-	    || ((p, param) in process__param && p in process_connection)
-	};
-set process__source__sink__param_t :=
-    { (p, source, sink) in process_source_sink, param in sourceSinkTimeParam
-	    :  (p, source, param) in process__source__param
-	    || (p, source, param) in process__source__param_t
-	    || (p, sink, param) in process__sink__param
-	    || (p, sink, param) in process__sink__param_t
-	    || ((p, param) in process__param && p in process_connection)
-	    || ((p, param) in process__param_t && p in process_connection)
-	};
+set process__source__sink__param dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__param.csv' : process__source__sink__param <- [process, source, sink, param];
+set process__source__sink__param_t dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__param_t.csv' : process__source__sink__param_t <- [process, source, sink, param];
 
 
-set process_source_sink_param_t := {(p, source, sink) in process_source_sink_eff, param in processTimeParam : (p, param) in process__param_t};
+set process_source_sink_param_t dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_param_t.csv' : process_source_sink_param_t <- [process, source, sink, param];
 
-set process__source__sink__ramp_method :=
-    { (p, source, sink) in process_source_sink, m in ramp_method
-	    :  (p, source, m) in process_node_ramp_method
-		|| (p, sink, m) in process_node_ramp_method
-	};
+set process__source__sink__ramp_method dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__source__sink__ramp_method.csv' : process__source__sink__ramp_method <- [process, source, sink, ramp_method];
 
-set node__PeriodParam_in_use :=
-  { n in node, param in nodePeriodParam:
-    param in nodePeriodParamRequired
-    || ((n in entityInvest || n in entityDivest) && param in nodePeriodParamInvest)
-  };
+set node__PeriodParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/node__PeriodParam_in_use.csv' : node__PeriodParam_in_use <- [node, param];
 
-set node__TimeParam_in_use :=
-  { n in node, param in nodeTimeParam:
-    (n in nodeBalance && param in nodeTimeParamRequired)
-	|| (n in nodeBalancePeriod && param in nodeTimeParamRequired)
-    || ((n in nodeState) && (param == 'self_discharge_loss' || param == 'availability'))
-    || ((n, 'use_reference_value') in node__storage_solve_horizon_method && param == 'storage_state_reference_value')
-  };
+set node__TimeParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/node__TimeParam_in_use.csv' : node__TimeParam_in_use <- [node, param];
 
-param pdNode {(n, param) in node__PeriodParam_in_use, d in period_with_history} :=
-    + if (n, param, d) in node__param__period
-		   then pd_node[n, param, d]
-      else if exists{(n, param, db) in node__param__period: (db, d) in period__branch} 1
-           then sum{(db, d) in period__branch} pd_node[n, param, db]
-	  else p_node[n, param];
+param pdNode {(n, param) in node__PeriodParam_in_use, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdNode.csv' : [node, param, period], pdNode~value;
 
-param pdtNode {(n, param) in node__TimeParam_in_use, (d, t) in dt} :=
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, param, tb, ts, t) in node__param__branch__time} 1
-           && exists{(g,n) in group_node: g in groupStochastic} 1
-             then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_node[n, param, tb, ts, t]
-        else if exists{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, param, tb, ts, t) in node__param__branch__time} 1
-             then sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node[n, param, tb, ts, t]
-        else if (n, param, t) in node__param__time
-		     then pt_node[n, param, t]
-        else if (n, param, d) in node__param__period
-		     then pd_node[n, param, d]
-		else if (n, param) in node__param
-		     then p_node[n, param]
-        else if param in nodeParam_def1
-             then 1
-        else if ('node',param) in class_paramName_default
-            then default_value['node', param]
-        else 0;
+param pdtNode {(n, param) in node__TimeParam_in_use, (d, t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
+table data IN 'CSV' 'solve_data/pdtNode.csv' : [node, param, period, time], pdtNode~value;
 
-param ptNode_inflow {n in node, t in time} :=
-        + if (n, t) in node__time_inflow
-		  then pt_node_inflow[n, t]
-		  else p_node[n, 'inflow'];
-set nodeSelfDischarge :=  {n in nodeState : exists{(d, t) in dt : pdtNode[n, 'self_discharge_loss', d, t]} 1};
+param ptNode_inflow {n in node, t in time};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ptNode_inflow.csv' : [node, time], ptNode_inflow~value;
+set nodeSelfDischarge dimen 1;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/nodeSelfDischarge.csv' : nodeSelfDischarge <- [node];
 
-set process__PeriodParam_in_use :=
-  { p in process, param in processPeriodParam:
-    param in processPeriodParamRequired
-    || ((p in entityInvest || p in entityDivest) && param in processPeriodParamInvest)
-    || (p in process_online && param == 'startup_cost')
-  };
+set process__PeriodParam_in_use dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_TimeParam_in_use dimen 2;     # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__PeriodParam_in_use.csv' : process__PeriodParam_in_use <- [process, param];
+table data IN 'CSV' 'solve_data/process_TimeParam_in_use.csv' : process_TimeParam_in_use <- [process, param];
 
-set process_TimeParam_in_use :=
-  { p in process, param in processTimeParam:
-    param in processTimeParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
+param pdProcess {(p, param) in process__PeriodParam_in_use, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdProcess.csv' : [process, param, period], pdProcess~value;
+param pdtProcess {(p, param) in process_TimeParam_in_use, (d,t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
+table data IN 'CSV' 'solve_data/pdtProcess.csv' : [process, param, period, time], pdtProcess~value;
+param pdtProfile {p in profile, (d,t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
+table data IN 'CSV' 'solve_data/pdtProfile.csv' : [profile, period, time], pdtProfile~value;
 
-param pdProcess {(p, param) in process__PeriodParam_in_use, d in period_with_history} :=
-     + if (p, param, d) in process__param__period
-		  then pd_process[p, param, d]
-       else if exists{(p, param, db) in process__param__period: (db, d) in period__branch} 1
-            then sum{(db, d) in period__branch} pd_process[p, param, db]
-	   else if (p, param) in process__param
-		    then p_process[p, param]
-	   else 0;
-param pdtProcess {(p, param) in process_TimeParam_in_use, (d,t) in dt} :=
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, param, tb, ts, t) in process__param__branch__time} 1
-	       && exists{(g,p) in group_process: g in groupStochastic} 1
-             then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process[p, param, tb, ts, t]
-        else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, param, tb, ts, t) in process__param__branch__time} 1
-             then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process[p, param, tb, ts, t]
-        else if (p, param, d) in process__param__period
-		     then pd_process[p, param, d]
-		else if (p, param, t) in process__param__time
-		     then pt_process[p, param, t]
-	    else if (p, param) in process__param
-		     then p_process[p, param]
-        else if param in processParam_def1
-             then 1
-	    else 0;
-param pdtProfile {p in profile, (d,t) in dt} :=
-      + if (exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, tb, ts, t) in profile__branch__time} 1
-      && ((exists{(pc, p, m) in process__profile__profile_method, (g, pc) in group_process: g in groupStochastic} 1 )
-      || (exists{(n, p, m) in node__profile__profile_method, (g,n) in group_node: g in groupStochastic} 1)
-      || (exists{(pc, n, p, m) in process__node__profile__profile_method, (g,pc) in group_process: g in groupStochastic} 1)))
-      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_profile[p, tb, ts, t]
-      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, tb, ts, t) in profile__branch__time} 1
-      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_profile[p, tb, ts, t]
-      else if (p, t) in profile_param__time
-		  then pt_profile[p, t]
-		  else if (p) in profile_param
-		  then p_profile[p]
-		  else 0;
+param p_entity_unitsize {e in entity};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_unitsize.csv' : [entity], p_entity_unitsize~value;
 
-param p_entity_unitsize {e in entity} :=
-        + if e in process
-		  then ( if p_process[e, 'virtual_unitsize']
-                 then p_process[e, 'virtual_unitsize']
-		         else if e in process && p_process[e, 'existing']
-			          then p_process[e, 'existing']
-					  else 1000
-			   )
-          else if e in node
-		  then ( if p_node[e, 'virtual_unitsize']
-                 then p_node[e, 'virtual_unitsize']
-		         else if e in node && p_node[e, 'existing']
-		              then p_node[e, 'existing']
-					  else 1000
-			   );
+param edEntity_lifetime {e in entity, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/edEntity_lifetime.csv' : [entity, period], edEntity_lifetime~value;
 
-param edEntity_lifetime {e in entity, d in period_with_history} :=
-        + if e in process then pdProcess[e, 'lifetime', d]
-		  else if e in node then pdNode[e, 'lifetime', d];
+param pProcess_source_sink {(p, source, sink, param) in process__source__sink__param};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pProcess_source_sink.csv' : [process, source, sink, param], pProcess_source_sink~value;
 
-param pProcess_source_sink {(p, source, sink, param) in process__source__sink__param} :=
-		+ if (p, source, param) in process__source__param
-		  then p_process_source[p, source, param]
-		  else if (p, sink, param) in process__sink__param
-		  then p_process_sink[p, sink, param]
-		  else 0;
+set process_source_sourceSinkTimeParam_in_use dimen 3;  # Migrated to Python.
+set process_sink_sourceSinkTimeParam_in_use dimen 3;    # Migrated to Python.
+set process_source_sourceSinkPeriodParam_in_use dimen 3;  # Migrated to Python.
+set process_sink_sourceSinkPeriodParam_in_use dimen 3;    # Migrated to Python.
+table data IN 'CSV' 'solve_data/process_source_sourceSinkTimeParam_in_use.csv' : process_source_sourceSinkTimeParam_in_use <- [process, source, param];
+table data IN 'CSV' 'solve_data/process_sink_sourceSinkTimeParam_in_use.csv' : process_sink_sourceSinkTimeParam_in_use <- [process, sink, param];
+table data IN 'CSV' 'solve_data/process_source_sourceSinkPeriodParam_in_use.csv' : process_source_sourceSinkPeriodParam_in_use <- [process, source, param];
+table data IN 'CSV' 'solve_data/process_sink_sourceSinkPeriodParam_in_use.csv' : process_sink_sourceSinkPeriodParam_in_use <- [process, sink, param];
 
-set process_source_sourceSinkTimeParam_in_use :=
-  {(p, source) in process_source, param in sourceSinkTimeParam:
-    param in sourceSinkTimeParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
-set process_sink_sourceSinkTimeParam_in_use :=
-  { (p, sink) in process_sink, param in sourceSinkTimeParam:
-    param in sourceSinkTimeParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
+param pdtProcess_source {(p, source, param) in process_source_sourceSinkTimeParam_in_use, (d, t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
+table data IN 'CSV' 'solve_data/pdtProcess_source.csv' : [process, source, param, period, time], pdtProcess_source~value;
 
-set process_source_sourceSinkPeriodParam_in_use :=
-  {(p, source) in process_source, param in sourceSinkPeriodParam:
-    param in sourceSinkPeriodParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
-set process_sink_sourceSinkPeriodParam_in_use :=
-  { (p, sink) in process_sink, param in sourceSinkPeriodParam:
-    param in sourceSinkPeriodParamRequired ||
-    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
-  };
+param pdtProcess_sink {(p, sink, param) in process_sink_sourceSinkTimeParam_in_use, (d, t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
+table data IN 'CSV' 'solve_data/pdtProcess_sink.csv' : [process, sink, param, period, time], pdtProcess_sink~value;
 
-param pdtProcess_source {(p, source, param) in process_source_sourceSinkTimeParam_in_use, (d, t) in dt} :=  # : sum{d in period : (d, t) in dt} 1
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
-           && exists{(g,p) in group_process: g in groupStochastic} 1
-             then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
-        else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
-             then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_source[p, source, param, tb, ts, t]
-        else if (p, source, param, d) in process__source__param__period
-		     then pd_process_source[p, source, param, d]
-	    else if (p, source, param, t) in process__source__param__time
-		     then pt_process_source[p, source, param, t]
-	    else if (p, source, param) in process__source__param
-		    then p_process_source[p, source, param]
-	    else 0;
-
-param pdtProcess_sink {(p, sink, param) in process_sink_sourceSinkTimeParam_in_use, (d, t) in dt} :=  #  : sum{d in period : (d, t) in dt} 1
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
-           && exists{(g,p) in group_process: g in groupStochastic} 1
-             then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
-        else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
-             then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_sink[p, sink, param, tb, ts, t]
-        else if (p, sink, param, d) in process__sink__param__period
-		     then pd_process_sink[p, sink, param, d]
-		else if (p, sink, param, t) in process__sink__param__time
-		     then pt_process_sink[p, sink, param, t]
-        else if (p, sink, param) in process__sink__param
-		     then p_process_sink[p, sink, param]
-		else 0;
-
-param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, (d, t) in dt} := #  : sum{d in period : (d, t) in dt} 1
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
-      && exists{(g,p) in group_process: g in groupStochastic} 1
-      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
-      else if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
-      && exists{(g,p) in group_process: g in groupStochastic} 1
-      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
-      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch &&(p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
-      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_sink[p, sink, param, tb, ts, t]
-      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
-      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_source[p, source, param, tb, ts, t]
-      else if (p, sink, param, t) in process__sink__param__time
-		  then pt_process_sink[p, sink, param, t]
-      else if (p, source, param, t) in process__source__param__time
-		  then pt_process_source[p, source, param, t]
-		  else if (p, param, t) in connection__param__time
-		  then pt_process[p, param, t]
-		  else if (p, source, param) in process__source__param
-		  then p_process_source[p, source, param]
-		  else if (p, sink, param) in process__sink__param
-		  then p_process_sink[p, sink, param]
-		  else if (p, param) in connection__param
-		  then p_process[p, param]
-		  else 0;
+param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, (d, t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
+table data IN 'CSV' 'solve_data/pdtProcess_source_sink.csv' : [process, source, sink, param, period, time], pdtProcess_source_sink~value;
 
 
-param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt} :=
-      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1 && g in groupStochastic
-      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t]
-      else if exists{(pe,tb) in solve_branch__time_branch,  (d,ts) in period__time_first: (pe,d) in period__branch && (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1
-      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t]
-      else if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
-		  then pt_reserve_upDown_group[r, ud, g, param, t]
-		  else p_reserve_upDown_group[r, ud, g, param];
-set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group, (d,t) in dt} pdtReserve_upDown_group[r, ud, g, 'reservation', d, t]};
-set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt};
-set pdt_online_linear := {p in process_online_linear, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
-set pdt_online_integer := {p in process_online_integer, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
+param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt};  # Migrated to Python (preprocessing/reserve_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtReserve_upDown_group.csv' : [reserve, upDown, group, param, period, time], pdtReserve_upDown_group~value;
+set process_reserve_upDown_node_active dimen 4;  # Migrated to Python (preprocessing/reserve_calc_params.py).
+table data IN 'CSV' 'solve_data/process_reserve_upDown_node_active.csv' : process_reserve_upDown_node_active <- [process, reserve, upDown, node];
+set prundt dimen 6;  # Migrated to Python (preprocessing/reserve_calc_params.py).
+table data IN 'CSV' 'solve_data/prundt.csv' : prundt <- [process, reserve, upDown, node, period, time];
+set pdt_online_linear  dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set pdt_online_integer dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/pdt_online_linear.csv'  : pdt_online_linear  <- [process, period, time];
+table data IN 'CSV' 'solve_data/pdt_online_integer.csv' : pdt_online_integer <- [process, period, time];
 
-param hours_in_period{d in period_in_use} := sum {(d, t) in dt} (step_duration[d, t]);
-param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
-param period_share_of_year{d in period_in_use} := hours_in_period[d] / 8760;
-param solve_share_of_year := hours_in_solve / 8760;
-param p_years_d{d in period_with_history} := p_period_from_solve[d];
-param p_years_represented_d{d in periodAll} := sum {y in year : (d, y) in period__year} p_years_represented[d, y];
+param hours_in_period{d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/hours_in_period.csv' : [period], hours_in_period~value;
+param period_share_of_year{d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/period_share_of_year.csv' : [period], period_share_of_year~value;
+param p_years_d{d in period_with_history};            # Migrated to Python (preprocessing/period_calculated_params.py).
+param p_years_represented_d{d in periodAll};          # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/p_years_d.csv' : [period], p_years_d~value;
+table data IN 'CSV' 'solve_data/p_years_represented_d_calc.csv' : [period], p_years_represented_d~value;
 
-param complete_hours_in_period{d in period_in_use} := sum {(d2, t) in dt_complete: (d2, d) in period__branch} (complete_step_duration[d2, t]);
-param complete_period_share_of_year{d in period_in_use} := complete_hours_in_period[d] / 8760;
+param complete_hours_in_period{d in period_in_use};       # Migrated to Python (preprocessing/period_calculated_params.py).
+param complete_period_share_of_year{d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/complete_hours_in_period.csv' : [period], complete_hours_in_period~value;
+table data IN 'CSV' 'solve_data/complete_period_share_of_year_calc.csv' : [period], complete_period_share_of_year~value;
 
 # Rolling "fraction of period d filled" — central to the rolling-aware
 # ladder caps below.  Numerator = sim-hours of period d already realized
@@ -1437,73 +1240,45 @@ param complete_period_share_of_year{d in period_in_use} := complete_hours_in_per
 # one representative year (share_of_year * 8760).  On a single solve
 # covering all of period d this is exactly 1.0 so the rolling caps reduce
 # to their pre-refactor form bit-for-bit.
-param f_d_k {d in period_in_use} :=
-  (p_ladder_cum_sim_hours[d] + sum {(d, t) in dt} step_duration[d, t])
-  / (complete_period_share_of_year[d] * 8760);
+param f_d_k {d in period_in_use};  # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/f_d_k.csv' : [period], f_d_k~value;
 
-param period_share_of_annual_flow {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
-        && pdNode[n, 'annual_flow', d]} := abs(sum{(d, t) in dt_complete} (ptNode_inflow[n, t])) / pdNode[n, 'annual_flow', d];
-param period_flow_annual_multiplier {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method)
-        && pdNode[n, 'annual_flow', d]} := complete_period_share_of_year[d] / period_share_of_annual_flow[n, d];
-param orig_flow_sum {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
-        && pdNode[n, 'annual_flow', d]}  := sum{t in complete_time_in_use} ptNode_inflow[n, t];
-param period_flow_proportional_multiplier {n in node, d in period_in_use : (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]} :=
-        pdNode[n, 'annual_flow', d] / (abs(sum{t in time} (ptNode_inflow[n, t])) / sum{(d, tl) in period__timeline} p_timeline_duration_in_years[tl]);
-param new_peak_sign{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        (if pdNode[n, 'peak_inflow', d] >= 0 then 1 else -1);
-param old_peak_max{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        if sum{(n, t) in node__time_inflow : t in time} 1
-		then max{t in time} ptNode_inflow[n, t]
-		else p_node[n, 'inflow'];
-param old_peak_min{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-         if sum{(n, t) in node__time_inflow : t in time} 1
-		then min{t in time} ptNode_inflow[n, t]
-		else p_node[n, 'inflow'];
-param old_peak_sign{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-		(  if sum{(n, t) in node__time_inflow : t in time} 1
-		  then (if abs(old_peak_max[n, d]) >= abs(old_peak_min[n, d]) then 1 else -1)
-		  else (if p_node[n, 'inflow'] >= 0 then 1 else -1)
-		);
-param old_peak{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        (if old_peak_sign[n, d] >= 0 then old_peak_max[n, d] else old_peak_min[n, d]);
+param period_share_of_annual_flow {n in node, d in period_in_use};   # Migrated to Python.
+param period_flow_annual_multiplier {n in node, d in period_in_use};  # Migrated to Python.
+param orig_flow_sum {n in node, d in period_in_use};                  # Migrated to Python.
+param period_flow_proportional_multiplier {n in node, d in period_in_use};  # Migrated to Python.
+param new_peak_sign{n in node, d in period_in_use};                   # Migrated to Python.
+param old_peak_max{n in node, d in period_in_use};                    # Migrated to Python.
+param old_peak_min{n in node, d in period_in_use};                    # Migrated to Python.
+param old_peak_sign{n in node, d in period_in_use};                   # Migrated to Python.
+param old_peak{n in node, d in period_in_use};                        # Migrated to Python.
+table data IN 'CSV' 'solve_data/period_share_of_annual_flow.csv' : [node, period], period_share_of_annual_flow~value;
+table data IN 'CSV' 'solve_data/period_flow_annual_multiplier.csv' : [node, period], period_flow_annual_multiplier~value;
+table data IN 'CSV' 'solve_data/orig_flow_sum.csv' : [node, period], orig_flow_sum~value;
+table data IN 'CSV' 'solve_data/period_flow_proportional_multiplier.csv' : [node, period], period_flow_proportional_multiplier~value;
+table data IN 'CSV' 'solve_data/new_peak_sign.csv' : [node, period], new_peak_sign~value;
+table data IN 'CSV' 'solve_data/old_peak_max.csv' : [node, period], old_peak_max~value;
+table data IN 'CSV' 'solve_data/old_peak_min.csv' : [node, period], old_peak_min~value;
+table data IN 'CSV' 'solve_data/old_peak_sign.csv' : [node, period], old_peak_sign~value;
+table data IN 'CSV' 'solve_data/old_peak.csv' : [node, period], old_peak~value;
 printf ('Checking: if the sign of new peak inflow is the same as the sign ');
 printf ('of the peak inflow in the original inflow time series\n');
 check {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} new_peak_sign[n, d] = old_peak_sign[n, d];
 
-param new_peak_divided_by_old_peak {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        pdNode[n, 'peak_inflow', d] / old_peak[n, d];
-param new_peak_divide_by_old_peak_sum_inflow {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        new_peak_divided_by_old_peak[n, d] * orig_flow_sum[n, d] / complete_period_share_of_year[d];
-param new_peak_inflow_sum {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        pdNode[n, 'peak_inflow', d] * 8760;
-param new_old_multiplier {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        old_peak_sign[n, d] *
-		( old_peak_sign[n, d] * new_peak_divide_by_old_peak_sum_inflow[n, d] - pdNode[n, 'annual_flow', d]
-		)
-		/ ( new_peak_inflow_sum[n, d] - new_peak_divide_by_old_peak_sum_inflow[n, d] );
-param new_old_slope {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        new_peak_divided_by_old_peak[n, d] * ( 1 + new_old_multiplier[n, d] );
-param new_old_section {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        pdNode[n, 'peak_inflow', d] * new_old_multiplier[n, d];
-param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  :=
-        + (if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, tb, ts, t) in node__branch__time_inflow} 1
-              && exists{(g,n) in group_node: g in groupStochastic} 1
-           then sum{(d,ts) in period__time_first,(d,tb) in solve_branch__time_branch} pbt_node_inflow[n, tb, ts, t]
-           else
-		       if exists{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, tb, ts, t) in node__branch__time_inflow} 1
-               then
-			       sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node_inflow[n, tb, ts, t]
-               else
-			       + (if n in nodeBalance union nodeBalancePeriod && (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]
-				       then + period_flow_annual_multiplier[n, d] * ptNode_inflow[n, t])
-			       + (if n in nodeBalance union nodeBalancePeriod && (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]
-					   then + period_flow_proportional_multiplier[n, d] * ptNode_inflow[n, t])
-				   + (if n in nodeBalance union nodeBalancePeriod && (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]
-					   then + new_old_slope[n, d] * ptNode_inflow[n, t]
-			                - new_old_section[n, d])
-				   + (if n in nodeBalance union nodeBalancePeriod && (n, 'use_original') in node__inflow_method
-		               then + ptNode_inflow[n, t])
-		  );
+param new_peak_divided_by_old_peak {n in node, d in period_in_use};            # Migrated to Python.
+param new_peak_divide_by_old_peak_sum_inflow {n in node, d in period_in_use};  # Migrated to Python.
+param new_peak_inflow_sum {n in node, d in period_in_use};                     # Migrated to Python.
+param new_old_multiplier {n in node, d in period_in_use};                      # Migrated to Python.
+param new_old_slope {n in node, d in period_in_use};                           # Migrated to Python.
+param new_old_section {n in node, d in period_in_use};                         # Migrated to Python.
+table data IN 'CSV' 'solve_data/new_peak_divided_by_old_peak.csv' : [node, period], new_peak_divided_by_old_peak~value;
+table data IN 'CSV' 'solve_data/new_peak_divide_by_old_peak_sum_inflow.csv' : [node, period], new_peak_divide_by_old_peak_sum_inflow~value;
+table data IN 'CSV' 'solve_data/new_peak_inflow_sum.csv' : [node, period], new_peak_inflow_sum~value;
+table data IN 'CSV' 'solve_data/new_old_multiplier.csv' : [node, period], new_old_multiplier~value;
+table data IN 'CSV' 'solve_data/new_old_slope.csv' : [node, period], new_old_slope~value;
+table data IN 'CSV' 'solve_data/new_old_section.csv' : [node, period], new_old_section~value;
+param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
+table data IN 'CSV' 'solve_data/pdtNodeInflow.csv' : [node, period, time], pdtNodeInflow~value;
 # Agent 5b (LP-scaling): row scalers for node and group, computed from
 # connected-unit unitsizes when the solve opts in via
 # p_use_row_scaling == 1; otherwise held at 1 (pre-Agent-5 behaviour).
@@ -1515,36 +1290,22 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 # fallback; if that is also zero the scaler collapses to 1.  Final
 # value is clamped to [1e-6, 1e9] so no pathological input produces a
 # nonsense scaler.
-param _node_cap_unitsize_sum {n in node, d in period_in_use} :=
-    + sum{(p, source, n) in process_source_sink} p_entity_unitsize[p]
-    + sum{(p, n, sink)   in process_source_sink} p_entity_unitsize[p];
-param _node_cap_inflow_fallback {n in node, d in period_in_use} :=
-    if card({t in time}) = 0
-    then 0
-    else max{t in time} abs(ptNode_inflow[n, t]);
-param _node_cap_raw {n in node, d in period_in_use} :=
-    if _node_cap_unitsize_sum[n, d] > 0
-    then _node_cap_unitsize_sum[n, d]
-    else if _node_cap_inflow_fallback[n, d] > 0
-    then _node_cap_inflow_fallback[n, d]
-    else 1;
-param _node_cap_pow10 {n in node, d in period_in_use} :=
-    max(1e-6, min(1e9, 10 ^ round(log10(_node_cap_raw[n, d]))));
-param node_capacity_for_scaling{n in node, d in period_in_use} :=
-    if sum{c in solve_current} p_use_row_scaling[c] < 0.5
-    then 1
-    else _node_cap_pow10[n, d];
-
-param _group_cap_raw {g in group, d in period_in_use} :=
-    sum{(g, n) in group_node} node_capacity_for_scaling[n, d];
-param _group_cap_pow10 {g in group, d in period_in_use} :=
-    if _group_cap_raw[g, d] > 0
-    then max(1e-6, min(1e9, 10 ^ round(log10(_group_cap_raw[g, d]))))
-    else 1;
-param group_capacity_for_scaling{g in group, d in period_in_use} :=
-    if sum{c in solve_current} p_use_row_scaling[c] < 0.5
-    then 1
-    else _group_cap_pow10[g, d];
+param _node_cap_unitsize_sum {n in node, d in period_in_use};       # Migrated to Python.
+param _node_cap_inflow_fallback {n in node, d in period_in_use};     # Migrated to Python (preprocessing/node_inflow_scaling_params.py).
+param _node_cap_raw {n in node, d in period_in_use};                # Migrated to Python.
+param _node_cap_pow10 {n in node, d in period_in_use};              # Migrated to Python.
+param node_capacity_for_scaling{n in node, d in period_in_use};     # Migrated to Python.
+param _group_cap_raw {g in group, d in period_in_use};              # Migrated to Python.
+param _group_cap_pow10 {g in group, d in period_in_use};            # Migrated to Python.
+param group_capacity_for_scaling{g in group, d in period_in_use};   # Migrated to Python.
+table data IN 'CSV' 'solve_data/_node_cap_unitsize_sum.csv' : [node, period], _node_cap_unitsize_sum~value;
+table data IN 'CSV' 'solve_data/_node_cap_inflow_fallback.csv' : [node, period], _node_cap_inflow_fallback~value;
+table data IN 'CSV' 'solve_data/_node_cap_raw.csv' : [node, period], _node_cap_raw~value;
+table data IN 'CSV' 'solve_data/_node_cap_pow10.csv' : [node, period], _node_cap_pow10~value;
+table data IN 'CSV' 'solve_data/node_capacity_for_scaling.csv' : [node, period], node_capacity_for_scaling~value;
+table data IN 'CSV' 'solve_data/_group_cap_raw.csv' : [group, period], _group_cap_raw~value;
+table data IN 'CSV' 'solve_data/_group_cap_pow10.csv' : [group, period], _group_cap_pow10~value;
+table data IN 'CSV' 'solve_data/group_capacity_for_scaling.csv' : [group, period], group_capacity_for_scaling~value;
 # Agent 5c (LP-scaling): precomputed reciprocals of the row scalers
 # above.  Multiplying every term of a balance or group-aggregation
 # constraint by the reciprocal divides the whole row by its scaler,
@@ -1552,13 +1313,19 @@ param group_capacity_for_scaling{g in group, d in period_in_use} :=
 # Mode A (flag = 0) both scalers are 1, so these reciprocals are 1 and
 # every `* inv_*_cap[.]` factor in the constraints collapses to a
 # no-op at AMPL parse time.
-param inv_node_cap{n in node, d in period_in_use} :=
-    1 / node_capacity_for_scaling[n, d];
-param inv_group_cap{g in group, d in period_in_use} :=
-    1 / group_capacity_for_scaling[g, d];
-param p_inflation := (if sum{m in model} 1 then max{m in model} p_inflation_rate[m] else 0);
-param p_infl_offset_investment := (if sum{m in model} 1 then max{m in model} p_inflation_offset_investment[m] else 0);
-param p_infl_offset_operations := (if sum{m in model} 1 then max{m in model} p_inflation_offset_operations[m] else 0.5);
+param inv_node_cap{n in node, d in period_in_use};   # Migrated to Python.
+param inv_group_cap{g in group, d in period_in_use}; # Migrated to Python.
+table data IN 'CSV' 'solve_data/inv_node_cap.csv' : [node, period], inv_node_cap~value;
+table data IN 'CSV' 'solve_data/inv_group_cap.csv' : [group, period], inv_group_cap~value;
+# p_inflation, p_infl_offset_investment, p_infl_offset_operations
+# were dead scalars — declared from input/p_inflation_rate.csv etc.
+# but never used in any constraint. Inflation factors that the LP
+# actually consumes are computed in Python preprocessing
+# (period_calculated_params.py:read_p_inflation_factors). Removed
+# in batch 69. The model-indexed source params at L542-544 remain
+# loaded but are now also unreferenced — left in place for
+# documentation; deletable in a future cleanup if the `set model`
+# loader (L757) is repointed to p_max_flow_for_unconstrained_variables.csv.
 param p_unconstrained_flow_cap := (if sum{m in model} 1 then max{m in model} p_max_flow_for_unconstrained_variables[m] else 1000000);
 # Inflation offsets are fractions of the represented window p_years_represented[d, y]:
 #   0   = beginning of the window
@@ -1567,20 +1334,14 @@ param p_unconstrained_flow_cap := (if sum{m in model} 1 then max{m in model} p_m
 # Defaults: investment annuity 0 (start-of-year — "paid when built"),
 # operational costs 0.5 (mid-year average).  User-provided values on the
 # model entity override the defaults via p_inflation_offset_*.
-param p_years_until_dispatch{(d, y) in period__year} :=
-    + sum{y2 in year : y2 < y} (p_years_represented[d, y2])
-    + p_years_represented[d, y] * p_infl_offset_operations;
-param p_years_until_invest{(d, y) in period__year} :=
-    + sum{y2 in year : y2 < y} (p_years_represented[d, y2])
-    + p_years_represented[d, y] * p_infl_offset_investment;
-param p_inflation_factor_investment_yearly{d in period} :=
-		if sum{y in year} p_years_represented[d, y]
-		then sum{(d, y) in period__year} p_years_represented[d, y] * ( 1/(1 + p_inflation) ^ (p_years_until_invest[d, y]) )
-		else 1;
-param p_inflation_factor_operations_yearly{d in period_in_use} :=
-		if sum{y in year} p_years_represented[d, y]
-		then sum{(d, y) in period__year} p_years_represented[d, y] * ( 1/(1 + p_inflation) ^ (p_years_until_dispatch[d, y]) )
-		else 1;
+param p_years_until_dispatch{(d, y) in period__year};  # Migrated to Python (preprocessing/period_calculated_params.py).
+param p_years_until_invest{(d, y) in period__year};    # Migrated to Python (preprocessing/period_calculated_params.py).
+table data IN 'CSV' 'solve_data/p_years_until_dispatch.csv' : [period, year], p_years_until_dispatch~value;
+table data IN 'CSV' 'solve_data/p_years_until_invest.csv' : [period, year], p_years_until_invest~value;
+param p_inflation_factor_investment_yearly{d in period};        # Migrated to Python.
+param p_inflation_factor_operations_yearly{d in period_in_use};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/p_inflation_factor_investment_yearly.csv' : [period], p_inflation_factor_investment_yearly~value;
+table data IN 'CSV' 'solve_data/p_inflation_factor_operations_yearly.csv' : [period], p_inflation_factor_operations_yearly~value;
 
 # Check for division by zero
 printf 'Checking: node lifetime > 0, if the node is investing or divesting';
@@ -1596,584 +1357,286 @@ check {e in (entityInvest union entityDivest), d in period_invest : e in process
 # to the check above; the check is authoritative for investing/divesting
 # entities.
 
-param ed_entity_annual{e in entityInvest, d in period_invest} :=
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
-          ( + ( pdNode[e, 'invest_cost', d] * 1000
-		        * ( (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05)
-			        / (1 - (1 / (1 + (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05))^(if pdNode[e, 'lifetime', d] > 0 then pdNode[e, 'lifetime', d] else 20) ) )
-				  )
-		       )
-		  )
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m not in invest_method_not_allowed}
-		  (
-            + (pdProcess[e, 'invest_cost', d] * 1000 * ( (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05)
-			  / (1 - (1 / (1 + (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05))^(if pdProcess[e, 'lifetime', d] > 0 then pdProcess[e, 'lifetime', d] else 20) ) ) ))
-		  )
-;
+param ed_entity_annual{e in entityInvest, d in period_invest};  # Migrated to Python (preprocessing/entity_annual_calc_params.py).
+table data IN 'CSV' 'solve_data/ed_entity_annual.csv' : [entity, period], ed_entity_annual~value;
 
-param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice' || m = 'no_investment'}
-          ( + ed_entity_annual[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-					  && p_discount_years[d_all] < p_discount_years[d] + edEntity_lifetime[e, d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_automatic'}
-		  (
-            + ed_entity_annual[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-;
+param ed_entity_annual_discounted{e in entityInvest, d in period_invest};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_entity_annual_discounted.csv' : [entity, period], ed_entity_annual_discounted~value;
 
-param ed_entity_annual_divest{e in entityDivest, d in period_invest} :=
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in divest_method_not_allowed}
-          ( + (pdNode[e, 'salvage_value', d] * 1000 * ( (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05)
-			  / (1 - (1 / (1 + (if pdNode[e, 'discount_rate', d] > 0 then pdNode[e, 'discount_rate', d] else 0.05))^(if pdNode[e, 'lifetime', d] > 0 then pdNode[e, 'lifetime', d] else 20) ) ) ))
-		  )
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m not in divest_method_not_allowed}
-		  (
-            + (pdProcess[e, 'salvage_value', d] * 1000 * ( (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05)
-			  / (1 - (1 / (1 + (if pdProcess[e, 'discount_rate', d] > 0 then pdProcess[e, 'discount_rate', d] else 0.05))^(if pdProcess[e, 'lifetime', d] > 0 then pdProcess[e, 'lifetime', d] else 20) ) ) ))
-		  )
-;
-param ed_entity_annual_divest_discounted{e in entityDivest, d in period_invest} :=
-        if (e in node) then
-          ( + ed_entity_annual_divest[e, d]
-			    * sum{d_all in period_in_use
-				   :    p_discount_years[d_all] >= p_discount_years[d]
-				     && p_discount_years[d_all] < p_discount_years[d] + pdNode[e, 'lifetime', d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-		else if (e in process) then
-		  (
-            + ed_entity_annual_divest[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-					  && p_discount_years[d_all] < p_discount_years[d] + pdProcess[e, 'lifetime', d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-;
+param ed_entity_annual_divest{e in entityDivest, d in period_invest};            # Migrated to Python.
+param ed_entity_annual_divest_discounted{e in entityDivest, d in period_invest};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_entity_annual_divest.csv' : [entity, period], ed_entity_annual_divest~value;
+table data IN 'CSV' 'solve_data/ed_entity_annual_divest_discounted.csv' : [entity, period], ed_entity_annual_divest_discounted~value;
 
-param ed_fixed_cost{e in entity, d in period_with_history} :=
-  + (if e in node then pdNode[e, 'fixed_cost', d] * 1000 else 0)
-  + (if e in process then pdProcess[e, 'fixed_cost', d] * 1000 else 0);
+param ed_fixed_cost{e in entity, d in period_with_history};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/ed_fixed_cost.csv' : [entity, period], ed_fixed_cost~value;
 
-param ed_lifetime_fixed_cost{e in entity, d in period_with_history} :=
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice' || m = 'no_investment'}
-          ( + ed_fixed_cost[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-					  && p_discount_years[d_all] < p_discount_years[d] + edEntity_lifetime[e, d]
-				  }
-				    ( p_inflation_factor_operations_yearly[d_all] )
-		  )
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_automatic'}
-		  (
-            + ed_fixed_cost[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-				  }
-				    ( p_inflation_factor_operations_yearly[d_all] )
-		  )
-;
+param ed_lifetime_fixed_cost{e in entity, d in period_with_history};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_lifetime_fixed_cost.csv' : [entity, period], ed_lifetime_fixed_cost~value;
 
-param ed_lifetime_fixed_cost_divest{e in entityDivest, d in period_invest} :=
-        if (e in node) then
-          ( + ed_fixed_cost[e, d]
-			    * sum{d_all in period_in_use
-				   :    p_discount_years[d_all] >= p_discount_years[d]
-				     && p_discount_years[d_all] < p_discount_years[d] + pdNode[e, 'lifetime', d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-		else if (e in process) then
-		  (
-            + ed_fixed_cost[e, d]
-			    * sum{d_all in period_in_use
-				    :    p_discount_years[d_all] >= p_discount_years[d]
-					  && p_discount_years[d_all] < p_discount_years[d] + pdProcess[e, 'lifetime', d]
-				  }
-				    ( p_inflation_factor_investment_yearly[d_all] )
-		  )
-;
+param ed_lifetime_fixed_cost_divest{e in entityDivest, d in period_invest};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_lifetime_fixed_cost_divest.csv' : [entity, period], ed_lifetime_fixed_cost_divest~value;
 
 
-set process_minload := {p in process : (p, 'min_load_efficiency') in process__ct_method};
+set process_minload;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_minload.csv' : process_minload <- [process];
 
-param pdtConversion_rate{p in process, (d, t) in dt} := round(1 / pdtProcess[p, 'efficiency', d, t], 6);
+param pdtConversion_rate{p in process, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtConversion_rate.csv' : [process, period, time], pdtConversion_rate~value;
 
-param pdtProcess_section{p in process_minload, (d, t) in dt} :=
-        + pdtConversion_rate[p, d, t]
-    	- round(
-    	    ( pdtConversion_rate[p, d, t] - pdtProcess[p, 'min_load', d, t] * (1 / pdtProcess[p, 'efficiency_at_min_load', d, t]) )
-			    / (1 - pdtProcess[p, 'min_load', d, t]), 6);
+param pdtProcess_section{p in process_minload, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtProcess_section.csv' : [process, period, time], pdtProcess_section~value;
 
-param pdtProcess_slope{p in process, (d, t) in dt} :=
-        + pdtConversion_rate[p, d, t]
-		- (if p in process_minload then pdtProcess_section[p, d, t] else 0);
+param pdtProcess_slope{p in process, (d, t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/pdtProcess_slope.csv' : [process, period, time], pdtProcess_slope~value;
 
-param pdtProcess__source__sink__dt_varCost {(p, source, sink) in process_source_sink, (d, t) in dt} :=
-  + (if (p, source) in process_source then pdtProcess_source[p, source, 'other_operational_cost', d, t])
-  + (if (p, sink) in process_sink then pdtProcess_sink[p, sink, 'other_operational_cost', d, t])
-  + (if (p, source, sink) in process_source_sink then
-      ( if pdtProcess[p, 'other_operational_cost', d, t] then pdtProcess[p, 'other_operational_cost', d, t]
-	  )
-	)
-;
+param pdtProcess__source__sink__dt_varCost {(p, source, sink) in process_source_sink, (d, t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
+table data IN 'CSV' 'solve_data/pdtProcess__source__sink__dt_varCost.csv' : [process, source, sink, period, time], pdtProcess__source__sink__dt_varCost~value;
 
-param pdtProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
-  + (if (p, source) in process_source then pdtProcess_source[p, source, 'other_operational_cost', d, t])
-  + (if (p, sink) in process_sink then pdtProcess_sink[p, sink, 'other_operational_cost', d, t])
-  + (if (p, source, sink) in process_source_sink_alwaysProcess
-        && ((p, sink) in process_sink || (p, sink) in process_source)
-	 then ( if pdtProcess[p, 'other_operational_cost', d, t] then pdtProcess[p, 'other_operational_cost', d, t]
-	      )
-    )
-;
-set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : pdtProcess__source__sink__dt_varCost[p, source, sink, d, t]};
-set pssdt_varCost_eff_unit_source := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && pdtProcess_source[p, source, 'other_operational_cost', d, t]};
-set pssdt_varCost_eff_unit_sink := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && pdtProcess_sink[p, sink, 'other_operational_cost', d, t]};
-set pssdt_varCost_eff_connection := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : pdtProcess[p,'other_operational_cost', d, t]};
-set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || exists{(e, c) in process_capacity_constraint_invested} 1 || exists{(e, c) in node_capacity_constraint_invested} 1 || exists{(e, c) in process_capacity_constraint_prebuilt} 1 || exists{(e, c) in node_capacity_constraint_prebuilt} 1 };
-set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method
-                                               || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set e_invest_total := {e in entityInvest : (e, 'invest_total') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method
-                                               || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set ed_invest_cumulative := {(e, d) in ed_invest : (e, 'cumulative_limits') in entity__invest_method};
-set edd_history_choice := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_choice') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + edEntity_lifetime[e, d_history]};
-set edd_history_automatic := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
-set edd_history_no_investment := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'no_investment') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + edEntity_lifetime[e, d_history]};
-set edd_history := edd_history_choice union edd_history_automatic union edd_history_no_investment;
-set edd_history_invest := {(e, d_invest, d) in edd_history : e in entityInvest};
-set edd_invest := {(e, d_invest, d) in edd_history_invest : (e, d_invest) in ed_invest};
-
-set pd_invest := {(p, d) in ed_invest : p in process};
-set nd_invest := {(n, d) in ed_invest : n in node};
-set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || exists{(e, c) in process_capacity_constraint_invested} 1 || exists{(e, c) in node_capacity_constraint_invested} 1 || exists{(e, c) in process_capacity_constraint_prebuilt} 1 || exists{(e, c) in node_capacity_constraint_prebuilt} 1 };
-set ed_divest_period := {(e, d) in ed_invest : (e, 'retire_period') in entity__invest_method || (e, 'retire_period_total') in entity__invest_method
-                                               || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set e_divest_total := {e in entityDivest : (e, 'retire_total') in entity__invest_method || (e, 'retire_period_total') in entity__invest_method
-                                               || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set pd_divest := {(p, d) in ed_divest : p in process};
-set nd_divest := {(n, d) in ed_divest : n in node};
-
-set gd_invest := {g in group_invest, d in period_invest : sum{(g, e) in group_entity : (e, d) in ed_invest} 1};
-set gd_invest_period := {(g, d) in gd_invest : (g, 'invest_period') in group__invest_method || (g, 'invest_period_total') in group__invest_method
-                                               || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
-set g_invest_total := {g in group_invest : (g, 'invest_total') in group__invest_method || (g, 'invest_period_total') in group__invest_method
-                                               || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
-set gd_divest := {g in group_invest, d in period_invest : sum{(g, e) in group_entity : (e, d) in ed_invest} 1};
-set gd_divest_period := {(g, d) in gd_invest : (g, 'retire_period') in group__invest_method || (g, 'retire_period_total') in group__invest_method
-                                               || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
-set g_divest_total := {g in group_divest : (g, 'retire_total') in group__invest_method || (g, 'retire_period_total') in group__invest_method
-                                               || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
-set g_invest_cumulative := {g in group_invest : (g, 'cumulative_limits') in group__invest_method};
+param pdtProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} default 0;  # Migrated to Python (preprocessing/entity_period_calc_params.py).  Sparse CSV: writer skips zero-valued rows; mod's `default 0` substitutes.
+table data IN 'CSV' 'solve_data/pdtProcess__source__sink__dt_varCost_alwaysProcess.csv' : [process, source, sink, period, time], pdtProcess__source__sink__dt_varCost_alwaysProcess~value;
+set pssdt_varCost_noEff dimen 5;  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+set pssdt_varCost_eff_unit_source dimen 5;  # Migrated to Python.
+set pssdt_varCost_eff_unit_sink dimen 5;    # Migrated to Python.
+set pssdt_varCost_eff_connection dimen 5;   # Migrated to Python.
+table data IN 'CSV' 'solve_data/pssdt_varCost_noEff.csv' : pssdt_varCost_noEff <- [process, source, sink, period, time];
+table data IN 'CSV' 'solve_data/pssdt_varCost_eff_unit_source.csv' : pssdt_varCost_eff_unit_source <- [process, source, sink, period, time];
+table data IN 'CSV' 'solve_data/pssdt_varCost_eff_unit_sink.csv' : pssdt_varCost_eff_unit_sink <- [process, source, sink, period, time];
+table data IN 'CSV' 'solve_data/pssdt_varCost_eff_connection.csv' : pssdt_varCost_eff_connection <- [process, source, sink, period, time];
+set ed_invest dimen 2;            # Migrated to Python (preprocessing/invest_divest_sets.py).
+set ed_invest_period dimen 2;     # Migrated to Python.
+set e_invest_total;               # Migrated to Python (preprocessing/invest_total_sets.py).
+set ed_invest_cumulative dimen 2; # Migrated to Python.
+set edd_history_choice dimen 3;   # Migrated to Python.
+set edd_history_automatic dimen 3;# Migrated to Python.
+set edd_history_no_investment dimen 3;  # Migrated to Python.
+set edd_history dimen 3;          # Migrated to Python.
+set edd_history_invest dimen 3;   # Migrated to Python.
+set edd_invest dimen 3;           # Migrated to Python.
+set pd_invest dimen 2;            # Migrated to Python.
+set nd_invest dimen 2;            # Migrated to Python.
+set ed_divest dimen 2;            # Migrated to Python.
+set ed_divest_period dimen 2;     # Migrated to Python.
+set e_divest_total;               # Migrated to Python (preprocessing/invest_total_sets.py).
+set pd_divest dimen 2;            # Migrated to Python.
+set nd_divest dimen 2;            # Migrated to Python.
+set gd_invest dimen 2;            # Migrated to Python.
+set gd_invest_period dimen 2;     # Migrated to Python.
+set g_invest_total;               # Migrated to Python (preprocessing/invest_total_sets.py).
+set gd_divest dimen 2;            # Migrated to Python.
+set gd_divest_period dimen 2;     # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_invest.csv' : ed_invest <- [entity, period];
+table data IN 'CSV' 'solve_data/ed_invest_period.csv' : ed_invest_period <- [entity, period];
+table data IN 'CSV' 'solve_data/ed_invest_cumulative.csv' : ed_invest_cumulative <- [entity, period];
+table data IN 'CSV' 'solve_data/edd_history_choice.csv' : edd_history_choice <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_history_automatic.csv' : edd_history_automatic <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_history_no_investment.csv' : edd_history_no_investment <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_history.csv' : edd_history <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_history_invest.csv' : edd_history_invest <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/edd_invest.csv' : edd_invest <- [entity, period_history, period];
+table data IN 'CSV' 'solve_data/pd_invest.csv' : pd_invest <- [process, period];
+table data IN 'CSV' 'solve_data/nd_invest.csv' : nd_invest <- [node, period];
+table data IN 'CSV' 'solve_data/ed_divest.csv' : ed_divest <- [entity, period];
+table data IN 'CSV' 'solve_data/ed_divest_period.csv' : ed_divest_period <- [entity, period];
+table data IN 'CSV' 'solve_data/pd_divest.csv' : pd_divest <- [process, period];
+table data IN 'CSV' 'solve_data/nd_divest.csv' : nd_divest <- [node, period];
+table data IN 'CSV' 'solve_data/gd_invest.csv' : gd_invest <- [group, period];
+table data IN 'CSV' 'solve_data/gd_invest_period.csv' : gd_invest_period <- [group, period];
+table data IN 'CSV' 'solve_data/gd_divest.csv' : gd_divest <- [group, period];
+table data IN 'CSV' 'solve_data/gd_divest_period.csv' : gd_divest_period <- [group, period];
+set g_divest_total;       # Migrated to Python (preprocessing/invest_total_sets.py).
+set g_invest_cumulative;  # Migrated to Python (preprocessing/invest_total_sets.py).
+table data IN 'CSV' 'solve_data/e_invest_total.csv' : e_invest_total <- [entity];
+table data IN 'CSV' 'solve_data/e_divest_total.csv' : e_divest_total <- [entity];
+table data IN 'CSV' 'solve_data/g_invest_total.csv' : g_invest_total <- [group];
+table data IN 'CSV' 'solve_data/g_divest_total.csv' : g_divest_total <- [group];
+table data IN 'CSV' 'solve_data/g_invest_cumulative.csv' : g_invest_cumulative <- [group];
 
 # For entities with lifetime_method = 'no_investment', v_invest is allowed
 # only within the first-period lifetime window. After p_years_d[period_first]
 # + lifetime the asset retires once and the model is forbidden from
 # rebuilding — the fix_v_invest_no_investment_eq constraint below pins
 # v_invest[e, d] = 0 for these (e, d).
-set ed_invest_forbidden_no_investment := {(e, d) in ed_invest :
-    (e, 'no_investment') in entity__lifetime_method
-    && p_years_d[d] >= sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first])};
+set ed_invest_forbidden_no_investment dimen 2;  # Migrated to Python (preprocessing/invest_divest_sets.py).
+table data IN 'CSV' 'solve_data/ed_invest_forbidden_no_investment.csv'
+    : ed_invest_forbidden_no_investment <- [entity, period];
 
-param e_invest_max_total{e in entityInvest} :=
-  + (if e in process then p_process[e, 'invest_max_total'])
-  + (if e in node then p_node[e, 'invest_max_total'])
-;
+# e_*_total params migrated to Python (preprocessing/entity_total_caps.py).
+# Each is the sum of p_process[e, paramName] + p_node[e, paramName] (one
+# of the two contributes per entity since process/node are disjoint).
+# Computed during write_input and loaded back via table data IN below.
+param e_invest_max_total{e in entityInvest};
+param e_divest_max_total{e in entityDivest};
+param e_invest_min_total{e in entityInvest};
+param e_divest_min_total{e in entityDivest};
+table data IN 'CSV' 'solve_data/e_invest_max_total.csv' : [entity], e_invest_max_total~value;
+table data IN 'CSV' 'solve_data/e_divest_max_total.csv' : [entity], e_divest_max_total~value;
+table data IN 'CSV' 'solve_data/e_invest_min_total.csv' : [entity], e_invest_min_total~value;
+table data IN 'CSV' 'solve_data/e_divest_min_total.csv' : [entity], e_divest_min_total~value;
 
-param e_divest_max_total{e in entityDivest} :=
-  + (if e in process then p_process[e, 'retire_max_total'])
-  + (if e in node then p_node[e, 'retire_max_total'])
-;
+param ed_invest_max_period{(e, d) in ed_invest};         # Migrated to Python.
+param ed_divest_max_period{(e, d) in ed_divest};         # Migrated to Python.
+param ed_invest_min_period{(e, d) in ed_invest};         # Migrated to Python.
+param ed_divest_min_period{(e, d) in ed_divest};         # Migrated to Python.
+param ed_cumulative_max_capacity{(e, d) in ed_invest};   # Migrated to Python.
+param ed_cumulative_min_capacity{(e, d) in ed_invest};   # Migrated to Python.
+table data IN 'CSV' 'solve_data/ed_invest_max_period.csv' : [entity, period], ed_invest_max_period~value;
+table data IN 'CSV' 'solve_data/ed_divest_max_period.csv' : [entity, period], ed_divest_max_period~value;
+table data IN 'CSV' 'solve_data/ed_invest_min_period.csv' : [entity, period], ed_invest_min_period~value;
+table data IN 'CSV' 'solve_data/ed_divest_min_period.csv' : [entity, period], ed_divest_min_period~value;
+table data IN 'CSV' 'solve_data/ed_cumulative_max_capacity.csv' : [entity, period], ed_cumulative_max_capacity~value;
+table data IN 'CSV' 'solve_data/ed_cumulative_min_capacity.csv' : [entity, period], ed_cumulative_min_capacity~value;
 
-param e_invest_min_total{e in entityInvest} :=
-  + (if e in process then p_process[e, 'invest_min_total'])
-  + (if e in node then p_node[e, 'invest_min_total'])
-;
+set process_source_sink_ramp_limit_source_up   dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_ramp_limit_sink_up     dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_ramp_limit_source_down dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_ramp_limit_sink_down   dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_source_sink_ramp_cost              dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_source_up.csv'   : process_source_sink_ramp_limit_source_up   <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_sink_up.csv'     : process_source_sink_ramp_limit_sink_up     <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_source_down.csv' : process_source_sink_ramp_limit_source_down <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_limit_sink_down.csv'   : process_source_sink_ramp_limit_sink_down   <- [process, source, sink];
+table data IN 'CSV' 'solve_data/process_source_sink_ramp_cost.csv'              : process_source_sink_ramp_cost              <- [process, source, sink];
+set process_source_sink_ramp dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_ramp.csv' : process_source_sink_ramp <- [process, source, sink];
+# The 4 process_source_sink_dtttdt_ramp_limit_*_{up,down} sets that
+# used to live here were unused (the ramp_*_constraint families at
+# L3468-3543 inline the same filter on block_dtttdt) — removed in the
+# batch 68 cleanup along with their CSV writers and table-data-IN.
 
-param e_divest_min_total{e in entityDivest} :=
-  + (if e in process then p_process[e, 'retire_min_total'])
-  + (if e in node then p_node[e, 'retire_min_total'])
-;
+param p_process_reserve_upDown_node_reliability {(p, r, ud, n) in process_reserve_upDown_node_active};  # Migrated to Python (preprocessing/reserve_calc_params.py).
+table data IN 'CSV' 'solve_data/p_process_reserve_upDown_node_reliability.csv' : [process, reserve, upDown, node], p_process_reserve_upDown_node_reliability~value;
 
-param ed_invest_max_period{(e, d) in ed_invest} :=
-  + (if e in process then pdProcess[e, 'invest_max_period', d])
-  + (if e in node then pdNode[e, 'invest_max_period', d])
-;
-
-param ed_divest_max_period{(e, d) in ed_divest} :=
-  + (if e in process then pdProcess[e, 'retire_max_period', d])
-  + (if e in node then pdNode[e, 'retire_max_period', d])
-;
-
-param ed_invest_min_period{(e, d) in ed_invest} :=
-  + (if e in process then pdProcess[e, 'invest_min_period', d])
-  + (if e in node then pdNode[e, 'invest_min_period', d])
-;
-
-param ed_divest_min_period{(e, d) in ed_divest} :=
-  + (if e in process then pdProcess[e, 'retire_min_period', d])
-  + (if e in node then pdNode[e, 'retire_min_period', d])
-;
-
-param ed_cumulative_max_capacity{(e, d) in ed_invest} :=
-  + (if e in process then pdProcess[e, 'cumulative_max_capacity', d])
-  + (if e in node then pdNode[e, 'cumulative_max_capacity', d])
-;
-
-param ed_cumulative_min_capacity{(e, d) in ed_invest} :=
-  + (if e in process then pdProcess[e, 'cumulative_min_capacity', d])
-  + (if e in node then pdNode[e, 'cumulative_min_capacity', d])
-;
-
-set process_source_sink_ramp_limit_source_up :=
-    {(p, source, sink) in process_source_sink
-	    : ( sum{(p, source, m) in process_node_ramp_method : m in ramp_limit_method} 1
-		    && p_process_source[p, source, 'ramp_speed_up'] > 0
-		  )
-	};
-set process_source_sink_ramp_limit_sink_up :=
-    {(p, source, sink) in process_source_sink
-	    : ( sum{(p, sink, m) in process_node_ramp_method : m in ramp_limit_method} 1
-		    && p_process_sink[p, sink, 'ramp_speed_up'] > 0
-		  )
-	};
-set process_source_sink_ramp_limit_source_down :=
-    {(p, source, sink) in process_source_sink
-	    : ( sum{(p, source, m) in process_node_ramp_method : m in ramp_limit_method} 1
-		    && p_process_source[p, source, 'ramp_speed_down'] > 0
-		  )
-	};
-set process_source_sink_ramp_limit_sink_down :=
-    {(p, source, sink) in process_source_sink
-	    : ( sum{(p, sink, m) in process_node_ramp_method : m in ramp_limit_method} 1
-		    && p_process_sink[p, sink, 'ramp_speed_down'] > 0
-		  )
-	};
-set process_source_sink_ramp_cost :=
-    {(p, source, sink) in process_source_sink
-	    : sum{(p, source, m) in process_node_ramp_method : m in ramp_cost_method} 1
-		  || sum{(p, sink, m) in process_node_ramp_method : m in ramp_cost_method} 1
-	};
-set process_source_sink_ramp :=
-    process_source_sink_ramp_limit_source_up
-    union process_source_sink_ramp_limit_sink_up
-	union process_source_sink_ramp_limit_source_down
-	union process_source_sink_ramp_limit_sink_down
-	union process_source_sink_ramp_cost;
-
-set process_source_sink_dtttdt_ramp_limit_source_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit_source_up, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
- 		    p_process_source[p, source, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
-        };
-set process_source_sink_dtttdt_ramp_limit_sink_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit_sink_up, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
- 		    p_process_sink[p, sink, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
-        };
-set process_source_sink_dtttdt_ramp_limit_source_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit_source_down, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
- 		    p_process_source[p, source, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
-        };
-set process_source_sink_dtttdt_ramp_limit_sink_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit_sink_down, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
- 		    p_process_sink[p, sink, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
-        };
-
-param p_process_reserve_upDown_node_reliability {(p, r, ud, n) in process_reserve_upDown_node_active} :=
-  if p_process_reserve_upDown_node[p, r, ud, n, 'reliability'] then
-    p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
-  else 1;
-
-set process_reserve_upDown_node_increase_reserve_ratio :=
-        {(p, r, ud, n) in process_reserve_upDown_node_active :
-		    p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'] > 0
-		};
-set process_reserve_upDown_node_large_failure_ratio :=
-        {(p, r, ud, n) in process_reserve_upDown_node_active :
-		    p_process_reserve_upDown_node[p, r, ud, n, 'large_failure_ratio'] > 0
-		};
-set process_large_failure := setof {(p, r, ud, n) in process_reserve_upDown_node_large_failure_ratio} p;
+set process_reserve_upDown_node_increase_reserve_ratio dimen 4;  # Migrated to Python.
+table data IN 'CSV' 'solve_data/process_reserve_upDown_node_increase_reserve_ratio.csv' : process_reserve_upDown_node_increase_reserve_ratio <- [process, reserve, upDown, node];
+set process_reserve_upDown_node_large_failure_ratio dimen 4;  # Migrated to Python.
+table data IN 'CSV' 'solve_data/process_reserve_upDown_node_large_failure_ratio.csv' : process_reserve_upDown_node_large_failure_ratio <- [process, reserve, upDown, node];
+set process_large_failure;  # Migrated to Python.
+table data IN 'CSV' 'solve_data/process_large_failure.csv' : process_large_failure <- [process];
 
 # Morales-Espana startup/shutdown capacity reduction parameters
 # If ramp_speed > 0: reduction = max(0, 1 - min_load - ramp_speed * 60 * step_duration)
 # If no ramp: reduction = 0 (unit can reach full power instantly)
-param p_startup_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt
-                                    : p in process_online} :=
-  if p_process_sink[p, sink, 'ramp_speed_up'] > 0 then
-    max(0, 1 - p_process[p, 'min_load']
-            - p_process_sink[p, sink, 'ramp_speed_up'] * 60 * step_duration[d, t])
-  else 0;
+param p_startup_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt : p in process_online};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_startup_cap_reduction_sink.csv' : [process, sink, period, time], p_startup_cap_reduction_sink~value;
 
-param p_shutdown_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt
-                                     : p in process_online} :=
-  if p_process_sink[p, sink, 'ramp_speed_down'] > 0 then
-    max(0, 1 - p_process[p, 'min_load']
-            - p_process_sink[p, sink, 'ramp_speed_down'] * 60 * step_duration[d, t])
-  else 0;
+param p_shutdown_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt : p in process_online};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/p_shutdown_cap_reduction_sink.csv' : [process, sink, period, time], p_shutdown_cap_reduction_sink~value;
 
-param p_startup_cap_reduction_source {(p, source) in process_source, (d, t) in dt
-                                      : p in process_online} :=
-  if p_process_source[p, source, 'ramp_speed_up'] > 0 then
-    max(0, 1 - p_process[p, 'min_load']
-            - p_process_source[p, source, 'ramp_speed_up'] * 60 * step_duration[d, t])
-  else 0;
+param p_startup_cap_reduction_source {(p, source) in process_source, (d, t) in dt : p in process_online};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/p_startup_cap_reduction_source.csv' : [process, source, period, time], p_startup_cap_reduction_source~value;
 
-param p_shutdown_cap_reduction_source {(p, source) in process_source, (d, t) in dt
-                                       : p in process_online} :=
-  if p_process_source[p, source, 'ramp_speed_down'] > 0 then
-    max(0, 1 - p_process[p, 'min_load']
-            - p_process_source[p, source, 'ramp_speed_down'] * 60 * step_duration[d, t])
-  else 0;
+param p_shutdown_cap_reduction_source {(p, source) in process_source, (d, t) in dt : p in process_online};  # Migrated to Python.
+table data IN 'CSV' 'solve_data/p_shutdown_cap_reduction_source.csv' : [process, source, period, time], p_shutdown_cap_reduction_source~value;
 
-set gcndt_co2_price :=
-        {g in group, (c,n) in commodity_node, d in period_in_use, t in time_in_use: (d,t) in dt
-        && (g, n) in group_node
-        && p_commodity[c, 'co2_content']
-        && g in group_co2_price
-        && pdtGroup[g, 'co2_price', d, t]
-      };
+set gcndt_co2_price                          dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set group_commodity_node_period_co2_period   dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/gcndt_co2_price.csv'                          : gcndt_co2_price                          <- [group, commodity, node, period, time];
+table data IN 'CSV' 'solve_data/group_commodity_node_period_co2_period.csv'   : group_commodity_node_period_co2_period   <- [group, commodity, node, period];
 
-set group_commodity_node_period_co2_period :=
-        {g in group, (c, n) in commodity_node, d in period_in_use :
-		    (g, n) in group_node
-			&& p_commodity[c, 'co2_content']
-			&& g in group_co2_max_period
-		};
-
-set group_commodity_node_period_co2_total :=
-        {g in group, (c, n) in commodity_node :
-		    (g, n) in group_node
-			&& p_commodity[c, 'co2_content']
-			&& g in group_co2_max_total
-		};
+set group_commodity_node_period_co2_total dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/group_commodity_node_period_co2_total.csv' : group_commodity_node_period_co2_total <- [group, commodity, node];
 
 # Commodity-ladder index sets.  cnd_ladder lists (commodity, node, period)
 # triples that need period-level v_trade variables; cndi_ladder_* adds the
 # tier index, split per ladder method so each reads from its own tier set.
 # cndi_ladder is the union used for v_trade declaration and the
 # per-(c, n, d) balance row.
-set cnd_ladder dimen 3 := {(c, n) in commodity_node, d in period_in_use : c in commodity_with_ladder};
-set cndi_ladder_cum dimen 4
-    := {(c, n) in commodity_node, d in period_in_use, i in tier
-        : c in commodity_with_ladder_cumulative && (c, i) in commodity__tier_cum};
-set cndi_ladder_ann dimen 4
-    := {(c, n) in commodity_node, d in period_in_use, i in tier
-        : c in commodity_with_ladder_annual && (c, i) in commodity__tier_ann};
-set cndi_ladder dimen 4 := cndi_ladder_cum union cndi_ladder_ann;
-set ci_ladder_cumulative := {(c, i) in commodity__tier_cum : c in commodity_with_ladder_cumulative};
+set cnd_ladder dimen 3;       # Migrated to Python (preprocessing/per_solve_sets.py).
+set cndi_ladder_cum dimen 4;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set cndi_ladder_ann dimen 4;  # Migrated to Python (preprocessing/per_solve_sets.py).
+set cndi_ladder dimen 4;      # Migrated to Python (preprocessing/per_solve_sets.py).
+table data IN 'CSV' 'solve_data/cnd_ladder_set.csv' : cnd_ladder <- [commodity, node, period];
+table data IN 'CSV' 'solve_data/cndi_ladder_cum_set.csv' : cndi_ladder_cum <- [commodity, node, period, tier];
+table data IN 'CSV' 'solve_data/cndi_ladder_ann_set.csv' : cndi_ladder_ann <- [commodity, node, period, tier];
+table data IN 'CSV' 'solve_data/cndi_ladder_set.csv' : cndi_ladder <- [commodity, node, period, tier];
+set ci_ladder_cumulative dimen 2;  # Migrated to Python (preprocessing/invest_total_sets.py).
+table data IN 'CSV' 'solve_data/ci_ladder_cumulative.csv' : ci_ladder_cumulative <- [commodity, tier];
 
-set process__commodity__node := {p in process, (c, n) in commodity_node : (p, n) in process_source || (p, n) in process_sink};
+set process__commodity__node dimen 3;  # Migrated to Python (preprocessing/structural_filters.py).
+table data IN 'CSV' 'solve_data/process__commodity__node.csv' : process__commodity__node <- [process, commodity, node];
 
-set commodity_node_co2 :=
-        {(c, n) in commodity_node :
-			p_commodity[c, 'co2_content']
-		};
+set commodity_node_co2 dimen 2;  # Migrated to Python (preprocessing/structural_filters.py).
+table data IN 'CSV' 'solve_data/commodity_node_co2.csv' : commodity_node_co2 <- [commodity, node];
 
-set process__commodity__node_co2 := {p in process, (c, n) in commodity_node_co2 : (p, n) in process_source || (p, n) in process_sink};
-set process_co2 := setof{(p, c, n) in process__commodity__node_co2} p;
+set process__commodity__node_co2 dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set process_co2;                           # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process__commodity__node_co2.csv' : process__commodity__node_co2 <- [process, commodity, node];
+table data IN 'CSV' 'solve_data/process_co2.csv' : process_co2 <- [process];
 
-set process__sink_nonSync :=
-        {p in process, sink in node :
-		       ( (p, sink) in process_sink && (p, sink) in process__sink_nonSync_unit )
-			|| ( (p, sink) in process_sink && p in process_nonSync_connection )
-			|| ( (p, sink) in process_source && p in process_nonSync_connection )
-	    };
+set process__sink_nonSync dimen 2;  # Migrated to Python (preprocessing/nonsync_sets.py).
+table data IN 'CSV' 'solve_data/process__sink_nonSync.csv' : process__sink_nonSync <- [process, sink];
 
-set process__group_inside_group_nonSync :=
-  {p in process, g in groupNonSync:
-  sum{source in node, sink in node:
-  (p,source) in process_source && (g, source) in group_node
-  && (p,sink) in process_sink && (g,sink) in group_node
-  && source != sink } 1
-  };
   #|| sum{(p,m) in process_method: m in method_2way_1var} 1
+  # Declaration moved to the top of the model alongside other process-related
+  # sets so it precedes its `table data IN` reader.
 
-set nodeGroupDispatch__process_fully_inside :=
-  {g in nodeGroupDispatch, p in process
-     : sum {(p, source) in process_source : (g, source) in group_node} 1   # source node is in the group
-       && sum {(p, sink) in process_sink : (g, sink) in group_node} 1      # sink node is in the group
-	   && not sum {(p, source, sink) in process_source_sink : source == sink} 1  # but source and sink can't be the same (rule out e.g. battery storage)
-  };
-set nodeGroupDispatch__process__unit__to_node_Not_in_aggregate :=
-    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_unit
-								 && (g, sink) in group_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside
-								 && not sum{(ga, p, sink) in group_process_node : ga in flowAggregator} 1};
-set nodeGroupDispatch__process__node__to_unit_Not_in_aggregate :=
-    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_unit
-								 && (g, source) in group_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside
-								 && not sum{(ga, p, source) in group_process_node : ga in flowAggregator} 1};
-set nodeGroupDispatch__group_aggregate__process__unit__to_node :=
-    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_unit
-								 && (g, sink) in group_node
-								 && (ga, p, sink) in group_process_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside};
-set nodeGroupDispatch__group_aggregate__process__node__to_unit :=
-    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_unit
-								 && (g, source) in group_node
-								 && (ga, p, source) in group_process_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside};
-set nodeGroupDispatch__process__node__to_connection_Not_in_aggregate :=
-    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_connection
-								 && (g, source) in group_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside
-								 && not sum{(ga, p, source) in group_process_node : ga in flowAggregator} 1};
-set nodeGroupDispatch__process__connection__to_node_Not_in_aggregate :=
-    {g in nodeGroupDispatch, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_connection
-								 && (g, sink) in group_node
-								 && (g, p) not in nodeGroupDispatch__process_fully_inside
-								 && not sum{(ga, p, sink) in group_process_node : ga in flowAggregator} 1};
-set nodeGroupDispatch__connection_Not_in_aggregate :=
-    setof {(g, p, source, sink) in
-	          nodeGroupDispatch__process__connection__to_node_Not_in_aggregate
-	          union nodeGroupDispatch__process__node__to_connection_Not_in_aggregate} (g, p);
-set nodeGroupDispatch__group_aggregate__process__connection__to_node :=
-    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_connection
-								 && (g, sink) in group_node
-								 && (ga, p, sink) in group_process_node
-								 && not (g, p) in nodeGroupDispatch__process_fully_inside};
-set nodeGroupDispatch__group_aggregate__process__node__to_connection :=
-    {g in nodeGroupDispatch, ga in flowAggregator, (p, source, sink) in process_source_sink_alwaysProcess
-	                             : p in process_connection
-								 && (g, source) in group_node
-								 && (ga, p, source) in group_process_node
-								 && not (g, p) in nodeGroupDispatch__process_fully_inside};
-set nodeGroupDispatch__group_aggregate_Connection :=
-    setof {(g, ga, p, source, sink) in
-	          nodeGroupDispatch__group_aggregate__process__connection__to_node
-	          union nodeGroupDispatch__group_aggregate__process__node__to_connection} (g, ga);
+set nodeGroupDispatch__process_fully_inside dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process_fully_inside.csv' : nodeGroupDispatch__process_fully_inside <- [group, process];
+set nodeGroupDispatch__process__unit__to_node_Not_in_aggregate         dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__process__node__to_unit_Not_in_aggregate         dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate__process__unit__to_node         dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate__process__node__to_unit         dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__process__node__to_connection_Not_in_aggregate   dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__process__connection__to_node_Not_in_aggregate   dimen 4;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__connection_Not_in_aggregate                     dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate__process__connection__to_node   dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate__process__node__to_connection   dimen 5;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate_Connection                      dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate_Unit_to_group                   dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+set nodeGroupDispatch__group_aggregate_Group_to_unit                   dimen 2;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv'         : nodeGroupDispatch__process__unit__to_node_Not_in_aggregate         <- [group, process, unit, node];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv'         : nodeGroupDispatch__process__node__to_unit_Not_in_aggregate         <- [group, process, node, unit];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate__process__unit__to_node.csv'         : nodeGroupDispatch__group_aggregate__process__unit__to_node         <- [group, group_aggregate, unit, source, sink];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate__process__node__to_unit.csv'         : nodeGroupDispatch__group_aggregate__process__node__to_unit         <- [group, group_aggregate, unit, source, sink];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv'   : nodeGroupDispatch__process__node__to_connection_Not_in_aggregate   <- [group, process, node, connection];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv'   : nodeGroupDispatch__process__connection__to_node_Not_in_aggregate   <- [group, process, connection, node];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__connection_Not_in_aggregate.csv'                     : nodeGroupDispatch__connection_Not_in_aggregate                     <- [group, connection];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate__process__connection__to_node.csv'   : nodeGroupDispatch__group_aggregate__process__connection__to_node   <- [group, group_aggregate, connection, source, sink];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate__process__node__to_connection.csv'   : nodeGroupDispatch__group_aggregate__process__node__to_connection   <- [group, group_aggregate, connection, source, sink];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate_Connection.csv'                      : nodeGroupDispatch__group_aggregate_Connection                      <- [group, group_aggregate];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate_Unit_to_group.csv'                   : nodeGroupDispatch__group_aggregate_Unit_to_group                   <- [group, group_aggregate];
+table data IN 'CSV' 'solve_data/nodeGroupDispatch__group_aggregate_Group_to_unit.csv'                   : nodeGroupDispatch__group_aggregate_Group_to_unit                   <- [group, group_aggregate];
 
-set nodeGroupDispatch__group_aggregate_Unit_to_group :=
-    setof {(g, ga, p, source, sink) in nodeGroupDispatch__group_aggregate__process__unit__to_node} (g, ga);
+param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__inflow_method};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_positive_inflow.csv' : [node, period, time], p_positive_inflow~value;
 
-set nodeGroupDispatch__group_aggregate_Group_to_unit :=
-    setof {(g, ga, p, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_unit} (g, ga);
+param p_negative_inflow{n in node, (d,t) in dt};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_negative_inflow.csv' : [node, period, time], p_negative_inflow~value;
 
-param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__inflow_method} :=
-  +(if pdtNodeInflow[n,d,t] >= 0 then pdtNodeInflow[n,d,t] else 0);
+param p_entity_pre_existing {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_pre_existing.csv' : [entity, period], p_entity_pre_existing~value;
+param p_entity_existing_capacity_later_solves {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_existing_capacity_later_solves.csv' : [entity, period], p_entity_existing_capacity_later_solves~value;
 
-param p_negative_inflow{n in node, (d,t) in dt} :=
-  +(if pdtNodeInflow[n,d,t] < 0 then pdtNodeInflow[n,d,t] else 0);
+param p_entity_all_existing {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_all_existing.csv' : [entity, period], p_entity_all_existing~value;
 
-param p_entity_pre_existing {e in entity, d in period_in_use} :=
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && e in process && not p_process[e, 'virtual_unitsize'] then pdProcess[e, 'existing', d])
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && e in process && p_process[e, 'virtual_unitsize'] then pdProcess[e, 'existing', d] * p_process[e, 'virtual_unitsize'])
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && e in node && not p_node[e, 'virtual_unitsize'] then pdNode[e, 'existing', d])
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && e in node && p_node[e, 'virtual_unitsize'] then pdNode[e, 'existing', d] * p_node[e, 'virtual_unitsize'])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && e in process && not p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && e in process && p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d] * p_process[e, 'virtual_unitsize'])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && e in node && not p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && e in node && p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d] * p_node[e, 'virtual_unitsize'])
-  + (if (e, 'no_investment') in entity__lifetime_method && e in process && not p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d])
-  + (if (e, 'no_investment') in entity__lifetime_method && e in process && p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d] * p_process[e, 'virtual_unitsize'])
-  + (if (e, 'no_investment') in entity__lifetime_method && e in node && not p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d])
-  + (if (e, 'no_investment') in entity__lifetime_method && e in node && p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d] * p_node[e, 'virtual_unitsize'])
-;
-param p_entity_existing_capacity_later_solves {e in entity, d in period_in_use} :=
-  + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_existing_capacity[e, d_history]);
+param p_entity_existing_count {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_existing_count.csv' : [entity, period], p_entity_existing_count~value;
 
-param p_entity_all_existing {e in entity, d in period_in_use} :=
-  + (if p_model['solveFirst'] then p_entity_pre_existing[e, d])
-  + (if not p_model['solveFirst'] then p_entity_existing_capacity_later_solves[e, d])
-  - (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
-;
+param p_entity_existing_integer_count {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_existing_integer_count.csv' : [entity, period], p_entity_existing_integer_count~value;
 
-param p_entity_existing_count {e in entity, d in period_in_use} :=
-  + p_entity_all_existing[e, d]
-    / p_entity_unitsize[e];
+param p_entity_previously_invested_capacity {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_previously_invested_capacity.csv' : [entity, period], p_entity_previously_invested_capacity~value;
 
-param p_entity_existing_integer_count {e in entity, d in period_in_use} :=
-  + round( p_entity_existing_count[e, d] );
+param p_entity_max_capacity {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_max_capacity.csv' : [entity, period], p_entity_max_capacity~value;
 
-param p_entity_previously_invested_capacity {e in entity, d in period_in_use} :=
-  + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_invested_capacity[e, d_history]);
+param p_entity_max_units {e in entity, d in period};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_max_units.csv' : [entity, period], p_entity_max_units~value;
 
-param p_entity_max_capacity {e in entity, d in period_in_use} :=
-  + if (e, d) in ed_invest_cumulative
-    then ed_cumulative_max_capacity[e, d]
-	else
-      + p_entity_all_existing[e, d]
-      + if (e, d) in ed_invest_period && e not in e_invest_total then ed_invest_max_period[e, d] else 0
-      + if e in e_invest_total && (e, d) not in ed_invest_period then e_invest_max_total[e] else 0
-      + if (e, d) in ed_invest_period && e in e_invest_total then max(ed_invest_max_period[e, d], e_invest_max_total[e]) else 0
-      + if (e, 'invest_no_limit') in entity__invest_method then p_unconstrained_flow_cap else 0    # Configured via model.max_flow_for_unconstrained_variables (default 1e6).
-;
-
-param p_entity_max_units {e in entity, d in period} :=
-  + p_entity_max_capacity[e, d]
-    / p_entity_unitsize[e]
-;
-
-# Cumulative upper bound on v_invest summed over lifetime-alive tranches at
-# dispatch period d (excluding pre-existing capacity).  Sums each alive
-# tranche's own per-period cap so the bound on a dispatch variable
-# reflects capacity from tranches invested at earlier periods that are
-# still within their lifetime.  For cumulative_limits the ceiling minus
-# existing; for invest_no_limit a Big-M; for invest_total / invest_period_total
-# the looser of per-period sum and horizon total (mirrors the max()
-# convention in p_entity_max_capacity).
-param p_entity_invest_cumulative_max {e in entityInvest, d in period_in_use} :=
-  + if (e, d) in ed_invest_cumulative
-    then max(0, ed_cumulative_max_capacity[e, d] - p_entity_all_existing[e, d])
-    else if sum{(e, m) in entity__invest_method : m = 'invest_no_limit'} 1
-    then p_unconstrained_flow_cap
-    else
-      + (if (e, d) in ed_invest_period && e not in e_invest_total
-         then sum{(e, d_invest, d) in edd_invest
-                  : (e, d_invest) in ed_invest_period
-                 && (e, d_invest) not in ed_invest_forbidden_no_investment}
-                 ed_invest_max_period[e, d_invest]
-         else 0)
-      + (if e in e_invest_total && (e, d) not in ed_invest_period
-         then e_invest_max_total[e]
-         else 0)
-      + (if (e, d) in ed_invest_period && e in e_invest_total
-         then max(
-                sum{(e, d_invest, d) in edd_invest
-                    : (e, d_invest) in ed_invest_period
-                   && (e, d_invest) not in ed_invest_forbidden_no_investment}
-                  ed_invest_max_period[e, d_invest],
-                e_invest_max_total[e])
-         else 0)
-;
+param p_entity_invest_cumulative_max {e in entityInvest, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_invest_cumulative_max.csv' : [entity, period], p_entity_invest_cumulative_max~value;
 
 # Symmetric building block for divestments: cumulative upper bound on
 # v_divest summed by dispatch period d.  Currently not consumed by the
 # dispatch UBs below (those take the max-alive case = zero optional
 # divest); kept for parity and for future tightening via forced-divest
 # floors.
-param p_entity_divest_cumulative_max {e in entityDivest, d in period_in_use} :=
-  + (if e not in e_divest_total
-     then sum{(e, d_divest) in ed_divest_period : p_years_d[d_divest] <= p_years_d[d]}
-              ed_divest_max_period[e, d_divest]
-     else 0)
-  + (if e in e_divest_total && sum{(e, d2) in ed_divest_period} 1 = 0
-     then e_divest_max_total[e]
-     else 0)
-  + (if e in e_divest_total && sum{(e, d2) in ed_divest_period} 1 > 0
-     then max(
-            sum{(e, d_divest) in ed_divest_period : p_years_d[d_divest] <= p_years_d[d]}
-              ed_divest_max_period[e, d_divest],
-            e_divest_max_total[e])
-     else 0)
-;
+param p_entity_divest_cumulative_max {e in entityDivest, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_divest_cumulative_max.csv' : [entity, period], p_entity_divest_cumulative_max~value;
 
 # Upper bound on alive capacity at dispatch period d (existing + cumulative
 # invest ceiling).  Drives dispatch variable UBs: v_flow (via p_flow_max /
@@ -2181,53 +1644,28 @@ param p_entity_divest_cumulative_max {e in entityDivest, d in period_in_use} :=
 # v_startup_*, v_shutdown_*.  v_invest / v_divest keep their own per-
 # invest-period scalar UB on p_entity_max_units — that is the correct
 # per-tranche cap for those decision variables.
-param p_entity_dispatch_capacity_max {e in entity, d in period_in_use} :=
-  + p_entity_all_existing[e, d]
-  + (if e in entityInvest then p_entity_invest_cumulative_max[e, d] else 0)
-;
+param p_entity_dispatch_capacity_max {e in entity, d in period_in_use};  # Migrated to Python (preprocessing/entity_period_calc_params.py).
+table data IN 'CSV' 'solve_data/p_entity_dispatch_capacity_max.csv' : [entity, period], p_entity_dispatch_capacity_max~value;
 
-set process_source_coeff_zero := {(p, source) in process_source: not p_process_source_max_capacity_coefficient[p, source]};
-set process_sink_coeff_zero := {(p, sink) in process_sink: not p_process_sink_max_capacity_coefficient[p, sink]};
-set process_source_sink_coeff_zero := {(p, source, sink) in process_source_sink: (p,source) in process_source_coeff_zero || (p,sink) in process_sink_coeff_zero};
+set process_source_coeff_zero dimen 2;  # Migrated to Python (preprocessing/structural_filters.py).
+set process_sink_coeff_zero dimen 2;    # Migrated to Python (preprocessing/structural_filters.py).
+table data IN 'CSV' 'solve_data/process_source_coeff_zero.csv' : process_source_coeff_zero <- [process, source];
+table data IN 'CSV' 'solve_data/process_sink_coeff_zero.csv' : process_sink_coeff_zero <- [process, sink];
+set process_source_sink_coeff_zero dimen 3;  # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/process_source_sink_coeff_zero.csv' : process_source_sink_coeff_zero <- [process, source, sink];
 
-param p_flow_max{(p, source, sink, d, t) in peedt} :=
-  if (p, source, sink) in process_source_sink_coeff_zero
-  then
-    + p_unconstrained_flow_cap   # Configured via model.max_flow_for_unconstrained_variables (default 1e6).
-  else
-    + (
-      if exists{(p, m) in process__method_indirect} 1 && (p, source) in process_source
-      then
-        + ( if (p, 'min_load_efficiency') in process__ct_method
-          then pdtProcess_slope[p, d, t] + pdtProcess_section[p, d, t]
-          else pdtProcess_slope[p, d, t]
-          ) * (p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
-          / p_process_source_max_capacity_coefficient[p, source]
-      else
-        + (p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
-      )
-      * (if (p, sink) in process_sink then p_process_sink_max_capacity_coefficient[p, sink] else 1)
-;
+param p_flow_max{(p, source, sink, d, t) in peedt};                  # Migrated to Python (preprocessing/process_arc_unions.py).
+param p_flow_min{(p, source, sink, d, t) in peedt} default 0;        # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/p_flow_max.csv' : [process, source, sink, period, time], p_flow_max~value;
+table data IN 'CSV' 'solve_data/p_flow_min.csv' : [process, source, sink, period, time], p_flow_min~value;
 
-param p_flow_min{(p, source, sink, d, t) in peedt} :=
-  if (p, source, sink) in process__source__sinkIsNode_2way1var
-  then -(p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])
-  else 0
-;
+set process_VRE;  # Migrated to Python (preprocessing/process_method_sets.py).
+table data IN 'CSV' 'solve_data/process_VRE.csv' : process_VRE <- [process];
 
-set process_VRE := {p in process_unit : sum{(p, source) in process_source} 1 == 0
-                                        && (sum{(p, n, prof, m) in process__node__profile__profile_method : m = 'upper_limit'} 1)};
-
-param p_state_slack_share{(g,n) in group_node, (d,t) in dt: g in group_loss_share} :=
-  if (g,'inflow_weighted') in group__loss_share_type then pdtNodeInflow[n,d,t] / (sum{(g,ng) in group_node} pdtNodeInflow[ng,d,t])
-  else (if (g,'equal') in group__loss_share_type then 1 / (sum{(g,ng) in group_node} 1) else 0);
-
-param p_storage_state_reference_price{n in nodeState, d in period_in_use}:=
-  # if a price is found in the last timestep of the period
-  if exists{(n,d2,t2) in ndt_fix_storage_price, (d,t) in period__time_last: (d2,d) in period__branch && (d, t, t2) in dtt_timeline_matching} 1
-  then sum{(d2,d) in period__branch, (d,t) in period__time_last, (d, t, t2) in dtt_timeline_matching} p_fix_storage_price[n,d2,t2]
-  else (if (n, 'use_reference_price') in node__storage_solve_horizon_method then pdNode[n, 'storage_state_reference_price', d]
-  else 0);
+param p_state_slack_share{(g,n) in group_node, (d,t) in dt: g in group_loss_share};  # Migrated to Python (preprocessing/process_arc_unions.py).
+param p_storage_state_reference_price{n in nodeState, d in period_in_use};           # Migrated to Python (preprocessing/process_arc_unions.py).
+table data IN 'CSV' 'solve_data/p_state_slack_share.csv'              : [group, node, period, time], p_state_slack_share~value;
+table data IN 'CSV' 'solve_data/p_storage_state_reference_price.csv'  : [node, period],              p_storage_state_reference_price~value;
 
 param d_obj default 0;
 param d_flow {(p, source, sink, d, t) in peedt} default 0;
@@ -2239,8 +1677,10 @@ param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, d, t) in peedt} >= p_flow_min[p, source, sink, d, t], <= p_flow_max[p, source, sink, d, t];
-param p_angle_lower{n in node_dc_power_flow} := if n in node_reference_angle then 0 else -3.14159265;
-param p_angle_upper{n in node_dc_power_flow} := if n in node_reference_angle then 0 else 3.14159265;
+param p_angle_lower{n in node_dc_power_flow};  # Migrated to Python (preprocessing/dc_angle_bounds.py).
+param p_angle_upper{n in node_dc_power_flow};  # Migrated to Python (preprocessing/dc_angle_bounds.py).
+table data IN 'CSV' 'solve_data/p_angle_lower.csv' : [node], p_angle_lower~value;
+table data IN 'CSV' 'solve_data/p_angle_upper.csv' : [node], p_angle_upper~value;
 var v_angle {n in node_dc_power_flow, (d, t) in dt} >= p_angle_lower[n], <= p_angle_upper[n];
 var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} >= -p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p], <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
 var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
@@ -2268,8 +1708,8 @@ var v_state_rp_start {n in nodeState_rp, (d, t) in rp_block_first} >= 0, <= p_en
 # valid 1-to-1 without overlap aggregation.
 set p_online_dt
     'UC variable indexing: (process, period, step) at the process''s block'
-    := {p in process_online, (d, t) in dt :
-           exists {(p, b) in process__block : (b, d, t) in block__period__step} 1};
+    dimen 3;  # Migrated to Python (preprocessing/per_solve_sets.py).
+table data IN 'CSV' 'solve_data/p_online_dt_set.csv' : p_online_dt <- [process, period, step];
 var v_online_linear {(p, d, t) in p_online_dt : p in process_online_linear}
     >= 0, <= p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p];
 var v_startup_linear {(p, d, t) in p_online_dt : p in process_online_linear}
@@ -2530,8 +1970,13 @@ if p_model["solveFirst"] == 1 && 'read' in phase then {
 
 param setup := gmtime();
 printf 'Timer - Setup: %ss\n', setup - datetime0;
-param solve_progress symbolic := 'solve_data/solve_progress.csv';
-printf ',%s', setup - datetime0 >> solve_progress;
+# Per-solve mod-phase timings — truncated on each invocation (single
+# glpsol process per solve), so the file always reflects the current
+# solve.  orchestration.py reads it after solver.run() and feeds the
+# rows into the unified TimingRecorder (timings.csv).
+param mod_phases_file symbolic := 'solve_data/mod_phases.csv';
+printf 'phase,seconds\n' > mod_phases_file;
+printf '%s,%s\n', 'setup', setup - datetime0 >> mod_phases_file;
 
 printf("Constraint generation:\n");
 
@@ -2702,7 +2147,7 @@ minimize total_cost:
 ;
 param total_obj_cost := gmtime();
 printf 'Timer - Objective: %ss\n', total_obj_cost - setup;
-printf ',%s', total_obj_cost - setup >> solve_progress;
+printf '%s,%s\n', 'total_obj_cost', total_obj_cost - setup >> mod_phases_file;
 
 # ---------------------------------------------------------------------------
 # Generalized node balance equations (Agent 1.3 — M-matrix / overlap-set
@@ -2963,7 +2408,7 @@ s.t. nodeBalanceBlock_eq {c in solve_current, n in nodeStateBlock,
 
 param balance := gmtime();
 printf 'Timer - Balance: %ss\n', balance - total_obj_cost;
-printf ',%s', balance - total_obj_cost >> solve_progress;
+printf '%s,%s\n', 'balance', balance - total_obj_cost >> mod_phases_file;
 
 s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active
@@ -3092,7 +2537,7 @@ s.t. reserveBalance_down_n_1_eq{(r, 'down', ng, r_m) in reserve__upDown__group__
 ;
 param reserves := gmtime();
 printf 'Timer - Reserves: %ss\n', reserves - balance;
-printf ',%s', reserves - balance >> solve_progress;
+printf '%s,%s\n', 'reserves', reserves - balance >> mod_phases_file;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
 # Block-aware (Agent 1.5): the equation is emitted at the sink-side block
@@ -4789,7 +4234,8 @@ s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_act
 param rest := gmtime();
 printf "Timer - Rest: %ss\n", rest - reserves;
 printf "Timer - Total constraints: %ss\n\n", rest - setup;
-printf ',%s,%s', rest - reserves, rest - setup >> solve_progress;
+printf '%s,%s\n', 'rest', rest - reserves >> mod_phases_file;
+printf '%s,%s\n', 'total_constraints', rest - setup >> mod_phases_file;
 
 # ==========================================================
 # Outputs that do not depend on solver values — emitted in
@@ -4823,59 +4269,68 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s,%.8g", s, d, t, p_rp_cost_weight[d, t] >> "solve_data/p_rp_cost_weight.csv";
 }
 
-# Write p_flow_min
+# Write p_flow_min — wide-format dump for read_parameters.py;
+# retargeted to solve__p_flow_min.csv to break the path collision
+# with the LONG-format CSV that Python preprocessing writes for
+# mod's table-data-IN (see preprocessing/process_arc_unions.py).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/p_flow_min.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "solve_data/p_flow_min.csv";}
-  printf "\n,," >> "solve_data/p_flow_min.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "solve_data/p_flow_min.csv";}
-  printf "\n,," >> "solve_data/p_flow_min.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "solve_data/p_flow_min.csv";}
+  printf "solve,period,time" > "solve_data/solve__p_flow_min.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "solve_data/solve__p_flow_min.csv";}
+  printf "\n,," >> "solve_data/solve__p_flow_min.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "solve_data/solve__p_flow_min.csv";}
+  printf "\n,," >> "solve_data/solve__p_flow_min.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "solve_data/solve__p_flow_min.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/p_flow_min.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__p_flow_min.csv";
     for {(p, source, sink) in process_source_sink} {
-        printf ",%.8g", p_flow_min[p, source, sink, d, t] >> "solve_data/p_flow_min.csv";
+        printf ",%.8g", p_flow_min[p, source, sink, d, t] >> "solve_data/solve__p_flow_min.csv";
     }
 }
 
-# Write p_flow_max
+# Write p_flow_max — same path-collision retarget as p_flow_min above.
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/p_flow_max.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "solve_data/p_flow_max.csv";}
-  printf "\n,," >> "solve_data/p_flow_max.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "solve_data/p_flow_max.csv";}
-  printf "\n,," >> "solve_data/p_flow_max.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "solve_data/p_flow_max.csv";}
+  printf "solve,period,time" > "solve_data/solve__p_flow_max.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "solve_data/solve__p_flow_max.csv";}
+  printf "\n,," >> "solve_data/solve__p_flow_max.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "solve_data/solve__p_flow_max.csv";}
+  printf "\n,," >> "solve_data/solve__p_flow_max.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "solve_data/solve__p_flow_max.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/p_flow_max.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__p_flow_max.csv";
     for {(p, source, sink) in process_source_sink} {
-        printf ",%.8g", p_flow_max[p, source, sink, d, t] >> "solve_data/p_flow_max.csv";
+        printf ",%.8g", p_flow_max[p, source, sink, d, t] >> "solve_data/solve__p_flow_max.csv";
     }
 }
 
-# Write pdtProcess_slope
+# Write pdtProcess_slope (post-solve realized values, wide format).
+# Mod's input now reads solve_data/pdtProcess_slope.csv (long) written by
+# Python preprocessing, so this output goes to solve__pdtProcess_slope.csv
+# (read_parameters.py:47 + cumulative_handoffs.py:449 read here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/pdtProcess_slope.csv";
-  for {p in process} {printf ",%s", p >> "solve_data/pdtProcess_slope.csv";}
+  printf "solve,period,time" > "solve_data/solve__pdtProcess_slope.csv";
+  for {p in process} {printf ",%s", p >> "solve_data/solve__pdtProcess_slope.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/pdtProcess_slope.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__pdtProcess_slope.csv";
     for {p in process} {
-        printf ",%.8g", pdtProcess_slope[p, d, t] >> "solve_data/pdtProcess_slope.csv";
+        printf ",%.8g", pdtProcess_slope[p, d, t] >> "solve_data/solve__pdtProcess_slope.csv";
     }
 }
 
-# Write pdtProcess_section
+# Write pdtProcess_section (post-solve realized values, wide format).
+# Mod's input now reads solve_data/pdtProcess_section.csv (long) written by
+# Python preprocessing, so this output goes to solve__pdtProcess_section.csv
+# (read_parameters.py:48 reads here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/pdtProcess_section.csv";
-  for {p in process_minload} {printf ",%s", p >> "solve_data/pdtProcess_section.csv";}
+  printf "solve,period,time" > "solve_data/solve__pdtProcess_section.csv";
+  for {p in process_minload} {printf ",%s", p >> "solve_data/solve__pdtProcess_section.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/pdtProcess_section.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__pdtProcess_section.csv";
     for {p in process_minload} {
-        printf ",%.8g", pdtProcess_section[p, d, t] >> "solve_data/pdtProcess_section.csv";
+        printf ",%.8g", pdtProcess_section[p, d, t] >> "solve_data/solve__pdtProcess_section.csv";
     }
 }
 
@@ -4941,15 +4396,18 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     }
 }
 
-# Write pdtNodeInflow
+# Write pdtNodeInflow (post-solve realized values, wide solve×period×time × node).
+# Mod's input now reads solve_data/pdtNodeInflow.csv (long format) written
+# by Python preprocessing, so this output goes to solve__pdtNodeInflow.csv
+# to avoid the dual-writer path collision (read_parameters.py:54 reads here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/pdtNodeInflow.csv";
-  for {n in node} {printf ",%s", n >> "solve_data/pdtNodeInflow.csv";}
+  printf "solve,period,time" > "solve_data/solve__pdtNodeInflow.csv";
+  for {n in node} {printf ",%s", n >> "solve_data/solve__pdtNodeInflow.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/pdtNodeInflow.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__pdtNodeInflow.csv";
     for {n in node} {
-        printf ",%.8g", pdtNodeInflow[n, d, t] >> "solve_data/pdtNodeInflow.csv";
+        printf ",%.8g", pdtNodeInflow[n, d, t] >> "solve_data/solve__pdtNodeInflow.csv";
     }
 }
 
@@ -4993,15 +4451,18 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     }
 }
 
-# Write pdtProfile
+# Write pdtProfile (post-solve realized values, wide format).
+# Mod's input now reads solve_data/pdtProfile.csv (long) written by Python
+# preprocessing, so this output goes to solve__pdtProfile.csv to avoid
+# the dual-writer collision (read_parameters.py:58 reads here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,time" > "solve_data/pdtProfile.csv";
-  for {f in profile} {printf ",%s", f >> "solve_data/pdtProfile.csv";}
+  printf "solve,period,time" > "solve_data/solve__pdtProfile.csv";
+  for {f in profile} {printf ",%s", f >> "solve_data/solve__pdtProfile.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
-    printf "\n%s,%s,%s", s, d, t >> "solve_data/pdtProfile.csv";
+    printf "\n%s,%s,%s", s, d, t >> "solve_data/solve__pdtProfile.csv";
     for {f in profile} {
-        printf ",%.8g", pdtProfile[f, d, t] >> "solve_data/pdtProfile.csv";
+        printf ",%.8g", pdtProfile[f, d, t] >> "solve_data/solve__pdtProfile.csv";
     }
 }
 
@@ -5021,39 +4482,45 @@ for {s in solve_current, d in d_realize_dispatch_or_invest} {
     printf "\n%s,%s,%.8g", s, d, p_years_represented_d[d] >> "solve_data/p_years_represented_d.csv";
 }
 
-# Write p_entity_max_units
+# Write p_entity_max_units (post-solve realized values, wide format).
+# Mod's input now reads solve_data/p_entity_max_units.csv (long) written by
+# Python preprocessing, so this output goes to solve__p_entity_max_units.csv
+# (read_parameters.py:61 reads here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/p_entity_max_units.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/p_entity_max_units.csv";}
+  printf "solve,period" > "solve_data/solve__p_entity_max_units.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__p_entity_max_units.csv";}
 }
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/p_entity_max_units.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__p_entity_max_units.csv";
     for {e in entity} {
-        printf ",%.8g", p_entity_max_units[e, d] >> "solve_data/p_entity_max_units.csv";
+        printf ",%.8g", p_entity_max_units[e, d] >> "solve_data/solve__p_entity_max_units.csv";
     }
 }
 
-# Write p_entity_all_existing
+# Write p_entity_all_existing (post-solve realized values, wide format).
+# Mod's input now reads solve_data/p_entity_all_existing.csv (long) written by
+# Python preprocessing, so this output goes to solve__p_entity_all_existing.csv
+# (handoff_writers._load_p_entity_all_existing + read_parameters.py:62 read here).
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/p_entity_all_existing.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/p_entity_all_existing.csv";}
+  printf "solve,period" > "solve_data/solve__p_entity_all_existing.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__p_entity_all_existing.csv";}
 }
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/p_entity_all_existing.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__p_entity_all_existing.csv";
     for {e in entity} {
-        printf ",%.8g", p_entity_all_existing[e, d] >> "solve_data/p_entity_all_existing.csv";
+        printf ",%.8g", p_entity_all_existing[e, d] >> "solve_data/solve__p_entity_all_existing.csv";
     }
 }
 
 # Write p_entity_pre_existing
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/p_entity_pre_existing.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/p_entity_pre_existing.csv";}
+  printf "solve,period" > "solve_data/solve__p_entity_pre_existing.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__p_entity_pre_existing.csv";}
 }
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/p_entity_pre_existing.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__p_entity_pre_existing.csv";
     for {e in entity} {
-        printf ",%.8g", p_entity_pre_existing[e, d] >> "solve_data/p_entity_pre_existing.csv";
+        printf ",%.8g", p_entity_pre_existing[e, d] >> "solve_data/solve__p_entity_pre_existing.csv";
     }
 }
 
@@ -5071,43 +4538,43 @@ for {s in solve_current, d in d_realized_period} {
 
 # Write fixed costs
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_fixed_cost.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/ed_fixed_cost.csv";}
+  printf "solve,period" > "solve_data/solve__ed_fixed_cost.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__ed_fixed_cost.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_fixed_cost.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_fixed_cost.csv";
     for {e in entity} {
-        printf ",%.8g", ed_fixed_cost[e, d] >> "solve_data/ed_fixed_cost.csv";
+        printf ",%.8g", ed_fixed_cost[e, d] >> "solve_data/solve__ed_fixed_cost.csv";
     }
 }
 
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_lifetime_fixed_cost.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/ed_lifetime_fixed_cost.csv";}
+  printf "solve,period" > "solve_data/solve__ed_lifetime_fixed_cost.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__ed_lifetime_fixed_cost.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_lifetime_fixed_cost.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_lifetime_fixed_cost.csv";
     # Header has all entities (see line above); write 0 for entities not in
     # ed_invest so the column alignment matches the header.
     for {e in entity} {
         printf ",%.8g",
             (if (e, d) in ed_invest then ed_lifetime_fixed_cost[e, d] else 0)
-            >> "solve_data/ed_lifetime_fixed_cost.csv";
+            >> "solve_data/solve__ed_lifetime_fixed_cost.csv";
     }
 }
 
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_lifetime_fixed_cost_divest.csv";
-  for {e in entity} {printf ",%s", e >> "solve_data/ed_lifetime_fixed_cost_divest.csv";}
+  printf "solve,period" > "solve_data/solve__ed_lifetime_fixed_cost_divest.csv";
+  for {e in entity} {printf ",%s", e >> "solve_data/solve__ed_lifetime_fixed_cost_divest.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_lifetime_fixed_cost_divest.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_lifetime_fixed_cost_divest.csv";
     # Header has all entities; write 0 for entities not in ed_divest so the
     # column alignment matches the header.
     for {e in entity} {
         printf ",%.8g",
             (if (e, d) in ed_divest then ed_lifetime_fixed_cost_divest[e, d] else 0)
-            >> "solve_data/ed_lifetime_fixed_cost_divest.csv";
+            >> "solve_data/solve__ed_lifetime_fixed_cost_divest.csv";
     }
 }
 
@@ -5193,65 +4660,65 @@ for {s in solve_current, d in d_realize_invest} {
 
 # Write ed_entity_annual_discounted
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_entity_annual_discounted.csv";
-  for {e in entityInvest} {printf ",%s", e >> "solve_data/ed_entity_annual_discounted.csv";}
+  printf "solve,period" > "solve_data/solve__ed_entity_annual_discounted.csv";
+  for {e in entityInvest} {printf ",%s", e >> "solve_data/solve__ed_entity_annual_discounted.csv";}
 }
 for {s in solve_current, d in d_realize_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_entity_annual_discounted.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_entity_annual_discounted.csv";
     for {e in entityInvest} {
-        printf ",%.8g", (if (e, d) in ed_invest then ed_entity_annual_discounted[e, d] else 0) >> "solve_data/ed_entity_annual_discounted.csv";
+        printf ",%.8g", (if (e, d) in ed_invest then ed_entity_annual_discounted[e, d] else 0) >> "solve_data/solve__ed_entity_annual_discounted.csv";
     }
 }
 
 # Write ed_entity_annual_divest_discounted
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/ed_entity_annual_divest_discounted.csv";
-  for {e in entityDivest} {printf ",%s", e >> "solve_data/ed_entity_annual_divest_discounted.csv";}
+  printf "solve,period" > "solve_data/solve__ed_entity_annual_divest_discounted.csv";
+  for {e in entityDivest} {printf ",%s", e >> "solve_data/solve__ed_entity_annual_divest_discounted.csv";}
 }
 for {s in solve_current, d in d_realize_invest} {
-    printf "\n%s,%s", s, d >> "solve_data/ed_entity_annual_divest_discounted.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__ed_entity_annual_divest_discounted.csv";
     for {e in entityDivest} {
-        printf ",%.8g", (if (e, d) in ed_divest then ed_entity_annual_divest_discounted[e, d] else 0) >> "solve_data/ed_entity_annual_divest_discounted.csv";
+        printf ",%.8g", (if (e, d) in ed_divest then ed_entity_annual_divest_discounted[e, d] else 0) >> "solve_data/solve__ed_entity_annual_divest_discounted.csv";
     }
 }
 
 # Write p_inflation_factor_operations_yearly
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,value" > "solve_data/p_inflation_factor_operations_yearly.csv";
+  printf "solve,period,value" > "solve_data/solve__p_inflation_factor_operations_yearly.csv";
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s,%.12g", s, d, p_inflation_factor_operations_yearly[d] >> "solve_data/p_inflation_factor_operations_yearly.csv";
+    printf "\n%s,%s,%.12g", s, d, p_inflation_factor_operations_yearly[d] >> "solve_data/solve__p_inflation_factor_operations_yearly.csv";
 }
 
 # Write p_inflation_factor_investment_yearly
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,value" > "solve_data/p_inflation_factor_investment_yearly.csv";
+  printf "solve,period,value" > "solve_data/solve__p_inflation_factor_investment_yearly.csv";
 }
 for {s in solve_current, d in d_realize_invest} {
-    printf "\n%s,%s,%.12g", s, d, p_inflation_factor_investment_yearly[d] >> "solve_data/p_inflation_factor_investment_yearly.csv";
+    printf "\n%s,%s,%.12g", s, d, p_inflation_factor_investment_yearly[d] >> "solve_data/solve__p_inflation_factor_investment_yearly.csv";
 }
 
 # Write node_capacity_for_scaling
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/node_capacity_for_scaling.csv";
-  for {n in node} {printf ",%s", n >> "solve_data/node_capacity_for_scaling.csv";}
+  printf "solve,period" > "solve_data/solve__node_capacity_for_scaling.csv";
+  for {n in node} {printf ",%s", n >> "solve_data/solve__node_capacity_for_scaling.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/node_capacity_for_scaling.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__node_capacity_for_scaling.csv";
     for {n in node} {
-        printf ",%.12g", node_capacity_for_scaling[n, d] >> "solve_data/node_capacity_for_scaling.csv";
+        printf ",%.12g", node_capacity_for_scaling[n, d] >> "solve_data/solve__node_capacity_for_scaling.csv";
     }
 }
 
 # Write group_capacity_for_scaling
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period" > "solve_data/group_capacity_for_scaling.csv";
-  for {g in group} {printf ",%s", g >> "solve_data/group_capacity_for_scaling.csv";}
+  printf "solve,period" > "solve_data/solve__group_capacity_for_scaling.csv";
+  for {g in group} {printf ",%s", g >> "solve_data/solve__group_capacity_for_scaling.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s", s, d >> "solve_data/group_capacity_for_scaling.csv";
+    printf "\n%s,%s", s, d >> "solve_data/solve__group_capacity_for_scaling.csv";
     for {g in group} {
-        printf ",%.12g", group_capacity_for_scaling[g, d] >> "solve_data/group_capacity_for_scaling.csv";
+        printf ",%.12g", group_capacity_for_scaling[g, d] >> "solve_data/solve__group_capacity_for_scaling.csv";
     }
 }
 
@@ -5412,10 +4879,6 @@ if p_model['solveFirst'] then {
 
   # Sets needed for entity_all_capacity
   # entity - all entities (ordered)
-  printf "entity\n" > "solve_data/entity.csv";
-  for {e in entity} {
-      printf "%s\n", e >> "solve_data/entity.csv";
-  }
 
   # period - all periods (ordered)
   if p_model["solveFirst"] == 1 then printf "solve,period\n" > "solve_data/period.csv";
@@ -5486,17 +4949,7 @@ if p_model['solveFirst'] then {
   }
 
   # Process process__node__profile__profile_method set
-  printf "process,node,profile,profile_method\n" > "solve_data/process__node__profile__profile_method.csv";
-  for {(p, n, prof, m) in process__node__profile__profile_method} {
-      printf "%s,%s,%s,%s\n", p, n, prof, m >> "solve_data/process__node__profile__profile_method.csv";
-  }
-
   # Process method sets
-  printf "process,method\n" > "solve_data/process_method.csv";
-  for {(p, m) in process_method} {
-      printf "%s,%s\n", p, m >> "solve_data/process_method.csv";
-  }
-
   printf "process,method\n" > "solve_data/process__ct_method.csv";
   for {(p, m) in process__ct_method} {
       printf "%s,%s\n", p, m >> "solve_data/process__ct_method.csv";
@@ -5554,16 +5007,6 @@ if p_model['solveFirst'] then {
   }
 
   # Process-related sets
-  printf "process\n" > "solve_data/process.csv";
-  for {p in process} {
-      printf "%s\n", p >> "solve_data/process.csv";
-  }
-
-  printf "node\n" > "solve_data/node.csv";
-  for {n in node} {
-      printf "%s\n", n >> "solve_data/node.csv";
-  }
-
   printf "process\n" > "solve_data/process_connection.csv";
   for {c in process_connection} {
       printf "%s\n", c >> "solve_data/process_connection.csv";
@@ -5621,104 +5064,16 @@ if p_model['solveFirst'] then {
       printf "%s\n", g >> "solve_data/group_co2_limit.csv";
   }
 
-  printf "group\n" > "solve_data/groupInertia.csv";
-  for {g in groupInertia} {
-      printf "%s\n", g >> "solve_data/groupInertia.csv";
-  }
-
-  printf "group\n" > "solve_data/groupNonSync.csv";
-  for {g in groupNonSync} {
-      printf "%s\n", g >> "solve_data/groupNonSync.csv";
-  }
-
-  printf "group\n" > "solve_data/groupCapacityMargin.csv";
-  for {g in groupCapacityMargin} {
-      printf "%s\n", g >> "solve_data/groupCapacityMargin.csv";
-  }
-
-  printf "group\n" > "solve_data/nodeGroupDispatch.csv";
-  for {g in nodeGroupDispatch} {
-      printf "%s\n", g >> "solve_data/nodeGroupDispatch.csv";
-  }
-
-  printf "group\n" > "solve_data/nodeGroupIndicators.csv";
-  for {g in nodeGroupIndicators} {
-      printf "%s\n", g >> "solve_data/nodeGroupIndicators.csv";
-  }
-
-  printf "group\n" > "solve_data/flowGroupIndicators.csv";
-  for {g in flowGroupIndicators} {
-      printf "%s\n", g >> "solve_data/flowGroupIndicators.csv";
-  }
-
-  printf "group,connection\n" > "solve_data/nodeGroupDispatch__connection_Not_in_aggregate.csv";
-  for {(g, c) in nodeGroupDispatch__connection_Not_in_aggregate} {
-      printf "%s,%s\n", g, c >> "solve_data/nodeGroupDispatch__connection_Not_in_aggregate.csv";
-  }
-
-  printf "group,process,connection,node\n" > "solve_data/nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
-  for {(g, c, c2, n) in nodeGroupDispatch__process__connection__to_node_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, c2, n >> "solve_data/nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv";
-  }
-
-  printf "group,process,node,connection\n" > "solve_data/nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
-  for {(g, c, n, c2) in nodeGroupDispatch__process__node__to_connection_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, n, c2 >> "solve_data/nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv";
-  }
-
-  printf "group,process,unit,node\n" > "solve_data/nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
-  for {(g, p, p2, n) in nodeGroupDispatch__process__unit__to_node_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, p, p2, n >> "solve_data/nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv";
-  }
-
-  printf "group,process,node,unit\n" > "solve_data/nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
-  for {(g, p, n, p2) in nodeGroupDispatch__process__node__to_unit_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, p, n, p2 >> "solve_data/nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv";
-  }
-
-  printf "group,group_aggregate\n" > "solve_data/nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
-  for {(g, ga) in nodeGroupDispatch__group_aggregate_Unit_to_group} {
-      printf "%s,%s\n", g, ga >> "solve_data/nodeGroupDispatch__group_aggregate_Unit_to_group.csv";
-  }
-
-  printf "group,group_aggregate,unit,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
-  for {(g, ga, u, source, sink) in nodeGroupDispatch__group_aggregate__process__unit__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__unit__to_node.csv";
-  }
-
-  printf "group,group_aggregate\n" > "solve_data/nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
-  for {(g, ga) in nodeGroupDispatch__group_aggregate_Group_to_unit} {
-      printf "%s,%s\n", g, ga >> "solve_data/nodeGroupDispatch__group_aggregate_Group_to_unit.csv";
-  }
-
-  printf "group,group_aggregate,unit,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
-  for {(g, ga, u, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_unit} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_unit.csv";
-  }
-
-  printf "group,group_aggregate\n" > "solve_data/nodeGroupDispatch__group_aggregate_Connection.csv";
-  for {(g, ga) in nodeGroupDispatch__group_aggregate_Connection} {
-      printf "%s,%s\n", g, ga >> "solve_data/nodeGroupDispatch__group_aggregate_Connection.csv";
-  }
-
-  printf "group,group_aggregate,connection,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
-  for {(g, ga, c, source, sink) in nodeGroupDispatch__group_aggregate__process__connection__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__connection__to_node.csv";
-  }
-
-  printf "group,group_aggregate,connection,source,sink\n" > "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
-  for {(g, ga, c, source, sink) in nodeGroupDispatch__group_aggregate__process__node__to_connection} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "solve_data/nodeGroupDispatch__group_aggregate__process__node__to_connection.csv";
-  }
+  # The 12 nodeGroupDispatch__* derived-set printfs that used to live
+  # here (mod batch 62) and the nodeGroupDispatch__process_fully_inside
+  # printf (batch 33) were redundant — Python preprocessing
+  # (preprocessing/process_arc_unions.py) writes the same files via
+  # write_node_group_dispatch_sets/_fully_inside before mod runs.
+  # Removed in batch 68.
 
   printf "group,process\n" > "solve_data/group_process.csv";
   for {(g, p) in group_process} {
       printf "%s,%s\n", g, p >> "solve_data/group_process.csv";
-  }
-
-  printf "group,process\n" > "solve_data/nodeGroupDispatch__process_fully_inside.csv";
-  for {(g, p) in nodeGroupDispatch__process_fully_inside} {
-      printf "%s,%s\n", g, p >> "solve_data/nodeGroupDispatch__process_fully_inside.csv";
   }
 
   printf "group,node\n" > "solve_data/group_node.csv";
@@ -5766,21 +5121,21 @@ for {s in solve_current, (d, t) in dt_realize_dispatch: dt_jump[d, t] != 1 && (d
 }
 
 # ed_invest - (entity, period) pairs where investment occurs
-if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/ed_invest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/solve__ed_invest.csv";
 for {s in solve_current, (e, d) in ed_invest : d in d_realize_invest} {
-    printf "%s,%s,%s\n", s, e, d >> "solve_data/ed_invest.csv";
+    printf "%s,%s,%s\n", s, e, d >> "solve_data/solve__ed_invest.csv";
 }
 
 # ed_divest - (entity, period) pairs where divestment occurs
-if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/ed_divest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "solve_data/solve__ed_divest.csv";
 for {s in solve_current, (e, d) in ed_divest} {
-    printf "%s,%s,%s\n", s, e, d >> "solve_data/ed_divest.csv";
+    printf "%s,%s,%s\n", s, e, d >> "solve_data/solve__ed_divest.csv";
 }
 
 # edd_invest - (entity, d_invest, d) triplets showing which investments apply to which periods
-if p_model["solveFirst"] == 1 then printf "solve,entity,d_invest,d\n" > "solve_data/edd_invest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,entity,d_invest,d\n" > "solve_data/solve__edd_invest.csv";
 for {s in solve_current, (e, d_invest, d) in edd_invest} {
-    printf "%s,%s,%s,%s\n", s, e, d_invest, d >> "solve_data/edd_invest.csv";
+    printf "%s,%s,%s,%s\n", s, e, d_invest, d >> "solve_data/solve__edd_invest.csv";
 }
 
 # Write p_nested_model (solveFirst)
@@ -5849,7 +5204,7 @@ solve;
 
 param r_solution := gmtime();
 printf "Timer - Read solution: %ss\n", r_solution - rest;
-printf ',%s', r_solution - rest >> solve_progress;
+printf '%s,%s\n', 'r_solution', r_solution - rest >> mod_phases_file;
 
 printf("\n\nOutputs:");
 
@@ -6457,10 +5812,11 @@ for {s in solve_current}
 
 param w_raw := gmtime();
 printf "Timer - Write raw output: %ss\n", w_raw - r_solution;
-printf ',%s', w_raw - r_solution >> solve_progress;
+printf '%s,%s\n', 'w_raw', w_raw - r_solution >> mod_phases_file;
 
-param hours_in_realized_period{d in d_realized_period} := sum {(d, t) in dt_realize_dispatch} (step_duration[d, t]);
-param realized_period_share_of_year{d in d_realized_period}:= hours_in_realized_period[d] / 8760;
+# hours_in_realized_period and realized_period_share_of_year removed —
+# unused in mod (no readers); the Python post-processor recomputes both
+# directly from step_duration in process_outputs/calc_capacity_flows.py.
 
 param entity_all_capacity{e in entity, d in period} :=
   + p_entity_all_existing[e, d]
@@ -6683,7 +6039,7 @@ for {s in solve_current, e in nodeState, d in d_realize_dispatch_or_invest: 'yes
 
 param w_capacity := gmtime();
 printf "Timer - Write capacity: %ss\n", w_capacity - w_raw;
-printf ',%s', w_capacity - w_raw >> solve_progress;
+printf '%s,%s\n', 'w_capacity', w_capacity - w_raw >> mod_phases_file;
 
 #display period_first;
 #display period;

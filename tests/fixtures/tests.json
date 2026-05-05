@@ -284,6 +284,11 @@
     ],
     [
       "connection",
+      "west-east-aux",
+      null
+    ],
+    [
+      "connection",
       "west_east",
       null
     ],
@@ -509,6 +514,11 @@
     ],
     [
       "solve",
+      "y2020_2_5_year",
+      null
+    ],
+    [
+      "solve",
       "y2020_2day_dispatch",
       null
     ],
@@ -520,6 +530,11 @@
     [
       "solve",
       "y2020_fullYear_dispatch",
+      null
+    ],
+    [
+      "solve",
+      "y2020_half_year",
       null
     ],
     [
@@ -957,6 +972,15 @@
     [
       "connection__node__node",
       [
+        "west-east-aux",
+        "west",
+        "east"
+      ],
+      null
+    ],
+    [
+      "connection__node__node",
+      [
         "west_east",
         "west",
         "east"
@@ -1181,6 +1205,14 @@
         "east_north"
       ],
       "network",
+      true
+    ],
+    [
+      "connection",
+      [
+        "west-east-aux"
+      ],
+      "hyphenated",
       true
     ],
     [
@@ -2278,6 +2310,13 @@
       ]
     ],
     [
+      "transfer_methods",
+      [
+        "InVuaWRpcmVjdGlvbmFsIg==",
+        "str"
+      ]
+    ],
+    [
       "yes_no",
       [
         "InllcyI=",
@@ -2735,6 +2774,17 @@
     ],
     [
       "group",
+      "flow_aggregator",
+      [
+        "bnVsbA==",
+        null
+      ],
+      "yes_no",
+      "Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from output_aggregate_flows.",
+      null
+    ],
+    [
+      "group",
       "has_capacity_margin",
       [
         "bnVsbA==",
@@ -2900,13 +2950,13 @@
     ],
     [
       "group",
-      "flow_aggregator",
+      "output_flowGroup_indicators",
       [
         "bnVsbA==",
         null
       ],
       "yes_no",
-      "Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from output_aggregate_flows.",
+      "Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).",
       null
     ],
     [
@@ -2929,17 +2979,6 @@
       ],
       "yes_no",
       "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
-      null
-    ],
-    [
-      "group",
-      "output_flowGroup_indicators",
-      [
-        "bnVsbA==",
-        null
-      ],
-      "yes_no",
-      "Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).",
       null
     ],
     [
@@ -4970,6 +5009,12 @@
     ],
     [
       "group",
+      "flow_aggregator",
+      "str",
+      0
+    ],
+    [
+      "group",
       "has_capacity_margin",
       "str",
       0
@@ -5096,7 +5141,7 @@
     ],
     [
       "group",
-      "flow_aggregator",
+      "output_flowGroup_indicators",
       "str",
       0
     ],
@@ -5109,12 +5154,6 @@
     [
       "group",
       "output_nodeGroup_indicators",
-      "str",
-      0
-    ],
-    [
-      "group",
-      "output_flowGroup_indicators",
       "str",
       0
     ],
@@ -6514,6 +6553,46 @@
     ],
     [
       "connection",
+      "east_north",
+      "transfer_method",
+      [
+        "InVuaWRpcmVjdGlvbmFsIg==",
+        "str"
+      ],
+      "unidirectional"
+    ],
+    [
+      "connection",
+      "west-east-aux",
+      "efficiency",
+      [
+        "MC45",
+        "float"
+      ],
+      "hyphenated"
+    ],
+    [
+      "connection",
+      "west-east-aux",
+      "existing",
+      [
+        "NTAuMA==",
+        "float"
+      ],
+      "hyphenated"
+    ],
+    [
+      "connection",
+      "west-east-aux",
+      "other_operational_cost",
+      [
+        "MC4x",
+        "float"
+      ],
+      "hyphenated"
+    ],
+    [
+      "connection",
       "west_east",
       "availability",
       [
@@ -6544,6 +6623,16 @@
     ],
     [
       "connection",
+      "west_east",
+      "transfer_method",
+      [
+        "InVuaWRpcmVjdGlvbmFsIg==",
+        "str"
+      ],
+      "unidirectional"
+    ],
+    [
+      "connection",
       "west_north",
       "efficiency",
       [
@@ -6561,6 +6650,16 @@
         "float"
       ],
       "network"
+    ],
+    [
+      "connection",
+      "west_north",
+      "transfer_method",
+      [
+        "InVuaWRpcmVjdGlvbmFsIg==",
+        "str"
+      ],
+      "unidirectional"
     ],
     [
       "constraint",
@@ -6795,6 +6894,16 @@
     [
       "group",
       "electricity",
+      "flow_aggregator",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "init"
+    ],
+    [
+      "group",
+      "electricity",
       "has_inertia",
       [
         "InllcyI=",
@@ -6811,16 +6920,6 @@
         "float"
       ],
       "inertia"
-    ],
-    [
-      "group",
-      "electricity",
-      "flow_aggregator",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "init"
     ],
     [
       "group",
@@ -6865,22 +6964,22 @@
     [
       "group",
       "to_west_node",
-      "output_nodeGroup_dispatch",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "aggregate_outputs"
-    ],
-    [
-      "group",
-      "to_west_node",
       "output_flowGroup_indicators",
       [
         "InllcyI=",
         "str"
       ],
       "init"
+    ],
+    [
+      "group",
+      "to_west_node",
+      "output_nodeGroup_dispatch",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "aggregate_outputs"
     ],
     [
       "group",
@@ -6997,6 +7096,16 @@
       "flexTool",
       "solves",
       [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJ5MjAyMF9oYWxmX3llYXIiXSwgImluZGV4X25hbWUiOiAic2VxdWVuY2VfaW5kZXgifQ==",
+        "array"
+      ],
+      "half_year"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJ5MjAyMF8yZGF5X2Rpc3BhdGNoIl0sICJpbmRleF9uYW1lIjogInNlcXVlbmNlX2luZGV4In0=",
         "array"
       ],
@@ -7061,6 +7170,16 @@
         "array"
       ],
       "invest_twoYears4Times_5weeks"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJ5MjAyMF8yXzVfeWVhciJdLCAiaW5kZXhfbmFtZSI6ICJzZXF1ZW5jZV9pbmRleCJ9",
+        "array"
+      ],
+      "two_and_half_year"
     ],
     [
       "node",
@@ -8785,6 +8904,56 @@
     ],
     [
       "solve",
+      "y2020_2_5_year",
+      "period_timeset",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsICIyZGF5Il1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "two_and_half_year"
+    ],
+    [
+      "solve",
+      "y2020_2_5_year",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "array"
+      ],
+      "two_and_half_year"
+    ],
+    [
+      "solve",
+      "y2020_2_5_year",
+      "solve_mode",
+      [
+        "InNpbmdsZV9zb2x2ZSI=",
+        "str"
+      ],
+      "two_and_half_year"
+    ],
+    [
+      "solve",
+      "y2020_2_5_year",
+      "solver",
+      [
+        "ImdscHNvbCI=",
+        "str"
+      ],
+      "two_and_half_year"
+    ],
+    [
+      "solve",
+      "y2020_2_5_year",
+      "years_represented",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDIuNV1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "two_and_half_year"
+    ],
+    [
+      "solve",
       "y2020_2day_dispatch",
       "highs_method",
       [
@@ -8892,6 +9061,26 @@
         "str"
       ],
       "init"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "solver",
+      [
+        "ImdscHNvbCI=",
+        "str"
+      ],
+      "hyphenated"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "solver",
+      [
+        "ImdscHNvbCI=",
+        "str"
+      ],
+      "unidirectional"
     ],
     [
       "solve",
@@ -9042,6 +9231,56 @@
         "str"
       ],
       "fullYear"
+    ],
+    [
+      "solve",
+      "y2020_half_year",
+      "period_timeset",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsICIyZGF5Il1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "half_year"
+    ],
+    [
+      "solve",
+      "y2020_half_year",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "array"
+      ],
+      "half_year"
+    ],
+    [
+      "solve",
+      "y2020_half_year",
+      "solve_mode",
+      [
+        "InNpbmdsZV9zb2x2ZSI=",
+        "str"
+      ],
+      "half_year"
+    ],
+    [
+      "solve",
+      "y2020_half_year",
+      "solver",
+      [
+        "ImdscHNvbCI=",
+        "str"
+      ],
+      "half_year"
+    ],
+    [
+      "solve",
+      "y2020_half_year",
+      "years_represented",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDAuNV1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "half_year"
     ],
     [
       "solve",
@@ -10580,7 +10819,15 @@
       ""
     ],
     [
+      "half_year",
+      ""
+    ],
+    [
       "heat",
+      ""
+    ],
+    [
+      "hyphenated",
       ""
     ],
     [
@@ -10645,6 +10892,14 @@
     ],
     [
       "storage_fullYear_6h",
+      ""
+    ],
+    [
+      "two_and_half_year",
+      ""
+    ],
+    [
+      "unidirectional",
       ""
     ],
     [
@@ -10826,6 +11081,11 @@
       ""
     ],
     [
+      "hyphenated_entity_names",
+      false,
+      ""
+    ],
+    [
       "multi_fullYear_battery",
       false,
       ""
@@ -10936,6 +11196,11 @@
       ""
     ],
     [
+      "unidirectional_connection",
+      false,
+      ""
+    ],
+    [
       "water_pump",
       false,
       ""
@@ -10982,6 +11247,16 @@
     ],
     [
       "y2020_2029_2x5y",
+      false,
+      ""
+    ],
+    [
+      "years_represented_2_5",
+      false,
+      ""
+    ],
+    [
+      "years_represented_half",
       false,
       ""
     ]
@@ -11750,6 +12025,36 @@
     [
       "fusion",
       "fusion",
+      null
+    ],
+    [
+      "hyphenated_entity_names",
+      "init",
+      "west"
+    ],
+    [
+      "hyphenated_entity_names",
+      "west",
+      "coal"
+    ],
+    [
+      "hyphenated_entity_names",
+      "coal",
+      "wind"
+    ],
+    [
+      "hyphenated_entity_names",
+      "wind",
+      "network"
+    ],
+    [
+      "hyphenated_entity_names",
+      "network",
+      "hyphenated"
+    ],
+    [
+      "hyphenated_entity_names",
+      "hyphenated",
       null
     ],
     [
@@ -13058,6 +13363,36 @@
       null
     ],
     [
+      "unidirectional_connection",
+      "init",
+      "west"
+    ],
+    [
+      "unidirectional_connection",
+      "west",
+      "coal"
+    ],
+    [
+      "unidirectional_connection",
+      "coal",
+      "wind"
+    ],
+    [
+      "unidirectional_connection",
+      "wind",
+      "network"
+    ],
+    [
+      "unidirectional_connection",
+      "network",
+      "unidirectional"
+    ],
+    [
+      "unidirectional_connection",
+      "unidirectional",
+      null
+    ],
+    [
       "water_pump",
       "init",
       "west"
@@ -13390,6 +13725,46 @@
     [
       "y2020_2029_2x5y",
       "2x5y",
+      null
+    ],
+    [
+      "years_represented_2_5",
+      "init",
+      "west"
+    ],
+    [
+      "years_represented_2_5",
+      "west",
+      "coal"
+    ],
+    [
+      "years_represented_2_5",
+      "coal",
+      "two_and_half_year"
+    ],
+    [
+      "years_represented_2_5",
+      "two_and_half_year",
+      null
+    ],
+    [
+      "years_represented_half",
+      "init",
+      "west"
+    ],
+    [
+      "years_represented_half",
+      "west",
+      "coal"
+    ],
+    [
+      "years_represented_half",
+      "coal",
+      "half_year"
+    ],
+    [
+      "years_represented_half",
+      "half_year",
       null
     ]
   ]
