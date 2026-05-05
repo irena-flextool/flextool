@@ -257,6 +257,35 @@ class PdtLookup:
         # ('node', param) in class_paramName_default → default_value['node', param]).
         self._class_defaults: dict[str, float] = class_default_values or {}
 
+        # Pre-built (entity, param) keys across the time/period-varying
+        # tables — used by ``is_static`` to skip per-(d, t) ``get`` calls
+        # for entries whose value is the same across the whole timeline.
+        # frozenset over ordered iterables is allowed by the
+        # preprocessing-lint rule for hot-path membership testing.
+        self._pbt_e_param_keys = frozenset(
+            (k[0], k[1]) for k in self._pbt
+        )
+        self._pd_e_param_keys = frozenset(
+            (k[0], k[1]) for k in self._pd
+        )
+        self._pt_e_param_keys = frozenset(
+            (k[0], k[1]) for k in self._pt
+        )
+
+    def is_static(self, e: str, param: str) -> bool:
+        """Return True iff ``get(e, param, d, t)`` is independent of (d, t).
+
+        True when the entity has no time- or period-indexed entries for
+        this param: the result then comes from the scalar ``p_`` table or
+        the def1 / class_default / 0 fallbacks, which are all constant
+        across (d, t).  Callers can compute the value once and replicate
+        it across the whole ``dt`` set instead of paying for ``|dt|``
+        branch walks.
+        """
+        return ((e, param) not in self._pbt_e_param_keys
+                and (e, param) not in self._pd_e_param_keys
+                and (e, param) not in self._pt_e_param_keys)
+
     def get(self, e: str, param: str, d: str, t: str) -> float:
         # Branch 1: stochastic + outer-d's ts and tb
         if e in self._stoch_entity:
@@ -448,6 +477,26 @@ class PdtLookupPerSide:
                 for row in reader:
                     if len(row) >= 2 and row[0] in groups_stoch and row[1]:
                         self._stoch_process.add(row[1])
+
+        # Pre-built (process, side, param) keys across the time/period-
+        # varying tables — see PdtLookup.is_static for rationale.
+        self._pbt_psp_keys = frozenset(
+            (k[0], k[1], k[2]) for k in self._pbt
+        )
+        self._pd_psp_keys = frozenset(
+            (k[0], k[1], k[2]) for k in self._pd
+        )
+        self._pt_psp_keys = frozenset(
+            (k[0], k[1], k[2]) for k in self._pt
+        )
+
+    def is_static(self, p: str, side: str, param: str) -> bool:
+        """Return True iff ``get(p, side, param, d, t)`` is independent
+        of (d, t).  See :meth:`PdtLookup.is_static` for rationale.
+        """
+        return ((p, side, param) not in self._pbt_psp_keys
+                and (p, side, param) not in self._pd_psp_keys
+                and (p, side, param) not in self._pt_psp_keys)
 
     def get(self, p: str, side: str, param: str, d: str, t: str) -> float:
         if p in self._stoch_process:
