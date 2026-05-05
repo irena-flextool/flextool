@@ -3647,6 +3647,203 @@ def _read_singles_csv(path: Path) -> list[str]:
         return [r[0] for r in reader if r and r[0]]
 
 
+def _extract_cum_sim_hours(
+    sd: Path, *, prior_handoff=None,
+) -> "pl.DataFrame | None":
+    """Δ.11 — derive ``cum_sim_hours[period]`` from the workdir's
+    ``p_step_duration.csv`` + ``realized_dispatch.csv``.
+
+    Algorithm (mirror of
+    ``cumulative_handoffs.py::write_ladder_rolling_accumulators``):
+
+      this_roll_hrs[d] = Σ_t step_duration[d, t]   for (d, t) ∈ realized_dispatch
+      cum[d]           = prior[d] + this_roll[d]   ∀d ∈ keys(prior) ∪ keys(this_roll)
+
+    Returns the wide ``[period, value]`` carrier frame, or ``None`` when
+    neither prior nor the workdir's realized set contributes any rows.
+    """
+    rd_path = sd / "realized_dispatch.csv"
+    sd_path = sd / "p_step_duration.csv"
+    realized: set[tuple[str, str]] = set()
+    if rd_path.exists():
+        try:
+            rd_df = _read_csv_file(rd_path)
+        except pl.exceptions.NoDataError:
+            rd_df = None
+        if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
+            for r in rd_df.iter_rows(named=True):
+                realized.add((str(r["period"]), str(r["step"])))
+    this_roll_hrs: dict[str, float] = {}
+    if realized and sd_path.exists():
+        try:
+            sd_df = _read_csv_file(sd_path)
+        except pl.exceptions.NoDataError:
+            sd_df = None
+        if sd_df is not None and sd_df.height > 0:
+            d_col = "period" if "period" in sd_df.columns else None
+            t_col = "time" if "time" in sd_df.columns else "step" if "step" in sd_df.columns else None
+            v_col = "value" if "value" in sd_df.columns else (
+                "p_step_duration" if "p_step_duration" in sd_df.columns else None
+            )
+            if d_col is not None and t_col is not None and v_col is not None:
+                for r in sd_df.iter_rows(named=True):
+                    key = (str(r[d_col]), str(r[t_col]))
+                    if key in realized:
+                        try:
+                            this_roll_hrs[key[0]] = this_roll_hrs.get(key[0], 0.0) + float(r[v_col])
+                        except (TypeError, ValueError):
+                            continue
+    prior_hrs: dict[str, float] = {}
+    if prior_handoff is not None and prior_handoff.cum_sim_hours is not None:
+        for r in prior_handoff.cum_sim_hours.iter_rows(named=True):
+            prior_hrs[str(r["period"])] = float(r["value"])
+    if not this_roll_hrs and not prior_hrs:
+        return None
+    keys = sorted(set(prior_hrs) | set(this_roll_hrs))
+    rows = [(d, prior_hrs.get(d, 0.0) + this_roll_hrs.get(d, 0.0)) for d in keys]
+    return pl.DataFrame(rows, schema=["period", "value"], orient="row")
+
+
+def _extract_cumulative_commodity(
+    sol, sd: Path, *, prior_handoff=None,
+) -> "pl.DataFrame | None":
+    """Δ.11 — derive ``cumulative_commodity[c, i, d]`` from ``v_trade``
+    on the LP solution + workdir-side accumulator metadata.
+
+    Algorithm (mirror of
+    ``cumulative_handoffs.py::write_ladder_rolling_accumulators``):
+
+      this_roll[c, i, d] = Σ_n v_trade[c, n, d, i] × unitsize[c]
+                              × (realized_hours[d] / horizon_hours[d])
+
+      cum[c, i, d] = prior[c, i, d] + this_roll[c, i, d]
+
+    Restricted to ``(c, i)`` in ``ci_ladder_cumulative.csv`` (the finite
+    tiers; non-finite tiers don't need carry-over).  Returns the wide
+    ``[commodity, tier, period, mwh]`` carrier frame, or ``None`` when
+    no v_trade variable exists on the solution AND no prior accumulator
+    is supplied (caller falls back to the workdir CSV).
+    """
+    if sol is None or "v_trade" not in getattr(sol, "_vars", {}):
+        # Without v_trade we can only propagate prior — same shape the
+        # legacy file path uses.  Returning None lets the caller fall
+        # through to the file-based propagation.
+        return None
+
+    # Finite ladder tiers — cumulative restriction set.
+    cilc_path = sd / "ci_ladder_cumulative.csv"
+    finite_tiers: set[tuple[str, int]] = set()
+    if cilc_path.exists():
+        try:
+            cilc_df = _read_csv_file(cilc_path)
+        except pl.exceptions.NoDataError:
+            cilc_df = None
+        if cilc_df is not None and cilc_df.height > 0:
+            for r in cilc_df.iter_rows(named=True):
+                try:
+                    finite_tiers.add((str(r["commodity"]), int(r["tier"])))
+                except (TypeError, ValueError, KeyError):
+                    continue
+    if not finite_tiers:
+        return None
+
+    # Per-period horizon vs realized hours (uniform-split fraction).
+    sd_path = sd / "p_step_duration.csv"
+    rd_path = sd / "realized_dispatch.csv"
+    horizon_hrs: dict[str, float] = {}
+    realized_hrs: dict[str, float] = {}
+    if sd_path.exists():
+        try:
+            sd_df = _read_csv_file(sd_path)
+        except pl.exceptions.NoDataError:
+            sd_df = None
+        if sd_df is not None and sd_df.height > 0:
+            d_col = "period" if "period" in sd_df.columns else None
+            t_col = "time" if "time" in sd_df.columns else "step" if "step" in sd_df.columns else None
+            v_col = "value" if "value" in sd_df.columns else (
+                "p_step_duration" if "p_step_duration" in sd_df.columns else None
+            )
+            realized_set: set[tuple[str, str]] = set()
+            if rd_path.exists():
+                try:
+                    rd_df = _read_csv_file(rd_path)
+                except pl.exceptions.NoDataError:
+                    rd_df = None
+                if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
+                    for r in rd_df.iter_rows(named=True):
+                        realized_set.add((str(r["period"]), str(r["step"])))
+            if d_col is not None and t_col is not None and v_col is not None:
+                for r in sd_df.iter_rows(named=True):
+                    d_v = str(r[d_col])
+                    try:
+                        dur = float(r[v_col])
+                    except (TypeError, ValueError):
+                        continue
+                    horizon_hrs[d_v] = horizon_hrs.get(d_v, 0.0) + dur
+                    if (d_v, str(r[t_col])) in realized_set:
+                        realized_hrs[d_v] = realized_hrs.get(d_v, 0.0) + dur
+
+    # Commodity unitsize (defaults 1.0 when absent — flextool default).
+    unitsize: dict[str, float] = {}
+    cu_path = sd / "p_commodity_unitsize.csv"
+    if cu_path.exists():
+        try:
+            cu_df = _read_csv_file(cu_path)
+        except pl.exceptions.NoDataError:
+            cu_df = None
+        if cu_df is not None and cu_df.height > 0:
+            c_col = "commodity" if "commodity" in cu_df.columns else "name"
+            v_col = "value" if "value" in cu_df.columns else "p_commodity_unitsize"
+            if c_col in cu_df.columns and v_col in cu_df.columns:
+                for r in cu_df.iter_rows(named=True):
+                    try:
+                        unitsize[str(r[c_col])] = float(r[v_col])
+                    except (TypeError, ValueError):
+                        continue
+
+    # v_trade extraction — schema from _commodity_ladder.add_variables.
+    v_trade_df = sol.value("v_trade")
+    this_roll: dict[tuple[str, int, str], float] = {}
+    if v_trade_df is not None and v_trade_df.height > 0:
+        for r in v_trade_df.iter_rows(named=True):
+            try:
+                c = str(r["c"])
+                i = int(r["i"])
+                d = str(r["d"])
+                v = float(r["value"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            if (c, i) not in finite_tiers:
+                continue
+            hz = horizon_hrs.get(d, 0.0)
+            rz = realized_hrs.get(d, 0.0)
+            if hz <= 0.0 or rz <= 0.0:
+                continue
+            us = unitsize.get(c, 1.0)
+            key = (c, i, d)
+            this_roll[key] = this_roll.get(key, 0.0) + v * us * (rz / hz)
+
+    # Prior accumulator (carry across solves).
+    prior: dict[tuple[str, int, str], float] = {}
+    if prior_handoff is not None and prior_handoff.cumulative_commodity is not None:
+        for r in prior_handoff.cumulative_commodity.iter_rows(named=True):
+            try:
+                key = (str(r["commodity"]), int(r["tier"]), str(r["period"]))
+                prior[key] = float(r["mwh"])
+            except (TypeError, ValueError, KeyError):
+                continue
+
+    if not this_roll and not prior:
+        return None
+
+    keys = sorted(set(prior) | set(this_roll))
+    rows = [(c, i, d, prior.get((c, i, d), 0.0) + this_roll.get((c, i, d), 0.0))
+                for (c, i, d) in keys]
+    return pl.DataFrame(rows,
+                          schema=["commodity", "tier", "period", "mwh"],
+                          orient="row")
+
+
 def build_handoff_from_flexpy(
     sol, work_folder: Path, solve_name: str,
     *, prior_handoff=None,
@@ -3922,51 +4119,80 @@ def build_handoff_from_flexpy(
                   .select("group", "period", "value"))
 
     # ---- cumulative_commodity: per-(commodity, tier, period) running mwh ----
-    # Same propagation pattern as cumulative_co2.
-    cumulative_commodity_df = None
-    if prior_handoff is not None and prior_handoff.cumulative_commodity is not None:
-        cumulative_commodity_df = prior_handoff.cumulative_commodity
-    cc_path = sd / "commodity_ladder_cumulative.csv"
-    if cc_path.exists():
-        try:
-            cc_df = _read_csv_file(cc_path)
-        except pl.exceptions.NoDataError:
-            cc_df = None
-        if cc_df is not None and cc_df.height > 0:
-            # Tolerate either ``mwh`` or ``p_ladder_cum_realized_mwh`` as
-            # the value column name — the file's writer may use either.
-            if "mwh" in cc_df.columns:
-                value_col = "mwh"
-            elif "p_ladder_cum_realized_mwh" in cc_df.columns:
-                value_col = "p_ladder_cum_realized_mwh"
-            else:
-                value_col = None
-            if value_col is not None and {"commodity", "tier", "period"}.issubset(
-                    cc_df.columns):
-                cumulative_commodity_df = (
-                    cc_df.with_columns(
-                        mwh=pl.col(value_col).cast(pl.Float64, strict=False)
-                                .fill_null(0.0))
-                      .select("commodity", "tier", "period", "mwh"))
+    # Δ.11 — derive from sol when v_trade is in the LP and prior_handoff
+    # carries finite-tier ladder commodities.  Algorithm mirrors
+    # ``flextool/process_outputs/cumulative_handoffs.py:write_ladder_rolling_accumulators``:
+    #
+    #   this_roll_mwh[c, i, d] = Σ_n v_trade[c, n, d, i] × unitsize[c]
+    #                              × (realized_hours[d] / horizon_hours[d])
+    #
+    # Cumulative across solves: prior_mwh + this_roll_mwh, restricted to
+    # finite ladder tiers (``ci_ladder_cumulative.csv``) — non-finite
+    # tiers don't need the carry-over since their cap is unbounded.
+    #
+    # Falls back to the workdir CSV when v_trade isn't in the solution
+    # (the LP didn't expose the variable for this fixture) — preserves
+    # the legacy propagation path.
+    cumulative_commodity_df = _extract_cumulative_commodity(
+        sol, sd, prior_handoff=prior_handoff)
+    if cumulative_commodity_df is None:
+        # Legacy file fallback (chain runner that ran flextool's
+        # preprocessing already wrote the file).
+        cc_path = sd / "commodity_ladder_cumulative.csv"
+        if cc_path.exists():
+            try:
+                cc_df = _read_csv_file(cc_path)
+            except pl.exceptions.NoDataError:
+                cc_df = None
+            if cc_df is not None and cc_df.height > 0:
+                if "mwh" in cc_df.columns:
+                    value_col = "mwh"
+                elif "p_ladder_cum_realized_mwh" in cc_df.columns:
+                    value_col = "p_ladder_cum_realized_mwh"
+                else:
+                    value_col = None
+                if value_col is not None and {"commodity", "tier", "period"}.issubset(
+                        cc_df.columns):
+                    cumulative_commodity_df = (
+                        cc_df.with_columns(
+                            mwh=pl.col(value_col).cast(pl.Float64, strict=False)
+                                    .fill_null(0.0))
+                          .select("commodity", "tier", "period", "mwh"))
+        if (cumulative_commodity_df is None
+                and prior_handoff is not None
+                and prior_handoff.cumulative_commodity is not None):
+            cumulative_commodity_df = prior_handoff.cumulative_commodity
 
     # ---- cum_sim_hours: per-period running sim-hour total ----
-    cum_sim_hours_df = None
-    if prior_handoff is not None and prior_handoff.cum_sim_hours is not None:
-        cum_sim_hours_df = prior_handoff.cum_sim_hours
-    csh_path = sd / "ladder_cum_sim_hours.csv"
-    if csh_path.exists():
-        try:
-            csh_df = _read_csv_file(csh_path)
-        except pl.exceptions.NoDataError:
-            csh_df = None
-        if csh_df is not None and csh_df.height > 0 and \
-                "p_ladder_cum_sim_hours" in csh_df.columns:
-            cum_sim_hours_df = (
-                csh_df.with_columns(
-                    value=pl.col("p_ladder_cum_sim_hours")
-                            .cast(pl.Float64, strict=False)
-                            .fill_null(0.0))
-                   .select("period", "value"))
+    # Δ.11 — derive from the workdir's ``p_step_duration.csv`` +
+    # ``realized_dispatch.csv`` (uniform-split assumption per
+    # ``cumulative_handoffs.py:write_ladder_rolling_accumulators``):
+    #
+    #   this_roll_hrs[d] = Σ_t step_duration[d, t] for (d, t) ∈ realized_dispatch
+    #
+    # Cumulative: prior_hrs + this_roll_hrs.  ``v_trade`` not required —
+    # the carrier exists for every chained fixture even when the ladder
+    # itself is inactive (CO2-cap normalisation also consumes it).
+    cum_sim_hours_df = _extract_cum_sim_hours(sd, prior_handoff=prior_handoff)
+    if cum_sim_hours_df is None:
+        csh_path = sd / "ladder_cum_sim_hours.csv"
+        if csh_path.exists():
+            try:
+                csh_df = _read_csv_file(csh_path)
+            except pl.exceptions.NoDataError:
+                csh_df = None
+            if csh_df is not None and csh_df.height > 0 and \
+                    "p_ladder_cum_sim_hours" in csh_df.columns:
+                cum_sim_hours_df = (
+                    csh_df.with_columns(
+                        value=pl.col("p_ladder_cum_sim_hours")
+                                .cast(pl.Float64, strict=False)
+                                .fill_null(0.0))
+                       .select("period", "value"))
+        if (cum_sim_hours_df is None
+                and prior_handoff is not None
+                and prior_handoff.cum_sim_hours is not None):
+            cum_sim_hours_df = prior_handoff.cum_sim_hours
 
     # Δ.1 — ``periods_already_emitted`` extraction removed.  The carrier
     # moved to ``_output_writer.OutputWriterState`` (writer-side state).
