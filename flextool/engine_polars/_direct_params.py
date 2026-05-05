@@ -543,11 +543,20 @@ def _entity_period_scalar(source: "InputSource", entity_class: str,
                             period_filter: pl.DataFrame | None = None
                             ) -> Param | None:
     """Return ``Param((entity_dim, "d"), [<entity_dim>, d, value])`` for a
-    ``1d_map(period)`` parameter on the given entity class.
+    ``1d_map(period)`` OR scalar parameter on the given entity class.
 
     Mirrors the CSV path's slice of ``pdGroup.csv`` / ``pdProcess.csv``
     style files: explicit rows only, optionally filtering out zero /
     null values.  Returns ``None`` when no rows survive.
+
+    Δ.12c-fix gap #3: scalar broadcast.  When the source returns a
+    scalar shape (``[name, value]`` without a ``period`` column) we
+    broadcast the scalar over the periods supplied in ``period_filter``
+    — mirroring flextool's preprocessing which expands a group/process
+    scalar to one row per (entity, period) before writing the
+    ``pdGroup.csv`` / ``pd_process.csv`` family.  Without
+    ``period_filter`` we cannot infer the broadcast axis and fall
+    through to ``None``.
 
     ``period_filter``: optional ``[d]`` frame restricting the output to
     a subset of periods (mirrors flextool preprocessing's per-solve
@@ -555,7 +564,8 @@ def _entity_period_scalar(source: "InputSource", entity_class: str,
     Maps cover ALL declared periods, but the CSV path's
     ``pd_group.csv`` etc. is pre-filtered to the active solve's
     periods).  Pass ``flex_data.dt`` (already restricted to the active
-    solve) to mirror that semantic.
+    solve) to mirror that semantic.  Also used as the broadcast axis
+    for scalar-shape values.
     """
     try:
         df = source.parameter_explicit(entity_class, parameter_name)
@@ -567,8 +577,29 @@ def _entity_period_scalar(source: "InputSource", entity_class: str,
     if df is None or df.height == 0:
         return None
     cols = df.columns
-    if "period" not in cols or "value" not in cols:
+    if "value" not in cols:
         return None
+    if "period" not in cols:
+        # Scalar broadcast cascade — Δ.12c-fix gap #3.  Mirrors
+        # flextool preprocessing which writes one (entity, period, value)
+        # row per period when the source value is a scalar.
+        if period_filter is None or period_filter.height == 0:
+            return None
+        if "name" not in cols:
+            return None
+        lf = df.lazy().rename({"name": entity_dim})
+        if filter_null:
+            lf = lf.filter(pl.col("value").is_not_null())
+        if filter_zero:
+            lf = lf.filter(pl.col("value") != 0.0)
+        periods = period_filter.lazy().select("d").unique()
+        out = (lf.select(entity_dim, "value")
+                  .join(periods, how="cross")
+                  .select(entity_dim, "d", "value")
+                  .collect())
+        if out.height == 0:
+            return None
+        return Param((entity_dim, "d"), out.lazy())
     lf = df.lazy().rename({"name": entity_dim, "period": "d"})
     if filter_null:
         lf = lf.filter(pl.col("value").is_not_null())
@@ -653,37 +684,56 @@ def _g_scalar(source: "InputSource", parameter_name: str,
 
 
 # §1.16 — pdGroup_* (1d_map period) — dropping zeros and nulls
-def pdGroup_capacity_margin_from_source(source: "InputSource") -> Param | None:
-    """``group.capacity_margin`` 1d_map(period) → ``Param(("g","d"))``.
-    CSV path drops zero rows; we mirror.
+def pdGroup_capacity_margin_from_source(source: "InputSource",
+                                         period_filter: pl.DataFrame | None = None,
+                                         ) -> Param | None:
+    """``group.capacity_margin`` 1d_map(period) OR scalar →
+    ``Param(("g","d"))``.  CSV path drops zero rows; we mirror.
+    Δ.12c-fix: ``period_filter`` enables scalar→(period) broadcast.
     """
     return _entity_period_scalar(source, "group", "capacity_margin", "g",
-                                    filter_zero=True)
+                                    filter_zero=True,
+                                    period_filter=period_filter)
 
 
-def pdGroup_penalty_capacity_margin_from_source(source: "InputSource") -> Param | None:
+def pdGroup_penalty_capacity_margin_from_source(source: "InputSource",
+                                                 period_filter: pl.DataFrame | None = None,
+                                                 ) -> Param | None:
     return _entity_period_scalar(source, "group", "penalty_capacity_margin", "g",
-                                    filter_zero=True)
+                                    filter_zero=True,
+                                    period_filter=period_filter)
 
 
-def pdGroup_inertia_limit_from_source(source: "InputSource") -> Param | None:
+def pdGroup_inertia_limit_from_source(source: "InputSource",
+                                       period_filter: pl.DataFrame | None = None,
+                                       ) -> Param | None:
     return _entity_period_scalar(source, "group", "inertia_limit", "g",
-                                    filter_zero=True)
+                                    filter_zero=True,
+                                    period_filter=period_filter)
 
 
-def pdGroup_penalty_inertia_from_source(source: "InputSource") -> Param | None:
+def pdGroup_penalty_inertia_from_source(source: "InputSource",
+                                         period_filter: pl.DataFrame | None = None,
+                                         ) -> Param | None:
     return _entity_period_scalar(source, "group", "penalty_inertia", "g",
-                                    filter_zero=True)
+                                    filter_zero=True,
+                                    period_filter=period_filter)
 
 
-def pdGroup_non_synchronous_limit_from_source(source: "InputSource") -> Param | None:
+def pdGroup_non_synchronous_limit_from_source(source: "InputSource",
+                                               period_filter: pl.DataFrame | None = None,
+                                               ) -> Param | None:
     return _entity_period_scalar(source, "group", "non_synchronous_limit", "g",
-                                    filter_zero=True)
+                                    filter_zero=True,
+                                    period_filter=period_filter)
 
 
-def pdGroup_penalty_non_synchronous_from_source(source: "InputSource") -> Param | None:
+def pdGroup_penalty_non_synchronous_from_source(source: "InputSource",
+                                                 period_filter: pl.DataFrame | None = None,
+                                                 ) -> Param | None:
     return _entity_period_scalar(source, "group", "penalty_non_synchronous", "g",
-                                    filter_zero=True)
+                                    filter_zero=True,
+                                    period_filter=period_filter)
 
 
 # §1.16 — group invest/divest 1d_map(period) — drop zeros to match CSV
@@ -1465,6 +1515,9 @@ def apply_direct_params(source: "InputSource",
     # ─── Δ.4b — group 1d_map(period) (capacity_margin / inertia / nonSync) ─
     # Δ.12b: unconditional — _entity_period_scalar handles 1d_map(period)
     # natively (this is the only Spine shape for these parameters).
+    # Δ.12c-fix gap #3: pass ``dt`` as ``period_filter`` so scalar values
+    # (single ``[name, value]`` row) broadcast across the active solve's
+    # periods, matching flextool's pdGroup.csv preprocessing.
     for fn, field in (
         (pdGroup_capacity_margin_from_source, "pdGroup_capacity_margin"),
         (pdGroup_penalty_capacity_margin_from_source,
@@ -1476,7 +1529,8 @@ def apply_direct_params(source: "InputSource",
         (pdGroup_penalty_non_synchronous_from_source,
             "pdGroup_penalty_non_synchronous"),
     ):
-        setattr(flex_data, field, _filter_param_by_periods(fn(source), dt))
+        setattr(flex_data, field,
+                _filter_param_by_periods(fn(source, period_filter=dt), dt))
 
     # ─── Δ.4b — group 1d_map(period) (invest/divest/cumulative) ──────────
     for fn, field in (
