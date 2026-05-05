@@ -352,7 +352,15 @@ def _drive_cascade(
             )
             pb = Problem()
             build_flextool(pb, data)
-            sol = pb.solve()
+            # Δ.12c-fix: ``keep_solver=True`` so ``sol.highs`` carries
+            # the live HiGHS instance the output writer adapter consumes
+            # (``write_all_variables`` / ``write_all_handoffs`` read MPS
+            # column / row names directly off the solver).  Without this
+            # the adapter no-ops and the native cascade emits zero
+            # parquets — the regression
+            # ``test_native_cascade_emits_reference_output_raw_files``
+            # surfaced in Δ.12c-fix.
+            sol = pb.solve(keep_solver=True)
             if not sol.optimal:
                 self.state.logger.error(
                     f"flexpy non-optimal for {complete_solve_name}"
