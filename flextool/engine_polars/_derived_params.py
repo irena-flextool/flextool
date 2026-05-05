@@ -4006,10 +4006,19 @@ def apply_derived_c(
             flex_data.p_inflation_op = infl_my
 
     # ─── §3.12 group slack ────────────────────────────────────────────
-    flex_data.p_group_capacity_for_scaling = p_group_capacity_for_scaling_from_source(
+    # TODO(Δ.12b helper-fix): the helpers cover the scaling-inactive
+    # default path; scaling-active fixtures (``solve.use_row_scaling``)
+    # require the pow10 cascade in ``lp_scaling_params.py:91-244`` which
+    # the seed-side ``_group_slack`` reads directly from
+    # ``solve_data/group_capacity_for_scaling.csv`` /
+    # ``solve_data/inv_group_cap.csv``.  Keep the conditional assignment.
+    gcs_db = p_group_capacity_for_scaling_from_source(
         source, active_solve, workdir)
-    flex_data.p_inv_group_cap = p_inv_group_cap_from_source(
-        source, active_solve, workdir)
+    if gcs_db is not None:
+        flex_data.p_group_capacity_for_scaling = gcs_db
+    igc_db = p_inv_group_cap_from_source(source, active_solve, workdir)
+    if igc_db is not None:
+        flex_data.p_inv_group_cap = igc_db
 
     # Inflow derivatives — these consume the (CSV-loaded or override-set)
     # p_inflow.  Helpers return None when p_inflow is None.
