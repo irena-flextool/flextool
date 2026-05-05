@@ -1076,14 +1076,26 @@ def apply_existing_chain(flex_data: object,
         _read_active_solve, _period_in_use_set,
         _read_period_with_history,
     )
-    from .input import _read_solve_first, _read_csv_file
+    from .input import _read_solve_first
+    from ._input_source import _read_csv_file
     from polar_high_opt import Param as _Param
 
-    active_solve = _read_active_solve(workdir)
-    period_in_use = _period_in_use_set(source, active_solve, workdir)
+    # Δ.12a — prefer the typed SolveContext fields (zero physical IO)
+    # when the caller supplied one; fall back to direct workdir reads
+    # for back-compat with callers that haven't been wired up.
+    if ctx is not None:
+        active_solve = ctx.solve_name
+        solve_first = ctx.solveFirst
+        ppec_csv_df = ctx.p_entity_period_existing_capacity
+        edd_hist_df_raw = ctx.edd_history
+    else:
+        active_solve = _read_active_solve(workdir)
+        solve_first = _read_solve_first(workdir)
+        ppec_csv_df = None
+        edd_hist_df_raw = None
+    period_in_use = _period_in_use_set(source, active_solve, workdir, ctx=ctx)
     period_with_history = (_read_period_with_history(workdir)
                               or list(period_in_use))
-    solve_first = _read_solve_first(workdir)
 
     ppic = getattr(flex_data, "p_entity_previously_invested_capacity", None)
     ped = getattr(flex_data, "p_entity_divested", None)
@@ -1102,32 +1114,43 @@ def apply_existing_chain(flex_data: object,
                                                        "period": "d"})
                                           .select("e", "d", "value"))
     if ppec_param is None:
-        ppec_path = workdir / "solve_data" / "p_entity_period_existing_capacity.csv"
-        if ppec_path.exists():
-            try:
-                df = _read_csv_file(ppec_path)
-            except Exception:
+        # Δ.12a — prefer the typed SolveContext field; the cached
+        # active-CSV-cache funnels the read either way.
+        if ctx is not None and ppec_csv_df is not None and ppec_csv_df.height > 0:
+            df = ppec_csv_df
+        else:
+            ppec_path = workdir / "solve_data" / "p_entity_period_existing_capacity.csv"
+            if ppec_path.exists():
+                try:
+                    df = _read_csv_file(ppec_path)
+                except Exception:
+                    df = None
+            else:
                 df = None
-            if (df is not None and df.height > 0
-                    and "p_entity_period_existing_capacity" in df.columns):
-                ppec_param = _Param(("e", "d"),
-                                      df.rename({"entity": "e",
-                                                   "period": "d"})
-                                        .select("e", "d",
-                                                  pl.col("p_entity_period_existing_capacity")
-                                                    .cast(pl.Float64, strict=False)
-                                                    .fill_null(0.0)
-                                                    .alias("value")))
+        if (df is not None and df.height > 0
+                and "p_entity_period_existing_capacity" in df.columns):
+            ppec_param = _Param(("e", "d"),
+                                  df.rename({"entity": "e",
+                                               "period": "d"})
+                                    .select("e", "d",
+                                              pl.col("p_entity_period_existing_capacity")
+                                                .cast(pl.Float64, strict=False)
+                                                .fill_null(0.0)
+                                                .alias("value")))
 
     edd_hist_df: "pl.DataFrame | None" = None
-    edd_path = workdir / "solve_data" / "edd_history.csv"
-    if edd_path.exists():
-        try:
-            edd_hist_df = _read_csv_file(edd_path)
-        except Exception:
-            edd_hist_df = None
-        if edd_hist_df is not None and edd_hist_df.height == 0:
-            edd_hist_df = None
+    if ctx is not None:
+        if edd_hist_df_raw is not None and edd_hist_df_raw.height > 0:
+            edd_hist_df = edd_hist_df_raw
+    else:
+        edd_path = workdir / "solve_data" / "edd_history.csv"
+        if edd_path.exists():
+            try:
+                edd_hist_df = _read_csv_file(edd_path)
+            except Exception:
+                edd_hist_df = None
+            if edd_hist_df is not None and edd_hist_df.height == 0:
+                edd_hist_df = None
 
     try:
         pae = p_entity_all_existing_from_handoff(

@@ -3083,396 +3083,408 @@ def load_flextool(source: "Path | str | FlexInputSource",
     inp = source.input_dir
     sd  = source.solve_data_dir
 
-    # Δ.2: build the per-solve BlockLayout once from flextool's
-    # solve_data/ block CSVs (still produced by flextool's
-    # ``write_block_data_for_solve``).  Downstream block-aware helpers
-    # consume the in-memory frames instead of re-reading the same CSVs
-    # at each call site.  When the orchestrator transitions to building
-    # ``BlockLayout`` natively (Δ.3+), this load_from_solve_data call
-    # becomes a no-op or is replaced by passing the live layout in.
-    block_layout = BlockLayout.load_from_solve_data(sd)
-
-    dt, step_dur, rp_cw, infl, psh = _load_time(sd)
-    nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt)
-
-    proc = _load_process_topology(inp, sd, dt, block_layout=block_layout)
-
-    # base_cap_pd = (p, d, base) for profile RHS — recompute here; small.
-    base_cap_pd = None
-    p_flow_upper_existing = None
-    pd_neg_cap = None
-    if proc["pss"] is not None:
-        cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
-                                   sd / "p_entity_previously_invested_capacity.csv",
-                                   sd / "p_entity_all_existing.csv")
-        unitsize_long = _read_unitsize((sd / "p_entity_unitsize.csv") if (sd / "p_entity_unitsize.csv").exists() else (inp / "p_entity_unitsize.csv"))
-        cap_us_pd = (cap_long.rename({"e":"p","value":"cap"})
-            .filter(pl.col("p").is_in(proc["pss"]["p"].unique()))
-            .join(unitsize_long.rename({"e":"p","value":"us"}), on="p", how="inner"))
-        base_cap_pd = (cap_us_pd
-            .with_columns(base=pl.col("cap")/pl.col("us"))
-            .select("p","d","base"))
-        # pd_neg_cap = (p, d) where both existing and unitsize are negative.
-        # In the .mod, maxToSink is ``v_flow * unitsize ≤ existing × ...``.
-        # When both are negative (e.g. anti_energy_plant: us=-50, existing=-50)
-        # dividing by unitsize FLIPS the inequality direction, yielding
-        # ``v_flow ≥ existing/unitsize`` (a forced *minimum* output).
-        # We therefore route these (p, d) rows out of the standard ``≤``
-        # maxToSink and into a sign-flipped ``≥`` companion constraint.
-        neg_pd = cap_us_pd.filter(
-            (pl.col("cap") < 0.0) & (pl.col("us") < 0.0)
-        ).select("p", "d")
-        if neg_pd.height > 0:
-            pd_neg_cap = neg_pd
-        # p_flow_upper_existing = (existing/unitsize) per (p, source, sink, d).
-        # This is the *true* structural existing-capacity upper bound on
-        # v_flow.  It corresponds to the .mod's RHS without invest/divest
-        # (assuming cap_coef=1).  flextool's preprocessed p_flow_max may
-        # bake in max_invest_cum (for invest-method = invest_no_limit) and
-        # is therefore looser; using p_flow_upper_existing + the explicit
-        # invest tightening on the LHS gives the tight constraint.
-        p_flow_upper_existing = Param(("p", "source", "sink", "d"),
-            base_cap_pd.rename({"base": "value"})
-                       .join(proc["pss"], on="p", how="inner")
-                       .select("p", "source", "sink", "d", "value"))
-
-    flow_co2_p, flow_co2_p_noEff, co2c, co2pr = _load_co2_price(
-        inp, sd, proc["pss_eff"], proc.get("pss_noEff"))
-    g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped = _load_co2_cap(
-        inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"))
-    if co2_max_p is not None and co2c is None:
-        p_comm = _read_csv_file(inp / "p_commodity.csv")
-        co2c = Param(("c",),
-            p_comm.filter(pl.col("commodityParam")=="co2_content")
-                  .rename({"commodity":"c","p_commodity":"value"})
-                  .select("c","value"))
-
-    (indir_set, indir_in, indir_out, indir_dt,
-     p_source_flow_coef, p_sink_flow_coef) = _load_indirect(sd, proc["pss"], dt, inp)
-    (fc_idx, fc_coef, c_const, cdt_eq, cdt_le, cdt_ge,
-     n_inv_coef, p_inv_coef,
-     n_state_coef, n_prebuilt_coef, p_prebuilt_coef,
-     _) = _load_user_constraints(inp, proc["pss"], dt)
-
-    p_up, p_lo, p_fx, prof_v, exist_cnt, avail = _load_profiles(
-        inp, sd, proc["pss"], proc["unitsize"], base_cap_pd)
-    # existing_count is also needed by the online/UC feature even when
-    # no profile features are active; fall back to base_cap_pd directly.
-    if exist_cnt is None and base_cap_pd is not None:
-        exist_cnt = Param(("p", "d"), base_cap_pd.rename({"base": "value"}))
-    # availability: default to 1.0 from preprocessing — also used by UC
-    # capacity bounds; if loader didn't populate (no profile data), try
-    # to read pdtProcess_availability.csv standalone.
-    if avail is None and proc["pss"] is not None:
-        avail_long = _slice_param(sd / "pdtProcess.csv", "process", "availability",
-                                   rename_entity_to="p")
-        if avail_long is not None:
-            avail = Param(("p","d","t"), avail_long)
-
-    # dtttdt is needed by both storage and online features — always load
-    # it when present (preprocessing always emits it for non-trivial
-    # solves).  p_process_existing_count (= existing/unitsize per (p, d))
-    # is needed by online + profile features — always load when processes
-    # exist.
-    dtttdt = _read_step_previous(sd / "step_previous.csv")
-
-    online = _load_online(inp, sd, dt, proc["pss"])
-    ramp = _load_ramp(inp, sd, proc["pss"])
-    invest = _load_invest(sd, dt, inp, proc["pss"])
-    varcost = _load_varcost(sd, proc["pss"])
-    fixed_cost = _load_fixed_cost(sd)
-    capacity_for_scaling = _load_node_capacity_for_scaling(sd, nb)
-
-    # ─── Storage (nodeState + binding methods + dtttdt + node-balance source-side flows)
-    storage = _load_storage(inp, sd, dt, nb,
-                             proc["pss_eff"], proc["pss_noEff"],
-                             base_cap_pd, proc["unitsize"],
-                             block_layout=block_layout)
-    # _load_storage emits its own dtttdt; if storage is inactive it'll be
-    # None there but we want the top-level read.
-    if storage["dtttdt"] is None:
-        storage["dtttdt"] = dtttdt
-
-    # ─── Per-arc block step durations (reserved for future use) ──────────
-    p_arc_step_duration_sink = None
-    p_arc_step_duration_source = None
-
-    # ─── Per-arc-side daily-block aggregation index ──────────────────────
-    # For each (n, d, b_first) in nodeStateBlock × period_block, build the
-    # set of (p, source, sink, t, weight) that contribute to that daily
-    # nodeBalance via the .mod's overlap × block_step_duration aggregation.
-    # The arc's relevant side block (process_side_block.csv) determines
-    # the timesteps & weights:
-    #   * b_f=daily_group → t=b_first only, weight=block_step_duration
-    #     (=24 for daily_group's coarse step).
-    #   * b_f=hourly_group/default → all fine t in period_block_time[d,
-    #     b_first], weight=1.
-    # This matches the .mod's nodeBalance_eq treatment of mixed-block arcs
-    # (e.g., electrolyser_A's sink-side daily, source-side hourly) where
-    # the daily-side balance only references v_flow at coarse steps × 24,
-    # while the hourly-side balance integrates all 24 hourly v_flow values.
-    # See flextool.mod:2208-2246.
-    arc_sink_block_dt = None
-    arc_source_block_dt = None
-    p_arc_sink_weight = None
-    p_arc_source_weight = None
-    # Δ.2: consume block frames from the in-memory ``BlockLayout``.
-    if (proc["pss"] is not None and proc["pss"].height > 0
-            and storage.get("nodeStateBlock") is not None
-            and storage["nodeStateBlock"].height > 0
-            and storage.get("period_block_time") is not None
-            and storage["period_block_time"].height > 0
-            and block_layout.process_side_block_frame.height > 0
-            and block_layout.block_step_duration_frame.height > 0):
-        psb = block_layout.process_side_block_frame.rename(
-            {"process": "p", "block": "b_f"})
-        bsd_arc = block_layout.block_step_duration_frame.rename(
-            {"block": "b_f", "period": "d", "step": "t",
-             "step_duration": "weight"})
-        nsb_set = storage["nodeStateBlock"]["n"].unique()
-        pss_local = proc["pss"]
-        pbt = storage["period_block_time"]   # (d, b_first, t)
-
-        # Sink-side: arcs where sink ∈ nodeStateBlock.
-        # process_side_block (p, side='sink', b_f) → arc-side block
-        psb_sink = psb.filter(pl.col("side") == "sink").select("p", "b_f")
-        sink_arcs = (pss_local
-            .filter(pl.col("sink").is_in(nsb_set))
-            .join(psb_sink, on="p", how="inner"))
-        if sink_arcs.height > 0:
-            # For each arc-side, restrict (d, t) to those where
-            # block_step_duration[b_f, d, t] is defined (i.e., t is a
-            # coarse step of b_f).  Then join to period_block_time to
-            # group by (d, b_first).
-            arc_sink_block_dt = (sink_arcs
-                .join(bsd_arc, on="b_f", how="inner")  # adds (d, t, weight)
-                .join(pbt.rename({}), on=["d", "t"], how="inner")
-                .select("p", "source", "sink", "d", "b_first", "t", "weight")
-                .unique())
-            if arc_sink_block_dt.height == 0:
-                arc_sink_block_dt = None
-            else:
-                # Keyed (p, source, sink, d, t) so it joins naturally with
-                # v_flow on (p, source, sink, d, t).  The sink→n rename
-                # happens in nbb_eq's index frame instead.
-                weight_frame = (arc_sink_block_dt
-                    .select("p", "source", "sink", "d", "t", "weight")
-                    .unique()
-                    .rename({"weight": "value"}))
-                p_arc_sink_weight = Param(
-                    ("p", "source", "sink", "d", "t"), weight_frame)
-        # Source-side: arcs where source ∈ nodeStateBlock.
-        psb_src = psb.filter(pl.col("side") == "source").select("p", "b_f")
-        src_arcs = (pss_local
-            .filter(pl.col("source").is_in(nsb_set))
-            .join(psb_src, on="p", how="inner"))
-        if src_arcs.height > 0:
-            arc_source_block_dt = (src_arcs
-                .join(bsd_arc, on="b_f", how="inner")
-                .join(pbt.rename({}), on=["d", "t"], how="inner")
-                .select("p", "source", "sink", "d", "b_first", "t", "weight")
-                .unique())
-            if arc_source_block_dt.height == 0:
-                arc_source_block_dt = None
-            else:
-                # Keep ``source`` column unchanged so this Param joins with
-                # v_flow on (p, source, sink, d, t).  The arc-source-side
-                # rename happens in nbb_eq's index frame instead.
-                weight_frame_src = (arc_source_block_dt
-                    .select("p", "source", "sink", "d", "t", "weight")
-                    .unique()
-                    .rename({"weight": "value"}))
-                p_arc_source_weight = Param(
-                    ("p", "source", "sink", "d", "t"), weight_frame_src)
-
-    # ─── Group-level slack (capacity_margin / inertia / non_sync) ────────
-    group_slack = _group_slack.load_data(
-        inp=inp, sd=sd, dt=dt,
-        nb=nb,
-        pss_eff=proc["pss_eff"],
-        pss_noEff=proc["pss_noEff"],
-        p_unitsize=proc["unitsize"],
-    )
-
-    # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
-    reserve_data = _reserve.load_data(inp=inp, sd=sd, dt=dt)
-    # ``group_node`` is shared between _group_slack and _reserve (both
-    # populate it from the canonical solve_data/group_node.csv).  Drop the
-    # reserve copy to avoid duplicate-kwargs at the FlexData(...) call when
-    # group_slack already provided it; reserve will read it back off d in
-    # add_constraints.  If group_slack didn't populate it, hand the
-    # reserve copy through.
-    if "group_node" in reserve_data and group_slack.get("group_node") is not None:
-        reserve_data = {k: v for k, v in reserve_data.items() if k != "group_node"}
-
-    # ─── Cumulative / group-invest / min-invest data ─────────────────────
-    # The module's ``load_data`` is a no-op stub; ``flextool/input.py`` is
-    # the canonical loader.  Call it for symmetry, then populate the new
-    # ``FlexData`` fields from the canonical helper below.
-    _cumulative_invest.load_data(inp=inp, sd=sd, dt=dt)
-    ci_data = _load_cumulative_invest(inp=inp, sd=sd, dt=dt)
-
-    # ─── Delayed processes / DR data ─────────────────────────────────────
-    delay_data = _delay.load_data(inp_dir=inp, sd_dir=sd)
-
-    # ─── DC power flow data ──────────────────────────────────────────────
-    dc_pf_data = _dc_power_flow.load_data(inp_dir=inp)
-
-    # ─── Commodity price ladder data ─────────────────────────────────────
-    ladder_data = _commodity_ladder.load_data(inp_dir=inp, sd_dir=sd)
-
-    # ─── Multi-branch stochastic data (A6) ───────────────────────────────
-    stoch_data = _load_stochastics(inp=inp, sd=sd, dt=dt)
-
-    flex_data = FlexData(
-        dt = dt,
-        p_step_duration = step_dur,
-        p_rp_cost_weight = rp_cw,
-        p_inflation_op = infl,
-        p_period_share = psh,
-
-        nodeBalance = nb,
-        nodeBalance_dt = nb_dt,
-        p_inflow = inflow,
-        p_penalty_up = pen_up,
-        p_penalty_down = pen_dn,
-
-        process_source_sink       = proc["pss"],
-        process_source_sink_eff   = proc["pss_eff"],
-        process_source_sink_noEff = proc["pss_noEff"],
-        pss_dt                    = proc["pss_dt"],
-        flow_to_n                 = proc["flow_to_n"],
-        flow_from_n               = proc["flow_from_n"],
-        flow_from_commodity_eff   = proc["flow_from_commodity_eff"],
-        flow_from_commodity_noEff = proc["flow_from_commodity_noEff"],
-        flow_to_commodity         = proc.get("flow_to_commodity"),
-        p_unitsize                = proc["unitsize"],
-        p_flow_upper              = proc["flow_upper"],
-        p_flow_upper_existing     = p_flow_upper_existing,
-        p_slope                   = proc["slope"],
-        p_commodity_price         = proc["commodity_price"],
-        pd_neg_cap                = pd_neg_cap,
-
-        flow_from_co2_priced = flow_co2_p,
-        flow_from_co2_priced_noEff = flow_co2_p_noEff,
-        p_co2_content = co2c,
-        p_co2_price = co2pr,
-
-        group_co2_max_period = g_co2_max,
-        flow_from_co2_capped = flow_co2_cap,
-        flow_from_co2_capped_noEff = flow_co2_cap_noEff,
-        p_co2_max_period = co2_max_p,
-        group_d_co2_capped = g_d_capped,
-
-        process_indirect = indir_set,
-        process_input_flows = indir_in,
-        process_output_flows = indir_out,
-        process_indirect_dt = indir_dt,
-        p_process_source_flow_coef = p_source_flow_coef,
-        p_process_sink_flow_coef = p_sink_flow_coef,
-
-        flow_constraint_idx = fc_idx,
-        p_flow_constraint_coef = fc_coef,
-        p_constraint_constant = c_const,
-        cdt_eq = cdt_eq,
-        cdt_le = cdt_le,
-        cdt_ge = cdt_ge,
-        p_node_constraint_invested_capacity_coefficient = n_inv_coef,
-        p_process_constraint_invested_capacity_coefficient = p_inv_coef,
-        p_node_constraint_state_coefficient = n_state_coef,
-        p_node_constraint_prebuilt_capacity_coefficient = n_prebuilt_coef,
-        p_process_constraint_prebuilt_capacity_coefficient = p_prebuilt_coef,
-
-        process_profile_upper = p_up,
-        process_profile_lower = p_lo,
-        process_profile_fixed = p_fx,
-        p_profile_value = prof_v,
-        p_process_existing_count = exist_cnt,
-        p_process_availability = avail,
-
-        **online,
-        **ramp,
-        **invest,
-        **storage,
-        **varcost,
-        **fixed_cost,
-        **capacity_for_scaling,
-        **group_slack,
-        **reserve_data,
-        **ci_data,
-        **delay_data,
-        **dc_pf_data,
-        **ladder_data,
-        **stoch_data,
-        p_arc_step_duration_sink = p_arc_step_duration_sink,
-        p_arc_step_duration_source = p_arc_step_duration_source,
-        arc_sink_block_dt = arc_sink_block_dt,
-        arc_source_block_dt = arc_source_block_dt,
-        p_arc_sink_weight = p_arc_sink_weight,
-        p_arc_source_weight = p_arc_source_weight,
-        solver_options = _load_solver_options(sd),
-    )
-
-    # Δ.3/Δ.4 — DB-direct construction.  Replaces the previous 3-pass
-    # override layering (CSV → first_wave_overrides → projection_overrides
-    # → derived_overrides_a..g).  Δ.3 collapsed the dict-overlay
-    # round-trip into linear ``apply_*`` mutations; Δ.4 deleted the nine
-    # deprecated wrapper aliases.  Each FlexData field that has a
-    # DB-direct helper is now built by exactly one helper that mutates
-    # ``flex_data`` directly — no dict-overlay round-trip, no "override"
-    # semantics.  See progress.md (Δ.3 / Δ.4 close stanzas).
-    #
-    # NOTE: the CSV path above still populates every field as the
-    # initial seed.  In Δ.5+, when every FlexData field has a DB-direct
-    # helper, the CSV path will retire and these apply_* calls become
-    # the primary loader.
-    # Δ.12a — build the per-solve in-memory state once, ahead of
-    # ``_apply_db_overrides`` so derived helpers can consume cached
-    # frames + typed fields rather than re-reading ``solve_data/*.csv``
-    # 119 times per solve.  Falls back to ``None`` when no workdir is
-    # known (handoff-only callers).
+    # Δ.12a — build the per-solve in-memory state (typed fields +
+    # process-level CSV cache) up front, then activate the cache so
+    # every ``_read_csv_file`` call inside the loader (``_load_time``,
+    # ``_load_node``, the helpers' ``load_data``, the apply_derived_*
+    # passes) deduplicates by absolute path.  Falls back to ``None``
+    # when no workdir is known (handoff-only callers).
     ctx = None
-    if workdir_for_db is not None:
+    ctx_workdir = workdir_for_db
+    if ctx_workdir is None:
+        ctx_workdir = (Path(source.work_folder)
+                          if hasattr(source, "work_folder")
+                          else None)
+    if ctx_workdir is None and hasattr(source, "input_dir"):
+        try:
+            ctx_workdir = Path(source.input_dir).parent
+        except Exception:  # pragma: no cover — defensive
+            ctx_workdir = None
+    if ctx_workdir is not None:
         from flextool.engine_polars._solve_context import SolveContext
         try:
-            ctx = SolveContext.from_workdir(workdir_for_db)
+            ctx = SolveContext.from_workdir(ctx_workdir)
         except Exception:  # pragma: no cover — defensive
             ctx = None
+    if ctx is not None:
+        ctx.activate()
 
-    if db_reader is not None:
-        # Activate the process-level CSV-read cache for the duration of
-        # the override pass — every ``_read_csv_file`` call inside
-        # ``_derived_params``/``_derived_existing``/``_derived_branch``/
-        # the helper modules deduplicates by absolute path so repeated
-        # reads of the same workdir CSV (``period_in_use_set.csv``,
-        # ``period__branch.csv``, ``edd_history.csv``, …) hit memory.
-        if ctx is not None:
-            with ctx:
-                _apply_db_overrides(flex_data, db_reader, source, ctx=ctx)
-        else:
+    try:
+        # Δ.2: build the per-solve BlockLayout once from flextool's
+        # solve_data/ block CSVs (still produced by flextool's
+        # ``write_block_data_for_solve``).  Downstream block-aware helpers
+        # consume the in-memory frames instead of re-reading the same CSVs
+        # at each call site.  When the orchestrator transitions to building
+        # ``BlockLayout`` natively (Δ.3+), this load_from_solve_data call
+        # becomes a no-op or is replaced by passing the live layout in.
+        block_layout = BlockLayout.load_from_solve_data(sd)
+
+        dt, step_dur, rp_cw, infl, psh = _load_time(sd)
+        nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt)
+
+        proc = _load_process_topology(inp, sd, dt, block_layout=block_layout)
+
+        # base_cap_pd = (p, d, base) for profile RHS — recompute here; small.
+        base_cap_pd = None
+        p_flow_upper_existing = None
+        pd_neg_cap = None
+        if proc["pss"] is not None:
+            cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
+                                       sd / "p_entity_previously_invested_capacity.csv",
+                                       sd / "p_entity_all_existing.csv")
+            unitsize_long = _read_unitsize((sd / "p_entity_unitsize.csv") if (sd / "p_entity_unitsize.csv").exists() else (inp / "p_entity_unitsize.csv"))
+            cap_us_pd = (cap_long.rename({"e":"p","value":"cap"})
+                .filter(pl.col("p").is_in(proc["pss"]["p"].unique()))
+                .join(unitsize_long.rename({"e":"p","value":"us"}), on="p", how="inner"))
+            base_cap_pd = (cap_us_pd
+                .with_columns(base=pl.col("cap")/pl.col("us"))
+                .select("p","d","base"))
+            # pd_neg_cap = (p, d) where both existing and unitsize are negative.
+            # In the .mod, maxToSink is ``v_flow * unitsize ≤ existing × ...``.
+            # When both are negative (e.g. anti_energy_plant: us=-50, existing=-50)
+            # dividing by unitsize FLIPS the inequality direction, yielding
+            # ``v_flow ≥ existing/unitsize`` (a forced *minimum* output).
+            # We therefore route these (p, d) rows out of the standard ``≤``
+            # maxToSink and into a sign-flipped ``≥`` companion constraint.
+            neg_pd = cap_us_pd.filter(
+                (pl.col("cap") < 0.0) & (pl.col("us") < 0.0)
+            ).select("p", "d")
+            if neg_pd.height > 0:
+                pd_neg_cap = neg_pd
+            # p_flow_upper_existing = (existing/unitsize) per (p, source, sink, d).
+            # This is the *true* structural existing-capacity upper bound on
+            # v_flow.  It corresponds to the .mod's RHS without invest/divest
+            # (assuming cap_coef=1).  flextool's preprocessed p_flow_max may
+            # bake in max_invest_cum (for invest-method = invest_no_limit) and
+            # is therefore looser; using p_flow_upper_existing + the explicit
+            # invest tightening on the LHS gives the tight constraint.
+            p_flow_upper_existing = Param(("p", "source", "sink", "d"),
+                base_cap_pd.rename({"base": "value"})
+                           .join(proc["pss"], on="p", how="inner")
+                           .select("p", "source", "sink", "d", "value"))
+
+        flow_co2_p, flow_co2_p_noEff, co2c, co2pr = _load_co2_price(
+            inp, sd, proc["pss_eff"], proc.get("pss_noEff"))
+        g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped = _load_co2_cap(
+            inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"))
+        if co2_max_p is not None and co2c is None:
+            p_comm = _read_csv_file(inp / "p_commodity.csv")
+            co2c = Param(("c",),
+                p_comm.filter(pl.col("commodityParam")=="co2_content")
+                      .rename({"commodity":"c","p_commodity":"value"})
+                      .select("c","value"))
+
+        (indir_set, indir_in, indir_out, indir_dt,
+         p_source_flow_coef, p_sink_flow_coef) = _load_indirect(sd, proc["pss"], dt, inp)
+        (fc_idx, fc_coef, c_const, cdt_eq, cdt_le, cdt_ge,
+         n_inv_coef, p_inv_coef,
+         n_state_coef, n_prebuilt_coef, p_prebuilt_coef,
+         _) = _load_user_constraints(inp, proc["pss"], dt)
+
+        p_up, p_lo, p_fx, prof_v, exist_cnt, avail = _load_profiles(
+            inp, sd, proc["pss"], proc["unitsize"], base_cap_pd)
+        # existing_count is also needed by the online/UC feature even when
+        # no profile features are active; fall back to base_cap_pd directly.
+        if exist_cnt is None and base_cap_pd is not None:
+            exist_cnt = Param(("p", "d"), base_cap_pd.rename({"base": "value"}))
+        # availability: default to 1.0 from preprocessing — also used by UC
+        # capacity bounds; if loader didn't populate (no profile data), try
+        # to read pdtProcess_availability.csv standalone.
+        if avail is None and proc["pss"] is not None:
+            avail_long = _slice_param(sd / "pdtProcess.csv", "process", "availability",
+                                       rename_entity_to="p")
+            if avail_long is not None:
+                avail = Param(("p","d","t"), avail_long)
+
+        # dtttdt is needed by both storage and online features — always load
+        # it when present (preprocessing always emits it for non-trivial
+        # solves).  p_process_existing_count (= existing/unitsize per (p, d))
+        # is needed by online + profile features — always load when processes
+        # exist.
+        dtttdt = _read_step_previous(sd / "step_previous.csv")
+
+        online = _load_online(inp, sd, dt, proc["pss"])
+        ramp = _load_ramp(inp, sd, proc["pss"])
+        invest = _load_invest(sd, dt, inp, proc["pss"])
+        varcost = _load_varcost(sd, proc["pss"])
+        fixed_cost = _load_fixed_cost(sd)
+        capacity_for_scaling = _load_node_capacity_for_scaling(sd, nb)
+
+        # ─── Storage (nodeState + binding methods + dtttdt + node-balance source-side flows)
+        storage = _load_storage(inp, sd, dt, nb,
+                                 proc["pss_eff"], proc["pss_noEff"],
+                                 base_cap_pd, proc["unitsize"],
+                                 block_layout=block_layout)
+        # _load_storage emits its own dtttdt; if storage is inactive it'll be
+        # None there but we want the top-level read.
+        if storage["dtttdt"] is None:
+            storage["dtttdt"] = dtttdt
+
+        # ─── Per-arc block step durations (reserved for future use) ──────────
+        p_arc_step_duration_sink = None
+        p_arc_step_duration_source = None
+
+        # ─── Per-arc-side daily-block aggregation index ──────────────────────
+        # For each (n, d, b_first) in nodeStateBlock × period_block, build the
+        # set of (p, source, sink, t, weight) that contribute to that daily
+        # nodeBalance via the .mod's overlap × block_step_duration aggregation.
+        # The arc's relevant side block (process_side_block.csv) determines
+        # the timesteps & weights:
+        #   * b_f=daily_group → t=b_first only, weight=block_step_duration
+        #     (=24 for daily_group's coarse step).
+        #   * b_f=hourly_group/default → all fine t in period_block_time[d,
+        #     b_first], weight=1.
+        # This matches the .mod's nodeBalance_eq treatment of mixed-block arcs
+        # (e.g., electrolyser_A's sink-side daily, source-side hourly) where
+        # the daily-side balance only references v_flow at coarse steps × 24,
+        # while the hourly-side balance integrates all 24 hourly v_flow values.
+        # See flextool.mod:2208-2246.
+        arc_sink_block_dt = None
+        arc_source_block_dt = None
+        p_arc_sink_weight = None
+        p_arc_source_weight = None
+        # Δ.2: consume block frames from the in-memory ``BlockLayout``.
+        if (proc["pss"] is not None and proc["pss"].height > 0
+                and storage.get("nodeStateBlock") is not None
+                and storage["nodeStateBlock"].height > 0
+                and storage.get("period_block_time") is not None
+                and storage["period_block_time"].height > 0
+                and block_layout.process_side_block_frame.height > 0
+                and block_layout.block_step_duration_frame.height > 0):
+            psb = block_layout.process_side_block_frame.rename(
+                {"process": "p", "block": "b_f"})
+            bsd_arc = block_layout.block_step_duration_frame.rename(
+                {"block": "b_f", "period": "d", "step": "t",
+                 "step_duration": "weight"})
+            nsb_set = storage["nodeStateBlock"]["n"].unique()
+            pss_local = proc["pss"]
+            pbt = storage["period_block_time"]   # (d, b_first, t)
+
+            # Sink-side: arcs where sink ∈ nodeStateBlock.
+            # process_side_block (p, side='sink', b_f) → arc-side block
+            psb_sink = psb.filter(pl.col("side") == "sink").select("p", "b_f")
+            sink_arcs = (pss_local
+                .filter(pl.col("sink").is_in(nsb_set))
+                .join(psb_sink, on="p", how="inner"))
+            if sink_arcs.height > 0:
+                # For each arc-side, restrict (d, t) to those where
+                # block_step_duration[b_f, d, t] is defined (i.e., t is a
+                # coarse step of b_f).  Then join to period_block_time to
+                # group by (d, b_first).
+                arc_sink_block_dt = (sink_arcs
+                    .join(bsd_arc, on="b_f", how="inner")  # adds (d, t, weight)
+                    .join(pbt.rename({}), on=["d", "t"], how="inner")
+                    .select("p", "source", "sink", "d", "b_first", "t", "weight")
+                    .unique())
+                if arc_sink_block_dt.height == 0:
+                    arc_sink_block_dt = None
+                else:
+                    # Keyed (p, source, sink, d, t) so it joins naturally with
+                    # v_flow on (p, source, sink, d, t).  The sink→n rename
+                    # happens in nbb_eq's index frame instead.
+                    weight_frame = (arc_sink_block_dt
+                        .select("p", "source", "sink", "d", "t", "weight")
+                        .unique()
+                        .rename({"weight": "value"}))
+                    p_arc_sink_weight = Param(
+                        ("p", "source", "sink", "d", "t"), weight_frame)
+            # Source-side: arcs where source ∈ nodeStateBlock.
+            psb_src = psb.filter(pl.col("side") == "source").select("p", "b_f")
+            src_arcs = (pss_local
+                .filter(pl.col("source").is_in(nsb_set))
+                .join(psb_src, on="p", how="inner"))
+            if src_arcs.height > 0:
+                arc_source_block_dt = (src_arcs
+                    .join(bsd_arc, on="b_f", how="inner")
+                    .join(pbt.rename({}), on=["d", "t"], how="inner")
+                    .select("p", "source", "sink", "d", "b_first", "t", "weight")
+                    .unique())
+                if arc_source_block_dt.height == 0:
+                    arc_source_block_dt = None
+                else:
+                    # Keep ``source`` column unchanged so this Param joins with
+                    # v_flow on (p, source, sink, d, t).  The arc-source-side
+                    # rename happens in nbb_eq's index frame instead.
+                    weight_frame_src = (arc_source_block_dt
+                        .select("p", "source", "sink", "d", "t", "weight")
+                        .unique()
+                        .rename({"weight": "value"}))
+                    p_arc_source_weight = Param(
+                        ("p", "source", "sink", "d", "t"), weight_frame_src)
+
+        # ─── Group-level slack (capacity_margin / inertia / non_sync) ────────
+        group_slack = _group_slack.load_data(
+            inp=inp, sd=sd, dt=dt,
+            nb=nb,
+            pss_eff=proc["pss_eff"],
+            pss_noEff=proc["pss_noEff"],
+            p_unitsize=proc["unitsize"],
+        )
+
+        # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
+        reserve_data = _reserve.load_data(inp=inp, sd=sd, dt=dt)
+        # ``group_node`` is shared between _group_slack and _reserve (both
+        # populate it from the canonical solve_data/group_node.csv).  Drop the
+        # reserve copy to avoid duplicate-kwargs at the FlexData(...) call when
+        # group_slack already provided it; reserve will read it back off d in
+        # add_constraints.  If group_slack didn't populate it, hand the
+        # reserve copy through.
+        if "group_node" in reserve_data and group_slack.get("group_node") is not None:
+            reserve_data = {k: v for k, v in reserve_data.items() if k != "group_node"}
+
+        # ─── Cumulative / group-invest / min-invest data ─────────────────────
+        # The module's ``load_data`` is a no-op stub; ``flextool/input.py`` is
+        # the canonical loader.  Call it for symmetry, then populate the new
+        # ``FlexData`` fields from the canonical helper below.
+        _cumulative_invest.load_data(inp=inp, sd=sd, dt=dt)
+        ci_data = _load_cumulative_invest(inp=inp, sd=sd, dt=dt)
+
+        # ─── Delayed processes / DR data ─────────────────────────────────────
+        delay_data = _delay.load_data(inp_dir=inp, sd_dir=sd)
+
+        # ─── DC power flow data ──────────────────────────────────────────────
+        dc_pf_data = _dc_power_flow.load_data(inp_dir=inp)
+
+        # ─── Commodity price ladder data ─────────────────────────────────────
+        ladder_data = _commodity_ladder.load_data(inp_dir=inp, sd_dir=sd)
+
+        # ─── Multi-branch stochastic data (A6) ───────────────────────────────
+        stoch_data = _load_stochastics(inp=inp, sd=sd, dt=dt)
+
+        flex_data = FlexData(
+            dt = dt,
+            p_step_duration = step_dur,
+            p_rp_cost_weight = rp_cw,
+            p_inflation_op = infl,
+            p_period_share = psh,
+
+            nodeBalance = nb,
+            nodeBalance_dt = nb_dt,
+            p_inflow = inflow,
+            p_penalty_up = pen_up,
+            p_penalty_down = pen_dn,
+
+            process_source_sink       = proc["pss"],
+            process_source_sink_eff   = proc["pss_eff"],
+            process_source_sink_noEff = proc["pss_noEff"],
+            pss_dt                    = proc["pss_dt"],
+            flow_to_n                 = proc["flow_to_n"],
+            flow_from_n               = proc["flow_from_n"],
+            flow_from_commodity_eff   = proc["flow_from_commodity_eff"],
+            flow_from_commodity_noEff = proc["flow_from_commodity_noEff"],
+            flow_to_commodity         = proc.get("flow_to_commodity"),
+            p_unitsize                = proc["unitsize"],
+            p_flow_upper              = proc["flow_upper"],
+            p_flow_upper_existing     = p_flow_upper_existing,
+            p_slope                   = proc["slope"],
+            p_commodity_price         = proc["commodity_price"],
+            pd_neg_cap                = pd_neg_cap,
+
+            flow_from_co2_priced = flow_co2_p,
+            flow_from_co2_priced_noEff = flow_co2_p_noEff,
+            p_co2_content = co2c,
+            p_co2_price = co2pr,
+
+            group_co2_max_period = g_co2_max,
+            flow_from_co2_capped = flow_co2_cap,
+            flow_from_co2_capped_noEff = flow_co2_cap_noEff,
+            p_co2_max_period = co2_max_p,
+            group_d_co2_capped = g_d_capped,
+
+            process_indirect = indir_set,
+            process_input_flows = indir_in,
+            process_output_flows = indir_out,
+            process_indirect_dt = indir_dt,
+            p_process_source_flow_coef = p_source_flow_coef,
+            p_process_sink_flow_coef = p_sink_flow_coef,
+
+            flow_constraint_idx = fc_idx,
+            p_flow_constraint_coef = fc_coef,
+            p_constraint_constant = c_const,
+            cdt_eq = cdt_eq,
+            cdt_le = cdt_le,
+            cdt_ge = cdt_ge,
+            p_node_constraint_invested_capacity_coefficient = n_inv_coef,
+            p_process_constraint_invested_capacity_coefficient = p_inv_coef,
+            p_node_constraint_state_coefficient = n_state_coef,
+            p_node_constraint_prebuilt_capacity_coefficient = n_prebuilt_coef,
+            p_process_constraint_prebuilt_capacity_coefficient = p_prebuilt_coef,
+
+            process_profile_upper = p_up,
+            process_profile_lower = p_lo,
+            process_profile_fixed = p_fx,
+            p_profile_value = prof_v,
+            p_process_existing_count = exist_cnt,
+            p_process_availability = avail,
+
+            **online,
+            **ramp,
+            **invest,
+            **storage,
+            **varcost,
+            **fixed_cost,
+            **capacity_for_scaling,
+            **group_slack,
+            **reserve_data,
+            **ci_data,
+            **delay_data,
+            **dc_pf_data,
+            **ladder_data,
+            **stoch_data,
+            p_arc_step_duration_sink = p_arc_step_duration_sink,
+            p_arc_step_duration_source = p_arc_step_duration_source,
+            arc_sink_block_dt = arc_sink_block_dt,
+            arc_source_block_dt = arc_source_block_dt,
+            p_arc_sink_weight = p_arc_sink_weight,
+            p_arc_source_weight = p_arc_source_weight,
+            solver_options = _load_solver_options(sd),
+        )
+
+        # Δ.3/Δ.4 — DB-direct construction.  Replaces the previous 3-pass
+        # override layering (CSV → first_wave_overrides → projection_overrides
+        # → derived_overrides_a..g).  Δ.3 collapsed the dict-overlay
+        # round-trip into linear ``apply_*`` mutations; Δ.4 deleted the nine
+        # deprecated wrapper aliases.  Each FlexData field that has a
+        # DB-direct helper is now built by exactly one helper that mutates
+        # ``flex_data`` directly — no dict-overlay round-trip, no "override"
+        # semantics.  See progress.md (Δ.3 / Δ.4 close stanzas).
+        #
+        # NOTE: the CSV path above still populates every field as the
+        # initial seed.  In Δ.5+, when every FlexData field has a DB-direct
+        # helper, the CSV path will retire and these apply_* calls become
+        # the primary loader.
+        # Δ.12a — ctx (with the process-level CSV-read cache activated)
+        # was constructed at the top of ``load_flextool`` so the caching
+        # benefit reaches every ``_read_csv_file`` call inside the loader
+        # (``_load_*`` family + helpers' ``load_data`` + apply_derived_*).
+        # ``deactivate`` happens in the outer ``finally`` block.
+        if db_reader is not None:
             _apply_db_overrides(flex_data, db_reader, source, ctx=ctx)
 
-    # Δ.11 — overlay in-memory handoff carriers onto the FlexData
-    # built so far.  Replaces the previous post-load ``apply_handoff``
-    # call: the handoff is now an input to the build, not a separate
-    # overlay step.  ``solve_data_dir`` (if known) is consulted only for
-    # ``edd_history.csv`` — used by the
-    # ``p_entity_previously_invested_capacity`` derivation.  Cluster B
-    # chained-handoff state (``p_entity_all_existing``) is rebuilt from
-    # the now-populated carriers via :func:`apply_existing_chain` (called
-    # below — db_reader is required for that path).
-    if handoff is not None:
-        sd_dir = workdir_for_db / "solve_data" if workdir_for_db is not None else None
-        flex_data = _overlay_handoff(flex_data, handoff, sd_dir, ctx=ctx)
-        # Re-apply the cluster B chained-existing helper so
-        # ``p_entity_all_existing`` reflects the in-memory handoff
-        # carriers (rather than the workdir's pre-handoff CSV value).
-        if db_reader is not None and workdir_for_db is not None:
-            from flextool.engine_polars import _derived_existing as _ex
-            _ex.apply_existing_chain(flex_data, db_reader, workdir_for_db,
-                                          handoff=handoff, ctx=ctx)
+        # Δ.11 — overlay in-memory handoff carriers onto the FlexData
+        # built so far.  Replaces the previous post-load ``apply_handoff``
+        # call: the handoff is now an input to the build, not a separate
+        # overlay step.  ``solve_data_dir`` (if known) is consulted only for
+        # ``edd_history.csv`` — used by the
+        # ``p_entity_previously_invested_capacity`` derivation.  Cluster B
+        # chained-handoff state (``p_entity_all_existing``) is rebuilt from
+        # the now-populated carriers via :func:`apply_existing_chain` (called
+        # below — db_reader is required for that path).
+        if handoff is not None:
+            sd_dir = workdir_for_db / "solve_data" if workdir_for_db is not None else None
+            flex_data = _overlay_handoff(flex_data, handoff, sd_dir, ctx=ctx)
+            # Re-apply the cluster B chained-existing helper so
+            # ``p_entity_all_existing`` reflects the in-memory handoff
+            # carriers (rather than the workdir's pre-handoff CSV value).
+            if db_reader is not None and workdir_for_db is not None:
+                from flextool.engine_polars import _derived_existing as _ex
+                _ex.apply_existing_chain(flex_data, db_reader, workdir_for_db,
+                                              handoff=handoff, ctx=ctx)
 
-    return _assign_param_names(flex_data)
+        return _assign_param_names(flex_data)
+    finally:
+        if ctx is not None:
+            ctx.deactivate()
 
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
