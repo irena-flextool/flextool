@@ -305,7 +305,28 @@ def _drive_cascade(
             self._all_steps: dict[str, OrchestrationStep] = results
 
         def run(self, complete_solve_name: str) -> int:
-            data = load_flextool(self.state.paths.work_folder)
+            # Δ.12 — wire ``handoff=`` through ``load_flextool`` so the
+            # in-memory carriers from the prior solve flow into this
+            # solve's FlexData directly.  Replaces the previous
+            # implicit dependency on flextool's per-solve preprocessing
+            # rewriting ``solve_data/p_entity_*.csv`` between solves.
+            # After Δ.12 the cascade reads these five carrier-derived
+            # fields from the in-memory ``SolveHandoff`` rather than the
+            # workdir CSVs:
+            #
+            #   * ``p_entity_invested``
+            #   * ``p_entity_divested``
+            #   * ``p_entity_previously_invested_capacity``
+            #   * ``p_roll_continue_state``
+            #   * ``p_fix_storage_quantity``
+            prior_for_load = (
+                self.state.handoffs.get(self.state.last_captured_solve)
+                if self.state.last_captured_solve is not None else None
+            )
+            data = load_flextool(
+                self.state.paths.work_folder,
+                handoff=prior_for_load,
+            )
             pb = Problem()
             build_flextool(pb, data)
             sol = pb.solve()
@@ -315,10 +336,7 @@ def _drive_cascade(
                 )
                 return 1
 
-            prior = (
-                self.state.handoffs.get(self.state.last_captured_solve)
-                if self.state.last_captured_solve is not None else None
-            )
+            prior = prior_for_load
             # Δ.1 — emit TIER A output_raw artefacts BEFORE the in-memory
             # handoff is built.  ``write_all_handoffs`` (called by the
             # adapter) refreshes ``solve_data/period_capacity.csv`` and
