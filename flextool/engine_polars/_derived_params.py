@@ -1011,12 +1011,15 @@ def apply_derived_a(
     """Apply Γ.3.A foundational Derived Params, mutating ``flex_data``
     in place.
 
-    Each FlexData field is built by exactly one helper.  When the helper
-    returns ``None`` (no upstream data), the field is left untouched.
-
-    Δ.3 collapsed the previous ``derived_overrides_a`` dict-return
-    pattern; Δ.4 deleted the deprecated wrapper alias.  Each helper
-    writes its field directly — no dict-overlay round-trip.
+    Δ.12b — assignment is unconditional for the helpers that are
+    authoritative producers (``p_inflation_op``, ``p_rp_cost_weight``,
+    ``pd_branch_weight``, ``pdt_branch_weight``, ``p_penalty_up``,
+    ``p_penalty_down``).  ``p_inflow`` and ``p_process_existing_count``
+    retain a conditional assignment because the helpers have known
+    incomplete coverage (``inflow_method=scale_to_*`` is deferred to
+    Batch B; ``p_process_existing_count`` skips when no processes have
+    explicit existing capacity in the source) — see TODO at each call
+    site for the helper-extension scope.
 
     Dependency order:
         dt / p_step_duration → p_period_share, p_inflation_op,
@@ -1030,12 +1033,8 @@ def apply_derived_a(
         return
 
     # 1. dt + p_step_duration -------------------------------------------
-    dt_step = None
-    try:
-        dt_step = dt_and_step_duration_from_source(source, active_solve,
-                                                       workdir, ctx=ctx)
-    except Exception:
-        dt_step = None
+    dt_step = dt_and_step_duration_from_source(source, active_solve,
+                                                   workdir, ctx=ctx)
     if dt_step is None:
         # Without dt we can't derive the dependent Params either; bail.
         return
@@ -1053,63 +1052,50 @@ def apply_derived_a(
     if usable_dt is None:
         return
 
-    # 2. p_period_share -------------------------------------------------
+    # 2. p_period_share — None when sd_for_share is None (no step duration).
     if sd_for_share is not None:
-        try:
-            psh = p_period_share_from_source(source, usable_dt, sd_for_share)
-        except Exception:
-            psh = None
-        if psh is not None:
-            flex_data.p_period_share = psh
+        flex_data.p_period_share = p_period_share_from_source(
+            source, usable_dt, sd_for_share)
 
-    # 3. p_inflation_op -------------------------------------------------
-    try:
-        infl = p_inflation_op_from_source(source, usable_dt, active_solve)
-    except Exception:
-        infl = None
-    if infl is not None:
-        flex_data.p_inflation_op = infl
+    # 3. p_inflation_op — Δ.12b: unconditional.  None == no inflation
+    #    declared; the multi-year cascade in apply_derived_c overlays
+    #    this with the full per-period inflation later.
+    flex_data.p_inflation_op = p_inflation_op_from_source(
+        source, usable_dt, active_solve)
 
-    # 4. p_rp_cost_weight -----------------------------------------------
-    try:
-        rp = p_rp_cost_weight_from_source(source, usable_dt, active_solve)
-    except Exception:
-        rp = None
-    if rp is not None:
-        flex_data.p_rp_cost_weight = rp
+    # 4. p_rp_cost_weight — Δ.12b: unconditional.  None == no
+    #    timeset.timeset_weights declared (default 1.0 broadcast handled
+    #    inside the helper).
+    flex_data.p_rp_cost_weight = p_rp_cost_weight_from_source(
+        source, usable_dt, active_solve)
 
-    # 5. pd_branch_weight + pdt_branch_weight ---------------------------
-    # Γ.3.A's simple-1.0 helpers are always emitted; Γ.3.G's full multi-
-    # branch cascade overlays them later.
-    try:
-        pd_bw = pd_branch_weight_from_source(source, usable_dt)
-    except Exception:
-        pd_bw = None
-    if pd_bw is not None:
-        flex_data.pd_branch_weight = pd_bw
-
-    try:
-        pdt_bw = pdt_branch_weight_from_source(source, usable_dt, pd_bw)
-    except Exception:
-        pdt_bw = None
-    if pdt_bw is not None:
-        flex_data.pdt_branch_weight = pdt_bw
+    # 5. pd_branch_weight + pdt_branch_weight — Δ.12b: unconditional.
+    # Γ.3.A's simple-1.0 helpers; Γ.3.G's full multi-branch cascade
+    # overlays them later via apply_branch_cluster.
+    pd_bw = pd_branch_weight_from_source(source, usable_dt)
+    flex_data.pd_branch_weight = pd_bw
+    flex_data.pdt_branch_weight = pdt_branch_weight_from_source(
+        source, usable_dt, pd_bw)
 
     # 6. p_inflow -------------------------------------------------------
+    # TODO(Δ.12b helper-fix): the helper returns None for
+    # ``inflow_method ∈ {scale_to_annual_flow, scale_to_peak_inflow,
+    # scale_to_annual_and_peak}`` and stochastic 3d_map shapes.  Until
+    # those branches are ported, we keep the conditional assignment so
+    # the seed-loaded CSV value (already scaled by flextool's
+    # preprocessing) survives.
     if sd_for_share is not None:
-        try:
-            inflow = p_inflow_from_source(source, usable_dt, sd_for_share)
-        except Exception:
-            inflow = None
+        inflow = p_inflow_from_source(source, usable_dt, sd_for_share)
         if inflow is not None:
             flex_data.p_inflow = inflow
 
     # 7. p_process_existing_count ---------------------------------------
-    try:
-        ec = p_process_existing_count_from_source(
-            source, usable_dt, active_solve, workdir)
-    except Exception:
-        ec = None
+    # TODO(Δ.12b helper-fix): the helper returns None when no process
+    # has explicit existing capacity per period.  Until the
+    # zero-existing path is documented as "no override", keep the
+    # conditional assignment.
+    ec = p_process_existing_count_from_source(
+        source, usable_dt, active_solve, workdir)
     if ec is not None:
         flex_data.p_process_existing_count = ec
 
@@ -1118,35 +1104,25 @@ def apply_derived_a(
     # — the new module ports flextool's full 5-branch cascade lazily and
     # drops the Δ.5/Δ.6 canonical-keys gate.  We delegate here so the
     # apply_derived_a entry stays the single integration point.
+    # Δ.12b: defensive try/except removed — apply_profile_cascade is
+    # parity-bound (cluster C tests gate it).
     from ._derived_profile import apply_profile_cascade
-    try:
-        apply_profile_cascade(flex_data, source, workdir)
-    except Exception:
-        # Conservative: any failure here leaves the CSV-loaded value in
-        # place.  Cluster C parity tests are the load-bearing oracle.
-        pass
+    apply_profile_cascade(flex_data, source, workdir)
 
     # 9. p_penalty_up / p_penalty_down (Δ.10 cluster F) ----------------
     # Sentinel-default scalar broadcast over (n, d, t) restricted to
     # nodeBalance nodes.  Mirrors ``input.py:_load_node`` lines 695-700
     # (the slice from ``pdtNode.csv``).
+    # Δ.12b: unconditional — penalty helpers always produce a Param
+    # when nodeBalance is non-empty (sentinel default applied inside).
     from ._derived_arithmetic import (
         p_penalty_up_from_source,
         p_penalty_down_from_source,
     )
     nb_df = getattr(flex_data, "nodeBalance", None)
-    try:
-        pu = p_penalty_up_from_source(source, nb_df, usable_dt)
-    except Exception:
-        pu = None
-    if pu is not None:
-        flex_data.p_penalty_up = pu
-    try:
-        pd_ = p_penalty_down_from_source(source, nb_df, usable_dt)
-    except Exception:
-        pd_ = None
-    if pd_ is not None:
-        flex_data.p_penalty_down = pd_
+    flex_data.p_penalty_up = p_penalty_up_from_source(source, nb_df, usable_dt)
+    flex_data.p_penalty_down = p_penalty_down_from_source(
+        source, nb_df, usable_dt)
 
 
 # ---------------------------------------------------------------------------
@@ -2259,14 +2235,10 @@ def apply_derived_b(
     # Active solve (used for existing-period broadcast in some helpers).
     active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
 
-    # Build the classifier once.
-    try:
-        classified = _classify_process_method(source)
-    except Exception:
-        classified = pl.DataFrame(schema={
-            "p": pl.Utf8, "ct": pl.Utf8, "startup": pl.Utf8,
-            "fork": pl.Utf8, "method": pl.Utf8, "klass": pl.Utf8,
-        })
+    # Build the classifier once.  Δ.12b: hard errors here would
+    # indicate a malformed source — let them propagate instead of
+    # silently producing an empty schema.
+    classified = _classify_process_method(source)
 
     # Topology — already-computed CSV-side process_source_sink (a plain
     # DataFrame on FlexData; see input.py:252).
@@ -2274,40 +2246,33 @@ def apply_derived_b(
     dt_csv = getattr(flex_data, "dt", None)
 
     # process_indirect / process_input_flows / process_output_flows /
-    # process_indirect_dt.  Empty DB-side frames don't overlay (CSV path
-    # leaves these fields as None for fixtures with no indirect units —
-    # mirroring that semantic keeps the consumer-side feature gate
-    # `len(field) == 0` semantically equivalent).
+    # process_indirect_dt.  Δ.12b: helpers produce or raise.  ``None``
+    # / empty frame == "no indirect units" — same semantic the seed
+    # produces.  We keep the ``height > 0`` filter on the assignment
+    # so the SET-frame contract (None or non-empty) is preserved.
     if classified.height > 0:
-        try:
-            pi_db = process_indirect_set(source, classified)
-        except Exception:
-            pi_db = None
+        pi_db = process_indirect_set(source, classified)
         if pi_db is not None and pi_db.height > 0:
             flex_data.process_indirect = pi_db
+        else:
+            flex_data.process_indirect = None
 
         if pss_frame is not None and pss_frame.height > 0:
-            try:
-                pif_db = process_input_flows(source, pss_frame, classified)
-            except Exception:
-                pif_db = None
-            if pif_db is not None and pif_db.height > 0:
-                flex_data.process_input_flows = pif_db
+            pif_db = process_input_flows(source, pss_frame, classified)
+            flex_data.process_input_flows = (
+                pif_db if pif_db is not None and pif_db.height > 0
+                else None)
 
-            try:
-                pof_db = process_output_flows(source, pss_frame, classified)
-            except Exception:
-                pof_db = None
-            if pof_db is not None and pof_db.height > 0:
-                flex_data.process_output_flows = pof_db
+            pof_db = process_output_flows(source, pss_frame, classified)
+            flex_data.process_output_flows = (
+                pof_db if pof_db is not None and pof_db.height > 0
+                else None)
 
         if dt_csv is not None and dt_csv.height > 0:
-            try:
-                pid_db = process_indirect_dt(source, dt_csv, classified)
-            except Exception:
-                pid_db = None
-            if pid_db is not None and pid_db.height > 0:
-                flex_data.process_indirect_dt = pid_db
+            pid_db = process_indirect_dt(source, dt_csv, classified)
+            flex_data.process_indirect_dt = (
+                pid_db if pid_db is not None and pid_db.height > 0
+                else None)
 
     # flow_to_n / flow_from_n — Δ.9 closes the Δ.3 gap: the lazy
     # cluster E port now applies the block-aware filter on the source-
@@ -2315,6 +2280,8 @@ def apply_derived_b(
     # 728-782.  Single-block fixtures are no-ops; multi-block fixtures
     # (work_lh2_three_region) drop arc rows incompatible with the
     # destination node's block.
+    # Δ.12b: bundle load failure is non-fatal (workdir without block
+    # CSVs => no block filtering).  Helper exceptions propagate.
     if pss_frame is not None and pss_frame.height > 0:
         from flextool.engine_polars._derived_block import (
             flow_to_n_block_filtered,
@@ -2325,112 +2292,75 @@ def apply_derived_b(
             bundle = load_block_bundle(workdir)
         except Exception:
             bundle = None
-        try:
-            ftn_db = flow_to_n_block_filtered(pss_frame, bundle)
-            ffn_db = flow_from_n_block_filtered(pss_frame, bundle)
-        except Exception:
-            ftn_db = None
-            ffn_db = None
+        ftn_db = flow_to_n_block_filtered(pss_frame, bundle)
+        ffn_db = flow_from_n_block_filtered(pss_frame, bundle)
         if ftn_db is not None and ftn_db.height > 0:
             flex_data.flow_to_n = ftn_db
         if ffn_db is not None and ffn_db.height > 0:
             flex_data.flow_from_n = ffn_db
 
     # ─── §3.3.3 p_flow_upper_existing ──────────────────────────────────
+    # Δ.12b: unconditional when pss is non-empty.  Helper returns None
+    # for fixtures without entity-existing-capacity.
     if pss_frame is not None and pss_frame.height > 0:
-        try:
-            pfue_db = p_flow_upper_existing_from_source(
-                source, pss_frame, active_solve, workdir)
-        except Exception:
-            pfue_db = None
-        if pfue_db is not None:
-            flex_data.p_flow_upper_existing = pfue_db
+        flex_data.p_flow_upper_existing = p_flow_upper_existing_from_source(
+            source, pss_frame, active_solve, workdir)
 
     # ─── §3.5.1 p_flow_constraint_coef ─────────────────────────────────
+    # Δ.12b: unconditional when pss is non-empty.
     if pss_frame is not None and pss_frame.height > 0:
-        try:
-            fcc_db = p_flow_constraint_coef_from_source(source, pss_frame)
-        except Exception:
-            fcc_db = None
-        if fcc_db is not None:
-            flex_data.p_flow_constraint_coef = fcc_db
+        flex_data.p_flow_constraint_coef = p_flow_constraint_coef_from_source(
+            source, pss_frame)
 
     # ─── §3.10.1 p_pssdt_varCost ───────────────────────────────────────
+    # Δ.12b: unconditional when (pss, dt) are non-empty.
     if (pss_frame is not None and pss_frame.height > 0
             and dt_csv is not None and dt_csv.height > 0):
-        try:
-            pvc_db = p_pssdt_varCost_from_source(source, pss_frame, dt_csv)
-        except Exception:
-            pvc_db = None
-        if pvc_db is not None:
-            flex_data.p_pssdt_varCost = pvc_db
+        flex_data.p_pssdt_varCost = p_pssdt_varCost_from_source(
+            source, pss_frame, dt_csv)
 
     # ─── §3.3.4 p_slope ────────────────────────────────────────────────
+    # Δ.12b: unconditional when (dt, classified) are non-empty.
     if dt_csv is not None and dt_csv.height > 0 and classified.height > 0:
-        try:
-            slope_db = p_slope_from_source(source, dt_csv, classified)
-        except Exception:
-            slope_db = None
-        if slope_db is not None:
-            flex_data.p_slope = slope_db
+        flex_data.p_slope = p_slope_from_source(source, dt_csv, classified)
 
     # ─── §F.1 p_unitsize  (Δ.10 cluster F) ─────────────────────────────
     # Per-process unitsize cascade restricted to processes appearing in
     # ``pss``.  Mirrors ``input.py:800-825``'s
     # ``unitsize_long.filter(p ∈ pss["p"].unique())``.
+    # Δ.12b: unconditional when pss is non-empty.
     if pss_frame is not None and pss_frame.height > 0:
         from ._derived_arithmetic import p_unitsize_from_source
-        try:
-            p_us = p_unitsize_from_source(source, pss_frame)
-        except Exception:
-            p_us = None
-        if p_us is not None:
-            flex_data.p_unitsize = p_us
+        flex_data.p_unitsize = p_unitsize_from_source(source, pss_frame)
 
     # ─── §F.4 p_process_source_flow_coef / p_process_sink_flow_coef ────
     # (Δ.10 cluster F).  Mirrors ``input.py:_load_indirect`` lines
     # 950-1002.  Anti-joins zero-coef rows out of the indirect-process
     # input/output flow sets and emits a Param keyed on (p, source) /
     # (p, sink) when any non-default, non-zero coef remains.
+    # Δ.12b: helper exceptions propagate; the anti-join inner gate
+    # (only when zero-rows exist) is preserved as a structural filter.
     from ._derived_arithmetic import (
         p_process_source_flow_coef_from_source,
         p_process_sink_flow_coef_from_source,
     )
     pif = getattr(flex_data, "process_input_flows", None)
     pof = getattr(flex_data, "process_output_flows", None)
-    try:
-        z_src, p_src_coef = p_process_source_flow_coef_from_source(
-            source, pif)
-    except Exception:
-        z_src, p_src_coef = None, None
+    z_src, p_src_coef = p_process_source_flow_coef_from_source(source, pif)
     if z_src is not None and z_src.height > 0 and pif is not None \
             and pif.height > 0:
-        # Anti-join zero-coef rows out of process_input_flows.  The
-        # CSV-side _load_indirect already does this; the source-driven
-        # path mirrors here so consumers see a consistent set.
-        try:
-            new_pif = pif.join(z_src, on=["p", "source"], how="anti")
-        except Exception:
-            new_pif = pif
+        new_pif = pif.join(z_src, on=["p", "source"], how="anti")
         if new_pif.height < pif.height:
             flex_data.process_input_flows = new_pif
-    if p_src_coef is not None:
-        flex_data.p_process_source_flow_coef = p_src_coef
-    try:
-        z_sink, p_sink_coef = p_process_sink_flow_coef_from_source(
-            source, pof)
-    except Exception:
-        z_sink, p_sink_coef = None, None
+    flex_data.p_process_source_flow_coef = p_src_coef
+
+    z_sink, p_sink_coef = p_process_sink_flow_coef_from_source(source, pof)
     if z_sink is not None and z_sink.height > 0 and pof is not None \
             and pof.height > 0:
-        try:
-            new_pof = pof.join(z_sink, on=["p", "sink"], how="anti")
-        except Exception:
-            new_pof = pof
+        new_pof = pof.join(z_sink, on=["p", "sink"], how="anti")
         if new_pof.height < pof.height:
             flex_data.process_output_flows = new_pof
-    if p_sink_coef is not None:
-        flex_data.p_process_sink_flow_coef = p_sink_coef
+    flex_data.p_process_sink_flow_coef = p_sink_coef
 
 
 # ===========================================================================
@@ -4051,119 +3981,75 @@ def apply_derived_c(
     dt_csv = getattr(flex_data, "dt", None)
     sd_csv = getattr(flex_data, "p_step_duration", None)
 
+    # Δ.12b — assignment is unconditional except for fields with
+    # documented helper-coverage gaps (multi-year cascade extends
+    # apply_derived_a's path; fall-throughs noted inline).
+
     # ─── Multi-year inflation cascade ─────────────────────────────────
+    # TODO(Δ.12b helper-fix): the multi-year helper EXTENDS rather than
+    # replaces apply_derived_a's p_inflation_op (single-year path) — when
+    # the multi-year cascade isn't applicable (single-year fixture) the
+    # helper returns None and we want to retain apply_derived_a's value.
+    # Keep the conditional assignment.
     if active_solve is not None and dt_csv is not None:
-        try:
-            infl_my = p_inflation_op_multi_year_from_source(
-                source, active_solve, dt_csv)
-        except Exception:
-            infl_my = None
+        infl_my = p_inflation_op_multi_year_from_source(
+            source, active_solve, dt_csv)
         if infl_my is not None:
             flex_data.p_inflation_op = infl_my
 
     # ─── §3.12 group slack ────────────────────────────────────────────
-    try:
-        gcs_db = p_group_capacity_for_scaling_from_source(
-            source, active_solve, workdir)
-    except Exception:
-        gcs_db = None
-    if gcs_db is not None:
-        flex_data.p_group_capacity_for_scaling = gcs_db
-    try:
-        igc_db = p_inv_group_cap_from_source(source, active_solve, workdir)
-    except Exception:
-        igc_db = None
-    if igc_db is not None:
-        flex_data.p_inv_group_cap = igc_db
+    flex_data.p_group_capacity_for_scaling = p_group_capacity_for_scaling_from_source(
+        source, active_solve, workdir)
+    flex_data.p_inv_group_cap = p_inv_group_cap_from_source(
+        source, active_solve, workdir)
 
+    # Inflow derivatives — these consume the (CSV-loaded or override-set)
+    # p_inflow.  Helpers return None when p_inflow is None.
     p_inflow_csv = getattr(flex_data, "p_inflow", None)
-    try:
-        ppi_db = p_positive_inflow_from_inflow(p_inflow_csv)
-        pni_db = p_negative_inflow_from_inflow(p_inflow_csv)
-    except Exception:
-        ppi_db = pni_db = None
-    if ppi_db is not None:
-        flex_data.p_positive_inflow = ppi_db
-    if pni_db is not None:
-        flex_data.p_negative_inflow = pni_db
-
-    try:
-        pis_db = pdtNodeInflow_per_step_from_inflow(p_inflow_csv, sd_csv)
-    except Exception:
-        pis_db = None
-    if pis_db is not None:
-        flex_data.pdtNodeInflow_per_step = pis_db
+    flex_data.p_positive_inflow = p_positive_inflow_from_inflow(p_inflow_csv)
+    flex_data.p_negative_inflow = p_negative_inflow_from_inflow(p_inflow_csv)
+    flex_data.pdtNodeInflow_per_step = pdtNodeInflow_per_step_from_inflow(
+        p_inflow_csv, sd_csv)
 
     # process_group_inside_nonSync — empty for all our covered fixtures.
-    try:
-        pgi_db = process_group_inside_nonSync_from_source(source)
-    except Exception:
-        pgi_db = None
-    if pgi_db is not None:
-        flex_data.process_group_inside_nonSync = pgi_db
+    flex_data.process_group_inside_nonSync = (
+        process_group_inside_nonSync_from_source(source))
 
     # ─── §3.8 online / UC ─────────────────────────────────────────────
-    classified = None
-    try:
-        classified = _classify_process_method(source)
-    except Exception:
-        classified = None
+    classified = _classify_process_method(source)
     if dt_csv is not None and classified is not None and classified.height > 0:
-        try:
-            sec_db = p_section_from_source(source, dt_csv, classified)
-        except Exception:
-            sec_db = None
-        if sec_db is not None:
-            flex_data.p_section = sec_db
+        flex_data.p_section = p_section_from_source(source, dt_csv, classified)
 
     # uptime / downtime lookbacks + projected pdt_*_set.
-    try:
-        ulb_db = uptime_lookback_from_source(source, dt_csv, sd_csv)
-    except Exception:
-        ulb_db = None
+    ulb_db = uptime_lookback_from_source(source, dt_csv, sd_csv)
     if ulb_db is not None and ulb_db.height > 0:
         flex_data.uptime_lookback = ulb_db
-        try:
-            flex_data.pdt_uptime_set = pdt_uptime_set_from_lookback(ulb_db)
-        except Exception:
-            pass
+        flex_data.pdt_uptime_set = pdt_uptime_set_from_lookback(ulb_db)
 
-    try:
-        dlb_db = downtime_lookback_from_source(source, dt_csv, sd_csv)
-    except Exception:
-        dlb_db = None
+    dlb_db = downtime_lookback_from_source(source, dt_csv, sd_csv)
     if dlb_db is not None and dlb_db.height > 0:
         flex_data.downtime_lookback = dlb_db
-        try:
-            flex_data.pdt_downtime_set = pdt_downtime_set_from_lookback(dlb_db)
-        except Exception:
-            pass
+        flex_data.pdt_downtime_set = pdt_downtime_set_from_lookback(dlb_db)
 
     # ─── §3.7 invest / divest ─────────────────────────────────────────
-    try:
-        ed_inv_db = ed_invest_set_from_source(source, active_solve, workdir)
-    except Exception:
-        ed_inv_db = None
+    # Δ.12b — set frames (None or non-empty); keep height>0 as a
+    # structural filter to preserve the SET-frame contract.
+    ed_inv_db = ed_invest_set_from_source(source, active_solve, workdir)
     if ed_inv_db is not None and ed_inv_db.height > 0:
         flex_data.ed_invest_set = ed_inv_db
 
-    try:
-        ed_div_db = ed_divest_set_from_source(source, active_solve)
-    except Exception:
-        ed_div_db = None
+    ed_div_db = ed_divest_set_from_source(source, active_solve)
     if ed_div_db is not None and ed_div_db.height > 0:
         flex_data.ed_divest_set = ed_div_db
 
     # Γ.6.D — ed_invest_forbidden_no_investment.  Built off the
     # (possibly-overridden) ed_invest_set so the helper sees the same
     # frame the LP downstream consumes.
-    try:
-        ed_invest_for_forbidden = ed_inv_db if ed_inv_db is not None \
-            else getattr(flex_data, "ed_invest_set", None)
-        forbidden_db = ed_invest_forbidden_no_investment_from_source(
-            source, active_solve, workdir, ed_invest_for_forbidden)
-    except Exception:
-        forbidden_db = None
+    ed_invest_for_forbidden = (
+        ed_inv_db if ed_inv_db is not None
+        else getattr(flex_data, "ed_invest_set", None))
+    forbidden_db = ed_invest_forbidden_no_investment_from_source(
+        source, active_solve, workdir, ed_invest_for_forbidden)
     if forbidden_db is not None:
         flex_data.ed_invest_forbidden_no_investment = (
             forbidden_db if forbidden_db.height > 0 else None)
@@ -4609,19 +4495,16 @@ def apply_derived_d(
       * §3.16 ``node_reference_angle`` (DC PF reference pick).
       * §3.13 ``process_reserve_upDown_node_active`` (reliability>0 set).
 
-    Δ.3 replaced the previous ``derived_overrides_d`` dict-return;
-    Δ.4 deleted the deprecated wrapper alias.
+    Δ.12b — assignment is unconditional; helpers are authoritative
+    producers.  ``None`` is the explicit "feature inactive" signal
+    (no DC-PF reference angle / no reserve relationships /
+    no chained existing capacity).  Hard exceptions propagate.
     """
     active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
 
-    # ─── §3.11 p_entity_all_existing ─────────────────────────────────
-    try:
-        pae_db = p_entity_all_existing_from_source(source, active_solve,
-                                                       workdir)
-    except Exception:
-        pae_db = None
-    if pae_db is not None:
-        flex_data.p_entity_all_existing = pae_db
+    # ─── §3.11 p_entity_all_existing — Δ.12b: unconditional ──────────
+    flex_data.p_entity_all_existing = p_entity_all_existing_from_source(
+        source, active_solve, workdir)
 
     # Δ.11 — wire the cluster B chained-existing helper as a final
     # override.  When the workdir's chain-summation inputs
@@ -4632,27 +4515,17 @@ def apply_derived_d(
     # ``solve_data/p_entity_all_existing.csv`` — verified per-fixture in
     # ``test_existing_chain_cluster_parity.py``.  ``apply_existing_chain``
     # short-circuits to no-op when the inputs aren't available.
+    # Δ.12b: defensive try/except removed.  apply_existing_chain is
+    # parity-bound (cluster B tests gate it).
     from flextool.engine_polars import _derived_existing as _ex
-    try:
-        _ex.apply_existing_chain(flex_data, source, workdir)
-    except Exception:  # noqa: BLE001 — defensive: cluster B is parity-bound
-        pass
+    _ex.apply_existing_chain(flex_data, source, workdir)
 
-    # ─── §3.16 node_reference_angle ──────────────────────────────────
-    try:
-        nra_db = node_reference_angle_from_source(source)
-    except Exception:
-        nra_db = None
-    if nra_db is not None:
-        flex_data.node_reference_angle = nra_db
+    # ─── §3.16 node_reference_angle — Δ.12b: unconditional ───────────
+    flex_data.node_reference_angle = node_reference_angle_from_source(source)
 
-    # ─── §3.13 process_reserve_upDown_node_active ────────────────────
-    try:
-        pruna_db = process_reserve_upDown_node_active_from_source(source)
-    except Exception:
-        pruna_db = None
-    if pruna_db is not None:
-        flex_data.process_reserve_upDown_node_active = pruna_db
+    # ─── §3.13 process_reserve_upDown_node_active — Δ.12b: unconditional
+    flex_data.process_reserve_upDown_node_active = (
+        process_reserve_upDown_node_active_from_source(source))
 
 
 
@@ -5928,37 +5801,39 @@ def apply_derived_e(
     has_state = (nodeState_df is not None
                   and getattr(nodeState_df, "height", 0) > 0)
     # Δ.9 — single BlockBundle per solve (replaces 4× CSV reads).
+    # Δ.12b — bundle-load failure is non-fatal (workdir without block
+    # CSVs is legitimate for fixtures without explicit blocks).
     try:
         block_bundle = load_block_bundle(workdir)
     except Exception:
         block_bundle = None
 
+    # Δ.12b — assignment is unconditional for storage-only Params and
+    # the rolling-handoff carriers.  ``None`` is the explicit
+    # "feature inactive / no handoff state" signal.
+
     # 1. dtttdt -------------------------------------------------------
-    dtttdt_db = None
-    try:
-        dtttdt_db = dtttdt_from_source(source, active_solve, workdir)
-    except Exception:
-        dtttdt_db = None
+    # TODO(Δ.12b helper-fix): dtttdt_from_source has gaps for fixtures
+    # whose timeline is preprocessed via flextool's
+    # ``solve_writers.write_dtttdt`` (uses preprocessing-only state).
+    # Until ported (Δ.13+), the seed-loaded ``flex_data.dtttdt`` (from
+    # _load_storage / pre-existing CSV) is preserved when the helper
+    # returns None.
+    dtttdt_db = dtttdt_from_source(source, active_solve, workdir)
     if dtttdt_db is not None:
         flex_data.dtttdt = dtttdt_db
 
     # 2. period_block family (storage-only). --------------------------
     pb_family = None
     if has_state:
-        try:
-            pb_family = period_block_family_from_source(
-                source, active_solve, workdir)
-        except Exception:
-            pb_family = None
+        pb_family = period_block_family_from_source(
+            source, active_solve, workdir)
     period_block_time_for_arc: pl.DataFrame | None = None
     if pb_family is not None:
-        if pb_family["period_block"] is not None:
-            flex_data.period_block = pb_family["period_block"]
-        if pb_family["period_block_succ"] is not None:
-            flex_data.period_block_succ = pb_family["period_block_succ"]
-        if pb_family["period_block_time"] is not None:
-            flex_data.period_block_time = pb_family["period_block_time"]
-            period_block_time_for_arc = pb_family["period_block_time"]
+        flex_data.period_block = pb_family["period_block"]
+        flex_data.period_block_succ = pb_family["period_block_succ"]
+        flex_data.period_block_time = pb_family["period_block_time"]
+        period_block_time_for_arc = pb_family["period_block_time"]
 
     # 1b. dtttdt-derived lag frames (storage-only). ------------------
     if has_state:
@@ -5969,20 +5844,14 @@ def apply_derived_e(
                     and sbm_full.filter(
                         pl.col("method") == "bind_forward_only").height > 0):
                 flex_data.dtttdt_forward_only = fwd
-        interior = dtttdt_block_interior_from_dtttdt(
+        flex_data.dtttdt_block_interior = dtttdt_block_interior_from_dtttdt(
             dtttdt_db, period_block_time_for_arc)
-        if interior is not None:
-            flex_data.dtttdt_block_interior = interior
 
     # 3. nodeStateBlock synthesis (storage-only) ----------------------
     nsb_db = None
     if has_state:
-        try:
-            nsb_db = nodeStateBlock_from_source(source, workdir)
-        except Exception:
-            nsb_db = None
-        if nsb_db is not None:
-            flex_data.nodeStateBlock = nsb_db
+        nsb_db = nodeStateBlock_from_source(source, workdir)
+        flex_data.nodeStateBlock = nsb_db
 
     # 4. arc block weights --------------------------------------------
     pss = getattr(flex_data, "pss", None)
@@ -5991,27 +5860,19 @@ def apply_derived_e(
             flex_data, "pss_noEff", None)
     if (nsb_db is not None and period_block_time_for_arc is not None
             and pss is not None):
-        try:
-            arc = arc_block_dt_from_source(
-                source, workdir, nsb_db, period_block_time_for_arc, pss)
-        except Exception:
-            arc = None
+        arc = arc_block_dt_from_source(
+            source, workdir, nsb_db, period_block_time_for_arc, pss)
         if arc is not None:
             for k in ("arc_sink_block_dt", "arc_source_block_dt",
                        "p_arc_sink_weight", "p_arc_source_weight"):
-                if arc.get(k) is not None:
-                    setattr(flex_data, k, arc[k])
+                setattr(flex_data, k, arc.get(k))
 
     # 4b. nodeState_last_dt — Δ.9: previously only set by ``input.py``'s
     # ``_load_storage`` from the CSV path.  The lazy port lifts the
     # algorithm onto the in-memory ``BlockBundle`` so source-driven
     # parity holds for multi-block fixtures.
     if has_state and block_bundle is not None:
-        try:
-            nsld = nodeState_last_dt_lf(
-                nodeState_df, block_bundle).collect()
-        except Exception:
-            nsld = None
+        nsld = nodeState_last_dt_lf(nodeState_df, block_bundle).collect()
         if nsld is not None and nsld.height > 0:
             flex_data.nodeState_last_dt = nsld
 
@@ -6024,74 +5885,34 @@ def apply_derived_e(
             cur = getattr(flex_data, fld, None)
             if cur is None or getattr(cur, "height", 0) == 0:
                 continue
-            try:
-                filtered = flow_from_nodeBalance_block_filtered(
-                    cur, block_bundle)
-            except Exception:
-                filtered = None
+            filtered = flow_from_nodeBalance_block_filtered(cur, block_bundle)
             if filtered is not None and filtered.height > 0:
                 setattr(flex_data, fld, filtered)
 
     # 5. p_state_existing_capacity / p_state_upper --------------------
     if has_state:
-        try:
-            pse = p_state_existing_capacity_from_source(
-                source, active_solve, nodeState_df, workdir)
-        except Exception:
-            pse = None
-        if pse is not None:
-            flex_data.p_state_existing_capacity = pse
-        try:
-            psu = p_state_upper_from_source(source, pse, nodeState_df)
-        except Exception:
-            psu = None
-        if psu is not None:
-            flex_data.p_state_upper = psu
+        pse = p_state_existing_capacity_from_source(
+            source, active_solve, nodeState_df, workdir)
+        flex_data.p_state_existing_capacity = pse
+        flex_data.p_state_upper = p_state_upper_from_source(
+            source, pse, nodeState_df)
         # §F.2 p_state_unitsize (Δ.10 cluster F) — per-node unitsize
         # restricted to nodeState.
         from ._derived_arithmetic import p_state_unitsize_from_source
-        try:
-            psun = p_state_unitsize_from_source(source, nodeState_df)
-        except Exception:
-            psun = None
-        if psun is not None:
-            flex_data.p_state_unitsize = psun
+        flex_data.p_state_unitsize = p_state_unitsize_from_source(
+            source, nodeState_df)
 
     # 6. storage_use_reference_value (storage-only) -------------------
     if has_state:
-        try:
-            surv = storage_use_reference_value_from_source(source, nsb_db)
-        except Exception:
-            surv = None
-        if surv is not None:
-            flex_data.storage_use_reference_value = surv
+        flex_data.storage_use_reference_value = (
+            storage_use_reference_value_from_source(source, nsb_db))
 
     # 7. rolling-handoff (storage-only — read-from-disk handoff) ------
     if has_state:
-        try:
-            rcs = p_roll_continue_state_from_workdir(workdir)
-        except Exception:
-            rcs = None
-        if rcs is not None:
-            flex_data.p_roll_continue_state = rcs
-        try:
-            pfsq = p_fix_storage_quantity_from_workdir(workdir)
-        except Exception:
-            pfsq = None
-        if pfsq is not None:
-            flex_data.p_fix_storage_quantity = pfsq
-        try:
-            dttm = dtt_timeline_matching_from_workdir(workdir)
-        except Exception:
-            dttm = None
-        if dttm is not None:
-            flex_data.dtt_timeline_matching = dttm
-        try:
-            pbr = period_branch_from_source(source, workdir)
-        except Exception:
-            pbr = None
-        if pbr is not None:
-            flex_data.period_branch = pbr
+        flex_data.p_roll_continue_state = p_roll_continue_state_from_workdir(workdir)
+        flex_data.p_fix_storage_quantity = p_fix_storage_quantity_from_workdir(workdir)
+        flex_data.dtt_timeline_matching = dtt_timeline_matching_from_workdir(workdir)
+        flex_data.period_branch = period_branch_from_source(source, workdir)
 
 
 
@@ -7065,24 +6886,14 @@ def apply_derived_f(
     _derived_npv.apply_npv(flex_data, source, workdir)
 
     # 2. Handoff state -----------------------------------------------
-    try:
-        ppic = p_entity_previously_invested_capacity_from_workdir(workdir)
-    except Exception:
-        ppic = None
-    if ppic is not None:
-        flex_data.p_entity_previously_invested_capacity = ppic
-    try:
-        pei = p_entity_invested_from_workdir(workdir)
-    except Exception:
-        pei = None
-    if pei is not None:
-        flex_data.p_entity_invested = pei
-    try:
-        ped = p_entity_divested_from_workdir(workdir)
-    except Exception:
-        ped = None
-    if ped is not None:
-        flex_data.p_entity_divested = ped
+    # Δ.12b — unconditional assignment.  Each helper returns ``None``
+    # when the corresponding handoff CSV is missing / header-only
+    # (single-solve fixtures, or first-of-chain) — ``None`` is the
+    # explicit "no prior-solve state" signal.
+    flex_data.p_entity_previously_invested_capacity = (
+        p_entity_previously_invested_capacity_from_workdir(workdir))
+    flex_data.p_entity_invested = p_entity_invested_from_workdir(workdir)
+    flex_data.p_entity_divested = p_entity_divested_from_workdir(workdir)
 
 
 
@@ -7690,45 +7501,26 @@ def apply_derived_g(
     active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
     dt = getattr(flex_data, "dt", None)
 
+    # Δ.12b — assignment is unconditional; helpers are authoritative
+    # producers.  ``None`` is the explicit "feature inactive" signal
+    # (no commodity-ladder commodities, no reserve relationships,
+    # no delayed processes, etc.).  Hard exceptions propagate.
+
     # ─── §3.17.1 p_f_d_k ───────────────────────────────────────────
-    try:
-        fdk = p_f_d_k_from_source(source, active_solve, workdir)
-    except Exception:
-        fdk = None
-    if fdk is not None:
-        flex_data.p_f_d_k = fdk
+    flex_data.p_f_d_k = p_f_d_k_from_source(source, active_solve, workdir)
 
     # ─── §3.17.2 p_ladder_cum_realized_mwh ─────────────────────────
-    try:
-        cum_real = p_ladder_cum_realized_mwh_from_workdir(workdir)
-    except Exception:
-        cum_real = None
-    if cum_real is not None:
-        flex_data.p_ladder_cum_realized_mwh = cum_real
+    flex_data.p_ladder_cum_realized_mwh = (
+        p_ladder_cum_realized_mwh_from_workdir(workdir))
 
     # ─── §3.13.1 prundt ────────────────────────────────────────────
-    try:
-        prundt = prundt_from_source(source, active_solve, dt)
-    except Exception:
-        prundt = None
-    if prundt is not None:
-        flex_data.prundt = prundt
+    flex_data.prundt = prundt_from_source(source, active_solve, dt)
 
     # ─── §3.15.1 dtt__delay_duration ───────────────────────────────
-    try:
-        dtt_dd = dtt__delay_duration_from_source(source, dt)
-    except Exception:
-        dtt_dd = None
-    if dtt_dd is not None:
-        flex_data.dtt__delay_duration = dtt_dd
+    flex_data.dtt__delay_duration = dtt__delay_duration_from_source(source, dt)
 
     # ─── §3.15.2 p_process_delay_weight ────────────────────────────
-    try:
-        pdw = p_process_delay_weight_from_source(source)
-    except Exception:
-        pdw = None
-    if pdw is not None:
-        flex_data.p_process_delay_weight = pdw
+    flex_data.p_process_delay_weight = p_process_delay_weight_from_source(source)
 
     # ─── §3.18 cluster D — multi-branch normalisation + non-anticipativity ──
     # Δ.8 consolidation: delegate the full cluster D port to
@@ -7739,13 +7531,9 @@ def apply_derived_g(
     # three are kept as overrides so the lazy port becomes the single
     # producer once the CSV cascade retires (Δ.12).  R-O6: the helper
     # never touches ``invest_periods`` / ``v_invest``.
+    # Δ.12b: defensive try/except removed; apply_branch_cluster is
+    # parity-bound (cluster D tests gate it).
     from flextool.engine_polars._derived_branch import apply_branch_cluster
-    try:
-        apply_branch_cluster(flex_data, source, workdir, active_solve)
-    except Exception:
-        # Defensive: any failure in the lazy port falls through to the
-        # CSV-loaded fields ``input.py`` already populated.  Drop this
-        # gate when Δ.12 retires the CSV cascade.
-        pass
+    apply_branch_cluster(flex_data, source, workdir, active_solve)
 
 
