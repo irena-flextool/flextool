@@ -1,6 +1,5 @@
 """Warm-LP primitives — structural fingerprint, Param classification, and
-WarmProblem update routine shared by the legacy ``run_chain`` driver and
-the native cascade in ``_orchestration``.
+WarmProblem update routine for the native cascade in ``_orchestration``.
 
 Two consecutive sub-solves of a chain are "warm-compatible" iff they emit
 an LP of identical shape (same set of vars and cstrs by row count and
@@ -11,9 +10,9 @@ warm-update routine pushes the deltas into the live HiGHS instance via
 ``changeRowsBounds`` / ``changeColsCost`` / per-cell coefficient writes
 instead of cold-rebuilding the model.
 
-This module exists so the warm machinery can be consumed by both
-``chain.py::run_chain`` (legacy file-symlink driver) and
-``_orchestration.py::_drive_cascade`` (native flexpy cascade — Δ.12d).
+Consumed by ``_orchestration.py::_drive_cascade`` (native flexpy cascade
+— Δ.12d).  Re-exported as module attributes on ``chain.py`` for
+backward-compat with callers like ``test_warm_param_autoupdate``.
 """
 from __future__ import annotations
 
@@ -171,7 +170,7 @@ _WARM_PARAMS: tuple[tuple[str, str, str, str | None, str | None], ...] = (
 )
 
 # Params that participate in composite LP cells (multi-Param products).
-# When ``run_chain(..., warm=True)`` is invoked, the WarmProblem is told to
+# When ``run_chain_from_db(..., warm=True)`` is invoked, the WarmProblem is told to
 # track these via :meth:`polar_high.WarmProblem.declare_mutable` so per-cell
 # auto-update can fire on transitions where any of them differs between
 # sub-solves.  This widens the warm-compatible regime BEYOND the clean-RHS

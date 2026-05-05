@@ -51,10 +51,10 @@ Design choices
   :class:`FlexToolConfigError` per the audit's
   ``orchestration.py:634-637``.
 
-* **Feature flag**: ``run_chain`` retains its legacy file-symlink-based
-  driver; native delegation is opt-in via
-  ``FLEXPY_USE_NATIVE_ORCHESTRATION=1`` (or the ``native=True``
-  parameter on the function).  Default = legacy.
+* **Δ.12e**: the legacy file-symlink ``run_chain(native=False)`` driver
+  retired once the native cascade reached feature parity (warm-LP,
+  handoff carriers, output writer, override chain).  ``run_chain`` is
+  now a thin compat shim that always delegates here.
 
 Reference: ``flextool/flextoolrunner/orchestration.py``.
 """
