@@ -1344,8 +1344,16 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     #     ``ed_entity_annual_divest_discounted`` ← ``apply_derived_f`` (npv).
     #   * ``ed_invest_max_period`` / ``ed_divest_max_period``
     #     ← ``apply_direct_params`` via ``ed_*_max_period_from_source``.
-    #   * ``p_entity_previously_invested_capacity`` / ``p_entity_invested``
-    #     / ``p_entity_divested`` ← ``apply_derived_f`` from workdir.
+    #
+    # ``p_entity_previously_invested_capacity`` / ``p_entity_invested`` /
+    # ``p_entity_divested`` are also re-set by ``apply_derived_f`` from the
+    # workdir, BUT ``apply_derived_d.apply_existing_chain`` runs BEFORE
+    # ``apply_derived_f`` and consumes those carriers (chain-summation).
+    # Keep the CSV seed so the chained-existing helper sees the prior
+    # solve's handoff state.
+    # TODO(Δ.12c+): retire when ``apply_existing_chain`` is moved after
+    # ``apply_derived_f`` in the override chain (or its dependence on
+    # those carriers is replaced with a direct workdir read).
     return dict(
         ed_invest_set=ed_inv if ed_inv.height > 0 else None,
         ed_divest_set=ed_div if ed_div.height > 0 else None,
@@ -1369,9 +1377,10 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_divest_period_set=_read_period_set("ed_divest_period"),
         ed_invest_max_period=None,
         ed_divest_max_period=None,
-        p_entity_previously_invested_capacity=None,
-        p_entity_invested=None,
-        p_entity_divested=None,
+        p_entity_previously_invested_capacity=_read_handoff_e_d(
+            "p_entity_previously_invested_capacity"),
+        p_entity_invested=_read_handoff_e("p_entity_invested"),
+        p_entity_divested=_read_handoff_e("p_entity_divested"),
     )
 
 
