@@ -2453,46 +2453,77 @@ def write_pssdt_varCost_filters(input_dir: Path, solve_data_dir: Path) -> None:
     pss_eff = _read_triples(solve_data_dir / "process_source_sink_eff.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
 
+    # Pre-index the value dicts so we can iterate only the (d, t) pairs
+    # that actually have non-zero entries instead of doing a full
+    # ``pss × dt`` membership scan for each filter.  Was the second
+    # contributor to the post-`Scenario:` hang (after the CSV reads).
+    varcost_dt_for_pss: dict[tuple[str, str, str], dict[tuple[str, str], None]] = {}
+    for (p, src, snk, d, t) in varcost:
+        if varcost[(p, src, snk, d, t)]:
+            varcost_dt_for_pss.setdefault((p, src, snk), {})[(d, t)] = None
+
+    pdt_src_dt_for_ps: dict[tuple[str, str], dict[tuple[str, str], None]] = {}
+    for (p, src, d, t) in pdt_src:
+        if pdt_src[(p, src, d, t)]:
+            pdt_src_dt_for_ps.setdefault((p, src), {})[(d, t)] = None
+
+    pdt_snk_dt_for_ps: dict[tuple[str, str], dict[tuple[str, str], None]] = {}
+    for (p, snk, d, t) in pdt_snk:
+        if pdt_snk[(p, snk, d, t)]:
+            pdt_snk_dt_for_ps.setdefault((p, snk), {})[(d, t)] = None
+
+    pdt_dt_for_p: dict[str, dict[tuple[str, str], None]] = {}
+    for (p, d, t) in pdt:
+        if pdt[(p, d, t)]:
+            pdt_dt_for_p.setdefault(p, {})[(d, t)] = None
+
     # pssdt_varCost_noEff
     rows: list[tuple[str, str, str, str, str]] = []
     for (p, src, snk) in pss_noEff:
-        for (d, t) in dt:
-            if varcost.get((p, src, snk, d, t), 0.0):
-                rows.append((p, src, snk, d, t))
+        for (d, t) in varcost_dt_for_pss.get((p, src, snk), ()):
+            rows.append((p, src, snk, d, t))
     _write_5col(solve_data_dir / "pssdt_varCost_noEff.csv",
                 ("process", "source", "sink", "period", "time"), rows)
 
     # pssdt_varCost_eff_unit_source
     rows = []
     for (p, src, snk) in pss_eff:
-        for (d, t) in dt:
-            if (p, src) in proc_src and pdt_src.get((p, src, d, t), 0.0):
-                rows.append((p, src, snk, d, t))
+        if (p, src) not in proc_src:
+            continue
+        for (d, t) in pdt_src_dt_for_ps.get((p, src), ()):
+            rows.append((p, src, snk, d, t))
     _write_5col(solve_data_dir / "pssdt_varCost_eff_unit_source.csv",
                 ("process", "source", "sink", "period", "time"), rows)
 
     # pssdt_varCost_eff_unit_sink
     rows = []
     for (p, src, snk) in pss_eff:
-        for (d, t) in dt:
-            if (p, snk) in proc_snk and pdt_snk.get((p, snk, d, t), 0.0):
-                rows.append((p, src, snk, d, t))
+        if (p, snk) not in proc_snk:
+            continue
+        for (d, t) in pdt_snk_dt_for_ps.get((p, snk), ()):
+            rows.append((p, src, snk, d, t))
     _write_5col(solve_data_dir / "pssdt_varCost_eff_unit_sink.csv",
                 ("process", "source", "sink", "period", "time"), rows)
 
     # pssdt_varCost_eff_connection
     rows = []
     for (p, src, snk) in pss_eff:
-        for (d, t) in dt:
-            if pdt.get((p, d, t), 0.0):
-                rows.append((p, src, snk, d, t))
+        for (d, t) in pdt_dt_for_p.get(p, ()):
+            rows.append((p, src, snk, d, t))
     _write_5col(solve_data_dir / "pssdt_varCost_eff_connection.csv",
                 ("process", "source", "sink", "period", "time"), rows)
 
 
 def _write_5col(path: Path, header: tuple[str, ...], rows: list[tuple]) -> None:
-    path.write_text(",".join(header) + "\n"
-                    + "".join(",".join(r) + "\n" for r in rows))
+    """C-speed CSV write via pandas — was a per-row ``",".join``
+    generator + ``path.write_text`` building a multi-hundred-MB
+    string in memory, which py-spy pinned at the latest hang.
+    """
+    if not rows:
+        path.write_text(",".join(header) + "\n")
+        return
+    import pandas as pd
+    pd.DataFrame(rows, columns=list(header)).to_csv(path, index=False)
 
 
 def write_pdtProcess__source__sink__dt_varCost_pair(
