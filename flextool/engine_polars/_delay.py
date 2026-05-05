@@ -161,16 +161,11 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
 
     pd_df = pd_df.rename({"process": "p"}) if "process" in pd_df.columns else pd_df
 
-    # process_delayed__duration: (process, delay_duration)
-    pdd_path = sd / "process_delayed__duration.csv"
+    # Δ.12-drop: ``process_delayed__duration`` (set frame, not Param)
+    # produced authoritatively by
+    # ``apply_direct_params.process_delayed__duration_from_source``.
+    # Seed dropped.
     pdd_df = None
-    if pdd_path.exists():
-        raw = _read_csv_file(pdd_path)
-        if raw.height > 0:
-            pdd_df = raw.rename(
-                {c: r for c, r in [("process", "p"), ("delay_duration", "td")]
-                 if c in raw.columns}
-            ).select("p", "td")
 
     # process_source_(un)delayed: (process, source) frames
     def _read_pse(name: str) -> pl.DataFrame | None:
@@ -223,30 +218,12 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
                     psse_delayed = psse_delayed.join(
                         zero_src, on=["p", "source"], how="anti")
 
-    # dtt__delay_duration: (period, time_source, time_sink, delay_duration)
-    dtt_path = sd / "dtt__delay_duration.csv"
+    # Δ.12-drop: ``dtt__delay_duration`` / ``p_process_delay_weight``
+    # produced authoritatively by ``apply_derived_g`` (helpers
+    # ``dtt__delay_duration_from_source`` / ``p_process_delay_weight_from_source``).
+    # Seeds dropped.
     dtt_df = None
-    if dtt_path.exists():
-        raw = _read_csv_file(dtt_path)
-        if raw.height > 0:
-            rename_map = {}
-            if "period" in raw.columns:      rename_map["period"] = "d"
-            if "time_source" in raw.columns: rename_map["time_source"] = "t_source"
-            if "time_sink" in raw.columns:   rename_map["time_sink"] = "t_sink"
-            if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
-            dtt_df = raw.rename(rename_map).select("d", "t_source", "t_sink", "td")
-
-    # p_process_delay_weight: (process, delay_duration, value)
-    pw_path = sd / "p_process_delay_weight.csv"
     pw_param = None
-    if pw_path.exists():
-        raw = _read_csv_file(pw_path)
-        if raw.height > 0:
-            rename_map = {}
-            if "process" in raw.columns: rename_map["process"] = "p"
-            if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
-            pw_long = raw.rename(rename_map).select("p", "td", "value")
-            pw_param = Param(("p", "td"), pw_long)
 
     return dict(
         process_delayed              = pd_df.select("p"),

@@ -230,20 +230,19 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
                            value=pl.col("quantity").cast(pl.Float64)),
             )
 
-    # ── Commodity unitsize ───────────────────────────────────────────────
-    # File header is per-fixture either ``commodity,p_commodity_unitsize``
-    # or empty.  Default to 1.0 when missing/empty.
+    # Δ.12-drop: ``p_commodity_unitsize`` produced authoritatively by
+    # ``apply_direct_params.p_commodity_unitsize_from_source`` (Δ.4b).
+    # Seed dropped.  The default-1.0 fallback in
+    # ``_commodity_unitsize_param`` covers the case when the override
+    # leaves the field None (unset feature).
     p_unitsize = None
-    cu_path = inp / "p_commodity_unitsize.csv"
-    if cu_path.exists():
-        cu = _read_csv_file(cu_path)
-        if cu.height > 0:
-            value_col = "p_commodity_unitsize" if "p_commodity_unitsize" in cu.columns else "value"
-            cu = (cu.rename({"commodity": "c", value_col: "value"})
-                  .select("c", "value"))
-            p_unitsize = Param(("c",), cu)
 
-    # ── f_d_k (period → fraction realized this roll) ─────────────────────
+    # ``p_f_d_k`` and ``p_ladder_cum_realized_mwh`` are produced by
+    # ``apply_derived_g`` BUT the 7 mismatch fixtures
+    # (``work_commodity_ladder_*`` etc.) skip auto-resolution and rely
+    # on the seed.  Keep CSV reads.
+    # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
+    # variant fixtures or all fixtures explicitly pass db_reader=.
     p_f_d_k = None
     fdk_path = sd / "f_d_k.csv"
     if fdk_path.exists():
@@ -252,7 +251,6 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
             fdk = fdk.rename({"period": "d"}).select("d", "value")
             p_f_d_k = Param(("d",), fdk)
 
-    # ── Cumulative realized accumulator (c, i, d) ────────────────────────
     p_realized = None
     rel_path = sd / "ladder_cum_realized_mwh.csv"
     if rel_path.exists():
