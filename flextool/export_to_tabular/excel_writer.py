@@ -846,11 +846,34 @@ def write_nested_periodic_sheet_v2(
         ws.cell(row=2, column=col).fill = FILL_DESC_DATA
         ws.cell(row=2, column=col).font = FONT_DESC_DATA
 
-    # --- Row 3: definition row ---
+    # --- Optional row 3: defaults (only when at least one param has one) ---
+    param_defaults = {
+        pname: _get_param_default_string(pname, spec.entity_classes, db_contents)
+        for pname in nested_params
+    }
+    has_default_row = any(v is not None for v in param_defaults.values())
+    if has_default_row:
+        default_row = 3
+        ws.cell(row=default_row, column=def_col, value="default")
+        ws.cell(row=default_row, column=def_col).fill = FILL_DESC_ROW
+        ws.cell(row=default_row, column=def_col).font = FONT_DESC_ROW
+        for i, pname in enumerate(nested_params):
+            col = def_col + 1 + i
+            dv = param_defaults[pname]
+            if dv is not None:
+                ws.cell(row=default_row, column=col, value=dv)
+                ws.cell(row=default_row, column=col).fill = FILL_DESC_DATA
+                ws.cell(row=default_row, column=col).font = FONT_DESC_DATA
+        def_row = 4
+    else:
+        def_row = 3
+    data_start_row = def_row + 1
+
+    # --- Definition row ---
     for col_idx, label in enumerate(left_cols, start=1):
-        ws.cell(row=3, column=col_idx, value=label)
+        ws.cell(row=def_row, column=col_idx, value=label)
     for col_idx, label in enumerate(right_cols, start=def_col):
-        ws.cell(row=3, column=col_idx, value=label)
+        ws.cell(row=def_row, column=col_idx, value=label)
 
     # --- Collect data rows ---
     data_rows: list[list[Any]] = []
@@ -915,7 +938,7 @@ def write_nested_periodic_sheet_v2(
     data_rows.sort(key=lambda r: tuple(str(v) if v is not None else "" for v in r))
 
     # --- Write data rows ---
-    for row_idx, row_data in enumerate(data_rows, start=4):
+    for row_idx, row_data in enumerate(data_rows, start=data_start_row):
         for col_idx, value in enumerate(row_data, start=1):
             if value is not None:
                 ws.cell(row=row_idx, column=col_idx, value=value)
@@ -923,7 +946,7 @@ def write_nested_periodic_sheet_v2(
     # --- Reference section ---
     last_data_col = def_col + len(right_cols) - 1
     _write_param_reference(
-        ws, last_data_col + 1, spec, db_contents, header_row=3,
+        ws, last_data_col + 1, spec, db_contents, header_row=def_row,
         n_data_rows=len(data_rows), layout="nested_periodic",
         shown_params=nested_params,
     )
@@ -932,13 +955,16 @@ def write_nested_periodic_sheet_v2(
     n_entity_cols = len(spec.entity_columns)
     index_col_positions = {3, 4}  # current_solve_period and periods_included
     last_data_col_nested = def_col + len(right_cols) - 1
-    format_constant_sheet_v2(ws, n_entity_cols, 2, def_col, index_col_positions, last_data_col_nested)
+    format_constant_sheet_v2(
+        ws, n_entity_cols, 2, def_col, index_col_positions,
+        last_data_col_nested, def_row=def_row,
+    )
     add_navigate_link(ws)
     auto_column_width(ws, min_param_width=_min_param_width,
                       non_param_width=_non_param_width,
                       def_col_width=_def_col_width,
                       index_col_width=_index_col_width,
-                      header_row=3, def_col=def_col,
+                      header_row=def_row, def_col=def_col,
                       index_cols=index_col_positions)
 
 
@@ -1242,6 +1268,9 @@ def write_array_transposed_sheet_v2(
     triplet = f"parameter: {pname} | data type: {dtype}"
     if desc:
         triplet += f" | description: {desc}"
+    default_str = _get_param_default_string(pname, spec.entity_classes, db_contents)
+    if default_str is not None:
+        triplet += f" | default: {default_str}"
     ws.cell(row=cur_row, column=2, value=triplet)
     cur_row += 1
 
@@ -1463,6 +1492,9 @@ def write_stochastic_sheet_v2(
     triplet = f"parameter: {pname} | data type: {dtype}"
     if desc:
         triplet += f" | description: {desc}"
+    default_str = _get_param_default_string(pname, spec.entity_classes, db_contents)
+    if default_str is not None:
+        triplet += f" | default: {default_str}"
     ws.cell(row=cur_row, column=def_col, value=triplet)
     row_types: dict[int, str] = {cur_row: "param_info"}
     cur_row += 1
@@ -1826,6 +1858,39 @@ def _get_param_description(
     return None
 
 
+def _get_param_default_string(
+    param_name: str,
+    entity_classes: list[str],
+    db_contents: DatabaseContents,
+) -> str | None:
+    """Return a stringified default value for a parameter, or None.
+
+    Scalars stringify directly.  Maps/Arrays are rendered in a JSON-like
+    form so they fit in a single Excel cell.
+    """
+    for entity_class in entity_classes:
+        for pdef in db_contents.parameter_definitions.get(entity_class, []):
+            if pdef["name"] == param_name:
+                dv = pdef.get("default_value")
+                if dv is None:
+                    return None
+                return _format_default_value(dv)
+    return None
+
+
+def _format_default_value(value: Any) -> str:
+    """Render a parameter default value to a single-cell string."""
+    if _is_map(value):
+        parts = [
+            f"{_to_native(idx)}: {_format_default_value(val)}"
+            for idx, val in zip(value.indexes, value.values)
+        ]
+        return "{" + ", ".join(parts) + "}"
+    if _is_array(value):
+        return "[" + ", ".join(_format_default_value(v) for v in value.values) + "]"
+    return str(_to_native(value))
+
+
 def _build_entity_def_label(spec: SheetSpec) -> str:
     """Build the 'entity: ...' definition label for the definition row.
 
@@ -1872,15 +1937,16 @@ def _add_data_validation(
     spec: SheetSpec,
     db_contents: DatabaseContents,
     max_data_rows: int = 500,
+    data_start_row: int = 4,
 ) -> None:
     """Add dropdown validation lists for parameters that have value lists.
 
-    Applies validation from row 4 down to a reasonable limit (not the entire
-    column) to avoid bloating the file.
+    Applies validation from *data_start_row* down to a reasonable limit
+    (not the entire column) to avoid bloating the file.
     """
     from openpyxl.worksheet.datavalidation import DataValidation
 
-    last_row = min(4 + max_data_rows, 504)  # cap at ~500 data rows
+    last_row = min(data_start_row + max_data_rows, data_start_row + 500)
 
     from openpyxl.utils import get_column_letter
 
@@ -1896,7 +1962,7 @@ def _add_data_validation(
         dv_ee.error = "Select TRUE or FALSE"
         dv_ee.errorTitle = "Entity existence"
         ee_letter = get_column_letter(ee_col)
-        dv_ee.sqref = f"{ee_letter}4:{ee_letter}{last_row}"
+        dv_ee.sqref = f"{ee_letter}{data_start_row}:{ee_letter}{last_row}"
         ws.add_data_validation(dv_ee)
 
     for i, pname in enumerate(param_names):
@@ -1922,7 +1988,7 @@ def _add_data_validation(
         dv.error = f"Value must be one of: {', '.join(values)}"
         dv.errorTitle = f"Invalid {pname}"
         col_letter = get_column_letter(col)
-        dv.sqref = f"{col_letter}4:{col_letter}{last_row}"
+        dv.sqref = f"{col_letter}{data_start_row}:{col_letter}{last_row}"
         ws.add_data_validation(dv)
 
 
@@ -2188,11 +2254,30 @@ def write_constant_sheet_v2(
         dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="constant")
         ws.cell(row=2, column=col, value=dtype)
 
-    # --- Row 3: definition row ---
+    # --- Optional row 3: defaults (only when at least one param has one) ---
+    param_defaults = {
+        pname: _get_param_default_string(pname, spec.entity_classes, db_contents)
+        for pname in all_params
+    }
+    has_default_row = any(v is not None for v in param_defaults.values())
+    if has_default_row:
+        default_row = 3
+        ws.cell(row=default_row, column=def_col, value="default")
+        for i, pname in enumerate(all_params):
+            col = def_col + 1 + ea_offset + i
+            dv = param_defaults[pname]
+            if dv is not None:
+                ws.cell(row=default_row, column=col, value=dv)
+        def_row = 4
+    else:
+        def_row = 3
+    data_start_row = def_row + 1
+
+    # --- Definition row ---
     for col_idx, label in enumerate(left_cols, start=1):
-        ws.cell(row=3, column=col_idx, value=label)
+        ws.cell(row=def_row, column=col_idx, value=label)
     for col_idx, label in enumerate(right_cols, start=def_col):
-        ws.cell(row=3, column=col_idx, value=label)
+        ws.cell(row=def_row, column=col_idx, value=label)
 
     # --- Map column positions for data writing ---
     col_alt = 1
@@ -2264,8 +2349,8 @@ def write_constant_sheet_v2(
         str(v) if v is not None else "" for _, v in r
     ))
 
-    # --- Write data rows (starting at row 4) ---
-    for row_idx, row_cells in enumerate(data_rows, start=4):
+    # --- Write data rows (starting at data_start_row) ---
+    for row_idx, row_cells in enumerate(data_rows, start=data_start_row):
         for col, value in row_cells:
             if value is not None:
                 ws.cell(row=row_idx, column=col, value=value)
@@ -2273,7 +2358,7 @@ def write_constant_sheet_v2(
     # --- Write parameter reference section ---
     last_data_col = def_col + len(right_cols) - 1
     _write_param_reference(
-        ws, last_data_col + 1, spec, db_contents, header_row=3,
+        ws, last_data_col + 1, spec, db_contents, header_row=def_row,
         n_data_rows=len(data_rows), layout="constant",
         shown_params=all_params,
     )
@@ -2284,12 +2369,18 @@ def write_constant_sheet_v2(
         + (1 if filter_label else 0)
         + (1 if spec.unpack_index_column else 0)
     )
-    format_constant_sheet_v2(ws, n_entity_cols, n_extra, def_col, index_col_positions, last_data_col)
+    format_constant_sheet_v2(
+        ws, n_entity_cols, n_extra, def_col, index_col_positions,
+        last_data_col, def_row=def_row,
+    )
     add_navigate_link(ws)
 
     # --- Data validation (dropdown lists) for parameters with value lists ---
-    _add_data_validation(ws, all_params, def_col, ea_offset, spec, db_contents,
-                         max_data_rows=max(len(data_rows), 1) + 3)
+    _add_data_validation(
+        ws, all_params, def_col, ea_offset, spec, db_contents,
+        max_data_rows=max(len(data_rows), 1) + 3,
+        data_start_row=data_start_row,
+    )
 
     # --- Filter dropdown for merged classes ---
     if filter_col_pos is not None and spec.direction_map:
@@ -2306,24 +2397,24 @@ def write_constant_sheet_v2(
         dv_filter.error = f"Select: {', '.join(filter_values)}"
         dv_filter.errorTitle = spec.direction_column or "Filter"
         cl = get_column_letter(filter_col_pos)
-        last_row = max(len(data_rows) + 3, 504)
-        dv_filter.sqref = f"{cl}4:{cl}{last_row}"
+        last_row = max(len(data_rows) + data_start_row - 1, data_start_row + 500)
+        dv_filter.sqref = f"{cl}{data_start_row}:{cl}{last_row}"
         ws.add_data_validation(dv_filter)
 
     auto_column_width(ws, min_param_width=_min_param_width,
                       non_param_width=_non_param_width,
                       def_col_width=_def_col_width,
                       index_col_width=_index_col_width,
-                      header_row=3, def_col=def_col,
+                      header_row=def_row, def_col=def_col,
                       index_cols=index_col_positions,
                       last_data_col=last_data_col)
 
     # --- Lock metadata ---
     _lock_metadata_cells(
         ws,
-        meta_rows=3,
+        meta_rows=def_row,
         meta_cols=def_col,
-        data_start_row=4,
+        data_start_row=data_start_row,
         data_start_col=1,
     )
 
@@ -2586,11 +2677,30 @@ def write_periodic_sheet_v2(
         dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="periodic")
         ws.cell(row=2, column=col, value=dtype)
 
-    # --- Row 3: definition row ---
+    # --- Optional row 3: defaults (only when at least one param has one) ---
+    param_defaults = {
+        pname: _get_param_default_string(pname, spec.entity_classes, db_contents)
+        for pname in spec.parameter_names
+    }
+    has_default_row = any(v is not None for v in param_defaults.values())
+    if has_default_row:
+        default_row = 3
+        ws.cell(row=default_row, column=def_col, value="default")
+        for i, pname in enumerate(spec.parameter_names):
+            col = def_col + 1 + i
+            dv = param_defaults[pname]
+            if dv is not None:
+                ws.cell(row=default_row, column=col, value=dv)
+        def_row = 4
+    else:
+        def_row = 3
+    data_start_row = def_row + 1
+
+    # --- Definition row ---
     for col_idx, label in enumerate(left_cols, start=1):
-        ws.cell(row=3, column=col_idx, value=label)
+        ws.cell(row=def_row, column=col_idx, value=label)
     for col_idx, label in enumerate(right_cols, start=def_col):
-        ws.cell(row=3, column=col_idx, value=label)
+        ws.cell(row=def_row, column=col_idx, value=label)
 
     # --- Map column positions ---
     col_alt = 1
@@ -2702,7 +2812,7 @@ def write_periodic_sheet_v2(
     ))
 
     # --- Write data rows ---
-    for row_idx, row_cells in enumerate(data_rows, start=4):
+    for row_idx, row_cells in enumerate(data_rows, start=data_start_row):
         for col, value in row_cells:
             if value is not None:
                 ws.cell(row=row_idx, column=col, value=value)
@@ -2710,7 +2820,7 @@ def write_periodic_sheet_v2(
     # --- Write parameter reference section ---
     last_data_col = def_col + len(right_cols) - 1
     _write_param_reference(
-        ws, last_data_col + 1, spec, db_contents, header_row=3,
+        ws, last_data_col + 1, spec, db_contents, header_row=def_row,
         n_data_rows=len(data_rows), layout="periodic",
         shown_params=list(spec.parameter_names),
     )
@@ -2720,22 +2830,25 @@ def write_periodic_sheet_v2(
         (1 if filter_label else 0)
         + 1  # index column
     )
-    format_periodic_sheet_v2(ws, n_entity_cols, n_extra, def_col, {index_col_pos}, last_data_col)
+    format_periodic_sheet_v2(
+        ws, n_entity_cols, n_extra, def_col, {index_col_pos},
+        last_data_col, def_row=def_row,
+    )
     add_navigate_link(ws)
     auto_column_width(ws, min_param_width=_min_param_width,
                       non_param_width=_non_param_width,
                       def_col_width=_def_col_width,
                       index_col_width=_index_col_width,
-                      header_row=3, def_col=def_col,
+                      header_row=def_row, def_col=def_col,
                       index_cols={index_col_pos},
                       last_data_col=last_data_col)
 
     # --- Lock metadata ---
     _lock_metadata_cells(
         ws,
-        meta_rows=3,
+        meta_rows=def_row,
         meta_cols=def_col,
-        data_start_row=4,
+        data_start_row=data_start_row,
         data_start_col=1,
     )
 
@@ -2810,6 +2923,9 @@ def write_timeseries_sheet_v2(
         triplet = f"parameter: {default_param} | data type: {dtype}"
         if desc:
             triplet += f" | description: {desc}"
+        default_str = _get_param_default_string(default_param, spec.entity_classes, db_contents)
+        if default_str is not None:
+            triplet += f" | default: {default_str}"
         ws.cell(row=cur_row, column=2, value=triplet)
         row_types[cur_row] = "param_info"
         cur_row += 1
@@ -2865,6 +2981,19 @@ def write_timeseries_sheet_v2(
             ws.cell(row=cur_row, column=col_idx, value=pname)
         row_types[cur_row] = "parameter"
         cur_row += 1
+
+        # default row (multi-param only, when at least one column has one)
+        column_defaults = [
+            _get_param_default_string(pname, [ec], db_contents)
+            for (ec, _byname, pname, _alt, _m) in columns
+        ]
+        if any(d is not None for d in column_defaults):
+            ws.cell(row=cur_row, column=2, value="default")
+            for col_idx, default_str in enumerate(column_defaults, start=3):
+                if default_str is not None:
+                    ws.cell(row=cur_row, column=col_idx, value=default_str)
+            row_types[cur_row] = "default"
+            cur_row += 1
 
     n_header_rows = cur_row - 1
 
