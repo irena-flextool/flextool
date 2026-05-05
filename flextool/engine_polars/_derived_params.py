@@ -1092,6 +1092,28 @@ def apply_derived_a(
         # place.  Cluster C parity tests are the load-bearing oracle.
         pass
 
+    # 9. p_penalty_up / p_penalty_down (Δ.10 cluster F) ----------------
+    # Sentinel-default scalar broadcast over (n, d, t) restricted to
+    # nodeBalance nodes.  Mirrors ``input.py:_load_node`` lines 695-700
+    # (the slice from ``pdtNode.csv``).
+    from ._derived_arithmetic import (
+        p_penalty_up_from_source,
+        p_penalty_down_from_source,
+    )
+    nb_df = getattr(flex_data, "nodeBalance", None)
+    try:
+        pu = p_penalty_up_from_source(source, nb_df, usable_dt)
+    except Exception:
+        pu = None
+    if pu is not None:
+        flex_data.p_penalty_up = pu
+    try:
+        pd_ = p_penalty_down_from_source(source, nb_df, usable_dt)
+    except Exception:
+        pd_ = None
+    if pd_ is not None:
+        flex_data.p_penalty_down = pd_
+
 
 # ---------------------------------------------------------------------------
 # Internal: frame-equal guard for safe overlay
@@ -2315,6 +2337,64 @@ def apply_derived_b(
             slope_db = None
         if slope_db is not None:
             flex_data.p_slope = slope_db
+
+    # ─── §F.1 p_unitsize  (Δ.10 cluster F) ─────────────────────────────
+    # Per-process unitsize cascade restricted to processes appearing in
+    # ``pss``.  Mirrors ``input.py:800-825``'s
+    # ``unitsize_long.filter(p ∈ pss["p"].unique())``.
+    if pss_frame is not None and pss_frame.height > 0:
+        from ._derived_arithmetic import p_unitsize_from_source
+        try:
+            p_us = p_unitsize_from_source(source, pss_frame)
+        except Exception:
+            p_us = None
+        if p_us is not None:
+            flex_data.p_unitsize = p_us
+
+    # ─── §F.4 p_process_source_flow_coef / p_process_sink_flow_coef ────
+    # (Δ.10 cluster F).  Mirrors ``input.py:_load_indirect`` lines
+    # 950-1002.  Anti-joins zero-coef rows out of the indirect-process
+    # input/output flow sets and emits a Param keyed on (p, source) /
+    # (p, sink) when any non-default, non-zero coef remains.
+    from ._derived_arithmetic import (
+        p_process_source_flow_coef_from_source,
+        p_process_sink_flow_coef_from_source,
+    )
+    pif = getattr(flex_data, "process_input_flows", None)
+    pof = getattr(flex_data, "process_output_flows", None)
+    try:
+        z_src, p_src_coef = p_process_source_flow_coef_from_source(
+            source, pif)
+    except Exception:
+        z_src, p_src_coef = None, None
+    if z_src is not None and z_src.height > 0 and pif is not None \
+            and pif.height > 0:
+        # Anti-join zero-coef rows out of process_input_flows.  The
+        # CSV-side _load_indirect already does this; the source-driven
+        # path mirrors here so consumers see a consistent set.
+        try:
+            new_pif = pif.join(z_src, on=["p", "source"], how="anti")
+        except Exception:
+            new_pif = pif
+        if new_pif.height < pif.height:
+            flex_data.process_input_flows = new_pif
+    if p_src_coef is not None:
+        flex_data.p_process_source_flow_coef = p_src_coef
+    try:
+        z_sink, p_sink_coef = p_process_sink_flow_coef_from_source(
+            source, pof)
+    except Exception:
+        z_sink, p_sink_coef = None, None
+    if z_sink is not None and z_sink.height > 0 and pof is not None \
+            and pof.height > 0:
+        try:
+            new_pof = pof.join(z_sink, on=["p", "sink"], how="anti")
+        except Exception:
+            new_pof = pof
+        if new_pof.height < pof.height:
+            flex_data.process_output_flows = new_pof
+    if p_sink_coef is not None:
+        flex_data.p_process_sink_flow_coef = p_sink_coef
 
 
 # ===========================================================================
@@ -5902,6 +5982,15 @@ def apply_derived_e(
             psu = None
         if psu is not None:
             flex_data.p_state_upper = psu
+        # §F.2 p_state_unitsize (Δ.10 cluster F) — per-node unitsize
+        # restricted to nodeState.
+        from ._derived_arithmetic import p_state_unitsize_from_source
+        try:
+            psun = p_state_unitsize_from_source(source, nodeState_df)
+        except Exception:
+            psun = None
+        if psun is not None:
+            flex_data.p_state_unitsize = psun
 
     # 6. storage_use_reference_value (storage-only) -------------------
     if has_state:
