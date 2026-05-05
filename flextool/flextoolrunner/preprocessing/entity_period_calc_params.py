@@ -567,11 +567,17 @@ def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
     domain = _read_pairs(solve_data_dir / "node__TimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
     out_path = solve_data_dir / "pdtNode.csv"
+    # Sparse-write: see write_pdtProcess for rationale.  NODE_PARAM_DEF1
+    # ({"availability"}) defaults to 1.0 when no input is present so
+    # those rows are still written; class_default_values may also
+    # produce non-zero defaults for specific (class, param) pairs.
     with out_path.open("w") as fh:
         fh.write("node,param,period,time,value\n")
         for (n, param) in domain:
             for (d, t) in dt:
                 v = lookup.get(n, param, d, t)
+                if v == 0.0:
+                    continue
                 fh.write(f"{n},{param},{d},{t},{repr(v)}\n")
 
 
@@ -738,7 +744,8 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
                                 total += v
                                 hit = True
                     if hit:
-                        fh.write(f"{n},{d},{t},{repr(total)}\n")
+                        if total != 0.0:
+                            fh.write(f"{n},{d},{t},{repr(total)}\n")
                         continue
                 # Branch 2: parent-period fold-in
                 pe_list = pe_for_d.get(d, ())
@@ -754,9 +761,12 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
                                     total += v
                                     hit = True
                     if hit:
-                        fh.write(f"{n},{d},{t},{repr(total)}\n")
+                        if total != 0.0:
+                            fh.write(f"{n},{d},{t},{repr(total)}\n")
                         continue
-                # Branch 3: deterministic additive sum
+                # Branch 3: deterministic additive sum.  Sparse-write:
+                # mod's `default 0` on pdtNodeInflow substitutes when
+                # the row is omitted.
                 value = 0.0
                 if in_balance:
                     pti = pt_inflow.get((n, t), 0.0)
@@ -771,6 +781,8 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
                                  - nos_section.get((n, d), 0.0)
                     if has_use_original:
                         value += pti
+                if value == 0.0:
+                    continue
                 fh.write(f"{n},{d},{t},{repr(value)}\n")
 
 
@@ -953,8 +965,8 @@ def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
                 if v is not None:
                     fh.write(f"{p},{d},{t},{repr(v)}\n")
                     continue
-                # Branch 5: 0
-                fh.write(f"{p},{d},{t},0.0\n")
+                # Branch 5: 0 — sparse-write skips this fallback; mod's
+                # `default 0` on pdtProfile substitutes downstream.
 
 
 def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
@@ -1212,8 +1224,9 @@ def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
                     if v is not None:
                         fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
                         continue
-                # Branch 11: 0
-                fh.write(f"{p},{src},{snk},{param},{d},{t},0.0\n")
+                # Branch 11: 0 — sparse-write skips this fallback;
+                # mod's `default 0` on pdtProcess_source_sink
+                # substitutes downstream.
 
 
 def write_pdtConversion_rate_section_slope(
@@ -2434,6 +2447,12 @@ def write_pdtProcess__source__sink__dt_varCost_pair(
     pss_always = _read_triples(solve_data_dir / "process_source_sink_alwaysProcess.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
 
+    # Sparse-write both varCost CSVs.  mod has `default 0` so missing
+    # rows resolve to 0 there.  Downstream `write_pssdt_varCost_filters`
+    # reads back via `dict.get(..., 0.0)` truthy checks, so sparse
+    # semantics carry through.  Eliminates the dense
+    # (process_source_sink × periods × timesteps) write previously
+    # surfaced by py-spy at write_pssdt_varCost_filters:2350.
     out_basic = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
     with out_basic.open("w") as fh:
         fh.write("process,source,sink,period,time,value\n")
@@ -2445,6 +2464,8 @@ def write_pdtProcess__source__sink__dt_varCost_pair(
                 if (p, snk) in proc_snk:
                     v += pdt_snk.get((p, snk, d, t), 0.0)
                 v += pdt.get((p, d, t), 0.0)
+                if v == 0.0:
+                    continue
                 fh.write(f"{p},{src},{snk},{d},{t},{repr(v)}\n")
 
     out_always = solve_data_dir / "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv"
@@ -2460,5 +2481,7 @@ def write_pdtProcess__source__sink__dt_varCost_pair(
                 # mod gate: ((p, sink) in process_sink || (p, sink) in process_source)
                 if (p, snk) in proc_snk or (p, snk) in proc_src:
                     v += pdt.get((p, d, t), 0.0)
+                if v == 0.0:
+                    continue
                 fh.write(f"{p},{src},{snk},{d},{t},{repr(v)}\n")
 
