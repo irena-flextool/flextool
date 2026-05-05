@@ -4551,8 +4551,16 @@ def apply_derived_d(
     # carriers on the first iteration.  Moved to ``_apply_db_overrides``
     # so it runs strictly after ``apply_derived_f``.
 
-    # ─── §3.16 node_reference_angle — Δ.12b: unconditional ───────────
-    flex_data.node_reference_angle = node_reference_angle_from_source(source)
+    # ─── §3.16 node_reference_angle — Δ.12b: unconditional, with
+    #     CSV-fallback (Δ.16).  Some fixtures (e.g. ``work_dc_power_flow``
+    #     / ``case14.sqlite``) ship a pre-computed
+    #     ``input/node_reference_angle.csv`` but don't populate the
+    #     ``connection.is_DC`` parameter the source-side derivation
+    #     consumes.  Preserve the CSV-loaded value when the source path
+    #     produces nothing.
+    derived_ref = node_reference_angle_from_source(source)
+    if derived_ref is not None:
+        flex_data.node_reference_angle = derived_ref
 
     # ─── §3.13 process_reserve_upDown_node_active — Δ.12b: unconditional
     flex_data.process_reserve_upDown_node_active = (

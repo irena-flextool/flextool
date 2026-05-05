@@ -1587,7 +1587,13 @@ def apply_direct_params(source: "InputSource",
     flex_data.p_min_load = p_min_load_from_source(source)
 
     # ─── Δ.4 second wave — connection scalars (DC power flow feature) ───
-    flex_data.p_connection_susceptance = p_connection_susceptance_from_source(source)
+    # Δ.16 — preserve the CSV-loaded value when the source has no rows.
+    # Some fixtures (e.g. ``work_dc_power_flow`` / ``case14.sqlite``)
+    # ship a pre-computed CSV but don't carry the parameter on the
+    # ``connection`` class in the DB.
+    _pcs_src = p_connection_susceptance_from_source(source)
+    if _pcs_src is not None:
+        flex_data.p_connection_susceptance = _pcs_src
 
     # ─── Δ.4 second wave — commodity scalars (price ladder feature) ─────
     flex_data.p_commodity_unitsize = p_commodity_unitsize_from_source(source)
