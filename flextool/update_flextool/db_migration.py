@@ -1784,7 +1784,7 @@ def _v44_build_parameter_group_map() -> dict[tuple[str, str], str]:
         "max_flow_for_unconstrained_variables",
     ):
         m[("model", p)] = "model"
-    m[("group", "include_stochastics")] = "model"
+    m[("group", "include_stochastics")] = "solve_advanced"
 
     # --- solve_basics --------------------------------------------------
     for p in (
@@ -2227,13 +2227,13 @@ def _migrate_v51_group_block_resolution(db) -> None:
             "dispatch resolution than others (e.g. power systems)."
         ),
     )
-    # Attach the timeline parameter_group when it exists (v44+).
-    if db.item(db.mapped_table("parameter_group"), name="timeline") is not None:
+    # Attach the solve_advanced parameter_group when it exists (v44+).
+    if db.item(db.mapped_table("parameter_group"), name="solve_advanced") is not None:
         db.add_update_item(
             "parameter_definition",
             entity_class_name="group",
             name="new_stepduration",
-            parameter_group_name="timeline",
+            parameter_group_name="solve_advanced",
         )
 
     # --- group.decomposition_method -------------------------------------
