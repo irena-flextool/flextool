@@ -4575,6 +4575,21 @@ def apply_derived_d(
     if pae_db is not None:
         flex_data.p_entity_all_existing = pae_db
 
+    # Δ.11 — wire the cluster B chained-existing helper as a final
+    # override.  When the workdir's chain-summation inputs
+    # (``p_entity_period_existing_capacity.csv`` + ``edd_history.csv``)
+    # are populated AND the in-memory ``ppic`` / ``ped`` carriers are on
+    # ``flex_data`` (CSV path or handoff overlay), the lazy chain
+    # produces a value identical to the eager one read from
+    # ``solve_data/p_entity_all_existing.csv`` — verified per-fixture in
+    # ``test_existing_chain_cluster_parity.py``.  ``apply_existing_chain``
+    # short-circuits to no-op when the inputs aren't available.
+    from flextool.engine_polars import _derived_existing as _ex
+    try:
+        _ex.apply_existing_chain(flex_data, source, workdir)
+    except Exception:  # noqa: BLE001 — defensive: cluster B is parity-bound
+        pass
+
     # ─── §3.16 node_reference_angle ──────────────────────────────────
     try:
         nra_db = node_reference_angle_from_source(source)
