@@ -1090,10 +1090,15 @@ def apply_derived_a(
             flex_data.p_inflow = inflow
 
     # 7. p_process_existing_count ---------------------------------------
-    # TODO(Δ.12b helper-fix): the helper returns None when no process
-    # has explicit existing capacity per period.  Until the
-    # zero-existing path is documented as "no override", keep the
-    # conditional assignment.
+    # Δ.12c-fix gap #4: the helper handles two paths:
+    # (1) ``p_entity_all_existing.csv`` (workdir-derived, carries
+    #     multi-solve handoff state and lifetime gate);
+    # (2) explicit ``unit.existing`` / ``connection.existing`` cascade
+    #     (existing / unitsize per (p, d)).
+    # Returns ``None`` for fixtures with neither path active (pure-invest
+    # without initial capacity).  Keep conditional so the seed Param
+    # (which always emits a row per process for ``base_cap_pd`` from the
+    # CSV preprocessing) survives in that degenerate case.
     ec = p_process_existing_count_from_source(
         source, usable_dt, active_solve, workdir)
     if ec is not None:
