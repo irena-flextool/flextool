@@ -2870,7 +2870,13 @@ def _find_scenario(workdir: Path) -> str | None:
     2. Strip a leading ``work_`` from the workdir's basename and check
        whether the resulting name appears as a scenario in
        ``<workdir>/tests.sqlite``.  If yes, return it.
-    3. Otherwise return ``None`` — the caller should fall back to the
+    3. Δ.16 — when the workdir's ``input/`` is a symlink, recurse into
+       the linked directory's parent (the canonical workdir).  This
+       lets the per-sub-solve test pattern
+       (``tempdir/{input,output_raw}`` symlinked to a fixture's
+       canonical dirs, ``tempdir/solve_data`` symlinked to a sub-solve
+       snapshot) auto-resolve to the original fixture's scenario.
+    4. Otherwise return ``None`` — the caller should fall back to the
        CSV-only path.
 
     This covers every fixture in ``tests/engine_polars/data/`` without
@@ -2880,6 +2886,20 @@ def _find_scenario(workdir: Path) -> str | None:
     ``work_`` prefix will continue to use the CSV-only path until they
     pass an explicit ``db_reader=``.
     """
+    # Δ.16 — per-sub-solve test pattern: ``tempdir/input`` is a symlink
+    # into the fixture's canonical ``work_<scenario>/input``.  Recurse
+    # into that fixture before falling back to the basename heuristic.
+    input_link = workdir / "input"
+    if input_link.is_symlink():
+        try:
+            target = (workdir / "input").resolve()
+            canonical = target.parent
+            if canonical != workdir and canonical.is_dir():
+                resolved = _find_scenario(canonical)
+                if resolved is not None:
+                    return resolved
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
     # 1. Explicit override map for the seven mismatch fixtures.
     override = _FIND_SCENARIO_OVERRIDES.get(workdir.name)
     if override is not None:
@@ -3008,9 +3028,19 @@ def load_flextool(source: "Path | str | FlexInputSource",
         scenario = _find_scenario(workdir_for_db)
         if scenario is not None:
             from flextool.engine_polars._spinedb_reader import SpineDbReader
-            override = _FIND_SCENARIO_OVERRIDES.get(workdir_for_db.name)
+            # Δ.16 — when the workdir's input/ is a symlink (the
+            # per-sub-solve test pattern), the sqlite lives in the
+            # canonical fixture dir, not in the tmp_path.  Resolve.
+            db_workdir = workdir_for_db
+            input_link = workdir_for_db / "input"
+            if input_link.is_symlink():
+                try:
+                    db_workdir = input_link.resolve().parent
+                except Exception:  # noqa: BLE001
+                    db_workdir = workdir_for_db
+            override = _FIND_SCENARIO_OVERRIDES.get(db_workdir.name)
             sqlite_filename = override[0] if override is not None else "tests.sqlite"
-            sqlite_path = workdir_for_db / sqlite_filename
+            sqlite_path = db_workdir / sqlite_filename
             try:
                 db_reader = SpineDbReader(
                     f"sqlite:///{sqlite_path}", scenario=scenario,
@@ -4491,6 +4521,16 @@ def load_flextool_from_db(input_db_url: str | Path,
     solves = next(iter(runner.state.solve.model_solve.values()))
     total_solves = len(solves)
 
+    # Δ.16 — explicit db_reader keeps the override chain authoritative
+    # when the test's ``work_folder`` (typically a tmp_path) doesn't
+    # match the ``work_<scenario>`` convention that ``_find_scenario``
+    # uses for auto-construction.  Without this, the CSV-only path runs
+    # and Params dropped by Δ.12-drop (e.g. ``p_min_load``) stay
+    # ``None``, breaking ``build_flextool``'s feature-active check.
+    from flextool.engine_polars._spinedb_reader import SpineDbReader
+    explicit_db_reader = SpineDbReader(db_url, scenario=scenario_name) \
+        if scenario_name is not None else None
+
     if total_solves <= 1:
         # Single-solve: orchestration writes per-solve preprocessing
         # CSVs (timesets, scaling, period_first, etc.) and the no-op
@@ -4499,7 +4539,7 @@ def load_flextool_from_db(input_db_url: str | Path,
             def run(self, complete_solve_name: str) -> int:  # noqa: ARG002
                 return 0
         orchestration.run_model(runner.state, _NoOpSolver(runner.state))
-        return load_flextool(work_folder)
+        return load_flextool(work_folder, db_reader=explicit_db_reader)
 
     # Multi-solve cascade: drive flextool's loop with a custom solver
     # that runs flexpy on every solve except the last, builds a
@@ -4521,7 +4561,8 @@ def load_flextool_from_db(input_db_url: str | Path,
             self._count += 1
             if self._count == self._total:
                 return 0  # caller solves the last one
-            data = load_flextool(self.state.paths.work_folder)
+            data = load_flextool(self.state.paths.work_folder,
+                                   db_reader=explicit_db_reader)
             from polar_high import Problem
             from flextool.engine_polars.model import build_flextool as _build
             pb = Problem()
@@ -4546,6 +4587,6 @@ def load_flextool_from_db(input_db_url: str | Path,
     orchestration.run_model(
         runner.state, _FlexpyCascadeSolver(runner.state, total_solves),
     )
-    return load_flextool(work_folder)
+    return load_flextool(work_folder, db_reader=explicit_db_reader)
 
 
