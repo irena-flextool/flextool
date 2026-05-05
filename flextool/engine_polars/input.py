@@ -2994,7 +2994,8 @@ def _find_scenario(workdir: Path) -> str | None:
 
 def load_flextool(source: "Path | str | FlexInputSource",
                    *,
-                   db_reader: "object | None" = None) -> FlexData:
+                   db_reader: "object | None" = None,
+                   handoff: "object | None" = None) -> FlexData:
     """Load a :class:`FlexData` from either a workdir on disk or a
     :class:`flextool._input_source.FlexInputSource`.
 
@@ -3023,6 +3024,27 @@ def load_flextool(source: "Path | str | FlexInputSource",
     the auto-construction.
 
     See ``audit/db_direct_param_map.md §7.1`` for the migration plan.
+
+    Δ.11 — ``handoff`` (in-memory :class:`SolveHandoff`) overlay
+    ------------------------------------------------------------
+
+    When ``handoff`` is supplied, the loader populates the five
+    handoff-derived FlexData fields directly during the build (replacing
+    the previous post-load :func:`apply_handoff` call):
+
+      * ``p_entity_previously_invested_capacity`` ← ``realized_invest``
+        × ``edd_history`` (read from ``solve_data/edd_history.csv``).
+      * ``p_entity_invested`` ← ``realized_invest`` summed over period.
+      * ``p_entity_divested`` ← ``divest_cumulative``.
+      * ``p_roll_continue_state`` ← ``roll_end_state``.
+      * ``p_fix_storage_quantity`` ← ``fix_storage.quantity``.
+
+    Construct-with-handoff replaces the old overlay-after-load pattern
+    so the in-memory carriers flow into the build as inputs, no separate
+    "apply" step.  Snapshot CSV state for these fields is overwritten
+    by the in-memory handoff (the in-memory handoff is the source of
+    truth, even when the workdir's ``solve_data/*.csv`` already carries
+    a value).
     """
     # Late-import the Protocol + adapters to avoid a circular import
     # against the tests' fixture-loaders (which sometimes import this
@@ -3406,6 +3428,26 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # the primary loader.
     if db_reader is not None:
         _apply_db_overrides(flex_data, db_reader, source)
+
+    # Δ.11 — overlay in-memory handoff carriers onto the FlexData
+    # built so far.  Replaces the previous post-load ``apply_handoff``
+    # call: the handoff is now an input to the build, not a separate
+    # overlay step.  ``solve_data_dir`` (if known) is consulted only for
+    # ``edd_history.csv`` — used by the
+    # ``p_entity_previously_invested_capacity`` derivation.  Cluster B
+    # chained-handoff state (``p_entity_all_existing``) is rebuilt from
+    # the now-populated carriers via :func:`apply_existing_chain` (called
+    # below — db_reader is required for that path).
+    if handoff is not None:
+        sd_dir = workdir_for_db / "solve_data" if workdir_for_db is not None else None
+        flex_data = _overlay_handoff(flex_data, handoff, sd_dir)
+        # Re-apply the cluster B chained-existing helper so
+        # ``p_entity_all_existing`` reflects the in-memory handoff
+        # carriers (rather than the workdir's pre-handoff CSV value).
+        if db_reader is not None and workdir_for_db is not None:
+            from flextool.engine_polars import _derived_existing as _ex
+            _ex.apply_existing_chain(flex_data, db_reader, workdir_for_db,
+                                          handoff=handoff)
 
     return _assign_param_names(flex_data)
 
@@ -4001,17 +4043,17 @@ def build_handoff_from_flexpy(
     )
 
 
-def apply_handoff(flex_data: "FlexData", handoff,
-                   solve_data_dir: Path | None = None) -> "FlexData":
-    """Overlay an in-memory ``SolveHandoff`` onto an already-loaded
-    :class:`FlexData`, returning a NEW FlexData.
+def _overlay_handoff(flex_data: "FlexData", handoff,
+                       solve_data_dir: Path | None = None) -> "FlexData":
+    """Δ.11 — internal helper used by :func:`load_flextool` to overlay an
+    in-memory :class:`SolveHandoff` onto the FlexData built from disk.
 
-    The original is unchanged (we use :func:`dataclasses.replace`).  This
-    lets the chain runner load each sub-solve's snapshot for STRUCTURE
-    (entity sets, methods, profiles, time, …) and then swap the
-    sub-solve's pre-written handoff CSV state for the in-memory one
-    extracted from the prior flexpy solve via
-    :func:`build_handoff_from_flexpy` — a true standalone chain run.
+    Returns a NEW FlexData with the 5 carrier-derived fields replaced
+    (uses :func:`dataclasses.replace`, original untouched).  Called from
+    inside :func:`load_flextool` when ``handoff`` is supplied — there is
+    no longer a public ``apply_handoff`` entry point; the construct-with-
+    handoff path is the only supported way to pipe an in-memory
+    :class:`SolveHandoff` into a fresh :class:`FlexData`.
 
     Carriers overlaid (target FlexData fields):
 

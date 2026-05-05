@@ -682,47 +682,61 @@ def p_entity_all_existing_from_handoff(
         period_with_history: list[str],  # noqa: ARG001 — kept for symmetry
         period_in_use: list[str],
         *,
-        p_entity_period_existing_capacity: "Param | None" = None,  # noqa: ARG001 — alt. carrier shape
+        p_entity_period_existing_capacity: "Param | None" = None,
         p_entity_previously_invested_capacity: "Param | None" = None,
         p_entity_divested: "Param | None" = None,
+        solve_first: bool = True,
+        edd_history: "pl.DataFrame | None" = None,
         ) -> "Param | None":
     """Lazy port of flextool's
     ``write_p_entity_existing_chain`` algorithm
     (``entity_period_calc_params.py:1381-1591``).
 
-    The canonical formula on the consumer side
-    (:func:`._read_capacity` legacy fallback,
-    ``input.py:128-155``):
+    Per flextool's writer (lines 1554-1568):
 
-        all_existing[e, d] = pre_existing[e, d]
-                          + p_entity_previously_invested_capacity[e, d]
-                          − p_entity_divested[e]   (only if e ∈ entityDivest)
+      * ``solve_first`` →
+            ``all_existing[e, d] = pre_existing[e, d]``  (no divest applied)
+      * later solves →
+            ``all_existing[e, d] = later_existing[e, d]``
+            ``                    − p_entity_divested[e]   (if e ∈ entityDivest)``
 
-    where:
-
-    * ``pre_existing[e, d]`` is ``entity.existing`` lifetime-gated
-      (zero past expiry for ``reinvest_choice`` / ``no_investment``).
-    * ``p_entity_previously_invested_capacity[e, d]`` is the chain-summed
-      prior-solve invest at d (carried via the in-memory handoff;
-      :class:`._solve_handoff.SolveHandoff.realized_invest`).
-    * ``p_entity_divested[e]`` is the cumulative prior-solve divest
-      scalar (also via handoff).
-
-    On the first solve (no handoff carriers populated) all three terms
-    after ``pre_existing`` are zero so the formula collapses to
-    ``v = pre_existing[e, d]``.
+    where ``later_existing[e, d]`` for the chain-runner case is the
+    chain-summed prior-solve existing per current period — already
+    integrated by flextool's preprocessing into
+    ``p_entity_previously_invested_capacity[e, d]`` (the
+    ``later_invested`` shape) ⊕ ``pre_existing[e, d]``.  Δ.11 — we rebuild
+    the result from the in-memory handoff carriers via
+    ``pre + ppic − divest`` which matches the canonical flextool CSV
+    (verified per-fixture in ``test_existing_chain_cluster_parity.py``).
 
     Parameters
     ----------
     p_entity_period_existing_capacity
-        Legacy / placeholder; not consumed in this overload.  Kept on
-        the signature for forward-compat with a future helper that
-        walks ``edd_history × ppec_handoff`` directly.
+        Δ.11 — in-memory handoff carrier ``[entity, period, value]``
+        (the SolveHandoff ``realized_existing`` shape).  When supplied,
+        the helper switches into the ``later_existing`` chain-summation
+        branch: ``later_existing[e, d] = Σ_{(e, d_h, d) ∈ edd_history ∧
+        (e, d_h) realized} ppec[(e, d_h)]`` (mirrors flextool's
+        ``write_p_entity_existing_chain`` lines 1530-1543).  Required for
+        lifetime-renew chains where the chain-summed existing isn't
+        recoverable from ``ppic + pre_existing`` alone.
     p_entity_previously_invested_capacity
         In-memory handoff Param ``[e, d, value]`` — chain-summed prior
-        invest at d.  When None / empty → solve-first branch.
+        invest at d.  Used only when ``p_entity_period_existing_capacity``
+        is None (the simple-baseline branch); the chain-summation
+        branch derives both terms from ``ppec``.
     p_entity_divested
         Handoff Param ``[e, value]`` cumulative prior divest.
+    solve_first
+        Δ.11 — flextool's ``solveFirst`` flag.  When True, divest is
+        NOT subtracted (mirrors the writer's solve-first branch); when
+        False, ``e ∈ entityDivest`` triggers a per-entity divest
+        subtraction.  Default True (single-solve / cold-start).
+    edd_history
+        Δ.11 — ``[entity, period_history, period]`` triple-set used by
+        the chain-summation branch.  When None, the helper falls back
+        to the simple ``pre + ppic − divest`` formula (which is exact
+        for non-renew chains).
 
     Returns Param ``[e, d, value]`` or None when no entities exist.
     """
@@ -738,6 +752,74 @@ def p_entity_all_existing_from_handoff(
     pre_existing_lf = p_entity_pre_existing_lf(
         source, active_solve, period_in_use)
 
+    # entityDivest set + p_entity_divested scalar.  Shared by both
+    # branches; the divest subtraction is gated on solve_first below.
+    div_set_lf = entity_divest_set_lf(source).with_columns(
+        is_divest=pl.lit(True))
+    if (p_entity_divested is not None
+            and p_entity_divested.frame.height > 0):
+        ped_lf = (p_entity_divested.frame.lazy()
+                     .select("e", pl.col("value").alias("divested")))
+    else:
+        ped_lf = pl.LazyFrame(schema={"e": pl.Utf8, "divested": pl.Float64})
+
+    # ---------------------------------------------------------------
+    # Δ.11 — chain-summation branch: later_existing[e, d] from
+    # edd_history × ppec.  Activates when the caller supplies the
+    # ``p_entity_period_existing_capacity`` carrier (the SolveHandoff
+    # ``realized_existing`` shape) AND the ``edd_history`` triple-set
+    # AND solve_first is False.  Mirrors flextool's writer at
+    # ``entity_period_calc_params.py:1530-1568``.
+    # ---------------------------------------------------------------
+    if (not solve_first
+            and p_entity_period_existing_capacity is not None
+            and p_entity_period_existing_capacity.frame.height > 0
+            and edd_history is not None and edd_history.height > 0):
+        ppec_lf = (p_entity_period_existing_capacity.frame.lazy()
+                       .select(pl.col("e").alias("e"),
+                                pl.col("d").alias("d_h"),
+                                pl.col("value").alias("ppec")))
+        edd_lf = edd_history.lazy()
+        if {"entity", "period_history", "period"}.issubset(set(edd_history.columns)):
+            edd_lf = edd_lf.rename({"entity": "e",
+                                       "period_history": "d_h",
+                                       "period": "d"})
+        # later_existing[e, d] = Σ_{d_h: (e, d_h, d) ∈ edd_history ∧
+        #                              (e, d_h) ∈ realized} ppec[(e, d_h)].
+        # (e, d_h) is "realized" iff ppec carries a row for it.
+        later_lf = (edd_lf
+                       .join(ppec_lf, on=["e", "d_h"], how="inner")
+                       .group_by(["e", "d"])
+                       .agg(pl.col("ppec").sum().alias("later")))
+        out = (grid_lf
+                  .join(later_lf, on=["e", "d"], how="left")
+                  .join(div_set_lf, on="e", how="left")
+                  .join(ped_lf, on="e", how="left")
+                  .with_columns(
+                      later=pl.col("later").fill_null(0.0),
+                      is_divest=pl.col("is_divest").fill_null(False),
+                      divested=pl.col("divested").fill_null(0.0),
+                  )
+                  .with_columns(
+                      value=pl.col("later")
+                      - pl.when(pl.col("is_divest"))
+                              .then(pl.col("divested"))
+                              .otherwise(0.0),
+                  )
+                  .select("e", "d", "value")
+                  .sort("e", "d")
+                  .collect())
+        if out.height == 0:
+            return None
+        return Param(("e", "d"), out)
+
+    # ---------------------------------------------------------------
+    # Simple-baseline branch (single-solve / non-renew chains):
+    #   pae[e, d] = pre_existing[e, d]
+    #             + p_entity_previously_invested_capacity[e, d]
+    #             − p_entity_divested[e]   (if e ∈ entityDivest, later solves)
+    # ---------------------------------------------------------------
+
     # Previously-invested overlay (in-memory handoff carrier).
     if (p_entity_previously_invested_capacity is not None
             and p_entity_previously_invested_capacity.frame.height > 0):
@@ -748,16 +830,6 @@ def p_entity_all_existing_from_handoff(
         ppic_lf = pl.LazyFrame(schema={
             "e": pl.Utf8, "d": pl.Utf8, "ppic": pl.Float64,
         })
-
-    # entityDivest set + p_entity_divested scalar.
-    div_set_lf = entity_divest_set_lf(source).with_columns(
-        is_divest=pl.lit(True))
-    if (p_entity_divested is not None
-            and p_entity_divested.frame.height > 0):
-        ped_lf = (p_entity_divested.frame.lazy()
-                     .select("e", pl.col("value").alias("divested")))
-    else:
-        ped_lf = pl.LazyFrame(schema={"e": pl.Utf8, "divested": pl.Float64})
 
     out = (grid_lf
               .join(pre_existing_lf.rename({"value": "pre"}),
@@ -772,10 +844,14 @@ def p_entity_all_existing_from_handoff(
                   divested=pl.col("divested").fill_null(0.0),
               )
               .with_columns(
+                  # Δ.11 — divest subtraction is applied only on later
+                  # solves (solve_first=False); flextool's writer skips it
+                  # on the first solve in the chain.
                   value=pl.col("pre") + pl.col("ppic")
-                  - pl.when(pl.col("is_divest"))
-                         .then(pl.col("divested"))
-                         .otherwise(0.0),
+                  - (pl.when(pl.col("is_divest"))
+                          .then(pl.col("divested"))
+                          .otherwise(0.0)
+                     if not solve_first else pl.lit(0.0)),
               )
               .select("e", "d", "value")
               .sort("e", "d")
@@ -966,7 +1042,9 @@ def _lifetime_expired_pairs_lf(source: "InputSource",
 
 def apply_existing_chain(flex_data: object,
                               source: "InputSource",
-                              workdir: Path) -> None:
+                              workdir: Path,
+                              *,
+                              handoff: object | None = None) -> None:
     """Apply Cluster B helpers to ``flex_data`` (mutates in place).
 
     Wired-in fields:
@@ -996,21 +1074,68 @@ def apply_existing_chain(flex_data: object,
         _read_active_solve, _period_in_use_set,
         _read_period_with_history,
     )
+    from .input import _read_solve_first, _read_csv_file
+    from polar_high_opt import Param as _Param
 
     active_solve = _read_active_solve(workdir)
     period_in_use = _period_in_use_set(source, active_solve, workdir)
     period_with_history = (_read_period_with_history(workdir)
                               or list(period_in_use))
+    solve_first = _read_solve_first(workdir)
 
     ppic = getattr(flex_data, "p_entity_previously_invested_capacity", None)
     ped = getattr(flex_data, "p_entity_divested", None)
+
+    # Δ.11 — chain-summation inputs.  Prefer the in-memory handoff
+    # ``realized_existing`` carrier when supplied; else fall back to the
+    # workdir's ``p_entity_period_existing_capacity.csv`` (which carries
+    # the same data after flextool's preprocessing).  ``edd_history.csv``
+    # is always sourced from the workdir.
+    ppec_param: "Param | None" = None
+    if handoff is not None and getattr(handoff, "realized_existing", None) is not None:
+        re_frame = handoff.realized_existing
+        if re_frame.height > 0:
+            ppec_param = _Param(("e", "d"),
+                                  re_frame.rename({"entity": "e",
+                                                       "period": "d"})
+                                          .select("e", "d", "value"))
+    if ppec_param is None:
+        ppec_path = workdir / "solve_data" / "p_entity_period_existing_capacity.csv"
+        if ppec_path.exists():
+            try:
+                df = _read_csv_file(ppec_path)
+            except Exception:
+                df = None
+            if (df is not None and df.height > 0
+                    and "p_entity_period_existing_capacity" in df.columns):
+                ppec_param = _Param(("e", "d"),
+                                      df.rename({"entity": "e",
+                                                   "period": "d"})
+                                        .select("e", "d",
+                                                  pl.col("p_entity_period_existing_capacity")
+                                                    .cast(pl.Float64, strict=False)
+                                                    .fill_null(0.0)
+                                                    .alias("value")))
+
+    edd_hist_df: "pl.DataFrame | None" = None
+    edd_path = workdir / "solve_data" / "edd_history.csv"
+    if edd_path.exists():
+        try:
+            edd_hist_df = _read_csv_file(edd_path)
+        except Exception:
+            edd_hist_df = None
+        if edd_hist_df is not None and edd_hist_df.height == 0:
+            edd_hist_df = None
 
     try:
         pae = p_entity_all_existing_from_handoff(
             source, active_solve,
             period_with_history, period_in_use,
+            p_entity_period_existing_capacity=ppec_param,
             p_entity_previously_invested_capacity=ppic,
-            p_entity_divested=ped)
+            p_entity_divested=ped,
+            solve_first=solve_first,
+            edd_history=edd_hist_df)
     except Exception:
         pae = None
     if pae is not None:

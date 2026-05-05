@@ -10,7 +10,7 @@ flexpy stays as the pure LP eDSL kernel.
 """
 
 from flextool.engine_polars.input import (
-    FlexData, load_flextool, load_flextool_from_db, apply_handoff,
+    FlexData, load_flextool, load_flextool_from_db,
 )
 from flextool.engine_polars.model import build_flextool
 from flextool.engine_polars.chain import run_chain, ChainStep
@@ -27,7 +27,7 @@ from flextool.engine_polars._orchestration import (
 
 __all__ = [
     "FlexData", "load_flextool", "load_flextool_from_db", "build_flextool",
-    "apply_handoff", "run_chain", "ChainStep",
+    "run_chain", "ChainStep",
     "FlexInputSource", "CsvSource", "SpineDbSource",
     "InputSource", "SpineDbReader", "InMemoryReader",
     # Γ.8.D — native orchestrator + handoff carrier.

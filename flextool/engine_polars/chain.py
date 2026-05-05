@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from polar_high_opt import Problem, Solution, WarmProblem
-from flextool.engine_polars.input import load_flextool, build_handoff_from_flexpy, apply_handoff
+from flextool.engine_polars.input import load_flextool, build_handoff_from_flexpy
 from flextool.engine_polars.model import build_flextool
 from flextool.engine_polars._input_source import _read_csv_file
 
@@ -1100,15 +1100,15 @@ def run_chain(
         with tempfile.TemporaryDirectory() as tmp:
             td = Path(tmp)
             _stage_subsolve_workdir(work, sub_solve, td)
-            data = load_flextool(td)
-            if use_handoff_overlay and i > 0 and prior_handoff is not None:
-                # Overlay flexpy-extracted handoff onto the snapshot's
-                # FlexData — replaces the pre-written handoff CSV state
-                # with our in-memory carriers, fully decoupling the chain
-                # runner from flextool's between-solves CSV writers.
-                # Pass solve_data dir so the overlay can read
-                # edd_history.csv for the period-history convolution.
-                data = apply_handoff(data, prior_handoff, td / "solve_data")
+            # Δ.11 — construct-with-handoff: pass the in-memory
+            # SolveHandoff into ``load_flextool`` so the carrier-derived
+            # fields are populated during the build.  Replaces the
+            # previous post-load ``apply_handoff`` overlay step.
+            handoff_arg = (prior_handoff
+                              if use_handoff_overlay and i > 0
+                                 and prior_handoff is not None
+                              else None)
+            data = load_flextool(td, handoff=handoff_arg)
 
             warm_used = False
             if warm:

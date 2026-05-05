@@ -119,6 +119,19 @@ def _discover_fixtures() -> list[tuple[str, str]]:
 PARITY_CASES = _discover_fixtures()
 
 
+# Δ.11 — fixtures whose committed ``solve_data/`` is in an inconsistent
+# post-chain state where ``p_entity_all_existing.csv`` carries chained
+# values but the inputs needed to derive them (the bare
+# ``p_entity_period_existing_capacity.csv``) are header-only.  These
+# fixtures need a regenerated workdir (``ed_history_realized``,
+# ``p_entity_period_existing_capacity`` populated) for the lazy chain-
+# summation branch to reproduce the canonical result.  Tracked as a
+# Δ.12 fixture rebuild.
+_CHAIN_INCONSISTENT_FIXTURES = frozenset({
+    "work_wind_battery_invest_lifetime_renew_4solve",
+})
+
+
 def _frames_equal(a: pl.DataFrame | None,
                      b: pl.DataFrame | None,
                      keys: tuple[str, ...]) -> tuple[bool, str | None]:
@@ -178,27 +191,31 @@ def test_p_entity_all_existing_lazy_vs_csv(
     :func:`._derived_params.p_entity_all_existing_from_source`.  The
     lazy port computes the same via the in-memory handoff carriers
     on ``flex_data`` (``p_entity_invested`` /
-    ``p_entity_previously_invested_capacity`` / ``p_entity_divested``).
+    ``p_entity_previously_invested_capacity`` / ``p_entity_divested``)
+    plus the workdir's ``solveFirst`` flag.
 
-    Solve-first fixtures (no prior solve) → both paths reduce to the
-    lifetime-gated ``entity.existing`` frame.
-
-    Multi-solve / chain fixtures where the handoff has already been
-    integrated into the workdir CSV (i.e. the handoff carriers on
-    flex_data are *empty* but the CSV is the cumulative value) are
-    out-of-scope for this test: the lazy path can't recompute the
-    chain without the in-memory carriers.  These fixtures are gated
-    via :func:`_handoff_already_consumed` and surface as ``xfail``-
-    style skips with a message documenting the architectural
-    boundary.  The end-to-end golden-objective tests still cover
-    these fixtures via the chain runner; the cluster B field is
-    re-derived from in-memory state when the chain runner is the
-    orchestrator (Δ.7+).
+    Δ.11 — the previous chain-summation skip guard
+    (``_handoff_already_consumed``) was overly conservative.  The lazy
+    helper, given the workdir's chain-summed ``ppic`` carrier and the
+    correct ``solve_first`` flag, reproduces the chained
+    ``p_entity_all_existing.csv`` value at every (e, d) — even on
+    multi-solve fixtures whose ``ppec.csv`` carries many history
+    periods per entity (the chained value lands in ``ppic`` at the
+    current solve period, not split across history rows on the
+    consumer side).
     """
     work = DATA / work_name
     sqlite = work / "tests.sqlite"
     if not sqlite.exists():
         pytest.skip("fixture missing tests.sqlite")
+    if work_name in _CHAIN_INCONSISTENT_FIXTURES:
+        pytest.skip(
+            f"{work_name}: committed solve_data/ is in inconsistent "
+            "post-chain state — the bare "
+            "``p_entity_period_existing_capacity.csv`` is header-only "
+            "but ``p_entity_all_existing.csv`` carries chained values. "
+            "Lazy chain-summation needs the populated ppec input. "
+            "Tracked for Δ.12 fixture rebuild.")
 
     reader = SpineDbReader(sqlite, scenario)
     data_eager = load_flextool(work, db_reader=reader)
@@ -207,24 +224,54 @@ def test_p_entity_all_existing_lazy_vs_csv(
     period_in_use = _period_in_use_set(reader, active_solve, work)
     period_with_history = (_read_period_with_history(work)
                               or list(period_in_use))
+    # Δ.11 — match flextool's writer's solveFirst branch (divest is
+    # subtracted only on later solves).  Read from
+    # ``solve_data/p_model.csv`` exactly the way the eager loader does.
+    from flextool.engine_polars.input import _read_solve_first
+    from flextool.engine_polars._input_source import _read_csv_file
+    from polar_high_opt import Param as _Param
+    solve_first = _read_solve_first(work)
 
     ped = getattr(data_eager, "p_entity_divested", None)
-    pei = getattr(data_eager, "p_entity_invested", None)
     ppic = getattr(data_eager, "p_entity_previously_invested_capacity", None)
 
-    handoff_consumed = _handoff_already_consumed(work, None, ped, pei, ppic)
-    if handoff_consumed:
-        pytest.skip(
-            f"{work_name}: workdir CSV carries chained handoff value but "
-            "in-memory handoff carriers (FlexData) are empty.  "
-            "Re-derivation requires the chain runner's in-memory state "
-            "(Δ.7+); lazy port produces the pre-existing baseline only.")
+    # Chain-summation inputs sourced from the workdir CSVs (the same
+    # data the in-memory handoff would carry on a real chain run).
+    ppec_param = None
+    ppec_path = work / "solve_data" / "p_entity_period_existing_capacity.csv"
+    if ppec_path.exists():
+        try:
+            df = _read_csv_file(ppec_path)
+        except Exception:
+            df = None
+        if (df is not None and df.height > 0
+                and "p_entity_period_existing_capacity" in df.columns):
+            ppec_param = _Param(
+                ("e", "d"),
+                df.rename({"entity": "e", "period": "d"})
+                  .select("e", "d",
+                            pl.col("p_entity_period_existing_capacity")
+                                .cast(pl.Float64, strict=False)
+                                .fill_null(0.0)
+                                .alias("value")))
+    edd_hist_df = None
+    edd_path = work / "solve_data" / "edd_history.csv"
+    if edd_path.exists():
+        try:
+            edd_hist_df = _read_csv_file(edd_path)
+        except Exception:
+            edd_hist_df = None
+        if edd_hist_df is not None and edd_hist_df.height == 0:
+            edd_hist_df = None
 
     lazy_pae = _ex.p_entity_all_existing_from_handoff(
         reader, active_solve,
         period_with_history, period_in_use,
+        p_entity_period_existing_capacity=ppec_param,
         p_entity_previously_invested_capacity=ppic,
-        p_entity_divested=ped)
+        p_entity_divested=ped,
+        solve_first=solve_first,
+        edd_history=edd_hist_df)
     eager_pae = data_eager.p_entity_all_existing
     lazy_frame = lazy_pae.frame if lazy_pae is not None else None
     eager_frame = eager_pae.frame if eager_pae is not None else None
@@ -234,83 +281,6 @@ def test_p_entity_all_existing_lazy_vs_csv(
             f"p_entity_all_existing parity failed for {work_name}: {msg}\n"
             f"  eager:\n{eager_frame}\n  lazy:\n{lazy_frame}"
         )
-
-
-def _handoff_already_consumed(work: Path,
-                                  ppec, ped, pei, ppic) -> bool:
-    """Detect post-handoff fixtures where the workdir CSV is chained
-    but the in-memory carriers can't reproduce the chain via the simple
-    ``base + prior`` formula.
-
-    Two conditions trigger the skip:
-
-    1. ``solve_data/p_entity_period_existing_capacity.csv`` has
-       multiple history periods per entity (the chain-summation case
-       — flextool's preprocessing sums these inline at d_history).
-    2. The workdir's ``p_entity_all_existing.csv`` carries values that
-       can't be reproduced as ``pre_existing + p_entity_previously_invested_capacity``
-       given the in-memory FlexData carriers — i.e. the chain runner's
-       in-memory state would be different from the post-CSV snapshot.
-
-    For lazy parity these fixtures need the chain runner's in-memory
-    state (Δ.7+); the lazy helper produces the ``pre + prior`` baseline
-    which matches single-history fixtures only.
-    """
-    # The chain-sum trap: ppec.csv carries multiple history periods per
-    # entity (post-multi-solve snapshot).
-    ppec_path = work / "solve_data" / "p_entity_period_existing_capacity.csv"
-    if ppec_path.exists():
-        try:
-            df = pl.read_csv(ppec_path)
-        except Exception:
-            df = None
-        if df is not None and df.height > 0 and "entity" in df.columns:
-            # Count distinct periods per entity; if any > 1, the chain
-            # is multi-history and our simple formula won't match.
-            try:
-                counts = (df.group_by("entity")
-                              .agg(pl.col("period").n_unique().alias("n")))
-                max_n = counts["n"].max() or 0
-            except Exception:
-                max_n = 0
-            if max_n and max_n > 1:
-                return True
-    # Older snapshot tracking: when later_solves CSV carries values that
-    # exceed pre_existing + previously_invested, fall through.
-    later = work / "solve_data" / "p_entity_existing_capacity_later_solves.csv"
-    pre = work / "solve_data" / "p_entity_pre_existing.csv"
-    ppic_csv = work / "solve_data" / "p_entity_previously_invested_capacity.csv"
-    if not (later.exists() and pre.exists() and ppic_csv.exists()):
-        return False
-    try:
-        later_df = pl.read_csv(later)
-        pre_df = pl.read_csv(pre)
-        ppic_df = pl.read_csv(ppic_csv)
-    except Exception:
-        return False
-    if later_df.height == 0:
-        return False
-    pre_long = pre_df.rename({"entity": "e", "period": "d"})
-    ppic_long = (ppic_df.rename({"entity": "e", "period": "d"})
-                          .rename({"value": "ppic"})
-                  if "value" in ppic_df.columns else ppic_df)
-    if "ppic" not in ppic_long.columns:
-        return False
-    later_long = later_df.rename({"entity": "e", "period": "d"})
-    merged = (later_long
-                  .join(pre_long.select("e", "d",
-                                            pl.col("value").alias("pre")),
-                          on=["e", "d"], how="left")
-                  .join(ppic_long.select("e", "d", "ppic"),
-                          on=["e", "d"], how="left")
-                  .with_columns(
-                      pre=pl.col("pre").fill_null(0.0),
-                      ppic=pl.col("ppic").fill_null(0.0),
-                      diff=(pl.col("value").cast(pl.Float64, strict=False)
-                            - pl.col("pre") - pl.col("ppic")),
-                  ))
-    max_abs = merged["diff"].abs().max() or 0.0
-    return max_abs > 1e-3
 
 
 @pytest.mark.parametrize(
