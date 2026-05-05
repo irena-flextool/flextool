@@ -196,18 +196,39 @@ def _pt_node_inflow_lf(source: "InputSource",
     has_t = "t" in cols
     has_period = "period" in cols
     if has_t and not has_period:
-        # 1d_map(t) — direct.
-        explicit_lf = (raw.lazy()
-                          .select(pl.col("name").alias("n"),
-                                  pl.col("t"),
-                                  pl.col("value").cast(pl.Float64)))
+        # 1d_map(t) — entries with non-null t are direct (n, t, value);
+        # entries with t=null are scalar broadcasts for that entity (the
+        # Spine source plugin emits scalar parameters with all index
+        # columns null).  Mirrors flextool preprocessing's mixed-shape
+        # handling in entity_period_calc_params.write_pdtNodeInflow:
+        # ``ptNode_inflow[n, t]`` falls through to the entity's scalar
+        # default when no (n, t) row is present.
+        raw_lf = raw.lazy().select(
+            pl.col("name").alias("n"),
+            pl.col("t"),
+            pl.col("value").cast(pl.Float64),
+        )
+        explicit_lf = raw_lf.filter(pl.col("t").is_not_null())
+        scalar_lf = raw_lf.filter(pl.col("t").is_null()) \
+                           .select("n", pl.col("value").alias("scalar"))
         # Default broadcast across time for nodes without explicit (n, t).
         full_lf = (nodes_lf.join(time_lf, how="cross")
                            .join(explicit_lf, on=["n", "t"], how="left")
+                           .join(scalar_lf, on="n", how="left")
                            .with_columns(
-                               value=pl.col("value").fill_null(0.0)))
-        return (full_lf.select("n", "t", "value"),
-                explicit_lf.select("n", "t").unique())
+                               value=pl.col("value")
+                                       .fill_null(pl.col("scalar"))
+                                       .fill_null(0.0))
+                           .select("n", "t", "value"))
+        # The "explicit" set for peak-domain detection: any (n, t) the
+        # source has for that node — including scalar broadcasts (which
+        # cover ALL t).
+        explicit_t_set = explicit_lf.select("n", "t").unique()
+        scalar_n = scalar_lf.select("n").unique()
+        scalar_explicit = scalar_n.join(time_lf, how="cross") \
+                                   .select("n", "t")
+        return (full_lf,
+                pl.concat([explicit_t_set, scalar_explicit]).unique())
     if has_period and has_t:
         # 2d_map(period, t) — fold over period (sum) for the (n, t) raw.
         # Used by some stochastic-adjacent fixtures; drop period.
@@ -244,22 +265,47 @@ def _pt_node_inflow_lf(source: "InputSource",
 
 
 def _inflow_method_lf(source: "InputSource") -> pl.LazyFrame:
-    """Return ``[n, method]`` for nodes with a non-default inflow_method.
+    """Return ``[n, method]`` covering every node entity.
 
-    Mirrors ``method_with_fallback_sets.py::node__inflow_method``:
+    Mirrors
+    :func:`flextool.flextoolrunner.preprocessing.method_with_fallback_sets.write_node_inflow_method`:
     nodes with an explicit method use it; nodes WITHOUT an explicit
-    method inherit the schema default (``use_original``).  Since the
-    additive sum loop in :func:`write_pdtNodeInflow` only fires
-    branches 3a-3d when the corresponding method is present, we only
-    need to materialise the explicit methods PLUS a fallback flag.
+    method inherit the schema default (``use_original``).  Both the
+    explicit and the default-broadcast rows are emitted so the
+    downstream additive sum and the default-pdtNodeInflow domain
+    (every n NOT in ``no_inflow``) match flextool's pre-existing
+    output.
+
+    The schema default for ``node.inflow_method`` is None on the Spine
+    side (the Spine source plugin doesn't auto-broadcast); flextool's
+    preprocessing (per ``method_with_fallback_sets._INFLOW_METHOD_DEFAULT``)
+    fills in ``use_original`` for every node lacking an explicit row.
+    We mirror that here.
     """
     raw = _try_param(source, "node", "inflow_method")
+    nodes = _try_entities(source, "node")
     schema = {"n": pl.Utf8, "method": pl.Utf8}
+    if nodes is None:
+        if raw is None:
+            return pl.LazyFrame(schema=schema)
+        return (raw.lazy()
+                   .select(pl.col("name").alias("n"),
+                           pl.col("value").alias("method")))
+    nodes_lf = nodes.lazy().select(pl.col("name").alias("n"))
     if raw is None:
-        return pl.LazyFrame(schema=schema)
-    return (raw.lazy()
-               .select(pl.col("name").alias("n"),
-                       pl.col("value").alias("method")))
+        # Every node falls back to the schema default.
+        return nodes_lf.with_columns(method=pl.lit("use_original"))
+    explicit = (raw.lazy()
+                   .select(pl.col("name").alias("n"),
+                           pl.col("value").alias("method")))
+    explicit_n = explicit.select("n").unique() \
+                          .with_columns(_has_explicit=pl.lit(True))
+    fallback = (nodes_lf
+                  .join(explicit_n, on="n", how="left")
+                  .filter(pl.col("_has_explicit").fill_null(False).not_())
+                  .select(pl.col("n"))
+                  .with_columns(method=pl.lit("use_original")))
+    return pl.concat([explicit, fallback])
 
 
 # ---------------------------------------------------------------------------
@@ -508,11 +554,50 @@ def _has_pbt_node_inflow(source: "InputSource") -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _balance_nodes_lf(
+    workdir: Path | None,
+    balance_set: pl.DataFrame | None,
+) -> pl.LazyFrame | None:
+    """Return the ``nodeBalance ∪ nodeBalancePeriod`` set as a lazy
+    ``[n]`` frame, or ``None`` when the set can't be determined.
+
+    Mirrors flextool's ``write_pdtNodeInflow`` ``balance_union`` filter:
+    nodes outside the balance set get ``pdtNodeInflow = 0`` even if they
+    have explicit inflow.
+    """
+    parts: list[pl.LazyFrame] = []
+    if balance_set is not None and balance_set.height > 0:
+        col = next((c for c in ("n", "node", "name")
+                     if c in balance_set.columns), None)
+        if col is not None:
+            parts.append(balance_set.lazy().select(pl.col(col).alias("n")))
+    if workdir is not None:
+        for fname in ("nodeBalance.csv", "nodeBalancePeriod.csv"):
+            p = Path(workdir) / "solve_data" / fname
+            if not p.exists():
+                continue
+            try:
+                df = _read_csv_file(p)
+            except Exception:
+                continue
+            if df.height == 0:
+                continue
+            col = next((c for c in ("node", "n", "name")
+                         if c in df.columns), None)
+            if col is None:
+                continue
+            parts.append(df.lazy().select(pl.col(col).alias("n")))
+    if not parts:
+        return None
+    return pl.concat(parts).unique()
+
+
 def p_inflow_with_scaling_from_source(
     source: "InputSource",
     dt: pl.DataFrame,
     *,
     workdir: Path | None = None,
+    balance_set: pl.DataFrame | None = None,
 ) -> Param | None:
     """Compute the per-(n, d, t) scaled inflow Param.
 
@@ -563,8 +648,20 @@ def p_inflow_with_scaling_from_source(
 
     nodes_lf = eligible_nodes.lazy()
     dt_lf = dt.lazy()
-    time_lf = dt_lf.select("t").unique()
     period_lf = dt_lf.select("d").unique()
+    # dt_complete: per-period × full-timeline timesteps.  Used by the
+    # ``period_share_of_annual_flow`` sum (mod L1395).  Reads
+    # ``solve_data/steps_complete_solve.csv`` when available; falls back
+    # to dt for single-solve fixtures (dt_complete == dt).
+    dt_complete_lf = _dt_complete_lf(workdir, dt_lf)
+    # time_lf must cover the FULL timeline so ``ptNode_inflow`` is
+    # computed over every t (not just active dt).  flextool's
+    # preprocessing iterates over ``time`` set (== union of timeline
+    # timesteps), not ``time_in_use``.  We use dt_complete's t set as
+    # a proxy — it carries the full-period timesteps for every period
+    # in use.  When the workdir doesn't supply
+    # ``steps_complete_solve.csv``, fall back to dt's t-set.
+    time_lf = dt_complete_lf.select("t").unique()
 
     # ── ptNode_inflow ────────────────────────────────────────────────
     p_node_inflow_default = _scalar_default(source, "node", "inflow", 0.0)
@@ -591,10 +688,6 @@ def p_inflow_with_scaling_from_source(
     )
 
     # ── Per-(n, d) scaling parameters ─────────────────────────────────
-    # complete-time-in-use (dt_complete) typically equals dt for non-
-    # stochastic / non-rolling fixtures.  Reads ``solve_data/
-    # steps_complete_solve.csv`` when available; falls back to dt.
-    dt_complete_lf = _dt_complete_lf(workdir, dt_lf)
 
     psaf_lf = _compute_period_share_of_annual_flow(
         pti_lf, af_lf, method_lf, dt_complete_lf,
@@ -611,11 +704,22 @@ def p_inflow_with_scaling_from_source(
     )
 
     # ── Build per-(n, d, t) result ───────────────────────────────────
-    # Domain: (n, d, t) ∈ eligible_nodes × dt.
+    # Domain: (n, d, t) ∈ eligible_nodes × dt.  Non-balance-union nodes
+    # get pti=0 (mirrors flextool's ``write_pdtNodeInflow`` branch 3
+    # gate: ``value = 0.0; if in_balance: value += ...``).
+    balance_lf = _balance_nodes_lf(workdir, balance_set)
     base = nodes_lf.join(dt_lf, how="cross") \
                     .join(pti_lf, on=["n", "t"], how="left") \
                     .with_columns(value=pl.col("value").fill_null(0.0)) \
                     .rename({"value": "pti"})
+    if balance_lf is not None:
+        base = (base.join(balance_lf.with_columns(_in_balance=pl.lit(True)),
+                          on="n", how="left")
+                    .with_columns(
+                        pti=pl.when(pl.col("_in_balance").fill_null(False))
+                              .then(pl.col("pti"))
+                              .otherwise(pl.lit(0.0)))
+                    .drop("_in_balance"))
 
     method_pivot = (method_lf.with_columns(present=pl.lit(True))
         .collect()
@@ -871,9 +975,63 @@ def apply_p_inflow_with_scaling(
       * no node has a non-default inflow_method (caller falls back to
         the Γ.3.A ``p_inflow_from_source`` path which handles
         ``use_original``-only fixtures).
+
+    The ``flex_data.nodeBalance`` set (loaded earlier in
+    :func:`flextool.engine_polars.input.load_flextool`) is forwarded
+    as the ``balance_set`` filter — non-balance nodes get
+    ``pti = 0`` per flextool's ``write_pdtNodeInflow`` semantics.
+
+    Non-destructive overlay against the seed
+    (``solve_data/pdtNodeInflow.csv`` loaded earlier into
+    ``flex_data.p_inflow``): when the helper would zero out a seed
+    value because the source has no inflow data for a node BUT the
+    seed has it (e.g. fixture-specific CSV-only patches like
+    ``_gen_delay_source_coef::_patch_water_sink_demand`` which add
+    ``water_sink,inflow,-1.0`` to ``input/p_node.csv`` post-write_input
+    without mirroring it to Spine), the seed value survives via a
+    per-(n, d, t) MAX(abs) overlay restricted to nodes the source
+    doesn't know about.  Mirrors the safe-overlay pattern in
+    ``_param_matches`` / Δ.6's ``parameter_explicit`` policy: the
+    helper is authoritative for nodes the SOURCE explicitly carries;
+    the seed survives for nodes it doesn't.
     """
-    p = p_inflow_with_scaling_from_source(source, dt, workdir=workdir)
+    nb = getattr(flex_data, "nodeBalance", None)
+    p = p_inflow_with_scaling_from_source(source, dt, workdir=workdir,
+                                            balance_set=nb)
     if p is None:
         return False
+
+    # Non-destructive overlay: the helper is authoritative for nodes
+    # whose inflow the SOURCE has explicit rows for.  For nodes the
+    # source doesn't know about (e.g. fixture-CSV-only injections),
+    # restore the seed value via a per-(n, d, t) coalesce.
+    seed = getattr(flex_data, "p_inflow", None)
+    if seed is not None:
+        seed_fr = seed.frame if hasattr(seed, "frame") else seed
+        if (seed_fr is not None and seed_fr.height > 0
+                and set(seed_fr.columns).issuperset({"n", "d", "t", "value"})):
+            inflow_raw = _try_param(source, "node", "inflow")
+            authoritative_nodes: list[str] = []
+            if inflow_raw is not None:
+                authoritative_nodes = (inflow_raw["name"].unique()
+                                                          .to_list())
+            # Seed rows for non-authoritative nodes.
+            non_auth_seed = (seed_fr
+                .filter(~pl.col("n").is_in(authoritative_nodes))
+                .select("n", "d", "t",
+                        pl.col("value").cast(pl.Float64).alias("seed_v")))
+            if non_auth_seed.height > 0:
+                helper_fr = p.frame
+                merged = (helper_fr.lazy()
+                            .join(non_auth_seed.lazy(),
+                                  on=["n", "d", "t"], how="left")
+                            .with_columns(
+                                value=pl.when(pl.col("seed_v").is_null())
+                                        .then(pl.col("value"))
+                                        .otherwise(pl.col("seed_v")))
+                            .select("n", "d", "t", "value")
+                            .sort("n", "d", "t")
+                            .collect())
+                p = Param(("n", "d", "t"), merged)
     flex_data.p_inflow = p
     return True
