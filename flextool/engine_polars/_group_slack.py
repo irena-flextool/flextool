@@ -323,13 +323,14 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
         iner_pd = _slice_pdgroup(sd, "inertia_limit")
     nsync_pd = _slice_pdgroup(sd, "non_synchronous_limit")  # only via pdGroup.csv
 
-    # Set frames keyed by group name.
+    # Set frames keyed by group name.  Δ.12-drop: the corresponding
+    # ``pdGroup_capacity_margin`` / ``pdGroup_inertia_limit`` /
+    # ``pdGroup_non_synchronous_limit`` Params are produced
+    # authoritatively by ``apply_direct_params`` (Δ.4b).
     if cap_pd is not None:
         out["groupCapacityMargin"] = cap_pd.select("g").unique()
-        out["pdGroup_capacity_margin"] = Param(("g", "d"), cap_pd)
     if iner_pd is not None:
         out["groupInertia"] = iner_pd.select("g").unique()
-        out["pdGroup_inertia_limit"] = Param(("g", "d"), iner_pd)
 
     # groupNonSync: prefer the explicit input file (canonical), fallback to
     # pd_group's non_synchronous_limit slice.
@@ -343,46 +344,12 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
                                      .select("g").unique())
     if out["groupNonSync"] is None and nsync_pd is not None:
         out["groupNonSync"] = nsync_pd.select("g").unique()
-    if nsync_pd is not None:
-        out["pdGroup_non_synchronous_limit"] = Param(("g", "d"), nsync_pd)
 
-    # ── Penalty params (one slot per feature) ────────────────────────────
-    # Stored as standalone wide-or-long files in solve_data/.  Try
-    # _slice_pdgroup_topfile first, then fall back to pdGroup.csv slice.
-    for feat, file_, key, fallback in [
-        ("capacity_margin", "pdGroup_penalty_capacity_margin.csv",
-            "pdGroup_penalty_capacity_margin", "penalty_capacity_margin"),
-        ("inertia",         "pdGroup_penalty_inertia.csv",
-            "pdGroup_penalty_inertia", "penalty_inertia"),
-        ("non_synchronous", "pdGroup_penalty_non_synchronous.csv",
-            "pdGroup_penalty_non_synchronous", "penalty_non_synchronous"),
-    ]:
-        # The wide-by-group file has a "value column" we don't know in advance;
-        # try each plausible column name (the group name itself).  If that
-        # fails fall back to slicing pdGroup.csv.
-        df_pen = None
-        p = sd / file_
-        if p.exists():
-            raw = _read_csv_file(p)
-            if raw.height > 0:
-                if "solve" in raw.columns:
-                    raw = raw.drop("solve")
-                if {"period", "value"}.issubset(raw.columns) and "group" in raw.columns:
-                    df_pen = (raw.rename({"group": "g", "period": "d"})
-                                 .select("g", "d", "value")
-                                 .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
-                elif "period" in raw.columns:
-                    val_cols = [c for c in raw.columns if c != "period"]
-                    if val_cols:
-                        df_pen = (raw.unpivot(on=val_cols, index=["period"],
-                                              variable_name="g", value_name="value")
-                                    .rename({"period": "d"})
-                                    .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                                    .select("g", "d", "value"))
-        if df_pen is None:
-            df_pen = _slice_pdgroup(sd, fallback)
-        if df_pen is not None and df_pen.height > 0:
-            out[key] = Param(("g", "d"), df_pen.filter(pl.col("value").is_not_null()))
+    # Δ.12-drop: ``pdGroup_penalty_capacity_margin`` /
+    # ``pdGroup_penalty_inertia`` / ``pdGroup_penalty_non_synchronous``
+    # produced authoritatively by ``apply_direct_params`` (Δ.4b).  The
+    # legacy CSV reads of pdGroup_penalty_*.csv (and the pdGroup.csv
+    # ``penalty_*`` slice fallback) are dropped.
 
     # ── group_node ────────────────────────────────────────────────────────
     # Canonical preprocessing target: solve_data/group_node.csv.
@@ -448,14 +415,17 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
                  .select("g", "d", "value"))
         out["p_group_capacity_for_scaling"] = Param(("g", "d"), gcs)
 
-    # ── inertia_constant params + index sets ─────────────────────────────
+    # ── inertia_constant index sets ─────────────────────────────
+    # Δ.12-drop: ``p_process_sink_inertia_constant`` /
+    # ``p_process_source_inertia_constant`` Params are produced
+    # authoritatively by ``apply_direct_params`` (Δ.4b).  The set frames
+    # ``process_sink_inertia`` / ``process_source_inertia`` are kept on
+    # the seed path for SIMPLE_PROJECTIONS' fall-through semantics.
     sink_df, src_df = _read_inertia_constants(inp)
     if sink_df is not None:
         out["process_sink_inertia"]                 = sink_df.select("p", "sink").unique()
-        out["p_process_sink_inertia_constant"]      = Param(("p", "sink"), sink_df)
     if src_df is not None:
         out["process_source_inertia"]               = src_df.select("p", "source").unique()
-        out["p_process_source_inertia_constant"]    = Param(("p", "source"), src_df)
 
     # ── non-sync supporting sets ─────────────────────────────────────────
     p_sink_ns = _read_csv_or_none(sd / "process__sink_nonSync.csv")
@@ -472,38 +442,11 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
         out["process_group_inside_nonSync"] = (
             p_grp_inside.rename(rn).select("p", "g").unique())
 
-    # ── exogenous inflow split (used by non_sync_constraint) ─────────────
-    out["p_positive_inflow"]  = (Param(("n", "d", "t"),
-                                  _read_inflow_signed(sd, "pos"))
-                                  if _read_inflow_signed(sd, "pos") is not None else None)
-    out["p_negative_inflow"]  = (Param(("n", "d", "t"),
-                                  _read_inflow_signed(sd, "neg"))
-                                  if _read_inflow_signed(sd, "neg") is not None else None)
-
-    # ── pdtNodeInflow_per_step (for capacity_margin RHS) ─────────────────
-    # The .mod RHS uses ``pdtNodeInflow[n, d, t] / step_duration[d, t]``.
-    # We have inflow in two forms:  (1) preprocessed Param ``p_inflow``
-    # from FlexData (already on caller side), and (2) raw pdtNodeInflow.csv
-    # in solve_data/.  For the merge agent's convenience we recompute the
-    # ratio here from the canonical CSV — same operation .mod does.
-    inflow_path = sd / "pdtNodeInflow.csv"
-    if inflow_path.exists():
-        from .input import _read_wide_per_entity   # reuse shape helper
-        inflow_long = _read_wide_per_entity(inflow_path, rename={"entity": "n"})
-        # Need step_duration to divide.  Reuse steps_in_use.csv.
-        siu_path = sd / "steps_in_use.csv"
-        if siu_path.exists():
-            siu = (_read_csv_file(siu_path)
-                     .rename({"period": "d", "step": "t",
-                              "step_duration": "dur"})
-                     .with_columns(pl.col("dur").cast(pl.Float64, strict=False))
-                     .select("d", "t", "dur"))
-            joined = (inflow_long.join(siu, on=["d", "t"], how="inner")
-                                  .with_columns(value=pl.col("value")
-                                                       / pl.col("dur"))
-                                  .select("n", "d", "t", "value"))
-            if joined.height > 0:
-                out["pdtNodeInflow_per_step"] = Param(("n", "d", "t"), joined)
+    # Δ.12-drop: ``p_positive_inflow`` / ``p_negative_inflow`` /
+    # ``pdtNodeInflow_per_step`` produced authoritatively by
+    # ``apply_derived_c`` (helpers ``p_positive_inflow_from_inflow`` /
+    # ``p_negative_inflow_from_inflow`` /
+    # ``pdtNodeInflow_per_step_from_inflow``).  Seeds dropped.
 
     return out
 
