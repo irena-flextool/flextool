@@ -30,6 +30,12 @@ import polars as pl
 
 from polar_high import Param
 
+from flextool.engine_polars._param_shapes import (
+    broadcast_to_period,
+    broadcast_to_period_time,
+    resolve_param_shape,
+)
+
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
 
@@ -852,17 +858,27 @@ def p_group_min_cumulative_flow_from_source(source: "InputSource") -> Param | No
 def pdt_max_instant_flow_from_source(source: "InputSource",
                                       period_filter: pl.DataFrame | None = None,
                                       ) -> Param | None:
-    return _entity_period_time_param(source, "group", "max_instant_flow", "g",
-                                        filter_zero=True,
-                                        period_filter=period_filter)
+    """``group.max_instant_flow`` → ``Param(("g", "d", "t"))``.
+
+    Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
+    shapes: scalar / 1d_map[period] / 1d_map[time] / 2d_map[period,time].
+    """
+    resolved = resolve_param_shape(source, "group", "max_instant_flow")
+    return broadcast_to_period_time(
+        resolved, "g", period_filter, filter_zero=True)
 
 
 def pdt_min_instant_flow_from_source(source: "InputSource",
                                       period_filter: pl.DataFrame | None = None,
                                       ) -> Param | None:
-    return _entity_period_time_param(source, "group", "min_instant_flow", "g",
-                                        filter_zero=True,
-                                        period_filter=period_filter)
+    """``group.min_instant_flow`` → ``Param(("g", "d", "t"))``.
+
+    Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
+    shapes: scalar / 1d_map[period] / 1d_map[time] / 2d_map[period,time].
+    """
+    resolved = resolve_param_shape(source, "group", "min_instant_flow")
+    return broadcast_to_period_time(
+        resolved, "g", period_filter, filter_zero=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1044,33 +1060,31 @@ def p_startup_cost_from_source(source: "InputSource",
 def p_node_availability_from_source(source: "InputSource",
                                      period_filter: pl.DataFrame | None = None,
                                      ) -> Param | None:
-    """``node.availability`` Map(period→time) → ``Param(("n", "d", "t"))``.
+    """``node.availability`` → ``Param(("n", "d", "t"))``.
 
+    Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
+    shapes: scalar / 1d_map[period] / 1d_map[time] / 2d_map[period,time].
     CSV path slices ``pdtNode.csv`` and filters to nodeState entities at
     the apply site; the helper here returns ALL availability rows.  The
-    nodeState filter is applied downstream by ``_load_storage`` — the
-    DB-direct path receives the unfiltered Param and the same filter
-    runs at the consumer (no parity divergence on already-filtered
-    fixtures: every node referenced by the parameter is a node).
-    Δ.12c-fix gap #1: scalar / 1d_map(time) / 1d_map(period) broadcast
-    via ``period_filter``.
+    nodeState filter is applied downstream by ``_load_storage``.
     """
-    return _entity_period_time_param(source, "node", "availability", "n",
-                                        period_filter=period_filter)
+    resolved = resolve_param_shape(source, "node", "availability")
+    return broadcast_to_period_time(resolved, "n", period_filter)
 
 
 def p_storage_state_reference_value_from_source(source: "InputSource",
                                                 period_filter: pl.DataFrame | None = None,
                                                 ) -> Param | None:
-    """``node.storage_state_reference_value`` Map(period→time) →
-    ``Param(("n", "d", "t"))``.
+    """``node.storage_state_reference_value`` → ``Param(("n", "d", "t"))``.
 
+    Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
+    shapes: scalar / 1d_map[period] / 1d_map[time] / 2d_map[period,time].
     CSV path (``_load_storage``) gates on ``use_reference_value`` set;
     the gate stays on the consumer side.
     """
-    return _entity_period_time_param(source, "node",
-                                        "storage_state_reference_value", "n",
-                                        period_filter=period_filter)
+    resolved = resolve_param_shape(
+        source, "node", "storage_state_reference_value")
+    return broadcast_to_period_time(resolved, "n", period_filter)
 
 
 # ---------------------------------------------------------------------------
@@ -1079,31 +1093,35 @@ def p_storage_state_reference_value_from_source(source: "InputSource",
 def p_co2_price_from_source(source: "InputSource",
                              period_filter: pl.DataFrame | None = None,
                              ) -> Param | None:
-    """``group.co2_price`` Map(period→time) → ``Param(("g", "d", "t"))``.
+    """``group.co2_price`` → ``Param(("g", "d", "t"))``.
 
-    CSV path slices ``pdtGroup.csv`` (param='co2_price').  None default
-    on the schema — explicit rows only.
+    Δ.17c — uses :func:`._param_shapes.resolve_param_shape` to discover
+    the actual shape from the DB and validate against the per-parameter
+    allow-list (scalar / 1d_map[period] / 1d_map[time] /
+    2d_map[period,time]).  CSV path slices ``pdtGroup.csv``
+    (param='co2_price').  None default on the schema — explicit rows
+    only.
     """
-    return _entity_period_time_param(source, "group", "co2_price", "g",
-                                        period_filter=period_filter)
+    resolved = resolve_param_shape(source, "group", "co2_price")
+    return broadcast_to_period_time(resolved, "g", period_filter)
 
 
 def p_co2_max_period_from_source(source: "InputSource",
                                   period_filter: pl.DataFrame | None = None,
                                   ) -> Param | None:
-    """``group.co2_max_period`` 1d_map(period) → ``Param(("g", "d"))``.
+    """``group.co2_max_period`` → ``Param(("g", "d"))``.
 
-    CSV path keys this off ``inp/pd_group.csv`` slice.  None default on
-    the schema; the CSV path emits when at least one (g, d) row.
+    Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
+    shapes: scalar / 1d_map[period].  CSV path keys this off
+    ``inp/pd_group.csv`` slice.
 
     Gate-coupled note: at the consumer site this Param is only emitted
     into the LP when the (g, c, n) join with ``commodity_node_co2`` ×
     ``group__node`` is non-empty (see ``_load_co2_cap``).  We return the
     Param unconditionally — the consumer decides whether to wire it.
-    Δ.12c-fix: ``period_filter`` enables scalar→(period) broadcast.
     """
-    return _entity_period_scalar(source, "group", "co2_max_period", "g",
-                                  period_filter=period_filter)
+    resolved = resolve_param_shape(source, "group", "co2_max_period")
+    return broadcast_to_period(resolved, "g", period_filter)
 
 
 # ---------------------------------------------------------------------------
@@ -1407,38 +1425,22 @@ def _entity_scalar_with_default(source: "InputSource", entity_class: str,
 def p_process_availability_from_source(source: "InputSource",
                                         period_filter: pl.DataFrame | None = None,
                                         ) -> Param | None:
-    """``unit/connection.availability`` Map(period→time) →
-    ``Param(("p", "d", "t"))``.
+    """``unit/connection.availability`` → ``Param(("p", "d", "t"))``.
 
-    Default 1.0 (schema).  CSV path slices ``pdtProcess.csv``
+    Δ.17c — uses :func:`._param_shapes.resolve_param_shape` for each of
+    ``unit.availability`` and ``connection.availability`` independently
+    (Spine carries them on separate classes; the LP consumes the union).
+    Allowed shapes per class: scalar / 1d_map[period] / 1d_map[time] /
+    2d_map[period,time].  CSV path slices ``pdtProcess.csv``
     (param='availability') and emits explicit rows only.
-
-    Note: the unioned (unit + connection) parameter often arrives in
-    mixed Spine shapes (1d_map(time) reads as ``[name, x, value]``,
-    scalar as ``[name, value]``).  The Δ.12c-fix gap #1 broadcast
-    cascade is intentionally NOT enabled here — the mixed-shape /
-    ``x`` column path needs dedicated normalisation that's deferred
-    to a future delta.  The helper continues to emit only the canonical
-    Map(period→time) rows.
     """
     parts: list[pl.LazyFrame] = []
     for cls in ("unit", "connection"):
-        try:
-            df = source.parameter_explicit(cls, "availability")
-        except (KeyError, AttributeError):
-            try:
-                df = source.parameter(cls, "availability")
-            except KeyError:
-                continue
-        if df is None or df.height == 0:
+        resolved = resolve_param_shape(source, cls, "availability")
+        param = broadcast_to_period_time(resolved, "p", period_filter)
+        if param is None:
             continue
-        cols = df.columns
-        if not {"name", "period", "t", "value"}.issubset(cols):
-            continue
-        parts.append(df.lazy()
-                       .rename({"name": "p", "period": "d"})
-                       .filter(pl.col("value").is_not_null())
-                       .select("p", "d", "t", "value"))
+        parts.append(param.frame.lazy())
     if not parts:
         return None
     out = pl.concat(parts).collect()
@@ -1450,13 +1452,16 @@ def p_process_availability_from_source(source: "InputSource",
 def p_commodity_price_from_source(source: "InputSource",
                                    period_filter: pl.DataFrame | None = None,
                                    ) -> Param | None:
-    """``commodity.price`` Map(period→time) → ``Param(("c", "d", "t"))``.
+    """``commodity.price`` → ``Param(("c", "d", "t"))``.
 
-    None default (schema).  CSV path slices ``pdtCommodity.csv``
+    Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
+    shapes: scalar / 1d_map[period] / 1d_map[time] (no 2d_map per
+    flextool's ``write_pdtCommodity`` cascade pt → pd → p → 0).  None
+    default on the schema; CSV path slices ``pdtCommodity.csv``
     (param='price') and emits explicit rows only.
     """
-    return _entity_period_time_param(source, "commodity", "price", "c",
-                                        period_filter=period_filter)
+    resolved = resolve_param_shape(source, "commodity", "price")
+    return broadcast_to_period_time(resolved, "c", period_filter)
 
 
 # ---------------------------------------------------------------------------

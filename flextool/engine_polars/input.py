@@ -835,13 +835,12 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
     # variant fixtures or all fixtures explicitly pass db_reader=.
     slope_long = _read_wide_per_entity(sd / "pdtProcess_slope.csv", rename={"entity":"p"})
-    # commodity price sliced from canonical pdtCommodity.csv —
-    # `pdtCommodity[c, 'price', d, t]` in .mod.
-    # TODO(Δ.12c+): retire pdtCommodity.csv slice when
-    # ``p_commodity_price_from_source`` covers the scalar-broadcast / 1d_map
-    # cascade — today the helper only handles Map(period→time).
-    cp_long = _slice_param(sd / "pdtCommodity.csv", "commodity", "price",
-                            rename_entity_to="c")
+    # Δ.17c Gap C: ``p_commodity_price`` produced authoritatively by
+    # ``apply_direct_params`` via ``p_commodity_price_from_source``
+    # (uses the ``_param_shapes`` resolver — scalar / 1d_map[period] /
+    # 1d_map[time] cascade with explicit allow-list).  Local
+    # pdtCommodity.csv slice dropped.
+    cp_long = None
 
     # flow_upper is the canonical ``p_flow_max.csv`` long-format file
     # the .mod reads via ``table data IN`` (`[process, source, sink,
@@ -864,7 +863,21 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         unitsize = Param(("p",), unitsize_p.select("p","value")),
         flow_upper = Param(("p","source","sink","d","t"), flow_upper_psskdt),
         slope = Param(("p","d","t"), slope_long.select("p","d","t","value")),
-        commodity_price = Param(("c","d","t"), cp_long),
+        # Δ.17c Gap C: ``p_commodity_price`` populated authoritatively by
+        # ``apply_direct_params``.  The seed used to materialise a fully-
+        # zero-filled (c, d, t) Param for fixtures with no explicit price
+        # (preprocessed pdtCommodity.csv emits 0.0 rows for every cell);
+        # the model.py ``PROCESSES`` invariant requires the field non-None.
+        # We satisfy it with an empty Param as a placeholder; ``Sum(Where(
+        # ..., ...) * d.p_commodity_price * ...)`` joins yield no rows
+        # which is the same behaviour as zero-filled rows in the LP.
+        commodity_price = (Param(("c","d","t"), cp_long)
+                            if cp_long is not None
+                            else Param(("c","d","t"),
+                                        pl.DataFrame(schema={
+                                            "c": pl.Utf8, "d": pl.Utf8,
+                                            "t": pl.Utf8,
+                                            "value": pl.Float64}))),
     )
 
 
@@ -910,15 +923,12 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
         p_comm.filter(pl.col("commodityParam")=="co2_content")
               .rename({"commodity":"c","p_commodity":"value"})
               .select("c","value"))
-    # group co2_price sliced from canonical pdtGroup.csv —
-    # `pdtGroup[g, 'co2_price', d, t]` in .mod.
-    # TODO(Δ.12c+): retire pdtGroup.csv co2_price slice when
-    # ``p_co2_price_from_source`` covers the scalar-broadcast / 1d_map(time)
-    # cascade — today the helper only handles Map(period→time) and falls
-    # back to this seed.
-    cp = _slice_param(sd / "pdtGroup.csv", "group", "co2_price",
-                       rename_entity_to="g")
-    co2_price = Param(("g","d","t"), cp) if cp is not None else None
+    # Δ.17c Gap C: ``p_co2_price`` produced authoritatively by
+    # ``apply_direct_params`` via ``p_co2_price_from_source`` (uses the
+    # ``_param_shapes`` resolver — full scalar / 1d_map[period] /
+    # 1d_map[time] / 2d_map[period,time] cascade with explicit allow-list).
+    # Local CSV slice dropped.
+    co2_price = None
     return (flow_from_co2_priced, flow_from_co2_priced_noEff,
             co2_content, co2_price)
 
@@ -964,11 +974,11 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             flow_from_co2_capped_noEff = noeff
     if flow_from_co2_capped_eff is None and flow_from_co2_capped_noEff is None:
         return (None, None, None, None, None)
-    pd_group = _read_csv_file(inp / "pd_group.csv")
-    cap_long = (pd_group.filter(pl.col("groupParam")=="co2_max_period")
-                        .rename({"group":"g","period":"d","pd_group":"value"})
-                        .select("g","d","value"))
-    co2_max_period = Param(("g","d"), cap_long)
+    # Δ.17c Gap C: ``p_co2_max_period`` produced authoritatively by
+    # ``apply_direct_params`` via ``p_co2_max_period_from_source`` (uses
+    # the ``_param_shapes`` resolver — scalar / 1d_map[period] cascade
+    # with explicit allow-list).  Local pd_group.csv slice dropped.
+    co2_max_period = None
     period = dt.select("d").unique()
     return (g_max, flow_from_co2_capped_eff, flow_from_co2_capped_noEff,
             co2_max_period, g_max.join(period, how="cross"))
@@ -1868,18 +1878,14 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         if use_reference_value.height == 0:
             use_reference_value = None
 
-    # storage_state_reference_value: sliced from canonical pdtNode.csv
-    # (parameter = ``storage_state_reference_value``).
+    # Δ.17c Gap C: ``p_storage_state_reference_value`` produced
+    # authoritatively by ``apply_direct_params`` via
+    # ``p_storage_state_reference_value_from_source`` (uses the
+    # ``_param_shapes`` resolver — full scalar / 1d_map[period] /
+    # 1d_map[time] / 2d_map[period,time] cascade).  The
+    # ``use_reference_value`` consumer-side filter runs in apply_direct_params
+    # — kept here as None so the override path takes ownership.
     p_ssrv = None
-    if use_reference_value is not None:
-        ssrv_long = _slice_param(sd / "pdtNode.csv", "node",
-                                  "storage_state_reference_value",
-                                  rename_entity_to="n")
-        if ssrv_long is not None and ssrv_long.height > 0:
-            ssrv_long = (ssrv_long
-                .filter(pl.col("n").is_in(use_reference_value["n"])))
-            if ssrv_long.height > 0:
-                p_ssrv = Param(("n", "d", "t"), ssrv_long)
 
     # ─── Intraperiod-block (bind_intraperiod_blocks) sets ────────────────
     # Used by ``stateConstantWithinBlock_eq`` and ``nodeBalanceBlock_eq``
@@ -1972,17 +1978,11 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # ``_read_csv_file`` call retired).
     node_profile_upper_df = node_profile_lower_df = node_profile_fixed_df = None
 
-    # Node availability (n, d, t) — sliced from pdtNode[n, 'availability', d, t].
-    # Used as an RHS multiplier on profile_state_* constraints (mod:2645).
+    # Δ.17c Gap C: ``p_node_availability`` produced authoritatively by
+    # ``apply_direct_params`` via ``p_node_availability_from_source``
+    # (uses the ``_param_shapes`` resolver — full broadcast cascade with
+    # explicit allow-list).  Local pdtNode.csv slice dropped.
     p_node_avail = None
-    avail_long = _slice_param(sd / "pdtNode.csv", "node", "availability",
-                                rename_entity_to="n")
-    if avail_long is not None and avail_long.height > 0:
-        # Restrict to nodeState entries.
-        avail_long = (avail_long
-            .filter(pl.col("n").is_in(nodeState["n"])))
-        if avail_long.height > 0:
-            p_node_avail = Param(("n", "d", "t"), avail_long)
 
     return dict(
         nodeState = nodeState,
@@ -2063,12 +2063,12 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
     # (no investment yet) this equals base_cap_pd.
     existing_count = Param(("p","d"), cap_pd.rename({"base":"value"}))
 
-    # availability sliced from canonical pdtProcess.csv —
-    # `pdtProcess[p, 'availability', d, t]` in .mod.
-    avail_long = _slice_param(sd / "pdtProcess.csv", "process", "availability",
-                               rename_entity_to="p")
-    availability = (Param(("p","d","t"), avail_long)
-                    if avail_long is not None else None)
+    # Δ.17c Gap C: ``p_process_availability`` produced authoritatively
+    # by ``apply_direct_params`` via ``p_process_availability_from_source``
+    # (uses the ``_param_shapes`` resolver — unions ``unit.availability``
+    # + ``connection.availability`` with full broadcast cascade).  Local
+    # pdtProcess.csv slice dropped.
+    availability = None
 
     return upper, lower, fixed, profile_value, existing_count, availability
 
@@ -2303,15 +2303,14 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     out["e_invest_min_total"]         = None
     out["e_divest_min_total"]         = None
 
-    # ── Group params from pdtGroup slices (period+time) ──────────────────
-    # TODO(Δ.12c+): retire pdtGroup.csv slices for ``pdt_max_instant_flow`` /
-    # ``pdt_min_instant_flow`` when ``apply_direct_params`` covers the
-    # scalar-broadcast / 1d_map(time) cascade — today the helper handles
-    # only Map(period→time) and falls back to this seed.
-    def _slice_pdtgroup_local(name: str):
-        return _slice_pdtgroup(name)
-    pdt_max = _slice_pdtgroup_local("max_instant_flow")
-    pdt_min = _slice_pdtgroup_local("min_instant_flow")
+    # Δ.17c Gap C: ``pdt_max_instant_flow`` / ``pdt_min_instant_flow``
+    # produced authoritatively by ``apply_direct_params`` via
+    # ``pdt_max_instant_flow_from_source`` / ``pdt_min_instant_flow_from_source``
+    # (use the ``_param_shapes`` resolver — full scalar / 1d_map[period] /
+    # 1d_map[time] / 2d_map[period,time] cascade).  Local pdtGroup.csv
+    # slices dropped.
+    pdt_max = None
+    pdt_min = None
     out["p_group_invest_max_period"]      = None
     out["p_group_invest_min_period"]      = None
     out["p_group_retire_max_period"]      = None
