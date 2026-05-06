@@ -473,6 +473,176 @@ def process_source_sink_noEff(source: "InputSource",
               .collect())
 
 
+# ---------------------------------------------------------------------------
+# Δ.17c Gap D — process_source_sink_ramp_limit_* / _ramp_cost helpers
+# ---------------------------------------------------------------------------
+#
+# Mirror of ``flextool/flextoolrunner/preprocessing/process_arc_unions.py::
+# write_process_source_sink_ramp_family`` (mod L1660-1688).  Five sets:
+#
+#   * ``process_source_sink_ramp_limit_source_up`` — (p, src, sink) where
+#       (p, src, m) ∈ process__node__ramp_method, m ∈ RAMP_LIMIT_METHOD
+#       AND p_process_source[p, src, 'ramp_speed_up'] > 0.
+#   * Symmetric for sink/up, source/down, sink/down.
+#   * ``process_source_sink_ramp_cost`` — OR of source/sink-side membership
+#       in RAMP_COST_METHOD (no speed-gate).
+#
+# In Spine, the per-arc ramp_method + ramp_speed_*  parameters live on
+# ``unit__inputNode`` (source side) and ``unit__outputNode`` (sink side).
+# Connections never carry ramp methods — flextool's preprocessing reads
+# only ``input/process__node__ramp_method.csv`` which is the union of
+# ``unit__inputNode.ramp_method`` ∪ ``unit__outputNode.ramp_method``.
+#
+# User-supplied MathProg snippets (Δ.17c dispatch, Gap D):
+#
+#     set process_source_sink_ramp_limit_source_up :=
+#         {(p, source, sink) in process_source_sink :
+#             ( sum{(p, source, m) in process_node_ramp_method
+#                   : m in ramp_limit_method} 1
+#               && p_process_source[p, source, 'ramp_speed_up'] > 0
+#             )};
+#
+#     set process_source_sink_ramp_cost :=
+#         {(p, source, sink) in process_source_sink :
+#             sum{(p, source, m) in process_node_ramp_method
+#                  : m in ramp_cost_method} 1
+#             || sum{(p, sink, m) in process_node_ramp_method
+#                     : m in ramp_cost_method} 1};
+
+
+# Mirror of flextool/flextoolrunner/preprocessing/_method_constants.py.
+# Kept locally to avoid an import dependency on the runner package.
+_RAMP_LIMIT_METHOD: frozenset[str] = frozenset(("ramp_limit", "both"))
+_RAMP_COST_METHOD: frozenset[str] = frozenset(("ramp_cost", "both"))
+
+
+def _ramp_pairs(source: "InputSource",
+                relationship_class: str,
+                method_set: "frozenset[str]") -> "pl.LazyFrame":
+    """Return ``[unit, node]`` pairs whose ``ramp_method`` value is in
+    *method_set*, drawn from *relationship_class* ∈
+    ``{unit__inputNode, unit__outputNode}``.
+
+    Empty / missing parameter → empty LazyFrame with schema ``[unit, node]``.
+    """
+    df = _try_param(source, relationship_class, "ramp_method")
+    if df is None:
+        return pl.DataFrame(
+            schema={"unit": pl.Utf8, "node": pl.Utf8}).lazy()
+    return (df.lazy()
+              .filter(pl.col("value").is_in(list(method_set)))
+              .select("unit", "node"))
+
+
+def _ramp_speed_positive_pairs(source: "InputSource",
+                                  relationship_class: str,
+                                  parameter_name: str) -> "pl.LazyFrame":
+    """Return ``[unit, node]`` pairs whose ``parameter_name`` value
+    (``ramp_speed_up`` / ``ramp_speed_down``) is strictly > 0.
+    """
+    df = _try_param(source, relationship_class, parameter_name)
+    if df is None:
+        return pl.DataFrame(
+            schema={"unit": pl.Utf8, "node": pl.Utf8}).lazy()
+    return (df.lazy()
+              .filter(pl.col("value").is_not_null() & (pl.col("value") > 0.0))
+              .select("unit", "node"))
+
+
+def _ramp_limit_set(source: "InputSource",
+                     side: str,
+                     direction: str) -> pl.DataFrame:
+    """Build ``process_source_sink_ramp_limit_<side>_<direction>``.
+
+    *side* — ``"source"`` or ``"sink"`` (the column the relationship-side
+    constraint applies to).
+    *direction* — ``"up"`` or ``"down"`` (which speed parameter to gate).
+    """
+    if side == "source":
+        rel_class = "unit__inputNode"
+        ramp_pairs = _ramp_pairs(source, rel_class, _RAMP_LIMIT_METHOD) \
+                        .rename({"unit": "p", "node": "source"})
+        speed_pairs = _ramp_speed_positive_pairs(
+            source, rel_class, f"ramp_speed_{direction}") \
+                .rename({"unit": "p", "node": "source"})
+        gated = ramp_pairs.join(speed_pairs, on=["p", "source"],
+                                  how="inner")
+        canonical = process_source_sink_canonical(source).lazy()
+        return (canonical
+                  .select("p", "source", "sink")
+                  .unique()
+                  .join(gated, on=["p", "source"], how="inner")
+                  .select("p", "source", "sink")
+                  .unique()
+                  .sort("p", "source", "sink")
+                  .collect())
+    if side == "sink":
+        rel_class = "unit__outputNode"
+        ramp_pairs = _ramp_pairs(source, rel_class, _RAMP_LIMIT_METHOD) \
+                        .rename({"unit": "p", "node": "sink"})
+        speed_pairs = _ramp_speed_positive_pairs(
+            source, rel_class, f"ramp_speed_{direction}") \
+                .rename({"unit": "p", "node": "sink"})
+        gated = ramp_pairs.join(speed_pairs, on=["p", "sink"],
+                                  how="inner")
+        canonical = process_source_sink_canonical(source).lazy()
+        return (canonical
+                  .select("p", "source", "sink")
+                  .unique()
+                  .join(gated, on=["p", "sink"], how="inner")
+                  .select("p", "source", "sink")
+                  .unique()
+                  .sort("p", "source", "sink")
+                  .collect())
+    raise ValueError(f"_ramp_limit_set: unknown side {side!r}")
+
+
+def process_source_sink_ramp_limit_source_up(
+    source: "InputSource",
+) -> pl.DataFrame:
+    """Δ.17c Gap D — see module docstring above for the MathProg shape."""
+    return _ramp_limit_set(source, "source", "up")
+
+
+def process_source_sink_ramp_limit_source_down(
+    source: "InputSource",
+) -> pl.DataFrame:
+    return _ramp_limit_set(source, "source", "down")
+
+
+def process_source_sink_ramp_limit_sink_up(
+    source: "InputSource",
+) -> pl.DataFrame:
+    return _ramp_limit_set(source, "sink", "up")
+
+
+def process_source_sink_ramp_limit_sink_down(
+    source: "InputSource",
+) -> pl.DataFrame:
+    return _ramp_limit_set(source, "sink", "down")
+
+
+def process_source_sink_ramp_cost(source: "InputSource") -> pl.DataFrame:
+    """``{(p, src, sink) ∈ pss : ramp_cost on source-side OR sink-side}``.
+
+    Mirrors mod L1115-1119 + the user's Δ.17c MathProg snippet (no
+    speed-gate; pure method membership).
+    """
+    src_cost = (_ramp_pairs(source, "unit__inputNode", _RAMP_COST_METHOD)
+                  .rename({"unit": "p", "node": "source"}))
+    sink_cost = (_ramp_pairs(source, "unit__outputNode", _RAMP_COST_METHOD)
+                   .rename({"unit": "p", "node": "sink"}))
+    canonical = process_source_sink_canonical(source).lazy().select(
+        "p", "source", "sink").unique()
+    via_source = canonical.join(src_cost, on=["p", "source"], how="inner")
+    via_sink = canonical.join(sink_cost, on=["p", "sink"], how="inner")
+    return (pl.concat([via_source, via_sink], how="vertical_relaxed")
+              .select("p", "source", "sink")
+              .unique()
+              .sort("p", "source", "sink")
+              .collect())
+
+
 def flow_from_commodity_eff(source: "InputSource",
                              pss_eff: pl.DataFrame | None = None) -> pl.DataFrame:
     """``pss_eff ⋈ commodity__node`` on ``source = node`` →
@@ -1663,6 +1833,17 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "commodity_with_ladder_cumulative": commodity_with_ladder_cumulative,
     "commodity__tier_ann": commodity__tier_ann,
     "commodity__tier_cum": commodity__tier_cum,
+    # Δ.17c Gap D — process_source_sink × ramp_method partitions.
+    "process_source_sink_ramp_limit_source_up":
+        process_source_sink_ramp_limit_source_up,
+    "process_source_sink_ramp_limit_source_down":
+        process_source_sink_ramp_limit_source_down,
+    "process_source_sink_ramp_limit_sink_up":
+        process_source_sink_ramp_limit_sink_up,
+    "process_source_sink_ramp_limit_sink_down":
+        process_source_sink_ramp_limit_sink_down,
+    "process_source_sink_ramp_cost":
+        process_source_sink_ramp_cost,
 }
 
 

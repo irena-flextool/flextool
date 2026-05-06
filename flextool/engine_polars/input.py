@@ -356,6 +356,13 @@ class FlexData:
     process_source_sink_ramp_limit_sink_down: pl.DataFrame | None = None
     process_source_sink_ramp_limit_source_up: pl.DataFrame | None = None
     process_source_sink_ramp_limit_source_down: pl.DataFrame | None = None
+    # Δ.17c Gap D — process_source_sink_ramp_cost (mod L1115-1119): (p, src,
+    # sink) rows whose source-side OR sink-side ramp_method ∈
+    # RAMP_COST_METHOD.  Populated by ``apply_projection_params``; not yet
+    # consumed by model.py (the LP doesn't carry a per-arc ramp-cost
+    # objective term in the current scope) but kept for parity with
+    # flextool's preprocessing set family.
+    process_source_sink_ramp_cost: pl.DataFrame | None = None
     p_ramp_speed_up_sink:   Param | None = None    # (p, sink)
     p_ramp_speed_down_sink: Param | None = None
     p_ramp_speed_up_source:   Param | None = None  # (p, source)
