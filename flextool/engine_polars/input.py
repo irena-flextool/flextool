@@ -1737,35 +1737,14 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         .agg(pl.col("t").min().alias("t"))
         .select("n", "d", "t"))
 
-    # ``p_state_existing_capacity`` / ``p_state_unitsize`` / ``p_state_upper``
-    # are produced by ``apply_derived_e`` when ``nodeState`` is non-empty
-    # AND the workdir's auto-resolved SpineDbReader fires.  Fixtures whose
-    # workdir basename doesn't match the DB scenario (auto-resolution
-    # returns None) skip the override and rely on the seed.  Keep the seed.
-    # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
-    # variant fixtures or all fixtures explicitly pass db_reader=.
-    if unitsize is not None and cap_pd is not None:
-        # cap_pd from process side; for nodes we need a node-side capacity.
-        cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
-                                   sd / "p_entity_previously_invested_capacity.csv",
-                                   sd / "p_entity_all_existing.csv")
-        unitsize_long = _read_unitsize((sd / "p_entity_unitsize.csv") if (sd / "p_entity_unitsize.csv").exists() else (inp / "p_entity_unitsize.csv"))
-        state_existing = (cap_long.rename({"e":"n","value":"cap"})
-            .filter(pl.col("n").is_in(nodeState["n"]))
-            .select("n","d","cap"))
-        state_us_long = (unitsize_long.rename({"e":"n"})
-            .filter(pl.col("n").is_in(nodeState["n"]))
-            .select("n","value"))
-        state_existing_capacity = Param(("n","d"),
-            state_existing.rename({"cap":"value"}))
-        state_unitsize = Param(("n",), state_us_long)
-        state_upper_long = (state_existing
-            .join(state_us_long.rename({"value":"us"}), on="n", how="inner")
-            .with_columns(value=pl.col("cap")/pl.col("us"))
-            .select("n","d","value"))
-        state_upper = Param(("n","d"), state_upper_long)
-    else:
-        state_unitsize = state_existing_capacity = state_upper = None
+    # Δ.17 — ``p_state_existing_capacity`` / ``p_state_unitsize`` /
+    # ``p_state_upper`` produced authoritatively by ``apply_derived_e``
+    # via ``p_state_existing_capacity_from_source`` /
+    # ``p_state_unitsize_from_source`` / ``p_state_upper_from_source``.
+    # All current test fixtures auto-resolve via ``_FIND_SCENARIO_OVERRIDES``
+    # so the override chain runs and the seed becomes redundant.
+    # Seeds dropped (3 ``_read_csv_file`` calls retired).
+    state_unitsize = state_existing_capacity = state_upper = None
 
     # Δ.12-drop: ``state_self_discharge`` (``p_state_self_discharge``) and
     # ``state_start`` (``p_state_start``) seeds dropped — both are now
@@ -2751,44 +2730,15 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     LP (e.g. ``period1_realized`` in the 2_day_stochastic_dispatch
     fixture).
     """
-    # pdt_branch_weight: (d, t) → value, defaults 1.0
-    pdt_bw_path = sd / "pdt_branch_weight.csv"
-    if pdt_bw_path.exists():
-        df = _read_csv_file(pdt_bw_path)
-        if df.height > 0:
-            df = (df.rename({"period": "d", "time": "t"})
-                    .with_columns(value=pl.col("value")
-                                            .cast(pl.Float64, strict=False)
-                                            .fill_null(1.0))
-                    .select("d", "t", "value"))
-            # Build a (d,t)-dense Param: dt × value with value defaulting
-            # to 1.0 where pdt_branch_weight is silent.  Mirrors .mod's
-            # ``param pdt_branch_weight {(d,t) in dt}`` declaration —
-            # dense over dt.
-            base = dt.with_columns(value=pl.lit(1.0)).select("d", "t", "value")
-            base = (base
-                    .join(df, on=["d", "t"], how="left", suffix="__r")
-                    .with_columns(value=pl.coalesce(
-                        pl.col("value__r"), pl.col("value")))
-                    .select("d", "t", "value"))
-            pdt_branch_weight = Param(("d", "t"), base)
-        else:
-            pdt_branch_weight = None
-    else:
-        pdt_branch_weight = None
-
-    # pd_branch_weight: (d,) → value
-    pd_bw_path = sd / "pd_branch_weight.csv"
+    # Δ.17 — ``pdt_branch_weight`` / ``pd_branch_weight`` produced
+    # authoritatively by ``apply_branch_cluster`` in ``apply_derived_g``
+    # via ``pdt_branch_weight_param`` / ``pd_branch_weight_param``.  The
+    # helper inherits the dense-dt left-join + coalesce(1.0) semantics
+    # the seed used to provide.  All current test fixtures auto-resolve
+    # via ``_FIND_SCENARIO_OVERRIDES`` so the override chain runs and the
+    # seed becomes redundant.  Seeds dropped.
+    pdt_branch_weight = None
     pd_branch_weight = None
-    if pd_bw_path.exists():
-        df = _read_csv_file(pd_bw_path)
-        if df.height > 0:
-            df = (df.rename({"period": "d"})
-                    .with_columns(value=pl.col("value")
-                                            .cast(pl.Float64, strict=False)
-                                            .fill_null(1.0))
-                    .select("d", "value"))
-            pd_branch_weight = Param(("d",), df)
 
     # Δ.12-drop: ``dt_non_anticipativity`` / ``period_branch_full`` /
     # ``period_in_use_set`` produced authoritatively by
