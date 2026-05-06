@@ -9,18 +9,8 @@ from datetime import datetime
 import time
 import os
 from flextool.process_outputs.result_writer import write_outputs
-from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
 from flextool.flextoolrunner.timing_recorder import TimingRecorder
-from flextool.flextoolrunner.precision import (
-    report_near_duplicates,
-    resolve_precision_digits,
-    resolve_report_near_duplicates,
-)
-from flextool.flextoolrunner.scaling import resolve_auto_scale
-from flextool.flextoolrunner.solver_runner import (
-    resolve_ipm,
-    resolve_relax_feasibility,
-)
+from flextool.flextoolrunner.precision import resolve_precision_digits
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import DatabaseMapping, to_database, DateTime
@@ -46,98 +36,90 @@ sys.stdout = FlushingStream(sys.stdout)
 #1: Infeasible or unbounded problem (not implemented in the toolbox, functionally same as -1. For a possiblity of a graphical depiction)
 
 
-# Δ.14 — engine-selection helper.  Pulled out of ``main`` for direct
-# unit testing (precedence semantics: explicit CLI flag > env var >
-# default).  Pure function: no I/O, no side effects.
-def _resolve_engine(cli_value, env_value, default='gmpl'):
-    """Return ``'native'`` or ``'gmpl'`` per Δ.14 precedence rules.
+# Δ.21 — engine-selection helper.  GMPL retired; only ``'native'`` is
+# accepted.  ``--engine=gmpl`` is rejected with a clear error message;
+# ``FLEXPY_USE_NATIVE_ORCHESTRATION`` is now vestigial (native is the
+# only path) and emits a deprecation warning when set.
+#
+# Pure function: no I/O, no side effects.  Exposed for direct unit
+# testing — the CLI calls it from ``main`` to validate any explicit
+# ``--engine`` value the user passed.
+_ENGINE_RETIRED_GMPL_MESSAGE = (
+    "GMPL path retired in Δ.21. Use --engine=native (default)."
+)
+
+
+def _resolve_engine(cli_value, env_value, default='native'):
+    """Return ``'native'`` per Δ.21.
+
+    The function preserves the old (cli_value, env_value, default)
+    signature for test compatibility but the only valid runtime value
+    is ``'native'``.  Any explicit ``--engine=gmpl`` invocation raises
+    :class:`SystemExit` with the retirement message.
+
+    The ``FLEXPY_USE_NATIVE_ORCHESTRATION`` env var is now vestigial:
+    truthy values (``'1'`` / ``'true'`` / ``'yes'`` / ``'on'``,
+    case-insensitive after ``strip()``) emit a deprecation warning
+    once but otherwise keep the default behaviour.  Falsy or unset
+    values are silent.
 
     Parameters
     ----------
     cli_value : str | None
-        The literal value of ``--engine`` from argparse: ``'native'``,
-        ``'gmpl'``, or ``None`` (flag absent).
+        The literal value of ``--engine`` from argparse: ``'native'``
+        or ``None`` (flag absent).  ``'gmpl'`` triggers a hard exit.
     env_value : str | None
         ``os.environ.get('FLEXPY_USE_NATIVE_ORCHESTRATION')`` — a bare
-        ``None`` if unset.  Truthy values (``'1'``, ``'true'``,
-        ``'yes'``, ``'on'``, case-insensitive after ``strip()``) select
-        ``'native'``; everything else (including the empty string and
-        ``'0'``) keeps the default.
+        ``None`` if unset.
     default : str, optional
-        Fallback when neither the flag nor the env var force a choice.
-        Δ.14 ships with ``'gmpl'`` so existing GUI / Toolbox subprocess
-        invocations don't accidentally swap their solver backend on
-        upgrade.
+        Reserved kwarg kept for API stability with Δ.14.  Always
+        returns ``'native'`` regardless of value (the legacy CLI no
+        longer offers any other engine).
 
     Returns
     -------
     str
-        One of ``'native'`` / ``'gmpl'``.
-
-    Notes
-    -----
-    The env-var truth-table mirrors
-    :func:`flextool.engine_polars.chain.run_chain`'s feature flag (Γ.8.D)
-    so a single env-var setting drives both the CLI dispatcher and any
-    direct ``run_chain`` callers (e.g. test fixtures) consistently.
+        Always ``'native'``.
     """
-    if cli_value in ('native', 'gmpl'):
-        return cli_value
+    if cli_value == 'gmpl':
+        # Hard error — the legacy GMPL path has been retired entirely.
+        # The CLI calls ``sys.exit(2)`` with the retirement banner so
+        # automation / GUI invocations get a readable diagnostic.
+        print(
+            f"error: --engine=gmpl: {_ENGINE_RETIRED_GMPL_MESSAGE}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if cli_value is not None and cli_value != 'native':
+        # argparse's ``choices=`` should forbid this branch in normal
+        # use.  Defensive guard for direct callers only.
+        print(
+            f"error: --engine={cli_value!r} is not recognised; "
+            "the only supported value is 'native'.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if env_value is not None:
         normalised = env_value.strip().lower()
         if normalised in ('1', 'true', 'yes', 'on'):
-            return 'native'
-    return default
-
-
-def _warn_dropped_native_flags(args):
-    """Δ.14 — log a single warning enumerating GMPL-only flags that
-    the user passed alongside ``--engine=native``.
-
-    Pulled out of :func:`_run_native_solve` for direct testing — the
-    enumeration is the only behaviour worth pinning, the rest of
-    ``_run_native_solve`` is straight delegation.
-    """
-    gmpl_only_flags = {
-        '--use-old-raw-csv': args.use_old_raw_csv,
-        '--ipm': args.ipm,
-        '--auto-scale': args.auto_scale,
-        '--relax-feasibility': args.relax_feasibility is not None,
-        '--glpsol-timing': args.glpsol_timing,
-        '--highs-threads (>1)': (args.highs_threads or 1) > 1,
-        '--precision-digits': args.precision_digits is not None,
-        '--report-near-duplicates': args.report_near_duplicates,
-    }
-    dropped = [name for name, active in gmpl_only_flags.items() if active]
-    if dropped:
-        logging.warning(
-            "engine=native: ignoring GMPL-only flag(s) %s — these "
-            "configure the glpsol/HiGHS legacy pipeline and have no "
-            "effect on the polar-high cascade.  Re-run with "
-            "--engine=gmpl if you need them.",
-            ', '.join(dropped),
-        )
-    return dropped
+            logging.warning(
+                "FLEXPY_USE_NATIVE_ORCHESTRATION is deprecated as of "
+                "Δ.21: native is now the only engine. Unset the env "
+                "var to silence this warning."
+            )
+    # ``default`` is honoured for API stability; the live CLI always
+    # passes the new default.
+    return default if default == 'native' else 'native'
 
 
 def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
-    """Δ.14 — Native (flexpy / polar-high) cascade.
+    """Δ.21 — drive the native (flexpy / polar-high) cascade.
 
     Returns ``0`` on success, ``1`` on any non-optimal sub-solve.
     Output-tree emission (``write_outputs``, ``timings.csv`` finalize,
-    output-DB updates) is shared with the GMPL path back in
-    :func:`main` — this helper only drives the solve loop.
-
-    Several legacy CLI flags are GMPL-pipeline-specific and no-op
-    under the native path; :func:`_warn_dropped_native_flags` logs
-    their names.  Aligned with the audit's "fail loudly when native
-    can't satisfy a CLI flag" policy: a warning is loud enough for
-    diagnosis without breaking GUI-driven invocations that pass a
-    default-set of flags.
+    output-DB updates) is shared with the rest of :func:`main`.
     """
     from flextool.engine_polars import run_chain_from_db
-
-    _warn_dropped_native_flags(args)
 
     print(f'Scenario: {scenario_name}')
     if scenario_name:
@@ -206,8 +188,9 @@ def main():
     parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
                         help='Only produce the first file for each plot (quick overview mode)')
     parser.add_argument('--use-old-raw-csv', action='store_true', default=False,
-                        help='Keep only the legacy glpsol-driven output_raw/*.csv pathway; '
-                             'skip the HiGHS → parquet extractor.')
+                        help='[DEPRECATED — Δ.21] Selected the legacy glpsol-driven '
+                             'output_raw/*.csv pathway in the retired GMPL CLI.  '
+                             'No-op under the native engine; will be removed in Δ.22.')
     parser.add_argument('--highs-threads', metavar='N', type=int, default=1,
                         help='Number of threads HiGHS may use for the MIP / LP solve (default: 1). '
                              'Serial is the reliable default because HiGHS PAMI (parallel dual '
@@ -305,28 +288,17 @@ def main():
     parser.add_argument('--engine',
                         choices=['gmpl', 'native'],
                         default=None,
-                        help='Solver-orchestration backend (Δ.14).  '
-                             '``gmpl`` (default) runs the legacy '
-                             'glpsol/HiGHS pipeline through '
-                             '``FlexToolRunner.run_model`` — the path the '
-                             'GUI / Toolbox subprocess invocations have '
-                             'always used.  ``native`` runs the in-process '
-                             'flexpy/polar-high cascade via '
-                             '``flextool.engine_polars.run_chain_from_db``: '
-                             'flextool''s preprocessing still emits the '
-                             'snapshot CSVs, but each per-solve LP is built '
-                             'and solved inside this Python process and '
-                             'handoff state flows in-memory between sub-'
-                             'solves (no glpsol invocation).  Precedence: '
-                             '(1) explicit ``--engine=...`` flag, '
-                             '(2) ``FLEXPY_USE_NATIVE_ORCHESTRATION`` env '
-                             'var (``1`` / ``true`` / ``yes`` / ``on`` → '
-                             'native), (3) default ``gmpl``.  Several '
-                             'GMPL-only flags no-op under '
-                             '``--engine=native`` — see the dispatch close '
-                             'stanza for the full list (e.g. ``--ipm``, '
-                             '``--auto-scale``, ``--relax-feasibility``, '
-                             '``--use-old-raw-csv``, ``--glpsol-timing``).')
+                        help='Solver-orchestration backend.  Δ.21 retired '
+                             'the legacy GMPL/glpsol pipeline; the only '
+                             'supported value is ``native`` (the default), '
+                             'which runs the in-process flexpy/polar-high '
+                             'cascade via '
+                             '``flextool.engine_polars.run_chain_from_db``.  '
+                             'Passing ``--engine=gmpl`` is rejected with a '
+                             'clear error.  '
+                             '``FLEXPY_USE_NATIVE_ORCHESTRATION`` is '
+                             'vestigial (no-op) but emits a deprecation '
+                             'warning when set truthy.')
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
@@ -363,14 +335,34 @@ def main():
     # Replaces the legacy two ``solve_progress.csv`` files.
     timing_recorder = TimingRecorder(work_folder=wf, scenario=scenario_name)
     t_total_start = time.perf_counter()
-    timer = []
-    timer.append(time.perf_counter())
 
+    # Δ.21 — only ``effective_precision`` survives the GMPL retirement;
+    # it's still consumed by ``--region`` (input filter) and
+    # ``--decomposition lagrangian``.  ``--auto-scale`` /
+    # ``--relax-feasibility`` / ``--ipm`` / ``--report-near-duplicates``
+    # are GMPL-pipeline-only knobs — they stay accepted on the argparse
+    # surface for one release-cycle of automation backward-compat but
+    # never reach the solver.  Warn if any are explicitly set so users
+    # discover the deprecation.
     effective_precision = resolve_precision_digits(args.precision_digits)
-    run_near_dup_report = resolve_report_near_duplicates(args.report_near_duplicates)
-    auto_scale = resolve_auto_scale(args.auto_scale)
-    relax_feasibility = resolve_relax_feasibility(args.relax_feasibility)
-    use_ipm = resolve_ipm(args.ipm)
+    _retired_gmpl_flags = {
+        '--use-old-raw-csv': args.use_old_raw_csv,
+        '--ipm': args.ipm,
+        '--auto-scale': args.auto_scale,
+        '--relax-feasibility': args.relax_feasibility is not None,
+        '--glpsol-timing': args.glpsol_timing,
+        '--highs-threads (>1)': (args.highs_threads or 1) > 1,
+        '--report-near-duplicates': args.report_near_duplicates,
+    }
+    _retired_set = [name for name, active in _retired_gmpl_flags.items() if active]
+    if _retired_set:
+        logging.warning(
+            "engine=native: ignoring GMPL-only flag(s) %s — these "
+            "configured the retired glpsol/HiGHS legacy pipeline and "
+            "have no effect on the polar-high cascade. The flags will "
+            "be removed entirely in Δ.22.",
+            ', '.join(_retired_set),
+        )
 
     # --- Regional filter mode (Agent 3.1) --------------------------------
     # ``--region GROUP`` produces ``input_region_<GROUP>/`` and exits
@@ -447,93 +439,38 @@ def main():
             print(f"  λ[{pipe}] = {lam:.6g}")
         sys.exit(0 if result.converged else 1)
 
-    # --- Δ.14: dispatch on --engine ----------------------------------------
-    # Resolve the orchestration backend once.  ``_resolve_engine``
-    # encodes the precedence (CLI flag > env var > default 'gmpl').
-    # ``--engine=native`` skips the legacy ``FlexToolRunner`` /
-    # ``run_model`` path entirely and runs the polar-high cascade
-    # via ``run_chain_from_db`` instead; ``--engine=gmpl`` (the default)
-    # preserves the historical behaviour byte-for-byte for backward
-    # compatibility with the Toolbox / GUI subprocess invocations.
-    engine = _resolve_engine(
+    # --- Δ.21: native is now the only engine -------------------------------
+    # ``_resolve_engine`` validates the ``--engine`` value (rejects
+    # ``gmpl`` with sys.exit(2)) and emits a deprecation warning when
+    # the legacy ``FLEXPY_USE_NATIVE_ORCHESTRATION`` env var is set.
+    # The legacy GMPL/glpsol dispatch branch was removed in Δ.21; the
+    # CLI always runs the polar-high cascade via
+    # ``run_chain_from_db``.  ``--engine=native`` is preserved as a
+    # no-op for backward compatibility with one release-cycle of
+    # automation; passing nothing has the same effect.
+    _resolve_engine(
         args.engine,
         os.environ.get('FLEXPY_USE_NATIVE_ORCHESTRATION'),
     )
-    native_engine = (engine == 'native')
-    if engine == 'native':
-        # Resolve scenario_name when omitted: pull it from the DB's
-        # active filter (mirrors the GMPL else-branch below).  The
-        # native path's ``run_chain_from_db`` accepts a None scenario
-        # but downstream ``SolveConfig.load_from_db_url`` requires a
-        # concrete name, so fix it up here.
-        if not scenario_name:
-            with DatabaseMapping(input_db_url) as db_map:
-                _filters = db_map.get_filter_configs()
-                if _filters:
-                    scenario_name = name_from_dict(_filters[0])
-        try:
-            return_code = _run_native_solve(
-                args, scenario_name, work_folder, timing_recorder,
-            )
-        except Exception as e:
-            logging.error(
-                f"Native cascade failed: {str(e)}\n"
-                f"Traceback:\n{traceback.format_exc()}"
-            )
-            sys.exit(1)
-    else:
-        if scenario_name:
-            runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm, glpsol_timing=args.glpsol_timing, timing_recorder=timing_recorder)
-            timer.insert(0, time.perf_counter())
-            init_seconds = timer[0] - timer[1]
-            print("--- Init time %.4s seconds ---" % init_seconds)
-            timing_recorder.record('cli_init', seconds=init_seconds)
-            t_write_input = time.perf_counter()
-            runner.write_input(input_db_url, scenario_name, precision_digits=effective_precision)
-            timer.insert(0, time.perf_counter())
-            write_seconds = timer[0] - timer[1]
-            print("--- Write time %.4s seconds ---" % write_seconds)
-            timing_recorder.record('write_input', subphase='per_scenario',
-                                   seconds=write_seconds, t_start=t_write_input)
-
-        else:
-            runner = FlexToolRunner(input_db_url, output_path, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv, highs_threads=args.highs_threads, auto_scale=auto_scale, relax_feasibility=relax_feasibility, use_ipm=use_ipm, glpsol_timing=args.glpsol_timing, timing_recorder=timing_recorder)
-            timer.insert(0, time.perf_counter())
-            init_seconds = timer[0] - timer[1]
-            print("--- Init time %.4s seconds ---" % init_seconds)
-            timing_recorder.record('cli_init', seconds=init_seconds)
-            t_write_input = time.perf_counter()
-            runner.write_input(input_db_url, precision_digits=effective_precision)
-            timer.insert(0, time.perf_counter())
-            write_seconds = timer[0] - timer[1]
-            print("--- Write time %.4s seconds ---" % write_seconds)
-            timing_recorder.record('write_input', subphase='all',
-                                   seconds=write_seconds, t_start=t_write_input)
-            with DatabaseMapping(input_db_url) as db_map:
-                scenario_name = name_from_dict(db_map.get_filter_configs()[0])
-            timing_recorder.set_scenario(scenario_name)
-
-        # Diagnostic: cluster near-duplicate numeric parameter values.  Opt-in
-        # via --report-near-duplicates or FLEXTOOL_REPORT_NEAR_DUPS=1; silent
-        # by default.  Never fails the run.
-        if run_near_dup_report:
-            try:
-                report_near_duplicates(wf / "input")
-            except Exception as exc:
-                print(f"[precision] near-duplicate report failed: {exc}")
-
-        print(f'Scenario: {scenario_name}')
-        t_solve_start = time.perf_counter()
-        try:
-            return_code = runner.run_model()
-            timer.insert(0, time.perf_counter())
-            all_solves_seconds = timer[0] - timer[1]
-            print("--- All Flextool solves time %.4s seconds ---" % all_solves_seconds)
-            timing_recorder.record('all_solves', seconds=all_solves_seconds,
-                                   t_start=t_solve_start)
-        except Exception as e:
-            logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
-            sys.exit(1)
+    # Resolve scenario_name when omitted: pull it from the DB's
+    # active filter.  ``run_chain_from_db`` accepts a None scenario
+    # but downstream ``SolveConfig.load_from_db_url`` requires a
+    # concrete name, so fix it up here.
+    if not scenario_name:
+        with DatabaseMapping(input_db_url) as db_map:
+            _filters = db_map.get_filter_configs()
+            if _filters:
+                scenario_name = name_from_dict(_filters[0])
+    try:
+        return_code = _run_native_solve(
+            args, scenario_name, work_folder, timing_recorder,
+        )
+    except Exception as e:
+        logging.error(
+            f"Native cascade failed: {str(e)}\n"
+            f"Traceback:\n{traceback.format_exc()}"
+        )
+        sys.exit(1)
 
     # If successful and requested, write outputs
     output_subdir = args.output_subdir or scenario_name
@@ -555,34 +492,24 @@ def main():
                 timing_recorder=timing_recorder,
             )
         except FileNotFoundError as exc:
-            # Δ.14 — known gap on the native engine.  ``write_outputs``
+            # Δ.14 known gap, kept for Δ.21: ``write_outputs``
             # consumes wide-format ``solve_data/p_<entity>.csv`` files
             # (``p_node.csv``, ``p_process_sink.csv``, …) that the GMPL
-            # phase-1 dump emits.  The native cascade doesn't run that
-            # dump — it produces ``output_raw/`` alone.  Closing this
-            # gap properly is Δ.15 scope (port the wide-format dump to
-            # ``engine_polars/_dump_csvs.py`` or refactor
-            # ``read_parameters`` to read from ``input/`` directly).
-            # For now: when running native AND ``write_outputs`` fails
-            # on a missing solve_data CSV, log a clear warning and
-            # carry on so ``output_raw/`` (the only artefact the
-            # cascade currently produces) lands cleanly and the CLI
-            # exits 0.  Under GMPL the same exception is fatal — this
-            # tolerance is gated on ``native_engine``.
-            if native_engine:
-                logging.warning(
-                    "engine=native: write_outputs failed (%s).  This "
-                    "is a known Δ.15 gap — the native cascade does not "
-                    "yet emit the wide-format solve_data CSVs that "
-                    "process_outputs.read_parameters consumes.  "
-                    "output_raw/ artefacts ARE produced; output_csv/, "
-                    "output_parquet/, output_excel/, output_plots/ are "
-                    "skipped on this run.",
-                    exc,
-                )
-            else:
-                raise
-        timer.insert(0, time.perf_counter())
+            # phase-1 dump used to emit.  The native cascade produces
+            # ``output_raw/`` alone — closing the gap properly is
+            # tracked on the ``native_data_path_open_issues.md`` Gap F.
+            # Until then, log a clear warning when the wide-format dump
+            # is missing and carry on so ``output_raw/`` (the artefact
+            # the cascade does emit) lands cleanly and the CLI exits 0.
+            logging.warning(
+                "write_outputs failed (%s).  This is a known gap — "
+                "the native cascade does not yet emit the wide-format "
+                "solve_data CSVs that process_outputs.read_parameters "
+                "consumes.  output_raw/ artefacts ARE produced; "
+                "output_csv/, output_parquet/, output_excel/, "
+                "output_plots/ are skipped on this run.",
+                exc,
+            )
         timing_recorder.record('write_outputs', subphase='total',
                                seconds=time.perf_counter() - t_write_outputs,
                                t_start=t_write_outputs)
