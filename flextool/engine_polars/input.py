@@ -1876,18 +1876,55 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                 p_ssrv = Param(("n", "d", "t"), ssrv_long)
 
     # ─── Intraperiod-block (bind_intraperiod_blocks) sets ────────────────
-    # Δ.17 — ``nodeStateBlock`` / ``period_block`` / ``period_block_succ`` /
-    # ``period_block_time`` produced authoritatively by ``apply_derived_e``
-    # via ``nodeStateBlock_from_source`` / ``period_block_family_from_source``.
-    # The override-side helpers synthesize from entity_block +
-    # block_step_duration metadata and produce a STRICT superset of the
-    # CSV seed (e.g. ``work_lh2_three_region`` adds 6 nodes / 6 period_block
-    # rows the CSV omitted).  Seeds dropped (4 ``_read_csv_file`` calls
-    # retired).
+    # Only loaded if the corresponding solve_data CSVs exist.  Used by
+    # ``stateConstantWithinBlock_eq`` and ``nodeBalanceBlock_eq`` in
+    # model.py for nodes whose binding method is ``bind_intraperiod_blocks``.
+    # TODO(Δ.18+): ``apply_derived_e`` produces these (via
+    # ``nodeStateBlock_from_source`` / ``period_block_family_from_source``)
+    # but the local arc-block aggregation path in ``load_flextool``
+    # (input.py:3060+ — ``arc_sink_block_dt`` / ``arc_source_block_dt``)
+    # consumes ``storage["nodeStateBlock"]`` / ``storage["period_block_time"]``
+    # BEFORE the override chain runs.  Additionally, ``apply_derived_e``'s
+    # arc-block step (line ~6049) gates on ``getattr(flex_data, "pss", None)``
+    # which is always None (the FlexData field is named
+    # ``process_source_sink``, not ``pss``).  Both gaps need to close before
+    # these seeds can retire.
     nodeStateBlock = None
+    nsb_path = sd / "nodeStateBlock.csv"
+    if nsb_path.exists():
+        df = _read_csv_file(nsb_path)
+        if df.height > 0:
+            nodeStateBlock = df.rename({"node": "n"}).select("n").unique()
+
     period_block = None
+    pb_path = sd / "period_block_set.csv"
+    if pb_path.exists():
+        df = _read_csv_file(pb_path)
+        if df.height > 0:
+            period_block = (df
+                .rename({"period": "d", "block_first": "b_first"})
+                .select("d", "b_first")
+                .unique())
+
     period_block_succ = None
+    pbs_path = sd / "period_block_succ.csv"
+    if pbs_path.exists():
+        df = _read_csv_file(pbs_path)
+        if df.height > 0:
+            period_block_succ = (df
+                .rename({"period": "d", "block_first": "b_first",
+                         "block_first_next": "b_next"})
+                .select("d", "b_first", "b_next"))
+
     period_block_time = None
+    pbt_path = sd / "period_block_time.csv"
+    if pbt_path.exists():
+        df = _read_csv_file(pbt_path)
+        if df.height > 0:
+            period_block_time = (df
+                .rename({"period": "d", "block_first": "b_first",
+                         "step": "t"})
+                .select("d", "b_first", "t"))
 
     # Interior-of-block dtttdt rows: rows where the within-timeset previous
     # equals the plain (within-period) previous — i.e. NOT the block wrap row.
