@@ -2334,6 +2334,7 @@ def apply_derived_b(
         from flextool.engine_polars._derived_block import (
             flow_to_n_block_filtered,
             flow_from_n_block_filtered,
+            flow_from_nodeBalance_seed,
             load_block_bundle,
         )
         try:
@@ -2346,6 +2347,37 @@ def apply_derived_b(
             flex_data.flow_to_n = ftn_db
         if ffn_db is not None and ffn_db.height > 0:
             flex_data.flow_from_n = ffn_db
+
+        # ─── Δ.27 flow_from_nodeBalance_{eff,noEff} ─────────────────
+        # Source-side nodeBalance topology — native port of the
+        # inline derivation in ``input.py::_load_storage`` lines
+        # 1658-1705.  Without these, source-side flows from
+        # nodeBalance nodes (e.g. transmission discharge into a
+        # balance node) don't appear in nodeBalance_eq and the LP
+        # decouples on multi-arc fixtures
+        # (``work_lh2_three_region``).  ``apply_derived_e`` step 4c
+        # is now an idempotent overlay: it re-applies the same
+        # block-compat filter when bundle data is present, but the
+        # seed produced here already includes the filter so the
+        # overlay is a no-op.
+        nb_for_ffnb = getattr(flex_data, "nodeBalance", None)
+        pss_eff_frame = getattr(flex_data, "process_source_sink_eff", None)
+        pss_noEff_frame = getattr(flex_data, "process_source_sink_noEff",
+                                    None)
+        if (nb_for_ffnb is not None and nb_for_ffnb.height > 0
+                and pss_eff_frame is not None
+                and pss_eff_frame.height > 0):
+            ffnb_eff = flow_from_nodeBalance_seed(
+                pss_eff_frame, nb_for_ffnb, bundle)
+            if ffnb_eff is not None and ffnb_eff.height > 0:
+                flex_data.flow_from_nodeBalance_eff = ffnb_eff
+        if (nb_for_ffnb is not None and nb_for_ffnb.height > 0
+                and pss_noEff_frame is not None
+                and pss_noEff_frame.height > 0):
+            ffnb_noEff = flow_from_nodeBalance_seed(
+                pss_noEff_frame, nb_for_ffnb, bundle)
+            if ffnb_noEff is not None and ffnb_noEff.height > 0:
+                flex_data.flow_from_nodeBalance_noEff = ffnb_noEff
 
     # ─── §3.3.3 p_flow_upper_existing ──────────────────────────────────
     # Δ.12b: unconditional when pss is non-empty.  Helper returns None
@@ -6570,6 +6602,13 @@ def apply_derived_e(
     # 4c. flow_from_nodeBalance block filter — Δ.9: mirrors
     # ``input.py::_load_storage`` lines 1664-1699.  Drops arc rows
     # whose source block doesn't overlap the destination node's block.
+    # Δ.27: ``apply_derived_b`` is now the authoritative producer of the
+    # ``flow_from_nodeBalance_{eff,noEff}`` seed AND already applies the
+    # block-compat filter when a bundle is loadable from the workdir.
+    # This re-application is therefore an idempotent safety net for the
+    # case where ``apply_derived_b`` ran without a bundle (workdir's
+    # block CSVs not yet written) but ``apply_derived_e`` later resolves
+    # one — re-filter so the source-driven path matches the slow path.
     if block_bundle is not None and block_bundle.has_block_data():
         for fld in ("flow_from_nodeBalance_eff",
                      "flow_from_nodeBalance_noEff"):
