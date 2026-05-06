@@ -747,25 +747,42 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                                        "flow_from_commodity_noEff",
                                        "unitsize","flow_upper","slope","commodity_price")}
 
+    # Δ.18 — CSV-fallback for the pss family.  When ``source`` is None
+    # (dump_csvs roundtrip workdirs without a ``tests.sqlite``), read
+    # the canonical preprocessed CSVs (``process_source_sink.csv`` /
+    # ``_eff.csv`` / ``_noEff.csv``) directly.  These mirror the
+    # source-driven helper's output; the round-trip test depends on it.
     if source is None:
-        # No DB source available (dump_csvs roundtrip workdirs without a
-        # tests.sqlite).  Per the architecture invariants ("CSV path is
-        # the debug oracle, not a runtime fallback"), helpers expect the
-        # source to be available.  Without it we can't construct pss; the
-        # caller (load_flextool) handles the empty return by skipping the
-        # process-topology pipeline.
-        return empty_return
-    from ._projection_params import process_source_sink_canonical
-    canonical = process_source_sink_canonical(source)
-    if canonical.height == 0:
-        return empty_return
-    pss = canonical.select("p", "source", "sink").unique()
-    pss_eff = (canonical
-        .filter(pl.col("method") == "eff")
-        .select("p", "source", "sink").unique())
-    pss_noEff = (canonical
-        .filter(pl.col("method") == "noEff")
-        .select("p", "source", "sink").unique())
+        pss_path     = sd / "process_source_sink.csv"
+        pss_eff_path = sd / "process_source_sink_eff.csv"
+        pss_noe_path = sd / "process_source_sink_noEff.csv"
+        if not pss_path.exists():
+            return empty_return
+        empty_pss = pl.DataFrame(
+            schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+
+        def _read_pss(p: Path) -> pl.DataFrame:
+            df = _read_csv_file(p)
+            if df.height == 0 or "process" not in df.columns:
+                return empty_pss
+            return df.rename({"process": "p"}).select("p", "source", "sink").unique()
+        pss = _read_pss(pss_path)
+        if pss.height == 0:
+            return empty_return
+        pss_eff = _read_pss(pss_eff_path) if pss_eff_path.exists() else empty_pss
+        pss_noEff = _read_pss(pss_noe_path) if pss_noe_path.exists() else empty_pss
+    else:
+        from ._projection_params import process_source_sink_canonical
+        canonical = process_source_sink_canonical(source)
+        if canonical.height == 0:
+            return empty_return
+        pss = canonical.select("p", "source", "sink").unique()
+        pss_eff = (canonical
+            .filter(pl.col("method") == "eff")
+            .select("p", "source", "sink").unique())
+        pss_noEff = (canonical
+            .filter(pl.col("method") == "noEff")
+            .select("p", "source", "sink").unique())
 
     flow_to_n   = pss.with_columns(n=pl.col("sink"))
     flow_from_n = pss.with_columns(n=pl.col("source"))
@@ -1933,12 +1950,16 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # ─── Intraperiod-block (bind_intraperiod_blocks) sets ────────────────
     # Used by ``stateConstantWithinBlock_eq`` and ``nodeBalanceBlock_eq``
     # in model.py for nodes whose binding method is ``bind_intraperiod_blocks``.
-    # Δ.17b Gap A: ``apply_derived_e`` produces these via
-    # ``nodeStateBlock_from_source`` / ``period_block_family_from_source``
-    # / ``dtttdt_block_interior_from_dtttdt`` (with full multi-resolution
-    # synthesis matching the local path).  Local seeds dropped (4
-    # ``_read_csv_file`` calls retired).
+    # Δ.18 — CSV-fallback seed for ``nodeStateBlock``.  Override chain
+    # (``apply_derived_e`` via ``nodeStateBlock_from_source``) overlays
+    # this when active; for dump_csvs roundtrip workdirs (no DB) the
+    # canonical CSV is the only source.
     nodeStateBlock = None
+    nsb_path_seed = sd / "nodeStateBlock.csv"
+    if nsb_path_seed.exists():
+        nsb_df_seed = _read_csv_file(nsb_path_seed)
+        if nsb_df_seed.height > 0 and "node" in nsb_df_seed.columns:
+            nodeStateBlock = nsb_df_seed.rename({"node": "n"}).select("n").unique()
     period_block = None
     period_block_succ = None
     period_block_time = None
@@ -2291,19 +2312,29 @@ def _load_fixed_cost(sd: Path) -> dict:
     Δ.18 — CSV-fallback seeds.  Override chain (``apply_derived_f`` /
     ``apply_existing_chain``) overlays these when active; for synthetic
     per-sub-solve fixtures the snapshot CSV is the only source.  Empty
-    or missing CSV → None (override-only path).
+    or missing CSV → None (override-only path).  All-zero rows are
+    dropped from ``p_ed_fixed_cost`` to match the override's filter — the
+    override's ``ed_lifetime_fixed_cost_*`` family filters zero rows; the
+    ``p_ed_fixed_cost`` helper similarly skips zero-value rows so the
+    "no fixed cost" semantic round-trips as None on both paths.
     """
-    def _read_e_d_seed(name: str) -> "Param | None":
+    def _read_e_d_seed(name: str, drop_zero: bool = False) -> "Param | None":
         f = sd / f"{name}.csv"
         if not f.exists():
             return None
         df = _read_wide_e_d(f)
         if df.height == 0:
             return None
+        if drop_zero:
+            df = df.filter(pl.col("value") != 0.0)
+        if df.height == 0:
+            return None
         return Param(("e", "d"), df.select("e", "d", "value"))
 
     return dict(
-        p_ed_fixed_cost=_read_e_d_seed("ed_fixed_cost"),
+        p_ed_fixed_cost=_read_e_d_seed("ed_fixed_cost", drop_zero=True),
+        # ``p_entity_all_existing`` keeps zero rows — the chain consumer
+        # uses them as the "no existing" sentinel, distinct from absent.
         p_entity_all_existing=_read_e_d_seed("p_entity_all_existing"),
     )
 

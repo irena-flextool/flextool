@@ -128,26 +128,28 @@ def _read_active_solve(workdir: Path) -> str | None:
 def _solve_in_spine(source: "InputSource",
                       active_solve: str | None) -> bool:
     """Return True iff ``active_solve`` appears as a row in Spine's
-    ``solve`` entity class (any per-solve parameter is fine — we use
-    ``invest_periods`` as a probe; the parameter is always declared
-    when the solve exists).
+    ``solve`` entity class.
 
     Δ.18 — synthetic per-sub-solve names (e.g. ``invest_5weeks_p2020``
     for nested-multi-invest fixtures) don't exist in Spine; the per-solve
     override chain (``apply_derived_a`` etc.) returns None for every
     helper that takes ``active_solve`` as a key.  Detecting this upfront
     lets the loader keep the snapshot-CSV-loaded values as authoritative.
+
+    Probes the ``solve`` entity table directly — relying on a per-solve
+    parameter (e.g. ``invest_periods``) was incorrect because some solves
+    have empty ``invest_periods`` (dispatch-only) yet are valid solves.
     """
     if active_solve is None:
         return False
-    df = _try_param(source, "solve", "invest_periods")
-    if df is None:
-        # Fall back to ``realized_periods`` — the parameter that all
-        # solves carry.
-        df = _try_param(source, "solve", "realized_periods")
-    if df is None:
+    try:
+        ents = source.entities("solve")
+    except KeyError:
         return False
-    return df.filter(pl.col("name") == active_solve).height > 0
+    if ents is None or ents.height == 0:
+        return False
+    name_col = "name" if "name" in ents.columns else ents.columns[0]
+    return ents.filter(pl.col(name_col) == active_solve).height > 0
 
 
 def _ctx_read(
