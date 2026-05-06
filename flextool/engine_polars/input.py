@@ -1295,54 +1295,34 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
             .filter(pl.col("value") > 0)
             .select("e", "d", "value")) if (sd / "p_entity_max_units.csv").exists() else None
 
-    def _cost_param(name: str, dims=("e", "d"), per_e: bool = True) -> Param | None:
-        f = sd / f"{name}.csv"
-        if not f.exists():
-            return None
-        if per_e:
-            df = _read_wide_e_d(f).filter(pl.col("value") != 0)
-            if df.height == 0:
-                return None
-            return Param(dims, df.select(*dims, "value"))
-        else:
-            df = _read_csv_file(f).drop("solve").rename({"period": "d"})
-            if df.height == 0:
-                return None
-            return Param(dims, df.select(*dims, "value"))
+    # Δ.17 — ``_cost_param`` / ``_e_total_param`` / ``_read_period_cap``
+    # were retained as dead-code helpers in Δ.12-drop (their cost-Param /
+    # cap-Param consumers were retired but the inner-function definitions
+    # weren't cleaned up).  Removed; the override chain produces the
+    # corresponding Params:
+    #   * ``ed_lifetime_fixed_cost`` etc. ← ``apply_derived_f``.
+    #   * ``e_invest_max_total`` etc. ← ``apply_direct_params._e_total_param``.
+    #   * ``ed_invest_max_period`` etc. ← ``apply_direct_params``.
 
-    # Per-entity total caps (across all periods)
+    # Per-entity total set frames (used to populate ``e_invest_total`` /
+    # ``e_divest_total`` — index frames consumed by the LP-build's
+    # invest-total slice; no override-chain helper covers these yet).
     def _e_total_set(name: str) -> pl.DataFrame | None:
         f = sd / f"{name}.csv"
         if not f.exists(): return None
         df = _read_csv_file(f)
         if df.height == 0: return None
         return df.rename({"entity": "e"}).select("e")
-    def _e_total_param(name: str) -> Param | None:
-        f = sd / f"{name}.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        return Param(("e",), df.rename({"entity": "e"}).select("e", "value"))
 
-    # Per-period invest/divest caps.  ``ed_invest_period`` is the set of
-    # (e, d) pairs for which a per-period upper bound applies;
-    # ``ed_invest_max_period`` is the cap (in absolute units, post-unitsize).
+    # ``ed_invest_period_set`` / ``ed_divest_period_set`` (set frames
+    # of (e, d) pairs with per-period invest / divest caps) — no
+    # override-chain helper covers these yet.
     def _read_period_set(name: str) -> pl.DataFrame | None:
         f = sd / f"{name}.csv"
         if not f.exists(): return None
         df = _read_csv_file(f)
         if df.height == 0: return None
         return (df.rename({"entity": "e", "period": "d"}).select("e", "d"))
-    def _read_period_cap(name: str) -> Param | None:
-        f = sd / f"{name}.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        return Param(("e", "d"),
-            df.rename({"entity": "e", "period": "d"})
-              .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
-                                   .fill_null(0.0))
-              .select("e", "d", "value"))
 
     # Multi-solve handoff state.  These files are written between
     # sub-solves; the .mod uses them as constants on the
@@ -2434,75 +2414,14 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
         out_df = df.rename(rename).select(*src_to_dst.values()).unique()
         return out_df if out_df.height > 0 else None
 
-    def _read_set_drop_zeros(name: str, key_renames: dict[str, str]) -> pl.DataFrame | None:
-        """Read a (set, value) CSV and drop value==0 rows; return only the keys."""
-        f = sd / f"{name}.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        if "value" in df.columns:
-            df = df.with_columns(
-                pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0)
-            ).filter(pl.col("value") != 0.0)
-        rename = {s: d for s, d in key_renames.items() if s in df.columns}
-        out_df = df.rename(rename).select(*key_renames.values()).unique()
-        return out_df if out_df.height > 0 else None
-
-    def _read_e_d_param(name: str) -> Param | None:
-        f = sd / f"{name}.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        df = (df.rename({"entity": "e", "period": "d"})
-                .with_columns(pl.col("value").cast(pl.Float64, strict=False)
-                                              .fill_null(0.0))
-                .filter(pl.col("value") != 0.0)
-                .select("e", "d", "value"))
-        if df.height == 0: return None
-        return Param(("e", "d"), df)
-
-    def _read_e_param(name: str) -> Param | None:
-        f = sd / f"{name}.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        df = (df.rename({"entity": "e"})
-                .with_columns(pl.col("value").cast(pl.Float64, strict=False)
-                                              .fill_null(0.0))
-                .filter(pl.col("value") != 0.0)
-                .select("e", "value"))
-        if df.height == 0: return None
-        return Param(("e",), df)
-
-    def _slice_pdgroup(param_name: str) -> pl.DataFrame | None:
-        """Long pdGroup.csv slice → (g, d, value), zero rows dropped."""
-        f = sd / "pdGroup.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        sliced = (df.filter(pl.col("param") == param_name)
-                    .rename({"group": "g", "period": "d"})
-                    .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                    .filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0))
-                    .select("g", "d", "value"))
-        return sliced if sliced.height > 0 else None
-
-    def _slice_pgroup(param_name: str) -> pl.DataFrame | None:
-        """input/p_group.csv slice → (g, value), zero rows dropped."""
-        f = inp / "p_group.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        # Columns: group, groupParam, p_group
-        if "groupParam" not in df.columns:
-            return None
-        val_col = [c for c in df.columns if c not in ("group", "groupParam")][0]
-        sliced = (df.filter(pl.col("groupParam") == param_name)
-                    .rename({"group": "g", val_col: "value"})
-                    .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                    .filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0))
-                    .select("g", "value"))
-        return sliced if sliced.height > 0 else None
+    # Δ.17 — ``_read_set_drop_zeros`` / ``_read_e_d_param`` / ``_read_e_param``
+    # / ``_slice_pdgroup`` / ``_slice_pgroup`` were dead-code helpers
+    # retained from Δ.12-drop (their consumer Params were retired but
+    # the inner-function definitions weren't cleaned up).  Removed; the
+    # override chain produces the corresponding fields:
+    #   * ``ed_invest_min_period`` etc. ← ``apply_direct_params``.
+    #   * ``p_group_invest_*_period`` etc. ← ``apply_direct_params``.
+    # 5 dead-code ``_read_csv_file`` calls retired.
 
     def _slice_pdtgroup(param_name: str) -> pl.DataFrame | None:
         """solve_data/pdtGroup.csv slice → (g, d, t, value), zero dropped."""
