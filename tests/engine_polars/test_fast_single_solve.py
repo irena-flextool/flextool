@@ -211,3 +211,94 @@ def test_fast_single_solve_p_process_availability_lh2(tmp_path: Path) -> None:
         f"{fd.p_process_availability.frame.height}, expected 3360 "
         "(20 processes × 168 timesteps)."
     )
+
+
+def test_fast_single_solve_process_profile_upper_lh2(tmp_path: Path) -> None:
+    """Δ.29 — ``process_profile_upper`` must populate on the fast path
+    for ``work_lh2_three_region``.
+
+    The lh2 fixture has 3 wind units (wind_A/B/C) with
+    ``unit__node__profile.profile_method = upper_limit`` against their
+    respective elec_X output nodes.  Without this set on the fast path,
+    the LP's ``profile_flow_upper_limit`` constraint family is
+    unconstructed (model.py:2311 gates on ``height > 0``) — so the LP
+    treats wind capacity as unlimited and satisfies all demand from
+    "free" wind, driving obj to 0.  With this set populated the LP
+    forces coal usage and obj > 0.
+
+    Δ.28 close stanza diagnosed this as the load-bearing residual gap
+    on lh2; Δ.29 wires the existing ``_projection_params`` helper into
+    ``apply_projection_params``.
+    """
+    from flextool.engine_polars._fast_load import load_flextool_source_only
+    from flextool.engine_polars import SpineDbReader
+
+    fixture = DATA / "work_lh2_three_region"
+    db = fixture / "tests.sqlite"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+
+    work = tmp_path / "fast_lh2"
+    work.mkdir()
+    reader = SpineDbReader(db, scenario="lh2_three_region")
+    fd = load_flextool_source_only(reader, work)
+
+    assert fd.process_profile_upper is not None, (
+        "fast path: process_profile_upper is None — Δ.29 wiring "
+        "regression?  Spine carries 3 unit__node__profile rows for "
+        "wind_{A,B,C} on this fixture with profile_method=upper_limit."
+    )
+    assert fd.process_profile_upper.height == 3, (
+        f"fast path: process_profile_upper height="
+        f"{fd.process_profile_upper.height}, expected 3 "
+        "(wind_A/B/C → elec_A/B/C upper-limit profiles)."
+    )
+    # Schema parity with the slow path's _load_profiles output.
+    assert set(fd.process_profile_upper.columns) == {
+        "p", "source", "sink", "f"}, (
+        f"fast path: process_profile_upper schema={fd.process_profile_upper.columns}, "
+        "expected {p, source, sink, f}."
+    )
+
+
+def test_fast_single_solve_p_node_capacity_for_scaling_lh2(tmp_path: Path) -> None:
+    """Δ.29 — ``p_node_capacity_for_scaling`` must default to 1.0 across
+    ``(nodeBalance, period_in_use)`` on the fast path.
+
+    The slow path's :func:`_load_node_capacity_for_scaling` reads
+    ``solve_data/node_capacity_for_scaling.csv`` and inner-joins with
+    nodeBalance.  Without a fast-path source helper, the field stayed
+    None, leaving the LP's slack-penalty objective term without the
+    row-scaling factor — when the pow10 cascade is active this makes
+    penalty a free source of energy.  Δ.29's tactical default (1.0)
+    matches the inactive-scaling path and is bit-equal to the slow
+    path's CSV.
+    """
+    from flextool.engine_polars._fast_load import load_flextool_source_only
+    from flextool.engine_polars import SpineDbReader
+
+    fixture = DATA / "work_lh2_three_region"
+    db = fixture / "tests.sqlite"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+
+    work = tmp_path / "fast_lh2"
+    work.mkdir()
+    reader = SpineDbReader(db, scenario="lh2_three_region")
+    fd = load_flextool_source_only(reader, work)
+
+    assert fd.p_node_capacity_for_scaling is not None, (
+        "fast path: p_node_capacity_for_scaling is None — Δ.29 "
+        "default-1.0 helper regression?"
+    )
+    # 12 nodeBalance nodes × 1 period (y2030) = 12.
+    assert fd.p_node_capacity_for_scaling.frame.height == 12, (
+        f"fast path: p_node_capacity_for_scaling height="
+        f"{fd.p_node_capacity_for_scaling.frame.height}, expected 12 "
+        "(12 nodeBalance nodes × 1 period)."
+    )
+    assert (fd.p_node_capacity_for_scaling.frame["value"]
+            == 1.0).all(), (
+        "fast path: every p_node_capacity_for_scaling row should "
+        "carry the default scalar 1.0 (scaling-inactive path)."
+    )

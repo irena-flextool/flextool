@@ -1747,6 +1747,29 @@ class TestDerivedCInvestOnlineGroupSlack:
 
     @pytest.mark.parametrize("work, sqlite, scenario", DERIVED_C_FIXTURES,
                               ids=[f[0] for f in DERIVED_C_FIXTURES])
+    def test_p_node_capacity_for_scaling_parity(self, work, sqlite,
+                                                       scenario):
+        """Δ.29 — per-(n, d) row-scaling factor for slack-penalty terms.
+
+        Defaults to 1.0 across (nodeBalance, period_in_use) when
+        ``solve.use_row_scaling`` is unset.  Mirrors the slow path's
+        :func:`_load_node_capacity_for_scaling` (which reads
+        ``solve_data/node_capacity_for_scaling.csv`` and inner-joins
+        with nodeBalance).  Without this default the LP misses the
+        row-scaling factor on slack-penalty terms (penalty becomes a
+        free source of energy when the pow10 cascade is active).
+        """
+        csv_d, db_d = _load_pair(work, sqlite, scenario)
+        if (csv_d.p_node_capacity_for_scaling is None
+                and db_d.p_node_capacity_for_scaling is None):
+            pytest.skip(f"{work} has no p_node_capacity_for_scaling")
+        eq, diff = _frame_eq_value(csv_d.p_node_capacity_for_scaling,
+                                    db_d.p_node_capacity_for_scaling,
+                                    ["n", "d"])
+        assert eq, f"p_node_capacity_for_scaling mismatch on {work}: {diff}"
+
+    @pytest.mark.parametrize("work, sqlite, scenario", DERIVED_C_FIXTURES,
+                              ids=[f[0] for f in DERIVED_C_FIXTURES])
     def test_p_positive_inflow_parity(self, work, sqlite, scenario):
         """§3.12.3 — positive component (clip-low at 0) of p_inflow."""
         csv_d, db_d = _load_pair(work, sqlite, scenario)
