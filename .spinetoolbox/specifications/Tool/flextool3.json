@@ -3,18 +3,7 @@
     "tooltype": "python",
     "includes": [
         "cmd_run_flextool.py",
-        "bin/glpk_4_61.dll",
-        "bin/glpsol.exe",
-        "bin/highs.exe",
-        "bin/highs.opt",
-        "bin/libstdc++-6.dll",
-        "bin/libgcc_s_seh-1.dll",
-        "bin/zlib1.dll",
-        "bin/libwinpthread-1.dll",
-        "flextool/flextool.mod",
-        "flextool/flextool_base.dat",
-        "bin/highs",
-        "bin/glpsol"
+        "bin/highs.opt"
     ],
     "description": "",
     "inputfiles": [],
