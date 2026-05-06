@@ -350,14 +350,32 @@ def _try_parameter_frame(
     """Wrap ``source.parameter_explicit`` / ``source.parameter`` with
     None-on-KeyError semantics.  Used by both the InMemory shape-info
     fallback and by :func:`resolve_param_shape` to fetch the data.
+
+    Δ.28 — when ``parameter_explicit`` returns an empty frame (no
+    explicit overrides for any entity), fall through to ``parameter``
+    so the schema default (e.g. ``availability = 1.0``) is consulted.
+    Without this fall-through, the resolver dropped fields whose
+    Spine value is purely the default (``p_process_availability`` on
+    fixtures where every unit/connection inherits the 1.0 default,
+    e.g. ``work_lh2_three_region``) — the slow path's CSV
+    preprocessing always writes the default-broadcast rows so the
+    fast path was missing data.
+
+    Parameters with ``default_value=None`` (the §4.5 None-skip family)
+    behave unchanged: ``parameter`` still returns the explicit-only
+    frame, so an empty result remains an empty result and the resolver
+    correctly drops the field.
     """
     try:
-        return source.parameter_explicit(entity_class, parameter_name)
+        explicit = source.parameter_explicit(entity_class, parameter_name)
     except (KeyError, AttributeError):
-        try:
-            return source.parameter(entity_class, parameter_name)
-        except KeyError:
-            return None
+        explicit = None
+    if explicit is not None and explicit.height > 0:
+        return explicit
+    try:
+        return source.parameter(entity_class, parameter_name)
+    except KeyError:
+        return explicit
 
 
 def _entity_dim_columns_for_frame(
