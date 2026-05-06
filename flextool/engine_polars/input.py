@@ -3303,8 +3303,14 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     from flextool.engine_polars import _projection_params as _pp
     from flextool.engine_polars import _derived_params as _drv
 
-    # Pass 1-2: source-only Params (no workdir needed).
-    _dp.apply_direct_params(db_reader, flex_data)
+    # Pass 1a-2: source-only Params (no workdir needed).
+    # Δ.28 — pass 1 splits into 1a (dt-independent) and 1b (dt-dependent).
+    # Pass 1b runs after ``apply_derived_a`` populates ``flex_data.dt``
+    # so scalar / 1d_map[period] / 1d_map[time] values authored on the
+    # source can broadcast across the active solve's (d, t) axis.  See
+    # ``_direct_params.apply_direct_params_a/b`` docstrings for the
+    # full Δ.28 rationale.
+    _dp.apply_direct_params_a(db_reader, flex_data)
     _pp.apply_projection_params(db_reader, flex_data)
 
     # Pass 3-9: workdir-aware Params.  Resolve the workdir from the
@@ -3316,6 +3322,12 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     except Exception:  # pragma: no cover — defensive
         workdir = None
     if workdir is None:
+        # Δ.28 — no workdir means apply_derived_a won't run here.  In the
+        # slow path ``flex_data.dt`` was populated by ``_load_*`` from
+        # CSV before ``_apply_db_overrides``; run pass 1b with that dt.
+        # In the fast path ``workdir`` is always non-None
+        # (``_SourceShim`` carries ``work_folder``).
+        _dp.apply_direct_params_b(db_reader, flex_data)
         return
     workdir_path = Path(workdir)
 
@@ -3334,9 +3346,26 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     active_solve = _drv._read_active_solve(workdir_path)
     if active_solve is not None and not _drv._solve_in_spine(db_reader,
                                                                   active_solve):
+        # Δ.28 — synthetic solve: apply_derived_a is skipped, but in the
+        # slow path ``flex_data.dt`` is already populated from CSV (see
+        # ``_load_time``).  Run pass 1b so broadcast-needing Direct
+        # Params still apply against the CSV-loaded dt.
+        _dp.apply_direct_params_b(db_reader, flex_data)
         return
 
     _drv.apply_derived_a(flex_data, db_reader, workdir_path, ctx=ctx)
+
+    # Δ.28 — pass 1b: broadcast-needing Direct Params now have
+    # ``flex_data.dt`` populated by ``apply_derived_a`` step 1.  The
+    # broadcast helpers (``broadcast_to_period_time`` /
+    # ``broadcast_to_period`` / ``_entity_period_scalar`` /
+    # ``_entity_period_time_param``) require non-empty ``period_filter``
+    # to fan scalar/1d_map values across the (d, t) axis; running this
+    # pass before ``apply_derived_a`` (the legacy ordering) left
+    # ``p_commodity_price`` / ``p_process_availability`` / similar
+    # fields empty on the fast path even when Spine carried the data.
+    _dp.apply_direct_params_b(db_reader, flex_data)
+
     _drv.apply_derived_b(flex_data, db_reader, workdir_path, ctx=ctx)
     _drv.apply_derived_c(flex_data, db_reader, workdir_path, ctx=ctx)
     _drv.apply_derived_d(flex_data, db_reader, workdir_path, ctx=ctx)
