@@ -551,8 +551,12 @@ def run_chain_from_db(
 
     Combines:
 
-    1. ``FlexToolRunner.write_input`` (flextool's preprocessing) into a
-       work folder.
+    1. :func:`flextool.engine_polars._native_input_writer.write_workdir_inputs`
+       (Δ.20 — engine_polars-owned) populates the workdir's ``input/``
+       and ``solve_data/`` CSVs.  Replaces the legacy
+       ``FlexToolRunner.write_input`` call from earlier phases — the
+       cascade no longer calls into the FlexToolRunner.write_input
+       method directly.
     2. ``_orchestration.run_orchestration`` to drive the per-solve loop
        with a flexpy-as-inner-solver wrapper.
     3. Returns one :class:`OrchestrationStep` per per-solve iteration.
@@ -613,9 +617,29 @@ def run_chain_from_db(
         Path(bin_dir) if bin_dir is not None else _REPO_ROOT / "bin"
     )
 
-    # Construct + drive the underlying runner.  We delegate flextool's
-    # preprocessing (write_input) here so the snapshot tree exists
-    # before per-solve loops fire.
+    # Δ.20 — workdir CSV population is now owned by engine_polars.
+    # ``_native_input_writer.write_workdir_inputs`` invokes the input
+    # writers from inside engine_polars; the live cascade no longer
+    # references ``FlexToolRunner.write_input``.  Future Δ.20+ phases
+    # progressively replace the underlying writers with InputSource-
+    # driven helpers.
+    from flextool.engine_polars._native_input_writer import (
+        write_workdir_inputs,
+    )
+
+    write_workdir_inputs(
+        db_url,
+        scenario_name,
+        work_folder,
+        logger=logger,
+    )
+
+    # Construct the underlying FlexToolRunner — still needed to carry
+    # the cross-cutting ``RunnerState`` (timeline, solve config, handoff
+    # dict) through ``flextool.flextoolrunner.orchestration.run_model``,
+    # which the native cascade still drives for the per-solve
+    # preprocessing chain (``preprocessing_solve_time``,
+    # ``solve_writers``, ``handoff_writers``).  No write_input call.
     def _runner_factory() -> "FlexToolRunner":
         runner = FlexToolRunner(
             input_db_url=db_url,
@@ -624,7 +648,6 @@ def run_chain_from_db(
             bin_dir=bin_dir_resolved,
             work_folder=work_folder,
         )
-        runner.write_input(db_url, scenario_name)
         runner.state.logger.setLevel(logging.ERROR)
         return runner
 
