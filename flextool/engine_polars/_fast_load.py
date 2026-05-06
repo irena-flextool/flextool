@@ -206,15 +206,15 @@ def _populate_topology(flex_data: "FlexData",
             }),
         )
 
-    # ``p_flow_upper`` — model.py PROCESSES check requires non-None.
-    # The slow path computes this from ``solve_data/p_flow_max.csv``
-    # which bakes in invest_max_cum for invest_no_limit fixtures.  In
-    # fast single-solve mode without invest, an empty Param is correct
-    # — model.py prefers ``p_flow_upper_existing`` for direct arcs,
-    # only falling back to ``p_flow_upper`` for indirect ones.  An
-    # empty (no-rows) Param yields no constraint (the .join in
-    # ``maxToSink`` filters out absent rows).  Fixtures with explicit
-    # ``flow_max`` parameters need a native helper port — TODO Δ.25+.
+    # Δ.26: ``p_flow_upper`` is now produced natively by
+    # :func:`flextool.engine_polars._derived_params.p_flow_upper_from_source`
+    # in :func:`apply_derived_c`.  We seed an empty Param here purely so
+    # the model.py ``PROCESSES`` invariant (non-None when topology is
+    # non-empty) is satisfied even when the override chain skips this
+    # field — e.g. the rare degenerate fixture with no explicit
+    # ``existing`` and no invest method.  The override chain overwrites
+    # this seed when it has data; downstream consumers always join on
+    # the (p, source, sink, d, t) key so an empty seed is a no-op.
     flex_data.p_flow_upper = Param(
         ("p", "source", "sink", "d", "t"),
         pl.DataFrame(schema={
