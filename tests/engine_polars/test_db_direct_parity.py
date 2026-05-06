@@ -1291,6 +1291,68 @@ class TestDerivedBTopology:
                                     ["p", "source", "sink", "n"])
         assert eq, f"flow_from_n mismatch on {work}: {diff}"
 
+    @pytest.mark.parametrize(
+        "work, sqlite, scenario",
+        DERIVED_B_FIXTURES + [
+            # Δ.27: explicit lh2 coverage — the multi-block fixture is the
+            # one that exercises the source-side nodeBalance topology with
+            # 22 raw arcs filtered down to 19 by the block-compat join.
+            ("work_lh2_three_region", "tests.sqlite", "lh2_three_region"),
+        ],
+        ids=lambda v: v if isinstance(v, str) else "",
+    )
+    def test_flow_from_nodeBalance_eff_parity(self, work, sqlite, scenario):
+        """Δ.27 — source-side nodeBalance topology (eff partition).
+
+        Native port of the inline derivation in
+        ``input.py::_load_storage`` lines 1658-1705.  The slow path
+        produces ``flow_from_nodeBalance_eff`` as a side-effect of the
+        storage loader; the override chain produces the same set via
+        :func:`flextool.engine_polars._derived_block.flow_from_nodeBalance_seed`
+        wired into :func:`apply_derived_b`.
+        """
+        csv_d, db_d = _load_pair(work, sqlite, scenario)
+        if (csv_d.flow_from_nodeBalance_eff is None
+                and db_d.flow_from_nodeBalance_eff is None):
+            pytest.skip(f"{work} has no flow_from_nodeBalance_eff")
+        eq, diff = _frame_eq_value(csv_d.flow_from_nodeBalance_eff,
+                                    db_d.flow_from_nodeBalance_eff,
+                                    ["p", "source", "sink", "n"])
+        assert eq, (
+            f"flow_from_nodeBalance_eff mismatch on {work}: {diff}"
+        )
+
+    @pytest.mark.parametrize(
+        "work, sqlite, scenario",
+        DERIVED_B_FIXTURES + [
+            ("work_lh2_three_region", "tests.sqlite", "lh2_three_region"),
+        ],
+        ids=lambda v: v if isinstance(v, str) else "",
+    )
+    def test_flow_from_nodeBalance_noEff_parity(self, work, sqlite,
+                                                  scenario):
+        """Δ.27 — source-side nodeBalance topology (noEff partition).
+
+        Mirrors ``test_flow_from_nodeBalance_eff_parity`` for the
+        no-efficiency arc partition.  Most fixtures land an empty
+        ``noEff`` set (all arcs go through the eff partition); the test
+        skips when both sides are empty.
+        """
+        csv_d, db_d = _load_pair(work, sqlite, scenario)
+        # Treat 0-row frames as None for skip purposes — both
+        # representations encode "no noEff arcs" identically.
+        csv_v = csv_d.flow_from_nodeBalance_noEff
+        db_v = db_d.flow_from_nodeBalance_noEff
+        csv_empty = csv_v is None or csv_v.height == 0
+        db_empty = db_v is None or db_v.height == 0
+        if csv_empty and db_empty:
+            pytest.skip(f"{work} has no flow_from_nodeBalance_noEff")
+        eq, diff = _frame_eq_value(csv_v, db_v,
+                                    ["p", "source", "sink", "n"])
+        assert eq, (
+            f"flow_from_nodeBalance_noEff mismatch on {work}: {diff}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Γ.3.B — DB-direct solve parity on representative fixtures
