@@ -187,19 +187,6 @@ def main():
                              'Enables parallel scenario execution by isolating each run.')
     parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
                         help='Only produce the first file for each plot (quick overview mode)')
-    parser.add_argument('--use-old-raw-csv', action='store_true', default=False,
-                        help='[DEPRECATED — Δ.21] Selected the legacy glpsol-driven '
-                             'output_raw/*.csv pathway in the retired GMPL CLI.  '
-                             'No-op under the native engine; will be removed in Δ.22.')
-    parser.add_argument('--highs-threads', metavar='N', type=int, default=1,
-                        help='Number of threads HiGHS may use for the MIP / LP solve (default: 1). '
-                             'Serial is the reliable default because HiGHS PAMI (parallel dual '
-                             'simplex) can stall indefinitely on degenerate LPs that reappear with '
-                             'tiny post-optimality residuals — observed across HiGHS 1.11 / 1.12 / '
-                             '1.14 on rivendell hydro-cascade and UC scenarios. Raise this only on '
-                             'machines with spare cores AND after confirming PAMI is actually '
-                             'faster on your specific model; be ready to drop back to 1 if stalls '
-                             'resurface.')
     parser.add_argument('--precision-digits', metavar='N', type=int, default=None,
                         help='Round every numeric input parameter to N significant '
                              'figures before writing CSVs (typical: 10).  '
@@ -207,27 +194,6 @@ def main():
                              'mip_detect_symmetry can aggregate structurally-identical '
                              'coefficients.  0 or unset disables rounding (default).  '
                              'Overrides the FLEXTOOL_PRECISION_DIGITS env var.')
-    parser.add_argument('--report-near-duplicates', action='store_true', default=False,
-                        help='After writing input CSVs, scan each parameter column '
-                             'for clusters of nearly-equal values (per-parameter, '
-                             'rel_tol=1e-6).  Diagnostic only — never fails the run.  '
-                             'Also triggered by FLEXTOOL_REPORT_NEAR_DUPS=1.')
-    parser.add_argument('--relax-feasibility', nargs='?', const='default', default=None,
-                        metavar='TOL',
-                        help='Loosen HiGHS primal + dual feasibility tolerance. '
-                             'Without a value, uses 1e-5 (two orders of magnitude looser '
-                             'than HiGHS default 1e-7) — enough to absorb sub-tolerance '
-                             'residuals on wide-bound models (rivendell S19 dual-simplex '
-                             'stall) without being irresponsibly loose.  Pass '
-                             '``--relax-feasibility=1e-4`` etc. to set an explicit '
-                             'tolerance.  Also triggered by FLEXTOOL_RELAX_FEASIBILITY '
-                             '(empty / truthy -> default; numeric -> explicit).')
-    parser.add_argument('--ipm', action='store_true', default=False,
-                        help='Switch HiGHS to interior-point solver.  IPM has no basis, '
-                             'so it cannot stall on Markowitz-pivot degeneracy the way '
-                             'dual simplex does on rivendell S19.  For MIPs the LP '
-                             'relaxation uses IPM; branch-and-bound still drives the '
-                             'integer search.  Also triggered by FLEXTOOL_IPM=1.')
     parser.add_argument('--region', metavar='GROUP_NAME', default=None,
                         help='Produce a filtered per-region input directory '
                              '``input_region_<GROUP_NAME>/`` for Lagrangian '
@@ -265,26 +231,6 @@ def main():
                         help='Tail-averaged imbalance threshold (primal '
                              'units) for declaring Lagrangian convergence '
                              '(default 1.0).')
-    parser.add_argument('--glpsol-timing', action='store_true', default=False,
-                        help='Record per-constraint matrix-generation time '
-                             'from glpsol stdout. Writes '
-                             'solve_data/glpsol_constraint_timing.csv with '
-                             'columns solve,phase,constraint,elapsed_s. Use '
-                             'to identify which constraint families dominate '
-                             'MPS generation cost. Diagnostic only.')
-    parser.add_argument('--auto-scale', action='store_true', default=False,
-                        help='Apply the per-solve ScaleAnalyzer recommendation '
-                             'for use_row_scaling (Agent 8, LP-scaling).  Without '
-                             'this flag the analyzer still runs and emits '
-                             'solve_data/scaling_analysis.json, but the row-scaling '
-                             'recommendation is not acted on — an explicit opt-in '
-                             'is required.  The objective scalar '
-                             '(scale_the_objective) IS auto-applied unconditionally '
-                             '(Agent 12); its value comes from the same analyser '
-                             'and lives in solve_data/scale_the_objective.csv.  '
-                             'The flag is also triggered by FLEXTOOL_AUTO_SCALE=1.  '
-                             'A DB-supplied solve.use_row_scaling is always '
-                             'respected; the analyzer only fills in missing values.')
     parser.add_argument('--engine',
                         choices=['gmpl', 'native'],
                         default=None,
@@ -336,33 +282,14 @@ def main():
     timing_recorder = TimingRecorder(work_folder=wf, scenario=scenario_name)
     t_total_start = time.perf_counter()
 
-    # Δ.21 — only ``effective_precision`` survives the GMPL retirement;
-    # it's still consumed by ``--region`` (input filter) and
-    # ``--decomposition lagrangian``.  ``--auto-scale`` /
-    # ``--relax-feasibility`` / ``--ipm`` / ``--report-near-duplicates``
-    # are GMPL-pipeline-only knobs — they stay accepted on the argparse
-    # surface for one release-cycle of automation backward-compat but
-    # never reach the solver.  Warn if any are explicitly set so users
-    # discover the deprecation.
+    # ``effective_precision`` is the only GMPL-era knob still consumed
+    # on the native path — by ``--region`` (input filter) and by
+    # ``--decomposition lagrangian``.  The GMPL-pipeline-only flags
+    # (``--use-old-raw-csv``, ``--ipm``, ``--auto-scale``,
+    # ``--relax-feasibility``, ``--glpsol-timing``,
+    # ``--report-near-duplicates``, and ``--highs-threads``) were
+    # warn-deprecated in Δ.21 and removed entirely in Δ.22.
     effective_precision = resolve_precision_digits(args.precision_digits)
-    _retired_gmpl_flags = {
-        '--use-old-raw-csv': args.use_old_raw_csv,
-        '--ipm': args.ipm,
-        '--auto-scale': args.auto_scale,
-        '--relax-feasibility': args.relax_feasibility is not None,
-        '--glpsol-timing': args.glpsol_timing,
-        '--highs-threads (>1)': (args.highs_threads or 1) > 1,
-        '--report-near-duplicates': args.report_near_duplicates,
-    }
-    _retired_set = [name for name, active in _retired_gmpl_flags.items() if active]
-    if _retired_set:
-        logging.warning(
-            "engine=native: ignoring GMPL-only flag(s) %s — these "
-            "configured the retired glpsol/HiGHS legacy pipeline and "
-            "have no effect on the polar-high cascade. The flags will "
-            "be removed entirely in Δ.22.",
-            ', '.join(_retired_set),
-        )
 
     # --- Regional filter mode (Agent 3.1) --------------------------------
     # ``--region GROUP`` produces ``input_region_<GROUP>/`` and exits
