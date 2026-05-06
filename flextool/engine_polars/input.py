@@ -4341,7 +4341,17 @@ def load_flextool_from_db(input_db_url: str | Path,
         bin_dir=Path(bin_dir) if bin_dir else REPO / "bin",
         work_folder=work_folder,
     )
-    runner.write_input(db_url, scenario_name)
+    # Δ.20 — workdir CSV population is owned by engine_polars.  The
+    # legacy ``runner.write_input(...)`` call has been replaced by the
+    # native shim ``_native_input_writer.write_workdir_inputs`` so the
+    # cascade contract no longer references FlexToolRunner.write_input.
+    from flextool.engine_polars._native_input_writer import (
+        write_workdir_inputs,
+    )
+
+    write_workdir_inputs(
+        db_url, scenario_name, work_folder, logger=runner.state.logger,
+    )
 
     # Quiet the flextool logger's stdout chatter.
     runner.state.logger.setLevel(logging.ERROR)

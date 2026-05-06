@@ -18,9 +18,10 @@ The Phase-1 implementation therefore takes the subprocess-shim path
 
 1. Construct a :class:`flextool.flextoolrunner.flextoolrunner.FlexToolRunner`
    over a tempdir work folder.
-2. Call ``runner.write_input(...)`` — populates ``<tempdir>/input/``
-   and the L0-L9 batch ``<tempdir>/solve_data/*.csv`` via flextool's
-   Python preprocessing.
+2. Call :func:`flextool.engine_polars._native_input_writer.write_workdir_inputs`
+   (Δ.20 — engine_polars-owned) — populates ``<tempdir>/input/`` and
+   the L0-L9 batch ``<tempdir>/solve_data/*.csv``.  Replaces the legacy
+   ``runner.write_input(...)`` call from earlier phases.
 3. Drive ``orchestration.run_model(...)`` with a no-op solver so the
    per-solve preprocessing (timesets, scaling, period_first, …) writes
    the additional ``solve_data/*.csv`` files flexpy needs — without
@@ -253,7 +254,17 @@ class SpineDbSource:
             bin_dir=self._bin_dir,
             work_folder=self._work_folder,
         )
-        runner.write_input(self._db_url, self._scenario)
+        # Δ.20 — workdir CSV population is owned by engine_polars.  The
+        # cascade no longer reaches into FlexToolRunner.write_input;
+        # the native shim emits the same artefacts.
+        from flextool.engine_polars._native_input_writer import (
+            write_workdir_inputs,
+        )
+
+        write_workdir_inputs(
+            self._db_url, self._scenario, self._work_folder,
+            logger=runner.state.logger,
+        )
         runner.state.logger.setLevel(logging.ERROR)
 
         solves = next(iter(runner.state.solve.model_solve.values()))
