@@ -6046,10 +6046,15 @@ def apply_derived_e(
         flex_data.nodeStateBlock = nsb_db
 
     # 4. arc block weights --------------------------------------------
-    pss = getattr(flex_data, "pss", None)
+    # NB: FlexData attribute is ``process_source_sink`` (not ``pss``);
+    # the prior ``getattr(..., "pss", ...)`` always returned None and
+    # the override never fired — local seeds in input.py:3060+ were the
+    # sole producer.  Δ.17b Gap A: fixed; eff/noEff fallbacks also use
+    # canonical names.
+    pss = getattr(flex_data, "process_source_sink", None)
     if pss is None:
-        pss = getattr(flex_data, "pss_eff", None) or getattr(
-            flex_data, "pss_noEff", None)
+        pss = (getattr(flex_data, "process_source_sink_eff", None)
+               or getattr(flex_data, "process_source_sink_noEff", None))
     if (nsb_db is not None and period_block_time_for_arc is not None
             and pss is not None):
         arc = arc_block_dt_from_source(

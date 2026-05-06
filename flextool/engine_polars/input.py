@@ -3075,92 +3075,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
         p_arc_step_duration_source = None
 
         # ─── Per-arc-side daily-block aggregation index ──────────────────────
-        # For each (n, d, b_first) in nodeStateBlock × period_block, build the
-        # set of (p, source, sink, t, weight) that contribute to that daily
-        # nodeBalance via the .mod's overlap × block_step_duration aggregation.
-        # The arc's relevant side block (process_side_block.csv) determines
-        # the timesteps & weights:
-        #   * b_f=daily_group → t=b_first only, weight=block_step_duration
-        #     (=24 for daily_group's coarse step).
-        #   * b_f=hourly_group/default → all fine t in period_block_time[d,
-        #     b_first], weight=1.
-        # This matches the .mod's nodeBalance_eq treatment of mixed-block arcs
-        # (e.g., electrolyser_A's sink-side daily, source-side hourly) where
-        # the daily-side balance only references v_flow at coarse steps × 24,
-        # while the hourly-side balance integrates all 24 hourly v_flow values.
-        # See flextool.mod:2208-2246.
+        # Δ.17b Gap A: produced by ``apply_derived_e`` (which calls
+        # ``arc_block_dt_from_source``) — see ``_derived_params.py:6049+``.
+        # The local seed had been redundant since Γ.3.E but remained the
+        # sole producer because of a typo (``getattr(flex_data, "pss", ...)``
+        # — actual attribute is ``process_source_sink``).  Δ.17b fixed the
+        # typo; seeds dropped here.
         arc_sink_block_dt = None
         arc_source_block_dt = None
         p_arc_sink_weight = None
         p_arc_source_weight = None
-        # Δ.2: consume block frames from the in-memory ``BlockLayout``.
-        if (proc["pss"] is not None and proc["pss"].height > 0
-                and storage.get("nodeStateBlock") is not None
-                and storage["nodeStateBlock"].height > 0
-                and storage.get("period_block_time") is not None
-                and storage["period_block_time"].height > 0
-                and block_layout.process_side_block_frame.height > 0
-                and block_layout.block_step_duration_frame.height > 0):
-            psb = block_layout.process_side_block_frame.rename(
-                {"process": "p", "block": "b_f"})
-            bsd_arc = block_layout.block_step_duration_frame.rename(
-                {"block": "b_f", "period": "d", "step": "t",
-                 "step_duration": "weight"})
-            nsb_set = storage["nodeStateBlock"]["n"].unique()
-            pss_local = proc["pss"]
-            pbt = storage["period_block_time"]   # (d, b_first, t)
-
-            # Sink-side: arcs where sink ∈ nodeStateBlock.
-            # process_side_block (p, side='sink', b_f) → arc-side block
-            psb_sink = psb.filter(pl.col("side") == "sink").select("p", "b_f")
-            sink_arcs = (pss_local
-                .filter(pl.col("sink").is_in(nsb_set))
-                .join(psb_sink, on="p", how="inner"))
-            if sink_arcs.height > 0:
-                # For each arc-side, restrict (d, t) to those where
-                # block_step_duration[b_f, d, t] is defined (i.e., t is a
-                # coarse step of b_f).  Then join to period_block_time to
-                # group by (d, b_first).
-                arc_sink_block_dt = (sink_arcs
-                    .join(bsd_arc, on="b_f", how="inner")  # adds (d, t, weight)
-                    .join(pbt.rename({}), on=["d", "t"], how="inner")
-                    .select("p", "source", "sink", "d", "b_first", "t", "weight")
-                    .unique())
-                if arc_sink_block_dt.height == 0:
-                    arc_sink_block_dt = None
-                else:
-                    # Keyed (p, source, sink, d, t) so it joins naturally with
-                    # v_flow on (p, source, sink, d, t).  The sink→n rename
-                    # happens in nbb_eq's index frame instead.
-                    weight_frame = (arc_sink_block_dt
-                        .select("p", "source", "sink", "d", "t", "weight")
-                        .unique()
-                        .rename({"weight": "value"}))
-                    p_arc_sink_weight = Param(
-                        ("p", "source", "sink", "d", "t"), weight_frame)
-            # Source-side: arcs where source ∈ nodeStateBlock.
-            psb_src = psb.filter(pl.col("side") == "source").select("p", "b_f")
-            src_arcs = (pss_local
-                .filter(pl.col("source").is_in(nsb_set))
-                .join(psb_src, on="p", how="inner"))
-            if src_arcs.height > 0:
-                arc_source_block_dt = (src_arcs
-                    .join(bsd_arc, on="b_f", how="inner")
-                    .join(pbt.rename({}), on=["d", "t"], how="inner")
-                    .select("p", "source", "sink", "d", "b_first", "t", "weight")
-                    .unique())
-                if arc_source_block_dt.height == 0:
-                    arc_source_block_dt = None
-                else:
-                    # Keep ``source`` column unchanged so this Param joins with
-                    # v_flow on (p, source, sink, d, t).  The arc-source-side
-                    # rename happens in nbb_eq's index frame instead.
-                    weight_frame_src = (arc_source_block_dt
-                        .select("p", "source", "sink", "d", "t", "weight")
-                        .unique()
-                        .rename({"weight": "value"}))
-                    p_arc_source_weight = Param(
-                        ("p", "source", "sink", "d", "t"), weight_frame_src)
 
         # ─── Group-level slack (capacity_margin / inertia / non_sync) ────────
         group_slack = _group_slack.load_data(
