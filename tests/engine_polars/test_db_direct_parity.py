@@ -1547,6 +1547,30 @@ class TestDerivedCInvestOnlineGroupSlack:
 
     @pytest.mark.parametrize("work, sqlite, scenario", DERIVED_C_FIXTURES,
                               ids=[f[0] for f in DERIVED_C_FIXTURES])
+    def test_p_flow_upper_parity(self, work, sqlite, scenario):
+        """§3.3.5 (Δ.26) — per-(p, source, sink, d, t) structural max
+        flow.  Native port of flextool's
+        ``preprocessing/process_arc_unions.py:write_p_flow_max``.
+
+        The slow path reads ``solve_data/p_flow_max.csv``; the override
+        chain produces the same Param via
+        :func:`flextool.engine_polars._derived_params.p_flow_upper_from_source`.
+        """
+        csv_d, db_d = _load_pair(work, sqlite, scenario)
+        if (csv_d.p_flow_upper is None
+                and db_d.p_flow_upper is None):
+            pytest.skip(f"{work} has no p_flow_upper")
+        # Skip when DB-derived is None (gate-fail) — CSV value survives
+        # and is the canonical reference.
+        if db_d.p_flow_upper is None or db_d.p_flow_upper.frame.height == 0:
+            pytest.skip(f"{work} DB-derived p_flow_upper is empty (gated)")
+        eq, diff = _frame_eq_value(csv_d.p_flow_upper,
+                                    db_d.p_flow_upper,
+                                    ["p", "source", "sink", "d", "t"])
+        assert eq, f"p_flow_upper mismatch on {work}: {diff}"
+
+    @pytest.mark.parametrize("work, sqlite, scenario", DERIVED_C_FIXTURES,
+                              ids=[f[0] for f in DERIVED_C_FIXTURES])
     def test_p_group_capacity_for_scaling_parity(self, work, sqlite,
                                                        scenario):
         """§3.12.2 — per-group row-scaler.  Defaults to 1.0 when
