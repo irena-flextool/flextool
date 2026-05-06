@@ -4080,6 +4080,45 @@ def apply_derived_c(
     if ed_div_db is not None and ed_div_db.height > 0:
         flex_data.ed_divest_set = ed_div_db
 
+    # Δ.17c Gap D — pd/nd_invest_set, pd/nd_divest_set, edd_invest_set:
+    # partition the (e, d) frames to (process, d) / (node, d) by
+    # entity-class membership.  Mirrors the user's MathProg snippets
+    # for ``e_invest_total`` / ``e_divest_total`` (already wired in
+    # apply_projection_params) and ``invest_divest_sets.py:215-217``.
+    #
+    # We use the ed_*_set values just produced (or, when this run
+    # contributes nothing, fall back to the seed-loaded ed_*_set on
+    # flex_data).  The partition helpers are pure projections; they're
+    # cheap so re-running on every invocation is fine.
+    from flextool.engine_polars._derived_existing import (
+        pd_invest_set_lf as _pd_invest_lf,
+        nd_invest_set_lf as _nd_invest_lf,
+        pd_divest_set_lf as _pd_divest_lf,
+        nd_divest_set_lf as _nd_divest_lf,
+    )
+    ed_inv_for_partition = (
+        ed_inv_db if (ed_inv_db is not None and ed_inv_db.height > 0)
+        else getattr(flex_data, "ed_invest_set", None))
+    ed_div_for_partition = (
+        ed_div_db if (ed_div_db is not None and ed_div_db.height > 0)
+        else getattr(flex_data, "ed_divest_set", None))
+    if ed_inv_for_partition is not None and ed_inv_for_partition.height > 0:
+        ed_inv_lf = ed_inv_for_partition.lazy()
+        pd_inv_db = _pd_invest_lf(source, ed_inv_lf).collect()
+        if pd_inv_db.height > 0:
+            flex_data.pd_invest_set = pd_inv_db
+        nd_inv_db = _nd_invest_lf(source, ed_inv_lf).collect()
+        if nd_inv_db.height > 0:
+            flex_data.nd_invest_set = nd_inv_db
+    if ed_div_for_partition is not None and ed_div_for_partition.height > 0:
+        ed_div_lf = ed_div_for_partition.lazy()
+        pd_div_db = _pd_divest_lf(source, ed_div_lf).collect()
+        if pd_div_db.height > 0:
+            flex_data.pd_divest_set = pd_div_db
+        nd_div_db = _nd_divest_lf(source, ed_div_lf).collect()
+        if nd_div_db.height > 0:
+            flex_data.nd_divest_set = nd_div_db
+
     # Γ.6.D — ed_invest_forbidden_no_investment.  Built off the
     # (possibly-overridden) ed_invest_set so the helper sees the same
     # frame the LP downstream consumes.
@@ -4119,6 +4158,26 @@ def apply_derived_c(
         eil_db = None
     if eil_db is not None and eil_db.height > 0:
         flex_data.edd_invest_lookback_set = eil_db
+
+    # Δ.17c Gap D — edd_invest_set: union of edd_history walks intersected
+    # with ed_invest_set on (e, d_history).  Mirror of
+    # ``invest_divest_sets.py:267-270``.
+    if ed_inv_used is not None and ed_inv_used.height > 0:
+        from flextool.engine_polars._derived_existing import (
+            edd_invest_set_lf as _edd_invest_lf,
+        )
+        period_in_use = _period_in_use_set(source, active_solve, workdir,
+                                              ctx=ctx)
+        period_with_history = (_read_period_with_history(workdir)
+                                  or list(period_in_use))
+        try:
+            edd_inv_db = _edd_invest_lf(
+                source, active_solve, ed_inv_used.lazy(),
+                period_with_history, period_in_use, workdir).collect()
+        except Exception:
+            edd_inv_db = None
+        if edd_inv_db is not None and edd_inv_db.height > 0:
+            flex_data.edd_invest_set = edd_inv_db
 
     pd_div_used = getattr(flex_data, "pd_divest_set", None)
     try:
