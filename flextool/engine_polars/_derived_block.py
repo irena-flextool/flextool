@@ -389,6 +389,82 @@ def flow_from_nodeBalance_block_filtered(
 
 
 # ---------------------------------------------------------------------------
+# Δ.27 — flow_from_nodeBalance_{eff,noEff} source-driven seed
+# ---------------------------------------------------------------------------
+
+
+def flow_from_nodeBalance_seed(
+    pss_partition: pl.DataFrame | None,
+    nodeBalance: pl.DataFrame | None,
+    bundle: BlockBundle | None = None,
+) -> pl.DataFrame | None:
+    """Source-driven seed for ``flow_from_nodeBalance_eff`` /
+    ``flow_from_nodeBalance_noEff``.
+
+    Mirror of the inline derivation in
+    ``input.py::_load_storage`` lines 1658-1705 (the slow path's
+    storage loader).  Per the dispatch:
+
+    ::
+
+        flow_from_nb_<part> = pss_<part>
+            .filter(source ∈ nodeBalance.n)
+            .with_columns(n=source)
+            .select(p, source, sink, n)
+
+    Then the block-compatibility filter (when *bundle* carries an
+    ``overlap_set``) drops arc rows whose source-block doesn't overlap
+    the destination node's block.
+
+    The two partitions (``eff`` / ``noEff``) share this logic; the
+    caller passes the appropriate ``process_source_sink_eff`` /
+    ``_noEff`` partition to produce the matching field.
+
+    Parameters
+    ----------
+    pss_partition : pl.DataFrame or None
+        ``process_source_sink_eff`` or ``_noEff`` — schema
+        ``[p, source, sink]``.  ``None`` → returns ``None``.
+    nodeBalance : pl.DataFrame or None
+        ``[n]`` set frame.  Empty / ``None`` → returns ``None`` (no
+        nodeBalance nodes means there are no source-side flows to
+        gather).
+    bundle : BlockBundle or None
+        When supplied, applies the source-side block-compat filter
+        (mirrors :func:`flow_from_nodeBalance_block_filtered`).
+        ``None`` keeps the unfiltered seed.
+
+    Returns
+    -------
+    pl.DataFrame or None
+        ``[p, source, sink, n]`` with ``n = source`` and the filter
+        applied.  ``None`` when the inputs cannot produce a non-empty
+        frame.
+    """
+    if pss_partition is None or pss_partition.height == 0:
+        return None
+    if nodeBalance is None or nodeBalance.height == 0:
+        return None
+    if "n" not in nodeBalance.columns:
+        return None
+    nb_nodes = nodeBalance["n"]
+    seed = (
+        pss_partition.lazy()
+        .filter(pl.col("source").is_in(nb_nodes))
+        .with_columns(n=pl.col("source"))
+        .select("p", "source", "sink", "n")
+        .unique()
+        .sort("p", "source", "sink", "n")
+        .collect()
+    )
+    if seed.height == 0:
+        return None
+    if bundle is not None:
+        return filter_flow_n_by_block(seed, bundle, side="source")
+    return seed
+
+
+# ---------------------------------------------------------------------------
 # §3.9.2 — nodeStateBlock multi-resolution synthesis
 # ---------------------------------------------------------------------------
 
@@ -756,6 +832,7 @@ __all__ = [
     "flow_to_n_block_filtered",
     "flow_from_n_block_filtered",
     "flow_from_nodeBalance_block_filtered",
+    "flow_from_nodeBalance_seed",
     "nodeStateBlock_lf",
     "period_block_multi_resolution_lf",
     "arc_block_dt",
