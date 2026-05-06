@@ -1876,227 +1876,24 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                 p_ssrv = Param(("n", "d", "t"), ssrv_long)
 
     # ─── Intraperiod-block (bind_intraperiod_blocks) sets ────────────────
-    # Only loaded if the corresponding solve_data CSVs exist.  Used by
-    # ``stateConstantWithinBlock_eq`` and ``nodeBalanceBlock_eq`` in
-    # model.py for nodes whose binding method is ``bind_intraperiod_blocks``.
-    # TODO(Δ.18+): ``apply_derived_e`` produces these (via
-    # ``nodeStateBlock_from_source`` / ``period_block_family_from_source``)
-    # but the local arc-block aggregation path in ``load_flextool``
-    # (input.py:3060+ — ``arc_sink_block_dt`` / ``arc_source_block_dt``)
-    # consumes ``storage["nodeStateBlock"]`` / ``storage["period_block_time"]``
-    # BEFORE the override chain runs.  Additionally, ``apply_derived_e``'s
-    # arc-block step (line ~6049) gates on ``getattr(flex_data, "pss", None)``
-    # which is always None (the FlexData field is named
-    # ``process_source_sink``, not ``pss``).  Both gaps need to close before
-    # these seeds can retire.
+    # Used by ``stateConstantWithinBlock_eq`` and ``nodeBalanceBlock_eq``
+    # in model.py for nodes whose binding method is ``bind_intraperiod_blocks``.
+    # Δ.17b Gap A: ``apply_derived_e`` produces these via
+    # ``nodeStateBlock_from_source`` / ``period_block_family_from_source``
+    # / ``dtttdt_block_interior_from_dtttdt`` (with full multi-resolution
+    # synthesis matching the local path).  Local seeds dropped (4
+    # ``_read_csv_file`` calls retired).
     nodeStateBlock = None
-    nsb_path = sd / "nodeStateBlock.csv"
-    if nsb_path.exists():
-        df = _read_csv_file(nsb_path)
-        if df.height > 0:
-            nodeStateBlock = df.rename({"node": "n"}).select("n").unique()
-
     period_block = None
-    pb_path = sd / "period_block_set.csv"
-    if pb_path.exists():
-        df = _read_csv_file(pb_path)
-        if df.height > 0:
-            period_block = (df
-                .rename({"period": "d", "block_first": "b_first"})
-                .select("d", "b_first")
-                .unique())
-
     period_block_succ = None
-    pbs_path = sd / "period_block_succ.csv"
-    if pbs_path.exists():
-        df = _read_csv_file(pbs_path)
-        if df.height > 0:
-            period_block_succ = (df
-                .rename({"period": "d", "block_first": "b_first",
-                         "block_first_next": "b_next"})
-                .select("d", "b_first", "b_next"))
-
     period_block_time = None
-    pbt_path = sd / "period_block_time.csv"
-    if pbt_path.exists():
-        df = _read_csv_file(pbt_path)
-        if df.height > 0:
-            period_block_time = (df
-                .rename({"period": "d", "block_first": "b_first",
-                         "step": "t"})
-                .select("d", "b_first", "t"))
-
-    # Interior-of-block dtttdt rows: rows where the within-timeset previous
-    # equals the plain (within-period) previous — i.e. NOT the block wrap row.
-    # These pin v_state[n,d,t] = v_state[n,d,t_previous] for nodeStateBlock
-    # nodes (mod:2322-2326, jump=1 interior rows).
     dtttdt_block_interior = None
-    if (dtttdt is not None and dtttdt.height > 0
-            and "t_previous_within_timeset" in dtttdt.columns
-            and "t_previous" in dtttdt.columns):
-        dtttdt_block_interior = (dtttdt
-            .filter(pl.col("t_previous_within_timeset")
-                    == pl.col("t_previous"))
-            .select("d", "t", "t_previous"))
-        if dtttdt_block_interior.height == 0:
-            dtttdt_block_interior = None
 
     # ─── Multi-resolution block synthesis ───────────────────────────────
-    # If the fixture defines temporal-resolution blocks coarser than 'default'
-    # via entity_block.csv + block_step_duration.csv (e.g. lh2_three_region's
-    # daily_group), repurpose the existing nodeStateBlock / period_block_*
-    # infrastructure to emit one nodeBalance per (n, d, b_first) for nodes
-    # whose block != 'default'.  This is exactly what flextool's .mod does at
-    # nodeBalance_eq line 2185+ via the overlap M-matrix, in the degenerate
-    # case where every overlap row has fraction 1.0.
-    #
-    # The rewrite is *opt-in*: only fires when entity_block.csv assigns a
-    # non-'default' block to one or more nodeBalance nodes.  Fixtures without
-    # entity_block.csv (or with everything set to 'default') keep their
-    # existing pre-v51 hourly nodeBalance.
-    # Δ.2: consume block frames from in-memory ``BlockLayout`` when
-    # available; falls through if no block_layout was passed.
-    if (block_layout is not None
-            and block_layout.entity_block_frame.height > 0
-            and block_layout.block_step_duration_frame.height > 0
-            and nb is not None and nb.height > 0):
-        eb2 = block_layout.entity_block_frame.rename(
-            {"entity": "n", "block": "b"}).select("n", "b")
-        if eb2.height > 0:
-            # Identify *coarse* blocks: those whose ``block_step_duration``
-            # contains any entry > 1.  ``hourly_group`` (24-hourly grid with
-            # sd=1.0 per row) reduces to the default fine grid and shouldn't
-            # trigger the rewrite.  Only blocks with at least one row of
-            # step_duration > 1 (e.g. ``daily_group`` with sd=24.0) need the
-            # M-matrix aggregation.
-            #
-            # Additional gate: the rewrite only makes semantic sense when
-            # MULTIPLE distinct blocks are in use (e.g. lh2 has both
-            # ``hourly_group`` and ``daily_group``; some entities live on
-            # the fine grid while others aggregate to coarse).  A fixture
-            # with a single block (typically ``default``) is just a single
-            # natural-resolution LP — the per-step duration may exceed 1
-            # (e.g. 6h for storage_fullYear_6h) but there's no overlap /
-            # M-matrix structure to synthesise.  Without this gate the
-            # rewrite blanket-promotes every nodeBalance entity into
-            # nodeStateBlock, killing the per-step nodeBalance_eq AND
-            # forcing v_state to be constant across the period via the
-            # stateConstantWithinBlock_eq cyclic chain (battery can't
-            # charge/discharge → ~3-5% obj-value gap).
-            bsd_full = block_layout.block_step_duration_frame
-            distinct_blocks = bsd_full["block"].unique().to_list()
-            if len(distinct_blocks) < 2:
-                coarse_blocks = []
-            else:
-                coarse_blocks = block_layout.coarse_blocks(threshold=1.0)
-            # Restrict to nodeBalance nodes with a *coarse* block.
-            non_default_nodes = (eb2
-                .filter(pl.col("b").is_in(coarse_blocks))
-                .join(nb, on="n", how="inner"))
-            if non_default_nodes.height > 0:
-                bsd = bsd_full.rename(
-                    {"period": "d", "step": "b_first"})
-                # Keep only coarse blocks (b in non_default_nodes' set).
-                bsd = bsd.filter(
-                    pl.col("block").is_in(non_default_nodes["b"].unique()))
-                if bsd.height > 0:
-                    # period_block: union of (d, b_first) per non-default
-                    # block — each block's coarse timesteps are the b_first
-                    # rows of block_step_duration.
-                    new_pb = bsd.select("d", "b_first").unique()
-                    # period_block_succ: cyclic chain of consecutive
-                    # block_first values within each (block, period) — order
-                    # is lexicographic on b_first (t0001 < t0025 < … < t0145).
-                    succ_rows = []
-                    for (blk, dval), grp in (bsd
-                            .sort("block", "d", "b_first")
-                            .group_by(["block", "d"], maintain_order=True)):
-                        b_firsts = grp["b_first"].to_list()
-                        n_blk = len(b_firsts)
-                        for i in range(n_blk):
-                            cur = b_firsts[i]
-                            nxt = b_firsts[(i + 1) % n_blk]
-                            succ_rows.append((dval, cur, nxt))
-                    new_pbs = (pl.DataFrame(
-                        succ_rows, schema=["d", "b_first", "b_next"],
-                        orient="row")
-                        if succ_rows else None)
-                    # period_block_time: derived from overlap_set
-                    # (b_coarse=non-default, b_fine=default) — every fine
-                    # 'default' step that overlaps a coarse step.
-                    new_pbt = None
-                    ov = block_layout.overlap_set_frame
-                    if ov.height > 0:
-                        ov = ov.rename({
-                            "period": "d",
-                            "block_coarse": "b",
-                            "step_coarse": "b_first",
-                            "block_fine": "b_fine",
-                            "step_fine": "t",
-                        })
-                        ov_keep = ov.filter(
-                            pl.col("b").is_in(non_default_nodes["b"].unique())
-                            & (pl.col("b_fine") == "default"))
-                        if ov_keep.height > 0:
-                            new_pbt = ov_keep.select(
-                                "d", "b_first", "t").unique()
-                    if new_pbt is None:
-                        # Fallback: synthesise period_block_time from bsd —
-                        # each daily block (b_first, step_duration=N) covers
-                        # the next N consecutive 'default' fine steps.
-                        new_pbt = None
-                    # Synthesised dtttdt_block_interior: hours within the
-                    # same daily block need t→t_prev (previous hour within
-                    # day).  Built from new_pbt: for each (d, b_first),
-                    # consecutive sorted t's give (d, t, t_previous=t_prev).
-                    new_dbi = None
-                    if new_pbt is not None and new_pbt.height > 0:
-                        ints = []
-                        for (dval, bf), grp in (new_pbt
-                                .sort("d", "b_first", "t")
-                                .group_by(["d", "b_first"], maintain_order=True)):
-                            ts = grp["t"].to_list()
-                            for i in range(1, len(ts)):
-                                ints.append((dval, ts[i], ts[i - 1]))
-                        if ints:
-                            new_dbi = pl.DataFrame(
-                                ints, schema=["d", "t", "t_previous"],
-                                orient="row").unique()
-                    # *Replace* the existing block sets with the
-                    # synthesised coarse-block versions.  flextool's runner
-                    # writes degenerate identity rows (single-block
-                    # period_block_time spanning all 168 hours, self-loop
-                    # period_block_succ) when there's no
-                    # bind_intraperiod_blocks node, but those rows are wrong
-                    # for daily-aggregation (they'd put every fine hour into
-                    # one giant block).  When coarse blocks are present we
-                    # use the synthesised daily structure exclusively.  The
-                    # 5weeks_battery_intraperiod_blocks fixture has all
-                    # entities at block='default' so this branch is a no-op
-                    # there and the existing CSVs are kept verbatim.
-                    if new_pb is not None and new_pb.height > 0:
-                        period_block = new_pb
-                    if new_pbs is not None and new_pbs.height > 0:
-                        period_block_succ = new_pbs
-                    if new_pbt is not None and new_pbt.height > 0:
-                        period_block_time = new_pbt
-                    if new_dbi is not None and new_dbi.height > 0:
-                        dtttdt_block_interior = new_dbi
-                    # Add ALL non-default-block nodeBalance nodes (state +
-                    # non-state) to nodeStateBlock so the existing
-                    # nodeBalanceBlock_eq path handles them.  For non-state
-                    # nodes (h2 here), v_state isn't declared — the state-
-                    # change term becomes 0 by virtue of empty v_state frame,
-                    # and the constraint reduces to a daily-aggregated
-                    # instantaneous balance.
-                    new_nsb = non_default_nodes.select("n").unique()
-                    if nodeStateBlock is None:
-                        nodeStateBlock = new_nsb
-                    else:
-                        nodeStateBlock = pl.concat(
-                            [nodeStateBlock, new_nsb],
-                            how="vertical").unique()
-
+    # Δ.17b Gap A: synthesis is performed end-to-end by the override chain
+    # (``period_block_family_from_source`` + ``nodeStateBlock_from_source``
+    # + ``dtttdt_block_interior_from_dtttdt`` mirror the local logic).
+    # Local synthesis dropped here.
 
     # ─── Rolling-horizon nested-solve framework (flextool.mod:2196 + 2760) ─
     # p_nested_model.csv: { modelParam, p_nested_model } with rows
