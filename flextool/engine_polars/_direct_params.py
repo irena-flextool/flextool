@@ -1538,23 +1538,40 @@ def p_ladder_cum_quantity_from_source(source: "InputSource") -> Param | None:
     return _ladder_split(source, "price_ladder_cumulative", with_period=False)[1]
 
 
-def apply_direct_params(source: "InputSource",
-                          flex_data: object) -> None:
-    """Apply the DB-direct construction for the Direct Param wave,
-    mutating ``flex_data`` in place.
+def apply_direct_params_a(source: "InputSource",
+                            flex_data: object) -> None:
+    """Pass 1a of Direct Params — the dt-independent assignments.
+
+    Δ.28 — split from the legacy single-pass ``apply_direct_params``
+    so the dispatcher can run :func:`apply_derived_a` (which populates
+    ``flex_data.dt``) BEFORE the broadcast-needing assignments in
+    :func:`apply_direct_params_b` execute.  See module docstring on the
+    bug Δ.28 fixes (fast path's ``flex_data.dt`` is empty when
+    ``apply_direct_params`` runs, so scalar / 1d_map[period] /
+    1d_map[time] values authored on the source can't broadcast across
+    the active solve's ``(d, t)`` axis and the Param ends up empty —
+    e.g. ``p_commodity_price`` on ``work_lh2_three_region`` was empty
+    on the fast path even though Spine carries a scalar 30 for coal).
+
+    The slow path still calls these passes in sequence and the legacy
+    behaviour is preserved exactly — slow-path ``flex_data.dt`` is
+    already populated from CSVs by ``_load_*`` before
+    ``_apply_db_overrides`` runs, so pass-1a / pass-1b ordering is a
+    no-op there.
+
+    This pass writes:
+        * §5.2.1 scalar Params (``p_co2_content`` etc.).
+        * §5.2.3 relationship 1d_map (constraint coefficients).
+        * §5.2.1 invest/divest total caps.
+        * §1.16 second-wave scalars.
+
+    All of these consume ``source`` only — no ``flex_data.dt``
+    dependency.
 
     Δ.12b — assignment is unconditional for the scalar / 1d_map and
     relationship-1d_map helpers (these read the source unchanged and
     return None only when no upstream row exists, which is a
     legitimate "feature inactive" outcome).
-
-    Conditional assignment is retained for the
-    ``Map(period→time)``-shaped helpers (``_entity_period_time_param``
-    consumers) — these helpers only handle the explicit
-    ``Map(period→time)`` Spine shape and return None for scalar
-    broadcast / 1d_map(time) shapes, where the seed-loaded value
-    (preprocessed by flextool's per-solve cascade) survives.  See
-    TODO at each site for the helper-extension scope.
     """
     # ─── §5.2.1 scalar Params with FlexData fields — Δ.12b unconditional
     flex_data.p_co2_content = p_co2_content_from_source(source)
@@ -1609,6 +1626,33 @@ def apply_direct_params(source: "InputSource",
     # ─── Δ.4 second wave — commodity scalars (price ladder feature) ─────
     flex_data.p_commodity_unitsize = p_commodity_unitsize_from_source(source)
 
+
+def apply_direct_params_b(source: "InputSource",
+                            flex_data: object) -> None:
+    """Pass 1b of Direct Params — the dt-dependent assignments.
+
+    Δ.28 — runs AFTER :func:`apply_derived_a` populates
+    ``flex_data.dt`` for the active solve.  Every helper here is a
+    broadcast-needing Direct Param (scalar / 1d_map[period] /
+    1d_map[time] values authored on the source need ``dt`` to fan out
+    across the per-(d, t) axis).
+
+    Helpers in this pass either:
+        * consume ``period_filter=dt`` directly (scalar broadcast inside
+          ``broadcast_to_period_time`` / ``broadcast_to_period`` /
+          ``_entity_period_scalar`` / ``_entity_period_time_param``), or
+        * pass ``dt`` to ``_filter_param_by_periods`` to restrict
+          authored Map(period→…) values to the active periods.
+
+    On the fast path ``apply_direct_params_a`` runs first (with empty
+    ``dt``), then ``apply_derived_a`` populates ``dt`` from the source's
+    timeset / period structure, then this pass runs — every broadcast
+    helper sees a non-empty ``dt`` and produces the per-(d, t) frame.
+
+    On the slow path ``flex_data.dt`` is already populated by ``_load_*``
+    before ``_apply_db_overrides`` runs, so pass-A then pass-B is
+    behaviourally equivalent to the legacy single pass.
+    """
     # ─── Δ.4b — period filter (mirrors flextool's per-solve preprocessing) ─
     # Spine Map(period→…) parameters cover ALL declared periods, but the
     # CSV path's pd_group.csv / pdtNode.csv etc. is pre-filtered to the
@@ -1794,3 +1838,24 @@ def apply_direct_params(source: "InputSource",
         flex_data.p_ladder_cum_price = p_cum_price
     if p_cum_qty is not None:
         flex_data.p_ladder_cum_quantity = p_cum_qty
+
+
+def apply_direct_params(source: "InputSource",
+                          flex_data: object) -> None:
+    """Apply the full Direct Param wave in two phases.
+
+    Δ.28 — kept as a single back-compat entry point.  The dispatcher in
+    :func:`flextool.engine_polars.input._apply_db_overrides` does NOT
+    call this function any more; it calls
+    :func:`apply_direct_params_a` / :func:`apply_direct_params_b`
+    around :func:`apply_derived_a` so the dt-dependent broadcasts in
+    pass 1b see a populated ``flex_data.dt``.
+
+    External callers that want the legacy single-pass behaviour (with
+    pre-populated ``flex_data.dt``) keep this entry point.  In the slow
+    path ``flex_data.dt`` is loaded by ``_load_*`` before this runs;
+    in the fast path the dispatcher's two-phase ordering is the only
+    correct sequence.
+    """
+    apply_direct_params_a(source, flex_data)
+    apply_direct_params_b(source, flex_data)
