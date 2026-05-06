@@ -239,22 +239,25 @@ def test_extract_no_period_produces_solve_only_index() -> None:
     assert df.loc["s1", "g2"] == -4.0
 
 
-def test_extract_leading_and_trailing_ignore() -> None:
-    """leading_ignore/trailing_ignore drop bookkeeping indices from parse."""
-    # nodeBalance_eq has 8 parts: c, n, d, t, tp, tpwt, dp, tpws
+def test_extract_arity3_node_balance() -> None:
+    """Δ.30 — nodeBalance_eq is arity-3 ``[node, period, time]``.
+
+    The polars LP emits this constraint without the GMPL-era bookkeeping
+    subscripts (``c, bn, tp, tpwt, dp, tpws``); the parser accepts only
+    the polars-native shape now.
+    """
     h = _fake_highs(
         variable_names=[],
         col_values=[],
         row_names=[
-            "nodeBalance_eq[s1,nA,d1,t1,tp,tpwt,dp,tpws]",
-            "nodeBalance_eq[s1,nB,d1,t1,tp,tpwt,dp,tpws]",
+            "nodeBalance_eq[nA,d1,t1]",
+            "nodeBalance_eq[nB,d1,t1]",
         ],
         row_duals=[1.0, 2.0],
     )
     df = extract_variable(
         h, "nodeBalance_eq", ("node",),
         solve_name="s1", has_time=True, source="row_dual",
-        leading_ignore=1, trailing_ignore=4,
     )
     assert df.columns.name == "node"
     assert list(df.columns) == ["nA", "nB"]
@@ -385,21 +388,23 @@ def test_write_v_dual_invest_by_class_splits_entities(tmp_path: Path) -> None:
 
 
 def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) -> None:
-    """Value = −raw_dual × 1e6 / inflation[period]; trailing 4 indices skipped."""
+    """Value = −raw_dual × 1e6 / inflation[period]; arity-3 polars row names.
+
+    Δ.30 — the polars LP emits ``nodeBalance_eq[node, period, time]`` (3
+    subscripts); the legacy GMPL ``c, bn, tp, tpwt, dp, tpws`` wrappers
+    were retired in Δ.21/Δ.22 and the parser no longer accepts them.
+    """
     (tmp_path / "output_raw").mkdir()
     (tmp_path / "input").mkdir()
     (tmp_path / "solve_data").mkdir()
     (tmp_path / "solve_data" / "solve__p_inflation_factor_operations_yearly.csv").write_text(
         "solve,period,value\ns1,p2020,1.0\ns1,p2025,2.0\n"
     )
-    # Agent 1.4: nodeBalance_eq gained a ``bn`` block subscript between
-    # ``node`` and ``period``; the extractor handles this via
-    # ``mid_ignore=1``.  In degenerate mode the block tag is 'default'.
     h = _fake_highs(
         variable_names=[], col_values=[],
         row_names=[
-            "nodeBalance_eq[s1,nA,default,p2020,t0001,tp,tpwt,dp,tpws]",
-            "nodeBalance_eq[s1,nA,default,p2025,t0001,tp,tpwt,dp,tpws]",
+            "nodeBalance_eq[nA,p2020,t0001]",
+            "nodeBalance_eq[nA,p2025,t0001]",
         ],
         row_duals=[3e-6, -4e-6],  # scaled duals
     )
