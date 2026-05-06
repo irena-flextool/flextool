@@ -292,11 +292,160 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
                              "p_entity_period_invested_capacity"))
             stub.write_csv(sd_dir / "p_entity_period_existing_capacity.csv")
 
+    # ─── input/ entity-class set + wide-format unitsize (Δ.30) ────────
+    # flextool's handoff_writers (process_outputs/handoff_writers.py) read
+    # ``input/p_entity_unitsize.csv`` (wide-transposed: ``entity,<e1>,<e2>,…``
+    # / ``value,<v1>,<v2>,…``) plus the entity-class set CSVs
+    # ``input/{entity,process_unit,process_connection,node}.csv``
+    # (single-column lists).  These are produced by flextool's
+    # preprocessing pipeline on the slow path; the fast path skips
+    # preprocessing, so without these the handoff writers fail with
+    # ``[Errno 2]`` and the wide-format output writers downstream see
+    # an incomplete workdir.  We synthesise them from FlexData here.
+    _write_input_entity_set_csvs(data, inp_dir)
+    _write_input_p_entity_unitsize_wide(data, inp_dir)
+
+    # ─── solve_data/ handoff stub CSVs (Δ.30) ─────────────────────────
+    # ``write_p_entity_period_existing_capacity`` reads
+    # ``solve_data/solve__p_entity_pre_existing.csv`` (wide-by-entity,
+    # indexed by (solve, period)).  In single-solve mode there's no
+    # prior solve so no pre-existing capacity has been carried over;
+    # write a header-only stub so ``pd.read_csv(... index_col=[0, 1])``
+    # returns an empty frame and the writer's ``if df.empty: return {}``
+    # branch fires.  Idempotent — overwrites only when missing.
+    pre_existing_path = sd_dir / "solve__p_entity_pre_existing.csv"
+    if not pre_existing_path.exists():
+        pre_existing_path.write_text("solve,period\n")
+
     # ─── Optional metadata copy-through ───────────────────────────────
     if copy_meta_from is not None:
         _copy_meta(Path(copy_meta_from), work)
 
     return work
+
+
+def _write_input_entity_set_csvs(data: "FlexData", inp_dir: Path) -> None:
+    """Δ.30 — write the four single-column entity-class set CSVs that
+    handoff_writers' ``_load_entity_class_set`` reads.
+
+    ``input/node.csv`` — every row in ``data.nodeBalance`` (column ``n``).
+    ``input/process_unit.csv`` — every row in ``data.process_unit``
+        (column ``p``).  Header-only when the field is None / empty.
+    ``input/process_connection.csv`` — every process in
+        ``data.process_source_sink`` whose ``p`` is NOT in
+        ``data.process_unit``.  Header-only when no connection processes
+        exist (the common case for unit-only fixtures).
+    ``input/entity.csv`` — union of nodes + processes.
+
+    All four files MUST exist for handoff_writers to walk them; an
+    empty (header-only) file is fine.
+    """
+    # node.csv
+    nb = _frame_of(data.nodeBalance) if data.nodeBalance is not None else None
+    if nb is not None:
+        node_lf = nb.rename({"n": "node"}).select("node")
+    else:
+        node_lf = pl.DataFrame({"node": []}, schema={"node": pl.Utf8})
+    node_lf.write_csv(inp_dir / "node.csv")
+
+    # process_unit.csv
+    pu = _frame_of(data.process_unit) if data.process_unit is not None else None
+    if pu is not None:
+        pu_out = pu.rename({"p": "process_unit"}).select("process_unit")
+    else:
+        pu_out = pl.DataFrame({"process_unit": []},
+                              schema={"process_unit": pl.Utf8})
+    pu_out.write_csv(inp_dir / "process_unit.csv")
+
+    # process_connection.csv = (every process in pss) - process_unit
+    pss = (
+        _frame_of(data.process_source_sink)
+        if data.process_source_sink is not None
+        else None
+    )
+    pu_set: set[str] = (
+        set(pu["p"].cast(pl.Utf8).to_list()) if pu is not None else set()
+    )
+    if pss is not None and "p" in pss.columns:
+        all_p = set(pss["p"].cast(pl.Utf8).to_list())
+        conn_processes = sorted(all_p - pu_set)
+    else:
+        conn_processes = []
+    pl.DataFrame({"process_connection": conn_processes}).write_csv(
+        inp_dir / "process_connection.csv"
+    )
+
+    # entity.csv = nodes + processes (sorted, unique).
+    nodes = (
+        nb["n"].cast(pl.Utf8).to_list() if nb is not None else []
+    )
+    processes = (
+        list(set(pss["p"].cast(pl.Utf8).to_list())) if pss is not None and "p" in pss.columns else []
+    )
+    entities = sorted(set(nodes) | set(processes))
+    pl.DataFrame({"entity": entities}).write_csv(inp_dir / "entity.csv")
+
+
+def _write_input_p_entity_unitsize_wide(data: "FlexData",
+                                         inp_dir: Path) -> None:
+    """Δ.30 — write the wide-transposed ``input/p_entity_unitsize.csv``
+    that ``handoff_writers._load_unitsize`` consumes.
+
+    Layout (read with ``pd.read_csv(path, index_col=0)``):
+
+        entity,e1,e2,e3,...
+        value,v1,v2,v3,...
+
+    Source: union of ``data.p_unitsize`` (process unitsize, column ``p``)
+    and ``data.p_state_unitsize`` (node-state unitsize, column ``n``).
+    Entities not present in either Param fall back to 1000.0 — the same
+    default flextool's preprocessing applies (see
+    ``flextoolrunner/preprocessing/entity_period_calc_params.py:191``).
+    """
+    # Build the (entity → value) map.
+    entity_value: dict[str, float] = {}
+    pu_param = data.p_unitsize
+    pu_frame = _frame_of(pu_param) if pu_param is not None else None
+    if pu_frame is not None and "p" in pu_frame.columns and "value" in pu_frame.columns:
+        for row in pu_frame.iter_rows(named=True):
+            entity_value[str(row["p"])] = float(row["value"])
+    psu_param = getattr(data, "p_state_unitsize", None)
+    psu_frame = _frame_of(psu_param) if psu_param is not None else None
+    if psu_frame is not None and "n" in psu_frame.columns and "value" in psu_frame.columns:
+        for row in psu_frame.iter_rows(named=True):
+            entity_value[str(row["n"])] = float(row["value"])
+
+    # Discover the full entity universe so every node / process appears
+    # in the wide CSV — even when the Params didn't carry it.  Default
+    # 1000.0 mirrors flextool's preprocessing default.
+    nb = _frame_of(data.nodeBalance) if data.nodeBalance is not None else None
+    pss = (
+        _frame_of(data.process_source_sink)
+        if data.process_source_sink is not None
+        else None
+    )
+    nodes = (
+        nb["n"].cast(pl.Utf8).to_list() if nb is not None else []
+    )
+    processes = (
+        list(set(pss["p"].cast(pl.Utf8).to_list())) if pss is not None and "p" in pss.columns else []
+    )
+    universe = sorted(set(nodes) | set(processes))
+    rows: list[tuple[str, float]] = [
+        (e, entity_value.get(e, 1000.0)) for e in universe
+    ]
+
+    # Wide-transposed: header row "entity,e1,e2,...", value row "value,v1,v2,...".
+    if not rows:
+        # Header-only file — handoff_writers' _load_unitsize would fail,
+        # but _load_unitsize_map (the forgiving variant) tolerates a
+        # missing 'value' index.  Emit a single-column header so
+        # ``pd.read_csv(... index_col=0)`` returns an empty frame.
+        (inp_dir / "p_entity_unitsize.csv").write_text("entity\nvalue\n")
+        return
+    header = "entity," + ",".join(e for e, _ in rows)
+    values = "value," + ",".join(repr(v) for _, v in rows)
+    (inp_dir / "p_entity_unitsize.csv").write_text(header + "\n" + values + "\n")
 
 
 # ---------------------------------------------------------------------------

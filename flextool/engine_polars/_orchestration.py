@@ -467,6 +467,18 @@ def _drive_cascade(
                 return 1
 
             prior = prior_for_load
+            # Δ.30 — materialise FlexData to flextool's CSV layout so
+            # handoff_writers + downstream wide-format CSV/parquet
+            # writers find their inputs.  Idempotent / overwrites; the
+            # legacy preprocessing already wrote most of these but
+            # dump_csvs ensures the in-memory canonical wins, keeping
+            # FlexData → CSV in sync per solve.
+            try:
+                data.dump_csvs(self.state.paths.work_folder)
+            except Exception as exc:  # noqa: BLE001
+                self.state.logger.warning(
+                    f"dump_csvs failed for {complete_solve_name}: {exc}"
+                )
             # Δ.1 — emit TIER A output_raw artefacts BEFORE the in-memory
             # handoff is built.  ``write_all_handoffs`` (called by the
             # adapter) refreshes ``solve_data/period_capacity.csv`` and
@@ -788,9 +800,12 @@ def run_single_solve_from_db(
             getattr(sol, "obj", None),
         )
 
-    # 6. Output emission — write the support CSVs the writer adapter
-    # consumes, then call the adapter.  Both gracefully tolerate
-    # partial state (the adapter logs warnings on writer failures).
+    # 6. Output emission — materialise the FlexData to flextool's CSV
+    # layout (input/, solve_data/) so handoff_writers, read_parameters,
+    # and the wide-format CSV writers downstream find their inputs.
+    # Then write the small support-CSV cluster the output_raw writer
+    # adapter needs and call the adapter.  All steps tolerate partial
+    # state — handoff writers log warnings on individual failures.
     if emit_output and sol.optimal:
         from flextool.engine_polars._native_input_writer import (
             write_output_support_csvs,
@@ -799,6 +814,13 @@ def run_single_solve_from_db(
             OutputWriterState, write_outputs_for_solve,
         )
 
+        # Δ.30 — wire dump_csvs into the fast path so handoff_writers
+        # (input/p_entity_unitsize.csv, input/process_unit.csv, …) and
+        # the post-solve wide-format CSV / parquet writers
+        # (read_parameters.py: solve_data/p_node.csv, p_process_sink.csv,
+        # p_commodity.csv, …) find their inputs.  Without this only
+        # output_raw is produced; output_csv / output_parquet / etc. fail.
+        flex_data.dump_csvs(work_folder)
         write_output_support_csvs(
             flex_data, work_folder, solve_name=scenario_name,
         )
