@@ -5,6 +5,38 @@ Manages the three-phase glpsol/HiGHS workflow and filters/reformats
 solver output.
 
 Entry point: ``SolverRunner.run(current_solve) -> int``
+
+Δ.21 status — partial retirement
+================================
+
+Δ.21 retired the ``--engine=gmpl`` CLI dispatch.  The native cascade
+(``flextool.engine_polars._FlexpyCascadeSolver``) subclasses this
+class and overrides ``run()`` to drive the polar-high LP build/solve
+in-process — it never reaches any of the legacy GMPL helpers below.
+
+Two non-CLI consumers still depend on this module's GMPL/HiGHS
+workflow:
+
+1. ``flextool.flextoolrunner.lagrangian._region_solve_via_runner``
+   spawns one ``FlexToolRunner.run_model()`` per decomposition region
+   and uses the glpsol-MPS-gen → HiGHS → optional-phase-3 workflow
+   end-to-end.
+2. The CLI's ``--decomposition lagrangian`` dispatch (still active in
+   ``cmd_run_flextool.py``) drives the Lagrangian coordinator and
+   thus indirectly drives this module.
+
+Until the Lagrangian path is itself ported off ``run_model`` (out of
+scope for Δ.21 — the CLI gmpl dispatch is the deliverable), all
+``_run_glpsol_*`` / ``_run_highs_or_cplex`` / ``_run_phase_3`` /
+``_run_glpsol`` / ``_run_cplex`` helpers below remain in place.  The
+``_FlexpyCascadeSolver`` override ensures they're never reached on
+the engine_polars cascade path.
+
+When Δ.22+ retires Lagrangian's dependency on ``FlexToolRunner.run_model``
+(or ports the per-region solve to engine_polars), this entire module
+collapses to ``resolve_relax_feasibility`` / ``resolve_ipm`` plus the
+``_run_highs`` LP-solve path that ``_FlexpyCascadeSolver`` doesn't
+override but doesn't actually reach either.
 """
 from __future__ import annotations
 
