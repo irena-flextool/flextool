@@ -74,7 +74,114 @@ if TYPE_CHECKING:
     pass
 
 
-__all__ = ["write_workdir_inputs"]
+__all__ = ["write_workdir_inputs", "write_output_support_csvs"]
+
+
+# ---------------------------------------------------------------------------
+# Δ.25 — minimal output-support CSV writer (fast single-solve path).
+# ---------------------------------------------------------------------------
+
+
+def write_output_support_csvs(
+    flex_data: object,
+    work_folder: Path,
+    *,
+    solve_name: str,
+) -> None:
+    """Δ.25 — emit the tiny subset of ``solve_data/`` CSVs the output
+    writer adapter (:mod:`flextool.engine_polars._output_writer`) needs
+    when the fast single-solve path skips ``write_input``.
+
+    Specifically writes:
+
+      * ``solve_data/p_step_duration.csv`` — long format
+        ``[solve, period, time, p_step_duration]``.  Used by
+        :func:`flextool.process_outputs.read_highs_solution._load_realized_list`
+        for canonical row order.
+      * ``solve_data/scale_the_objective.csv`` — ``key,value`` form,
+        ``value=1.0`` (the native LP doesn't apply the scale-factor
+        the GMPL pipeline does, so the writer's reciprocal becomes a
+        no-op).
+      * ``solve_data/process_block.csv`` (header-only stub when no
+        block layout is in play — the output writer falls back to
+        ``"default"`` when the file is empty / absent).
+      * ``solve_data/entity_block.csv`` (same).
+
+    Every CSV is overwritten on each call — idempotent.
+
+    Parameters
+    ----------
+    flex_data : FlexData
+        The in-memory FlexData built by
+        :func:`flextool.engine_polars._fast_load.load_flextool_source_only`.
+        ``flex_data.dt`` and ``flex_data.p_step_duration`` must be
+        non-empty.
+    work_folder : Path
+        Workdir; ``solve_data/`` is created if absent.
+    solve_name : str
+        The ``solve`` value to use in the long-format CSVs.  The output
+        writer filters by this exact string.
+    """
+    sd = Path(work_folder) / "solve_data"
+    sd.mkdir(parents=True, exist_ok=True)
+
+    # ── p_step_duration.csv ────────────────────────────────────────────
+    # Long format: [solve, period, time, p_step_duration].  flextool's
+    # phase-1 printf writes one row per (d, t) ∈ dt_realize_dispatch.
+    # In the fast single-solve path, every (d, t) in flex_data.dt is
+    # realized, so we emit them all.
+    psd = getattr(flex_data, "p_step_duration", None)
+    psd_frame = psd.frame if psd is not None and hasattr(psd, "frame") else None
+    if psd_frame is None or psd_frame.height == 0:
+        raise ValueError(
+            "write_output_support_csvs: flex_data.p_step_duration is "
+            "empty — fast path requires populated step duration."
+        )
+    long_psd = (psd_frame
+        .with_columns(solve=__import__("polars").lit(solve_name))
+        .rename({"value": "p_step_duration"})
+        .select("solve", "d", "t", "p_step_duration")
+        .rename({"d": "period", "t": "time"}))
+    long_psd.write_csv(sd / "p_step_duration.csv")
+
+    # ── scale_the_objective.csv ────────────────────────────────────────
+    (sd / "scale_the_objective.csv").write_text(
+        "key,value\nscale_the_objective,1.0\n"
+    )
+
+    # ── process_block.csv / entity_block.csv ───────────────────────────
+    # Header-only stubs.  When the output writer's
+    # ``_load_entity_block_map`` reads an empty file it returns {} and
+    # downstream block-expand falls through to identity (every entity
+    # mapped to ``"default"``).  Single-solve simple fixtures don't
+    # exercise multi-block layouts, so empty stubs are correct.
+    (sd / "process_block.csv").write_text("process,block\n")
+    (sd / "entity_block.csv").write_text("entity,block\n")
+
+    # ── realized_dispatch.csv ──────────────────────────────────────────
+    # Long format: [solve, period, step].  Every (d, t) in dt is
+    # "realized" in single-solve mode (no rolling / nested cascade).
+    # write_all_variables uses this as the realized-set filter.
+    dt = getattr(flex_data, "dt", None)
+    if dt is not None and dt.height > 0:
+        rd = (dt
+            .with_columns(solve=__import__("polars").lit(solve_name))
+            .rename({"d": "period", "t": "step"})
+            .select("solve", "period", "step"))
+        rd.write_csv(sd / "realized_dispatch.csv")
+
+    # ── realized_invest_periods_of_current_solve.csv ───────────────────
+    # Single-column [period].  In single-solve mode every period in
+    # dt is also an invest-realized period.
+    if dt is not None and dt.height > 0:
+        periods = dt.select("d").unique().rename({"d": "period"})
+        periods.write_csv(sd / "realized_invest_periods_of_current_solve.csv")
+
+    # ── solve_current.csv ──────────────────────────────────────────────
+    # Some output-writer helpers (``_actual_solve_name``) consult this
+    # to resolve the solve name.  Not strictly required for the fast
+    # single-solve path but harmless and inexpensive.
+    (sd / "solve_current.csv").write_text(f"solve\n{solve_name}\n")
 
 
 def write_workdir_inputs(
