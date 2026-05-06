@@ -1220,89 +1220,29 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
             forbid = forbid.rename({"entity": "e", "period": "d"}).select("e", "d")
             ed_inv = ed_inv.join(forbid, on=["e", "d"], how="anti")
 
-    pd_inv = _read_invest_set("pd_invest", "p")
-    pd_div = _read_invest_set("pd_divest", "p")
-    nd_inv = _read_invest_set("nd_invest", "n")
-    nd_div = _read_invest_set("nd_divest", "n")
-    # Only keep nd/pd entries whose entity also appears in ed_inv/ed_div
-    # — the ed_* set is the "current-solve" set in the post-solve fixtures
-    # we read; pd_/nd_ are structural unions and may be wider.
-    if ed_inv.height > 0:
-        pd_inv = pd_inv.join(ed_inv.rename({"e": "p"}), on=["p", "d"], how="inner")
-        nd_inv = nd_inv.join(ed_inv.rename({"e": "n"}), on=["n", "d"], how="inner")
-    else:
-        pd_inv = pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8})
-        nd_inv = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8})
-    if ed_div.height > 0:
-        pd_div = pd_div.join(ed_div.rename({"e": "p"}), on=["p", "d"], how="inner")
-        nd_div = nd_div.join(ed_div.rename({"e": "n"}), on=["n", "d"], how="inner")
-    else:
-        pd_div = pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8})
-        nd_div = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8})
+    # Δ.17c Gap D — pd/nd_invest_set, pd/nd_divest_set, edd_invest_set
+    # produced authoritatively by ``apply_derived_c`` via the lazy LFs in
+    # ``_derived_existing.py`` (``pd_invest_set_lf`` / ``nd_invest_set_lf``
+    # / ``pd_divest_set_lf`` / ``nd_divest_set_lf`` / ``edd_invest_set_lf``).
+    # Local CSV-derived seeds dropped (5 ``_read_csv_file`` reads retired:
+    # pd_invest / pd_divest / nd_invest / nd_divest / edd_invest).
+    pd_inv = pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8})
+    pd_div = pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8})
+    nd_inv = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8})
+    nd_div = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8})
+    edd_inv = pl.DataFrame(schema={"e": pl.Utf8, "d_invest": pl.Utf8,
+                                     "d": pl.Utf8})
 
-    edd_inv_path = sd / "edd_invest.csv"
-    if edd_inv_path.exists():
-        edd_inv_df = _read_csv_file(edd_inv_path)
-        cols = set(edd_inv_df.columns)
-        if {"d_invest", "d", "entity"}.issubset(cols):
-            edd_inv = edd_inv_df.rename({"entity": "e"}).select("e", "d_invest", "d")
-        elif {"period_history", "period", "entity"}.issubset(cols):
-            # newer flextool preprocessing: ``period_history`` is the
-            # invest-period, ``period`` is the dispatch-period.
-            edd_inv = (edd_inv_df.rename({"entity": "e",
-                                           "period_history": "d_invest",
-                                           "period": "d"})
-                                   .select("e", "d_invest", "d"))
-        else:
-            edd_inv = pl.DataFrame(schema={"e": pl.Utf8,
-                                            "d_invest": pl.Utf8, "d": pl.Utf8})
-    else:
-        edd_inv = pl.DataFrame(schema={"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
-
-    # Drop edd_inv rows whose invest period (d_invest) was filtered out
-    # of ed_inv by ed_invest_forbidden_no_investment — those reference
-    # non-existent variables.
-    if edd_inv.height > 0 and ed_inv.height > 0:
-        edd_inv = edd_inv.join(
-            ed_inv.rename({"d": "d_invest"}), on=["e", "d_invest"], how="inner")
-
-    # edd_divest_active = (p, d_divest, d) where (p, d_divest) ∈ pd_divest
-    # and d_divest ≤ d.  Use p_years_d to order.
-    pyd_path = sd / "p_years_d.csv"
-    pyd = None
-    if pyd_path.exists():
-        pyd_raw = _read_csv_file(pyd_path)
-        # Column for years may be 'value' (long format) or 'p_years_d' (legacy).
-        yr_col = "value" if "value" in pyd_raw.columns else "p_years_d"
-        pyd = pyd_raw.rename({"period": "d", yr_col: "yr"}).select("d", "yr")
-    if pyd is not None and pd_div.height > 0:
-        # cross-join pd_divest with all (d) in dt × periods, filter by year ordering
-        dt_period = dt.select("d").unique()
-        edd_div = (pd_div.rename({"d": "d_divest"})
-                          .join(dt_period, how="cross")
-                          .join(pyd.rename({"d": "d_divest", "yr": "yr_divest"}), on="d_divest")
-                          .join(pyd.rename({"yr": "yr"}), on="d")
-                          .filter(pl.col("yr_divest") <= pl.col("yr"))
-                          .select("p", "d_divest", "d"))
-    else:
-        edd_div = pl.DataFrame(schema={"p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
-
-    # edd_invest_lookback: edd_invest filtered to year[d_invest] < year[d].
-    # Used by the user-constraint prebuilt-capacity LHS (mod:2885-2898) to
-    # add Σ_{d_invest < d} v_invest[p, d_invest] · coef[p, c] · unitsize[p].
-    # Without this, the prebuilt LHS only carries the static existing
-    # term and any constraint that depends on cumulative prior invests
-    # (e.g. ``wind_growth_cap`` on multi_year_wind_growth_cap) is too
-    # tight by exactly the missing variable contribution.
-    if pyd is not None and edd_inv.height > 0:
-        edd_inv_lookback = (edd_inv
-            .join(pyd.rename({"d": "d_invest", "yr": "yr_invest"}), on="d_invest")
-            .join(pyd.rename({"yr": "yr"}), on="d")
-            .filter(pl.col("yr_invest") < pl.col("yr"))
-            .select("e", "d_invest", "d"))
-    else:
-        edd_inv_lookback = pl.DataFrame(
-            schema={"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
+    # Δ.17c Gap D — ``edd_divest_active`` produced authoritatively by
+    # ``apply_derived_c`` via ``edd_divest_active_from_source`` (consumes
+    # ``flex_data.pd_divest_set`` which the same function populates above
+    # in the partition cascade).  ``edd_invest_lookback_set`` produced by
+    # ``apply_derived_c`` via ``edd_invest_lookback_set_from_source``.
+    # Local p_years_d.csv read + derivation dropped.
+    edd_div = pl.DataFrame(
+        schema={"p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
+    edd_inv_lookback = pl.DataFrame(
+        schema={"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
 
     # ``p_entity_max_units`` is produced by apply_derived_c BUT some
     # callers exercise the pure-CSV path (e.g. tempdir-symlink-based
@@ -1323,15 +1263,13 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     #   * ``e_invest_max_total`` etc. ← ``apply_direct_params._e_total_param``.
     #   * ``ed_invest_max_period`` etc. ← ``apply_direct_params``.
 
-    # Per-entity total set frames (used to populate ``e_invest_total`` /
-    # ``e_divest_total`` — index frames consumed by the LP-build's
-    # invest-total slice; no override-chain helper covers these yet).
-    def _e_total_set(name: str) -> pl.DataFrame | None:
-        f = sd / f"{name}.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        return df.rename({"entity": "e"}).select("e")
+    # Δ.17c Gap D — ``e_invest_total`` / ``e_divest_total`` produced
+    # authoritatively by ``apply_projection_params`` via
+    # ``e_invest_total`` / ``e_divest_total`` in ``_projection_params.py``
+    # (filter ``invest_method`` parameter on unit/node/connection by the
+    # INVEST_TOTAL / DIVEST_TOTAL enum subsets per the user's MathProg
+    # snippet ``set e_invest_total := {e in entityInvest : ...};``).
+    # Local seed reads retired (2 ``_read_csv_file`` reads).
 
     # ``ed_invest_period_set`` / ``ed_divest_period_set`` (set frames
     # of (e, d) pairs with per-period invest / divest caps) — no
@@ -1385,8 +1323,8 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_lifetime_fixed_cost_divest=None,
         ed_entity_annual_discounted=None,
         ed_entity_annual_divest_discounted=None,
-        e_invest_total=_e_total_set("e_invest_total"),
-        e_divest_total=_e_total_set("e_divest_total"),
+        e_invest_total=None,
+        e_divest_total=None,
         e_invest_max_total=None,
         e_divest_max_total=None,
         ed_invest_period_set=_read_period_set("ed_invest_period"),
