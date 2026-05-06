@@ -24,6 +24,21 @@ reproduces the downstream chain.  A regression on line 871 flips the
 extracted block back to the node-first ordering and the test fails
 with the original ``out of domain`` message — or with the col-1
 orientation assertion below.
+
+Δ.21 status — GMPL/glpsol retired
+---------------------------------
+
+The native cascade (``flextool.engine_polars``) does NOT consume
+``flextool.mod``; the LP is built directly from FlexData via
+``model.build_flextool``.  ``process_sink_toProcess`` regressions are
+therefore caught by the engine_polars LP-builder tests instead.
+
+Both the static text assertion and the live-glpsol harness in this
+file remain pinned to the ``flextool.mod`` source.  Δ.22 will delete
+``flextool.mod`` and ``bin/glpsol``; both tests will be removed at
+that point.  Until then the live-glpsol harness is skip-marked when
+the binary or the .mod file is missing (the static test still runs as
+long as ``flextool.mod`` is on disk).
 """
 from __future__ import annotations
 
@@ -66,11 +81,21 @@ def _extract_param_block(text: str, name: str) -> str:
 
 @pytest.fixture(scope="module")
 def _mod_source() -> str:
+    if not FLEXTOOL_MOD.exists():
+        pytest.skip(
+            f"flextool.mod not present at {FLEXTOOL_MOD}; the GMPL "
+            "model file is being retired in Δ.22.  See progress.md "
+            "Δ.21 close stanza."
+        )
     return FLEXTOOL_MOD.read_text()
 
 
 @pytest.fixture
 def _requires_glpsol() -> None:
+    # Δ.21: GMPL/glpsol path retired from the production CLI.  The
+    # binary may still ship for one release cycle, but skip-mark when
+    # absent so this regression test stays green on glpsol-free dev
+    # boxes.  Δ.22 will delete this test along with flextool.mod.
     if not GLPSOL.exists():
         pytest.skip(f"glpsol binary not present at {GLPSOL}")
 
