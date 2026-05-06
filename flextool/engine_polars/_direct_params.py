@@ -1413,14 +1413,15 @@ def p_process_availability_from_source(source: "InputSource",
     Default 1.0 (schema).  CSV path slices ``pdtProcess.csv``
     (param='availability') and emits explicit rows only.
 
-    Δ.17b Gap C: extended to the full broadcast cascade (scalar /
-    1d_map(time) / 1d_map(period) / Map(period→time)).  Normalisation
-    handles the ``x`` column (1d_map(time) Spine encoding aliases ``t``).
+    Note: the unioned (unit + connection) parameter often arrives in
+    mixed Spine shapes (1d_map(time) reads as ``[name, x, value]``,
+    scalar as ``[name, value]``).  The Δ.12c-fix gap #1 broadcast
+    cascade is intentionally NOT enabled here — the mixed-shape /
+    ``x`` column path needs dedicated normalisation that's deferred
+    to a future delta.  The helper continues to emit only the canonical
+    Map(period→time) rows.
     """
     parts: list[pl.LazyFrame] = []
-    dt_lf = (period_filter.lazy().select("d", "t").unique()
-             if period_filter is not None and period_filter.height > 0
-             else None)
     for cls in ("unit", "connection"):
         try:
             df = source.parameter_explicit(cls, "availability")
@@ -1431,38 +1432,13 @@ def p_process_availability_from_source(source: "InputSource",
                 continue
         if df is None or df.height == 0:
             continue
-        cols = set(df.columns)
-        if "value" not in cols or "name" not in cols:
+        cols = df.columns
+        if not {"name", "period", "t", "value"}.issubset(cols):
             continue
-        # Normalise 1d_map(time)'s ``x`` column to ``t``.
-        if "t" not in cols and "x" in cols:
-            df = df.rename({"x": "t"})
-            cols = set(df.columns)
-        has_period = "period" in cols
-        has_t = "t" in cols
-        lf = df.lazy().filter(pl.col("value").is_not_null())
-        if has_period and has_t:
-            parts.append(lf.rename({"name": "p", "period": "d"})
-                            .select("p", "d", "t", "value"))
-            continue
-        # Broadcast paths require period_filter.
-        if dt_lf is None:
-            continue
-        if has_period:
-            parts.append(lf.rename({"name": "p", "period": "d"})
-                            .select("p", "d", "value")
-                            .join(dt_lf, on="d", how="inner")
-                            .select("p", "d", "t", "value"))
-        elif has_t:
-            parts.append(lf.rename({"name": "p"})
-                            .select("p", "t", "value")
-                            .join(dt_lf, on="t", how="inner")
-                            .select("p", "d", "t", "value"))
-        else:
-            parts.append(lf.rename({"name": "p"})
-                            .select("p", "value")
-                            .join(dt_lf, how="cross")
-                            .select("p", "d", "t", "value"))
+        parts.append(df.lazy()
+                       .rename({"name": "p", "period": "d"})
+                       .filter(pl.col("value").is_not_null())
+                       .select("p", "d", "t", "value"))
     if not parts:
         return None
     out = pl.concat(parts).collect()
