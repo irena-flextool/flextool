@@ -4295,6 +4295,63 @@ def p_inv_group_cap_from_source(source: "InputSource",
     return Param(("g", "d"), out)
 
 
+def p_node_capacity_for_scaling_from_source(source: "InputSource",
+                                                  active_solve: str | None,
+                                                  workdir: Path | None = None,
+                                                  ) -> "Param | None":
+    """Per-(n, d) row scaling factor for slack-penalty terms in the
+    objective (``vq_up``/``vq_down`` × ``p_penalty`` × this factor).
+
+    Δ.29 — tactical default-1.0 path matching
+    :func:`p_group_capacity_for_scaling_from_source`.  Algorithm
+    (audit §3.12.2, ``lp_scaling_params.py:91-244``): pow10-clamped
+    per-node capacity proxy when ``solve.use_row_scaling`` is active,
+    else 1.0 across all (nodeBalance, period_in_use) pairs.
+
+    For Δ.29 we cover the **scaling-inactive default**: emit 1.0 across
+    nodeBalance × period_in_use.  Active scaling (rare; gated on
+    ``solve.use_row_scaling``) returns None and the CSV value survives.
+
+    The slow path's :func:`_load_node_capacity_for_scaling` reads
+    ``solve_data/node_capacity_for_scaling.csv`` and filters to
+    nodeBalance via ``df.join(nb, on='n', how='inner')``; we replicate
+    that filter inline here.
+
+    TODO(future): port the full pow10 cascade in
+    ``preprocessing/lp_scaling_params.py`` for fixtures with
+    ``solve.use_row_scaling=1``.  For now the helper bails (returns
+    None) when scaling is active so the seed CSV survives.
+    """
+    period_in_use = _period_in_use_set(source, active_solve, workdir)
+    if not period_in_use:
+        return None
+    # Detect scaling active: solve.use_row_scaling truthy.
+    urs = _try_param(source, "solve", "use_row_scaling")
+    scaling_active = False
+    if urs is not None and active_solve is not None:
+        sub = urs.filter(pl.col("name") == active_solve)
+        if sub.height > 0:
+            try:
+                scaling_active = float(sub["value"][0]) >= 0.5
+            except (TypeError, ValueError):
+                pass
+    if scaling_active:
+        return None  # defer; CSV path handles pow10 cascade
+    # nodeBalance projection — same set as the slow path's filter.
+    from ._projection_params import nodeBalance as _nodeBalance_proj
+    nb = _nodeBalance_proj(source)
+    if nb is None or nb.height == 0:
+        return None
+    out = (nb.lazy()
+              .join(pl.LazyFrame({"d": period_in_use}), how="cross")
+              .with_columns(value=pl.lit(1.0))
+              .sort("n", "d")
+              .collect())
+    if out.height == 0:
+        return None
+    return Param(("n", "d"), out)
+
+
 # ---------------------------------------------------------------------------
 # §3.12.3 — p_positive_inflow / p_negative_inflow
 # ---------------------------------------------------------------------------
@@ -4386,6 +4443,7 @@ DERIVED_C_FIELDS = (
     # §3.12
     "process_group_inside_nonSync",
     "p_group_capacity_for_scaling", "p_inv_group_cap",
+    "p_node_capacity_for_scaling",
     "p_positive_inflow", "p_negative_inflow",
     "pdtNodeInflow_per_step",
     # §3.1.3 multi-year (extends Γ.3.A)
@@ -4468,6 +4526,24 @@ def apply_derived_c(
     igc_db = p_inv_group_cap_from_source(source, active_solve, workdir)
     if igc_db is not None:
         flex_data.p_inv_group_cap = igc_db
+    # Δ.29 — tactical default-1.0 path for p_node_capacity_for_scaling.
+    # The proper fix is the lp_scaling_params pow10 cascade
+    # (``preprocessing/lp_scaling_params.py:91-244``); until that lands,
+    # default to 1.0 broadcast across (nodeBalance, period_in_use).
+    # Without this default, the fast path leaves the field None for
+    # fixtures with no preprocessed CSV → the slack penalty becomes
+    # the only sink for unmet demand without the row-scaling factor,
+    # but more critically when the pow10 cascade is active CSV-side and
+    # the fast path emits None, the LP misses the scaling on penalty
+    # terms (penalty becomes a free source of energy).  Default 1.0
+    # produces the same numeric coefficient as the None-branch in
+    # ``model.py:2349-2356`` but exposes the field uniformly so future
+    # consumers (e.g. region filter, warm cascade) see a populated
+    # frame.
+    ncs_db = p_node_capacity_for_scaling_from_source(
+        source, active_solve, workdir)
+    if ncs_db is not None:
+        flex_data.p_node_capacity_for_scaling = ncs_db
 
     # Inflow derivatives — these consume the (CSV-loaded or override-set)
     # p_inflow.  Helpers return None when p_inflow is None.
