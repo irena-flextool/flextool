@@ -1183,24 +1183,33 @@ def apply_npv(flex_data: object,
     if no_invest or active_solve is None:
         return
 
-    flex_data.ed_entity_annual_discounted = (
-        ed_entity_annual_discounted_from_source(
-            source, active_solve,
-            period_invest, period_in_use, period_universe))
+    # Δ.18 — when the override returns None (e.g. synthetic per-sub-solve
+    # ``active_solve`` whose ``invest_periods`` is empty in Spine), preserve
+    # the seed-loaded snapshot CSV value rather than overwriting it.  The
+    # override remains authoritative when it returns a non-None Param.
+    def _set_if(field: str, value):
+        if value is not None:
+            setattr(flex_data, field, value)
 
-    flex_data.ed_entity_annual_divest_discounted = (
-        ed_entity_annual_divest_discounted_from_source(
-            source, active_solve,
-            period_invest, period_in_use, period_universe))
+    _set_if("ed_entity_annual_discounted",
+            ed_entity_annual_discounted_from_source(
+                source, active_solve,
+                period_invest, period_in_use, period_universe))
 
-    flex_data.ed_lifetime_fixed_cost = ed_lifetime_fixed_cost_from_source(
-        source, active_solve,
-        period_with_history, period_in_use, period_universe)
+    _set_if("ed_entity_annual_divest_discounted",
+            ed_entity_annual_divest_discounted_from_source(
+                source, active_solve,
+                period_invest, period_in_use, period_universe))
 
-    flex_data.ed_lifetime_fixed_cost_divest = (
-        ed_lifetime_fixed_cost_divest_from_source(
-            source, active_solve,
-            period_invest, period_in_use, period_universe))
+    _set_if("ed_lifetime_fixed_cost",
+            ed_lifetime_fixed_cost_from_source(
+                source, active_solve,
+                period_with_history, period_in_use, period_universe))
+
+    _set_if("ed_lifetime_fixed_cost_divest",
+            ed_lifetime_fixed_cost_divest_from_source(
+                source, active_solve,
+                period_invest, period_in_use, period_universe))
 
 
 __all__ = [

@@ -125,6 +125,31 @@ def _read_active_solve(workdir: Path) -> str | None:
     return df[col][0]
 
 
+def _solve_in_spine(source: "InputSource",
+                      active_solve: str | None) -> bool:
+    """Return True iff ``active_solve`` appears as a row in Spine's
+    ``solve`` entity class (any per-solve parameter is fine — we use
+    ``invest_periods`` as a probe; the parameter is always declared
+    when the solve exists).
+
+    Δ.18 — synthetic per-sub-solve names (e.g. ``invest_5weeks_p2020``
+    for nested-multi-invest fixtures) don't exist in Spine; the per-solve
+    override chain (``apply_derived_a`` etc.) returns None for every
+    helper that takes ``active_solve`` as a key.  Detecting this upfront
+    lets the loader keep the snapshot-CSV-loaded values as authoritative.
+    """
+    if active_solve is None:
+        return False
+    df = _try_param(source, "solve", "invest_periods")
+    if df is None:
+        # Fall back to ``realized_periods`` — the parameter that all
+        # solves carry.
+        df = _try_param(source, "solve", "realized_periods")
+    if df is None:
+        return False
+    return df.filter(pl.col("name") == active_solve).height > 0
+
+
 def _ctx_read(
     ctx: "SolveContext | None",
     workdir: Path | str | None,
@@ -4134,8 +4159,15 @@ def apply_derived_c(
     # Dispatch-only gate: when neither ed_invest nor ed_divest carries
     # any (e, d) row, mirror ``input.py::_load_invest`` blank-out by
     # nulling every invest-cascade Param.
-    inv_empty = ed_inv_db is None or ed_inv_db.height == 0
-    div_empty = ed_div_db is None or ed_div_db.height == 0
+    #
+    # Δ.18 — gate must consult the *effective* invest/divest sets (the
+    # seed-loaded value persists when the override returned empty, e.g.
+    # for synthetic per-sub-solve names that don't exist in Spine).  Using
+    # ed_inv_db / ed_div_db alone fired the blank-out spuriously on
+    # per-sub-solve snapshot fixtures, nulling p_entity_max_units etc.
+    # even though the snapshot CSV had genuine invest activity.
+    inv_empty = ed_inv_for_partition is None or ed_inv_for_partition.height == 0
+    div_empty = ed_div_for_partition is None or ed_div_for_partition.height == 0
     if inv_empty and div_empty:
         for blank_field in (
             "e_invest_total", "e_divest_total",

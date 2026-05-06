@@ -699,19 +699,36 @@ def _load_node(sd: Path, dt: pl.DataFrame):
     # TODO(Δ.18+): retire pdtNodeInflow.csv read when ``apply_derived_a``
     # extends ``p_inflow_from_source`` to cover ``inflow_method ∈ {scale_to_*}``
     # and stochastic 3d_map shapes.
-    # Δ.17b Gap C: penalty_up/penalty_down seeds dropped — produced by
-    # ``apply_derived_a`` via ``p_penalty_up_from_source`` /
-    # ``p_penalty_down_from_source`` (full broadcast cascade incl. the
-    # schema-default sentinel).  FlexData ctor requires non-None Param
-    # for these fields; pass empty Param frames so the override populates
-    # downstream.
     inflow_long = _read_wide_per_entity(sd / "pdtNodeInflow.csv", rename={"entity":"n"})
+
+    # Δ.18 — CSV-fallback seed for ``p_penalty_up`` / ``p_penalty_down``
+    # from the wide-by-param ``pdtNode.csv`` slice.  Override chain
+    # (``apply_derived_a`` via ``p_penalty_up_from_source`` /
+    # ``p_penalty_down_from_source``) overlays these when active; for
+    # synthetic per-sub-solve fixtures the snapshot CSV is the only source.
     empty_n_d_t = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8,
                                          "t": pl.Utf8, "value": pl.Float64})
+    pen_up_df = empty_n_d_t
+    pen_dn_df = empty_n_d_t
+    pdtnode_path = sd / "pdtNode.csv"
+    if pdtnode_path.exists():
+        df_pn = _read_csv_file(pdtnode_path)
+        if df_pn.height > 0 and {"node", "param", "period", "time", "value"}.issubset(df_pn.columns):
+            df_pn = (df_pn.rename({"node": "n", "period": "d", "time": "t"})
+                          .with_columns(value=pl.col("value")
+                                                  .cast(pl.Float64, strict=False)
+                                                  .fill_null(0.0)))
+            up = df_pn.filter(pl.col("param") == "penalty_up").select("n", "d", "t", "value")
+            if up.height > 0:
+                pen_up_df = up
+            dn = df_pn.filter(pl.col("param") == "penalty_down").select("n", "d", "t", "value")
+            if dn.height > 0:
+                pen_dn_df = dn
+
     return (nb, nb.join(dt, how="cross"),
             Param(("n","d","t"), inflow_long.select("n","d","t","value")),
-            Param(("n","d","t"), empty_n_d_t),
-            Param(("n","d","t"), empty_n_d_t))
+            Param(("n","d","t"), pen_up_df),
+            Param(("n","d","t"), pen_dn_df))
 
 
 # ---------------------------------------------------------------------------
@@ -723,13 +740,13 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     # Δ.17b Gap B: ``process_source_sink_canonical`` produces flextool's
     # preprocessing-side collapsed shape directly from Spine (DIRECT methods
     # cross-joined; INDIRECT methods kept as 2-arc form; 2way reverse arcs
-    # added; noConversion fallbacks handled).  3 CSV seeds dropped — the
-    # canonical helper is now the sole producer of the pss family.
+    # added; noConversion fallbacks handled).
     empty_return = {k: None for k in ("pss","pss_eff","pss_noEff","pss_dt",
                                        "flow_to_n","flow_from_n",
                                        "flow_from_commodity_eff",
                                        "flow_from_commodity_noEff",
                                        "unitsize","flow_upper","slope","commodity_price")}
+
     if source is None:
         # No DB source available (dump_csvs roundtrip workdirs without a
         # tests.sqlite).  Per the architecture invariants ("CSV path is
@@ -1220,25 +1237,49 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
             forbid = forbid.rename({"entity": "e", "period": "d"}).select("e", "d")
             ed_inv = ed_inv.join(forbid, on=["e", "d"], how="anti")
 
-    # Δ.17c Gap D — pd/nd_invest_set, pd/nd_divest_set, edd_invest_set
-    # produced authoritatively by ``apply_derived_c`` via the lazy LFs in
-    # ``_derived_existing.py`` (``pd_invest_set_lf`` / ``nd_invest_set_lf``
-    # / ``pd_divest_set_lf`` / ``nd_divest_set_lf`` / ``edd_invest_set_lf``).
-    # Local CSV-derived seeds dropped (5 ``_read_csv_file`` reads retired:
-    # pd_invest / pd_divest / nd_invest / nd_divest / edd_invest).
-    pd_inv = pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8})
-    pd_div = pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8})
-    nd_inv = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8})
-    nd_div = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8})
+    # Δ.18 — CSV-fallback seeds for pd/nd_invest_set, pd/nd_divest_set,
+    # edd_invest_set, edd_invest_lookback, edd_divest_active.  The
+    # override chain (``apply_derived_c`` via the lazy LFs in
+    # ``_derived_existing.py``) overlays these when active.  For synthetic
+    # per-sub-solve fixtures the snapshot CSV is the only source.
+    def _read_set_seed(name: str, kind_col: str) -> pl.DataFrame:
+        empty = pl.DataFrame(schema={kind_col: pl.Utf8, "d": pl.Utf8})
+        f = sd / f"{name}.csv"
+        if not f.exists():
+            return empty
+        df = _read_csv_file(f)
+        if df.height == 0:
+            return empty
+        rename_src = ("entity" if "entity" in df.columns
+                      else "node" if "node" in df.columns
+                      else "process" if "process" in df.columns
+                      else None)
+        if rename_src is None or "period" not in df.columns:
+            return empty
+        return (df.rename({rename_src: kind_col, "period": "d"})
+                  .select(kind_col, "d"))
+
+    pd_inv = _read_set_seed("pd_invest", "p")
+    pd_div = _read_set_seed("pd_divest", "p")
+    nd_inv = _read_set_seed("nd_invest", "n")
+    nd_div = _read_set_seed("nd_divest", "n")
+
+    # edd_invest: (entity, d_invest, period).  Canonical CSV uses
+    # ``period_history`` for d_invest; tolerate both column names.
     edd_inv = pl.DataFrame(schema={"e": pl.Utf8, "d_invest": pl.Utf8,
                                      "d": pl.Utf8})
+    edd_inv_path = sd / "edd_invest.csv"
+    if edd_inv_path.exists():
+        df_edd = _read_csv_file(edd_inv_path)
+        if df_edd.height > 0:
+            ren = {}
+            if "entity" in df_edd.columns: ren["entity"] = "e"
+            if "period_history" in df_edd.columns: ren["period_history"] = "d_invest"
+            if "period" in df_edd.columns: ren["period"] = "d"
+            df_edd = df_edd.rename(ren)
+            if {"e", "d_invest", "d"}.issubset(df_edd.columns):
+                edd_inv = df_edd.select("e", "d_invest", "d")
 
-    # Δ.17c Gap D — ``edd_divest_active`` produced authoritatively by
-    # ``apply_derived_c`` via ``edd_divest_active_from_source`` (consumes
-    # ``flex_data.pd_divest_set`` which the same function populates above
-    # in the partition cascade).  ``edd_invest_lookback_set`` produced by
-    # ``apply_derived_c`` via ``edd_invest_lookback_set_from_source``.
-    # Local p_years_d.csv read + derivation dropped.
     edd_div = pl.DataFrame(
         schema={"p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
     edd_inv_lookback = pl.DataFrame(
@@ -1254,22 +1295,50 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
             .filter(pl.col("value") > 0)
             .select("e", "d", "value")) if (sd / "p_entity_max_units.csv").exists() else None
 
-    # Δ.17 — ``_cost_param`` / ``_e_total_param`` / ``_read_period_cap``
-    # were retained as dead-code helpers in Δ.12-drop (their cost-Param /
-    # cap-Param consumers were retired but the inner-function definitions
-    # weren't cleaned up).  Removed; the override chain produces the
-    # corresponding Params:
-    #   * ``ed_lifetime_fixed_cost`` etc. ← ``apply_derived_f``.
-    #   * ``e_invest_max_total`` etc. ← ``apply_direct_params._e_total_param``.
-    #   * ``ed_invest_max_period`` etc. ← ``apply_direct_params``.
+    # Δ.18 — CSV-fallback seeds for the lifetime / NPV / total / max-period
+    # cost cascade.  These were dropped in Δ.12-drop / Δ.17 because the
+    # override chain (``apply_derived_f`` / ``apply_direct_params`` /
+    # ``apply_projection_params``) is authoritative.  But for synthetic
+    # per-sub-solve fixtures (e.g. ``invest_5weeks_p2020`` — an artefact of
+    # flextool's per-period sub-solving that doesn't exist as a row in
+    # Spine), the override returns None for every field that depends on
+    # ``solve.invest_periods`` / ``solve.realized_periods`` lookups.  The
+    # seed CSV is the snapshot canonical and the only available source.
+    # The override chain runs after ``_load_invest`` and overlays its
+    # values when it has data; when it returns None, the seed persists.
+    def _read_e_d(name: str) -> "Param | None":
+        f = sd / f"{name}.csv"
+        if not f.exists():
+            return None
+        df = _read_wide_e_d(f)
+        if df.height == 0:
+            return None
+        return Param(("e", "d"), df.select("e", "d", "value"))
 
-    # Δ.17c Gap D — ``e_invest_total`` / ``e_divest_total`` produced
-    # authoritatively by ``apply_projection_params`` via
-    # ``e_invest_total`` / ``e_divest_total`` in ``_projection_params.py``
-    # (filter ``invest_method`` parameter on unit/node/connection by the
-    # INVEST_TOTAL / DIVEST_TOTAL enum subsets per the user's MathProg
-    # snippet ``set e_invest_total := {e in entityInvest : ...};``).
-    # Local seed reads retired (2 ``_read_csv_file`` reads).
+    def _read_e(name: str) -> "Param | None":
+        f = sd / f"{name}.csv"
+        if not f.exists():
+            return None
+        df = _read_csv_file(f)
+        if df.height == 0:
+            return None
+        if "entity" not in df.columns or "value" not in df.columns:
+            return None
+        return Param(("e",),
+                     df.rename({"entity": "e"})
+                       .with_columns(value=pl.col("value")
+                                             .cast(pl.Float64, strict=False)
+                                             .fill_null(0.0))
+                       .select("e", "value"))
+
+    ed_lifetime_fc_seed       = _read_e_d("ed_lifetime_fixed_cost")
+    ed_lifetime_fc_div_seed   = _read_e_d("ed_lifetime_fixed_cost_divest")
+    ed_annual_disc_seed       = _read_e_d("ed_entity_annual_discounted")
+    ed_annual_div_disc_seed   = _read_e_d("ed_entity_annual_divest_discounted")
+    e_invest_max_total_seed   = _read_e("e_invest_max_total")
+    e_divest_max_total_seed   = _read_e("e_divest_max_total")
+    ed_invest_max_period_seed = _read_e_d("ed_invest_max_period")
+    ed_divest_max_period_seed = _read_e_d("ed_divest_max_period")
 
     # ``ed_invest_period_set`` / ``ed_divest_period_set`` (set frames
     # of (e, d) pairs with per-period invest / divest caps) — no
@@ -1319,18 +1388,21 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         edd_invest_lookback_set=edd_inv_lookback if edd_inv_lookback.height > 0 else None,
         edd_divest_active=edd_div if edd_div.height > 0 else None,
         p_entity_max_units=p_max_units,
-        ed_lifetime_fixed_cost=None,
-        ed_lifetime_fixed_cost_divest=None,
-        ed_entity_annual_discounted=None,
-        ed_entity_annual_divest_discounted=None,
+        # Δ.18 — CSV-fallback seeds (override chain overlays when it has
+        # data; for synthetic per-sub-solve fixtures the snapshot CSV is
+        # the only source).
+        ed_lifetime_fixed_cost=ed_lifetime_fc_seed,
+        ed_lifetime_fixed_cost_divest=ed_lifetime_fc_div_seed,
+        ed_entity_annual_discounted=ed_annual_disc_seed,
+        ed_entity_annual_divest_discounted=ed_annual_div_disc_seed,
         e_invest_total=None,
         e_divest_total=None,
-        e_invest_max_total=None,
-        e_divest_max_total=None,
+        e_invest_max_total=e_invest_max_total_seed,
+        e_divest_max_total=e_divest_max_total_seed,
         ed_invest_period_set=_read_period_set("ed_invest_period"),
         ed_divest_period_set=_read_period_set("ed_divest_period"),
-        ed_invest_max_period=None,
-        ed_divest_max_period=None,
+        ed_invest_max_period=ed_invest_max_period_seed,
+        ed_divest_max_period=ed_divest_max_period_seed,
         p_entity_previously_invested_capacity=None,
         p_entity_invested=None,
         p_entity_divested=None,
@@ -1693,14 +1765,40 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         .agg(pl.col("t").min().alias("t"))
         .select("n", "d", "t"))
 
-    # Δ.17 — ``p_state_existing_capacity`` / ``p_state_unitsize`` /
-    # ``p_state_upper`` produced authoritatively by ``apply_derived_e``
-    # via ``p_state_existing_capacity_from_source`` /
-    # ``p_state_unitsize_from_source`` / ``p_state_upper_from_source``.
-    # All current test fixtures auto-resolve via ``_FIND_SCENARIO_OVERRIDES``
-    # so the override chain runs and the seed becomes redundant.
-    # Seeds dropped (3 ``_read_csv_file`` calls retired).
-    state_unitsize = state_existing_capacity = state_upper = None
+    # Δ.18 — restore CSV-fallback seeds for ``p_state_existing_capacity``
+    # / ``p_state_unitsize`` / ``p_state_upper``.  They were dropped in
+    # Δ.17 batch 1 because ``apply_derived_e`` was authoritative — but
+    # for synthetic per-sub-solve fixtures the per-solve override chain
+    # is skipped (workdir's ``solve_current.csv`` names a solve not in
+    # Spine, see ``_apply_db_overrides`` Δ.18 gate) and the snapshot CSV
+    # is the only source.  When the override does run, it overlays
+    # these via ``setattr`` so the seed becomes inert.
+    if unitsize is not None and cap_pd is not None and nodeState is not None:
+        cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
+                                   sd / "p_entity_previously_invested_capacity.csv",
+                                   sd / "p_entity_all_existing.csv")
+        unitsize_long = _read_unitsize((sd / "p_entity_unitsize.csv")
+                                          if (sd / "p_entity_unitsize.csv").exists()
+                                          else (inp / "p_entity_unitsize.csv"))
+        state_existing = (cap_long.rename({"e": "n", "value": "cap"})
+            .filter(pl.col("n").is_in(nodeState["n"]))
+            .select("n", "d", "cap"))
+        state_us_long = (unitsize_long.rename({"e": "n"})
+            .filter(pl.col("n").is_in(nodeState["n"]))
+            .select("n", "value"))
+        if state_existing.height > 0 and state_us_long.height > 0:
+            state_existing_capacity = Param(("n", "d"),
+                state_existing.rename({"cap": "value"}))
+            state_unitsize = Param(("n",), state_us_long)
+            state_upper_long = (state_existing
+                .join(state_us_long.rename({"value": "us"}), on="n", how="inner")
+                .with_columns(value=pl.col("cap") / pl.col("us"))
+                .select("n", "d", "value"))
+            state_upper = Param(("n", "d"), state_upper_long)
+        else:
+            state_unitsize = state_existing_capacity = state_upper = None
+    else:
+        state_unitsize = state_existing_capacity = state_upper = None
 
     # Δ.12-drop: ``state_self_discharge`` (``p_state_self_discharge``) and
     # ``state_start`` (``p_state_start``) seeds dropped — both are now
@@ -1867,17 +1965,72 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             if row.height > 0:
                 p_nested_solve_first = bool(int(row[value_col][0]))
 
-    # Δ.12c — ``p_roll_continue_state`` / ``p_fix_storage_quantity`` /
-    # ``dtt_timeline_matching`` / ``period_branch`` are now produced by
-    # ``apply_derived_e`` for every fixture (the seven mismatch fixtures
-    # auto-resolve via the explicit ``_FIND_SCENARIO_OVERRIDES`` map).
+    # Δ.18 — CSV-fallback seed for ``p_roll_continue_state`` and
+    # ``p_fix_storage_quantity``.  Override chain (``apply_derived_e``)
+    # overlays these when active; for synthetic per-sub-solve fixtures
+    # the snapshot CSV is the only source.
+    p_roll_continue_state = None
+    rcs_path = sd / "p_roll_continue_state.csv"
+    if rcs_path.exists():
+        df_rcs = _read_csv_file(rcs_path)
+        if df_rcs.height > 0 and "node" in df_rcs.columns:
+            value_col = ("p_roll_continue_state"
+                         if "p_roll_continue_state" in df_rcs.columns
+                         else "value" if "value" in df_rcs.columns else None)
+            # Tolerate leading-space column "p_roll_continue_state"
+            if value_col is None:
+                for c in df_rcs.columns:
+                    if c.strip() == "p_roll_continue_state":
+                        value_col = c
+                        break
+            if value_col is not None:
+                df_rcs = (df_rcs.rename({"node": "n", value_col: "value"})
+                                  .with_columns(value=pl.col("value")
+                                                          .cast(pl.Float64, strict=False)
+                                                          .fill_null(0.0))
+                                  .select("n", "value"))
+                if df_rcs.height > 0:
+                    p_roll_continue_state = Param(("n",), df_rcs)
+
+    p_fix_storage_quantity = None
+    fsq_path = sd / "fix_storage_quantity.csv"
+    if fsq_path.exists():
+        df_fsq = _read_csv_file(fsq_path)
+        if df_fsq.height > 0:
+            ren = {}
+            if "period" in df_fsq.columns: ren["period"] = "d"
+            if "step" in df_fsq.columns: ren["step"] = "t"
+            if "time" in df_fsq.columns: ren["time"] = "t"
+            if "node" in df_fsq.columns: ren["node"] = "n"
+            value_col = None
+            for c in df_fsq.columns:
+                if c.strip() == "p_fix_storage_quantity":
+                    value_col = c
+                    break
+            if value_col is None and "value" in df_fsq.columns:
+                value_col = "value"
+            if value_col is not None:
+                ren[value_col] = "value"
+            df_fsq = df_fsq.rename(ren)
+            if {"n", "d", "t", "value"}.issubset(df_fsq.columns):
+                df_fsq = (df_fsq
+                          .with_columns(value=pl.col("value")
+                                                  .cast(pl.Float64, strict=False)
+                                                  .fill_null(0.0))
+                          .select("n", "d", "t", "value"))
+                if df_fsq.height > 0:
+                    p_fix_storage_quantity = Param(("n", "d", "t"), df_fsq)
+
     # ``n_fix_storage_quantity`` / ``ndt_fix_storage_quantity`` are
     # derived from ``p_fix_storage_quantity`` after the helper assigns it
-    # (see ``_finalise_fix_storage_index_sets`` below).  Seeds dropped.
-    p_roll_continue_state = None
+    # (see ``_finalise_fix_storage_index_sets`` below).
     n_fix_storage_quantity = None
     ndt_fix_storage_quantity = None
-    p_fix_storage_quantity = None
+    if p_fix_storage_quantity is not None:
+        fsq_frame = p_fix_storage_quantity.frame
+        n_fix_storage_quantity = fsq_frame.select("n").unique()
+        ndt_fix_storage_quantity = fsq_frame.select("n", "d", "t").unique()
+
     dtt_timeline_matching = None
     period_branch = None
 
@@ -2058,10 +2211,26 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
     pssdt_ek = _read_pssdt_set("pssdt_varCost_eff_unit_sink")
     pssdt_ec = _read_pssdt_set("pssdt_varCost_eff_connection")
 
-    # Δ.12-drop: ``p_pssdt_varCost`` produced authoritatively by
-    # ``apply_derived_b.p_pssdt_varCost_from_source`` when pss + dt are
-    # non-empty.  Seed dropped.
+    # Δ.18 — CSV-fallback seed for ``p_pssdt_varCost``.  Override chain
+    # (``apply_derived_b.p_pssdt_varCost_from_source``) overlays this
+    # when active; for synthetic per-sub-solve fixtures the snapshot CSV
+    # is the only source.  Reads ``pdtProcess__source__sink__dt_varCost.csv``
+    # (long: process, source, sink, period, time, value).  Filtering
+    # zero-value rows mirrors the override's "drop zero coefficients" pass.
     p_pssdt_var = None
+    pssdt_path = sd / "pdtProcess__source__sink__dt_varCost.csv"
+    if pssdt_path.exists():
+        df = _read_csv_file(pssdt_path)
+        if df.height > 0:
+            sliced = (df.rename({"process": "p", "period": "d", "time": "t"})
+                        .with_columns(value=pl.col("value")
+                                              .cast(pl.Float64, strict=False)
+                                              .fill_null(0.0))
+                        .filter(pl.col("value") != 0.0))
+            if sliced.height > 0:
+                p_pssdt_var = Param(
+                    ("p", "source", "sink", "d", "t"),
+                    sliced.select("p", "source", "sink", "d", "t", "value"))
 
     # pdtProcess_source[p,source,'other_operational_cost',d,t] — wide param file
     def _slice_pds(name: str, side_col: str) -> Param | None:
@@ -2119,11 +2288,24 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
 def _load_fixed_cost(sd: Path) -> dict:
     """Load (e, d) ed_fixed_cost and (e, d) p_entity_all_existing.
 
-    Δ.12-drop: ``p_ed_fixed_cost`` produced authoritatively by
-    ``apply_derived_f`` (npv).  ``p_entity_all_existing`` produced by
-    ``apply_derived_d`` + ``apply_existing_chain``.  Seeds dropped.
+    Δ.18 — CSV-fallback seeds.  Override chain (``apply_derived_f`` /
+    ``apply_existing_chain``) overlays these when active; for synthetic
+    per-sub-solve fixtures the snapshot CSV is the only source.  Empty
+    or missing CSV → None (override-only path).
     """
-    return dict(p_ed_fixed_cost=None, p_entity_all_existing=None)
+    def _read_e_d_seed(name: str) -> "Param | None":
+        f = sd / f"{name}.csv"
+        if not f.exists():
+            return None
+        df = _read_wide_e_d(f)
+        if df.height == 0:
+            return None
+        return Param(("e", "d"), df.select("e", "d", "value"))
+
+    return dict(
+        p_ed_fixed_cost=_read_e_d_seed("ed_fixed_cost"),
+        p_entity_all_existing=_read_e_d_seed("p_entity_all_existing"),
+    )
 
 
 def _load_node_capacity_for_scaling(sd: Path,
@@ -2245,8 +2427,25 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     out["ed_divest_min_period"]       = None
     out["ed_cumulative_max_capacity"] = None
     out["ed_cumulative_min_capacity"] = None
-    out["e_invest_min_total"]         = None
-    out["e_divest_min_total"]         = None
+
+    # Δ.18 — CSV-fallback seeds (override chain overlays when it has data;
+    # for synthetic per-sub-solve fixtures the snapshot CSV is the only
+    # source).
+    def _read_e_seed(name: str) -> "Param | None":
+        f = sd / f"{name}.csv"
+        if not f.exists():
+            return None
+        df = _read_csv_file(f)
+        if df.height == 0 or "entity" not in df.columns or "value" not in df.columns:
+            return None
+        return Param(("e",),
+                     df.rename({"entity": "e"})
+                       .with_columns(value=pl.col("value")
+                                             .cast(pl.Float64, strict=False)
+                                             .fill_null(0.0))
+                       .select("e", "value"))
+    out["e_invest_min_total"]         = _read_e_seed("e_invest_min_total")
+    out["e_divest_min_total"]         = _read_e_seed("e_divest_min_total")
 
     # Δ.17c Gap C: ``pdt_max_instant_flow`` / ``pdt_min_instant_flow``
     # produced authoritatively by ``apply_direct_params`` via
@@ -2409,24 +2608,56 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     LP (e.g. ``period1_realized`` in the 2_day_stochastic_dispatch
     fixture).
     """
-    # Δ.17 — ``pdt_branch_weight`` / ``pd_branch_weight`` produced
-    # authoritatively by ``apply_branch_cluster`` in ``apply_derived_g``
-    # via ``pdt_branch_weight_param`` / ``pd_branch_weight_param``.  The
-    # helper inherits the dense-dt left-join + coalesce(1.0) semantics
-    # the seed used to provide.  All current test fixtures auto-resolve
-    # via ``_FIND_SCENARIO_OVERRIDES`` so the override chain runs and the
-    # seed becomes redundant.  Seeds dropped.
+    # Δ.18 — CSV-fallback seeds for ``pdt_branch_weight`` /
+    # ``pd_branch_weight`` / ``period_in_use_set``.  Override chain
+    # (``apply_branch_cluster`` in ``apply_derived_g``) overlays these
+    # when active; for synthetic per-sub-solve fixtures the snapshot
+    # CSV is the only source.  pdt_branch_weight defaults to dense-dt
+    # × 1.0 when CSV missing / empty (mirrors mod's
+    # ``param pdt_branch_weight {(d,t) in dt}`` declaration).
     pdt_branch_weight = None
-    pd_branch_weight = None
+    pdt_bw_path = sd / "pdt_branch_weight.csv"
+    if pdt_bw_path.exists():
+        df = _read_csv_file(pdt_bw_path)
+        if df.height > 0:
+            df = (df.rename({"period": "d", "time": "t"})
+                    .with_columns(value=pl.col("value")
+                                            .cast(pl.Float64, strict=False)
+                                            .fill_null(1.0))
+                    .select("d", "t", "value"))
+            base = dt.with_columns(value=pl.lit(1.0)).select("d", "t", "value")
+            base = (base
+                    .join(df, on=["d", "t"], how="left", suffix="__r")
+                    .with_columns(value=pl.coalesce(
+                        pl.col("value__r"), pl.col("value")))
+                    .select("d", "t", "value"))
+            pdt_branch_weight = Param(("d", "t"), base)
 
-    # Δ.12-drop: ``dt_non_anticipativity`` / ``period_branch_full`` /
-    # ``period_in_use_set`` produced authoritatively by
-    # ``apply_branch_cluster`` in ``apply_derived_g`` (helpers
-    # ``dt_non_anticipativity_df`` / ``period_branch_full_df`` /
-    # ``period_in_use_set_df``).  Seeds dropped.
+    pd_branch_weight = None
+    pd_bw_path = sd / "pd_branch_weight.csv"
+    if pd_bw_path.exists():
+        df = _read_csv_file(pd_bw_path)
+        if df.height > 0:
+            df = (df.rename({"period": "d"})
+                    .with_columns(value=pl.col("value")
+                                            .cast(pl.Float64, strict=False)
+                                            .fill_null(1.0))
+                    .select("d", "value"))
+            pd_branch_weight = Param(("d",), df)
+
+    # Δ.12-drop: ``dt_non_anticipativity`` / ``period_branch_full``
+    # produced authoritatively by ``apply_branch_cluster`` in
+    # ``apply_derived_g``.  Seeds dropped.
     dt_non_anticipativity = None
     period_branch_full = None
+
+    # Δ.18 — CSV-fallback seed for ``period_in_use_set``.
     period_in_use_set = None
+    piu_path = sd / "period_in_use_set.csv"
+    if piu_path.exists():
+        df = _read_csv_file(piu_path)
+        if df.height > 0 and "period" in df.columns:
+            period_in_use_set = df.rename({"period": "d"}).select("d").unique()
 
     # groupIncludeStochastics: (g,)
     gis_path = inp / "groupIncludeStochastics.csv"
@@ -3056,6 +3287,23 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     if workdir is None:
         return
     workdir_path = Path(workdir)
+
+    # Δ.18 — synthetic per-sub-solve detection.  When the workdir's
+    # ``solve_data/solve_current.csv`` names a solve that doesn't exist
+    # in Spine (e.g. nested-multi-invest fixtures whose orchestrator emits
+    # per-period sub-solve names like ``invest_5weeks_p2020`` that are
+    # synthesized at runtime, not declared in the data DB), the per-solve
+    # override chain (``apply_derived_a..g`` + ``apply_existing_chain``)
+    # would return None for every helper that takes ``active_solve`` as
+    # a key — wiping out the snapshot CSV seeds those helpers would have
+    # otherwise overlaid.  For these synthetic-solve workdirs, the
+    # snapshot CSV is the canonical and the per-solve overrides must be
+    # skipped entirely.  Direct + Projection Params (passes 1-2) are
+    # solve-agnostic and remain authoritative.
+    active_solve = _drv._read_active_solve(workdir_path)
+    if active_solve is not None and not _drv._solve_in_spine(db_reader,
+                                                                  active_solve):
+        return
 
     _drv.apply_derived_a(flex_data, db_reader, workdir_path, ctx=ctx)
     _drv.apply_derived_b(flex_data, db_reader, workdir_path, ctx=ctx)
