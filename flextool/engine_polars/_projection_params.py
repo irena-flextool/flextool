@@ -126,6 +126,13 @@ def process_source_sink(source: "InputSource") -> pl.DataFrame:
     pairs.
 
     Schema: ``[p, source, sink]``.
+
+    This produces the **expanded** form (one arc per input + one arc per
+    output) where indirect / no-collapse units appear as ``(p, source, p)``
+    and ``(p, p, sink)``.  Use :func:`process_source_sink_collapsed` to
+    obtain flextool's preprocessing-side **collapsed** shape (direct-
+    method units flattened to ``(p, source, sink)``) — that's the form
+    written to ``solve_data/process_source_sink.csv``.
     """
     parts: list[pl.LazyFrame] = []
 
@@ -156,6 +163,75 @@ def process_source_sink(source: "InputSource") -> pl.DataFrame:
     return pl.concat(parts).unique().sort("p", "source", "sink").collect()
 
 
+# ---------------------------------------------------------------------------
+# Δ.17b Gap B — flextool preprocessing-style collapsed pss
+# ---------------------------------------------------------------------------
+#
+# flextool's preprocessing produces ``solve_data/process_source_sink.csv``
+# as the union of 10 sub-sets (see preprocessing/process_arc_unions.py
+# and process_method_sets.py).  The shape per process depends on the
+# internal method:
+#
+#   * DIRECT methods (method_1way_1var_*, method_2way_1var_*,
+#     method_2way_2var_*): cross-product of (p, source) × (p, sink) →
+#     ``(p, source, sink)``.  2-way variants also emit reverse arcs
+#     ``(p, sink, source)``.
+#   * INDIRECT methods (method_*_nvar_*): ``(p, source, p)`` and
+#     ``(p, p, sink)`` — the unit name appears as the intermediate
+#     "node" in two arcs.  2way_nvar also emits ``(p, p, source)``.
+#   * 1way_1var with no source: ``(p, p, sink)`` (process_process_toSink_noConversion).
+#   * 1way_1var with no sink: ``(p, source, p)`` (process_source_toProcess_noConversion).
+#   * Connections: always ``(c, node_1, node_2)`` (already 1-arc form).
+#
+# Internal method comes from the classifier (input_writer.METHODS_MAPPING).
+# We reuse the classifier from ``_derived_params.py``.
+
+
+_METHOD_2WAY_NVAR_LOCAL = frozenset(("method_2way_nvar_off",))
+_METHOD_2WAY_2VAR_LOCAL = frozenset((
+    "method_2way_2var_off", "method_2way_2var_exclude",
+    "method_2way_2var_MIP_exclude",
+))
+_METHOD_1WAY_1VAR_LOCAL = frozenset((
+    "method_1way_1var_off", "method_1way_1var_LP", "method_1way_1var_MIP",
+))
+_METHOD_DIRECT_LOCAL = frozenset((
+    "method_1way_1var_off", "method_1way_1var_LP", "method_1way_1var_MIP",
+    "method_2way_1var_off", "method_2way_2var_off",
+    "method_2way_2var_exclude", "method_2way_2var_MIP_exclude",
+))
+_METHOD_INDIRECT_LOCAL = frozenset((
+    "method_1way_nvar_off", "method_1way_nvar_LP", "method_1way_nvar_MIP",
+    "method_2way_nvar_off",
+))
+
+
+def process_source_sink_collapsed(source: "InputSource",
+                                     classified: pl.DataFrame | None = None
+                                     ) -> pl.DataFrame:
+    """flextool-preprocessing-shaped ``process_source_sink`` — same as
+    :func:`process_source_sink_canonical` minus the ``method`` column.
+    Schema: ``[p, source, sink]``.
+
+    Δ.17b Gap B closure.  Prior to this, ``input.py:_load_process_topology``
+    had to read the three preprocessed ``process_source_sink*.csv`` files
+    from disk because the canonical helper produced the *expanded*
+    ``process_source_sink`` shape (``unit__inputNode`` ∪ ``unit__outputNode``
+    — 2 arcs per direct+indirect unit) — not flextool's collapsed shape.
+    This helper produces the same 10-way union flextool's
+    ``write_process_arc_unions`` builds.
+    """
+    del classified  # canonical computes its own
+    canonical = process_source_sink_canonical(source)
+    if canonical.height == 0:
+        return _empty({"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+    return (canonical.lazy()
+              .select("p", "source", "sink")
+              .unique()
+              .sort("p", "source", "sink")
+              .collect())
+
+
 # Conversion methods that are "efficiency-based" (eff partition).  The
 # .mod calls these the ``method_X_LP`` family; flextool's preprocessor
 # also includes ``min_load_efficiency`` and ``constant_efficiency`` for
@@ -172,37 +248,184 @@ def process_source_sink_canonical(source: "InputSource",
     partition from scratch.
 
     Schema: ``[p, source, sink, method]`` where ``method ∈ {'eff', 'noEff'}``.
-    Currently the partition is binary (efficiency-based vs not); future
-    method tags (``indirect``, ``connection``, etc.) can be added without
-    changing the .filter() consumer pattern.
 
-    Δ.3: this is the user-decided option (b)/(a-prime) hybrid — keep the
-    legacy 2-field FlexData surface (``process_source_sink_eff`` /
-    ``_noEff``) but compute them as projections of one canonical frame.
-    See progress.md (Δ.3 close stanza).
+    Δ.17b Gap B: produces flextool's preprocessing-side **collapsed
+    shape** (DIRECT methods flattened to ``(p, source, sink)``; INDIRECT
+    methods kept as 2-arc form ``(p, source, p)``+``(p, p, sink)``).
+    Partition keyed by internal METHOD (DIRECT → eff, else → noEff),
+    not by ``conversion_method``.  This matches flextool's
+    ``write_process_arc_unions``:
+
+      * ``_eff``  = ``process_source_toSink ∪ process_sink_toSource``
+                  (DIRECT-method arcs).
+      * ``_noEff`` = 8-way union of indirect / noConversion / profile
+                    sub-sets.
+
+    The legacy ``pss`` parameter is accepted for backward compatibility
+    but ignored when the classifier is available — the classifier dictates
+    both the shape (collapsed vs expanded) and the eff/noEff partition.
     """
-    if pss is None:
-        pss = process_source_sink(source)
-    if pss.height == 0:
+    del pss  # legacy parameter
+
+    # Late import to avoid a circular reference.
+    from flextool.engine_polars._derived_params import _classify_process_method
+    classified = _classify_process_method(source)
+
+    # Connections are always noEff and 1-arc.
+    cnn = _try_entities(source, "connection__node__node")
+    parts: list[pl.LazyFrame] = []
+    if cnn is not None and cnn.height > 0:
+        # Connections classify into the eff partition only when they
+        # carry a transfer_method that the .mod treats as efficiency-
+        # bearing (i.e. DIRECT-family internal methods).  Use the
+        # classifier output rather than re-deriving here.
+        cls_conns = (classified.lazy()
+                       .filter(pl.col("klass") == "connection")
+                       .select("p", "method"))
+        cnn_lf = cnn.lazy().select(
+            pl.col("connection").alias("p"),
+            pl.col("node_1").alias("source"),
+            pl.col("node_2").alias("sink"),
+        )
+        # Join with classifier to get internal method per arc.
+        cnn_with_method = cnn_lf.join(cls_conns, on="p", how="left")
+        # Forward direction: tag eff/noEff by method.
+        cnn_eff = (cnn_with_method
+            .filter(pl.col("method").is_in(list(_METHOD_DIRECT_LOCAL)))
+            .select("p", "source", "sink",
+                    pl.lit("eff").alias("method")))
+        cnn_noEff = (cnn_with_method
+            .filter(~pl.col("method").is_in(list(_METHOD_DIRECT_LOCAL))
+                    | pl.col("method").is_null())
+            .select("p", "source", "sink",
+                    pl.lit("noEff").alias("method")))
+        parts.append(cnn_eff)
+        parts.append(cnn_noEff)
+        # Reverse direction for 2way_2var connections.
+        rev_eff = (cnn_with_method
+            .filter(pl.col("method").is_in(list(_METHOD_2WAY_2VAR_LOCAL)))
+            .select("p",
+                    pl.col("sink").alias("source"),
+                    pl.col("source").alias("sink"),
+                    pl.lit("eff").alias("method")))
+        parts.append(rev_eff)
+        # 2way_nvar connections — emits indirect 2-arc form.  In practice
+        # connections almost never have 2way_nvar; guard via classifier.
+        rev_noEff = (cnn_with_method
+            .filter(pl.col("method").is_in(list(_METHOD_2WAY_NVAR_LOCAL)))
+            .select("p",
+                    pl.col("sink").alias("source"),
+                    pl.col("source").alias("sink"),
+                    pl.lit("noEff").alias("method")))
+        parts.append(rev_noEff)
+
+    # Per-unit dispatch keyed by classified method.  Build empty-but-typed
+    # source/sink LazyFrames when the entity-class is missing, so the
+    # noConversion branches still see "no source rows" / "no sink rows"
+    # rather than skipping entirely.
+    _empty_lf = lambda *cols: pl.DataFrame(
+        {c: [] for c in cols}, schema={c: pl.Utf8 for c in cols}).lazy()
+    if classified is not None and classified.height > 0:
+        cls_units = (classified.lazy()
+                       .filter(pl.col("klass") == "unit")
+                       .select("p", "method"))
+        uin = _try_entities(source, "unit__inputNode")
+        sources_lf = (uin.lazy().select(
+            pl.col("unit").alias("p"),
+            pl.col("node").alias("source"),
+        )) if uin is not None else _empty_lf("p", "source")
+        uout = _try_entities(source, "unit__outputNode")
+        sinks_lf = (uout.lazy().select(
+            pl.col("unit").alias("p"),
+            pl.col("node").alias("sink"),
+        )) if uout is not None else _empty_lf("p", "sink")
+
+        # ── DIRECT methods: cross-join → ``_eff`` partition ──
+        direct_p = (cls_units
+            .filter(pl.col("method").is_in(list(_METHOD_DIRECT_LOCAL)))
+            .select("p"))
+        direct_arcs = (sources_lf
+            .join(direct_p, on="p", how="inner")
+            .join(sinks_lf, on="p", how="inner")
+            .select("p", "source", "sink",
+                    pl.lit("eff").alias("method")))
+        parts.append(direct_arcs)
+
+        # 2way_2var: reverse arcs → also ``_eff``.
+        two_way_p = (cls_units
+            .filter(pl.col("method").is_in(list(_METHOD_2WAY_2VAR_LOCAL)))
+            .select("p"))
+        rev_arcs = (sources_lf
+            .join(two_way_p, on="p", how="inner")
+            .join(sinks_lf, on="p", how="inner")
+            .select(pl.col("p"),
+                    pl.col("sink").alias("source"),
+                    pl.col("source").alias("sink"),
+                    pl.lit("eff").alias("method")))
+        parts.append(rev_arcs)
+
+        # ── INDIRECT methods: 2-arc form → ``_noEff`` partition ──
+        indirect_p = (cls_units
+            .filter(pl.col("method").is_in(list(_METHOD_INDIRECT_LOCAL)))
+            .select("p"))
+        indirect_inputs = (sources_lf
+            .join(indirect_p, on="p", how="inner")
+            .select("p", "source", pl.col("p").alias("sink"),
+                    pl.lit("noEff").alias("method")))
+        parts.append(indirect_inputs)
+
+        # 2way_nvar: process_process_toSource — (p, p, source).
+        two_way_nvar_p = (cls_units
+            .filter(pl.col("method").is_in(list(_METHOD_2WAY_NVAR_LOCAL)))
+            .select("p"))
+        indirect_inputs_rev = (sources_lf
+            .join(two_way_nvar_p, on="p", how="inner")
+            .select("p", pl.col("p").alias("source"),
+                    pl.col("source").alias("sink"),
+                    pl.lit("noEff").alias("method")))
+        parts.append(indirect_inputs_rev)
+
+        indirect_outputs = (sinks_lf
+            .join(indirect_p, on="p", how="inner")
+            .select("p", pl.col("p").alias("source"), "sink",
+                    pl.lit("noEff").alias("method")))
+        parts.append(indirect_outputs)
+
+        # ── 1way_1var DIRECT, missing one side: noConversion ``_noEff`` ──
+        one_way_1var_p = (cls_units
+            .filter(pl.col("method").is_in(list(_METHOD_1WAY_1VAR_LOCAL)))
+            .select("p"))
+        sources_exist = sources_lf.select("p").unique()
+        sinks_exist = sinks_lf.select("p").unique()
+        no_sink_p = one_way_1var_p.join(sinks_exist, on="p", how="anti")
+        no_source_p = one_way_1var_p.join(sources_exist, on="p", how="anti")
+        no_sink_arcs = (sources_lf
+            .join(no_sink_p, on="p", how="inner")
+            .select("p", "source", pl.col("p").alias("sink"),
+                    pl.lit("noEff").alias("method")))
+        parts.append(no_sink_arcs)
+        no_source_arcs = (sinks_lf
+            .join(no_source_p, on="p", how="inner")
+            .select("p", pl.col("p").alias("source"), "sink",
+                    pl.lit("noEff").alias("method")))
+        parts.append(no_source_arcs)
+
+    if not parts:
         return _empty({"p": pl.Utf8, "source": pl.Utf8,
                        "sink": pl.Utf8, "method": pl.Utf8})
-    cm = _try_param(source, "unit", "conversion_method")
-    if cm is None:
-        # No conversion_method data — every arc is noEff (connections +
-        # units without an efficiency partition).
-        return (pss.lazy()
-                  .with_columns(pl.lit("noEff").alias("method"))
-                  .sort("p", "source", "sink")
-                  .collect())
-    eff_p = (cm.lazy()
-                .filter(pl.col("value").is_in(_EFF_CONVERSION_METHODS))
-                .select(pl.col("name").alias("p")))
-    return (pss.lazy()
-              .join(eff_p.with_columns(pl.lit("eff").alias("method")),
-                    on="p", how="left")
-              .with_columns(method=pl.col("method").fill_null("noEff"))
-              .sort("p", "source", "sink")
+
+    # Final dedup: arcs may appear in multiple partitions due to method
+    # categories; flextool's union takes a set-union (dedup).  Tie-break:
+    # if same (p, source, sink) appears as both eff and noEff (shouldn't
+    # in practice but defensive), prefer eff.
+    out = (pl.concat(parts, how="vertical_relaxed")
+              .unique(subset=["p", "source", "sink", "method"])
+              .sort("p", "source", "sink", "method")
               .collect())
+    if out.height == 0:
+        return _empty({"p": pl.Utf8, "source": pl.Utf8,
+                       "sink": pl.Utf8, "method": pl.Utf8})
+    return out
 
 
 def process_source_sink_eff(source: "InputSource",

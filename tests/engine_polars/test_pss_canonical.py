@@ -30,6 +30,7 @@ from flextool.engine_polars import SpineDbReader
 from flextool.engine_polars._projection_params import (
     process_source_sink,
     process_source_sink_canonical,
+    process_source_sink_collapsed,
     process_source_sink_eff,
     process_source_sink_noEff,
 )
@@ -68,10 +69,16 @@ def test_canonical_partitions_match_eff_and_noEff(work_name: str,
 
     reader = SpineDbReader(f"sqlite:///{sqlite}", scenario)
 
-    pss = process_source_sink(reader)
-    canonical = process_source_sink_canonical(reader, pss)
-    eff = process_source_sink_eff(reader, pss)
-    no_eff = process_source_sink_noEff(reader, pss)
+    # Δ.17b Gap B: ``process_source_sink_canonical`` now produces flextool's
+    # preprocessing-side **collapsed** shape (DIRECT methods cross-joined to
+    # ``(p, source, sink)``; INDIRECT methods kept as 2-arc form).  Use
+    # :func:`process_source_sink_collapsed` as the reference rather than
+    # the *expanded* :func:`process_source_sink` (which mirrors the Spine
+    # ``unit__inputNode`` ∪ ``unit__outputNode`` union).
+    canonical = process_source_sink_canonical(reader)
+    collapsed = process_source_sink_collapsed(reader)
+    eff = process_source_sink_eff(reader)
+    no_eff = process_source_sink_noEff(reader)
 
     # 1. Schema invariant.
     assert set(canonical.columns) == {"p", "source", "sink", "method"}, \
@@ -81,19 +88,20 @@ def test_canonical_partitions_match_eff_and_noEff(work_name: str,
     methods = set(canonical["method"].unique().to_list()) if canonical.height > 0 else set()
     assert methods <= {"eff", "noEff"}, f"unexpected methods: {methods}"
 
-    # 3. Union invariant: canonical's (p,s,sink) rows == pss rows.
+    # 3. Union invariant: canonical's (p,s,sink) rows == collapsed rows.
     canonical_keys = (canonical
         .select("p", "source", "sink")
         .unique()
         .sort("p", "source", "sink"))
-    pss_sorted = pss.sort("p", "source", "sink")
-    assert canonical_keys.equals(pss_sorted), \
-        "canonical (p,source,sink) doesn't match pss"
+    collapsed_sorted = collapsed.sort("p", "source", "sink")
+    assert canonical_keys.equals(collapsed_sorted), \
+        "canonical (p,source,sink) doesn't match collapsed pss"
 
     # 4. .filter(method=='eff') == process_source_sink_eff
     eff_from_canonical = (canonical
         .filter(pl.col("method") == "eff")
         .select("p", "source", "sink")
+        .unique()
         .sort("p", "source", "sink"))
     assert eff_from_canonical.equals(eff.sort("p", "source", "sink")), \
         "filter(method='eff') mismatches process_source_sink_eff"
@@ -102,6 +110,7 @@ def test_canonical_partitions_match_eff_and_noEff(work_name: str,
     no_eff_from_canonical = (canonical
         .filter(pl.col("method") == "noEff")
         .select("p", "source", "sink")
+        .unique()
         .sort("p", "source", "sink"))
     assert no_eff_from_canonical.equals(no_eff.sort("p", "source", "sink")), \
         "filter(method='noEff') mismatches process_source_sink_noEff"

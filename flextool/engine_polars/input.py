@@ -713,33 +713,37 @@ def _load_node(sd: Path, dt: pl.DataFrame):
 # Process-topology helpers (skipped if no processes)
 
 def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
-                            block_layout: "BlockLayout | None" = None):
-    pss_path = sd / "process_source_sink.csv"
-    if not pss_path.exists():
-        return {k: None for k in ("pss","pss_eff","pss_noEff","pss_dt",
-                                   "flow_to_n","flow_from_n",
-                                   "flow_from_commodity_eff",
-                                   "flow_from_commodity_noEff",
-                                   "unitsize","flow_upper","slope","commodity_price")}
-    pss     = _read_csv_file(pss_path).rename({"process": "p"})
-    if pss.height == 0:
-        return {k: None for k in ("pss","pss_eff","pss_noEff","pss_dt",
-                                   "flow_to_n","flow_from_n",
-                                   "flow_from_commodity_eff",
-                                   "flow_from_commodity_noEff",
-                                   "unitsize","flow_upper","slope","commodity_price")}
-    pss_eff = _read_csv_file(sd / "process_source_sink_eff.csv").rename({"process": "p"})
-    pss_noEff = _read_csv_file(sd / "process_source_sink_noEff.csv").rename({"process": "p"})
-    # TODO(Δ.18+): the canonical helper ``process_source_sink_canonical``
-    # in ``_projection_params`` (Δ.3) returns the union of unit__inputNode
-    # + unit__outputNode + connection__node__node arcs, but flextool's
-    # preprocessing CONSOLIDATES input+output unit arcs into a single arc
-    # (e.g. ``coal_market → demand_node`` for ``coal_plant``).  Wiring
-    # ``process_source_sink_canonical(source)`` here breaks downstream
-    # ``flow_to_n`` / ``flow_from_n`` shape and the LP becomes empty.
-    # The canonical helper needs an "indirect-collapse" pass to match
-    # the preprocessing-side consolidation before these CSV seeds can
-    # retire.
+                            block_layout: "BlockLayout | None" = None,
+                            *, source: "InputSource | None" = None):
+    # Δ.17b Gap B: ``process_source_sink_canonical`` produces flextool's
+    # preprocessing-side collapsed shape directly from Spine (DIRECT methods
+    # cross-joined; INDIRECT methods kept as 2-arc form; 2way reverse arcs
+    # added; noConversion fallbacks handled).  3 CSV seeds dropped — the
+    # canonical helper is now the sole producer of the pss family.
+    empty_return = {k: None for k in ("pss","pss_eff","pss_noEff","pss_dt",
+                                       "flow_to_n","flow_from_n",
+                                       "flow_from_commodity_eff",
+                                       "flow_from_commodity_noEff",
+                                       "unitsize","flow_upper","slope","commodity_price")}
+    if source is None:
+        # No DB source available (dump_csvs roundtrip workdirs without a
+        # tests.sqlite).  Per the architecture invariants ("CSV path is
+        # the debug oracle, not a runtime fallback"), helpers expect the
+        # source to be available.  Without it we can't construct pss; the
+        # caller (load_flextool) handles the empty return by skipping the
+        # process-topology pipeline.
+        return empty_return
+    from ._projection_params import process_source_sink_canonical
+    canonical = process_source_sink_canonical(source)
+    if canonical.height == 0:
+        return empty_return
+    pss = canonical.select("p", "source", "sink").unique()
+    pss_eff = (canonical
+        .filter(pl.col("method") == "eff")
+        .select("p", "source", "sink").unique())
+    pss_noEff = (canonical
+        .filter(pl.col("method") == "noEff")
+        .select("p", "source", "sink").unique())
 
     flow_to_n   = pss.with_columns(n=pl.col("sink"))
     flow_from_n = pss.with_columns(n=pl.col("source"))
@@ -2769,7 +2773,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         dt, step_dur, rp_cw, infl, psh = _load_time(sd)
         nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt)
 
-        proc = _load_process_topology(inp, sd, dt, block_layout=block_layout)
+        proc = _load_process_topology(inp, sd, dt, block_layout=block_layout,
+                                       source=db_reader)
 
         # base_cap_pd = (p, d, base) for profile RHS — recompute here; small.
         base_cap_pd = None
