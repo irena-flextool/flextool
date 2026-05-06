@@ -137,10 +137,17 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("node", "storage_state_reference_value"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
-    # ─── unit: (period, time) Params ─────────────────────────────────────
+    # ─── unit / connection: (period, time) Params ────────────────────────
     # PROCESS_TIME_PARAM ⊇ {availability}.
-    # Cascade: pbt → pd → pt → p (write_pdtProcess).
+    # Cascade: pbt → pd → pt → p (write_pdtProcess).  ``processes`` in
+    # process_arc_unions.py:write_param_in_use_sets reads the ``process.csv``
+    # union of unit + connection, so both classes participate in the LP's
+    # ``p_process_availability`` (the Spine schema declares the parameter
+    # on each class independently).
     ("unit", "availability"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
+    ("connection", "availability"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
     # ─── commodity: time Params ──────────────────────────────────────────
@@ -205,28 +212,54 @@ def _allowed_shape_names(allowed: "set[Shape]") -> str:
     return ", ".join(sorted(s.value for s in allowed))
 
 
+# Labels that the spinedb_api default-fills when the author didn't
+# specify ``index_name`` on a Map.  Treated as "silent default" — the
+# resolver returns None (the caller falls through to the seed / leaves
+# the field unset) instead of raising.  Per the user advice, the error
+# path applies to *explicit* mismatches, not authoring oversights.
+_SILENT_DEFAULT_LABELS: frozenset[str] = frozenset(("x", ""))
+
+
+def _normalise_label(n: "str | None") -> "str | None":
+    """Lowercase / strip / collapse silent defaults to ``None``."""
+    if n is None:
+        return None
+    if not isinstance(n, str):
+        return None
+    s = n.strip().lower()
+    if not s or s in _SILENT_DEFAULT_LABELS:
+        return None
+    return s
+
+
 def _shape_from_indices(index_names: "list[str | None]",
-                        ) -> Shape:
+                        ) -> "Shape | None":
     """Map a depth-ordered list of raw ``index_name`` labels to a
     :class:`Shape`.
 
     The user advice "If it says period, it is period; if it says time,
-    it is time. If does not match, error to the user." is enforced by
-    the caller — this function only normalises labels into the
-    canonical set; unrecognised labels return ``None``-equivalent and
-    the caller raises.
+    it is time. If does not match, error to the user." is enforced
+    here for *explicit* mismatches.  Empty / ``None`` / spinedb_api's
+    ``"x"`` silent default propagate as ambiguity → ``return None``,
+    letting the caller fall through to whatever non-resolver pathway
+    the seed used to fill (see Δ.18+ punch-list to clean up fixtures
+    that author Maps without ``index_name``).
+
+    Returns ``None`` when at least one level is a silent default
+    (cannot disambiguate without DB-side authoring fix).
+    Returns the resolved :class:`Shape` when every level is explicitly
+    "period" or "time" / "t".
+    Raises :class:`_UnrecognisedIndex` when at least one level carries
+    an explicit label outside that set (e.g. "tier", "branch").
     """
-    # Canonical normalisation: strip / lowercase, treat empty as None.
-    normalised: list[str | None] = []
-    for n in index_names:
-        if n is None:
-            normalised.append(None)
-            continue
-        s = n.strip().lower() if isinstance(n, str) else None
-        if not s:
-            normalised.append(None)
-        else:
-            normalised.append(s)
+    # Canonical normalisation: silent defaults collapse to None.
+    normalised = [_normalise_label(n) for n in index_names]
+
+    # Silent defaults at any level → return None (ambiguous; caller
+    # falls back).  We DON'T raise here because the spinedb_api default
+    # is a silent oversight, not a deliberate mismatch.
+    if any(n is None for n in normalised):
+        return None
 
     if len(normalised) == 0:
         return Shape.SCALAR
@@ -236,13 +269,9 @@ def _shape_from_indices(index_names: "list[str | None]",
             return Shape.MAP_PERIOD
         if n0 in ("time", "t"):
             return Shape.MAP_TIME
-        # Unrecognised single index — caller decides via error path.
         raise _UnrecognisedIndex(n0, depth=0)
     if len(normalised) == 2:
         n0, n1 = normalised[0], normalised[1]
-        # Both labels must be one of {period, time}.
-        if {n0, n1} == {"period"} or n0 == n1:
-            raise _UnrecognisedIndex(f"({n0!r}, {n1!r})", depth=0)
         if n0 == "period" and n1 in ("time", "t"):
             return Shape.MAP_PERIOD_TIME
         if n0 in ("time", "t") and n1 == "period":
@@ -403,6 +432,11 @@ def resolve_param_shape(
         shape = _shape_from_indices(raw_labels)
     except _UnrecognisedIndex as exc:
         # User advice: "If does not match, error to the user."
+        # We're strict only about *explicit* mismatches (e.g. ``branch`` on
+        # a parameter whose allow-list is {scalar, period, time}).  Silent
+        # defaults (empty / None / ``x``) collapse to ``shape=None`` below
+        # via :func:`_shape_from_indices` and trigger the soft-fallback
+        # path instead.
         raise FlexToolConfigError(
             f"Parameter ({entity_class!r}, {parameter_name!r}) carries an "
             f"unrecognised dimension index label {exc.label} (depth "
@@ -411,6 +445,14 @@ def resolve_param_shape(
             "'period' or 'time' (matching one of the allowed shapes), or "
             "extend PARAM_ALLOWED_SHAPES if a new shape is intended."
         ) from None
+
+    if shape is None:
+        # Ambiguous shape — at least one Map level carries the spinedb_api
+        # silent default.  Per Δ.17c policy: don't raise; return None so
+        # the caller falls back to its non-resolver pathway (typically the
+        # seed CSV).  Δ.18+ punch-list: re-author fixtures so every Map
+        # level carries an explicit ``index_name``.
+        return None
 
     if shape not in allowed:
         # Render observed shape for the message — labels can be empty
