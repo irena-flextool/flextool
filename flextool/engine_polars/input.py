@@ -1706,6 +1706,11 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # source (often empty in nested / rolling-horizon fixtures), so we
     # prefer ``period_first_of_solve.csv`` when it has rows; otherwise
     # fall back to ``period_first.csv``; otherwise the first dt period.
+    # TODO(Δ.18+): no canonical helper yet for ``nodeState_first_dt`` —
+    # the override-chain produces ``period_branch`` / ``dtt_timeline_matching``
+    # but not the simple per-(n, d) first timestep.  ``_read_period_first``
+    # in ``_derived_params`` reads similar data but is workdir-only and
+    # used by the existing-chain helper.
     fpos_path = sd / "period_first_of_solve.csv"
     fp_path = sd / "period_first.csv"
     first_period = None
@@ -2086,6 +2091,11 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     period_branch = None
 
     # period_last: (d,).
+    # TODO(Δ.18+): no canonical helper yet for ``period_last`` — this is
+    # preprocessing-only data (flextool's per-solve last-period anchor for
+    # storage/handoff binding).  The override-chain produces
+    # ``dtt_timeline_matching`` / ``period_branch`` / handoff carriers but
+    # not the simple ``period_last`` set frame.
     period_last_df = None
     pl_path = sd / "period_last.csv"
     if pl_path.exists():
