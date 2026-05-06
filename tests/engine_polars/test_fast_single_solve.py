@@ -98,6 +98,72 @@ def test_fast_single_solve_requires_scenario_name(tmp_path: Path) -> None:
         )
 
 
+def test_fast_single_solve_dump_csvs_populates_workdir(
+    tmp_path: Path, caplog
+) -> None:
+    """Δ.30 — the fast path calls ``data.dump_csvs(work_folder)`` so
+    ``input/`` and ``solve_data/`` carry the FlexData-derived CSVs that
+    handoff_writers + read_parameters consume.
+
+    Acceptance:
+    1. ``input/`` contains the four entity-class set CSVs and the
+       wide-format ``p_entity_unitsize.csv``.
+    2. ``solve_data/`` carries the header-only
+       ``solve__p_entity_pre_existing.csv`` stub.
+    3. No ``[Errno 2]`` log records for the input/handoff CSVs the
+       writers consume.
+    4. ``v_dual_node_balance__base.parquet`` is non-empty (Δ.30 piece 1).
+    """
+    import logging
+
+    fixture = DATA / "work_base"
+    db = fixture / "tests.sqlite"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+
+    work = tmp_path / "fast_dump"
+    with caplog.at_level(logging.WARNING):
+        step = run_single_solve_from_db(
+            f"sqlite:///{db}",
+            scenario_name="base",
+            work_folder=work,
+        )
+    assert step.solution is not None and step.solution.optimal
+
+    # 1. input/ entity-class set CSVs + wide-format unitsize.
+    input_dir = work / "input"
+    for name in ("entity.csv", "node.csv", "process_unit.csv",
+                  "process_connection.csv", "p_entity_unitsize.csv"):
+        assert (input_dir / name).exists(), (
+            f"missing input/{name} after fast-path dump_csvs"
+        )
+
+    # 2. solve_data/ pre-existing stub.
+    assert (work / "solve_data" / "solve__p_entity_pre_existing.csv").exists()
+
+    # 3. No [Errno 2] warnings for the previously-broken inputs.
+    forbidden_paths = (
+        "input/p_entity_unitsize.csv",
+        "solve__p_entity_pre_existing.csv",
+    )
+    bad_records = [
+        rec.message for rec in caplog.records
+        if "[Errno 2]" in rec.message
+        and any(p in rec.message for p in forbidden_paths)
+    ]
+    assert not bad_records, (
+        f"unexpected [Errno 2] warnings for handoff CSVs: {bad_records}"
+    )
+
+    # 4. v_dual_node_balance non-empty (piece 1 fix).
+    parquet = work / "output_raw" / "v_dual_node_balance__base.parquet"
+    assert parquet.exists()
+    from flextool.lean_parquet import read_lean_parquet
+    df = read_lean_parquet(parquet)
+    assert not df.empty, "v_dual_node_balance parquet is empty"
+    assert (df != 0).any().any(), "v_dual_node_balance has only zeros"
+
+
 def test_fast_single_solve_skip_output_emit(tmp_path: Path) -> None:
     """``emit_output=False`` short-circuits the writer adapter.
 
