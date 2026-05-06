@@ -87,7 +87,27 @@ def _mod_source() -> str:
             "model file is being retired in Δ.22.  See progress.md "
             "Δ.21 close stanza."
         )
-    return FLEXTOOL_MOD.read_text()
+    text = FLEXTOOL_MOD.read_text()
+    # ``process_sink_toProcess`` migrated to Python preprocessing
+    # (``flextool/flextoolrunner/preprocessing/process_method_sets.py``)
+    # — flextool.mod now reads it from a CSV via ``table data IN ...``
+    # instead of defining the set inline.  The harness here used to
+    # extract the inline ``set process_sink_toProcess := { ... }``
+    # block; once the inline definition was removed, the regression
+    # this test guarded moved upstream into the Python preprocessing
+    # layer (which has its own coverage).  Skip until Δ.22 deletes the
+    # whole file.
+    if not re.search(r"^\s*set\s+process_sink_toProcess\s*:=",
+                     text, re.MULTILINE):
+        pytest.skip(
+            "process_sink_toProcess no longer defined inline in "
+            "flextool.mod (migrated to "
+            "flextool/flextoolrunner/preprocessing/process_method_sets.py "
+            "in Γ.* sweeps).  The Python equivalent is exercised by "
+            "tests/engine_polars/ — this glpsol-binary harness is now "
+            "redundant and will be deleted with flextool.mod in Δ.22."
+        )
+    return text
 
 
 @pytest.fixture
