@@ -3630,6 +3630,375 @@ def p_section_from_source(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
+# §3.3.5 — p_flow_upper  (Δ.26)
+# ---------------------------------------------------------------------------
+#
+# Native port of flextool's
+# ``preprocessing/process_arc_unions.py:write_p_flow_max`` (file:line
+# `process_arc_unions.py:1469-1624` for `write_p_flow_max`).  Mirrors
+# flextool.mod L1661-1677:
+#
+#     p_flow_max{(p, source, sink, d, t) in peedt} :=
+#       if (p, source, sink) in process_source_sink_coeff_zero
+#       then p_unconstrained_flow_cap
+#       else (
+#         if exists{(p, m) in process__method_indirect} 1
+#            AND (p, source) in process_source
+#         then ( if (p, 'min_load_efficiency') in process__ct_method
+#                then pdtProcess_slope[p,d,t] + pdtProcess_section[p,d,t]
+#                else pdtProcess_slope[p,d,t]
+#              )
+#              * (p_entity_dispatch_capacity_max[p,d] / p_entity_unitsize[p])
+#              / p_process_source_max_capacity_coefficient[p, source]
+#         else (p_entity_dispatch_capacity_max[p,d] / p_entity_unitsize[p])
+#       )
+#       * (if (p, sink) in process_sink
+#          then p_process_sink_max_capacity_coefficient[p, sink] else 1)
+#
+# Slow-path consumer: ``input.py::_load_process_topology`` reads
+# ``solve_data/p_flow_max.csv`` (preprocessed CSV).  Δ.26 ports the
+# derivation natively as a polars-lazy helper, wired into
+# :func:`apply_derived_c` so the fast single-solve path produces the
+# correct ``p_flow_upper`` Param without any preprocessing.
+
+
+def _arc_max_capacity_coef_lf(source: "InputSource",
+                                  side: str,
+                                  ) -> pl.LazyFrame:
+    """Per-(p, node) ``max_capacity_coefficient`` from the relationship-class
+    parameter on ``unit__inputNode`` / ``unit__outputNode``.
+
+    ``side='source'`` → reads ``unit__inputNode.max_capacity_coefficient``
+    and returns ``[p, source, coef]``; ``side='sink'`` → reads
+    ``unit__outputNode.max_capacity_coefficient`` and returns
+    ``[p, sink, coef]``.
+
+    Connections don't carry a ``max_capacity_coefficient`` parameter in
+    the canonical Spine schema (the .mod's per-arc coef is unit-only;
+    connections always default to 1 on the Coefficient cascade — see
+    flextool.mod L686-687).  We mirror that by emitting only unit-arc
+    rows; downstream callers fill the default 1.0 via left-join.
+    """
+    if side == "source":
+        ec = "unit__inputNode"
+        node_alias = "source"
+    else:
+        ec = "unit__outputNode"
+        node_alias = "sink"
+    df = _try_param(source, ec, "max_capacity_coefficient")
+    if df is None or df.height == 0:
+        return pl.LazyFrame(
+            schema={"p": pl.Utf8, node_alias: pl.Utf8, "coef": pl.Float64})
+    cols = df.columns
+    rename: dict[str, str] = {}
+    for c in cols:
+        if c == "unit":
+            rename[c] = "p"
+        elif c == "node":
+            rename[c] = node_alias
+    return (df.lazy().rename(rename)
+              .with_columns(pl.col("value").cast(pl.Float64).alias("coef"))
+              .select("p", node_alias, "coef")
+              .unique(subset=["p", node_alias], keep="last"))
+
+
+def _process_source_pairs_lf(source: "InputSource") -> pl.LazyFrame:
+    """``process_source`` set ``[p, source]`` — union of unit input arcs
+    and connection's first node.  Mirrors flextool.mod L686 + the
+    expansion in ``input_writer.write_topology``."""
+    parts: list[pl.LazyFrame] = []
+    uin = _try_entities(source, "unit__inputNode")
+    if uin is not None and uin.height > 0:
+        parts.append(uin.lazy().select(
+            pl.col("unit").alias("p"),
+            pl.col("node").alias("source"),
+        ))
+    cnn = _try_entities(source, "connection__node__node")
+    if cnn is not None and cnn.height > 0:
+        parts.append(cnn.lazy().select(
+            pl.col("connection").alias("p"),
+            pl.col("node_1").alias("source"),
+        ))
+    if not parts:
+        return pl.LazyFrame(schema={"p": pl.Utf8, "source": pl.Utf8})
+    return pl.concat(parts).unique()
+
+
+def _process_sink_pairs_lf(source: "InputSource") -> pl.LazyFrame:
+    """``process_sink`` set ``[p, sink]`` — union of unit output arcs
+    and connection's second node.  Mirrors flextool.mod L687."""
+    parts: list[pl.LazyFrame] = []
+    uout = _try_entities(source, "unit__outputNode")
+    if uout is not None and uout.height > 0:
+        parts.append(uout.lazy().select(
+            pl.col("unit").alias("p"),
+            pl.col("node").alias("sink"),
+        ))
+    cnn = _try_entities(source, "connection__node__node")
+    if cnn is not None and cnn.height > 0:
+        parts.append(cnn.lazy().select(
+            pl.col("connection").alias("p"),
+            pl.col("node_2").alias("sink"),
+        ))
+    if not parts:
+        return pl.LazyFrame(schema={"p": pl.Utf8, "sink": pl.Utf8})
+    return pl.concat(parts).unique()
+
+
+def _process_source_sink_coeff_zero_lf(source: "InputSource",
+                                            pss: pl.DataFrame,
+                                            ) -> pl.LazyFrame:
+    """``process_source_sink_coeff_zero`` set: rows of pss whose source-
+    or sink-side ``max_capacity_coefficient`` is explicitly zero.
+
+    Mirrors flextool.mod L2219-2220 +
+    ``preprocessing/process_arc_unions.py:write_process_source_sink_coeff_zero``
+    (file:line `process_arc_unions.py:1006-1027`).
+    """
+    if pss is None or pss.height == 0:
+        return pl.LazyFrame(schema={
+            "p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+    src_zero = (_arc_max_capacity_coef_lf(source, "source")
+                  .filter(pl.col("coef") == 0.0)
+                  .select("p", "source"))
+    sink_zero = (_arc_max_capacity_coef_lf(source, "sink")
+                   .filter(pl.col("coef") == 0.0)
+                   .select("p", "sink"))
+    src_match = (pss.lazy()
+                   .join(src_zero, on=["p", "source"], how="inner")
+                   .select("p", "source", "sink"))
+    sink_match = (pss.lazy()
+                    .join(sink_zero, on=["p", "sink"], how="inner")
+                    .select("p", "source", "sink"))
+    return pl.concat([src_match, sink_match]).unique()
+
+
+def p_flow_upper_from_source(source: "InputSource",
+                                pss: pl.DataFrame,
+                                dt: pl.DataFrame,
+                                p_slope: "Param | None",
+                                p_section: "Param | None",
+                                p_unitsize: "Param | None",
+                                p_entity_max_units: "Param | None",
+                                p_entity_all_existing: "Param | None",
+                                classified: pl.DataFrame | None = None,
+                                ) -> "Param | None":
+    """§3.3.5 — per-(p, source, sink, d, t) structural max flow.
+
+    Native port of flextool's
+    ``preprocessing/process_arc_unions.py:write_p_flow_max``
+    (file:line `process_arc_unions.py:1469-1624`).  Returns a Param
+    keyed on ``(p, source, sink, d, t)`` whose values match
+    ``solve_data/p_flow_max.csv`` written by the slow path.
+
+    Inputs:
+
+    ``pss`` — ``process_source_sink`` set; the (p, source, sink) index
+    of the output Param.  Cross-joined with ``dt`` to form ``peedt``.
+
+    ``p_slope`` / ``p_section`` — per-(p, d, t) slope / section terms
+    from :func:`p_slope_from_source` / :func:`p_section_from_source`.
+    Used in the indirect-method branch.
+
+    ``p_unitsize`` — per-(p,) unitsize cascade from
+    :func:`_derived_arithmetic.p_unitsize_from_source`.  Caller may
+    also pass the per-entity cascade keyed on ``(e,)``; we accept either
+    column name.
+
+    ``p_entity_max_units`` — per-(e, d) ``max_capacity / unitsize`` from
+    :func:`p_entity_max_units_from_source`.  Provides
+    ``p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p]``
+    directly, so we don't need to recompute the dispatch cap inline.
+
+    ``p_entity_all_existing`` — fallback when ``p_entity_max_units`` is
+    absent (no invest configured); when both invest sets are empty
+    flextool's preprocessing still emits ``p_flow_max`` rows valued at
+    ``existing/unitsize`` per arc.  This matches the slow path's
+    behaviour in the no-invest case.
+
+    Returns ``None`` when no usable inputs exist (empty pss or dt) —
+    caller leaves the Param at its empty placeholder.
+    """
+    if pss is None or pss.height == 0 or dt is None or dt.height == 0:
+        return None
+
+    # ── 1. Resolve the (p, d) cap-per-unitsize term ─────────────────
+    # Prefer p_entity_max_units (= dispatch_capacity_max / unitsize per
+    # (e, d)).  When absent (no invest in fixture), derive it from
+    # p_entity_all_existing / p_unitsize.
+    if p_entity_max_units is not None and p_entity_max_units.frame.height > 0:
+        cap_per_unit_lf = (p_entity_max_units.frame.lazy()
+            .rename({"e": "p"})
+            .select("p", "d", pl.col("value").alias("cap_per_unit")))
+    else:
+        # Derive from existing / unitsize.  We only need rows that join
+        # against pss, so we filter inline.
+        if p_entity_all_existing is None or p_entity_all_existing.frame.height == 0:
+            return None
+        # p_unitsize may come keyed on (p,) (post-Δ.4b override) or (e,)
+        # (raw cascade); accept both.
+        if p_unitsize is None or p_unitsize.frame.height == 0:
+            us_df = _entity_unitsize_lf(source).rename({"e": "p", "us": "us"}).collect()
+        else:
+            us_cols = p_unitsize.frame.columns
+            us_key = "p" if "p" in us_cols else "e"
+            us_df = p_unitsize.frame.rename({us_key: "p", "value": "us"})
+        cap_per_unit_lf = (
+            p_entity_all_existing.frame.lazy()
+                .rename({"e": "p", "value": "cap"})
+                .join(us_df.lazy(), on="p", how="left")
+                .with_columns(
+                    cap_per_unit=pl.when((pl.col("us").is_not_null())
+                                          & (pl.col("us") != 0.0))
+                                    .then(pl.col("cap") / pl.col("us"))
+                                    .otherwise(0.0))
+                .select("p", "d", "cap_per_unit")
+        )
+
+    # ── 2. Indirect-method partition ────────────────────────────────
+    # Needs (p, source) ∈ process_source AND p ∈ process__method_indirect.
+    if classified is None:
+        classified = _classify_process_method(source)
+    indirect_p = (classified.lazy()
+                    .filter((pl.col("klass") == "unit")
+                            & pl.col("method").is_in(list(_METHOD_INDIRECT)))
+                    .select("p")
+                    .unique())
+    process_source_lf = _process_source_pairs_lf(source)
+    process_sink_lf = _process_sink_pairs_lf(source)
+
+    # min_load_efficiency rows (units only).
+    min_load_p = (classified.lazy()
+                    .filter(pl.col("ct") == "min_load_efficiency")
+                    .select("p")
+                    .unique())
+
+    # ── 3. Coefficient frames ───────────────────────────────────────
+    src_coef_lf = _arc_max_capacity_coef_lf(source, "source")
+    sink_coef_lf = _arc_max_capacity_coef_lf(source, "sink")
+
+    # ── 4. p_unconstrained_flow_cap ────────────────────────────────
+    p_unc = 1_000_000.0
+    df_unc = _try_param(source, "model", "p_max_flow_for_unconstrained_variables")
+    if df_unc is not None and df_unc.height > 0:
+        try:
+            p_unc = max(p_unc, float(df_unc["value"].max()))
+        except Exception:
+            pass
+
+    # ── 5. coeff_zero set — rows that get the unconstrained value ─
+    coeff_zero_lf = _process_source_sink_coeff_zero_lf(source, pss)
+
+    # ── 6. Build peedt = pss × dt with cap-per-unit and indirect tags ─
+    pss_lf = pss.lazy().select("p", "source", "sink")
+    base = (pss_lf
+        .join(dt.lazy(), how="cross")  # adds d, t
+        .join(cap_per_unit_lf, on=["p", "d"], how="left")
+        .with_columns(
+            cap_per_unit=pl.col("cap_per_unit").fill_null(0.0))
+        # Tag indirect arcs.
+        .join(indirect_p.with_columns(_is_indirect=pl.lit(True)),
+                on="p", how="left")
+        .with_columns(
+            _is_indirect=pl.col("_is_indirect").fill_null(False))
+        # Tag (p, source) ∈ process_source.
+        .join(process_source_lf.with_columns(_has_source=pl.lit(True)),
+                on=["p", "source"], how="left")
+        .with_columns(
+            _has_source=pl.col("_has_source").fill_null(False))
+        # Tag min_load_efficiency processes.
+        .join(min_load_p.with_columns(_has_min_load=pl.lit(True)),
+                on="p", how="left")
+        .with_columns(
+            _has_min_load=pl.col("_has_min_load").fill_null(False))
+        # Source-side max_capacity_coefficient (default 1.0).
+        .join(src_coef_lf.rename({"coef": "src_coef"}),
+                on=["p", "source"], how="left")
+        .with_columns(
+            src_coef=pl.col("src_coef").fill_null(1.0))
+        # Sink-side max_capacity_coefficient (default 1.0); also tag
+        # (p, sink) ∈ process_sink (the .mod multiplies by sink_coef
+        # only when (p, sink) ∈ process_sink, defaulting to 1 outside).
+        .join(process_sink_lf.with_columns(_has_sink=pl.lit(True)),
+                on=["p", "sink"], how="left")
+        .with_columns(
+            _has_sink=pl.col("_has_sink").fill_null(False))
+        .join(sink_coef_lf.rename({"coef": "sink_coef"}),
+                on=["p", "sink"], how="left")
+        .with_columns(
+            sink_coef=pl.col("sink_coef").fill_null(1.0))
+        # Mark coeff_zero rows.
+        .join(coeff_zero_lf.with_columns(_coeff_zero=pl.lit(True)),
+                on=["p", "source", "sink"], how="left")
+        .with_columns(
+            _coeff_zero=pl.col("_coeff_zero").fill_null(False))
+    )
+
+    # ── 7. Slope / section join (only relevant for indirect arcs) ───
+    if p_slope is not None and p_slope.frame.height > 0:
+        slope_lf = (p_slope.frame.lazy()
+                      .select("p", "d", "t",
+                                pl.col("value").cast(pl.Float64).alias("slope")))
+        base = base.join(slope_lf, on=["p", "d", "t"], how="left")
+    else:
+        base = base.with_columns(slope=pl.lit(None, dtype=pl.Float64))
+    if p_section is not None and p_section.frame.height > 0:
+        section_lf = (p_section.frame.lazy()
+                        .select("p", "d", "t",
+                                  pl.col("value").cast(pl.Float64).alias("section")))
+        base = base.join(section_lf, on=["p", "d", "t"], how="left")
+    else:
+        base = base.with_columns(section=pl.lit(None, dtype=pl.Float64))
+
+    # ── 8. Compute the formula. ─────────────────────────────────────
+    # eff_term used when indirect: slope (+ section iff min_load_efficiency).
+    # base_unconstrained: cap_per_unit / src_coef * eff_term.
+    # base_constrained:   cap_per_unit.
+    # Multiply by sink_coef when (p, sink) ∈ process_sink, else *1.
+    base = base.with_columns(
+        eff_term=pl.when(pl.col("_has_min_load"))
+                    .then(pl.col("slope").fill_null(0.0)
+                            + pl.col("section").fill_null(0.0))
+                    .otherwise(pl.col("slope").fill_null(0.0)),
+    ).with_columns(
+        # Avoid div-by-zero on src_coef; flextool's CSV reader uses
+        # default 1.0 → src_coef=1 when missing (fill_null above).  But
+        # explicit 0 in src_coef would crash; rows with src_coef=0
+        # are also (p,source) ∈ coeff_zero so they're handled by the
+        # _coeff_zero branch.  Guard with a when-then-otherwise.
+        _safe_src_coef=pl.when(pl.col("src_coef") == 0.0)
+                          .then(1.0)
+                          .otherwise(pl.col("src_coef")),
+    ).with_columns(
+        _indirect_branch=(pl.col("eff_term")
+                            * pl.col("cap_per_unit")
+                            / pl.col("_safe_src_coef")),
+        _direct_branch=pl.col("cap_per_unit"),
+    ).with_columns(
+        _branch_value=pl.when(pl.col("_is_indirect") & pl.col("_has_source"))
+                          .then(pl.col("_indirect_branch"))
+                          .otherwise(pl.col("_direct_branch")),
+    ).with_columns(
+        # sink-coef multiplier — only when (p, sink) ∈ process_sink.
+        _sink_factor=pl.when(pl.col("_has_sink"))
+                          .then(pl.col("sink_coef"))
+                          .otherwise(1.0),
+    ).with_columns(
+        value=pl.when(pl.col("_coeff_zero"))
+                  .then(pl.lit(p_unc))
+                  .otherwise(pl.col("_branch_value") * pl.col("_sink_factor")),
+    )
+
+    out = (base
+        .select("p", "source", "sink", "d", "t", "value")
+        .sort("p", "source", "sink", "d", "t")
+        .collect())
+    if out.height == 0:
+        return None
+    return Param(("p", "source", "sink", "d", "t"), out)
+
+
+# ---------------------------------------------------------------------------
 # §3.8.2 / §3.8.3 — pdt_uptime_set / pdt_downtime_set / lookbacks
 # ---------------------------------------------------------------------------
 
@@ -4658,6 +5027,38 @@ def apply_derived_d(
     # ─── §3.13 process_reserve_upDown_node_active — Δ.12b: unconditional
     flex_data.process_reserve_upDown_node_active = (
         process_reserve_upDown_node_active_from_source(source))
+
+    # ─── §3.3.5 p_flow_upper (Δ.26) ───────────────────────────────────
+    # Per-(p, source, sink, d, t) structural max flow.  Native port of
+    # ``preprocessing/process_arc_unions.py:write_p_flow_max`` (file:line
+    # `process_arc_unions.py:1469-1624`).  Wired in apply_derived_d so
+    # ``p_entity_all_existing`` (set immediately above) is available;
+    # ``p_entity_max_units`` from apply_derived_c is also picked up
+    # when the fixture has invest activity.
+    pss_for_upper = getattr(flex_data, "process_source_sink", None)
+    dt_for_upper = getattr(flex_data, "dt", None)
+    if (pss_for_upper is not None and pss_for_upper.height > 0
+            and dt_for_upper is not None and dt_for_upper.height > 0):
+        slope_for_upper = getattr(flex_data, "p_slope", None)
+        section_for_upper = getattr(flex_data, "p_section", None)
+        unitsize_for_upper = getattr(flex_data, "p_unitsize", None)
+        max_units_for_upper = getattr(flex_data, "p_entity_max_units", None)
+        existing_for_upper = getattr(flex_data, "p_entity_all_existing", None)
+        try:
+            pfu_db = p_flow_upper_from_source(
+                source,
+                pss_for_upper,
+                dt_for_upper,
+                p_slope=slope_for_upper,
+                p_section=section_for_upper,
+                p_unitsize=unitsize_for_upper,
+                p_entity_max_units=max_units_for_upper,
+                p_entity_all_existing=existing_for_upper,
+            )
+        except Exception:
+            pfu_db = None
+        if pfu_db is not None:
+            flex_data.p_flow_upper = pfu_db
 
 
 
