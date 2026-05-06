@@ -127,3 +127,87 @@ def test_fast_single_solve_skip_output_emit(tmp_path: Path) -> None:
             f"expected empty output_raw/ when emit_output=False; "
             f"got {[p.name for p in contents]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Δ.28 — broadcast-needing Direct Params populate on the fast path.
+# ---------------------------------------------------------------------------
+
+
+def test_fast_single_solve_p_commodity_price_lh2(tmp_path: Path) -> None:
+    """Δ.28 — ``p_commodity_price`` must populate on the fast path for
+    ``work_lh2_three_region``.
+
+    Spine carries ``commodity.price=30`` (scalar) for ``coal``.
+    Pre-Δ.28 the dispatcher ran ``apply_direct_params`` BEFORE
+    ``apply_derived_a`` populated ``flex_data.dt`` — so the broadcast
+    helper saw an empty ``period_filter`` and returned None.  After
+    Δ.28 splits the pass into 1a (dt-independent) / 1b
+    (broadcast-needing, post-derived_a), the helper sees a populated
+    ``dt`` and broadcasts the scalar across (d, t).
+    """
+    from flextool.engine_polars._fast_load import load_flextool_source_only
+    from flextool.engine_polars import SpineDbReader
+
+    fixture = DATA / "work_lh2_three_region"
+    db = fixture / "tests.sqlite"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+
+    work = tmp_path / "fast_lh2"
+    work.mkdir()
+    reader = SpineDbReader(db, scenario="lh2_three_region")
+    fd = load_flextool_source_only(reader, work)
+
+    assert fd.p_commodity_price is not None, (
+        "fast path: p_commodity_price is None — Δ.28 dt-ordering bug "
+        "regression?  Spine carries commodity.price=30 (scalar) for "
+        "coal on this fixture."
+    )
+    assert fd.p_commodity_price.frame.height == 168, (
+        f"fast path: p_commodity_price height={fd.p_commodity_price.frame.height}, "
+        "expected 168 (1 commodity × 168 timesteps in lh2_week)."
+    )
+    assert (fd.p_commodity_price.frame["value"]
+            == 30.0).all(), (
+        "fast path: every p_commodity_price row should carry the "
+        "scalar 30.0 broadcast value."
+    )
+
+
+def test_fast_single_solve_p_process_availability_lh2(tmp_path: Path) -> None:
+    """Δ.28 — ``p_process_availability`` must populate on the fast path
+    for ``work_lh2_three_region``.
+
+    Spine carries no explicit ``unit/connection.availability`` rows
+    on this fixture; every entity inherits the schema default 1.0.
+    Pre-Δ.28 the resolver's ``_try_parameter_frame`` returned the
+    empty explicit-only frame and the helper produced ``None``.  After
+    Δ.28's fall-through to ``parameter()`` (which applies the schema
+    default) the helper broadcasts 1.0 to every (entity, d, t) — the
+    same flat frame the slow path's ``pdtProcess_availability.csv``
+    encodes.
+    """
+    from flextool.engine_polars._fast_load import load_flextool_source_only
+    from flextool.engine_polars import SpineDbReader
+
+    fixture = DATA / "work_lh2_three_region"
+    db = fixture / "tests.sqlite"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+
+    work = tmp_path / "fast_lh2"
+    work.mkdir()
+    reader = SpineDbReader(db, scenario="lh2_three_region")
+    fd = load_flextool_source_only(reader, work)
+
+    assert fd.p_process_availability is not None, (
+        "fast path: p_process_availability is None — Δ.28 "
+        "default-broadcast fall-through regression?"
+    )
+    # 20 processes (15 unit + 5 connection) × 168 timesteps = 3360.
+    assert fd.p_process_availability.frame.height == 3360, (
+        f"fast path: p_process_availability height="
+        f"{fd.p_process_availability.frame.height}, expected 3360 "
+        "(20 processes × 168 timesteps)."
+    )

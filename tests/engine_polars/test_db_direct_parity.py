@@ -1353,6 +1353,92 @@ class TestDerivedBTopology:
             f"flow_from_nodeBalance_noEff mismatch on {work}: {diff}"
         )
 
+    @pytest.mark.parametrize(
+        "work, sqlite, scenario",
+        DERIVED_B_FIXTURES + [
+            # Δ.28: lh2 carries ``commodity.price=30`` (scalar) for coal
+            # and is the canonical fixture surfacing the dt-broadcast
+            # ordering bug.
+            ("work_lh2_three_region", "tests.sqlite", "lh2_three_region"),
+        ],
+        ids=lambda v: v if isinstance(v, str) else "",
+    )
+    def test_p_commodity_price_parity(self, work, sqlite, scenario):
+        """Δ.28 — broadcast-needing Direct Param (scalar / 1d_map[period]
+        / 1d_map[time] commodity price) populates correctly on the
+        DB-direct path.
+
+        Δ.17c routes ``commodity.price`` through the centralized
+        broadcast resolver (``_param_shapes.broadcast_to_period_time``).
+        The fast path's earlier ordering ran ``apply_direct_params``
+        BEFORE ``apply_derived_a`` populated ``flex_data.dt`` — every
+        scalar / 1d_map authored value was dropped because
+        ``period_filter.height == 0``.  Δ.28 splits ``apply_direct_params``
+        into pass 1a (dt-independent) and pass 1b (broadcast-needing,
+        runs after ``apply_derived_a``); this parity test guards the
+        bit-equality between the slow path's
+        ``solve_data/pdtCommodity_price.csv`` slice and the DB-direct
+        helper output.
+        """
+        csv_d, db_d = _load_pair(work, sqlite, scenario)
+        if (csv_d.p_commodity_price is None
+                and db_d.p_commodity_price is None):
+            pytest.skip(f"{work} has no p_commodity_price")
+        # 0-row frames represent "no commodity-price arcs" identically;
+        # skip when both sides produce them (the LP filter is gated on
+        # height > 0 inside model.py).
+        csv_h = (csv_d.p_commodity_price.frame.height
+                  if csv_d.p_commodity_price is not None else 0)
+        db_h = (db_d.p_commodity_price.frame.height
+                if db_d.p_commodity_price is not None else 0)
+        if csv_h == 0 and db_h == 0:
+            pytest.skip(f"{work} p_commodity_price is empty on both paths")
+        eq, diff = _frame_eq_value(csv_d.p_commodity_price,
+                                    db_d.p_commodity_price,
+                                    ["c", "d", "t"])
+        assert eq, f"p_commodity_price mismatch on {work}: {diff}"
+
+    @pytest.mark.parametrize(
+        "work, sqlite, scenario",
+        DERIVED_B_FIXTURES + [
+            # Δ.28: lh2 carries ``unit/connection.availability`` purely
+            # as the schema default 1.0 — exercises the
+            # ``_try_parameter_frame`` fall-through to ``parameter()``
+            # so default-broadcast values populate even when no entity
+            # has an explicit override.
+            ("work_lh2_three_region", "tests.sqlite", "lh2_three_region"),
+        ],
+        ids=lambda v: v if isinstance(v, str) else "",
+    )
+    def test_p_process_availability_parity(self, work, sqlite, scenario):
+        """Δ.28 — broadcast-needing Direct Param
+        (``unit/connection.availability``) populates correctly on the
+        DB-direct path.
+
+        Same root cause as ``test_p_commodity_price_parity`` plus the
+        ``_try_parameter_frame`` fall-through fix: when
+        ``parameter_explicit`` returns 0 rows (no overrides), the
+        resolver falls through to ``parameter()`` so the schema default
+        (1.0) broadcasts to every entity.  The slow path's
+        ``pdtProcess_availability.csv`` always has the default-broadcast
+        rows; this parity test guards their presence on the DB-direct
+        path.
+        """
+        csv_d, db_d = _load_pair(work, sqlite, scenario)
+        if (csv_d.p_process_availability is None
+                and db_d.p_process_availability is None):
+            pytest.skip(f"{work} has no p_process_availability")
+        csv_h = (csv_d.p_process_availability.frame.height
+                  if csv_d.p_process_availability is not None else 0)
+        db_h = (db_d.p_process_availability.frame.height
+                if db_d.p_process_availability is not None else 0)
+        if csv_h == 0 and db_h == 0:
+            pytest.skip(f"{work} p_process_availability is empty on both paths")
+        eq, diff = _frame_eq_value(csv_d.p_process_availability,
+                                    db_d.p_process_availability,
+                                    ["p", "d", "t"])
+        assert eq, f"p_process_availability mismatch on {work}: {diff}"
+
 
 # ---------------------------------------------------------------------------
 # Γ.3.B — DB-direct solve parity on representative fixtures
