@@ -87,6 +87,40 @@ class InMemoryReader:
         """
         return self.parameter(entity_class, parameter_name)
 
+    def parameter_shape_info(self, entity_class: str,
+                              parameter_name: str) -> "list[str | None]":
+        """Δ.17c — raw per-level ``index_name`` labels for the
+        parameter.
+
+        InMemoryReader callers author frames already in the post-
+        resolution shape (column names like ``period`` / ``t`` / etc.)
+        — no DB-level metadata is held.  We infer the labels from the
+        frame's column names: any column named ``period`` →
+        ``"period"``; any column named ``t`` / ``time`` → ``"time"``;
+        anything else is propagated as-is so the resolver can flag it.
+
+        The frame's entity-dim columns are excluded by walking the
+        registered entities frame for the same class.
+        """
+        df = self.parameter(entity_class, parameter_name)
+        try:
+            ent_df = self.entities(entity_class)
+            ent_cols = set(ent_df.columns)
+        except KeyError:
+            ent_cols = {"name"}
+        out: list[str | None] = []
+        for c in df.columns:
+            if c in ent_cols or c == "value":
+                continue
+            if c == "period":
+                out.append("period")
+            elif c in ("t", "time"):
+                out.append("time")
+            else:
+                # Unknown column → caller raises; pass through raw.
+                out.append(c)
+        return out
+
     # ------------------------------------------------------------------
     # Diagnostics
 

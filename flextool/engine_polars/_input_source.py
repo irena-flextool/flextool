@@ -177,6 +177,31 @@ class InputSource(Protocol):
         frames in the scalar-default-on-indexed case (§4.5).
         """
 
+    def parameter_shape_info(self,
+                              entity_class: str,
+                              parameter_name: str,
+                              ) -> "list[str | None]":
+        """Return the raw per-level ``Map.index_name`` labels for the
+        parameter (Δ.17c).
+
+        Schema:
+
+        * Empty list (``[]``) — scalar parameter (no Map nesting).
+        * One entry per Map nesting level, in order from outermost to
+          innermost.  Entries are the raw labels exactly as authored
+          in the source database (``None`` when unset / empty).
+
+        Used by :func:`flextool.engine_polars._param_shapes.resolve_param_shape`
+        to validate a parameter's actual shape against an explicit
+        per-parameter allow-list.  See the Δ.17c dispatch / open-issues
+        doc for the user advice that mandated this.
+
+        Implementations that lack explicit DB metadata (e.g.
+        :class:`InMemoryReader` in unit tests) infer labels from the
+        parameter frame's column names — see the per-implementation
+        docstring for details.
+        """
+
 
 @runtime_checkable
 class FlexInputSource(Protocol):

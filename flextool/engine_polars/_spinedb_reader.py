@@ -261,6 +261,87 @@ class SpineDbReader:
             return None
         return pdef["default_value"]
 
+    # ------------------------------------------------------------------
+    # Δ.17c — raw per-level index_name labels for a parameter.
+    #
+    # Used by :func:`flextool.engine_polars._param_shapes.resolve_param_shape`
+    # to validate the parameter's shape against an explicit allow-list
+    # (per the user's directive "read from database the dimensionality
+    # of the parameter" + "read the dimension index label from the
+    # database").
+    #
+    # Returns the list of raw ``Map.index_name`` labels per nesting
+    # depth: empty list for scalars; one entry per Map level for
+    # n-dim Maps.  Labels are returned exactly as the DB authored them
+    # (no normalisation, no canonical default substitution) so the
+    # caller can detect "wrong index_name" and raise loudly.
+    #
+    # ``TimeSeries`` / ``Array`` collapse to a single canonical label
+    # (``"time"`` / ``""`` respectively) — neither is valid for the
+    # registry-routed parameters today, but rejecting them with an
+    # accurate label is better than silently treating them as a Map.
+    def parameter_shape_info(self, entity_class: str,
+                              parameter_name: str) -> "list[str | None]":
+        cls_id = self._class_name_to_id.get(entity_class)
+        if cls_id is None:
+            raise KeyError(f"unknown entity_class {entity_class!r}")
+        pdef = self._pdef_by_class_name.get((cls_id, parameter_name))
+        if pdef is None:
+            raise KeyError(
+                f"unknown parameter ({entity_class!r}, {parameter_name!r})"
+            )
+        rows = self._param_rows.get((cls_id, pdef["id"]), [])
+        # Probe the deepest-nested row to capture the widest schema.
+        # Spine schema invariant: all rows for a parameter under a
+        # scenario share the same shape, but we're defensive in case
+        # a fixture mixes shapes (the resolver caller will raise on
+        # ambiguity downstream).
+        deepest: list[str | None] = []
+        for _eid, v in rows:
+            cand = self._index_name_path(v)
+            if len(cand) > len(deepest):
+                deepest = cand
+        if deepest:
+            return deepest
+        # No explicit rows — inspect the parameter's default_value (the
+        # schema default may itself be a Map).  Otherwise treat as
+        # scalar (depth 0).
+        default = pdef["default_value"]
+        if default is not None:
+            return self._index_name_path(default)
+        return []
+
+    @staticmethod
+    def _index_name_path(v: Any) -> "list[str | None]":
+        """Walk *v*'s nesting and return raw ``Map.index_name`` labels
+        per depth level.  Used by :meth:`parameter_shape_info`.
+
+        Differs from :meth:`_discover_index_cols` in that it returns
+        the raw DB labels (``None`` / empty when unset) instead of the
+        canonical defaults — that's the whole point of the Δ.17c
+        resolver path.
+        """
+        from spinedb_api.parameter_value import (
+            Map, TimeSeries, Array,
+        )
+        out: list[str | None] = []
+        cur = v
+        while True:
+            if isinstance(cur, Map):
+                out.append(cur.index_name if cur.index_name else None)
+                if len(cur.values) == 0:
+                    break
+                cur = cur.values[0]
+                continue
+            if isinstance(cur, TimeSeries):
+                out.append("time")
+                break
+            if isinstance(cur, Array):
+                out.append("")
+                break
+            break
+        return out
+
     def parameter_explicit(self, entity_class: str,
                              parameter_name: str) -> pl.DataFrame:
         """Like :meth:`parameter` but suppresses default-broadcast rows.
