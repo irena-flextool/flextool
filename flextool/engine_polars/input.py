@@ -689,24 +689,22 @@ def _load_time(sd: Path):
 def _load_node(sd: Path, dt: pl.DataFrame):
     nb = _read_csv_file(sd / "nodeBalance.csv").rename({"node": "n"})
     # pdtNodeInflow.csv is canonical (.mod reads it via `table data IN`).
-    # penalty_up/penalty_down are sliced from the canonical pdtNode.csv —
-    # same operation .mod does inline via `pdtNode[n, 'penalty_up', d, t]`.
-    # TODO(Δ.12c+): retire pdtNodeInflow.csv read when ``apply_derived_a``
+    # TODO(Δ.18+): retire pdtNodeInflow.csv read when ``apply_derived_a``
     # extends ``p_inflow_from_source`` to cover ``inflow_method ∈ {scale_to_*}``
     # and stochastic 3d_map shapes.
-    # TODO(Δ.12c+): retire pdtNode.csv penalty slices when
-    # ``apply_derived_a`` (via ``_derived_arithmetic.p_penalty_*_from_source``)
-    # produces a non-None Param for fixtures whose nodeBalance includes nodes
-    # without an explicit ``penalty_*`` row in the SpineDB source — today the
-    # helper returns None there and the seed survives via build_flextool's
-    # required-field gate.
+    # Δ.17b Gap C: penalty_up/penalty_down seeds dropped — produced by
+    # ``apply_derived_a`` via ``p_penalty_up_from_source`` /
+    # ``p_penalty_down_from_source`` (full broadcast cascade incl. the
+    # schema-default sentinel).  FlexData ctor requires non-None Param
+    # for these fields; pass empty Param frames so the override populates
+    # downstream.
     inflow_long = _read_wide_per_entity(sd / "pdtNodeInflow.csv", rename={"entity":"n"})
-    pen_up_long = _slice_param(sd / "pdtNode.csv", "node", "penalty_up",   rename_entity_to="n")
-    pen_dn_long = _slice_param(sd / "pdtNode.csv", "node", "penalty_down", rename_entity_to="n")
+    empty_n_d_t = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8,
+                                         "t": pl.Utf8, "value": pl.Float64})
     return (nb, nb.join(dt, how="cross"),
             Param(("n","d","t"), inflow_long.select("n","d","t","value")),
-            Param(("n","d","t"), pen_up_long),
-            Param(("n","d","t"), pen_dn_long))
+            Param(("n","d","t"), empty_n_d_t),
+            Param(("n","d","t"), empty_n_d_t))
 
 
 # ---------------------------------------------------------------------------
@@ -1511,7 +1509,8 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None) -> dict:
 
 
 def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
-                  pss: pl.DataFrame | None) -> dict:
+                  pss: pl.DataFrame | None,
+                  *, source: "InputSource | None" = None) -> dict:
     """Load online / min_load / startup data.  Empty dict-of-Nones when
     no process is online."""
     blank = dict(
@@ -1564,24 +1563,27 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     # ``apply_direct_params.p_min_load_from_source``.  Seed dropped.
     p_min_load = None
 
-    # startup_cost is per (p, d) — sliced from canonical pdProcess.csv
-    # (`pdProcess[p, 'startup_cost', d]` in .mod).
-    # TODO(Δ.12c+): retire pdProcess.csv slice for ``p_startup_cost`` when
-    # ``p_startup_cost_from_source`` covers the scalar-broadcast cascade
-    # (today the helper handles only the 1d_map(period) shape; scalar
-    # broadcast falls back to this seed).
-    sc_long = _slice_param(sd / "pdProcess.csv", "process", "startup_cost",
-                            has_time=False, rename_entity_to="p")
+    # startup_cost is per (p, d) — produced by ``apply_direct_params``
+    # via ``p_startup_cost_from_source`` with full scalar / 1d_map(period)
+    # broadcast cascade.  Δ.17b Gap C: local seed dropped.
+    # However the LOCAL pdt_online_lin / pdt_online_int sets DEPEND on
+    # the same (p, d) keying.  We reconstruct sc_long from the override
+    # if it has fired by reading flex_data.p_startup_cost — but
+    # flex_data isn't available at this scope.  Defensive: rebuild
+    # pdt_online_lin / pdt_online_int from the source-side helper too.
     p_startup_cost = None
     pdt_online_lin = pdt_online_int = None
-    if sc_long is not None:
-        sc_long = sc_long.filter(pl.col("value") != 0)
-        if sc_long.height > 0:
-            p_startup_cost = Param(("p", "d"), sc_long.select("p", "d", "value"))
-            # pdt_online_linear: (p, d, t) for online_linear processes with non-zero startup_cost
-            sc_p = sc_long.select("p", "d").unique()
-            pdt_online_lin = (p_odt.join(p_online_lin, on="p", how="inner")
-                                    .join(sc_p, on=["p", "d"], how="inner"))
+    if source is not None:
+        from ._direct_params import p_startup_cost_from_source
+        sc_param = p_startup_cost_from_source(source, period_filter=dt)
+        if sc_param is not None and sc_param.frame.height > 0:
+            sc_frame = sc_param.frame.filter(pl.col("value") != 0)
+            if sc_frame.height > 0:
+                p_startup_cost = Param(("p", "d"),
+                                          sc_frame.select("p", "d", "value"))
+                sc_p = sc_frame.select("p", "d").unique()
+                pdt_online_lin = (p_odt.join(p_online_lin, on="p", how="inner")
+                                       .join(sc_p, on=["p", "d"], how="inner"))
             if p_online_int.height > 0:
                 pdt_online_int = (p_odt.join(p_online_int, on="p", how="inner")
                                         .join(sc_p, on=["p", "d"], how="inner"))
@@ -2863,7 +2865,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # exist.
         dtttdt = _read_step_previous(sd / "step_previous.csv")
 
-        online = _load_online(inp, sd, dt, proc["pss"])
+        online = _load_online(inp, sd, dt, proc["pss"], source=db_reader)
         ramp = _load_ramp(inp, sd, proc["pss"])
         invest = _load_invest(sd, dt, inp, proc["pss"], source=db_reader)
         varcost = _load_varcost(sd, proc["pss"])
