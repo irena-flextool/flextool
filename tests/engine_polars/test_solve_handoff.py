@@ -10,7 +10,22 @@ file-based ``solve_data/p_entity_period_existing_capacity.csv`` carries.
 The scenario used is ``coal_unit_size_MIP_wind`` because it's the only
 test fixture exercising a multi-solve cascade (a y2020_5week invest
 solve handing realized invest to a y2020_fullYear_dispatch dispatch
-solve)."""
+solve).
+
+Δ.22 status — 9 of 11 tests skip-marked.  The cascade integration tests
+in this file exercise ``FlexToolRunner.run_model()``, which goes through
+``SolverRunner.run()``.  Δ.22 collapsed ``SolverRunner.run`` to
+``raise NotImplementedError`` (the legacy GMPL/HiGHS pipeline retired);
+the only surviving runtime path is the native cascade (override on
+``_FlexpyCascadeSolver.run``).  The PoC handoff mechanism these tests
+verify (``RunnerState.handoffs`` populated by ``capture_post_solve``)
+belongs to flextool's legacy orchestration loop and is not the path
+the engine_polars cascade uses.  The native cascade has its own
+in-memory handoff via ``_solve_handoff.SolveHandoff``, exercised by
+``test_chain_handoff_writers.py`` etc.  The 2 unit-level tests in this
+module (``test_cumulative_loaders_consume_from_handoff`` /
+``test_write_fix_storage_files_from_handoff``) exercise the
+SolveHandoff dataclass + writer in isolation and remain active."""
 from __future__ import annotations
 
 import contextlib
@@ -113,6 +128,24 @@ _VOLATILE: set[str] = {
 }
 
 
+# Δ.22 retirement banner reused for the 9 cascade-integration tests in
+# this module.  The PoC handoff exercised here uses
+# ``FlexToolRunner.run_model()`` → ``SolverRunner.run()`` which Δ.22
+# collapsed to ``NotImplementedError``.  The native cascade has its own
+# in-memory handoff (``_solve_handoff.SolveHandoff``); the PoC mechanism
+# these tests exercise is not on the surviving runtime path.
+_DELTA_22_RETIRED = pytest.mark.skip(
+    reason=(
+        "Δ.22 retired SolverRunner.run; this PoC handoff test exercises "
+        "FlexToolRunner.run_model() which is no longer functional. "
+        "The native cascade's handoff mechanism is exercised by "
+        "test_chain_handoff_writers.py + test_solve_handoff's two "
+        "unit-level tests below."
+    ),
+)
+
+
+@_DELTA_22_RETIRED
 def test_handoff_off_by_default(tmp_path):
     """Sanity: without setting state.handoffs, flextool runs exactly as
     before — runner state has no handoffs dict."""
@@ -120,6 +153,7 @@ def test_handoff_off_by_default(tmp_path):
     assert state.handoffs is None
 
 
+@_DELTA_22_RETIRED
 def test_handoff_capture_realized_invest(tmp_path):
     """When handoffs={}, the post-solve hook populates one entry per
     completed solve, with realized_invest matching the file-based
@@ -139,6 +173,7 @@ def test_handoff_capture_realized_invest(tmp_path):
     assert wind_row["value"][0] > 100  # ~177
 
 
+@_DELTA_22_RETIRED
 def test_handoff_on_preserves_csv_outputs(tmp_path):
     """The whole point of "add-on": turning on state.handoffs must not
     perturb a single byte of the CSV outputs.  Run the same scenario
@@ -164,6 +199,7 @@ def test_handoff_on_preserves_csv_outputs(tmp_path):
     assert not diffs, f"handoff-on perturbed {len(diffs)} CSVs: {diffs[:5]}"
 
 
+@_DELTA_22_RETIRED
 def test_handoff_capture_realized_existing(tmp_path):
     """``realized_existing`` is the *resolved* existing-capacity per
     period — different from ``realized_invest`` because pre-existing
@@ -177,6 +213,7 @@ def test_handoff_capture_realized_existing(tmp_path):
     assert coal["value"][0] == pytest.approx(500.0)
 
 
+@_DELTA_22_RETIRED
 def test_handoff_capture_divest_cumulative(tmp_path):
     """``coal_retire`` exercises divest: the realized solution divests
     the coal plant.  ``p_entity_divested.csv`` carries the cumulative
@@ -191,6 +228,7 @@ def test_handoff_capture_divest_cumulative(tmp_path):
     assert coal["value"][0] > 0  # something divested
 
 
+@_DELTA_22_RETIRED
 def test_handoff_capture_roll_end_state(tmp_path):
     """``multi_year_wind_no_investment`` writes a non-empty
     ``p_roll_continue_state.csv`` for the battery storage node."""
@@ -200,6 +238,7 @@ def test_handoff_capture_roll_end_state(tmp_path):
     assert "battery" in h.roll_end_state["node"].to_list()
 
 
+@_DELTA_22_RETIRED
 def test_period_capacity_csv_populates(tmp_path):
     """``period_capacity.csv`` is written by every solve.  Δ.1 moved the
     in-memory mirror from ``SolveHandoff.periods_already_emitted`` to
@@ -215,6 +254,7 @@ def test_period_capacity_csv_populates(tmp_path):
     assert "p2020" in df["period"].to_list()
 
 
+@_DELTA_22_RETIRED
 def test_handoff_unexercised_carriers_are_none(tmp_path):
     """Carriers whose source files are empty/missing in a scenario
     should leave their slot as None (not an empty frame).  ``coal``
@@ -294,6 +334,7 @@ def _read_csv_rows(path: Path) -> list[tuple[str, ...]]:
         return [tuple(r) for r in reader if r]
 
 
+@_DELTA_22_RETIRED
 def test_handoff_consume_realized_invest_chain(tmp_path):
     """Strong consume-side proof: corrupt
     ``p_entity_period_existing_capacity.csv`` and ``p_entity_divested.csv``
