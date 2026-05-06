@@ -1889,18 +1889,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         if use_reference_value.height == 0:
             use_reference_value = None
 
-    # storage_state_reference_value: sliced from canonical pdtNode.csv
-    # (parameter = ``storage_state_reference_value``).
+    # storage_state_reference_value: produced by ``apply_direct_params``
+    # via ``p_storage_state_reference_value_from_source`` (full broadcast
+    # cascade).  Δ.17b Gap C: local seed dropped.
     p_ssrv = None
-    if use_reference_value is not None:
-        ssrv_long = _slice_param(sd / "pdtNode.csv", "node",
-                                  "storage_state_reference_value",
-                                  rename_entity_to="n")
-        if ssrv_long is not None and ssrv_long.height > 0:
-            ssrv_long = (ssrv_long
-                .filter(pl.col("n").is_in(use_reference_value["n"])))
-            if ssrv_long.height > 0:
-                p_ssrv = Param(("n", "d", "t"), ssrv_long)
 
     # ─── Intraperiod-block (bind_intraperiod_blocks) sets ────────────────
     # Used by ``stateConstantWithinBlock_eq`` and ``nodeBalanceBlock_eq``
@@ -1993,17 +1985,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # ``_read_csv_file`` call retired).
     node_profile_upper_df = node_profile_lower_df = node_profile_fixed_df = None
 
-    # Node availability (n, d, t) — sliced from pdtNode[n, 'availability', d, t].
-    # Used as an RHS multiplier on profile_state_* constraints (mod:2645).
+    # Node availability (n, d, t): produced by ``apply_direct_params``
+    # via ``p_node_availability_from_source`` (broadcast cascade).
+    # Δ.17b Gap C: local seed dropped.
     p_node_avail = None
-    avail_long = _slice_param(sd / "pdtNode.csv", "node", "availability",
-                                rename_entity_to="n")
-    if avail_long is not None and avail_long.height > 0:
-        # Restrict to nodeState entries.
-        avail_long = (avail_long
-            .filter(pl.col("n").is_in(nodeState["n"])))
-        if avail_long.height > 0:
-            p_node_avail = Param(("n", "d", "t"), avail_long)
 
     return dict(
         nodeState = nodeState,
@@ -2862,14 +2847,14 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # no profile features are active; fall back to base_cap_pd directly.
         if exist_cnt is None and base_cap_pd is not None:
             exist_cnt = Param(("p", "d"), base_cap_pd.rename({"base": "value"}))
-        # availability: default to 1.0 from preprocessing — also used by UC
-        # capacity bounds; if loader didn't populate (no profile data), try
-        # to read pdtProcess_availability.csv standalone.
-        if avail is None and proc["pss"] is not None:
-            avail_long = _slice_param(sd / "pdtProcess.csv", "process", "availability",
-                                       rename_entity_to="p")
-            if avail_long is not None:
-                avail = Param(("p","d","t"), avail_long)
+        # availability: default to 1.0 from preprocessing.  Δ.17b Gap C:
+        # ``apply_direct_params`` overrides ``flex_data.p_process_availability``
+        # via ``p_process_availability_from_source`` (with full broadcast
+        # cascade).  Local seed retained as Δ.17b legacy fallback for
+        # fixtures whose profile loader doesn't fire and no DB is supplied —
+        # the local seed feeds the derived-stream-only ``avail`` consumer
+        # below.  When the override fires it will overwrite anyway.
+        # No-op kept for shape parity.
 
         # dtttdt is needed by both storage and online features — always load
         # it when present (preprocessing always emits it for non-trivial
