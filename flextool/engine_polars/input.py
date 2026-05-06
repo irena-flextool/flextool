@@ -730,6 +730,16 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                                    "unitsize","flow_upper","slope","commodity_price")}
     pss_eff = _read_csv_file(sd / "process_source_sink_eff.csv").rename({"process": "p"})
     pss_noEff = _read_csv_file(sd / "process_source_sink_noEff.csv").rename({"process": "p"})
+    # TODO(Δ.18+): the canonical helper ``process_source_sink_canonical``
+    # in ``_projection_params`` (Δ.3) returns the union of unit__inputNode
+    # + unit__outputNode + connection__node__node arcs, but flextool's
+    # preprocessing CONSOLIDATES input+output unit arcs into a single arc
+    # (e.g. ``coal_market → demand_node`` for ``coal_plant``).  Wiring
+    # ``process_source_sink_canonical(source)`` here breaks downstream
+    # ``flow_to_n`` / ``flow_from_n`` shape and the LP becomes empty.
+    # The canonical helper needs an "indirect-collapse" pass to match
+    # the preprocessing-side consolidation before these CSV seeds can
+    # retire.
 
     flow_to_n   = pss.with_columns(n=pl.col("sink"))
     flow_from_n = pss.with_columns(n=pl.col("source"))
