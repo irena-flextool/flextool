@@ -245,6 +245,12 @@ def main():
                              '``FLEXPY_USE_NATIVE_ORCHESTRATION`` is '
                              'vestigial (no-op) but emits a deprecation '
                              'warning when set truthy.')
+    parser.add_argument('--highs-threads', type=int, default=1,
+                        help='Number of HiGHS solver threads.  Accepted '
+                             'for GUI/Toolbox subprocess compatibility; '
+                             'currently a no-op on the native path until '
+                             'thread-count plumbing reaches '
+                             '``polar_high.Problem.solve``.  Default 1.')
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
