@@ -118,12 +118,44 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
     Returns ``0`` on success, ``1`` on any non-optimal sub-solve.
     Output-tree emission (``write_outputs``, ``timings.csv`` finalize,
     output-DB updates) is shared with the rest of :func:`main`.
-    """
-    from flextool.engine_polars import run_chain_from_db
 
+    Δ.25: when ``--fast-single-solve`` is passed, dispatch to the
+    surgical single-solve path that bypasses
+    ``write_input``/``run_chain_from_db`` entirely.  Experimental.
+    """
     print(f'Scenario: {scenario_name}')
     if scenario_name:
         timing_recorder.set_scenario(scenario_name)
+
+    # Δ.25 fast single-solve dispatch.
+    if getattr(args, 'fast_single_solve', False):
+        from flextool.engine_polars import run_single_solve_from_db
+        if not scenario_name:
+            logging.error(
+                "--fast-single-solve requires --scenario-name "
+                "(the fast path doesn't auto-pick scenarios)."
+            )
+            return 1
+        t_solve_start = time.perf_counter()
+        step = run_single_solve_from_db(
+            args.input_db_url,
+            scenario_name,
+            work_folder=work_folder,
+        )
+        all_solves_seconds = time.perf_counter() - t_solve_start
+        print("--- Fast single-solve time %.4s seconds ---" % all_solves_seconds)
+        timing_recorder.record('all_solves', seconds=all_solves_seconds,
+                               t_start=t_solve_start)
+        if step.solution is None or not step.solution.optimal:
+            logging.error(
+                "Fast single-solve: non-optimal (status=%r).",
+                getattr(step.solution, "status", None)
+                if step.solution else None,
+            )
+            return 1
+        return 0
+
+    from flextool.engine_polars import run_chain_from_db
 
     # Drive the native cascade end-to-end.  ``run_chain_from_db``
     # handles flextool's preprocessing (write_input) AND the per-solve
@@ -251,6 +283,22 @@ def main():
                              'currently a no-op on the native path until '
                              'thread-count plumbing reaches '
                              '``polar_high.Problem.solve``.  Default 1.')
+    parser.add_argument('--fast-single-solve', action='store_true',
+                        default=False,
+                        help='Δ.25 (EXPERIMENTAL) — bypass '
+                             '``flextool.flextoolrunner.input_writer.'
+                             'write_input`` entirely.  Reads inputs '
+                             'directly from Spine via SpineDbReader, '
+                             'builds the LP via the override chain, '
+                             'and emits ``output_raw/`` parquets via '
+                             'a tiny support-CSV bootstrap.  '
+                             'Single-solve only; no rolling, no '
+                             'nested cascade, no warm-LP, no handoff '
+                             'plumbing.  Raises loudly on any helper '
+                             'coverage gap (no fallback to the slow '
+                             'path).  Use for cold-start latency '
+                             'benchmarking on simple fixtures; the '
+                             'default path remains ``run_chain_from_db``.')
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
