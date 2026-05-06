@@ -910,11 +910,15 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
         p_comm.filter(pl.col("commodityParam")=="co2_content")
               .rename({"commodity":"c","p_commodity":"value"})
               .select("c","value"))
-    # group co2_price: produced by ``apply_direct_params`` via
-    # ``p_co2_price_from_source`` with the full broadcast cascade
-    # (scalar / 1d_map(time) / 1d_map(period) / Map(period→time)).
-    # Δ.17b Gap C: ``_slice_param`` seed dropped.
-    co2_price = None
+    # group co2_price sliced from canonical pdtGroup.csv —
+    # `pdtGroup[g, 'co2_price', d, t]` in .mod.
+    # TODO(Δ.12c+): retire pdtGroup.csv co2_price slice when
+    # ``p_co2_price_from_source`` covers the scalar-broadcast / 1d_map(time)
+    # cascade — today the helper only handles Map(period→time) and falls
+    # back to this seed.
+    cp = _slice_param(sd / "pdtGroup.csv", "group", "co2_price",
+                       rename_entity_to="g")
+    co2_price = Param(("g","d","t"), cp) if cp is not None else None
     return (flow_from_co2_priced, flow_from_co2_priced_noEff,
             co2_content, co2_price)
 
@@ -1142,27 +1146,9 @@ def _read_wide_e_d(path: Path) -> pl.DataFrame:
 
 
 def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
-                  pss: pl.DataFrame | None,
-                  *, source: "InputSource | None" = None) -> dict:
+                  pss: pl.DataFrame | None) -> dict:
     """Load invest/divest sets and per-(e, d) cost params.  Empty when
-    neither ed_invest nor ed_divest has any row.
-
-    Δ.17b Gap D: when *source* is supplied, this returns ``blank`` —
-    the override chain (``apply_derived_c`` + ``apply_derived_f``) is
-    authoritative for every field this loader populated:
-      * ``ed_invest_set`` / ``ed_divest_set`` ← ``ed_invest_set_from_source``.
-      * ``pd_invest_set`` / ``nd_invest_set`` / ``pd_divest_set`` /
-        ``nd_divest_set`` ← partition helpers in ``_derived_existing.py``.
-      * ``edd_invest_set`` / ``edd_invest_lookback_set`` ← lazy helpers.
-      * ``edd_divest_active`` ← ``edd_divest_active_from_source``.
-      * ``p_entity_max_units`` ← ``p_entity_max_units_from_source``.
-      * ``ed_lifetime_fixed_cost`` / ``ed_entity_annual_discounted`` (npv)
-        ← ``apply_derived_f``.
-      * ``e_invest_total`` / ``e_divest_total`` ← ``e_invest_total_lf``
-        consumers.
-      * ``ed_invest_max_period`` / ``ed_divest_max_period`` ←
-        ``apply_direct_params``.
-    """
+    neither ed_invest nor ed_divest has any row."""
     blank = dict(
         ed_invest_set=None, ed_divest_set=None,
         pd_invest_set=None, pd_divest_set=None,
@@ -1179,15 +1165,6 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_invest_period_set=None, ed_divest_period_set=None,
         ed_invest_max_period=None, ed_divest_max_period=None,
     )
-    # NOTE: keeping the local invest/divest set construction below — the
-    # override chain populates the same FlexData fields after the fact,
-    # but local seeds remain because: (a) some fixtures (e.g. lifetime_renew_*)
-    # depend on invariants the local code synthesises (e.g. forbid filter
-    # interaction with edd_invest_lookback) that the override doesn't yet
-    # mirror without the seed; (b) the dispatch-only blank-out gate at
-    # ``apply_derived_c:4100`` reads ``ed_inv_db.height`` from the helper,
-    # not from FlexData, so the seed doesn't influence the gate.
-    # Δ.17b Gap D: scope-narrowed; *did NOT* short-circuit unconditionally.
     # ``ed_invest.csv`` etc. are the canonical Python-preprocessing
     # outputs that .mod reads via ``table data IN`` (flextool.mod:1428).
     # The ``solve__`` prefixed twins are .mod printf debug-exports of
@@ -2882,7 +2859,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         online = _load_online(inp, sd, dt, proc["pss"], source=db_reader)
         ramp = _load_ramp(inp, sd, proc["pss"])
-        invest = _load_invest(sd, dt, inp, proc["pss"], source=db_reader)
+        invest = _load_invest(sd, dt, inp, proc["pss"])
         varcost = _load_varcost(sd, proc["pss"])
         fixed_cost = _load_fixed_cost(sd)
         capacity_for_scaling = _load_node_capacity_for_scaling(sd, nb)
