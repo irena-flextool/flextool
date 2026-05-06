@@ -23,6 +23,10 @@ from flextool.engine_polars._solve_handoff import (
 )
 from flextool.engine_polars._orchestration import (
     OrchestrationStep, run_chain_from_db, run_orchestration,
+    run_single_solve_from_db,
+)
+from flextool.engine_polars._fast_load import (
+    FastLoadError, load_flextool_source_only,
 )
 
 __all__ = [
@@ -34,4 +38,7 @@ __all__ = [
     "SolveHandoff", "capture_post_solve",
     "write_fix_storage_files_from_handoff",
     "OrchestrationStep", "run_chain_from_db", "run_orchestration",
+    # Δ.25 — surgical fast single-solve path.
+    "run_single_solve_from_db",
+    "FastLoadError", "load_flextool_source_only",
 ]

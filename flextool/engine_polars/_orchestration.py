@@ -677,8 +677,156 @@ def run_chain_from_db(
     )
 
 
+def run_single_solve_from_db(
+    input_db_url: str | Path,
+    scenario_name: str,
+    work_folder: Path | str,
+    *,
+    logger: logging.Logger | None = None,
+    emit_output: bool = True,
+) -> "OrchestrationStep":
+    """Δ.25 — Surgical fast-path single-solve from a Spine DB.
+
+    Bypasses :func:`flextool.flextoolrunner.input_writer.write_input`
+    entirely.  Reads inputs directly from a
+    :class:`flextool.engine_polars._spinedb_reader.SpineDbReader`,
+    builds the LP via the override chain + a small native topology
+    helper, solves via HiGHS, and emits ``output_raw/`` parquets via
+    the existing output writer adapter (with a tiny support-CSV
+    bootstrap that replaces the preprocessing pipeline's CSV writes).
+
+    **EXPERIMENTAL / NON-PRODUCTION.**  This is the fast path the user
+    flagged for ``test_24h_shipping``-style simple single-solve
+    workloads.  No feature detection, no fallback: any helper coverage
+    gap raises :class:`flextool.engine_polars._fast_load.FastLoadError`
+    with the exact field name.  The slow path
+    (:func:`run_chain_from_db`) remains the canonical multi-solve
+    driver.
+
+    Parameters
+    ----------
+    input_db_url : str | Path
+        Spine SQLite URL or path.  Bare paths are upgraded to
+        ``sqlite:///``.
+    scenario_name : str
+        Scenario name; required.  The fast path doesn't auto-pick.
+    work_folder : Path | str
+        Where to materialise ``solve_data/`` and ``output_raw/``.
+        Created if absent.  No CSVs are written into ``solve_data/``
+        beyond the small support cluster the output writer needs.
+    logger : logging.Logger, optional
+        Logger.  Defaults to a scenario-named logger.
+    emit_output : bool, default True
+        When False, skip the output-writer adapter call and the
+        support CSV writes.  Useful for benchmarking the LP-build
+        path in isolation.
+
+    Returns
+    -------
+    OrchestrationStep
+        With ``solve_name = scenario_name``, the live HiGHS solution,
+        a stub :class:`SolveHandoff` (no carriers — single-solve mode
+        has no next solve to hand off to), and ``warm_used = False``.
+
+    Raises
+    ------
+    FastLoadError
+        Override-chain helpers couldn't populate a required FlexData
+        field.  Message names the field; investigate the helper.
+    FlexToolSolveError
+        LP infeasible / non-optimal.
+    """
+    if logger is None:
+        logger = logging.getLogger(
+            f"flexpy.run_single_solve_from_db[{scenario_name}]"
+        )
+
+    db_url = str(input_db_url)
+    if not db_url.startswith("sqlite:") and not db_url.startswith("postgresql"):
+        db_url = f"sqlite:///{db_url}"
+
+    work_folder = Path(work_folder)
+    work_folder.mkdir(parents=True, exist_ok=True)
+
+    # 1. Construct the SpineDbReader once.
+    from flextool.engine_polars._spinedb_reader import SpineDbReader
+    reader = SpineDbReader(db_url, scenario=scenario_name)
+
+    # 2. Load SolveConfig + TimelineConfig (Γ.8.A / Γ.8.B).  These
+    # populate per-solve config the override chain consumes implicitly
+    # (timeline-derived dt, period_timeset cascades).  In single-solve
+    # mode we only need them for cross-validation; the fast loader
+    # consumes the SpineDbReader directly.
+    from flextool.engine_polars._solve_config import SolveConfig
+    from flextool.engine_polars._timeline import TimelineConfig
+    sc = SolveConfig.load_from_source(reader, logger=logger)
+    tc = TimelineConfig.load_from_source(reader, logger=logger)
+    tc.create_assumptive_parts(sc)
+    tc.create_timeline_from_timestep_duration(sc)
+
+    # 3. Build the FlexData via the source-only loader (Δ.25).
+    from flextool.engine_polars._fast_load import load_flextool_source_only
+    flex_data = load_flextool_source_only(
+        reader, work_folder, logger=logger,
+    )
+
+    # 4. Build the LP.
+    from polar_high import Problem
+    from flextool.engine_polars.model import build_flextool
+
+    problem = Problem()
+    build_flextool(problem, flex_data)
+
+    # 5. Solve.  ``keep_solver=True`` so the output writer can read MPS
+    # column / row names off the live HiGHS instance.
+    sol = problem.solve(keep_solver=True)
+    if not sol.optimal:
+        logger.error(
+            "fast single-solve: HiGHS returned non-optimal status "
+            "(%s) for scenario %s; obj=%r",
+            getattr(sol, "status", None), scenario_name,
+            getattr(sol, "obj", None),
+        )
+
+    # 6. Output emission — write the support CSVs the writer adapter
+    # consumes, then call the adapter.  Both gracefully tolerate
+    # partial state (the adapter logs warnings on writer failures).
+    if emit_output and sol.optimal:
+        from flextool.engine_polars._native_input_writer import (
+            write_output_support_csvs,
+        )
+        from flextool.engine_polars._output_writer import (
+            OutputWriterState, write_outputs_for_solve,
+        )
+
+        write_output_support_csvs(
+            flex_data, work_folder, solve_name=scenario_name,
+        )
+        writer_state = OutputWriterState()
+        write_outputs_for_solve(
+            sol,
+            work_folder=work_folder,
+            solve_name=scenario_name,
+            prior_handoff=None,
+            writer_state=writer_state,
+        )
+
+    # 7. Build a stub SolveHandoff (no carriers in single-solve mode).
+    from flextool.engine_polars._solve_handoff import SolveHandoff
+    handoff = SolveHandoff()
+
+    return OrchestrationStep(
+        solve_name=scenario_name,
+        solution=sol,
+        handoff=handoff,
+        obj=sol.obj if sol.optimal else None,
+        warm_used=False,
+    )
+
+
 __all__ = [
     "OrchestrationStep",
     "run_orchestration",
     "run_chain_from_db",
+    "run_single_solve_from_db",
 ]
