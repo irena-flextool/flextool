@@ -1806,13 +1806,25 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "node_profile_upper": node_profile_upper,
     "node_profile_lower": node_profile_lower,
     "node_profile_fixed": node_profile_fixed,
-    # process_profile_upper / _lower / _fixed are reclassified Derived:
-    # the (p, source, sink) tuple flextool emits is the unit-arc tuple
-    # threaded through the 10-way ``process_source_sink`` union (which
-    # collapses unit input + output into a single arc keyed by the
-    # unit's actual source node).  The DB-direct projection over
-    # unit__node__profile loses the input-side source node; only the
-    # post-Γ.3 ``process_source_sink`` resolution can restore it.
+    # Δ.29 — process_profile_upper / _lower / _fixed.  The (p, source, sink, f)
+    # tuple the slow path's ``_load_profiles`` reconstructs from
+    # ``process__source__sink__profile__profile_method.csv`` (itself a
+    # 4-way union over ``profileProcess`` connection/direct + indirect
+    # source/sink helpers — preprocessing/process_arc_unions.py:1837-1851)
+    # is exactly what ``_profile_method_arc`` rebuilds via the
+    # ``unit__node__profile`` × ``unit__inputNode`` / ``unit__outputNode``
+    # join.  Direct units with a single side (no source OR no sink) — the
+    # common VRE case (wind_X with method_1way_1var_off, no source) —
+    # land on the output-side branch (``source=unit, sink=node``) which
+    # matches the ``no_source_arcs`` partition of
+    # :func:`process_source_sink_canonical`.  Connection-side profiles
+    # are covered via ``connection__node__profile`` × ``connection__node__node``.
+    # Without this wiring on the fast path the wind upper-limit cap is
+    # absent → the LP satisfies demand from unconstrained wind → coal
+    # flow stays at 0 → obj=0 (Δ.28's gap diagnosis).
+    "process_profile_upper": process_profile_upper,
+    "process_profile_lower": process_profile_lower,
+    "process_profile_fixed": process_profile_fixed,
     "reserve_upDown_group": reserve_upDown_group,
     # process_reserve_upDown_node_active / _increase_reserve_ratio /
     # _large_failure_ratio are reclassified Derived: their CSV-side
