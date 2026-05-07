@@ -40,3 +40,4 @@ rivendell/
 # Continental benchmark re-copies rivendell.sqlite here at runtime; the
 # source is rebuilt into ~/.cache/rivendell_to_flextool/ on demand.
 benchmarks/scaling/scenarios/continental/input.sqlite
+.aider*

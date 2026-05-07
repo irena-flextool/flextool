@@ -74,6 +74,7 @@ from flextool.engine_polars._solve_state import (
     PathConfig,
     RunnerState,
 )
+from flextool.engine_polars import scaling as _scaling
 
 if TYPE_CHECKING:
     from polar_high import Solution
@@ -458,6 +459,24 @@ def _drive_cascade(
             else:
                 pb = Problem()
                 build_flextool(pb, data)
+                # --- scaling analysis -------------------------------------------
+                _scale_table = _scaling.analyze_solve(
+                    solve_name=complete_solve_name,
+                    flex_data=data,
+                    work_folder=self.state.paths.work_folder,
+                    logger=self.state.logger,
+                )
+                _user_row_scaling = state.solve.use_row_scaling.get(
+                    complete_solve_name
+                )
+                _effective_row_scaling = (
+                    _user_row_scaling
+                    if _user_row_scaling in ("yes", "no")
+                    else _scale_table.use_row_scaling
+                )
+                if _effective_row_scaling == "yes":
+                    pb.set_solver_options({"simplex_scale_strategy": 2})
+                # ----------------------------------------------------------------
                 # Δ.12c-fix: ``keep_solver=True`` so ``sol.highs``
                 # carries the live HiGHS instance the output writer
                 # adapter consumes (``write_all_variables`` /
@@ -808,6 +827,23 @@ def run_single_solve_from_db(
     problem = Problem()
     build_flextool(problem, flex_data)
     print(f"Input: LP build: {_time.perf_counter() - _t0:.3f}s")
+
+    # --- scaling analysis ---------------------------------------------------
+    _scale_table = _scaling.analyze_solve(
+        solve_name=scenario_name,
+        flex_data=flex_data,
+        work_folder=work_folder,
+        logger=logger,
+    )
+    _user_row_scaling = sc.use_row_scaling.get(scenario_name)
+    _effective_row_scaling = (
+        _user_row_scaling
+        if _user_row_scaling in ("yes", "no")
+        else _scale_table.use_row_scaling
+    )
+    if _effective_row_scaling == "yes":
+        problem.set_solver_options({"simplex_scale_strategy": 2})
+    # ------------------------------------------------------------------------
 
     # 5. Solve.  ``keep_solver=True`` so the output writer can read MPS
     # column / row names off the live HiGHS instance.

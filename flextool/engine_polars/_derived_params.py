@@ -2413,6 +2413,18 @@ def apply_derived_b(
         from ._derived_arithmetic import p_unitsize_from_source
         flex_data.p_unitsize = p_unitsize_from_source(source, pss_frame)
 
+    # ─── §F.1b p_all_entity_unitsize  (scaling family — all entities) ────
+    # Unfiltered entity unitsize covering processes + connections + nodes.
+    # Used by the scaling analyzer (scaling.py:analyze_solve) to compute the
+    # full entity-unitsize spread including node entries.
+    # Note: _entity_unitsize_lf returns all entities (unit ∪ node ∪ connection)
+    # with the cascade: virtual_unitsize OR existing OR 1000.0.
+    _all_us_lf = _entity_unitsize_lf(source)
+    _all_us_df = _all_us_lf.rename({"us": "value"}).collect()
+    if _all_us_df.height > 0:
+        from polar_high import Param as _Param
+        flex_data.p_all_entity_unitsize = _Param(("e",), _all_us_df)
+
     # ─── §F.4 p_process_source_flow_coef / p_process_sink_flow_coef ────
     # (Δ.10 cluster F).  Mirrors ``input.py:_load_indirect`` lines
     # 950-1002.  Anti-joins zero-coef rows out of the indirect-process

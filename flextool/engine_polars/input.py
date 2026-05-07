@@ -267,6 +267,7 @@ class FlexData:
     flow_from_commodity_noEff: pl.DataFrame | None = None
     flow_to_commodity: pl.DataFrame | None = None  # §2.4 sell into priced commodity node
     p_unitsize: Param | None = None              # (p,)
+    p_all_entity_unitsize: Param | None = None  # (e,) — all entities (processes + connections + nodes); used by scaling
     p_flow_upper: Param | None = None            # (p, source, sink, d, t) — preprocessed structural max (existing + max_invest_cum)
     p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing/unitsize only; used by maxToSink
     p_slope: Param | None = None                 # (p, d, t)
@@ -3038,11 +3039,19 @@ def load_flextool(source: "Path | str | FlexInputSource",
         base_cap_pd = None
         p_flow_upper_existing = None
         pd_neg_cap = None
+        all_entity_unitsize_param = None
         if proc["pss"] is not None:
             cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
                                        sd / "p_entity_previously_invested_capacity.csv",
                                        sd / "p_entity_all_existing.csv")
             unitsize_long = _read_unitsize((sd / "p_entity_unitsize.csv") if (sd / "p_entity_unitsize.csv").exists() else (inp / "p_entity_unitsize.csv"))
+            # p_all_entity_unitsize: unfiltered — covers processes, connections AND nodes.
+            # Used by the scaling analyzer to compute the full entity-unitsize spread.
+            if unitsize_long.height > 0:
+                all_entity_unitsize_param = Param(
+                    ("e",),
+                    unitsize_long.rename({"e": "e"}).select("e", "value"),
+                )
             cap_us_pd = (cap_long.rename({"e":"p","value":"cap"})
                 .filter(pl.col("p").is_in(proc["pss"]["p"].unique()))
                 .join(unitsize_long.rename({"e":"p","value":"us"}), on="p", how="inner"))
@@ -3210,6 +3219,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             process_source_canonical  = proc.get("pss_source_canonical"),
             process_sink_canonical    = proc.get("pss_sink_canonical"),
             p_unitsize                = proc["unitsize"],
+            p_all_entity_unitsize     = all_entity_unitsize_param,
             p_flow_upper              = proc["flow_upper"],
             p_flow_upper_existing     = p_flow_upper_existing,
             p_slope                   = proc["slope"],
