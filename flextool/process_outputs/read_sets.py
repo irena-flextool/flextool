@@ -533,18 +533,44 @@ def read_sets(
     s.node__storage_nested_fix_method = empty_multi_index(["node", "method"])
 
     # process_source / process_sink — (process, source) / (process, sink).
-    if (flex_data.process_source_sink is not None
-            and flex_data.process_source_sink.height > 0):
+    #
+    # Must contain exactly one canonical (process, node) per input/output arc:
+    #   • units  : unit__inputNode nodes for source, unit__outputNode for sink
+    #   • connections : node_1 of connection__node__node for source, node_2 for sink
+    #
+    # The collapsed process_source_sink includes reverse arcs for 2-way
+    # connections AND intermediate (p, p) arcs for indirect units, so it
+    # cannot be projected directly.  Use the pre-computed canonical fields
+    # (populated in input.py from the raw entity tables) when available; fall
+    # back to a pss-based derivation that filters out process-as-node arcs.
+    if (flex_data.process_source_canonical is not None
+            and flex_data.process_source_canonical.height > 0):
         s.process_source = pd.MultiIndex.from_frame(
-            flex_data.process_source_sink.select("p", "source").unique().to_pandas(),
+            flex_data.process_source_canonical.to_pandas(),
             names=["process", "source"],
         )
-        s.process_sink = pd.MultiIndex.from_frame(
-            flex_data.process_source_sink.select("p", "sink").unique().to_pandas(),
-            names=["process", "sink"],
-        )
+    elif (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        pss_pl = flex_data.process_source_sink
+        src_df = (pss_pl.filter(pl.col("source") != pl.col("p"))
+                  .select("p", "source").unique().to_pandas())
+        s.process_source = pd.MultiIndex.from_frame(src_df, names=["process", "source"])
     else:
         s.process_source = empty_multi_index(["process", "source"])
+
+    if (flex_data.process_sink_canonical is not None
+            and flex_data.process_sink_canonical.height > 0):
+        s.process_sink = pd.MultiIndex.from_frame(
+            flex_data.process_sink_canonical.to_pandas(),
+            names=["process", "sink"],
+        )
+    elif (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        pss_pl = flex_data.process_source_sink
+        snk_df = (pss_pl.filter(pl.col("sink") != pl.col("p"))
+                  .select("p", "sink").unique().to_pandas())
+        s.process_sink = pd.MultiIndex.from_frame(snk_df, names=["process", "sink"])
+    else:
         s.process_sink = empty_multi_index(["process", "sink"])
 
     # process__source__sink__profile__profile_method — DataFrame for VRE etc.

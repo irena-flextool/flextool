@@ -145,6 +145,7 @@ def _populate_topology(flex_data: "FlexData",
 
     from flextool.engine_polars._projection_params import (
         process_source_sink_canonical,
+        _try_entities,
     )
 
     canonical = process_source_sink_canonical(source)
@@ -163,6 +164,34 @@ def _populate_topology(flex_data: "FlexData",
     flex_data.process_source_sink_noEff = pss_noEff
     flex_data.flow_to_n = pss.with_columns(n=pl.col("sink"))
     flex_data.flow_from_n = pss.with_columns(n=pl.col("source"))
+
+    # Canonical (p, source) / (p, sink) — one row per unit input/output node
+    # and one row per connection using the original connection__node__node
+    # direction (not the added reverse arc).
+    src_parts: list[pl.DataFrame] = []
+    snk_parts: list[pl.DataFrame] = []
+    _uin = _try_entities(source, "unit__inputNode")
+    if _uin is not None and _uin.height > 0:
+        src_parts.append(_uin.select(
+            pl.col("unit").alias("p"), pl.col("node").alias("source")))
+    _uout = _try_entities(source, "unit__outputNode")
+    if _uout is not None and _uout.height > 0:
+        snk_parts.append(_uout.select(
+            pl.col("unit").alias("p"), pl.col("node").alias("sink")))
+    _cnn = _try_entities(source, "connection__node__node")
+    if _cnn is not None and _cnn.height > 0:
+        src_parts.append(_cnn.select(
+            pl.col("connection").alias("p"), pl.col("node_1").alias("source")))
+        snk_parts.append(_cnn.select(
+            pl.col("connection").alias("p"), pl.col("node_2").alias("sink")))
+    if src_parts:
+        flex_data.process_source_canonical = (
+            pl.concat(src_parts).unique().sort("p", "source")
+        )
+    if snk_parts:
+        flex_data.process_sink_canonical = (
+            pl.concat(snk_parts).unique().sort("p", "sink")
+        )
 
     # commodity__node join — read from source.
     cn = source.get_entities("commodity__node") if hasattr(source,

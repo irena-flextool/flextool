@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import csv
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 import polars as pl
@@ -255,6 +256,11 @@ class FlexData:
     process_source_sink_eff: pl.DataFrame | None = None
     process_source_sink_noEff: pl.DataFrame | None = None
     pss_dt: pl.DataFrame | None = None
+    # Canonical (p, source) / (p, sink) per process — one row per unit input
+    # node / output node, and one row per connection using the original
+    # connection__node__node direction (not the added reverse arc).
+    process_source_canonical: pl.DataFrame | None = None
+    process_sink_canonical: pl.DataFrame | None = None
     flow_to_n: pl.DataFrame | None = None
     flow_from_n: pl.DataFrame | None = None
     flow_from_commodity_eff: pl.DataFrame | None = None
@@ -745,7 +751,8 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                                        "flow_to_n","flow_from_n",
                                        "flow_from_commodity_eff",
                                        "flow_from_commodity_noEff",
-                                       "unitsize","flow_upper","slope","commodity_price")}
+                                       "unitsize","flow_upper","slope","commodity_price",
+                                       "pss_source_canonical","pss_sink_canonical")}
 
     # Δ.18 — CSV-fallback for the pss family.  When ``source`` is None
     # (dump_csvs roundtrip workdirs without a ``tests.sqlite``), read
@@ -771,8 +778,23 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             return empty_return
         pss_eff = _read_pss(pss_eff_path) if pss_eff_path.exists() else empty_pss
         pss_noEff = _read_pss(pss_noe_path) if pss_noe_path.exists() else empty_pss
+
+        # Canonical source/sink per process from the preprocessed CSV sets.
+        # process_source.csv and process_sink.csv (written by flextool's
+        # preprocessing) contain exactly the canonical node per process:
+        # unit__inputNode for source, unit__outputNode for sink, and the
+        # original connection__node__node direction for connections.
+        def _read_canonical_set(p: Path, side: str) -> pl.DataFrame | None:
+            if not p.exists():
+                return None
+            df = _read_csv_file(p)
+            if df.height == 0 or "process" not in df.columns or side not in df.columns:
+                return None
+            return df.rename({"process": "p"}).select("p", side).unique()
+        pss_source_canonical = _read_canonical_set(sd / "process_source.csv", "source")
+        pss_sink_canonical   = _read_canonical_set(sd / "process_sink.csv",   "sink")
     else:
-        from ._projection_params import process_source_sink_canonical
+        from ._projection_params import process_source_sink_canonical, _try_entities
         canonical = process_source_sink_canonical(source)
         if canonical.height == 0:
             return empty_return
@@ -783,6 +805,32 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         pss_noEff = (canonical
             .filter(pl.col("method") == "noEff")
             .select("p", "source", "sink").unique())
+
+        # Canonical source/sink per process from the original entity tables:
+        # unit__inputNode → (p, source), unit__outputNode → (p, sink),
+        # connection__node__node → (p, source=node_1) and (p, sink=node_2).
+        src_parts: list[pl.DataFrame] = []
+        snk_parts: list[pl.DataFrame] = []
+        _uin = _try_entities(source, "unit__inputNode")
+        if _uin is not None and _uin.height > 0:
+            src_parts.append(_uin.select(
+                pl.col("unit").alias("p"), pl.col("node").alias("source")))
+        _uout = _try_entities(source, "unit__outputNode")
+        if _uout is not None and _uout.height > 0:
+            snk_parts.append(_uout.select(
+                pl.col("unit").alias("p"), pl.col("node").alias("sink")))
+        _cnn = _try_entities(source, "connection__node__node")
+        if _cnn is not None and _cnn.height > 0:
+            src_parts.append(_cnn.select(
+                pl.col("connection").alias("p"), pl.col("node_1").alias("source")))
+            snk_parts.append(_cnn.select(
+                pl.col("connection").alias("p"), pl.col("node_2").alias("sink")))
+        pss_source_canonical = (
+            pl.concat(src_parts).unique().sort("p", "source") if src_parts else None
+        )
+        pss_sink_canonical = (
+            pl.concat(snk_parts).unique().sort("p", "sink") if snk_parts else None
+        )
 
     flow_to_n   = pss.with_columns(n=pl.col("sink"))
     flow_from_n = pss.with_columns(n=pl.col("source"))
@@ -901,6 +949,8 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         flow_from_commodity_eff = flow_from_commodity_eff,
         flow_from_commodity_noEff = flow_from_commodity_noEff,
         flow_to_commodity = flow_to_commodity,
+        pss_source_canonical = pss_source_canonical,
+        pss_sink_canonical   = pss_sink_canonical,
         unitsize = Param(("p",), unitsize_p.select("p","value")),
         flow_upper = Param(("p","source","sink","d","t"), flow_upper_psskdt),
         slope = Param(("p","d","t"), slope_long.select("p","d","t","value")),
@@ -3157,6 +3207,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
             flow_from_commodity_eff   = proc["flow_from_commodity_eff"],
             flow_from_commodity_noEff = proc["flow_from_commodity_noEff"],
             flow_to_commodity         = proc.get("flow_to_commodity"),
+            process_source_canonical  = proc.get("pss_source_canonical"),
+            process_sink_canonical    = proc.get("pss_sink_canonical"),
             p_unitsize                = proc["unitsize"],
             p_flow_upper              = proc["flow_upper"],
             p_flow_upper_existing     = p_flow_upper_existing,
@@ -3303,6 +3355,11 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     from flextool.engine_polars import _projection_params as _pp
     from flextool.engine_polars import _derived_params as _drv
 
+    def _timed(label, fn, *args, **kwargs):
+        t0 = time.perf_counter()
+        fn(*args, **kwargs)
+        print(f"  input pass {label}: {time.perf_counter() - t0:.3f}s")
+
     # Pass 1a-2: source-only Params (no workdir needed).
     # Δ.28 — pass 1 splits into 1a (dt-independent) and 1b (dt-dependent).
     # Pass 1b runs after ``apply_derived_a`` populates ``flex_data.dt``
@@ -3310,8 +3367,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # source can broadcast across the active solve's (d, t) axis.  See
     # ``_direct_params.apply_direct_params_a/b`` docstrings for the
     # full Δ.28 rationale.
-    _dp.apply_direct_params_a(db_reader, flex_data)
-    _pp.apply_projection_params(db_reader, flex_data)
+    _timed("1a direct_params_a", _dp.apply_direct_params_a, db_reader, flex_data)
+    _timed("2  projection_params", _pp.apply_projection_params, db_reader, flex_data)
 
     # Pass 3-9: workdir-aware Params.  Resolve the workdir from the
     # source object (CsvSource exposes ``input_dir.parent``;
@@ -3327,7 +3384,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # CSV before ``_apply_db_overrides``; run pass 1b with that dt.
         # In the fast path ``workdir`` is always non-None
         # (``_SourceShim`` carries ``work_folder``).
-        _dp.apply_direct_params_b(db_reader, flex_data)
+        _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
         return
     workdir_path = Path(workdir)
 
@@ -3350,10 +3407,10 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # slow path ``flex_data.dt`` is already populated from CSV (see
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct
         # Params still apply against the CSV-loaded dt.
-        _dp.apply_direct_params_b(db_reader, flex_data)
+        _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
         return
 
-    _drv.apply_derived_a(flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("3  derived_a", _drv.apply_derived_a, flex_data, db_reader, workdir_path, ctx=ctx)
 
     # Δ.28 — pass 1b: broadcast-needing Direct Params now have
     # ``flex_data.dt`` populated by ``apply_derived_a`` step 1.  The
@@ -3364,14 +3421,14 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # pass before ``apply_derived_a`` (the legacy ordering) left
     # ``p_commodity_price`` / ``p_process_availability`` / similar
     # fields empty on the fast path even when Spine carried the data.
-    _dp.apply_direct_params_b(db_reader, flex_data)
+    _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
 
-    _drv.apply_derived_b(flex_data, db_reader, workdir_path, ctx=ctx)
-    _drv.apply_derived_c(flex_data, db_reader, workdir_path, ctx=ctx)
-    _drv.apply_derived_d(flex_data, db_reader, workdir_path, ctx=ctx)
-    _drv.apply_derived_e(flex_data, db_reader, workdir_path, ctx=ctx)
-    _drv.apply_derived_f(flex_data, db_reader, workdir_path, ctx=ctx)
-    _drv.apply_derived_g(flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("4  derived_b", _drv.apply_derived_b, flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("5  derived_c", _drv.apply_derived_c, flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("6  derived_d", _drv.apply_derived_d, flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("7  derived_e", _drv.apply_derived_e, flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("8  derived_f", _drv.apply_derived_f, flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("9  derived_g", _drv.apply_derived_g, flex_data, db_reader, workdir_path, ctx=ctx)
 
     # Δ.12c — ``apply_existing_chain`` runs LAST (after ``apply_derived_f``)
     # so that the handoff carriers ``p_entity_previously_invested_capacity``
@@ -3381,7 +3438,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # carriers.  Now that ``apply_derived_f`` is the authoritative producer
     # of the carriers, the seed in ``_load_invest`` becomes redundant.
     from flextool.engine_polars import _derived_existing as _ex
-    _ex.apply_existing_chain(flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("10 existing_chain", _ex.apply_existing_chain, flex_data, db_reader, workdir_path, ctx=ctx)
 
 
 def _read_period_set(path: Path) -> set[str]:

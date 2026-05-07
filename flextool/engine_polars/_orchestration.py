@@ -762,6 +762,8 @@ def run_single_solve_from_db(
             f"flexpy.run_single_solve_from_db[{scenario_name}]"
         )
 
+    import time as _time
+
     db_url = str(input_db_url)
     if not db_url.startswith("sqlite:") and not db_url.startswith("postgresql"):
         db_url = f"sqlite:///{db_url}"
@@ -771,7 +773,9 @@ def run_single_solve_from_db(
 
     # 1. Construct the SpineDbReader once.
     from flextool.engine_polars._spinedb_reader import SpineDbReader
+    _t0 = _time.perf_counter()
     reader = SpineDbReader(db_url, scenario=scenario_name)
+    print(f"Input: DB reader open: {_time.perf_counter() - _t0:.3f}s")
 
     # 2. Load SolveConfig + TimelineConfig (Γ.8.A / Γ.8.B).  These
     # populate per-solve config the override chain consumes implicitly
@@ -780,23 +784,30 @@ def run_single_solve_from_db(
     # consumes the SpineDbReader directly.
     from flextool.engine_polars._solve_config import SolveConfig
     from flextool.engine_polars._timeline import TimelineConfig
+    _t0 = _time.perf_counter()
     sc = SolveConfig.load_from_source(reader, logger=logger)
     tc = TimelineConfig.load_from_source(reader, logger=logger)
     tc.create_assumptive_parts(sc)
     tc.create_timeline_from_timestep_duration(sc)
+    print(f"Input: solve/timeline config: {_time.perf_counter() - _t0:.3f}s")
 
     # 3. Build the FlexData via the source-only loader (Δ.25).
     from flextool.engine_polars._fast_load import load_flextool_source_only
+    print("Input: override chain passes:")
+    _t0 = _time.perf_counter()
     flex_data = load_flextool_source_only(
         reader, work_folder, logger=logger,
     )
+    print(f"Input: total override chain: {_time.perf_counter() - _t0:.3f}s")
 
     # 4. Build the LP.
     from polar_high import Problem
     from flextool.engine_polars.model import build_flextool
 
+    _t0 = _time.perf_counter()
     problem = Problem()
     build_flextool(problem, flex_data)
+    print(f"Input: LP build: {_time.perf_counter() - _t0:.3f}s")
 
     # 5. Solve.  ``keep_solver=True`` so the output writer can read MPS
     # column / row names off the live HiGHS instance.
