@@ -92,16 +92,16 @@ def _multi_index_with_solve(
 
 
 def _node_types(flex_data: "FlexData") -> dict[str, str]:
-    """Return ``{node: p_node_type}`` for every node, defaulting to
+    r"""Return ``{node: p_node_type}`` for every node, defaulting to
     ``balance``.
 
     FlexData carries the type-discrimination through dedicated set
     frames (``nodeBalance``, ``nodeState``).  We synthesize the
     ``p_node_type`` semantics from those:
 
-    * ``storage``               — node ∈ nodeState
-    * ``balance``               — node ∈ nodeBalance \ nodeState
-    * ``balance_within_period`` — node ∈ nodeBalance with the
+    * ``storage``               — node in nodeState
+    * ``balance``               — node in nodeBalance \ nodeState
+    * ``balance_within_period`` — node in nodeBalance with the
       ``balance_within_period`` flag (no FlexData field carries this
       flag standalone; treat as default for now)
     * ``commodity``             — node attached to a commodity (via

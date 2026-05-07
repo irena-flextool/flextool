@@ -65,20 +65,38 @@ if TYPE_CHECKING:
 
 
 def _empty_pdtX_per_entity(
-    *, solve_name: str, col_name: str, dtype=float,
+    *,
+    flex_data: "FlexData | None",
+    solve_name: str,
+    col_name: str,
+    dtype=float,
 ) -> pd.DataFrame:
-    """Return a header-only ``(solve, period, time)``-indexed DataFrame
-    with named, empty columns.
+    """Return a ``(solve, period, time)``-indexed DataFrame with empty
+    named columns.
 
     Used for the per-(solve, period, time) family when the underlying
-    FlexData field is None / empty (the CSV path produced these as
-    ``solve,period,time`` files with no data rows).
+    FlexData field is None / empty.  Critically, when ``flex_data``
+    is supplied, the row index is materialised over the active solve's
+    full ``(d, t)`` axis — matching the legacy CSV path which wrote
+    ``solve,period,time`` rows for every timestep even when no data
+    columns were present.  Without this, downstream broadcasts like
+    ``v.state.mul(par.node_self_discharge_loss, axis=1, level=0)``
+    raise ``TypeError: Join on level between two MultiIndex objects
+    is ambiguous`` because pandas can't reconcile two empty MultiIndex
+    on join.
     """
-    idx = pd.MultiIndex.from_arrays(
-        [[], [], []], names=["solve", "period", "time"]
-    )
+    if flex_data is not None and flex_data.dt is not None and flex_data.dt.height > 0:
+        dt_pdf = flex_data.dt.to_pandas()
+        idx = pd.MultiIndex.from_arrays(
+            [[solve_name] * len(dt_pdf), dt_pdf["d"].tolist(), dt_pdf["t"].tolist()],
+            names=["solve", "period", "time"],
+        )
+    else:
+        idx = pd.MultiIndex.from_arrays(
+            [[], [], []], names=["solve", "period", "time"],
+        )
     out = pd.DataFrame(index=idx, dtype=dtype)
-    out.columns.name = col_name
+    out.columns = pd.Index([], dtype="object", name=col_name)
     return out
 
 
@@ -88,16 +106,22 @@ def _pdtX_per_entity(
     solve_name: str,
     entity_dim: str,
     col_name: str | None = None,
+    flex_data: "FlexData | None" = None,
 ) -> pd.DataFrame:
     """Pivot a Param with dims ``(<entity>, d, t)`` to pandas wide-format
     indexed by ``(solve, period, time)`` × entity.
 
-    ``param`` may be ``None`` / empty — returns the empty form so
-    downstream callers can still read ``df.columns`` without crashing.
+    ``param`` may be ``None`` / empty — returns an empty DataFrame
+    indexed over the full ``(solve, d, t)`` axis (taken from
+    ``flex_data.dt`` when supplied) so downstream broadcast-multiply
+    ops align cleanly.
     """
     if param is None or param.frame.height == 0:
-        return _empty_pdtX_per_entity(solve_name=solve_name,
-                                      col_name=col_name or entity_dim)
+        return _empty_pdtX_per_entity(
+            flex_data=flex_data,
+            solve_name=solve_name,
+            col_name=col_name or entity_dim,
+        )
     pl_df = with_solve_column(param.frame, solve_name)
     return wide_per_entity(
         pl_df,
@@ -114,16 +138,27 @@ def _pdX_per_entity(
     solve_name: str,
     entity_dim: str,
     col_name: str | None = None,
+    flex_data: "FlexData | None" = None,
 ) -> pd.DataFrame:
     """Pivot a Param with dims ``(<entity>, d)`` to pandas wide-format
     indexed by ``(solve, period)`` × entity.
 
-    ``param`` may be ``None`` / empty — returns the empty form.
+    ``param`` may be ``None`` / empty — returns an empty DataFrame
+    indexed over the active solve's full ``(d,)`` axis (taken from
+    ``flex_data.dt`` when supplied).
     """
     if param is None or param.frame.height == 0:
-        idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
+        if flex_data is not None and flex_data.dt is not None and flex_data.dt.height > 0:
+            d_pdf = flex_data.dt.select("d").unique().to_pandas()
+            periods = d_pdf["d"].tolist()
+            idx = pd.MultiIndex.from_arrays(
+                [[solve_name] * len(periods), periods],
+                names=["solve", "period"],
+            )
+        else:
+            idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
         out = pd.DataFrame(index=idx, dtype=float)
-        out.columns.name = col_name or entity_dim
+        out.columns = pd.Index([], dtype="object", name=col_name or entity_dim)
         return out
     pl_df = with_solve_column(param.frame, solve_name)
     return wide_per_entity(
@@ -388,24 +423,24 @@ def _entity_all_capacity(
             schema={"e": pl.Utf8, "d": pl.Utf8, "divested": pl.Float64},
         ).lazy()
 
-    # Combine: outer-join on (e, d) and sum.
+    # Combine: outer-join on (e, d) and sum.  ``how="full"`` requires
+    # explicit coalesce on the join keys.
+    j1 = existing_lf.join(
+        invest_contrib, on=["e", "d"], how="full", coalesce=True,
+    )
+    j2 = j1.join(divest_contrib, on=["e", "d"], how="full", coalesce=True)
     combined = (
-        existing_lf
-            .join(invest_contrib, on=["e", "d"], how="full")
-            .join(divest_contrib, on=["e", "d"], how="full")
-            .with_columns(
-                e=pl.coalesce(["e", "e_right"]),
-                d=pl.coalesce(["d", "d_right"]),
-                existing=pl.col("existing").fill_null(0.0),
-                invested=pl.col("invested").fill_null(0.0),
-                divested=pl.col("divested").fill_null(0.0),
-            )
-            .with_columns(
-                total=pl.col("existing") + pl.col("invested") - pl.col("divested"),
-            )
-            .select("e", "d", "total")
-            .filter(pl.col("e").is_not_null() & pl.col("d").is_not_null())
-            .collect()
+        j2.with_columns(
+            existing=pl.col("existing").fill_null(0.0),
+            invested=pl.col("invested").fill_null(0.0),
+            divested=pl.col("divested").fill_null(0.0),
+        )
+        .with_columns(
+            total=pl.col("existing") + pl.col("invested") - pl.col("divested"),
+        )
+        .filter(pl.col("e").is_not_null() & pl.col("d").is_not_null())
+        .select("e", "d", "total")
+        .collect()
     )
     if combined.height == 0:
         idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
@@ -512,12 +547,29 @@ def _build_p_process_per_arc(
     else:
         raise ValueError(f"side must be 'source' or 'sink', got {side!r}")
 
+    # Build the canonical row-by-param row list — same order, same names
+    # as the legacy CSV so downstream ``loc['inertia_constant']`` etc.
+    # work whether columns are empty or not.
+    row_names = [
+        "efficiency",
+        "efficiency_at_min_load",
+        "min_load",
+        "coefficient",
+        "flow_unitsize",
+        "other_operational_cost",
+        "ramp_cost",
+        "ramp_speed_up",
+        "ramp_speed_down",
+        "inertia_constant",
+    ]
+
     if pss is None or pss.height == 0:
         cols = pd.MultiIndex.from_arrays(
             [[], []], names=["process", side_dim]
         )
-        out = pd.DataFrame(columns=cols, dtype=float)
-        out.index.name = "param"
+        out = pd.DataFrame(
+            index=pd.Index(row_names, name="param"), columns=cols, dtype=float,
+        )
         return out
 
     # Distinct (process, <side>) pairs.  ``process_source_sink`` carries
@@ -531,18 +583,6 @@ def _build_p_process_per_arc(
 
     # Build rows for known parameters.  All zeros except where FlexData
     # gives an explicit value.  Order matches the legacy CSV.
-    row_names = [
-        "efficiency",
-        "efficiency_at_min_load",
-        "min_load",
-        "coefficient",
-        "flow_unitsize",
-        "other_operational_cost",
-        "ramp_cost",
-        "ramp_speed_up",
-        "ramp_speed_down",
-        "inertia_constant",
-    ]
     out = pd.DataFrame(0.0, index=row_names, columns=cols, dtype=float)
     out.index.name = "param"
 
@@ -634,7 +674,12 @@ def read_parameters(
             names=["process", "sink"],
         )
     else:
-        p.process_sink_flow_coefficient = pd.Series(dtype=float)
+        p.process_sink_flow_coefficient = pd.Series(
+            dtype=float,
+            index=pd.MultiIndex.from_arrays(
+                [[], []], names=["process", "sink"]
+            ),
+        )
 
     if (flex_data.p_process_source_flow_coef is not None
             and flex_data.p_process_source_flow_coef.frame.height > 0):
@@ -644,7 +689,12 @@ def read_parameters(
             names=["process", "source"],
         )
     else:
-        p.process_source_flow_coefficient = pd.Series(dtype=float)
+        p.process_source_flow_coefficient = pd.Series(
+            dtype=float,
+            index=pd.MultiIndex.from_arrays(
+                [[], []], names=["process", "source"]
+            ),
+        )
 
     # reserve_upDown_group_penalty — Series with MultiIndex (reserve,
     # upDown, node_group).
@@ -656,7 +706,12 @@ def read_parameters(
             names=["reserve", "upDown", "node_group"],
         )
     else:
-        p.reserve_upDown_group_penalty = pd.Series(dtype=float)
+        p.reserve_upDown_group_penalty = pd.Series(
+            dtype=float,
+            index=pd.MultiIndex.from_arrays(
+                [[], [], []], names=["reserve", "upDown", "node_group"]
+            ),
+        )
 
     # ─── Per-(solve, period, time) parameters ───────────────────────────────
     p.step_duration = _pdt_series_solve_period_time(
@@ -688,15 +743,15 @@ def read_parameters(
     # (solve, period, time) × process.
     p.process_slope = _pdtX_per_entity(
         flex_data.p_slope, solve_name=solve_name,
-        entity_dim="p", col_name="process",
+        entity_dim="p", col_name="process", flex_data=flex_data,
     )
     p.process_section = _pdtX_per_entity(
         flex_data.p_section, solve_name=solve_name,
-        entity_dim="p", col_name="process",
+        entity_dim="p", col_name="process", flex_data=flex_data,
     )
     p.process_availability = _pdtX_per_entity(
         flex_data.p_process_availability, solve_name=solve_name,
-        entity_dim="p", col_name="process",
+        entity_dim="p", col_name="process", flex_data=flex_data,
     )
 
     # process_source_sink_varCost — (solve, period, time) × (process, source, sink).
@@ -729,28 +784,28 @@ def read_parameters(
         )
     else:
         p.node_self_discharge_loss = _empty_pdtX_per_entity(
-            solve_name=solve_name, col_name="node",
+            flex_data=flex_data, solve_name=solve_name, col_name="node",
         )
 
     p.node_penalty_up = _pdtX_per_entity(
         flex_data.p_penalty_up, solve_name=solve_name,
-        entity_dim="n", col_name="node",
+        entity_dim="n", col_name="node", flex_data=flex_data,
     )
     p.node_penalty_down = _pdtX_per_entity(
         flex_data.p_penalty_down, solve_name=solve_name,
-        entity_dim="n", col_name="node",
+        entity_dim="n", col_name="node", flex_data=flex_data,
     )
     p.node_inflow = _pdtX_per_entity(
         flex_data.p_inflow, solve_name=solve_name,
-        entity_dim="n", col_name="node",
+        entity_dim="n", col_name="node", flex_data=flex_data,
     )
     p.commodity_price = _pdtX_per_entity(
         flex_data.p_commodity_price, solve_name=solve_name,
-        entity_dim="c", col_name="commodity",
+        entity_dim="c", col_name="commodity", flex_data=flex_data,
     )
     p.group_co2_price = _pdtX_per_entity(
         flex_data.p_co2_price, solve_name=solve_name,
-        entity_dim="g", col_name="group",
+        entity_dim="g", col_name="group", flex_data=flex_data,
     )
 
     # reserve_upDown_group_reservation — multi-column (r, ud, g).
@@ -763,7 +818,7 @@ def read_parameters(
     # profile — (solve, period, time) × profile.
     p.profile = _pdtX_per_entity(
         flex_data.p_profile_value, solve_name=solve_name,
-        entity_dim="f", col_name="profile",
+        entity_dim="f", col_name="profile", flex_data=flex_data,
     )
 
     # ─── Per-(solve, period) scalar params ──────────────────────────────────
@@ -792,11 +847,11 @@ def read_parameters(
     # (solve, period) × entity.
     p.entity_max_units = _pdX_per_entity(
         flex_data.p_entity_max_units, solve_name=solve_name,
-        entity_dim="e", col_name="entity",
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
     p.entity_all_existing = _pdX_per_entity(
         flex_data.p_entity_all_existing, solve_name=solve_name,
-        entity_dim="e", col_name="entity",
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
 
     # entity_pre_existing — distinct from entity_all_existing on
@@ -834,7 +889,7 @@ def read_parameters(
     else:
         p.entity_pre_existing = _pdX_per_entity(
             flex_data.p_entity_all_existing, solve_name=solve_name,
-            entity_dim="e", col_name="entity",
+            entity_dim="e", col_name="entity", flex_data=flex_data,
         )
 
     # entity_all_capacity — post-solve derived.
@@ -845,21 +900,21 @@ def read_parameters(
     # process_startup_cost — (solve, period) × process.
     p.process_startup_cost = _pdX_per_entity(
         flex_data.p_startup_cost, solve_name=solve_name,
-        entity_dim="p", col_name="process",
+        entity_dim="p", col_name="process", flex_data=flex_data,
     )
 
     # entity_fixed_cost / entity_lifetime_fixed_cost / entity_lifetime_fixed_cost_divest.
     p.entity_fixed_cost = _pdX_per_entity(
         flex_data.p_ed_fixed_cost, solve_name=solve_name,
-        entity_dim="e", col_name="entity",
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
     p.entity_lifetime_fixed_cost = _pdX_per_entity(
         flex_data.ed_lifetime_fixed_cost, solve_name=solve_name,
-        entity_dim="e", col_name="entity",
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
     p.entity_lifetime_fixed_cost_divest = _pdX_per_entity(
         flex_data.ed_lifetime_fixed_cost_divest, solve_name=solve_name,
-        entity_dim="e", col_name="entity",
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
 
     # node_annual_flow — Series((solve, period), node).
@@ -871,23 +926,23 @@ def read_parameters(
     # group_penalty_capacity_margin / group_inertia_limit / group_capacity_margin.
     p.group_penalty_inertia = _pdX_per_entity(
         flex_data.pdGroup_penalty_inertia, solve_name=solve_name,
-        entity_dim="g", col_name="group",
+        entity_dim="g", col_name="group", flex_data=flex_data,
     )
     p.group_penalty_non_synchronous = _pdX_per_entity(
         flex_data.pdGroup_penalty_non_synchronous, solve_name=solve_name,
-        entity_dim="g", col_name="group",
+        entity_dim="g", col_name="group", flex_data=flex_data,
     )
     p.group_penalty_capacity_margin = _pdX_per_entity(
         flex_data.pdGroup_penalty_capacity_margin, solve_name=solve_name,
-        entity_dim="g", col_name="group",
+        entity_dim="g", col_name="group", flex_data=flex_data,
     )
     p.group_inertia_limit = _pdX_per_entity(
         flex_data.pdGroup_inertia_limit, solve_name=solve_name,
-        entity_dim="g", col_name="group",
+        entity_dim="g", col_name="group", flex_data=flex_data,
     )
     p.group_capacity_margin = _pdX_per_entity(
         flex_data.pdGroup_capacity_margin, solve_name=solve_name,
-        entity_dim="g", col_name="group",
+        entity_dim="g", col_name="group", flex_data=flex_data,
     )
 
     # entity_annuity / entity_annual_discounted / entity_annual_divest_discounted.
@@ -896,15 +951,15 @@ def read_parameters(
     # for compatibility).
     p.entity_annuity = _pdX_per_entity(
         flex_data.ed_entity_annual_discounted, solve_name=solve_name,
-        entity_dim="e", col_name="entity",
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
     p.entity_annual_discounted = _pdX_per_entity(
         flex_data.ed_entity_annual_discounted, solve_name=solve_name,
-        entity_dim="e", col_name="entity",
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
     p.entity_annual_divest_discounted = _pdX_per_entity(
         flex_data.ed_entity_annual_divest_discounted, solve_name=solve_name,
-        entity_dim="e", col_name="entity",
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
 
     # inflation factors — Series((solve, period)).
@@ -921,11 +976,11 @@ def read_parameters(
     # node_capacity_for_scaling / group_capacity_for_scaling.
     p.node_capacity_for_scaling = _pdX_per_entity(
         flex_data.p_node_capacity_for_scaling, solve_name=solve_name,
-        entity_dim="n", col_name="node",
+        entity_dim="n", col_name="node", flex_data=flex_data,
     )
     p.group_capacity_for_scaling = _pdX_per_entity(
         flex_data.p_group_capacity_for_scaling, solve_name=solve_name,
-        entity_dim="g", col_name="group",
+        entity_dim="g", col_name="group", flex_data=flex_data,
     )
 
     # complete_period_share_of_year — Series((solve, period)).
@@ -949,7 +1004,7 @@ def _empty_solve_period_per_entity(*, col_name: str) -> pd.DataFrame:
     """Empty ``(solve, period)``-indexed DataFrame with named empty columns."""
     idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
     out = pd.DataFrame(index=idx, dtype=float)
-    out.columns.name = col_name
+    out.columns = pd.Index([], dtype="object", name=col_name)
     return out
 
 

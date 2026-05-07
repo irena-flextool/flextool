@@ -143,7 +143,14 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
 
     # ``group_entity_invest`` is a static map (solveFirst-only) written
     # during phase 1 directly to ``input/`` — same as the CSV pathway.
-    v.group_entity_invest = pd.read_csv(input_path / "group_entity_invest.csv")
+    # Δ.31: tolerate absence (the polars cascade doesn't always emit
+    # this file; downstream code only consumes it for the
+    # ``maxInvestGroup`` family which is empty without group invest).
+    gei_path = input_path / "group_entity_invest.csv"
+    if gei_path.exists():
+        v.group_entity_invest = pd.read_csv(gei_path)
+    else:
+        v.group_entity_invest = pd.DataFrame(columns=["group", "entity"])
     return v
 
 
