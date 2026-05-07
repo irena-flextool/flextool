@@ -115,9 +115,11 @@ def _resolve_engine(cli_value, env_value, default='native'):
 def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
     """Δ.21 — drive the native (flexpy / polar-high) cascade.
 
-    Returns ``0`` on success, ``1`` on any non-optimal sub-solve.
-    Output-tree emission (``write_outputs``, ``timings.csv`` finalize,
-    output-DB updates) is shared with the rest of :func:`main`.
+    Returns a tuple ``(return_code, last_step)`` where ``last_step``
+    is the :class:`flextool.engine_polars.OrchestrationStep` of the
+    final (or only) sub-solve, used by the caller to thread
+    ``flex_data`` + ``solution`` into ``write_outputs`` for the
+    in-memory parameter / set namespace path (Δ.31).
 
     Δ.25: when ``--fast-single-solve`` is passed, dispatch to the
     surgical single-solve path that bypasses
@@ -135,7 +137,7 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
                 "--fast-single-solve requires --scenario-name "
                 "(the fast path doesn't auto-pick scenarios)."
             )
-            return 1
+            return 1, None
         t_solve_start = time.perf_counter()
         step = run_single_solve_from_db(
             args.input_db_url,
@@ -152,8 +154,8 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
                 getattr(step.solution, "status", None)
                 if step.solution else None,
             )
-            return 1
-        return 0
+            return 1, step
+        return 0, step
 
     from flextool.engine_polars import run_chain_from_db
 
@@ -173,9 +175,11 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
 
     if not steps:
         logging.error("Native cascade produced no solve steps; aborting.")
-        return 1
+        return 1, None
     # Non-optimal in any sub-solve → infeasible/unbounded exit code.
+    last_step = None
     for name, step in steps.items():
+        last_step = step
         if step.solution is None or not step.solution.optimal:
             logging.error(
                 "Native cascade: solve %r non-optimal (status=%r); "
@@ -183,8 +187,8 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
                 name,
                 getattr(step.solution, "status", None) if step.solution else None,
             )
-            return 1
-    return 0
+            return 1, step
+    return 0, last_step
 
 
 def main():
@@ -443,7 +447,7 @@ def main():
             if _filters:
                 scenario_name = name_from_dict(_filters[0])
     try:
-        return_code = _run_native_solve(
+        return_code, last_step = _run_native_solve(
             args, scenario_name, work_folder, timing_recorder,
         )
     except Exception as e:
@@ -458,6 +462,15 @@ def main():
     if return_code == 0:
         t_write_outputs = time.perf_counter()
         try:
+            # Δ.31 — pass the last step's flex_data + solution so
+            # write_outputs can build par/s in memory.  ``solve_name``
+            # is the complete sub-solve identifier (e.g. ``y2025_5week``
+            # for a roll, or just the scenario name for a single solve).
+            wo_flex_data = last_step.flex_data if last_step else None
+            wo_solution = last_step.solution if last_step else None
+            wo_solve_name = (
+                last_step.solve_name if last_step else None
+            ) or scenario_name
             write_outputs(
                 scenario_name=scenario_name,
                 output_location=args.output_location,
@@ -471,24 +484,19 @@ def main():
                 raw_output_dir=str(wf / 'output_raw'),
                 only_first_file=args.only_first_file_per_plot,
                 timing_recorder=timing_recorder,
+                flex_data=wo_flex_data,
+                solution=wo_solution,
+                solve_name=wo_solve_name,
             )
         except FileNotFoundError as exc:
-            # Δ.14 known gap, kept for Δ.21: ``write_outputs``
-            # consumes wide-format ``solve_data/p_<entity>.csv`` files
-            # (``p_node.csv``, ``p_process_sink.csv``, …) that the GMPL
-            # phase-1 dump used to emit.  The native cascade produces
-            # ``output_raw/`` alone — closing the gap properly is
-            # tracked on the ``native_data_path_open_issues.md`` Gap F.
-            # Until then, log a clear warning when the wide-format dump
-            # is missing and carry on so ``output_raw/`` (the artefact
-            # the cascade does emit) lands cleanly and the CLI exits 0.
+            # Δ.31: the in-memory parameter / set path doesn't read
+            # ``solve_data/`` CSVs anymore, but ``read_variables`` still
+            # reads ``output_raw/`` parquets.  Catch missing-parquet
+            # cases here (rare) and exit cleanly.
             logging.warning(
-                "write_outputs failed (%s).  This is a known gap — "
-                "the native cascade does not yet emit the wide-format "
-                "solve_data CSVs that process_outputs.read_parameters "
-                "consumes.  output_raw/ artefacts ARE produced; "
-                "output_csv/, output_parquet/, output_excel/, "
-                "output_plots/ are skipped on this run.",
+                "write_outputs failed (%s).  output_raw/ artefacts "
+                "ARE produced; downstream output_csv/, output_parquet/, "
+                "output_excel/, output_plots/ are skipped on this run.",
                 exc,
             )
         timing_recorder.record('write_outputs', subphase='total',

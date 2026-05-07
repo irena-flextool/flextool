@@ -128,6 +128,13 @@ class OrchestrationStep:
         prior solve's :class:`polar_high.WarmProblem` instance; False
         if it was a cold rebuild.  Always False for the first solve
         and for ``warm=False`` runs.
+    flex_data : FlexData | None
+        Δ.31 — the polars input bundle this sub-solve consumed.  Held
+        on the step so downstream :func:`flextool.process_outputs.
+        write_outputs` can build the parameter / set namespaces in
+        memory instead of re-parsing the workdir CSVs.  ``None`` only
+        on the failed-load path (the build-LP step would also have
+        failed, so callers usually short-circuit before reading it).
     """
 
     solve_name: str
@@ -135,6 +142,7 @@ class OrchestrationStep:
     handoff: SolveHandoff
     obj: float | None = None
     warm_used: bool = False
+    flex_data: "FlexData | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +533,7 @@ def _drive_cascade(
                 handoff=handoff,
                 obj=sol.obj,
                 warm_used=warm_used,
+                flex_data=data,
             )
             return 0
 
@@ -843,6 +852,7 @@ def run_single_solve_from_db(
         handoff=handoff,
         obj=sol.obj if sol.optimal else None,
         warm_used=False,
+        flex_data=flex_data,
     )
 
 

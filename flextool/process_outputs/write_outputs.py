@@ -49,10 +49,20 @@ from spinedb_api import DatabaseMapping, from_database, Array
 import warnings
 
 
-def _read_outputs(output_dir):
-    """Read solver output files and return (par, s, v)."""
-    p = read_parameters(output_dir)
-    s = read_sets(output_dir)
+def _read_outputs(output_dir, *, flex_data=None, solution=None, solve_name=None):
+    """Read solver output files and return (par, s, v).
+
+    Δ.31: ``flex_data`` + ``solution`` are required for the in-memory
+    parameter / set reading.  Variables (parquets) are still read from
+    ``output_raw/`` since the polars-LP write path emits them there.
+    """
+    if flex_data is None or solution is None:
+        raise ValueError(
+            "_read_outputs requires flex_data and solution after Δ.31; "
+            "the CSV-based read_parameters / read_sets path is gone."
+        )
+    p = read_parameters(flex_data, solution, solve_name=solve_name or "solve")
+    s = read_sets(flex_data, solution, solve_name=solve_name or "solve")
     v = read_variables(output_dir)
     return p, s, v
 
@@ -385,7 +395,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -405,6 +415,15 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         fallback_output_location: Used as output_location if not set by caller or settings DB
         raw_output_dir: Path to the directory containing solver raw output CSV files
             (default: 'output_raw' relative to CWD)
+        flex_data: FlexData (polars input bundle) — required after Δ.31 for
+            the in-memory parameter / set reading.  Pass-through from the
+            orchestration step's last solve.
+        solution: polar_high.Solution — required after Δ.31; used by the
+            in-memory read_parameters for entity_all_capacity (and friends)
+            derivation.
+        solve_name: complete solve identifier (e.g. ``"y2020_2day_dispatch"``)
+            used as the leading ``solve`` index level on the wide-format
+            params / sets.  Defaults to ``scenario_name``.
     """
     write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format = _resolve_settings(
         write_methods, output_config_path, active_configs, plot_rows,
@@ -483,7 +502,12 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
     # Read original raw outputs from FlexTool
     else:
-        par, s, v = _read_outputs(raw_output_dir or 'output_raw')
+        par, s, v = _read_outputs(
+            raw_output_dir or 'output_raw',
+            flex_data=flex_data,
+            solution=solution,
+            solve_name=solve_name or scenario_name,
+        )
         start = log_time("Read flextool outputs", start, timing_recorder)
 
         # Pre-process results to be closer to what needed for output writing
