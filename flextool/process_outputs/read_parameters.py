@@ -139,6 +139,7 @@ def _pdX_per_entity(
     entity_dim: str,
     col_name: str | None = None,
     flex_data: "FlexData | None" = None,
+    densify_entities: "list[str] | None" = None,
 ) -> pd.DataFrame:
     """Pivot a Param with dims ``(<entity>, d)`` to pandas wide-format
     indexed by ``(solve, period)`` × entity.
@@ -146,28 +147,55 @@ def _pdX_per_entity(
     ``param`` may be ``None`` / empty — returns an empty DataFrame
     indexed over the active solve's full ``(d,)`` axis (taken from
     ``flex_data.dt`` when supplied).
+
+    ``densify_entities`` (optional) — when supplied, the result is
+    reindexed to include every entity in the list (zero-filling any
+    entity that doesn't appear in ``param``).  The legacy CSV path
+    (``ed_fixed_cost.csv`` etc.) did this for the entity universe;
+    downstream consumers like
+    ``calc_costs.py:cost_entity_fixed_invested`` index the result
+    by ``v.invest.columns`` and expect every invest-entity column to
+    be present.
     """
+    if flex_data is not None and flex_data.dt is not None and flex_data.dt.height > 0:
+        d_pdf = flex_data.dt.select("d").unique().to_pandas()
+        periods_full = d_pdf["d"].tolist()
+    else:
+        periods_full = []
+
     if param is None or param.frame.height == 0:
-        if flex_data is not None and flex_data.dt is not None and flex_data.dt.height > 0:
-            d_pdf = flex_data.dt.select("d").unique().to_pandas()
-            periods = d_pdf["d"].tolist()
+        if periods_full:
             idx = pd.MultiIndex.from_arrays(
-                [[solve_name] * len(periods), periods],
+                [[solve_name] * len(periods_full), periods_full],
                 names=["solve", "period"],
             )
         else:
             idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
         out = pd.DataFrame(index=idx, dtype=float)
         out.columns = pd.Index([], dtype="object", name=col_name or entity_dim)
-        return out
-    pl_df = with_solve_column(param.frame, solve_name)
-    return wide_per_entity(
-        pl_df,
-        row_dims=("solve", "d"),
-        col_dim=entity_dim,
-        row_names=("solve", "period"),
-        col_name=col_name or entity_dim,
-    )
+    else:
+        pl_df = with_solve_column(param.frame, solve_name)
+        out = wide_per_entity(
+            pl_df,
+            row_dims=("solve", "d"),
+            col_dim=entity_dim,
+            row_names=("solve", "period"),
+            col_name=col_name or entity_dim,
+        )
+
+    if densify_entities:
+        # Keep existing columns + add missing entities (zero-filled).
+        missing = [e for e in densify_entities if e not in out.columns]
+        for e in missing:
+            out[e] = 0.0
+        out = out.reindex(columns=list(out.columns), fill_value=0.0)
+        # Reorder per densify_entities for stable column ordering.
+        ordered = list(densify_entities) + [
+            c for c in out.columns if c not in densify_entities
+        ]
+        out = out[ordered]
+        out.columns.name = col_name or entity_dim
+    return out
 
 
 def _pX_per_entity(
@@ -320,39 +348,58 @@ def _entity_all_capacity(
         ).lazy()
 
     # Active solution slices.  ``solution.value`` returns long form
-    # ``(*dims, value)``.  When the variable wasn't declared (e.g. no
-    # invest set), ``_vars`` lookup raises KeyError — guard that.
+    # ``(*dims, value)``.  The polars LP splits invest/divest into
+    # process-side (``v_invest_p`` / ``v_divest_p``) and node-side
+    # (``v_invest_n`` / ``v_divest_n``) variables; we union them.
     def _try_value(name: str) -> "pl.DataFrame":
         if name not in solution._vars:
             return pl.DataFrame(
                 schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64},
             )
         df = solution.value(name)
-        # variable's dim names are typically ("e", "d")
-        if "e" not in df.columns or "d" not in df.columns:
-            # try entity / period
-            rename = {}
-            if "entity" in df.columns:
-                rename["entity"] = "e"
-            if "period" in df.columns:
-                rename["period"] = "d"
+        # The polars LP uses ``p`` / ``n`` for the entity dim; rename
+        # to the canonical ``e``.  Also accept ``entity`` / ``period``.
+        rename = {}
+        for src, dst in (("p", "e"), ("n", "e"),
+                          ("entity", "e"), ("period", "d")):
+            if src in df.columns and dst not in df.columns:
+                rename[src] = dst
+        if rename:
             df = df.rename(rename)
         return df.select("e", "d", "value")
 
-    invest = _try_value("v_invest")
-    divest = _try_value("v_divest")
+    invest_pieces = []
+    divest_pieces = []
+    for nm in ("v_invest", "v_invest_p", "v_invest_n"):
+        f = _try_value(nm)
+        if f.height > 0:
+            invest_pieces.append(f)
+    for nm in ("v_divest", "v_divest_p", "v_divest_n"):
+        f = _try_value(nm)
+        if f.height > 0:
+            divest_pieces.append(f)
+    invest = (pl.concat(invest_pieces, how="vertical") if invest_pieces
+              else pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64}))
+    divest = (pl.concat(divest_pieces, how="vertical") if divest_pieces
+              else pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64}))
 
     # invest contribution per (e, d) — by edd_invest indirection
     if (flex_data.edd_invest_set is not None
             and flex_data.edd_invest_set.height > 0):
         edd = flex_data.edd_invest_set.lazy()
-        # Detect column names — should be (e, d_invest, d) or similar
         cols = flex_data.edd_invest_set.columns
-        # canonical: e, d_invest, d
-        col_e = cols[0]
-        col_d_inv = cols[1] if len(cols) > 1 else "d_invest"
-        col_d = cols[2] if len(cols) > 2 else "d"
-        edd = edd.rename({col_e: "e", col_d_inv: "d_invest", col_d: "d"})
+        # canonical: (e, d_invest, d) — rename if dim names differ
+        rename = {}
+        if cols[0] not in ("e", "entity"):
+            rename[cols[0]] = "e"
+        elif cols[0] == "entity":
+            rename["entity"] = "e"
+        if len(cols) > 1 and cols[1] != "d_invest":
+            rename[cols[1]] = "d_invest"
+        if len(cols) > 2 and cols[2] != "d":
+            rename[cols[2]] = "d"
+        if rename:
+            edd = edd.rename(rename)
         invest_contrib = (
             edd.join(invest.lazy().rename({"d": "d_invest", "value": "v_inv"}),
                      on=["e", "d_invest"], how="inner")
@@ -385,10 +432,19 @@ def _entity_all_capacity(
             and flex_data.edd_divest_active.height > 0):
         edd_dv = flex_data.edd_divest_active.lazy()
         cols = flex_data.edd_divest_active.columns
-        col_e = cols[0]
-        col_d_dv = cols[1] if len(cols) > 1 else "d_divest"
-        col_d = cols[2] if len(cols) > 2 else "d"
-        edd_dv = edd_dv.rename({col_e: "e", col_d_dv: "d_divest", col_d: "d"})
+        # canonical: (e, d_divest, d).  edd_divest_active uses ``p`` for
+        # the entity dim — rename to ``e``.
+        rename = {}
+        if cols[0] not in ("e", "entity"):
+            rename[cols[0]] = "e"
+        elif cols[0] == "entity":
+            rename["entity"] = "e"
+        if len(cols) > 1 and cols[1] != "d_divest":
+            rename[cols[1]] = "d_divest"
+        if len(cols) > 2 and cols[2] != "d":
+            rename[cols[2]] = "d"
+        if rename:
+            edd_dv = edd_dv.rename(rename)
         divest_contrib = (
             edd_dv.join(divest.lazy().rename({"d": "d_divest", "value": "v_dv"}),
                         on=["e", "d_divest"], how="inner")
@@ -406,9 +462,15 @@ def _entity_all_capacity(
         # the divestment in the same period.
         edd_dv = flex_data.ed_divest_set.lazy()
         cols = flex_data.ed_divest_set.columns
-        col_e = cols[0]
-        col_d = cols[1] if len(cols) > 1 else "d"
-        edd_dv = edd_dv.rename({col_e: "e", col_d: "d"})
+        rename = {}
+        if cols[0] not in ("e", "entity"):
+            rename[cols[0]] = "e"
+        elif cols[0] == "entity":
+            rename["entity"] = "e"
+        if len(cols) > 1 and cols[1] != "d":
+            rename[cols[1]] = "d"
+        if rename:
+            edd_dv = edd_dv.rename(rename)
         divest_contrib = (
             edd_dv.join(divest.lazy().rename({"value": "v_dv"}),
                         on=["e", "d"], how="inner")
@@ -644,9 +706,36 @@ def read_parameters(
     """
     p = SimpleNamespace()
 
+    # Entity universe — used to densify the (entity, period) wide frames
+    # so downstream consumers like
+    # ``calc_costs.py:cost_entity_fixed_invested`` find every invest
+    # entity in ``par.entity_lifetime_fixed_cost.columns`` (the legacy
+    # CSV path emitted zero-filled rows for every entity).
+    _entity_universe: list[str] = []
+    if (flex_data.nodeBalance is not None
+            and flex_data.nodeBalance.height > 0):
+        _entity_universe.extend(flex_data.nodeBalance["n"].to_list())
+    if (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        _entity_universe.extend(
+            flex_data.process_source_sink.select("p").unique()
+                .to_pandas()["p"].tolist()
+        )
+    # Also include any commodity nodes that show up in process_source_sink
+    # (sources / sinks) — these can be invest entities too.
+    if (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        for col in ("source", "sink"):
+            extra = flex_data.process_source_sink.select(col).unique().to_pandas()[col].tolist()
+            _entity_universe.extend(extra)
+    # Deduplicate while keeping insertion order.
+    _entity_universe = list(dict.fromkeys(_entity_universe))
+
     # ─── Write-once static params (entity-level scalars / per-arc tables) ──
     p.node = _build_p_node(flex_data)
-    p.entity_unitsize = _build_entity_unitsize_series(flex_data)
+    p.entity_unitsize = _build_entity_unitsize_series(
+        flex_data, entity_universe=_entity_universe,
+    )
 
     # commodity_co2_content — Series indexed by commodity (legacy used
     # to read this from input/p_commodity_co2_content.csv; in FlexData
@@ -844,14 +933,17 @@ def read_parameters(
         p.years_represented_d = pd.Series(dtype=float, index=empty_idx, name="value")
 
     # entity_max_units / entity_all_existing / entity_pre_existing —
-    # (solve, period) × entity.
+    # (solve, period) × entity.  Densify across the entity universe
+    # so downstream lookups by ``v.invest.columns`` find every entity.
     p.entity_max_units = _pdX_per_entity(
         flex_data.p_entity_max_units, solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
+        densify_entities=_entity_universe,
     )
     p.entity_all_existing = _pdX_per_entity(
         flex_data.p_entity_all_existing, solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
+        densify_entities=_entity_universe,
     )
 
     # entity_pre_existing — distinct from entity_all_existing on
@@ -904,17 +996,23 @@ def read_parameters(
     )
 
     # entity_fixed_cost / entity_lifetime_fixed_cost / entity_lifetime_fixed_cost_divest.
+    # Densify across the full entity universe — calc_costs.py:154-155
+    # indexes these by ``v.invest.columns`` / ``v.divest.columns``,
+    # which can include any entity.
     p.entity_fixed_cost = _pdX_per_entity(
         flex_data.p_ed_fixed_cost, solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
+        densify_entities=_entity_universe,
     )
     p.entity_lifetime_fixed_cost = _pdX_per_entity(
         flex_data.ed_lifetime_fixed_cost, solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
+        densify_entities=_entity_universe,
     )
     p.entity_lifetime_fixed_cost_divest = _pdX_per_entity(
         flex_data.ed_lifetime_fixed_cost_divest, solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
+        densify_entities=_entity_universe,
     )
 
     # node_annual_flow — Series((solve, period), node).
@@ -952,14 +1050,17 @@ def read_parameters(
     p.entity_annuity = _pdX_per_entity(
         flex_data.ed_entity_annual_discounted, solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
+        densify_entities=_entity_universe,
     )
     p.entity_annual_discounted = _pdX_per_entity(
         flex_data.ed_entity_annual_discounted, solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
+        densify_entities=_entity_universe,
     )
     p.entity_annual_divest_discounted = _pdX_per_entity(
         flex_data.ed_entity_annual_divest_discounted, solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
+        densify_entities=_entity_universe,
     )
 
     # inflation factors — Series((solve, period)).
@@ -974,9 +1075,16 @@ def read_parameters(
     )
 
     # node_capacity_for_scaling / group_capacity_for_scaling.
+    # Densify nodes for downstream slack-scaling lookups in
+    # ``out_node.py`` / ``calc_slacks.py``.
+    nodes_universe = []
+    if (flex_data.nodeBalance is not None
+            and flex_data.nodeBalance.height > 0):
+        nodes_universe = flex_data.nodeBalance["n"].to_list()
     p.node_capacity_for_scaling = _pdX_per_entity(
         flex_data.p_node_capacity_for_scaling, solve_name=solve_name,
         entity_dim="n", col_name="node", flex_data=flex_data,
+        densify_entities=nodes_universe,
     )
     p.group_capacity_for_scaling = _pdX_per_entity(
         flex_data.p_group_capacity_for_scaling, solve_name=solve_name,
@@ -1008,7 +1116,11 @@ def _empty_solve_period_per_entity(*, col_name: str) -> pd.DataFrame:
     return out
 
 
-def _build_entity_unitsize_series(flex_data: "FlexData") -> pd.Series:
+def _build_entity_unitsize_series(
+    flex_data: "FlexData",
+    *,
+    entity_universe: "list[str] | None" = None,
+) -> pd.Series:
     """Per-entity unitsize Series indexed by entity name.
 
     Combines ``p_unitsize`` (process side) and ``p_state_unitsize``
@@ -1030,11 +1142,17 @@ def _build_entity_unitsize_series(flex_data: "FlexData") -> pd.Series:
         s = df.set_index("n")["value"].astype(float)
         s.index.name = "entity"
         parts.append(s)
-    if not parts:
-        out = pd.Series(dtype=float, name="value", index=pd.Index([], name="entity"))
-        return out
-    out = pd.concat(parts)
-    # Deduplicate (unlikely; node/process sets are disjoint).
-    out = out[~out.index.duplicated(keep="first")]
+    if parts:
+        out = pd.concat(parts)
+        # Deduplicate (unlikely; node/process sets are disjoint).
+        out = out[~out.index.duplicated(keep="first")]
+    else:
+        out = pd.Series(dtype=float, index=pd.Index([], name="entity"))
     out.name = "entity"
+    # Densify with default 1000.0 (preprocessing default at
+    # entity_period_calc_params.py:191).
+    if entity_universe:
+        for e in entity_universe:
+            if e not in out.index:
+                out[e] = 1000.0
     return out

@@ -375,6 +375,65 @@ def test_write_outputs_fast_path_emits_all_dirs(tmp_path: Path) -> None:
     assert pq_dir.exists() and any(pq_dir.iterdir())
 
 
+def test_unit_capacity_period_table_includes_invested(tmp_path: Path) -> None:
+    """Δ.31 acceptance bar item 4 — ``unit_capacity__d.csv`` for a
+    multi-period investment fixture emits per-period invest values
+    AND a correctly-cumulative ``total`` column.
+
+    This exercises the post-solve derivation
+    ``total = existing + cumulative_invested - cumulative_divested``
+    via the FlexData ``edd_invest_set`` indirection — the legacy
+    GMPL-phase 3 path produced this row.
+    """
+    fixture = DATA / "work_network_coal_wind_battery_invest_cumulative"
+    db = fixture / "tests.sqlite"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+
+    from flextool.process_outputs.write_outputs import write_outputs
+
+    work = tmp_path / "fast"
+    work.mkdir()
+    step = run_single_solve_from_db(
+        f"sqlite:///{db}",
+        scenario_name="network_coal_wind_battery_invest_cumulative",
+        work_folder=work,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        write_outputs(
+            scenario_name="ncwbic",
+            write_methods=["csv"],
+            output_location=str(work),
+            subdir="ncwbic",
+            raw_output_dir=str(work / "output_raw"),
+            flex_data=step.flex_data,
+            solution=step.solution,
+            solve_name=step.solve_name,
+        )
+
+    csv = work / "output_csv" / "ncwbic" / "unit_capacity__d.csv"
+    assert csv.exists()
+    text = csv.read_text()
+    # Reads as a header + 8 rows (coal_plant × 4 periods + wind_plant × 4).
+    df = pd.read_csv(csv)
+    coal = df[df["unit"] == "coal_plant"].sort_values("period")
+    assert len(coal) == 4, f"expected 4 coal rows, got {len(coal)}"
+    # invested should be > 0 on every period (it's an active invest entity).
+    assert (coal["invested"] > 0).all(), (
+        f"invested column has zero rows: {coal[['period', 'invested']]}"
+    )
+    # total should be monotone non-decreasing (cumulative invest).
+    assert coal["total"].is_monotonic_increasing or all(
+        a <= b for a, b in zip(coal["total"], coal["total"].iloc[1:])
+    ), f"unit_capacity total not cumulative: {coal[['period', 'total']]}"
+    # And total = existing + invested_cumulative on the first period.
+    assert coal.iloc[0]["total"] == pytest.approx(
+        coal.iloc[0]["existing"] + coal.iloc[0]["invested"], rel=1e-6,
+    )
+
+
 def test_unit_capacity_period_table_non_empty(tmp_path: Path) -> None:
     """Δ.31 acceptance bar item 4 — ``unit_capacity__d.csv`` (the
     user-facing output_csv table for unit capacity by period) emits
