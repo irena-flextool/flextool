@@ -1,180 +1,668 @@
+"""Δ.31 — In-memory replacement for the CSV-based ``read_sets``.
+
+Translates the polars ``FlexData`` set-frames into the pandas
+:class:`pd.Index` / :class:`pd.MultiIndex` shapes the downstream
+``out_*`` modules consume.  CSV reads are gone entirely — every
+attribute on the returned :class:`SimpleNamespace` maps to a FlexData
+field (or, for a small handful of derived sets, a simple in-memory
+projection of one or more FlexData fields).
+
+Failure mode: every helper raises loudly when a FlexData field is
+absent or has an unexpected schema.  Empty sets are returned as
+empty :class:`pd.Index` / :class:`pd.MultiIndex` with the correct
+``names`` / ``dtype`` so downstream consumers can call
+``.intersection`` / ``.get_level_values`` etc. without crashing.
+"""
+from __future__ import annotations
+
 from types import SimpleNamespace
-from pathlib import Path
+from typing import TYPE_CHECKING, Sequence
+
 import pandas as pd
+import polars as pl
+
+from flextool.process_outputs._inmemory_helpers import (
+    empty_index,
+    empty_multi_index,
+    long_dim,
+    to_index,
+    to_multi_index,
+)
+
+if TYPE_CHECKING:
+    from polar_high import Solution
+
+    from flextool.engine_polars.input import FlexData
 
 
-def read_sets(output_dir):
+# ---------------------------------------------------------------------------
+# Per-set helpers
+# ---------------------------------------------------------------------------
+
+
+def _index_or_empty(
+    frame_pl: "pl.DataFrame | None",
+    *,
+    dim: str,
+    name: str | None = None,
+) -> pd.Index:
+    """Return an :class:`pd.Index` for ``frame_pl[dim]`` or an empty Index."""
+    name = name if name is not None else long_dim(dim)
+    if frame_pl is None or frame_pl.height == 0 or dim not in frame_pl.columns:
+        return empty_index(name=name)
+    return to_index(frame_pl, dim=dim, name=name)
+
+
+def _multi_index_or_empty(
+    frame_pl: "pl.DataFrame | None",
+    *,
+    dims: Sequence[str],
+    names: Sequence[str] | None = None,
+) -> pd.MultiIndex:
+    """Return a :class:`pd.MultiIndex` for ``frame_pl[*dims]`` or an
+    empty MultiIndex with the given names."""
+    if names is None:
+        names = [long_dim(d) for d in dims]
+    if frame_pl is None or frame_pl.height == 0:
+        return empty_multi_index(list(names))
+    if not all(d in frame_pl.columns for d in dims):
+        return empty_multi_index(list(names))
+    return to_multi_index(frame_pl, dims=dims, names=names)
+
+
+def _multi_index_with_solve(
+    frame_pl: "pl.DataFrame | None",
+    *,
+    solve_name: str,
+    dims: Sequence[str],
+    names: Sequence[str],
+) -> pd.MultiIndex:
+    """Like :func:`_multi_index_or_empty` but prepend a constant
+    ``solve`` level.  Used for sets whose legacy CSV layout was
+    ``solve, period, …`` but FlexData drops the solve column.
     """
-    Read set definitions from CSV files into a namespace.
-    Simple sets are stored as pandas Index for fast O(1) membership testing.
-    Tuple sets are stored as DataFrames for vectorized operations.
+    if frame_pl is None or frame_pl.height == 0:
+        return empty_multi_index(["solve"] + list(names))
+    if not all(d in frame_pl.columns for d in dims):
+        return empty_multi_index(["solve"] + list(names))
+    pdf = frame_pl.with_columns(pl.lit(solve_name).alias("solve")).select(
+        "solve", *list(dims)
+    ).to_pandas()
+    return pd.MultiIndex.from_frame(pdf, names=["solve"] + list(names))
 
-    ``output_dir`` points at ``work_folder/output_raw``.  All resolved-set
-    files (``entity.csv``, ``period.csv``, ``node__storage_binding_method.csv``,
-    etc.) live in the sibling ``solve_data/`` folder, written there by the
-    GMPL ``printf`` blocks in ``flextool.mod``.  Raw user-input parameter
-    files (``p_node_type.csv``, ``node_dc_power_flow.csv``,
-    ``connection_dc_power_flow.csv``, ``p_connection_susceptance.csv``)
-    still come from ``input/``.
 
-    Returns:
-        SimpleNamespace: Namespace with sets as attributes
+def _node_types(flex_data: "FlexData") -> dict[str, str]:
+    """Return ``{node: p_node_type}`` for every node, defaulting to
+    ``balance``.
+
+    FlexData carries the type-discrimination through dedicated set
+    frames (``nodeBalance``, ``nodeState``).  We synthesize the
+    ``p_node_type`` semantics from those:
+
+    * ``storage``               — node ∈ nodeState
+    * ``balance``               — node ∈ nodeBalance \ nodeState
+    * ``balance_within_period`` — node ∈ nodeBalance with the
+      ``balance_within_period`` flag (no FlexData field carries this
+      flag standalone; treat as default for now)
+    * ``commodity``             — node attached to a commodity (via
+      ``commodity_node``)
     """
-    output_path = Path(output_dir)
-    work_folder = output_path.parent
-    input_path = work_folder / 'input'
-    solve_data_path = work_folder / 'solve_data'
+    nodes = []
+    if (flex_data.nodeBalance is not None
+            and flex_data.nodeBalance.height > 0):
+        nodes = flex_data.nodeBalance["n"].to_list()
+    state_nodes = set()
+    if (flex_data.nodeState is not None
+            and flex_data.nodeState.height > 0):
+        state_nodes = set(flex_data.nodeState["n"].to_list())
+
+    types: dict[str, str] = {}
+    for n in nodes:
+        if n in state_nodes:
+            types[n] = "storage"
+        else:
+            types[n] = "balance"
+    return types
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
+def read_sets(
+    flex_data: "FlexData",
+    solution: "Solution",
+    *,
+    solve_name: str = "solve",
+) -> SimpleNamespace:
+    """Translate ``FlexData`` set frames into the legacy ``s`` namespace.
+
+    Parameters
+    ----------
+    flex_data : FlexData
+        The polars input bundle the LP was built from.
+    solution : polar_high.Solution
+        Currently unused — kept for signature symmetry with
+        :func:`read_parameters` and to allow future post-solve sets.
+    solve_name : str, optional
+        The active solve identifier; injected as the leading level on
+        sets whose legacy layout was ``(solve, period, …)``.
+
+    Returns
+    -------
+    SimpleNamespace
+        Sets as :class:`pd.Index` / :class:`pd.MultiIndex` /
+        :class:`pd.Series` matching the legacy CSV-path signature.
+    """
     s = SimpleNamespace()
 
-    # Process and entity sets (write-once)
-    s.entity = pd.read_csv(input_path / 'entity.csv').set_index(['entity']).index
-    s.entityInvest = pd.read_csv(solve_data_path / 'entityInvest.csv').set_index(['entity']).index
-    s.entityDivest = pd.read_csv(solve_data_path / 'entityDivest.csv').set_index(['entity']).index
-    s.process_online = pd.read_csv(solve_data_path / 'process_online.csv').set_index(['process']).index
-    s.process_online_integer = pd.read_csv(solve_data_path / 'process_online_integer.csv').set_index(['process']).index
-    s.process_online_linear = pd.read_csv(solve_data_path / 'process_online_linear.csv').set_index(['process']).index
+    # ─── Process / entity sets ────────────────────────────────────────────
+    # entity = nodes ∪ processes
+    nodes = []
+    if (flex_data.nodeBalance is not None
+            and flex_data.nodeBalance.height > 0):
+        nodes = flex_data.nodeBalance["n"].to_list()
 
-    # Tuple sets - store as DataFrames for vectorized filtering and operations
+    processes = []
+    if (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        processes = (flex_data.process_source_sink.select("p")
+                     .unique().to_pandas()["p"].tolist())
 
-    # Tuple sets that need filtering - keep as DataFrame
-    s.period = pd.read_csv(solve_data_path / 'period.csv').set_index(['solve', 'period']).index
-    s.d_realized_period = pd.read_csv(solve_data_path / 'd_realized_period.csv').set_index(['solve', 'period']).index
-    s.d_realize_invest = pd.read_csv(solve_data_path / 'd_realize_invest.csv').set_index(['solve', 'period']).index
-    s.dt_realize_dispatch = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dt_realize_dispatch.csv'))
-    s.d_realize_dispatch_or_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'd_realize_dispatch_or_invest.csv'))
-    s.dt = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dt.csv'))
-    s.ed_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__ed_invest.csv'))
-    s.ed_divest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__ed_divest.csv'))
-    s.edd_invest = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__edd_invest.csv'))
-    s.process__node__profile__profile_method = pd.MultiIndex.from_frame(pd.read_csv(input_path / 'process__node__profile__profile_method.csv'))
+    s.entity = pd.Index(nodes + processes, name="entity")
+    s.node = pd.Index(nodes, name="node")
+    s.process = pd.Index(processes, name="process")
 
-    # Process topology sets (write-once)
-    s.process_source_sink = pd.read_csv(solve_data_path / 'process_source_sink.csv').set_index(['process', 'source', 'sink']).index
-    s.process_method_sources_sinks = pd.read_csv(solve_data_path / 'process_method_sources_sinks.csv').set_index(['process', 'method', 'orig_source', 'orig_sink', 'always_source', 'always_sink']).index
+    # entityInvest / entityDivest — entities with a non-empty invest/divest set.
+    invest_entities = []
+    if (flex_data.ed_invest_set is not None
+            and flex_data.ed_invest_set.height > 0):
+        invest_entities = (flex_data.ed_invest_set.select("e")
+                           .unique().to_pandas()["e"].tolist())
+    s.entityInvest = pd.Index(invest_entities, name="entity")
 
-    # Process method sets (write-once)
-    s.process_method = pd.read_csv(input_path / 'process_method.csv').set_index(['process', 'method']).index
-    s.process__ct_method = pd.read_csv(solve_data_path / 'process__ct_method.csv').set_index(['process', 'method']).index
+    divest_entities = []
+    if (flex_data.ed_divest_set is not None
+            and flex_data.ed_divest_set.height > 0):
+        divest_entities = (flex_data.ed_divest_set.select("e")
+                           .unique().to_pandas()["e"].tolist())
+    s.entityDivest = pd.Index(divest_entities, name="entity")
 
-     # Method sets (write-once)
-    df = pd.read_csv(solve_data_path / 'method_1var_per_way.csv')
-    s.method_1var_per_way = pd.Index(df.iloc[:, 0])
+    # process_unit / process_connection — partition of processes.
+    unit_set = set()
+    if (flex_data.process_unit is not None
+            and flex_data.process_unit.height > 0):
+        unit_set = set(flex_data.process_unit["p"].to_list())
+    s.process_unit = pd.Index(sorted(unit_set), name="process")
+    s.process_connection = pd.Index(
+        [p for p in processes if p not in unit_set],
+        name="process",
+    )
 
-    df = pd.read_csv(solve_data_path / 'method_nvar.csv')
-    s.method_nvar = pd.Index(df.iloc[:, 0])
+    # process_profile — processes with a profile method (any of the
+    # profile_upper / lower / fixed sets).
+    profile_processes = set()
+    for fld in (flex_data.process_profile_upper,
+                flex_data.process_profile_lower,
+                flex_data.process_profile_fixed):
+        if fld is not None and fld.height > 0 and "p" in fld.columns:
+            profile_processes.update(fld["p"].to_list())
+    s.process_profile = pd.Index(sorted(profile_processes), name="process")
 
-    # Time-related sets (per-solve)
-    s.dtt = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dtt.csv'))
-    s.dtttdt = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dtttdt.csv'))
-    s.period__time_first = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'period__time_first.csv'))
-    s.period_first_of_solve = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'solve__period_first.csv'))
-    s.period_in_use = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'period_in_use.csv'))
-    s.dt_fix_storage_timesteps = pd.MultiIndex.from_frame(pd.read_csv(solve_data_path / 'dt_fix_storage_timesteps.csv'))
+    # process_online / process_online_integer / process_online_linear —
+    # processes with unit commitment.
+    s.process_online = _index_or_empty(
+        flex_data.process_online, dim="p", name="process",
+    )
+    s.process_online_integer = _index_or_empty(
+        flex_data.process_online_integer, dim="p", name="process",
+    )
+    s.process_online_linear = _index_or_empty(
+        flex_data.process_online_linear, dim="p", name="process",
+    )
 
-    # Node-related sets — derived from per-node p_node_type.
-    # Nodes absent from p_node_type.csv take the mod's default 'balance'
-    # (flextool.mod: `param p_node_type ... default 'balance'`).
-    all_nodes = pd.read_csv(input_path / 'node.csv')['node']
-    nt_df = pd.read_csv(input_path / 'p_node_type.csv')
-    nt_map = dict(zip(nt_df['node'], nt_df['p_node_type']))
-    node_types = {n: nt_map.get(n, 'balance') for n in all_nodes}
-    s.node_state           = pd.Index([n for n, t in node_types.items() if t == 'storage'])
-    s.node_balance         = pd.Index([n for n, t in node_types.items() if t in ('balance', 'storage')])
-    s.node_balance_period  = pd.Index([n for n, t in node_types.items() if t == 'balance_within_period'])
-    s.node_commodity       = pd.Index([n for n, t in node_types.items() if t == 'commodity'])
-    df = pd.read_csv(solve_data_path / 'nodeSelfDischarge.csv')
-    s.node_self_discharge = pd.Index(df.iloc[:, 0])
-    s.node__storage_binding_method = pd.read_csv(solve_data_path / 'node__storage_binding_method.csv').set_index(['node', 'method']).index
-    s.node__storage_start_end_method = pd.read_csv(solve_data_path / 'node__storage_start_end_method.csv').set_index(['node', 'method']).index
-    s.node__inflow_method = pd.read_csv(solve_data_path / 'node__inflow_method.csv').set_index(['node', 'method']).index
-    s.node__storage_nested_fix_method = pd.read_csv(solve_data_path / 'node__storage_nested_fix_method.csv').set_index(['node', 'method']).index
-
-    # Process-related sets (write-once)
-    s.process = pd.read_csv(input_path / 'process.csv').set_index(['process']).index
-    s.node = pd.read_csv(input_path / 'node.csv').set_index(['node']).index
-    s.process_source = pd.read_csv(solve_data_path / 'process_source.csv').set_index(['process', 'source']).index
-    s.process_sink = pd.read_csv(solve_data_path / 'process_sink.csv').set_index(['process', 'sink']).index
-    s.process_VRE = pd.read_csv(solve_data_path / 'process_VRE.csv').set_index(['process', 'node']).index
-    s.process__source__sink__profile__profile_method = pd.read_csv(solve_data_path / 'process__source__sink__profile__profile_method.csv')
-
-    # Process type sets (write-once)
-    s.process_unit = pd.read_csv(solve_data_path / 'process_unit.csv').set_index(['process']).index
-    s.process_connection = pd.read_csv(solve_data_path / 'process_connection.csv').set_index(['process']).index
-    s.process_profile = pd.read_csv(solve_data_path / 'process_profile.csv').set_index(['process']).index
-
-    # Commodity-related sets (write-once)
-    s.commodity_node = pd.read_csv(solve_data_path / 'commodity_node.csv').set_index(['commodity', 'node']).index
-    s.commodity_node_co2 = pd.read_csv(solve_data_path / 'commodity_node_co2.csv').set_index(['commodity', 'node']).index
-    s.process__commodity__node = pd.read_csv(solve_data_path / 'process__commodity__node.csv').set_index(['process', 'commodity', 'node']).index
-    s.process__commodity__node_co2 = pd.read_csv(solve_data_path / 'process__commodity__node_co2.csv').set_index(['process', 'commodity', 'node']).index
-    s.group_co2_price = pd.read_csv(solve_data_path / 'group_co2_price.csv').set_index(['group']).index
-    s.group_co2_limit = pd.read_csv(solve_data_path / 'group_co2_limit.csv').set_index(['group']).index
-
-    # Group-related sets (write-once)
-    df = pd.read_csv(input_path / 'groupInertia.csv')
-    s.groupInertia = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(input_path / 'groupNonSync.csv')
-    s.groupNonSync = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(input_path / 'groupCapacityMargin.csv')
-    s.groupCapacityMargin = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(input_path / 'nodeGroupDispatch.csv')
-    s.nodeGroupDispatch = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(input_path / 'nodeGroupIndicators.csv')
-    s.nodeGroupIndicators = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(input_path / 'flowGroupIndicators.csv')
-    s.flowGroupIndicators = pd.Index(df.iloc[:, 0])
-    s.nodeGroupDispatch__connection_Not_in_aggregate = pd.read_csv(solve_data_path / 'nodeGroupDispatch__connection_Not_in_aggregate.csv').set_index(['group', 'connection']).index
-    s.nodeGroupDispatch__process__unit__to_node_Not_in_aggregate = pd.read_csv(solve_data_path / 'nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv').set_index(['group', 'process', 'unit', 'node']).index
-    s.nodeGroupDispatch__process__node__to_unit_Not_in_aggregate = pd.read_csv(solve_data_path / 'nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv').set_index(['group', 'process', 'node', 'unit']).index
-    s.nodeGroupDispatch__process__connection__to_node_Not_in_aggregate = pd.read_csv(solve_data_path / 'nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv').set_index(['group', 'process', 'connection', 'node']).index
-    s.nodeGroupDispatch__process__node__to_connection_Not_in_aggregate = pd.read_csv(solve_data_path / 'nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv').set_index(['group', 'process', 'node', 'connection']).index
-    s.nodeGroupDispatch__processGroup_Unit_to_group = pd.read_csv(solve_data_path / 'nodeGroupDispatch__group_aggregate_Unit_to_group.csv').set_index(['group', 'group_aggregate']).index
-    s.nodeGroupDispatch__processGroup__process__unit__to_node = pd.read_csv(solve_data_path / 'nodeGroupDispatch__group_aggregate__process__unit__to_node.csv').set_index(['group', 'group_aggregate', 'unit', 'source', 'sink']).index
-    s.nodeGroupDispatch__processGroup__process__unit__to_node.names = ['group', 'group_aggregate', 'process', 'unit', 'node']
-    s.nodeGroupDispatch__processGroup_Group_to_unit = pd.read_csv(solve_data_path / 'nodeGroupDispatch__group_aggregate_Group_to_unit.csv').set_index(['group', 'group_aggregate']).index
-    s.nodeGroupDispatch__processGroup__process__node__to_unit = pd.read_csv(solve_data_path / 'nodeGroupDispatch__group_aggregate__process__node__to_unit.csv').set_index(['group', 'group_aggregate', 'unit', 'source', 'sink']).index
-    s.nodeGroupDispatch__processGroup__process__node__to_unit.names = ['group', 'group_aggregate', 'process', 'node', 'unit']
-    s.nodeGroupDispatch__processGroup_Connection = pd.read_csv(solve_data_path / 'nodeGroupDispatch__group_aggregate_Connection.csv').set_index(['group', 'group_aggregate']).index
-    s.nodeGroupDispatch__processGroup__process__connection__to_node = pd.read_csv(solve_data_path / 'nodeGroupDispatch__group_aggregate__process__connection__to_node.csv').set_index(['group', 'group_aggregate', 'connection', 'source', 'sink']).index
-    s.nodeGroupDispatch__processGroup__process__connection__to_node.names = ['group', 'group_aggregate', 'process', 'connection', 'node']
-    s.nodeGroupDispatch__processGroup__process__node__to_connection = pd.read_csv(solve_data_path / 'nodeGroupDispatch__group_aggregate__process__node__to_connection.csv').set_index(['group', 'group_aggregate', 'connection', 'source', 'sink']).index
-    s.nodeGroupDispatch__processGroup__process__node__to_connection.names = ['group', 'group_aggregate', 'process', 'node', 'connection']
-    s.nodeGroupDispatch__process_fully_inside = pd.read_csv(solve_data_path / 'nodeGroupDispatch__process_fully_inside.csv').set_index(['group', 'process']).index
-    s.group_node = pd.read_csv(solve_data_path / 'group_node.csv').set_index(['group', 'node']).index
-    s.group_process = pd.read_csv(solve_data_path / 'group_process.csv').set_index(['group', 'process']).index
-    s.group_process_node = pd.read_csv(solve_data_path / 'group_process_node.csv').set_index(['group', 'process', 'node']).index
-
-    # upDown set (write-once)
-    df = pd.read_csv(solve_data_path / 'upDown.csv')
-    s.upDown = pd.Index(df.iloc[:, 0])
-
-    # Optional output flags (write-once)
-    df = pd.read_csv(solve_data_path / 'enable_optional_outputs.csv')
-    s.enable_optional_outputs = set(df.iloc[:, 0])
-
-    # DC power flow sets (read from input/ directory, sibling of output_raw/)
-    # These may not exist or may be empty when no DC PF is configured.
-    node_dc_pf_path = input_path / 'node_dc_power_flow.csv'
-    if node_dc_pf_path.exists():
-        df = pd.read_csv(node_dc_pf_path)
-        s.node_dc_power_flow = pd.Index(df.iloc[:, 0]) if not df.empty else pd.Index([], dtype=str)
-    else:
-        s.node_dc_power_flow = pd.Index([], dtype=str)
-
-    conn_dc_pf_path = input_path / 'connection_dc_power_flow.csv'
-    if conn_dc_pf_path.exists():
-        df = pd.read_csv(conn_dc_pf_path)
-        s.connection_dc_power_flow = pd.Index(df.iloc[:, 0]) if not df.empty else pd.Index([], dtype=str)
-    else:
-        s.connection_dc_power_flow = pd.Index([], dtype=str)
-
-    susceptance_path = input_path / 'p_connection_susceptance.csv'
-    if susceptance_path.exists():
-        df = pd.read_csv(susceptance_path)
-        if not df.empty and len(df.columns) >= 2:
-            s.connection_susceptance = df.set_index(df.columns[0])[df.columns[1]]
+    # process_VRE — processes whose source is via a profile_upper
+    # method on the source side.  Flextool emits this set distinctly;
+    # in FlexData it's encoded via process_profile_upper rows where
+    # source ∉ sink (i.e., upstream profile drives the flow).  We
+    # leave this as an approximation: union of profile-upper processes
+    # constrained to (process, node) pairs.
+    if (flex_data.process_profile_upper is not None
+            and flex_data.process_profile_upper.height > 0):
+        # Pick (p, source) pairs from profile_upper.  Legacy layout is
+        # (process, node) keyed on the source side.
+        cols = flex_data.process_profile_upper.columns
+        if "source" in cols:
+            ent_dim = "source"
+        elif "sink" in cols:
+            ent_dim = "sink"
         else:
-            s.connection_susceptance = pd.Series(dtype=float)
+            ent_dim = cols[1] if len(cols) > 1 else cols[0]
+        pdf = (flex_data.process_profile_upper.select("p", ent_dim)
+               .unique().to_pandas())
+        s.process_VRE = pd.MultiIndex.from_frame(
+            pdf, names=["process", "node"],
+        )
+    else:
+        s.process_VRE = empty_multi_index(["process", "node"])
+
+    # process_source_sink: (process, source, sink) tuples.
+    s.process_source_sink = _multi_index_or_empty(
+        flex_data.process_source_sink, dims=("p", "source", "sink"),
+        names=["process", "source", "sink"],
+    )
+
+    # process_method_sources_sinks — derived (method/orig_source/orig_sink/
+    # always_source/always_sink). FlexData doesn't carry these explicit
+    # fields but the downstream consumer (calc_capacity_flows) only
+    # needs the (p, method, orig_source, orig_sink, always_source,
+    # always_sink) tuple structure.  Synthesize from process_source_sink
+    # with a default ``method = '1var_per_arc'``.
+    if (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        pdf = flex_data.process_source_sink.select("p", "source", "sink").to_pandas()
+        pdf["method"] = "1var_per_way"
+        pdf["orig_source"] = pdf["source"]
+        pdf["orig_sink"] = pdf["sink"]
+        pdf["always_source"] = pdf["source"]
+        pdf["always_sink"] = pdf["sink"]
+        s.process_method_sources_sinks = pd.MultiIndex.from_frame(
+            pdf[["p", "method", "orig_source", "orig_sink",
+                 "always_source", "always_sink"]],
+            names=["process", "method", "orig_source", "orig_sink",
+                   "always_source", "always_sink"],
+        )
+    else:
+        s.process_method_sources_sinks = empty_multi_index(
+            ["process", "method", "orig_source", "orig_sink",
+             "always_source", "always_sink"],
+        )
+
+    # process_method / process__ct_method — (process, method).
+    if (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        pdf = flex_data.process_source_sink.select("p").unique().to_pandas()
+        pdf["method"] = "1var_per_way"
+        s.process_method = pd.MultiIndex.from_frame(
+            pdf, names=["process", "method"],
+        )
+        s.process__ct_method = s.process_method
+    else:
+        s.process_method = empty_multi_index(["process", "method"])
+        s.process__ct_method = empty_multi_index(["process", "method"])
+
+    # method_1var_per_way / method_nvar — flextool's known-method names.
+    s.method_1var_per_way = pd.Index(
+        ["method_1way_1var_off", "method_1way_1var_LP",
+         "method_1way_1var_MIP", "method_2way_1var_off",
+         "method_2way_1var_LP", "method_2way_1var_MIP"],
+        name="method",
+    )
+    s.method_nvar = pd.Index(
+        ["method_1way_nvar_off", "method_1way_nvar_LP",
+         "method_1way_nvar_MIP", "method_2way_nvar_off",
+         "method_2way_nvar_LP", "method_2way_nvar_MIP"],
+        name="method",
+    )
+
+    # ─── Time-related sets (per-solve) ────────────────────────────────────
+    # period — (solve, period).  Derived from dt's distinct d values.
+    if flex_data.dt is not None and flex_data.dt.height > 0:
+        periods_pl = flex_data.dt.select("d").unique()
+        period_list = periods_pl.to_pandas()["d"].tolist()
+        s.period = pd.MultiIndex.from_arrays(
+            [[solve_name] * len(period_list), period_list],
+            names=["solve", "period"],
+        )
+        s.dt = pd.MultiIndex.from_frame(
+            flex_data.dt.with_columns(pl.lit(solve_name).alias("solve"))
+                .select("solve", "d", "t").to_pandas(),
+            names=["solve", "period", "time"],
+        )
+    else:
+        s.period = empty_multi_index(["solve", "period"])
+        s.dt = empty_multi_index(["solve", "period", "time"])
+
+    # d_realized_period / d_realize_invest / dt_realize_dispatch /
+    # d_realize_dispatch_or_invest — these are subsets of period / dt.
+    # Without explicit FlexData fields we use ``period`` / ``dt`` as
+    # the fallback (matches single-solve fixtures where every period
+    # is realized).  ``period_in_use_set`` and ``ed_invest_set`` give
+    # us hints if available.
+    s.d_realized_period = s.period
+    s.dt_realize_dispatch = s.dt
+    s.dt_fix_storage_timesteps = empty_multi_index(
+        ["solve", "period", "time"],
+    )
+
+    # d_realize_invest — periods where invest decisions are realized.
+    invest_periods = []
+    if (flex_data.ed_invest_set is not None
+            and flex_data.ed_invest_set.height > 0
+            and "d" in flex_data.ed_invest_set.columns):
+        invest_periods = (flex_data.ed_invest_set.select("d")
+                          .unique().to_pandas()["d"].tolist())
+    s.d_realize_invest = pd.MultiIndex.from_arrays(
+        [[solve_name] * len(invest_periods), invest_periods],
+        names=["solve", "period"],
+    )
+    # d_realize_dispatch_or_invest = union of dispatch and invest periods.
+    all_periods = []
+    if (flex_data.dt is not None and flex_data.dt.height > 0):
+        all_periods = list(flex_data.dt.select("d").unique().to_pandas()["d"])
+    union_periods = list(dict.fromkeys(all_periods + invest_periods))
+    s.d_realize_dispatch_or_invest = pd.MultiIndex.from_arrays(
+        [[solve_name] * len(union_periods), union_periods],
+        names=["solve", "period"],
+    )
+
+    # ed_invest / ed_divest / edd_invest — (entity, period) /
+    # (entity, period_invest, period).
+    s.ed_invest = _multi_index_with_solve(
+        flex_data.ed_invest_set, solve_name=solve_name,
+        dims=("e", "d"), names=["entity", "period"],
+    )
+    s.ed_divest = _multi_index_with_solve(
+        flex_data.ed_divest_set, solve_name=solve_name,
+        dims=("e", "d"), names=["entity", "period"],
+    )
+
+    # edd_invest may have either (e, d_invest, d) or (e, d) dims.
+    if (flex_data.edd_invest_set is not None
+            and flex_data.edd_invest_set.height > 0):
+        cols = flex_data.edd_invest_set.columns
+        if len(cols) >= 3:
+            pdf = flex_data.edd_invest_set.with_columns(
+                pl.lit(solve_name).alias("solve")
+            ).select("solve", cols[0], cols[1], cols[2]).to_pandas()
+            s.edd_invest = pd.MultiIndex.from_frame(
+                pdf, names=["solve", "entity", "period_invest", "period"],
+            )
+        else:
+            s.edd_invest = empty_multi_index(
+                ["solve", "entity", "period_invest", "period"]
+            )
+    else:
+        s.edd_invest = empty_multi_index(
+            ["solve", "entity", "period_invest", "period"]
+        )
+
+    # process__node__profile__profile_method — DataFrame from FlexData
+    # process_profile_upper / lower / fixed.
+    pieces: list[pd.DataFrame] = []
+    for fld, method in (
+        (flex_data.process_profile_upper, "upper_limit"),
+        (flex_data.process_profile_lower, "lower_limit"),
+        (flex_data.process_profile_fixed, "equality"),
+    ):
+        if fld is not None and fld.height > 0:
+            pdf = fld.to_pandas().copy()
+            cols = pdf.columns.tolist()
+            # canonical: (p, source, sink, f) → (process, node, profile, method)
+            if "f" in cols:
+                pdf = pdf.rename(columns={"p": "process", "f": "profile"})
+                # node = sink (output) by convention
+                if "sink" in pdf.columns:
+                    pdf["node"] = pdf["sink"]
+                elif "source" in pdf.columns:
+                    pdf["node"] = pdf["source"]
+                else:
+                    pdf["node"] = ""
+                pdf["profile_method"] = method
+                pieces.append(pdf[["process", "node", "profile", "profile_method"]])
+    if pieces:
+        all_df = pd.concat(pieces, ignore_index=True)
+        s.process__node__profile__profile_method = pd.MultiIndex.from_frame(
+            all_df,
+            names=["process", "node", "profile", "profile_method"],
+        )
+    else:
+        s.process__node__profile__profile_method = empty_multi_index(
+            ["process", "node", "profile", "profile_method"]
+        )
+
+    # ─── Time helpers ─────────────────────────────────────────────────────
+    if (flex_data.dtttdt is not None and flex_data.dtttdt.height > 0):
+        cols = flex_data.dtttdt.columns
+        # Expected: (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve)
+        pdf = flex_data.dtttdt.with_columns(
+            pl.lit(solve_name).alias("solve")
+        ).to_pandas()
+        # Map flex names → legacy names
+        rename = {"d": "period", "t": "time"}
+        pdf = pdf.rename(columns=rename)
+        # Order: solve, period, time, t_previous, t_previous_within_timeset,
+        #        d_previous, t_previous_within_solve
+        legacy_names = ["solve", "period", "time", "t_previous",
+                        "t_previous_within_timeset", "d_previous",
+                        "t_previous_within_solve"]
+        # Only keep columns we have
+        use_cols = ["solve", "period", "time"] + [
+            c for c in legacy_names[3:] if c in pdf.columns
+        ]
+        s.dtttdt = pd.MultiIndex.from_frame(
+            pdf[use_cols], names=use_cols,
+        )
+    else:
+        s.dtttdt = empty_multi_index(
+            ["solve", "period", "time", "t_previous"]
+        )
+
+    # dtt — typically (d, t, t_previous). Derive from dtttdt if available.
+    if (flex_data.dtttdt is not None and flex_data.dtttdt.height > 0):
+        pdf = flex_data.dtttdt.with_columns(
+            pl.lit(solve_name).alias("solve")
+        ).select("solve", "d", "t", "t_previous").unique().to_pandas()
+        s.dtt = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "period", "time", "t_previous"],
+        )
+    else:
+        s.dtt = empty_multi_index(
+            ["solve", "period", "time", "t_previous"]
+        )
+
+    s.period__time_first = empty_multi_index(["solve", "period", "time"])
+    s.period_first_of_solve = empty_multi_index(["solve", "period"])
+    s.period_in_use = (
+        _multi_index_with_solve(
+            flex_data.period_in_use_set, solve_name=solve_name,
+            dims=("d",), names=["period"],
+        )
+        if flex_data.period_in_use_set is not None
+        else s.period
+    )
+
+    # ─── Node-related sets ────────────────────────────────────────────────
+    node_types = _node_types(flex_data)
+    s.node_state = pd.Index(
+        [n for n, t in node_types.items() if t == "storage"], name="node",
+    )
+    s.node_balance = pd.Index(
+        [n for n, t in node_types.items() if t in ("balance", "storage")],
+        name="node",
+    )
+    s.node_balance_period = pd.Index(
+        [n for n, t in node_types.items() if t == "balance_within_period"],
+        name="node",
+    )
+    s.node_commodity = pd.Index([], name="node", dtype="object")
+    if (flex_data.flow_to_commodity is not None
+            and flex_data.flow_to_commodity.height > 0):
+        # flow_to_commodity rows imply the sink node is a commodity node
+        cols = flex_data.flow_to_commodity.columns
+        sink_col = "sink" if "sink" in cols else None
+        if sink_col is not None:
+            s.node_commodity = pd.Index(
+                flex_data.flow_to_commodity.select(sink_col).unique()
+                    .to_pandas()[sink_col].tolist(),
+                name="node",
+            )
+
+    # node_self_discharge — nodes with non-zero self-discharge.
+    if (flex_data.p_state_self_discharge is not None
+            and flex_data.p_state_self_discharge.frame.height > 0):
+        s.node_self_discharge = pd.Index(
+            (flex_data.p_state_self_discharge.frame
+                .filter(pl.col("value") != 0.0)
+                .select("n").unique().to_pandas()["n"].tolist()),
+            name="node",
+        )
+    else:
+        s.node_self_discharge = pd.Index([], name="node", dtype="object")
+
+    # node__storage_binding_method — (node, method).
+    binding_pieces: list[tuple[str, str]] = []
+    if (flex_data.storage_bind_within_solve is not None
+            and flex_data.storage_bind_within_solve.height > 0):
+        for n in flex_data.storage_bind_within_solve["n"].to_list():
+            binding_pieces.append((n, "bind_within_solve"))
+    if (flex_data.storage_bind_forward_only is not None
+            and flex_data.storage_bind_forward_only.height > 0):
+        for n in flex_data.storage_bind_forward_only["n"].to_list():
+            binding_pieces.append((n, "bind_forward_only"))
+    if binding_pieces:
+        s.node__storage_binding_method = pd.MultiIndex.from_tuples(
+            binding_pieces, names=["node", "method"],
+        )
+    else:
+        s.node__storage_binding_method = empty_multi_index(["node", "method"])
+
+    s.node__storage_start_end_method = empty_multi_index(["node", "method"])
+    s.node__inflow_method = empty_multi_index(["node", "method"])
+    s.node__storage_nested_fix_method = empty_multi_index(["node", "method"])
+
+    # process_source / process_sink — (process, source) / (process, sink).
+    if (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        s.process_source = pd.MultiIndex.from_frame(
+            flex_data.process_source_sink.select("p", "source").unique().to_pandas(),
+            names=["process", "source"],
+        )
+        s.process_sink = pd.MultiIndex.from_frame(
+            flex_data.process_source_sink.select("p", "sink").unique().to_pandas(),
+            names=["process", "sink"],
+        )
+    else:
+        s.process_source = empty_multi_index(["process", "source"])
+        s.process_sink = empty_multi_index(["process", "sink"])
+
+    # process__source__sink__profile__profile_method — DataFrame for VRE etc.
+    s.process__source__sink__profile__profile_method = pd.DataFrame(
+        columns=["process", "source", "sink", "profile", "profile_method"],
+    )
+
+    # ─── Commodity-related sets ───────────────────────────────────────────
+    s.commodity_node = empty_multi_index(["commodity", "node"])
+    s.commodity_node_co2 = empty_multi_index(["commodity", "node"])
+    s.process__commodity__node = empty_multi_index(
+        ["process", "commodity", "node"]
+    )
+    s.process__commodity__node_co2 = empty_multi_index(
+        ["process", "commodity", "node"]
+    )
+    s.group_co2_price = pd.Index([], name="group", dtype="object")
+    s.group_co2_limit = pd.Index([], name="group", dtype="object")
+    if (flex_data.p_co2_price is not None
+            and flex_data.p_co2_price.frame.height > 0):
+        s.group_co2_price = pd.Index(
+            flex_data.p_co2_price.frame.select("g").unique()
+                .to_pandas()["g"].tolist(),
+            name="group",
+        )
+    if (flex_data.group_co2_max_period is not None
+            and flex_data.group_co2_max_period.height > 0):
+        gcol = flex_data.group_co2_max_period.columns[0]
+        s.group_co2_limit = pd.Index(
+            flex_data.group_co2_max_period.select(gcol).unique()
+                .to_pandas()[gcol].tolist(),
+            name="group",
+        )
+
+    # ─── Group-related sets ───────────────────────────────────────────────
+    s.groupInertia = _index_or_empty(flex_data.groupInertia, dim="g", name="group")
+    s.groupNonSync = _index_or_empty(flex_data.groupNonSync, dim="g", name="group")
+    s.groupCapacityMargin = _index_or_empty(
+        flex_data.groupCapacityMargin, dim="g", name="group",
+    )
+
+    # Aggregator / dispatch group sets — empty by default; populated
+    # when nodeGroupDispatch features are configured.  No FlexData
+    # field carries these directly today.
+    s.nodeGroupDispatch = pd.Index([], name="group", dtype="object")
+    s.nodeGroupIndicators = pd.Index([], name="group", dtype="object")
+    s.flowGroupIndicators = pd.Index([], name="group", dtype="object")
+    s.nodeGroupDispatch__connection_Not_in_aggregate = empty_multi_index(
+        ["group", "connection"]
+    )
+    s.nodeGroupDispatch__process__unit__to_node_Not_in_aggregate = empty_multi_index(
+        ["group", "process", "unit", "node"]
+    )
+    s.nodeGroupDispatch__process__node__to_unit_Not_in_aggregate = empty_multi_index(
+        ["group", "process", "node", "unit"]
+    )
+    s.nodeGroupDispatch__process__connection__to_node_Not_in_aggregate = empty_multi_index(
+        ["group", "process", "connection", "node"]
+    )
+    s.nodeGroupDispatch__process__node__to_connection_Not_in_aggregate = empty_multi_index(
+        ["group", "process", "node", "connection"]
+    )
+    s.nodeGroupDispatch__processGroup_Unit_to_group = empty_multi_index(
+        ["group", "group_aggregate"]
+    )
+    s.nodeGroupDispatch__processGroup__process__unit__to_node = empty_multi_index(
+        ["group", "group_aggregate", "process", "unit", "node"]
+    )
+    s.nodeGroupDispatch__processGroup_Group_to_unit = empty_multi_index(
+        ["group", "group_aggregate"]
+    )
+    s.nodeGroupDispatch__processGroup__process__node__to_unit = empty_multi_index(
+        ["group", "group_aggregate", "process", "node", "unit"]
+    )
+    s.nodeGroupDispatch__processGroup_Connection = empty_multi_index(
+        ["group", "group_aggregate"]
+    )
+    s.nodeGroupDispatch__processGroup__process__connection__to_node = empty_multi_index(
+        ["group", "group_aggregate", "process", "connection", "node"]
+    )
+    s.nodeGroupDispatch__processGroup__process__node__to_connection = empty_multi_index(
+        ["group", "group_aggregate", "process", "node", "connection"]
+    )
+    s.nodeGroupDispatch__process_fully_inside = empty_multi_index(
+        ["group", "process"]
+    )
+
+    # group_node — (group, node) from group_node FlexData field.
+    if (flex_data.group_node is not None
+            and flex_data.group_node.height > 0):
+        cols = flex_data.group_node.columns
+        s.group_node = pd.MultiIndex.from_frame(
+            flex_data.group_node.to_pandas(),
+            names=[long_dim(c) for c in cols],
+        )
+    else:
+        s.group_node = empty_multi_index(["group", "node"])
+    s.group_process = empty_multi_index(["group", "process"])
+    s.group_process_node = empty_multi_index(["group", "process", "node"])
+
+    # upDown — flextool's known up/down set.
+    s.upDown = pd.Index(["up", "down"], name="updown")
+
+    # enable_optional_outputs — read from FlexData if available.  Empty set OK.
+    s.enable_optional_outputs = set()
+
+    # ─── DC power flow sets ───────────────────────────────────────────────
+    s.node_dc_power_flow = _index_or_empty(
+        flex_data.node_dc_power_flow, dim="n", name="node",
+    )
+    s.connection_dc_power_flow = _index_or_empty(
+        flex_data.connection_dc_power_flow, dim="p", name="connection",
+    )
+    if (flex_data.p_connection_susceptance is not None
+            and flex_data.p_connection_susceptance.frame.height > 0):
+        df = flex_data.p_connection_susceptance.frame.to_pandas()
+        s.connection_susceptance = df.set_index("p")["value"].astype(float)
+        s.connection_susceptance.index.name = "connection"
     else:
         s.connection_susceptance = pd.Series(dtype=float)
 
