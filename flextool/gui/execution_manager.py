@@ -58,19 +58,19 @@ def _wrap_linux(
     cmd: list[str],
     estimate_gb: float,
 ) -> tuple[list[str], dict, Callable[[subprocess.Popen], object | None] | None]:
-    """Wrap via systemd-run user scope with MemoryHigh/MemoryMax + slice."""
+    """Wrap via systemd-run user scope for slice isolation; no memory cap.
+
+    MemoryHigh throttles allocations (stalls the process) and MemoryMax kills
+    it — both interfere with large polars collect_all calls.  The watchdog is
+    the sole memory enforcer.  systemd-run is still used so the process can be
+    placed in a cgroup slice (FLEXTOOL_SLICE) for scheduling isolation.
+    """
     if not shutil.which("systemd-run"):
         return cmd, {}, None
     wrapped = ["systemd-run", "--user", "--scope", "--quiet"]
     slice_name = os.environ.get("FLEXTOOL_SLICE")
     if slice_name and _slice_exists(slice_name):
         wrapped.append(f"--slice={slice_name}")
-    if estimate_gb > 0:
-        cap_mb = int(estimate_gb * 1024)
-        wrapped.extend([
-            "-p", f"MemoryHigh={int(cap_mb * 0.9)}M",
-            "-p", f"MemoryMax={cap_mb}M",
-        ])
     wrapped.append("--")
     wrapped.extend(cmd)
     return wrapped, {}, None
@@ -80,113 +80,40 @@ def _wrap_windows(
     cmd: list[str],
     estimate_gb: float,
 ) -> tuple[list[str], dict, Callable[[subprocess.Popen], object | None] | None]:
-    """Wrap via Windows Job Object with JobMemoryLimit (hard kill on overrun).
-
-    The Job Object handle returned by the post-spawn callback MUST be kept
-    alive (stored on the ExecutionJob) until the child exits — closing the
-    last handle releases the limit.
-    """
-    if estimate_gb <= 0:
-        return cmd, {}, None
-    try:
-        import win32job  # noqa: F401  (probe import; real use inside post_spawn)
-    except ImportError:
-        logger.warning(
-            "pywin32 not available; Windows JobObject memory cap disabled "
-            "(MemoryWatchdog still applies)."
-        )
-        return cmd, {}, None
-
-    cap_bytes = int(estimate_gb * (1024 ** 3))
-
-    def post_spawn(proc: subprocess.Popen) -> object | None:
-        try:
-            import win32api
-            import win32con
-            import win32job
-            job = win32job.CreateJobObject(None, "")
-            info = win32job.QueryInformationJobObject(
-                job, win32job.JobObjectExtendedLimitInformation,
-            )
-            info["BasicLimitInformation"]["LimitFlags"] |= (
-                win32job.JOB_OBJECT_LIMIT_JOB_MEMORY
-            )
-            info["JobMemoryLimit"] = cap_bytes
-            win32job.SetInformationJobObject(
-                job, win32job.JobObjectExtendedLimitInformation, info,
-            )
-            handle = win32api.OpenProcess(
-                win32con.PROCESS_SET_QUOTA | win32con.PROCESS_TERMINATE,
-                False, proc.pid,
-            )
-            try:
-                win32job.AssignProcessToJobObject(job, handle)
-            finally:
-                win32api.CloseHandle(handle)
-            return job
-        except Exception:
-            logger.exception(
-                "Failed to apply Windows JobObject memory cap to pid %d", proc.pid
-            )
-            return None
-
-    return cmd, {}, post_spawn
+    """No OS-level memory cap on Windows — MemoryWatchdog is the sole enforcer."""
+    return cmd, {}, None
 
 
 def _wrap_macos(
     cmd: list[str],
     estimate_gb: float,
 ) -> tuple[list[str], dict, Callable[[subprocess.Popen], object | None] | None]:
-    """Wrap via setrlimit(RLIMIT_AS) in the child preexec.
-
-    RLIMIT_AS caps the child's *virtual address space* — approximate compared
-    to RSS, but it is the best built-in mechanism on macOS. The watchdog
-    remains the cross-platform safety net for cases this misses.
-    """
-    if estimate_gb <= 0:
-        return cmd, {}, None
-    cap_bytes = int(estimate_gb * (1024 ** 3))
-
-    def _set_rlimit() -> None:
-        try:
-            import resource
-            resource.setrlimit(resource.RLIMIT_AS, (cap_bytes, cap_bytes))
-        except (ValueError, OSError, ImportError):
-            # preexec runs after fork before exec; logging here is unsafe.
-            # Failure just means watchdog is the only line of defence.
-            pass
-
-    return cmd, {"preexec_fn": _set_rlimit}, None
+    """No OS-level memory cap on macOS — MemoryWatchdog is the sole enforcer."""
+    return cmd, {}, None
 
 
 def _wrap_for_memory_cap(
     cmd: list[str],
     estimate_gb: float,
 ) -> tuple[list[str], dict, Callable[[subprocess.Popen], object | None] | None]:
-    """Wrap a command so the OS enforces a per-job memory cap.
+    """Optionally wrap a command with a soft memory hint and return Popen extras.
 
     Returns a triple ``(wrapped_cmd, popen_extras, post_spawn)``:
 
     * ``wrapped_cmd`` — argv to hand to ``subprocess.Popen``.
-    * ``popen_extras`` — kwargs to merge into the ``Popen`` call (e.g.
-      ``preexec_fn`` on macOS).
+    * ``popen_extras`` — kwargs to merge into the ``Popen`` call.
     * ``post_spawn`` — optional callable invoked with the spawned ``Popen``;
-      its return value (e.g. a Windows JobObject handle) MUST be retained
-      by the caller until the child exits, or the cap is released.
+      its return value MUST be retained by the caller until the child exits.
 
     Per-platform mechanism:
 
-    * Linux: transient ``systemd-run --user --scope`` with
-      ``MemoryHigh`` (soft throttle, 90% of cap) + ``MemoryMax`` (hard kill).
-      When ``FLEXTOOL_SLICE`` names a loaded user slice, the scope is placed
-      in that slice for additional isolation (e.g. ``heavy.slice``).
-    * Windows: Job Object with ``JOB_OBJECT_LIMIT_JOB_MEMORY`` set to the
-      cap; kernel terminates the job when the limit is exceeded. Requires
-      pywin32; without it, falls back to watchdog-only.
-    * macOS: ``setrlimit(RLIMIT_AS)`` in the child preexec — caps virtual
-      address space rather than RSS, so it is approximate.
+    * Linux: transient ``systemd-run --user --scope`` for cgroup slice
+      isolation only (``FLEXTOOL_SLICE``). No memory property is set —
+      ``MemoryHigh`` throttles allocations and ``MemoryMax`` kills the
+      process, both of which stall or abort large solver runs.
+    * Windows / macOS: no OS-level wrapping.
 
-    ``MemoryWatchdog`` is the cross-platform backstop in every case.
+    ``MemoryWatchdog`` is the sole memory enforcer on all platforms.
     """
     if estimate_gb < 0:
         estimate_gb = 0
