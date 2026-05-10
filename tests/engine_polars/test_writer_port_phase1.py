@@ -34,6 +34,7 @@ from flextool.engine_polars import _writer_calc_params as native_calc
 from flextool.engine_polars import _writer_leaf_sets as native
 from flextool.engine_polars import _writer_mid_sets as native_mid
 from flextool.engine_polars import _writer_pdt_params as native_pdt
+from flextool.engine_polars import _writer_period_params as native_period
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
     dc_angle_bounds as legacy_dc,
@@ -795,4 +796,80 @@ def test_group_commodity_node_period_co2_total_parity(
     _assert_files_equal(
         lsd / "group_commodity_node_period_co2_total.csv",
         nsd / "group_commodity_node_period_co2_total.csv",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 follow-up 3 — heavy per-(d, t) emitters
+# ---------------------------------------------------------------------------
+
+# pdtNodeInflow: stress branch 3 (deterministic additive sum) via the
+# scale_to_peak_flow fixture which exercises peak/annual flow scaling.
+# work_2day_stochastic_dispatch_full_storage carries empty pbt_node_inflow
+# (Branches 1+2 are Gap E — no fixture exercises them).
+FIXTURES_WITH_INFLOW = FIXTURES + ["work_scale_to_peak_flow"]
+
+# pdtProfile: stress branch 1 (stochastic profile fold-in) via the 2-day
+# stochastic fixture which carries non-empty pbt_profile + stochastic
+# group__node membership tying through node__profile__profile_method.
+FIXTURES_WITH_PROFILE = FIXTURES + [
+    "work_2day_stochastic_dispatch_full_storage",
+    "work_scale_to_peak_flow",
+]
+
+# pdtConversion_rate / section / slope: stress the process_minload branch
+# via work_coal_min_load and work_coal_chp (cogeneration efficiency).
+FIXTURES_WITH_CONVERSION = FIXTURES + [
+    "work_coal_min_load",
+    "work_coal_chp",
+]
+
+# pdtProcess_source_sink: stress branches 5-11 via fixtures that carry
+# pt_process_sink / pt_process_source / p_process_source rows.  The
+# stochastic fixture exercises branches 1-4 indirectly when present.
+FIXTURES_WITH_PSS = FIXTURES + [
+    "work_coal_chp",
+    "work_2day_stochastic_dispatch_full_storage",
+]
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_INFLOW)
+def test_pdtNodeInflow_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtNodeInflow(lin, lsd)
+    native_period.write_pdtNodeInflow(nin, nsd)
+    _assert_files_equal(lsd / "pdtNodeInflow.csv", nsd / "pdtNodeInflow.csv")
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PROFILE)
+def test_pdtProfile_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtProfile(lin, lsd)
+    native_period.write_pdtProfile(nin, nsd)
+    _assert_files_equal(lsd / "pdtProfile.csv", nsd / "pdtProfile.csv")
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_CONVERSION)
+def test_pdtConversion_rate_section_slope_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtConversion_rate_section_slope(lin, lsd)
+    native_period.write_pdtConversion_rate_section_slope(nin, nsd)
+    for fname in (
+        "pdtConversion_rate.csv",
+        "pdtProcess_section.csv",
+        "pdtProcess_slope.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PSS)
+def test_pdtProcess_source_sink_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtProcess_source_sink(lin, lsd)
+    native_period.write_pdtProcess_source_sink(nin, nsd)
+    _assert_files_equal(
+        lsd / "pdtProcess_source_sink.csv",
+        nsd / "pdtProcess_source_sink.csv",
     )
