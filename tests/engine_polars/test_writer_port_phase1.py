@@ -29,12 +29,14 @@ from pathlib import Path
 
 import pytest
 
+from flextool.engine_polars import _writer_arc_unions as native_arc
 from flextool.engine_polars import _writer_calc_params as native_calc
 from flextool.engine_polars import _writer_leaf_sets as native
 from flextool.engine_polars import _writer_mid_sets as native_mid
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
     dc_angle_bounds as legacy_dc,
+    entity_period_calc_params as legacy_entity_period,
     entity_total_caps as legacy_entity_total,
     invest_method_sets as legacy_invest,
     invest_total_sets as legacy_invest_total,
@@ -42,6 +44,7 @@ from flextool.flextoolrunner.preprocessing import (
     node_type_sets as legacy_node_type,
     nonsync_sets as legacy_nonsync,
     period_param_sets as legacy_period,
+    process_arc_unions as legacy_arc_unions,
     process_method_sets as legacy_process_method,
     reserve_method_partitions as legacy_reserve_part,
     simple_projections as legacy_simple,
@@ -512,3 +515,179 @@ def test_process_method_sets_parity(tmp_path: Path, fixture: str) -> None:
     native_calc.write_process_profile_method_joins(nin, nsd)
     for fname in _PROCESS_METHOD_OUTPUTS:
         _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ===========================================================================
+# Phase 1 follow-up — process_arc_unions leaf-like writers
+#                   + entity_period_calc_params subset
+#
+# Each test mirrors the legacy↔native pattern.  Where the legacy writer
+# emits multiple CSVs (e.g. the four ``sinkIsNode*`` variants, or the
+# two ``delayed/undelayed`` partition halves) we compare every emitted
+# file independently.  Extra fixture ``work_coal_ramp_limit`` exercises
+# ``write_process_source_sink_ramp_method`` against a non-empty
+# ``process__node__ramp_method.csv`` input.
+# ===========================================================================
+
+FIXTURES_WITH_RAMP = FIXTURES + ["work_coal_ramp_limit"]
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_source_sink_param_t_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_sink_param_t(lin, lsd)
+    native_arc.write_process_source_sink_param_t(nin, nsd)
+    _assert_files_equal(
+        lsd / "process_source_sink_param_t.csv",
+        nsd / "process_source_sink_param_t.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_node_time_param_in_use_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_node_time_param_in_use(lin, lsd)
+    native_arc.write_node_time_param_in_use(nin, nsd)
+    _assert_files_equal(
+        lsd / "node__TimeParam_in_use.csv",
+        nsd / "node__TimeParam_in_use.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_source_delayed_partition_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_delayed_partition(lin, lsd)
+    native_arc.write_process_source_delayed_partition(nin, nsd)
+    for fname in ("process_source_delayed.csv", "process_source_undelayed.csv"):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_source_sink_param_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_sink_param(lin, lsd)
+    native_arc.write_process_source_sink_param(nin, nsd)
+    _assert_files_equal(
+        lsd / "process__source__sink__param.csv",
+        nsd / "process__source__sink__param.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_source_sink_profile_method_connection_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_sink_profile_method_connection(lin, lsd)
+    native_arc.write_process_source_sink_profile_method_connection(nin, nsd)
+    _assert_files_equal(
+        lsd / "process__source__sink__profile__profile_method_connection.csv",
+        nsd / "process__source__sink__profile__profile_method_connection.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_method_sources_sinks_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_method_sources_sinks(lin, lsd)
+    native_arc.write_process_method_sources_sinks(nin, nsd)
+    _assert_files_equal(
+        lsd / "process_method_sources_sinks.csv",
+        nsd / "process_method_sources_sinks.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_ed_history_realized_first_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_ed_history_realized_first(lin, lsd)
+    native_arc.write_ed_history_realized_first(nin, nsd)
+    _assert_files_equal(
+        lsd / "ed_history_realized_first.csv",
+        nsd / "ed_history_realized_first.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_source_is_node_sink_1way_no_sink_or_more_than_1_source_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(lin, lsd)
+    native_arc.write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(nin, nsd)
+    _assert_files_equal(
+        lsd / "process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.csv",
+        nsd / "process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_RAMP)
+def test_process_source_sink_ramp_method_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_sink_ramp_method(lin, lsd)
+    native_arc.write_process_source_sink_ramp_method(nin, nsd)
+    _assert_files_equal(
+        lsd / "process__source__sink__ramp_method.csv",
+        nsd / "process__source__sink__ramp_method.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_source_sink_coeff_zero_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_sink_coeff_zero(lin, lsd)
+    native_arc.write_process_source_sink_coeff_zero(nin, nsd)
+    _assert_files_equal(
+        lsd / "process_source_sink_coeff_zero.csv",
+        nsd / "process_source_sink_coeff_zero.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_source_sink_is_node_family_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_sink_is_node_family(lin, lsd)
+    native_arc.write_process_source_sink_is_node_family(nin, nsd)
+    for fname in (
+        "process__source__sinkIsNode.csv",
+        "process__source__sinkIsNode_2way1var.csv",
+        "process__source__sinkIsNode_not2way1var.csv",
+        "process__source__sinkIsNode_2way2var.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_source_sink_delayed_partition_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_sink_delayed_partition(lin, lsd)
+    native_arc.write_process_source_sink_delayed_partition(nin, nsd)
+    for fname in (
+        "process_source_sink_delayed.csv",
+        "process_source_sink_undelayed.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_INVEST)
+def test_p_process_source_sink_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pProcess_source_sink(lin, lsd)
+    native_arc.write_pProcess_source_sink(nin, nsd)
+    _assert_files_equal(
+        lsd / "pProcess_source_sink.csv",
+        nsd / "pProcess_source_sink.csv",
+    )
