@@ -330,6 +330,7 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
     from flextool.engine_polars import _writer_arc_unions as _native_arc
+    from flextool.engine_polars import _writer_chain_params as _native_chain
     from flextool.engine_polars import _writer_pdt_params as _native_pdt
     from flextool.engine_polars import _writer_period_params as _native_period
 
@@ -509,6 +510,20 @@ def _native_leaf_set_override():
         # ── Phase 1 follow-up 7 — param_t projections + time-param joins ──
         (_legacy_arc_unions, "write_param_t_projections_and_time_params",
                              _native_arc.write_param_t_projections_and_time_params),
+        # ── Phase 1 follow-up 8 — chain-cluster entity-period params ──
+        # Four writers covering the per-(entity, period) existing/divest
+        # chain that the LP build consumes via p_entity_*_existing_* /
+        # p_entity_*_capacity_*.  ``write_p_entity_existing_chain``
+        # straddles the per-solve handoff boundary (in-memory
+        # ``SolveHandoff`` carriers OR file-based reads).
+        (_legacy_entity_period, "write_p_entity_pre_existing",
+                                _native_chain.write_p_entity_pre_existing),
+        (_legacy_entity_period, "write_p_entity_divest_cumulative_max",
+                                _native_chain.write_p_entity_divest_cumulative_max),
+        (_legacy_entity_period, "write_p_entity_existing_chain",
+                                _native_chain.write_p_entity_existing_chain),
+        (_legacy_entity_period, "write_p_entity_capacity_max_chain",
+                                _native_chain.write_p_entity_capacity_max_chain),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides

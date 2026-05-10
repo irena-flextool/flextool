@@ -31,6 +31,7 @@ import pytest
 
 from flextool.engine_polars import _writer_arc_unions as native_arc
 from flextool.engine_polars import _writer_calc_params as native_calc
+from flextool.engine_polars import _writer_chain_params as native_chain
 from flextool.engine_polars import _writer_leaf_sets as native
 from flextool.engine_polars import _writer_mid_sets as native_mid
 from flextool.engine_polars import _writer_pdt_params as native_pdt
@@ -1290,5 +1291,97 @@ def test_param_t_projections_and_time_params_parity(
         "process__source__timeParam.csv",
         "process__sink__timeParam.csv",
         "process__timeParam.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 follow-up 8 — chain-cluster entity-period params (4 writers,
+# 11 output CSVs).  Cumulative-invest fixture is included to exercise
+# multi-period investment semantics; the lifetime-renew fixture exercises
+# ed_divest_period rows that aren't trivially zero.
+# ---------------------------------------------------------------------------
+
+# Fixtures with non-trivial invest / divest / lifetime data.  The
+# cumulative-invest fixture is the explicit must-include from the brief.
+FIXTURES_WITH_CHAIN = FIXTURES + [
+    "work_network_coal_wind_battery_invest_cumulative",
+    "work_wind_battery_invest_lifetime_renew_4solve",
+]
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_CHAIN)
+def test_p_entity_pre_existing_parity(tmp_path: Path, fixture: str) -> None:
+    """12-branch lifetime-method × kind × virtual_unitsize gate."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_p_entity_pre_existing(lin, lsd)
+    native_chain.write_p_entity_pre_existing(nin, nsd)
+    _assert_files_equal(
+        lsd / "p_entity_pre_existing.csv",
+        nsd / "p_entity_pre_existing.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_CHAIN)
+def test_p_entity_divest_cumulative_max_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """3-branch cumulative divest ceiling per (entity, period)."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_p_entity_divest_cumulative_max(lin, lsd)
+    native_chain.write_p_entity_divest_cumulative_max(nin, nsd)
+    _assert_files_equal(
+        lsd / "p_entity_divest_cumulative_max.csv",
+        nsd / "p_entity_divest_cumulative_max.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_CHAIN)
+def test_p_entity_existing_chain_parity(tmp_path: Path, fixture: str) -> None:
+    """5 cascading existing-capacity params (later_solves, all_existing,
+    existing_count, existing_integer_count, previously_invested_capacity).
+
+    Uses the file-based handoff path (prior_handoff=None) — that's what
+    fixtures carry on disk via ``p_entity_period_existing_capacity.csv``
+    and ``p_entity_divested.csv`` checked-in copies.  The cumulative-invest
+    fixture exercises non-trivial edd_history.
+    """
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_p_entity_existing_chain(lin, lsd)
+    native_chain.write_p_entity_existing_chain(nin, nsd)
+    for fname in (
+        "p_entity_existing_capacity_later_solves.csv",
+        "p_entity_all_existing.csv",
+        "p_entity_existing_count.csv",
+        "p_entity_existing_integer_count.csv",
+        "p_entity_previously_invested_capacity.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_CHAIN)
+def test_p_entity_capacity_max_chain_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """4 cascading capacity-ceiling params (max_capacity, max_units,
+    invest_cumulative_max, dispatch_capacity_max).  Depends on
+    p_entity_all_existing from the existing-chain writer above — we
+    invoke that first to provide the missing fixture row, then run
+    both legacy / native variants of the cap-max chain in isolation.
+    """
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    # p_entity_all_existing.csv is written by write_p_entity_existing_chain
+    # in the live cascade.  We replay it on both sides so the cap-max
+    # writer's read sees a deterministic upstream.
+    legacy_entity_period.write_p_entity_existing_chain(lin, lsd)
+    native_chain.write_p_entity_existing_chain(nin, nsd)
+
+    legacy_entity_period.write_p_entity_capacity_max_chain(lin, lsd)
+    native_chain.write_p_entity_capacity_max_chain(nin, nsd)
+    for fname in (
+        "p_entity_max_capacity.csv",
+        "p_entity_max_units.csv",
+        "p_entity_invest_cumulative_max.csv",
+        "p_entity_dispatch_capacity_max.csv",
     ):
         _assert_files_equal(lsd / fname, nsd / fname)
