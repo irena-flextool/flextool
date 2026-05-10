@@ -975,3 +975,185 @@ def test_node_group_dispatch_process_fully_inside_parity(
         lsd / "nodeGroupDispatch__process_fully_inside.csv",
         nsd / "nodeGroupDispatch__process_fully_inside.csv",
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 follow-up 5 — small_set_derivations + small arc-union writers
+# + entity_period_calc_params varCost / cap_reduction / ed_period_params.
+# ---------------------------------------------------------------------------
+
+# Fixtures specialised to exercise each follow-up 5 writer's branches.
+FIXTURES_WITH_DELAY = FIXTURES + ["work_delay_source_coef", "work_water_pump_delayed"]
+FIXTURES_WITH_ONLINE = FIXTURES + [
+    "work_coal_min_load",
+    "work_coal_min_load_MIP_wind",
+    "work_coal_wind_min_uptime",
+]
+
+
+# write_small_set_derivations emits 6 CSVs in one call.  It depends on
+# pdtNode + pdProcess + a small army of upstream solve_data files — all
+# pre-seeded in the fixture's checked-in solve_data tree.
+@pytest.mark.parametrize("fixture", FIXTURES + ["work_coal_min_load"])
+def test_small_set_derivations_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_small_set_derivations(lin, lsd)
+    native_arc.write_small_set_derivations(nin, nsd)
+    for fname in (
+        "ed_history_realized.csv",
+        "process__source__sink__profile__profile_method.csv",
+        "process_sinkIsNode_2way1var.csv",
+        "nodeSelfDischarge.csv",
+        "pdt_online_linear.csv",
+        "pdt_online_integer.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# write_process_source_sink_param_with_time — extension of the param_t
+# writer; stress with the standard FIXTURES set (work_test_a_lot exercises
+# multiple params + process_connection).
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_process_source_sink_param_with_time_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_sink_param_with_time(lin, lsd)
+    native_arc.write_process_source_sink_param_with_time(nin, nsd)
+    _assert_files_equal(
+        lsd / "process__source__sink__param_t.csv",
+        nsd / "process__source__sink__param_t.csv",
+    )
+
+
+# write_gdt_instant_flow_sets — needs non-empty pdtGroup with
+# max/min_instant_flow rows; the standard fixtures cover the 0-row case
+# byte-identically and that's also a parity assertion.
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_gdt_instant_flow_sets_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_gdt_instant_flow_sets(lin, lsd)
+    native_arc.write_gdt_instant_flow_sets(nin, nsd)
+    for fname in ("gdt_maxInstantFlow.csv", "gdt_minInstantFlow.csv"):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# write_p_process_delay_weight — exercise via the delay fixtures.
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_DELAY)
+def test_p_process_delay_weight_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_p_process_delay_weight(lin, lsd)
+    native_arc.write_p_process_delay_weight(nin, nsd)
+    _assert_files_equal(
+        lsd / "p_process_delay_weight.csv",
+        nsd / "p_process_delay_weight.csv",
+    )
+
+
+# write_gcndt_co2_price + write_group_commodity_node_period_co2_period —
+# exercise via the CO2-price fixture; the standard fixtures cover the
+# 0-row path.
+FIXTURES_WITH_CO2_PRICE = FIXTURES + ["work_coal_co2_price", "work_coal_co2_limit"]
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_CO2_PRICE)
+def test_gcndt_co2_price_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_gcndt_co2_price(lin, lsd)
+    native_arc.write_gcndt_co2_price(nin, nsd)
+    _assert_files_equal(
+        lsd / "gcndt_co2_price.csv", nsd / "gcndt_co2_price.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_CO2_PRICE)
+def test_group_commodity_node_period_co2_period_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_group_commodity_node_period_co2_period(lin, lsd)
+    native_arc.write_group_commodity_node_period_co2_period(nin, nsd)
+    _assert_files_equal(
+        lsd / "group_commodity_node_period_co2_period.csv",
+        nsd / "group_commodity_node_period_co2_period.csv",
+    )
+
+
+# write_peedt — cross-product of process_source_sink × dt; standard
+# fixtures cover small + medium row counts.
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_peedt_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_peedt(lin, lsd)
+    native_arc.write_peedt(nin, nsd)
+    _assert_files_equal(lsd / "peedt.csv", nsd / "peedt.csv")
+
+
+# write_pdtProcess__source__sink__dt_varCost_pair — emits 2 CSVs.  Stress
+# via the standard FIXTURES (work_test_a_lot exercises varCost path).
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_pdtProcess__source__sink__dt_varCost_pair_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtProcess__source__sink__dt_varCost_pair(lin, lsd)
+    native_period.write_pdtProcess__source__sink__dt_varCost_pair(nin, nsd)
+    for fname in (
+        "pdtProcess__source__sink__dt_varCost.csv",
+        "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# write_pssdt_varCost_filters — emits 4 CSVs; depends on the
+# varCost_pair writer having run first.  We invoke both legacy and
+# native writers in sequence so the input file is present in each
+# workdir.
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_pssdt_varCost_filters_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtProcess__source__sink__dt_varCost_pair(lin, lsd)
+    native_period.write_pdtProcess__source__sink__dt_varCost_pair(nin, nsd)
+    legacy_entity_period.write_pssdt_varCost_filters(lin, lsd)
+    native_period.write_pssdt_varCost_filters(nin, nsd)
+    for fname in (
+        "pssdt_varCost_noEff.csv",
+        "pssdt_varCost_eff_unit_source.csv",
+        "pssdt_varCost_eff_unit_sink.csv",
+        "pssdt_varCost_eff_connection.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# write_cap_reduction_params — emits 4 CSVs; non-zero rows require
+# online + ramp_speed > 0 (exercised by min_uptime / min_load fixtures).
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_ONLINE)
+def test_cap_reduction_params_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_cap_reduction_params(lin, lsd)
+    native_period.write_cap_reduction_params(nin, nsd)
+    for fname in (
+        "p_startup_cap_reduction_sink.csv",
+        "p_shutdown_cap_reduction_sink.csv",
+        "p_startup_cap_reduction_source.csv",
+        "p_shutdown_cap_reduction_source.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# write_ed_period_params — emits 6 CSVs.  Exercise via the invest
+# fixtures (FIXTURES_WITH_INVEST already covers the invest path).
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_INVEST)
+def test_ed_period_params_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_ed_period_params(lin, lsd)
+    native_period.write_ed_period_params(nin, nsd)
+    for fname in (
+        "ed_invest_max_period.csv",
+        "ed_invest_min_period.csv",
+        "ed_divest_max_period.csv",
+        "ed_divest_min_period.csv",
+        "ed_cumulative_max_capacity.csv",
+        "ed_cumulative_min_capacity.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
