@@ -1429,3 +1429,436 @@ def write_node_group_dispatch_process_fully_inside(
         derive_node_group_dispatch_process_fully_inside(input_dir, solve_data_dir),
         solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv",
     )
+
+
+# ===========================================================================
+# Phase 1 follow-up 5 — small_set_derivations + arc-union small writers
+# ===========================================================================
+
+# Helpers used by the small writers below.  These are byte-for-byte parity
+# with the legacy ``_read_singles`` / ``_read_pairs`` / ``_write_csv``
+# helpers in ``process_arc_unions``; we keep them local to this module
+# rather than reaching into the legacy module so the native port has no
+# transitive import from preprocessing.
+
+
+def _read_singles_csv(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    import csv
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        return [r[0] for r in reader if r and r[0]]
+
+
+def _read_pairs_csv(path: Path) -> list[tuple[str, str]]:
+    if not path.exists():
+        return []
+    import csv
+    out: list[tuple[str, str]] = []
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 2 and row[0] and row[1]:
+                out.append((row[0], row[1]))
+    return out
+
+
+def _read_n_col_csv(path: Path, n: int) -> list[tuple[str, ...]]:
+    if not path.exists():
+        return []
+    import csv
+    out: list[tuple[str, ...]] = []
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= n and all(row[i] for i in range(n)):
+                out.append(tuple(row[:n]))
+    return out
+
+
+def _write_csv_rows(path: Path, header: tuple[str, ...], rows) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(",".join(header) + "\n"
+                    + "".join(",".join(r) + "\n" for r in rows))
+
+
+# ---- write_small_set_derivations (mod L999, L1061, L1132, L1174, L1222-3) --
+
+def write_small_set_derivations(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L999, L1061, L1132, L1174, L1222-3 — 6 small derived sets.
+
+    Emits ``ed_history_realized``,
+    ``process__source__sink__profile__profile_method``,
+    ``process_sinkIsNode_2way1var``, ``nodeSelfDischarge``,
+    ``pdt_online_linear``, ``pdt_online_integer``.
+
+    See the legacy docstring for the full set of math-prog derivations.
+    """
+    import csv
+
+    # ed_history_realized (mod L999)
+    ed_read = _read_pairs_csv(
+        solve_data_dir / "p_entity_period_existing_capacity.csv"
+    )
+    ed_first = _read_pairs_csv(solve_data_dir / "ed_history_realized_first.csv")
+    seen_ed: dict[tuple[str, str], None] = {}
+    for r in ed_read:
+        seen_ed.setdefault(r, None)
+    for r in ed_first:
+        seen_ed.setdefault(r, None)
+    _write_csv_rows(solve_data_dir / "ed_history_realized.csv",
+                    ("entity", "period"), list(seen_ed.keys()))
+
+    # process__source__sink__profile__profile_method (mod L1061) — 4-way union
+    seen_pf: dict[tuple[str, ...], None] = {}
+    for fname in (
+        "process__profileProcess__toSink__profile__profile_method.csv",
+        "process__source__toProfileProcess__profile__profile_method.csv",
+        "process__source__sink__profile__profile_method_connection.csv",
+        "process__source__sink__profile__profile_method_direct.csv",
+    ):
+        for r in _read_n_col_csv(solve_data_dir / fname, 5):
+            seen_pf.setdefault(r, None)
+    _write_csv_rows(
+        solve_data_dir / "process__source__sink__profile__profile_method.csv",
+        ("process", "source", "sink", "profile", "profile_method"),
+        list(seen_pf.keys()),
+    )
+
+    # process_sinkIsNode_2way1var (mod L1132) — projection of column 0
+    triples = _read_n_col_csv(
+        solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3
+    )
+    seen_p: dict[str, None] = {}
+    for p, _, _ in triples:
+        seen_p.setdefault(p, None)
+    _write_csv_rows(solve_data_dir / "process_sinkIsNode_2way1var.csv",
+                    ("process",), [(p,) for p in seen_p.keys()])
+
+    # nodeSelfDischarge (mod L1174) — exists filter on pdtNode
+    nodeState = frozenset(_read_singles_csv(solve_data_dir / "nodeState.csv"))
+    nodes_with_selfdischarge: set[str] = set()
+    pdtn_path = solve_data_dir / "pdtNode.csv"
+    if pdtn_path.exists():
+        with pdtn_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if (len(r) >= 5 and r[0] in nodeState
+                        and r[1] == "self_discharge_loss"):
+                    try:
+                        if float(r[4]) != 0.0:
+                            nodes_with_selfdischarge.add(r[0])
+                    except ValueError:
+                        continue
+    _write_csv_rows(solve_data_dir / "nodeSelfDischarge.csv",
+                    ("node",),
+                    [(n,) for n in _read_singles_csv(solve_data_dir / "nodeState.csv")
+                     if n in nodes_with_selfdischarge])
+
+    # pdt_online_linear / pdt_online_integer (mod L1222-3) — startup-cost gate.
+    pd_startup: set[tuple[str, str]] = set()
+    pdp_path = solve_data_dir / "pdProcess.csv"
+    if pdp_path.exists():
+        with pdp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] == "startup_cost" and r[2]:
+                    try:
+                        if float(r[3]) != 0.0:
+                            pd_startup.add((r[0], r[2]))
+                    except ValueError:
+                        continue
+    dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
+    for fname_in, fname_out in (
+        ("process_online_linear.csv",  "pdt_online_linear.csv"),
+        ("process_online_integer.csv", "pdt_online_integer.csv"),
+    ):
+        procs = _read_singles_csv(solve_data_dir / fname_in)
+        rows: list[tuple[str, str, str]] = []
+        for p in procs:
+            for d, t in dt_pairs:
+                if (p, d) in pd_startup:
+                    rows.append((p, d, t))
+        _write_csv_rows(solve_data_dir / fname_out,
+                        ("process", "period", "time"), rows)
+
+
+# ---- write_process_source_sink_param_with_time (mod L1187-1195) ------------
+
+# preprocessing/_param_taxonomy.py — SOURCE_SINK_TIME_PARAM (smaller than
+# the dat-level enum, which is the union of all sourceSink params).  We
+# mirror the legacy taxonomy exactly so the rows + per-row param-iter
+# order match within a single process.
+_SOURCE_SINK_TIME_PARAM_WITH_TIME: frozenset[str] = frozenset((
+    "efficiency", "efficiency_at_min_load", "min_load",
+    "other_operational_cost",
+))
+
+
+def write_process_source_sink_param_with_time(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1187-1195 — process_source_sink × SOURCE_SINK_TIME_PARAM
+    gated by static or time-variant param membership on either side, or via
+    process_connection.
+
+    Distinct from the sibling ``write_process_source_sink_param`` (3-col
+    set, no _t variants).  This one is the double-underscore-named set
+    ``process__source__sink__param_t``.
+    """
+    import csv
+    triples = _read_n_col_csv(solve_data_dir / "process_source_sink.csv", 3)
+
+    def _read_3(path: Path) -> set[tuple[str, str, str]]:
+        out: set[tuple[str, str, str]] = set()
+        if not path.exists():
+            return out
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1] and row[2]:
+                    out.add((row[0], row[1], row[2]))
+        return out
+
+    def _read_2(path: Path) -> set[tuple[str, str]]:
+        out: set[tuple[str, str]] = set()
+        if not path.exists():
+            return out
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    out.add((row[0], row[1]))
+        return out
+
+    src_param = _read_3(input_dir / "p_process_source.csv")
+    sink_param = _read_3(input_dir / "p_process_sink.csv")
+    proc_param = _read_2(input_dir / "p_process.csv")
+    proc_conn = frozenset(_read_singles_csv(input_dir / "process_connection.csv"))
+    src_param_t = _read_3(solve_data_dir / "pt_process_source.csv")
+    sink_param_t = _read_3(solve_data_dir / "pt_process_sink.csv")
+    proc_param_t = _read_2(solve_data_dir / "pt_process.csv")
+
+    rows: list[tuple[str, str, str, str]] = []
+    for p, src, sink in triples:
+        for param in _SOURCE_SINK_TIME_PARAM_WITH_TIME:
+            if ((p, src, param) in src_param
+                    or (p, src, param) in src_param_t
+                    or (p, sink, param) in sink_param
+                    or (p, sink, param) in sink_param_t
+                    or ((p, param) in proc_param and p in proc_conn)
+                    or ((p, param) in proc_param_t and p in proc_conn)):
+                rows.append((p, src, sink, param))
+    _write_csv_rows(solve_data_dir / "process__source__sink__param_t.csv",
+                    ("process", "source", "sink", "param"), rows)
+
+
+# ---- write_gdt_instant_flow_sets (mod L1131-1132) -------------------------
+
+def write_gdt_instant_flow_sets(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1131-1132 — gdt_maxInstantFlow + gdt_minInstantFlow.
+
+    Each row is included iff the corresponding ``pdtGroup[g, P, d, t]``
+    value is non-zero.
+    """
+    import csv
+    max_rows: list[tuple[str, str, str]] = []
+    min_rows: list[tuple[str, str, str]] = []
+    pdtg_path = solve_data_dir / "pdtGroup.csv"
+    if pdtg_path.exists():
+        with pdtg_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 5 and r[0] and r[2] and r[3]:
+                    try:
+                        v = float(r[4])
+                    except ValueError:
+                        continue
+                    if v == 0.0:
+                        continue
+                    if r[1] == "max_instant_flow":
+                        max_rows.append((r[0], r[2], r[3]))
+                    elif r[1] == "min_instant_flow":
+                        min_rows.append((r[0], r[2], r[3]))
+    _write_csv_rows(solve_data_dir / "gdt_maxInstantFlow.csv",
+                    ("group", "period", "time"), max_rows)
+    _write_csv_rows(solve_data_dir / "gdt_minInstantFlow.csv",
+                    ("group", "period", "time"), min_rows)
+
+
+# ---- write_p_process_delay_weight (mod L1096-1099) ------------------------
+
+def write_p_process_delay_weight(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1096-1099 — ``p_process_delay_weight``.
+
+    For each (p, td) in ``process_delayed__duration``: 1 if
+    ``(p, td) in process_delay_single`` else ``p_process_delay_weighted``
+    (default 0).
+    """
+    import csv
+    delayed_duration = _read_pairs_csv(
+        solve_data_dir / "process_delayed__duration.csv"
+    )
+    delay_single = frozenset(
+        _read_pairs_csv(input_dir / "process_delay_single.csv")
+    )
+    weighted: dict[tuple[str, str], float] = {}
+    pdw_path = input_dir / "p_process_delay_weighted.csv"
+    if pdw_path.exists():
+        with pdw_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        weighted[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    rows: list[tuple[str, str, str]] = []
+    for p, td in delayed_duration:
+        v = 1.0 if (p, td) in delay_single else weighted.get((p, td), 0.0)
+        rows.append((p, td, repr(v)))
+    _write_csv_rows(solve_data_dir / "p_process_delay_weight.csv",
+                    ("process", "delay_duration", "value"), rows)
+
+
+# ---- write_gcndt_co2_price (mod L1542-1548) -------------------------------
+
+def write_gcndt_co2_price(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1542-1548 — gcndt_co2_price 5-tuple set."""
+    import csv
+    g_co2_price = frozenset(
+        _read_singles_csv(solve_data_dir / "group_co2_price.csv")
+    )
+    cn = _read_pairs_csv(input_dir / "commodity__node.csv")
+
+    gn_acc: dict[str, set[str]] = {}
+    for g, n in _read_pairs_csv(input_dir / "group__node.csv"):
+        gn_acc.setdefault(g, set()).add(n)
+
+    p_commodity_co2: dict[str, float] = {}
+    pc_path = input_dir / "p_commodity.csv"
+    if pc_path.exists():
+        with pc_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] == "co2_content":
+                    try:
+                        p_commodity_co2[r[0]] = float(r[2])
+                    except ValueError:
+                        continue
+
+    co2_price_dt: set[tuple[str, str, str]] = set()
+    pdtg_path = solve_data_dir / "pdtGroup.csv"
+    if pdtg_path.exists():
+        with pdtg_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if (len(r) >= 5 and r[0] and r[1] == "co2_price"
+                        and r[2] and r[3]):
+                    try:
+                        if float(r[4]) != 0.0:
+                            co2_price_dt.add((r[0], r[2], r[3]))
+                    except ValueError:
+                        continue
+
+    dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
+
+    rows: list[tuple[str, str, str, str, str]] = []
+    for g in g_co2_price:
+        gnodes = gn_acc.get(g, set())
+        if not gnodes:
+            continue
+        for c, n in cn:
+            if n not in gnodes:
+                continue
+            if p_commodity_co2.get(c, 0.0) == 0.0:
+                continue
+            for d, t in dt_pairs:
+                if (g, d, t) in co2_price_dt:
+                    rows.append((g, c, n, d, t))
+    _write_csv_rows(solve_data_dir / "gcndt_co2_price.csv",
+                    ("group", "commodity", "node", "period", "time"), rows)
+
+
+# ---- write_group_commodity_node_period_co2_period (mod L1550-1555) --------
+
+def write_group_commodity_node_period_co2_period(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1550-1555 — group_commodity_node_period_co2_period."""
+    import csv
+    g_co2_max_period = frozenset(
+        _read_singles_csv(solve_data_dir / "group_co2_max_period.csv")
+    )
+    cn = _read_pairs_csv(input_dir / "commodity__node.csv")
+
+    gn_acc: dict[str, set[str]] = {}
+    for g, n in _read_pairs_csv(input_dir / "group__node.csv"):
+        gn_acc.setdefault(g, set()).add(n)
+
+    p_commodity_co2: dict[str, float] = {}
+    pc_path = input_dir / "p_commodity.csv"
+    if pc_path.exists():
+        with pc_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1] == "co2_content":
+                    try:
+                        p_commodity_co2[r[0]] = float(r[2])
+                    except ValueError:
+                        continue
+
+    period_in_use = _read_singles_csv(solve_data_dir / "period_in_use_set.csv")
+
+    rows: list[tuple[str, str, str, str]] = []
+    for g in g_co2_max_period:
+        gnodes = gn_acc.get(g, set())
+        if not gnodes:
+            continue
+        for c, n in cn:
+            if n not in gnodes:
+                continue
+            if p_commodity_co2.get(c, 0.0) == 0.0:
+                continue
+            for d in period_in_use:
+                rows.append((g, c, n, d))
+    _write_csv_rows(
+        solve_data_dir / "group_commodity_node_period_co2_period.csv",
+        ("group", "commodity", "node", "period"), rows,
+    )
+
+
+# ---- write_peedt (mod L1084) ----------------------------------------------
+
+def write_peedt(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1084 — peedt = process_source_sink × dt.
+
+    Streams output for full-year fixtures where this is hundreds of
+    thousands of rows.
+    """
+    triples = _read_n_col_csv(solve_data_dir / "process_source_sink.csv", 3)
+    dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
+    out_path = solve_data_dir / "peedt.csv"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w") as fh:
+        fh.write("process,source,sink,period,time\n")
+        for p, src, snk in triples:
+            for d, t in dt_pairs:
+                fh.write(f"{p},{src},{snk},{d},{t}\n")

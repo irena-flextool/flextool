@@ -1052,3 +1052,363 @@ def write_p_positive_negative_inflow(
                 else:
                     v = pdt_inflow.get((n, d, t), 0.0)
                     fh.write(f"{n},{d},{t},{repr(v if v < 0 else 0.0)}\n")
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 follow-up 5 — entity_period_calc_params: varCost + cap_reduction +
+# ed_period_params + pssdt_varCost filters.
+# ---------------------------------------------------------------------------
+
+
+def _read_triples(path: Path) -> list[tuple[str, str, str]]:
+    if not path.exists():
+        return []
+    out: list[tuple[str, str, str]] = []
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 3 and row[0] and row[1] and row[2]:
+                out.append((row[0], row[1], row[2]))
+    return out
+
+
+def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
+                       key_cols: tuple[int, ...],
+                       val_col: int) -> dict[tuple, float]:
+    """Read a long-format pdtX CSV, filter rows where col[param_col] ==
+    param_value, return dict[tuple(row[c] for c in key_cols)] = float(row[val_col]).
+    """
+    out: dict[tuple, float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if (len(row) > max(param_col, val_col, *key_cols)
+                    and row[param_col] == param_value):
+                try:
+                    out[tuple(row[c] for c in key_cols)] = float(row[val_col])
+                except ValueError:
+                    continue
+    return out
+
+
+def _write_5col(path: Path, header: tuple[str, ...], rows: list[tuple]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(",".join(header) + "\n"
+                    + "".join(",".join(r) + "\n" for r in rows))
+
+
+# ---- write_pdtProcess__source__sink__dt_varCost_pair (mod L1493, L1502) ----
+
+def write_pdtProcess__source__sink__dt_varCost_pair(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1493, L1502 — two ``varCost`` calc params keyed on
+    ``process_source_sink`` and ``process_source_sink_alwaysProcess``.
+
+    Both sum per-side ``other_operational_cost`` (gated by process_source
+    / process_sink membership) plus ``pdtProcess['OOC']``.  The
+    ``_alwaysProcess`` variant additionally gates the third term on
+    ``(p, sink) ∈ process_sink ∪ process_source``.
+    """
+    pdt = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess.csv",
+        param_col=1, param_value="other_operational_cost",
+        key_cols=(0, 2, 3), val_col=4,
+    )  # (process, period, time) → value
+    pdt_src = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_source.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+    )  # (process, source, period, time) → value
+    pdt_snk = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_sink.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+    )  # (process, sink, period, time) → value
+    proc_src = frozenset(_read_pairs(input_dir / "process__source.csv"))
+    proc_snk = frozenset(_read_pairs(input_dir / "process__sink.csv"))
+    pss = _read_triples(solve_data_dir / "process_source_sink.csv")
+    pss_always = _read_triples(
+        solve_data_dir / "process_source_sink_alwaysProcess.csv"
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    out_basic = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
+    out_basic.parent.mkdir(parents=True, exist_ok=True)
+    with out_basic.open("w") as fh:
+        fh.write("process,source,sink,period,time,value\n")
+        for (p, src, snk) in pss:
+            for (d, t) in dt:
+                v = 0.0
+                if (p, src) in proc_src:
+                    v += pdt_src.get((p, src, d, t), 0.0)
+                if (p, snk) in proc_snk:
+                    v += pdt_snk.get((p, snk, d, t), 0.0)
+                v += pdt.get((p, d, t), 0.0)
+                fh.write(f"{p},{src},{snk},{d},{t},{repr(v)}\n")
+
+    out_always = (
+        solve_data_dir / "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv"
+    )
+    with out_always.open("w") as fh:
+        fh.write("process,source,sink,period,time,value\n")
+        for (p, src, snk) in pss_always:
+            for (d, t) in dt:
+                v = 0.0
+                if (p, src) in proc_src:
+                    v += pdt_src.get((p, src, d, t), 0.0)
+                if (p, snk) in proc_snk:
+                    v += pdt_snk.get((p, snk, d, t), 0.0)
+                if (p, snk) in proc_snk or (p, snk) in proc_src:
+                    v += pdt.get((p, d, t), 0.0)
+                fh.write(f"{p},{src},{snk},{d},{t},{repr(v)}\n")
+
+
+# ---- write_pssdt_varCost_filters (mod L1498-1501) -------------------------
+
+def write_pssdt_varCost_filters(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1498-1501 — four filter sets keyed on pdt-* OOC values.
+
+    Depends on ``pdtProcess__source__sink__dt_varCost.csv`` produced by
+    :func:`write_pdtProcess__source__sink__dt_varCost_pair`.
+    """
+    pdt = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess.csv",
+        param_col=1, param_value="other_operational_cost",
+        key_cols=(0, 2, 3), val_col=4,
+    )
+    pdt_src = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_source.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+    )
+    pdt_snk = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_sink.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+    )
+    varcost: dict[tuple[str, str, str, str, str], float] = {}
+    vp = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
+    if vp.exists():
+        with vp.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 6 and all(row[i] for i in range(5)):
+                    try:
+                        varcost[(row[0], row[1], row[2], row[3], row[4])] = float(row[5])
+                    except ValueError:
+                        continue
+
+    proc_src = frozenset(_read_pairs(input_dir / "process__source.csv"))
+    proc_snk = frozenset(_read_pairs(input_dir / "process__sink.csv"))
+    pss_noEff = _read_triples(solve_data_dir / "process_source_sink_noEff.csv")
+    pss_eff = _read_triples(solve_data_dir / "process_source_sink_eff.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    # pssdt_varCost_noEff
+    rows: list[tuple[str, str, str, str, str]] = []
+    for (p, src, snk) in pss_noEff:
+        for (d, t) in dt:
+            if varcost.get((p, src, snk, d, t), 0.0):
+                rows.append((p, src, snk, d, t))
+    _write_5col(solve_data_dir / "pssdt_varCost_noEff.csv",
+                ("process", "source", "sink", "period", "time"), rows)
+
+    # pssdt_varCost_eff_unit_source
+    rows = []
+    for (p, src, snk) in pss_eff:
+        for (d, t) in dt:
+            if (p, src) in proc_src and pdt_src.get((p, src, d, t), 0.0):
+                rows.append((p, src, snk, d, t))
+    _write_5col(solve_data_dir / "pssdt_varCost_eff_unit_source.csv",
+                ("process", "source", "sink", "period", "time"), rows)
+
+    # pssdt_varCost_eff_unit_sink
+    rows = []
+    for (p, src, snk) in pss_eff:
+        for (d, t) in dt:
+            if (p, snk) in proc_snk and pdt_snk.get((p, snk, d, t), 0.0):
+                rows.append((p, src, snk, d, t))
+    _write_5col(solve_data_dir / "pssdt_varCost_eff_unit_sink.csv",
+                ("process", "source", "sink", "period", "time"), rows)
+
+    # pssdt_varCost_eff_connection
+    rows = []
+    for (p, src, snk) in pss_eff:
+        for (d, t) in dt:
+            if pdt.get((p, d, t), 0.0):
+                rows.append((p, src, snk, d, t))
+    _write_5col(solve_data_dir / "pssdt_varCost_eff_connection.csv",
+                ("process", "source", "sink", "period", "time"), rows)
+
+
+# ---- write_cap_reduction_params (mod L1637-1663) --------------------------
+
+def write_cap_reduction_params(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1637-1663 — Morales-Espana startup/shutdown capacity
+    reduction params (4 calc params, 1 per side × startup/shutdown).
+    """
+    p_process: dict[tuple[str, str], float] = {}
+    pp_path = input_dir / "p_process.csv"
+    if pp_path.exists():
+        with pp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        p_process[(row[0], row[1])] = float(row[2])
+                    except ValueError:
+                        continue
+
+    def _read_p_side(path: Path) -> dict[tuple[str, str, str], float]:
+        out: dict[tuple[str, str, str], float] = {}
+        if not path.exists():
+            return out
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and all(row[i] for i in range(3)):
+                    try:
+                        out[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+        return out
+
+    p_process_source = _read_p_side(input_dir / "p_process_source.csv")
+    p_process_sink = _read_p_side(input_dir / "p_process_sink.csv")
+
+    process_online = frozenset(
+        _read_singles(solve_data_dir / "process_online.csv")
+    )
+    proc_src = _read_pairs(input_dir / "process__source.csv")
+    proc_snk = _read_pairs(input_dir / "process__sink.csv")
+
+    # dt with step_duration column from steps_in_use.csv.
+    dt_with_dur: list[tuple[str, str, float]] = []
+    su_path = solve_data_dir / "steps_in_use.csv"
+    if su_path.exists():
+        with su_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[0] and row[1]:
+                    try:
+                        dt_with_dur.append((row[0], row[1], float(row[2])))
+                    except ValueError:
+                        continue
+
+    def _compute(p_side: dict, pairs: list[tuple[str, str]],
+                 ramp_param: str) -> list[tuple[str, str, str, str, float]]:
+        rows: list[tuple[str, str, str, str, float]] = []
+        for (p, side_n) in pairs:
+            if p not in process_online:
+                continue
+            ramp = p_side.get((p, side_n, ramp_param), 0.0)
+            if ramp <= 0:
+                for (d, t, _dur) in dt_with_dur:
+                    rows.append((p, side_n, d, t, 0.0))
+                continue
+            min_load = p_process.get((p, "min_load"), 0.0)
+            for (d, t, dur) in dt_with_dur:
+                v = max(0.0, 1.0 - min_load - ramp * 60.0 * dur)
+                rows.append((p, side_n, d, t, v))
+        return rows
+
+    def _write(path: Path, side_label: str,
+               rows: list[tuple[str, str, str, str, float]]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w") as fh:
+            fh.write(f"process,{side_label},period,time,value\n")
+            for (p, sn, d, t, v) in rows:
+                fh.write(f"{p},{sn},{d},{t},{repr(v)}\n")
+
+    _write(solve_data_dir / "p_startup_cap_reduction_sink.csv", "sink",
+           _compute(p_process_sink, proc_snk, "ramp_speed_up"))
+    _write(solve_data_dir / "p_shutdown_cap_reduction_sink.csv", "sink",
+           _compute(p_process_sink, proc_snk, "ramp_speed_down"))
+    _write(solve_data_dir / "p_startup_cap_reduction_source.csv", "source",
+           _compute(p_process_source, proc_src, "ramp_speed_up"))
+    _write(solve_data_dir / "p_shutdown_cap_reduction_source.csv", "source",
+           _compute(p_process_source, proc_src, "ramp_speed_down"))
+
+
+# ---- write_ed_period_params (mod L1252-1255 family, ed_*_period) ----------
+
+def _read_ed_pairs(path: Path) -> list[tuple[str, str]]:
+    if not path.exists():
+        return []
+    out: list[tuple[str, str]] = []
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 2 and row[0] and row[1]:
+                out.append((row[0], row[1]))
+    return out
+
+
+def _write_keyed_2(path: Path, header: tuple[str, str, str],
+                   rows: list[tuple[str, str, float]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(",".join(header) + "\n"
+                    + "".join(f"{a},{b},{repr(v)}\n" for a, b, v in rows))
+
+
+def write_ed_period_params(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """``ed_*_period`` / ``ed_cumulative_*`` family — six calc params
+    keyed on ``ed_invest`` / ``ed_divest``.
+
+    Must run AFTER ``invest_divest_sets`` has produced
+    ``solve_data/ed_invest.csv`` and ``ed_divest.csv``.  Processes and
+    nodes are disjoint by construction, so exactly one of the
+    ``PdLookup`` branches fires per entity row.
+    """
+    from flextool.engine_polars._pdt_lookup import PdLookup
+    pp = PdLookup(
+        pd_csv=input_dir / "pd_process.csv",
+        p_csv=input_dir / "p_process.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+    )
+    pn = PdLookup(
+        pd_csv=input_dir / "pd_node.csv",
+        p_csv=input_dir / "p_node.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+    )
+    process_set = frozenset(_read_singles(input_dir / "process.csv"))
+    node_set = frozenset(_read_singles(input_dir / "node.csv"))
+
+    ed_invest_pairs = _read_ed_pairs(solve_data_dir / "ed_invest.csv")
+    ed_divest_pairs = _read_ed_pairs(solve_data_dir / "ed_divest.csv")
+
+    for fname, src_pairs, mod_param in (
+        ("ed_invest_max_period.csv",       ed_invest_pairs, "invest_max_period"),
+        ("ed_invest_min_period.csv",       ed_invest_pairs, "invest_min_period"),
+        ("ed_divest_max_period.csv",       ed_divest_pairs, "retire_max_period"),
+        ("ed_divest_min_period.csv",       ed_divest_pairs, "retire_min_period"),
+        ("ed_cumulative_max_capacity.csv", ed_invest_pairs, "cumulative_max_capacity"),
+        ("ed_cumulative_min_capacity.csv", ed_invest_pairs, "cumulative_min_capacity"),
+    ):
+        rows: list[tuple[str, str, float]] = []
+        for e, d in src_pairs:
+            if e in process_set:
+                v = pp.get(e, mod_param, d)
+            elif e in node_set:
+                v = pn.get(e, mod_param, d)
+            else:
+                v = 0.0
+            rows.append((e, d, v))
+        _write_keyed_2(solve_data_dir / fname,
+                       ("entity", "period", "value"), rows)

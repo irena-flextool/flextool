@@ -468,6 +468,32 @@ def _native_leaf_set_override():
         (_legacy_arc_unions, "write_node_group_dispatch_process_fully_inside",
                              _native_arc
                              .write_node_group_dispatch_process_fully_inside),
+        # ── Phase 1 follow-up 5 — small_set_derivations + small writers ──
+        (_legacy_arc_unions, "write_small_set_derivations",
+                             _native_arc.write_small_set_derivations),
+        (_legacy_arc_unions, "write_process_source_sink_param_with_time",
+                             _native_arc.write_process_source_sink_param_with_time),
+        (_legacy_arc_unions, "write_gdt_instant_flow_sets",
+                             _native_arc.write_gdt_instant_flow_sets),
+        (_legacy_arc_unions, "write_p_process_delay_weight",
+                             _native_arc.write_p_process_delay_weight),
+        (_legacy_arc_unions, "write_gcndt_co2_price",
+                             _native_arc.write_gcndt_co2_price),
+        (_legacy_arc_unions, "write_group_commodity_node_period_co2_period",
+                             _native_arc
+                             .write_group_commodity_node_period_co2_period),
+        (_legacy_arc_unions, "write_peedt", _native_arc.write_peedt),
+        # ── Phase 1 follow-up 5 — entity_period_calc_params varCost +
+        #    cap_reduction + ed_period_params + pssdt_varCost filters.
+        (_legacy_entity_period, "write_pdtProcess__source__sink__dt_varCost_pair",
+                                _native_period
+                                .write_pdtProcess__source__sink__dt_varCost_pair),
+        (_legacy_entity_period, "write_pssdt_varCost_filters",
+                                _native_period.write_pssdt_varCost_filters),
+        (_legacy_entity_period, "write_cap_reduction_params",
+                                _native_period.write_cap_reduction_params),
+        (_legacy_entity_period, "write_ed_period_params",
+                                _native_period.write_ed_period_params),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
