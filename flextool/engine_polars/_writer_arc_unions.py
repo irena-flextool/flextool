@@ -2395,3 +2395,212 @@ def write_node_group_dispatch_sets(
         solve_data_dir / "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
         ("group", "group_aggregate"), list(seen12.keys()),
     )
+
+
+# ---------------------------------------------------------------------------
+# write_param_t_projections_and_time_params — Phase 1 follow-up 7
+# (legacy process_arc_unions.py:1914, ~150 LOC)
+# ---------------------------------------------------------------------------
+
+# flextool_base.dat:158 — SOURCE_SINK_TIME_PARAM (mirrored locally for the
+# same enum-iteration-parity reasons as _PROCESS_TIME_PARAM above; legacy
+# stores it as a frozenset and the native writer mirrors that storage so
+# in-process iteration order matches byte-for-byte).
+_SS_TIME_PARAM_ENUM: frozenset[str] = frozenset((
+    "efficiency", "efficiency_at_min_load", "min_load", "other_operational_cost",
+))
+
+
+def _read_pt_pp_t_seen(
+    pt_path: Path, proc_conn: frozenset[str],
+) -> tuple[dict[tuple[str, str], None],
+           list[tuple[str, str, str]],
+           dict[tuple[str, str], None]]:
+    """Read pt_process.csv and return:
+
+      * pp_t_seen   — ordered (process, param) projection of all rows
+      * conn_pt_rows — full (process, param, time) rows where process is
+                       a connection (preserving CSV order)
+      * conn_pt_seen — ordered (process, param) projection restricted to
+                       connection rows.
+
+    Mirrors legacy ``setdefault`` ordered-dedup semantics.
+    """
+    pp_t_seen: dict[tuple[str, str], None] = {}
+    conn_pt_rows: list[tuple[str, str, str]] = []
+    conn_pt_seen: dict[tuple[str, str], None] = {}
+    if not pt_path.exists():
+        return pp_t_seen, conn_pt_rows, conn_pt_seen
+    import csv
+    with pt_path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for r in reader:
+            if len(r) >= 3 and r[0] and r[1] and r[2]:
+                pp_t_seen.setdefault((r[0], r[1]), None)
+                if r[0] in proc_conn:
+                    conn_pt_rows.append((r[0], r[1], r[2]))
+                    conn_pt_seen.setdefault((r[0], r[1]), None)
+    return pp_t_seen, conn_pt_rows, conn_pt_seen
+
+
+def _read_pps_t_seen(
+    path: Path,
+) -> dict[tuple[str, str, str], None]:
+    """Read pt_process_source.csv or pt_process_sink.csv and return the
+    ordered (e0, e1, param) projection (legacy ``setdefault`` order)."""
+    seen: dict[tuple[str, str, str], None] = {}
+    if not path.exists():
+        return seen
+    import csv
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for r in reader:
+            if len(r) >= 4 and r[0] and r[1] and r[2]:
+                seen.setdefault((r[0], r[1], r[2]), None)
+    return seen
+
+
+def _read_param_static_3(path: Path) -> set[tuple[str, str, str]]:
+    """Read input/p_process_source.csv or p_process_sink.csv as a set
+    of (process, side, param) triples (membership test only — order
+    not load-bearing)."""
+    out: set[tuple[str, str, str]] = set()
+    if not path.exists():
+        return out
+    import csv
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for r in reader:
+            if len(r) >= 3 and r[0] and r[1] and r[2]:
+                out.add((r[0], r[1], r[2]))
+    return out
+
+
+def _read_param_static_2(path: Path) -> set[tuple[str, str]]:
+    """Read input/p_process.csv as a set of (process, param) pairs."""
+    out: set[tuple[str, str]] = set()
+    if not path.exists():
+        return out
+    import csv
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for r in reader:
+            if len(r) >= 2 and r[0] and r[1]:
+                out.add((r[0], r[1]))
+    return out
+
+
+def write_param_t_projections_and_time_params(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Native port of
+    :func:`flextool.flextoolrunner.preprocessing.process_arc_unions.write_param_t_projections_and_time_params`
+    (legacy line 1914).
+
+    Emits 8 ``solve_data/`` CSVs:
+
+    * Projections (drop the time column from each *__time set):
+        - ``process__param_t.csv``
+        - ``connection__param__time.csv``
+        - ``connection__param_t.csv``
+        - ``process__source__param_t.csv``
+        - ``process__sink__param_t.csv``
+
+    * Joins with ``SOURCE_SINK_TIME_PARAM``:
+        - ``process__source__timeParam.csv``
+        - ``process__sink__timeParam.csv``
+        - ``process__timeParam.csv``
+
+    Reads ``solve_data/pt_process{,_source,_sink}.csv`` and
+    ``input/p_process{,_source,_sink}.csv``,
+    ``input/process{,_connection,__source,__sink}.csv``.
+    """
+    proc_conn = frozenset(_read_singles_list(input_dir / "process_connection.csv"))
+
+    # process__param__time → projection (process, param) [drop time]
+    pp_t_seen, conn_pt_rows, conn_pt_seen = _read_pt_pp_t_seen(
+        solve_data_dir / "pt_process.csv", proc_conn,
+    )
+    _write_csv_rows(
+        solve_data_dir / "process__param_t.csv",
+        ("process", "param"), list(pp_t_seen.keys()),
+    )
+    _write_csv_rows(
+        solve_data_dir / "connection__param__time.csv",
+        ("connection", "param", "time"), conn_pt_rows,
+    )
+    _write_csv_rows(
+        solve_data_dir / "connection__param_t.csv",
+        ("connection", "param"), list(conn_pt_seen.keys()),
+    )
+
+    # process__source__param_t (drop time)
+    pps_t_seen = _read_pps_t_seen(solve_data_dir / "pt_process_source.csv")
+    _write_csv_rows(
+        solve_data_dir / "process__source__param_t.csv",
+        ("process", "source", "param"), list(pps_t_seen.keys()),
+    )
+
+    # process__sink__param_t
+    ppk_t_seen = _read_pps_t_seen(solve_data_dir / "pt_process_sink.csv")
+    _write_csv_rows(
+        solve_data_dir / "process__sink__param_t.csv",
+        ("process", "sink", "param"), list(ppk_t_seen.keys()),
+    )
+
+    # Static parameter sets from input/p_process_source.csv, p_process_sink.csv,
+    # p_process.csv.
+    src_param = _read_param_static_3(input_dir / "p_process_source.csv")
+    sink_param = _read_param_static_3(input_dir / "p_process_sink.csv")
+    proc_param = _read_param_static_2(input_dir / "p_process.csv")
+
+    # process__source__timeParam
+    proc_sources = _read_n_col_rows(
+        input_dir / "process__source.csv", ["process", "source"],
+    )
+    proc_sinks = _read_n_col_rows(
+        input_dir / "process__sink.csv", ["process", "sink"],
+    )
+    pps_t_set = frozenset(pps_t_seen.keys())
+    ppk_t_set = frozenset(ppk_t_seen.keys())
+    pp_t_set = frozenset(pp_t_seen.keys())
+
+    rows_src_tp: list[tuple[str, str, str]] = []
+    for p, src in proc_sources:
+        for param in _SS_TIME_PARAM_ENUM:
+            if ((p, src, param) in src_param
+                    or (p, src, param) in pps_t_set):
+                rows_src_tp.append((p, src, param))
+    _write_csv_rows(
+        solve_data_dir / "process__source__timeParam.csv",
+        ("process", "source", "param"), rows_src_tp,
+    )
+
+    rows_snk_tp: list[tuple[str, str, str]] = []
+    for p, snk in proc_sinks:
+        for param in _SS_TIME_PARAM_ENUM:
+            if ((p, snk, param) in sink_param
+                    or (p, snk, param) in ppk_t_set):
+                rows_snk_tp.append((p, snk, param))
+    _write_csv_rows(
+        solve_data_dir / "process__sink__timeParam.csv",
+        ("process", "sink", "param"), rows_snk_tp,
+    )
+
+    # process__timeParam — only for processes that are connections.
+    processes = _read_singles_list(input_dir / "process.csv")
+    rows_p_tp: list[tuple[str, str]] = []
+    for p in processes:
+        if p not in proc_conn:
+            continue
+        for param in _SS_TIME_PARAM_ENUM:
+            if (p, param) in proc_param or (p, param) in pp_t_set:
+                rows_p_tp.append((p, param))
+    _write_csv_rows(
+        solve_data_dir / "process__timeParam.csv",
+        ("process", "param"), rows_p_tp,
+    )

@@ -506,6 +506,9 @@ def _native_leaf_set_override():
                              _native_arc.write_p_storage_state_reference_price),
         (_legacy_arc_unions, "write_node_group_dispatch_sets",
                              _native_arc.write_node_group_dispatch_sets),
+        # ── Phase 1 follow-up 7 — param_t projections + time-param joins ──
+        (_legacy_arc_unions, "write_param_t_projections_and_time_params",
+                             _native_arc.write_param_t_projections_and_time_params),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
