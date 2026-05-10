@@ -29,17 +29,20 @@ from pathlib import Path
 
 import pytest
 
+from flextool.engine_polars import _writer_calc_params as native_calc
 from flextool.engine_polars import _writer_leaf_sets as native
 from flextool.engine_polars import _writer_mid_sets as native_mid
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
     dc_angle_bounds as legacy_dc,
+    entity_total_caps as legacy_entity_total,
     invest_method_sets as legacy_invest,
     invest_total_sets as legacy_invest_total,
     method_with_fallback_sets as legacy_method_fb,
     node_type_sets as legacy_node_type,
     nonsync_sets as legacy_nonsync,
     period_param_sets as legacy_period,
+    process_method_sets as legacy_process_method,
     reserve_method_partitions as legacy_reserve_part,
     simple_projections as legacy_simple,
     structural_filters as legacy_struct,
@@ -51,6 +54,9 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 FIXTURES = ["work_base", "work_coal", "work_test_a_lot"]
 # Extra fixture exercising DC power-flow bounds.
 FIXTURES_WITH_DC = FIXTURES + ["work_dc_power_flow"]
+# Extra fixture exercising explicit float param values (invest_max_total),
+# stresses repr(float) precision parity in entity_total_caps.
+FIXTURES_WITH_INVEST = FIXTURES + ["work_network_coal_wind_battery_invest_cumulative"]
 
 
 def _seed_workdir(tmp_path: Path, fixture: str) -> tuple[Path, Path, Path, Path]:
@@ -252,6 +258,17 @@ def test_derive_returns_dataframe(tmp_path: Path) -> None:
     assert isinstance(native_mid.derive_reserve_universe(lin), pl.DataFrame)
     assert isinstance(native_mid.derive_entity_lifetime_method(lin), pl.DataFrame)
     assert isinstance(native_mid.derive_connection_param(lin), pl.DataFrame)
+    # L7-L9 native-derive return type smoke.
+    assert isinstance(native_calc.derive_process_online_linear(lin), pl.DataFrame)
+    assert isinstance(native_calc.derive_process_online_integer(lin), pl.DataFrame)
+    assert isinstance(native_calc.derive_process_method_indirect(lin), pl.DataFrame)
+    assert isinstance(native_calc.derive_process_VRE(lin), pl.DataFrame)
+    assert isinstance(
+        native_calc.derive_entity_total_cap(
+            [], frozenset(), frozenset(), {}, {}, "invest_max_total",
+        ),
+        pl.DataFrame,
+    )
 
 
 # ===========================================================================
@@ -421,4 +438,77 @@ def test_structural_filters_parity(tmp_path: Path, fixture: str) -> None:
         "process_source_coeff_zero.csv",
         "process_sink_coeff_zero.csv",
     ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ===========================================================================
+# Phase 1 (L7-L9) — calculated-param + process-method families
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Family 13 — entity_total_caps  (calculated-param, repr(float) precision)
+#
+# Depends on entityInvest / entityDivest being present in solve_data — the
+# fixture's checked-in solve_data has them.  We also stress an extra
+# fixture with explicit non-trivial float values (invest_max_total =
+# 800.0, etc.) to gate the repr(float)-parity strategy.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_INVEST)
+def test_entity_total_caps_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_total.write_entity_total_caps(lin, lsd)
+    native_calc.write_entity_total_caps(nin, nsd)
+    for fname in (
+        "e_invest_max_total.csv",
+        "e_divest_max_total.csv",
+        "e_invest_min_total.csv",
+        "e_divest_min_total.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Family 14 — process_method_sets
+#
+# Four legacy writers; each emits multiple solve_data CSVs.  We run all of
+# them on each fixture and compare every output independently.
+# ---------------------------------------------------------------------------
+
+_PROCESS_METHOD_OUTPUTS = (
+    # write_process_method_projections
+    "process_online_linear.csv",
+    "process_online_integer.csv",
+    "process__method_indirect.csv",
+    # write_process_VRE
+    "process_VRE.csv",
+    # write_process_arc_method_joins
+    "process_sink_toProcess.csv",
+    "process_process_toSource.csv",
+    "process_source_toSink.csv",
+    "process_source_toProcess_direct.csv",
+    "process_process_toSink_direct.csv",
+    "process_sink_toProcess_direct.csv",
+    "process_sink_toSource.csv",
+    "process_process_toSink_noConversion.csv",
+    "process_source_toProcess_noConversion.csv",
+    "process_process_toSource_direct.csv",
+    # write_process_profile_method_joins
+    "process__profileProcess__toSink__profile__profile_method.csv",
+    "process__source__toProfileProcess__profile__profile_method.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_INVEST)
+def test_process_method_sets_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_process_method.write_process_method_projections(lin, lsd)
+    legacy_process_method.write_process_VRE(lin, lsd)
+    legacy_process_method.write_process_arc_method_joins(lin, lsd)
+    legacy_process_method.write_process_profile_method_joins(lin, lsd)
+    native_calc.write_process_method_projections(nin, nsd)
+    native_calc.write_process_VRE(nin, nsd)
+    native_calc.write_process_arc_method_joins(nin, nsd)
+    native_calc.write_process_profile_method_joins(nin, nsd)
+    for fname in _PROCESS_METHOD_OUTPUTS:
         _assert_files_equal(lsd / fname, nsd / fname)
