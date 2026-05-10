@@ -12,6 +12,24 @@ invoked the legacy FlexToolRunner method to populate the workdir's
 contract is "produce the workdir CSVs the cascade and the output writer
 adapter need."
 
+Writer-port Phase 1 (L0-L2)
+---------------------------
+
+The four leaf-level set-derivation families
+(``period_param_sets``, ``invest_method_sets``, ``co2_method_sets``,
+``simple_projections``) are now produced natively by
+:mod:`flextool.engine_polars._writer_leaf_sets`.  The remaining
+``input/*`` emission (DB → CSV per ``_PARAMETER_SPECS`` /
+``_ENTITY_SPECS``) and the heavier preprocessing families
+(``node_type_sets``, ``method_with_fallback_sets``, ``nonsync_sets``,
+``union_sets``, ``entity_total_caps``, ``process_method_sets``,
+``reserve_method_partitions``, ``structural_filters``,
+``dc_angle_bounds``, ``invest_total_sets``, ``process_arc_unions``)
+still delegate to the legacy ``input_writer.write_input`` body.  The
+swap is implemented via monkey-patch on the legacy preprocessing
+modules so the in-tree call sites in ``write_input`` route through
+native code without modifying the legacy module's source.
+
 Implementation strategy
 -----------------------
 
@@ -240,10 +258,71 @@ def write_workdir_inputs(
     # ``engine_polars``.
     from flextool.flextoolrunner.input_writer import write_input as _flx_write_input
 
-    _flx_write_input(
-        db_url,
-        scenario_name,
-        logger,
-        work_folder=work_folder,
-        precision_digits=precision_digits,
+    with _native_leaf_set_override():
+        _flx_write_input(
+            db_url,
+            scenario_name,
+            logger,
+            work_folder=work_folder,
+            precision_digits=precision_digits,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Writer-port Phase 1 (L0-L2) — native override for leaf-level set families.
+# ---------------------------------------------------------------------------
+
+import contextlib  # noqa: E402  (placed near the override helper for locality)
+
+
+@contextlib.contextmanager
+def _native_leaf_set_override():
+    """Monkey-patch the four legacy leaf-set preprocessing families to
+    invoke :mod:`flextool.engine_polars._writer_leaf_sets`.
+
+    The legacy ``flextool.flextoolrunner.input_writer.write_input``
+    imports each preprocessing module by name and calls its ``write_*``
+    helpers directly.  We rebind those names on the legacy modules for
+    the duration of the call so the native implementations are
+    consulted in production.  Other preprocessing families still
+    delegate to legacy code.
+    """
+    from flextool.flextoolrunner.preprocessing import (
+        co2_method_sets as _legacy_co2,
+        invest_method_sets as _legacy_invest,
+        period_param_sets as _legacy_period,
+        simple_projections as _legacy_simple,
     )
+    from flextool.engine_polars import _writer_leaf_sets as _native
+
+    overrides: list[tuple[object, str, object]] = [
+        # period_param_sets
+        (_legacy_period, "write_period_param_sets", _native.write_period_param_sets),
+        # invest_method_sets
+        (_legacy_invest, "write_invest_method_sets", _native.write_invest_method_sets),
+        # co2_method_sets
+        (_legacy_co2, "write_co2_method_sets", _native.write_co2_method_sets),
+        # simple_projections (11 entries)
+        (_legacy_simple, "write_optional_yes", _native.write_optional_yes),
+        (_legacy_simple, "write_reserve_upDown_group", _native.write_reserve_upDown_group),
+        (_legacy_simple, "write_group_loss_share", _native.write_group_loss_share),
+        (_legacy_simple, "write_def_optional_yes", _native.write_def_optional_yes),
+        (_legacy_simple, "write_process_delayed", _native.write_process_delayed),
+        (_legacy_simple, "write_process_side", _native.write_process_side),
+        (_legacy_simple, "write_period_solve", _native.write_period_solve),
+        (_legacy_simple, "write_time_set", _native.write_time_set),
+        (_legacy_simple, "write_enable_optional_outputs", _native.write_enable_optional_outputs),
+        (_legacy_simple, "write_node_state_subsets", _native.write_node_state_subsets),
+        (_legacy_simple, "write_commodity_tier_sets", _native.write_commodity_tier_sets),
+        (_legacy_simple, "write_simple_setof_projections", _native.write_simple_setof_projections),
+    ]
+    saved: list[tuple[object, str, object]] = [
+        (mod, name, getattr(mod, name)) for mod, name, _ in overrides
+    ]
+    for mod, name, native_fn in overrides:
+        setattr(mod, name, native_fn)
+    try:
+        yield
+    finally:
+        for mod, name, original in saved:
+            setattr(mod, name, original)
