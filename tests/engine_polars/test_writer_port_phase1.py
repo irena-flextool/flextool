@@ -1157,3 +1157,103 @@ def test_ed_period_params_parity(tmp_path: Path, fixture: str) -> None:
         "ed_cumulative_min_capacity.csv",
     ):
         _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 follow-up 6 — flow-bound + state-slack + storage reference price
+# + 12-CSV nodeGroupDispatch dispatch set family.
+# ---------------------------------------------------------------------------
+
+# Fixtures exercising flow_min/flow_max paths beyond the trivial 0-row case.
+# work_network_coal_wind_battery_invest_cumulative + work_5weeks_battery_intraperiod_blocks
+# exercise indirect+min_load+sink_coef branches in flow_max via peedt rows.
+FIXTURES_WITH_FLOW_BOUNDS = FIXTURES + [
+    "work_network_coal_wind_battery_invest_cumulative",
+    "work_5weeks_battery_intraperiod_blocks",
+]
+
+# Fixtures with nodeGroupDispatch + flowAggregator (work_test_a_lot stresses
+# the multi-group case; the invest fixture has fully_inside rows).
+FIXTURES_WITH_NGD = FIXTURES + [
+    "work_network_coal_wind_battery_invest_cumulative",
+]
+
+# Fixtures exercising storage_state_reference_price (needs nodeState).
+FIXTURES_WITH_STORAGE = FIXTURES + [
+    "work_5weeks_battery_intraperiod_blocks",
+    "work_network_coal_wind_battery_invest_cumulative",
+    "work_2day_stochastic_dispatch_full_storage",
+]
+
+
+# write_p_flow_min — sparse for all fixtures with empty sinkIsNode_2way1var,
+# but the writer's shape (header-only emit) is also a parity assertion.
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_FLOW_BOUNDS)
+def test_p_flow_min_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_p_flow_min(lin, lsd)
+    native_arc.write_p_flow_min(nin, nsd)
+    _assert_files_equal(lsd / "p_flow_min.csv", nsd / "p_flow_min.csv")
+
+
+# write_p_flow_max — emits one value per peedt row.  Stresses repr(float)
+# precision parity across two-branch value formula (coeff_zero vs indirect +
+# slope/section).
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_FLOW_BOUNDS)
+def test_p_flow_max_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_p_flow_max(lin, lsd)
+    native_arc.write_p_flow_max(nin, nsd)
+    _assert_files_equal(lsd / "p_flow_max.csv", nsd / "p_flow_max.csv")
+
+
+# write_p_state_slack_share — empty for all fixtures (group_loss_share is
+# empty), but the writer's contract is still asserted byte-for-byte.
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_p_state_slack_share_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_p_state_slack_share(lin, lsd)
+    native_arc.write_p_state_slack_share(nin, nsd)
+    _assert_files_equal(
+        lsd / "p_state_slack_share.csv", nsd / "p_state_slack_share.csv"
+    )
+
+
+# write_p_storage_state_reference_price — nodes_state × period_in_use rows.
+# The storage fixtures stress non-empty nodeState; baselines exercise the
+# 0-row path.
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_STORAGE)
+def test_p_storage_state_reference_price_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_p_storage_state_reference_price(lin, lsd)
+    native_arc.write_p_storage_state_reference_price(nin, nsd)
+    _assert_files_equal(
+        lsd / "p_storage_state_reference_price.csv",
+        nsd / "p_storage_state_reference_price.csv",
+    )
+
+
+# write_node_group_dispatch_sets — emits 12 CSVs.  work_test_a_lot
+# is the strongest stress (multiple groups + 5 fully_inside rows).
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_NGD)
+def test_node_group_dispatch_sets_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_node_group_dispatch_sets(lin, lsd)
+    native_arc.write_node_group_dispatch_sets(nin, nsd)
+    for fname in (
+        "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv",
+        "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv",
+        "nodeGroupDispatch__group_aggregate__process__unit__to_node.csv",
+        "nodeGroupDispatch__group_aggregate__process__node__to_unit.csv",
+        "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv",
+        "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv",
+        "nodeGroupDispatch__connection_Not_in_aggregate.csv",
+        "nodeGroupDispatch__group_aggregate__process__connection__to_node.csv",
+        "nodeGroupDispatch__group_aggregate__process__node__to_connection.csv",
+        "nodeGroupDispatch__group_aggregate_Connection.csv",
+        "nodeGroupDispatch__group_aggregate_Unit_to_group.csv",
+        "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
