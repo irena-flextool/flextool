@@ -1267,86 +1267,36 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_invest_period_set=None, ed_divest_period_set=None,
         ed_invest_max_period=None, ed_divest_max_period=None,
     )
-    # ``ed_invest.csv`` etc. are the canonical Python-preprocessing
-    # outputs that .mod reads via ``table data IN`` (flextool.mod:1428).
-    # The ``solve__`` prefixed twins are .mod printf debug-exports of
-    # the *current solve's* subset and must NOT be used as inputs —
-    # using them silently drops invest variables for non-realized
-    # periods (e.g. p2025 in a 2-period invest scenario), making the
-    # LP smaller than .mod's by exactly the missing periods.
-    def _read_invest_set(name: str, kind_col: str) -> pl.DataFrame:
-        path = sd / f"{name}.csv"
-        if not path.exists():
-            return pl.DataFrame(schema={kind_col: pl.Utf8, "d": pl.Utf8})
-        df = _read_csv_file(path)
-        if df.height == 0:
-            return pl.DataFrame(schema={kind_col: pl.Utf8, "d": pl.Utf8})
-        rename_src = ("entity" if "entity" in df.columns
-                      else "node" if "node" in df.columns
-                      else "process")
-        return df.rename({rename_src: kind_col, "period": "d"}).select(kind_col, "d")
+    # Workdir-CSV seeds for the invest/divest cascade live in
+    # ``_invest_seeds.py`` — keeps the synthetic-solve fallback I/O off
+    # ``input.py`` so the override chain stays the dominant data path.
+    from ._invest_seeds import (
+        read_invest_set as _seed_invest_set,
+        read_forbidden_no_investment as _seed_forbidden_ni,
+        read_set_seed as _seed_set,
+        read_edd_invest as _seed_edd_invest,
+    )
 
-    ed_inv = _read_invest_set("ed_invest", "e")
-    ed_div = _read_invest_set("ed_divest", "e")
+    ed_inv = _seed_invest_set(sd, "ed_invest", "e")
+    ed_div = _seed_invest_set(sd, "ed_divest", "e")
     if ed_inv.height == 0 and ed_div.height == 0:
         return blank
 
-    # ed_invest_forbidden_no_investment: entities that may NOT invest in
-    # specified periods (lifetime_method=no_investment combined with
-    # invest_method=invest_no_limit at periods where the lifetime window
-    # disallows new build).  flextool encodes this as
-    # ``fix_v_invest_no_investment_eq`` pinning the variable to 0 — we
-    # achieve the same effect by removing the (entity, period) tuple
-    # from every invest set so the variable is never created.
-    forbid_path = sd / "ed_invest_forbidden_no_investment.csv"
-    if forbid_path.exists():
-        forbid = _read_csv_file(forbid_path)
-        if forbid.height > 0:
-            forbid = forbid.rename({"entity": "e", "period": "d"}).select("e", "d")
-            ed_inv = ed_inv.join(forbid, on=["e", "d"], how="anti")
+    forbid = _seed_forbidden_ni(sd)
+    if forbid.height > 0:
+        ed_inv = ed_inv.join(forbid, on=["e", "d"], how="anti")
 
     # Δ.18 — CSV-fallback seeds for pd/nd_invest_set, pd/nd_divest_set,
-    # edd_invest_set, edd_invest_lookback, edd_divest_active.  The
-    # override chain (``apply_derived_c`` via the lazy LFs in
-    # ``_derived_existing.py``) overlays these when active.  For synthetic
-    # per-sub-solve fixtures the snapshot CSV is the only source.
-    def _read_set_seed(name: str, kind_col: str) -> pl.DataFrame:
-        empty = pl.DataFrame(schema={kind_col: pl.Utf8, "d": pl.Utf8})
-        f = sd / f"{name}.csv"
-        if not f.exists():
-            return empty
-        df = _read_csv_file(f)
-        if df.height == 0:
-            return empty
-        rename_src = ("entity" if "entity" in df.columns
-                      else "node" if "node" in df.columns
-                      else "process" if "process" in df.columns
-                      else None)
-        if rename_src is None or "period" not in df.columns:
-            return empty
-        return (df.rename({rename_src: kind_col, "period": "d"})
-                  .select(kind_col, "d"))
+    # edd_invest_set.  The override chain (``apply_derived_c`` via the
+    # lazy LFs in ``_derived_existing.py``) overlays these when active.
+    # For synthetic per-sub-solve fixtures the snapshot CSV is the only
+    # source.
+    pd_inv = _seed_set(sd, "pd_invest", "p")
+    pd_div = _seed_set(sd, "pd_divest", "p")
+    nd_inv = _seed_set(sd, "nd_invest", "n")
+    nd_div = _seed_set(sd, "nd_divest", "n")
 
-    pd_inv = _read_set_seed("pd_invest", "p")
-    pd_div = _read_set_seed("pd_divest", "p")
-    nd_inv = _read_set_seed("nd_invest", "n")
-    nd_div = _read_set_seed("nd_divest", "n")
-
-    # edd_invest: (entity, d_invest, period).  Canonical CSV uses
-    # ``period_history`` for d_invest; tolerate both column names.
-    edd_inv = pl.DataFrame(schema={"e": pl.Utf8, "d_invest": pl.Utf8,
-                                     "d": pl.Utf8})
-    edd_inv_path = sd / "edd_invest.csv"
-    if edd_inv_path.exists():
-        df_edd = _read_csv_file(edd_inv_path)
-        if df_edd.height > 0:
-            ren = {}
-            if "entity" in df_edd.columns: ren["entity"] = "e"
-            if "period_history" in df_edd.columns: ren["period_history"] = "d_invest"
-            if "period" in df_edd.columns: ren["period"] = "d"
-            df_edd = df_edd.rename(ren)
-            if {"e", "d_invest", "d"}.issubset(df_edd.columns):
-                edd_inv = df_edd.select("e", "d_invest", "d")
+    edd_inv = _seed_edd_invest(sd)
 
     edd_div = pl.DataFrame(
         schema={"p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
@@ -1409,14 +1359,13 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     ed_divest_max_period_seed = _read_e_d("ed_divest_max_period")
 
     # ``ed_invest_period_set`` / ``ed_divest_period_set`` (set frames
-    # of (e, d) pairs with per-period invest / divest caps) — no
-    # override-chain helper covers these yet.
-    def _read_period_set(name: str) -> pl.DataFrame | None:
-        f = sd / f"{name}.csv"
-        if not f.exists(): return None
-        df = _read_csv_file(f)
-        if df.height == 0: return None
-        return (df.rename({"entity": "e", "period": "d"}).select("e", "d"))
+    # of (e, d) pairs with per-period invest / divest caps) —
+    # ``apply_derived_c`` populates these via
+    # ``ed_invest_period_set_from_source`` /
+    # ``ed_divest_period_set_from_source`` when active_solve is in
+    # Spine; the workdir-CSV seeds below cover the synthetic per-sub-
+    # solve case.
+    from ._invest_seeds import read_period_set as _seed_period_set
 
     # Multi-solve handoff state.  These files are written between
     # sub-solves; the .mod uses them as constants on the
@@ -1467,8 +1416,8 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         e_divest_total=None,
         e_invest_max_total=e_invest_max_total_seed,
         e_divest_max_total=e_divest_max_total_seed,
-        ed_invest_period_set=_read_period_set("ed_invest_period"),
-        ed_divest_period_set=_read_period_set("ed_divest_period"),
+        ed_invest_period_set=_seed_period_set(sd, "ed_invest_period"),
+        ed_divest_period_set=_seed_period_set(sd, "ed_divest_period"),
         ed_invest_max_period=ed_invest_max_period_seed,
         ed_divest_max_period=ed_divest_max_period_seed,
         p_entity_previously_invested_capacity=None,

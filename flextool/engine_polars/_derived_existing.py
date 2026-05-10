@@ -545,6 +545,47 @@ def nd_divest_set_lf(source: "InputSource",
               .unique())
 
 
+def ed_invest_period_set_lf(source: "InputSource",
+                                  ed_invest_lf: pl.LazyFrame,
+                                  ) -> pl.LazyFrame:
+    """Lazy ``[e, d]`` — ``ed_invest`` filtered to entities whose
+    ``invest_method`` is in :data:`_INVEST_PERIOD_METHODS`.
+
+    Mirror of ``preprocessing/invest_divest_sets.py`` 's
+    ``ed_invest_period`` set: keeps only the (e, d) pairs that carry
+    a per-period invest cap (``maxInvest_entity_period`` /
+    ``minInvest_entity_period`` constraint indices).  Used in
+    ``model.py:1517-1530`` to index the per-period invest cap rows.
+    """
+    methods_lf = _entity_method_lf(source, "invest_method")
+    period_e = (methods_lf
+                   .filter(pl.col("method").is_in(list(_INVEST_PERIOD_METHODS)))
+                   .select("e")
+                   .unique())
+    return (ed_invest_lf
+              .join(period_e, on="e", how="inner")
+              .select("e", "d")
+              .unique())
+
+
+def ed_divest_period_set_lf(source: "InputSource",
+                                  ed_divest_lf: pl.LazyFrame,
+                                  ) -> pl.LazyFrame:
+    """Lazy ``[e, d]`` — ``ed_divest`` filtered to entities whose
+    ``invest_method`` is in :data:`_DIVEST_PERIOD_METHODS`.  Mirror of
+    :func:`ed_invest_period_set_lf` for divest.
+    """
+    methods_lf = _entity_method_lf(source, "invest_method")
+    period_e = (methods_lf
+                   .filter(pl.col("method").is_in(list(_DIVEST_PERIOD_METHODS)))
+                   .select("e")
+                   .unique())
+    return (ed_divest_lf
+              .join(period_e, on="e", how="inner")
+              .select("e", "d")
+              .unique())
+
+
 # ---------------------------------------------------------------------------
 # §3.7.3 — edd_invest_set + edd_invest_lookback_set
 # ---------------------------------------------------------------------------
@@ -1182,6 +1223,7 @@ __all__ = [
     # Public lazy helpers — partitions.
     "pd_invest_set_lf", "nd_invest_set_lf",
     "pd_divest_set_lf", "nd_divest_set_lf",
+    "ed_invest_period_set_lf", "ed_divest_period_set_lf",
     # Public lazy helpers — existing chain.
     "p_entity_all_existing_from_handoff", "p_entity_pre_existing_lf",
     "apply_existing_chain",

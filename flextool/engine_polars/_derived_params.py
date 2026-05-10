@@ -4611,6 +4611,8 @@ def apply_derived_c(
         nd_invest_set_lf as _nd_invest_lf,
         pd_divest_set_lf as _pd_divest_lf,
         nd_divest_set_lf as _nd_divest_lf,
+        ed_invest_period_set_lf as _ed_invest_period_lf,
+        ed_divest_period_set_lf as _ed_divest_period_lf,
     )
     ed_inv_for_partition = (
         ed_inv_db if (ed_inv_db is not None and ed_inv_db.height > 0)
@@ -4626,6 +4628,11 @@ def apply_derived_c(
         nd_inv_db = _nd_invest_lf(source, ed_inv_lf).collect()
         if nd_inv_db.height > 0:
             flex_data.nd_invest_set = nd_inv_db
+        # Per-period invest cap subset — entities whose invest_method
+        # carries a period cap (``maxInvest_entity_period`` index).
+        ed_inv_period_db = _ed_invest_period_lf(source, ed_inv_lf).collect()
+        if ed_inv_period_db.height > 0:
+            flex_data.ed_invest_period_set = ed_inv_period_db
     if ed_div_for_partition is not None and ed_div_for_partition.height > 0:
         ed_div_lf = ed_div_for_partition.lazy()
         pd_div_db = _pd_divest_lf(source, ed_div_lf).collect()
@@ -4634,6 +4641,9 @@ def apply_derived_c(
         nd_div_db = _nd_divest_lf(source, ed_div_lf).collect()
         if nd_div_db.height > 0:
             flex_data.nd_divest_set = nd_div_db
+        ed_div_period_db = _ed_divest_period_lf(source, ed_div_lf).collect()
+        if ed_div_period_db.height > 0:
+            flex_data.ed_divest_period_set = ed_div_period_db
 
     # Γ.6.D — ed_invest_forbidden_no_investment.  Built off the
     # (possibly-overridden) ed_invest_set so the helper sees the same
