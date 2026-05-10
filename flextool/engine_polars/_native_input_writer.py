@@ -321,9 +321,15 @@ def _native_leaf_set_override():
         entity_total_caps as _legacy_entity_total,
         process_method_sets as _legacy_process_method,
     )
+    # Phase 1 follow-up — leaf-like arc-union + period-param writers.
+    from flextool.flextoolrunner.preprocessing import (
+        entity_period_calc_params as _legacy_entity_period,
+        process_arc_unions as _legacy_arc_unions,
+    )
     from flextool.engine_polars import _writer_leaf_sets as _native
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
+    from flextool.engine_polars import _writer_arc_unions as _native_arc
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -387,6 +393,36 @@ def _native_leaf_set_override():
                                  _native_calc.write_process_arc_method_joins),
         (_legacy_process_method, "write_process_profile_method_joins",
                                  _native_calc.write_process_profile_method_joins),
+        # ── Phase 1 follow-up — process_arc_unions leaf-like writers ──
+        (_legacy_arc_unions, "write_process_source_sink_param_t",
+                             _native_arc.write_process_source_sink_param_t),
+        (_legacy_arc_unions, "write_node_time_param_in_use",
+                             _native_arc.write_node_time_param_in_use),
+        (_legacy_arc_unions, "write_process_source_delayed_partition",
+                             _native_arc.write_process_source_delayed_partition),
+        (_legacy_arc_unions, "write_process_source_sink_param",
+                             _native_arc.write_process_source_sink_param),
+        (_legacy_arc_unions, "write_process_source_sink_profile_method_connection",
+                             _native_arc.write_process_source_sink_profile_method_connection),
+        (_legacy_arc_unions, "write_process_method_sources_sinks",
+                             _native_arc.write_process_method_sources_sinks),
+        (_legacy_arc_unions, "write_ed_history_realized_first",
+                             _native_arc.write_ed_history_realized_first),
+        (_legacy_arc_unions,
+         "write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source",
+         _native_arc
+         .write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source),
+        (_legacy_arc_unions, "write_process_source_sink_ramp_method",
+                             _native_arc.write_process_source_sink_ramp_method),
+        (_legacy_arc_unions, "write_process_source_sink_coeff_zero",
+                             _native_arc.write_process_source_sink_coeff_zero),
+        (_legacy_arc_unions, "write_process_source_sink_is_node_family",
+                             _native_arc.write_process_source_sink_is_node_family),
+        (_legacy_arc_unions, "write_process_source_sink_delayed_partition",
+                             _native_arc.write_process_source_sink_delayed_partition),
+        # ── Phase 1 follow-up — entity_period_calc_params subset ──
+        (_legacy_entity_period, "write_pProcess_source_sink",
+                                _native_arc.write_pProcess_source_sink),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
