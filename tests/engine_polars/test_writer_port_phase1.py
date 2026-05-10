@@ -1257,3 +1257,38 @@ def test_node_group_dispatch_sets_parity(tmp_path: Path, fixture: str) -> None:
         "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
     ):
         _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 follow-up 7 — param_t projections + time-param joins (8 CSVs).
+# ---------------------------------------------------------------------------
+
+# work_test_a_lot is the strongest stress (145-row pt_process.csv + 40-row
+# p_process.csv + 5-row process_connection.csv).  The 2-day stochastic
+# fixture exercises a separate code path (pt_process_source / sink can
+# differ from work_test_a_lot's enum).
+FIXTURES_WITH_PARAM_T = FIXTURES + [
+    "work_2day_stochastic_dispatch_full_storage",
+]
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PARAM_T)
+def test_param_t_projections_and_time_params_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_param_t_projections_and_time_params(lin, lsd)
+    native_arc.write_param_t_projections_and_time_params(nin, nsd)
+    for fname in (
+        # Projections (drop time)
+        "process__param_t.csv",
+        "connection__param__time.csv",
+        "connection__param_t.csv",
+        "process__source__param_t.csv",
+        "process__sink__param_t.csv",
+        # Static-∪-temporal joins
+        "process__source__timeParam.csv",
+        "process__sink__timeParam.csv",
+        "process__timeParam.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
