@@ -331,6 +331,7 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_calc_params as _native_calc
     from flextool.engine_polars import _writer_arc_unions as _native_arc
     from flextool.engine_polars import _writer_pdt_params as _native_pdt
+    from flextool.engine_polars import _writer_period_params as _native_period
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -440,6 +441,15 @@ def _native_leaf_set_override():
                              _native_arc.write_process_source_sink_ramp_unions),
         (_legacy_arc_unions, "write_group_commodity_node_period_co2_total",
                              _native_arc.write_group_commodity_node_period_co2_total),
+        # ── Phase 1 follow-up 3 — heavy per-(d, t) emitters ──
+        (_legacy_entity_period, "write_pdtNodeInflow",
+                                _native_period.write_pdtNodeInflow),
+        (_legacy_entity_period, "write_pdtProfile",
+                                _native_period.write_pdtProfile),
+        (_legacy_entity_period, "write_pdtConversion_rate_section_slope",
+                                _native_period.write_pdtConversion_rate_section_slope),
+        (_legacy_entity_period, "write_pdtProcess_source_sink",
+                                _native_period.write_pdtProcess_source_sink),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
