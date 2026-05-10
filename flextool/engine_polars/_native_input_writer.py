@@ -330,6 +330,7 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
     from flextool.engine_polars import _writer_arc_unions as _native_arc
+    from flextool.engine_polars import _writer_pdt_params as _native_pdt
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -423,6 +424,22 @@ def _native_leaf_set_override():
         # ── Phase 1 follow-up — entity_period_calc_params subset ──
         (_legacy_entity_period, "write_pProcess_source_sink",
                                 _native_arc.write_pProcess_source_sink),
+        # ── Phase 1 follow-up (next dispatch) — pdt* writers via PdtLookup ──
+        (_legacy_entity_period, "write_pdtProcess",
+                                _native_pdt.write_pdtProcess),
+        (_legacy_entity_period, "write_pdtNode",
+                                _native_pdt.write_pdtNode),
+        (_legacy_entity_period, "write_pdtProcess_source",
+                                _native_pdt.write_pdtProcess_source),
+        (_legacy_entity_period, "write_pdtProcess_sink",
+                                _native_pdt.write_pdtProcess_sink),
+        # ── Phase 1 follow-up — medium arc-union families ──
+        (_legacy_arc_unions, "write_process_source_sink_ramp_family",
+                             _native_arc.write_process_source_sink_ramp_family),
+        (_legacy_arc_unions, "write_process_source_sink_ramp_unions",
+                             _native_arc.write_process_source_sink_ramp_unions),
+        (_legacy_arc_unions, "write_group_commodity_node_period_co2_total",
+                             _native_arc.write_group_commodity_node_period_co2_total),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides

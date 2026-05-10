@@ -157,6 +157,10 @@ _NODE_TIME_PARAM_REQUIRED: frozenset[str] = frozenset((
 # flextool_base.dat:28-31 — RAMP_METHOD
 _RAMP_METHOD: frozenset[str] = frozenset(("ramp_limit", "ramp_cost", "both"))
 
+# preprocessing/_method_constants.py L90 / L93 — speed/cost-gated subsets.
+_RAMP_LIMIT_METHOD: frozenset[str] = frozenset(("ramp_limit", "both"))
+_RAMP_COST_METHOD: frozenset[str] = frozenset(("ramp_cost", "both"))
+
 # flextool_base.dat:69-70 — METHOD_1WAY
 _METHOD_1WAY: frozenset[str] = frozenset((
     "method_1way_1var_off", "method_1way_1var_LP", "method_1way_1var_MIP",
@@ -896,4 +900,195 @@ def write_pProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
     _write(
         derive_p_process_source_sink(input_dir, solve_data_dir),
         solve_data_dir / "pProcess_source_sink.csv",
+    )
+
+
+# ---------------------------------------------------------------------------
+# process_source_sink_ramp_family (mod L1660-1688)
+# ---------------------------------------------------------------------------
+
+def _read_p_proc_side_lookup(path: Path) -> dict[tuple[str, str, str], float]:
+    """Read p_process_source / p_process_sink: (process, side, param) → value."""
+    out: dict[tuple[str, str, str], float] = {}
+    if not path.exists() or path.stat().st_size == 0:
+        return out
+    df = _read_csv(path, ["process", "side", "param", "value"])
+    df = _drop_blank_rows(df, ["process", "side", "param"])
+    for p, s, param, v in df.iter_rows():
+        try:
+            out[(p, s, param)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _compute_ramp_family(
+    input_dir: Path, solve_data_dir: Path,
+) -> dict[str, list[tuple[str, str, str]]]:
+    """Emit the 5 ramp-family triple sets.
+
+    Returns ``{filename → rows}``.  Rows preserve ``process_source_sink``
+    order; legacy emits no dedup (input is already unique).
+    """
+    triples = _read_n_col_rows(
+        solve_data_dir / "process_source_sink.csv",
+        ["process", "source", "sink"],
+    )
+    pnrm_rows = _read_n_col_rows(
+        input_dir / "process__node__ramp_method.csv",
+        ["process", "node", "ramp_method"],
+    )
+    pnrm: dict[tuple[str, str], set[str]] = {}
+    for p, n, m in pnrm_rows:
+        pnrm.setdefault((p, n), set()).add(m)
+
+    p_proc_source = _read_p_proc_side_lookup(input_dir / "p_process_source.csv")
+    p_proc_sink = _read_p_proc_side_lookup(input_dir / "p_process_sink.csv")
+
+    def _has_method(p: str, n: str, methods: frozenset[str]) -> bool:
+        return bool(pnrm.get((p, n), set()) & methods)
+
+    rsu = [
+        (p, src, sink) for p, src, sink in triples
+        if _has_method(p, src, _RAMP_LIMIT_METHOD)
+        and p_proc_source.get((p, src, "ramp_speed_up"), 0.0) > 0
+    ]
+    siu = [
+        (p, src, sink) for p, src, sink in triples
+        if _has_method(p, sink, _RAMP_LIMIT_METHOD)
+        and p_proc_sink.get((p, sink, "ramp_speed_up"), 0.0) > 0
+    ]
+    rsd = [
+        (p, src, sink) for p, src, sink in triples
+        if _has_method(p, src, _RAMP_LIMIT_METHOD)
+        and p_proc_source.get((p, src, "ramp_speed_down"), 0.0) > 0
+    ]
+    sid = [
+        (p, src, sink) for p, src, sink in triples
+        if _has_method(p, sink, _RAMP_LIMIT_METHOD)
+        and p_proc_sink.get((p, sink, "ramp_speed_down"), 0.0) > 0
+    ]
+    cost = [
+        (p, src, sink) for p, src, sink in triples
+        if _has_method(p, src, _RAMP_COST_METHOD)
+        or _has_method(p, sink, _RAMP_COST_METHOD)
+    ]
+    return {
+        "process_source_sink_ramp_limit_source_up.csv": rsu,
+        "process_source_sink_ramp_limit_sink_up.csv":   siu,
+        "process_source_sink_ramp_limit_source_down.csv": rsd,
+        "process_source_sink_ramp_limit_sink_down.csv":   sid,
+        "process_source_sink_ramp_cost.csv":               cost,
+    }
+
+
+def _triples_frame(rows: list[tuple[str, str, str]]) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "process": [r[0] for r in rows],
+            "source":  [r[1] for r in rows],
+            "sink":    [r[2] for r in rows],
+        },
+        schema={"process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8},
+    )
+
+
+def write_process_source_sink_ramp_family(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """5 per-arc ramp sets gated by method and (for limit variants) speed > 0."""
+    by_file = _compute_ramp_family(input_dir, solve_data_dir)
+    for fname, rows in by_file.items():
+        _write(_triples_frame(rows), solve_data_dir / fname)
+
+
+# ---------------------------------------------------------------------------
+# process_source_sink_ramp_unions — 5-way union of ramp_*.csv files
+# ---------------------------------------------------------------------------
+
+def write_process_source_sink_ramp_unions(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Order-preserving union of the 5 ramp-family triple sets."""
+    ramp_files = (
+        "process_source_sink_ramp_limit_source_up.csv",
+        "process_source_sink_ramp_limit_sink_up.csv",
+        "process_source_sink_ramp_limit_source_down.csv",
+        "process_source_sink_ramp_limit_sink_down.csv",
+        "process_source_sink_ramp_cost.csv",
+    )
+    seen: dict[tuple[str, str, str], None] = {}
+    for fname in ramp_files:
+        for r in _read_n_col_rows(
+            solve_data_dir / fname, ["process", "source", "sink"],
+        ):
+            seen.setdefault(r, None)
+    _write(
+        _triples_frame(list(seen.keys())),
+        solve_data_dir / "process_source_sink_ramp.csv",
+    )
+
+
+# ---------------------------------------------------------------------------
+# group_commodity_node_period_co2_total (mod L1981)
+# ---------------------------------------------------------------------------
+
+def write_group_commodity_node_period_co2_total(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Join group_co2_max_total × group__node × commodity__node × p_commodity.
+
+    Emit rows ``(g, c, n)`` where:
+      * (g, n) ∈ group__node and g ∈ group_co2_max_total
+      * (c, n) ∈ commodity__node
+      * ``p_commodity[c, 'co2_content'] != 0``
+    """
+    cn = _read_n_col_rows(
+        input_dir / "commodity__node.csv", ["commodity", "node"],
+    )
+    gn = _read_n_col_rows(
+        input_dir / "group__node.csv", ["group", "node"],
+    )
+    g_with_n: dict[str, set[str]] = {}
+    for g, n in gn:
+        g_with_n.setdefault(g, set()).add(n)
+
+    p_commodity: dict[tuple[str, str], float] = {}
+    pc_path = input_dir / "p_commodity.csv"
+    if pc_path.exists() and pc_path.stat().st_size > 0:
+        pc_df = _read_csv(pc_path, ["commodity", "param", "value"])
+        pc_df = _drop_blank_rows(pc_df, ["commodity", "param"])
+        for c, param, v in pc_df.iter_rows():
+            try:
+                p_commodity[(c, param)] = float(v)
+            except (TypeError, ValueError):
+                continue
+    co2_max_total = frozenset(
+        _read_n_col_rows(
+            solve_data_dir / "group_co2_max_total.csv", ["group"],
+        )
+    )
+    # NB: frozenset entries are 1-tuples — flatten.
+    co2_max_total = frozenset(t[0] for t in co2_max_total)
+
+    rows: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for g in co2_max_total:
+        nodes = g_with_n.get(g, set())
+        for c, n in cn:
+            if n in nodes and p_commodity.get((c, "co2_content"), 0.0) != 0.0:
+                key = (g, c, n)
+                if key not in seen:
+                    seen.add(key)
+                    rows.append(key)
+    _write(
+        pl.DataFrame(
+            {
+                "group":     [r[0] for r in rows],
+                "commodity": [r[1] for r in rows],
+                "node":      [r[2] for r in rows],
+            },
+            schema={"group": pl.Utf8, "commodity": pl.Utf8, "node": pl.Utf8},
+        ),
+        solve_data_dir / "group_commodity_node_period_co2_total.csv",
     )
