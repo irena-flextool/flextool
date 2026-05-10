@@ -12,23 +12,26 @@ invoked the legacy FlexToolRunner method to populate the workdir's
 contract is "produce the workdir CSVs the cascade and the output writer
 adapter need."
 
-Writer-port Phase 1 (L0-L2)
+Writer-port Phase 1 (L0-L6)
 ---------------------------
 
-The four leaf-level set-derivation families
-(``period_param_sets``, ``invest_method_sets``, ``co2_method_sets``,
-``simple_projections``) are now produced natively by
-:mod:`flextool.engine_polars._writer_leaf_sets`.  The remaining
-``input/*`` emission (DB → CSV per ``_PARAMETER_SPECS`` /
+Twelve preprocessing families are now produced natively:
+
+* L0-L2 (:mod:`._writer_leaf_sets`): ``period_param_sets``,
+  ``invest_method_sets``, ``co2_method_sets``, ``simple_projections``.
+* L3-L6 (:mod:`._writer_mid_sets`): ``node_type_sets``, ``union_sets``,
+  ``dc_angle_bounds``, ``reserve_method_partitions``, ``nonsync_sets``,
+  ``method_with_fallback_sets``, ``invest_total_sets``,
+  ``structural_filters``.
+
+The remaining ``input/*`` emission (DB → CSV per ``_PARAMETER_SPECS`` /
 ``_ENTITY_SPECS``) and the heavier preprocessing families
-(``node_type_sets``, ``method_with_fallback_sets``, ``nonsync_sets``,
-``union_sets``, ``entity_total_caps``, ``process_method_sets``,
-``reserve_method_partitions``, ``structural_filters``,
-``dc_angle_bounds``, ``invest_total_sets``, ``process_arc_unions``)
-still delegate to the legacy ``input_writer.write_input`` body.  The
-swap is implemented via monkey-patch on the legacy preprocessing
-modules so the in-tree call sites in ``write_input`` route through
-native code without modifying the legacy module's source.
+(``entity_total_caps``, ``process_method_sets``, ``process_arc_unions``,
+``entity_period_calc_params``) still delegate to the legacy
+``input_writer.write_input`` body.  The swap is implemented via
+monkey-patch on the legacy preprocessing modules so the in-tree call
+sites in ``write_input`` route through native code without modifying
+the legacy module's source.
 
 Implementation strategy
 -----------------------
@@ -277,25 +280,42 @@ import contextlib  # noqa: E402  (placed near the override helper for locality)
 
 @contextlib.contextmanager
 def _native_leaf_set_override():
-    """Monkey-patch the four legacy leaf-set preprocessing families to
-    invoke :mod:`flextool.engine_polars._writer_leaf_sets`.
+    """Monkey-patch legacy preprocessing families to invoke the native
+    polars writers in :mod:`._writer_leaf_sets` (L0-L2 families) and
+    :mod:`._writer_mid_sets` (L3-L6 families).
 
     The legacy ``flextool.flextoolrunner.input_writer.write_input``
     imports each preprocessing module by name and calls its ``write_*``
     helpers directly.  We rebind those names on the legacy modules for
     the duration of the call so the native implementations are
-    consulted in production.  Other preprocessing families still
-    delegate to legacy code.
+    consulted in production.  Other preprocessing families
+    (``entity_total_caps``, ``process_method_sets``,
+    ``process_arc_unions``, ``entity_period_calc_params``) still
+    delegate to legacy code — those are Phase 1 L7-L9 follow-ups.
     """
+    # L0-L2 — leaf-level set projections.
     from flextool.flextoolrunner.preprocessing import (
         co2_method_sets as _legacy_co2,
         invest_method_sets as _legacy_invest,
         period_param_sets as _legacy_period,
         simple_projections as _legacy_simple,
     )
+    # L3-L6 — mid-level set / param projections.
+    from flextool.flextoolrunner.preprocessing import (
+        dc_angle_bounds as _legacy_dc,
+        invest_total_sets as _legacy_invest_total,
+        method_with_fallback_sets as _legacy_method_fb,
+        node_type_sets as _legacy_node_type,
+        nonsync_sets as _legacy_nonsync,
+        reserve_method_partitions as _legacy_reserve_part,
+        structural_filters as _legacy_struct,
+        union_sets as _legacy_union,
+    )
     from flextool.engine_polars import _writer_leaf_sets as _native
+    from flextool.engine_polars import _writer_mid_sets as _native_mid
 
     overrides: list[tuple[object, str, object]] = [
+        # ── L0-L2 ──────────────────────────────────────────────────────
         # period_param_sets
         (_legacy_period, "write_period_param_sets", _native.write_period_param_sets),
         # invest_method_sets
@@ -315,6 +335,36 @@ def _native_leaf_set_override():
         (_legacy_simple, "write_node_state_subsets", _native.write_node_state_subsets),
         (_legacy_simple, "write_commodity_tier_sets", _native.write_commodity_tier_sets),
         (_legacy_simple, "write_simple_setof_projections", _native.write_simple_setof_projections),
+        # ── L3-L6 ──────────────────────────────────────────────────────
+        # node_type_sets
+        (_legacy_node_type, "write_node_type_sets", _native_mid.write_node_type_sets),
+        # union_sets
+        (_legacy_union, "write_group_entity", _native_mid.write_group_entity),
+        (_legacy_union, "write_process_delayed__duration", _native_mid.write_process_delayed__duration),
+        # dc_angle_bounds
+        (_legacy_dc, "write_dc_angle_bounds", _native_mid.write_dc_angle_bounds),
+        # reserve_method_partitions
+        (_legacy_reserve_part, "write_reserve_partitions", _native_mid.write_reserve_partitions),
+        # nonsync_sets
+        (_legacy_nonsync, "write_process__sink_nonSync", _native_mid.write_process__sink_nonSync),
+        (_legacy_nonsync, "write_process_group_inside_group_nonsync",
+                          _native_mid.write_process_group_inside_group_nonsync),
+        # method_with_fallback_sets
+        (_legacy_method_fb, "write_entity_lifetime_method", _native_mid.write_entity_lifetime_method),
+        (_legacy_method_fb, "write_process_ct_method", _native_mid.write_process_ct_method),
+        (_legacy_method_fb, "write_process_startup_method", _native_mid.write_process_startup_method),
+        (_legacy_method_fb, "write_node_inflow_method", _native_mid.write_node_inflow_method),
+        (_legacy_method_fb, "write_node_storage_binding_method",
+                            _native_mid.write_node_storage_binding_method),
+        # invest_total_sets
+        (_legacy_invest_total, "write_invest_total_sets", _native_mid.write_invest_total_sets),
+        (_legacy_invest_total, "write_ci_ladder_cumulative", _native_mid.write_ci_ladder_cumulative),
+        # structural_filters
+        (_legacy_struct, "write_connection_param", _native_mid.write_connection_param),
+        (_legacy_struct, "write_nodegroup_dispatch_node", _native_mid.write_nodegroup_dispatch_node),
+        (_legacy_struct, "write_commodity_node_co2", _native_mid.write_commodity_node_co2),
+        (_legacy_struct, "write_process__commodity__node", _native_mid.write_process__commodity__node),
+        (_legacy_struct, "write_process_coeff_zero_sets", _native_mid.write_process_coeff_zero_sets),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
