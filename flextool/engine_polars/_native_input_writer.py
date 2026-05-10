@@ -494,6 +494,18 @@ def _native_leaf_set_override():
                                 _native_period.write_cap_reduction_params),
         (_legacy_entity_period, "write_ed_period_params",
                                 _native_period.write_ed_period_params),
+        # ── Phase 1 follow-up 6 — flow-bound + state-slack + storage ref
+        #    price + 12-CSV nodeGroupDispatch dispatch set family.
+        (_legacy_arc_unions, "write_p_flow_min",
+                             _native_arc.write_p_flow_min),
+        (_legacy_arc_unions, "write_p_flow_max",
+                             _native_arc.write_p_flow_max),
+        (_legacy_arc_unions, "write_p_state_slack_share",
+                             _native_arc.write_p_state_slack_share),
+        (_legacy_arc_unions, "write_p_storage_state_reference_price",
+                             _native_arc.write_p_storage_state_reference_price),
+        (_legacy_arc_unions, "write_node_group_dispatch_sets",
+                             _native_arc.write_node_group_dispatch_sets),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides

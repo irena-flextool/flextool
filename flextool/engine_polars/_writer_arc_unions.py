@@ -1862,3 +1862,536 @@ def write_peedt(input_dir: Path, solve_data_dir: Path) -> None:
         for p, src, snk in triples:
             for d, t in dt_pairs:
                 fh.write(f"{p},{src},{snk},{d},{t}\n")
+
+
+# ===========================================================================
+# Phase 1 follow-up 6 — flow-bound + state-slack + storage reference price
+# + 12-CSV nodeGroupDispatch dispatch set family.
+#
+# All five writers in this section emit either a parameter table (long-form
+# ``(keys..., value)`` with ``repr(float)`` precision parity) or a set of
+# tuples; semantics mirror flextool.mod L1596-L1803 exactly.  Each native
+# implementation reads the same input/solve_data CSVs as its legacy peer
+# and writes byte-identical output (CSV row order + float formatting).
+# ===========================================================================
+
+
+# ---- write_p_flow_min (mod L1680-1684) ------------------------------------
+
+
+def write_p_flow_min(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1680-1684 — ``p_flow_min{(p,source,sink,d,t) in peedt}``.
+
+    Emits only the non-zero rows.  The value is
+    ``-(p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])``
+    when ``(p, source, sink) in process__source__sinkIsNode_2way1var``,
+    else 0 (skipped — mod's bare-decl provides ``default 0``).
+    """
+    import csv
+    sinkIsNode = frozenset(_read_n_col_csv(
+        solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3
+    ))
+    if not sinkIsNode:
+        _write_csv_rows(
+            solve_data_dir / "p_flow_min.csv",
+            ("process", "source", "sink", "period", "time", "value"),
+            [],
+        )
+        return
+
+    dcm: dict[tuple[str, str], float] = {}
+    pdcm_path = solve_data_dir / "p_entity_dispatch_capacity_max.csv"
+    if pdcm_path.exists():
+        with pdcm_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        dcm[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    unitsize: dict[str, float] = {}
+    pus_path = solve_data_dir / "p_entity_unitsize.csv"
+    if pus_path.exists():
+        with pus_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        unitsize[r[0]] = float(r[1])
+                    except ValueError:
+                        continue
+
+    peedt = _read_n_col_csv(solve_data_dir / "peedt.csv", 5)
+    rows: list[tuple[str, ...]] = []
+    for p, src, sink, d, t in peedt:
+        if (p, src, sink) not in sinkIsNode:
+            continue
+        us = unitsize.get(p, 1.0)
+        if us == 0.0:
+            continue
+        v = -dcm.get((p, d), 0.0) / us
+        rows.append((p, src, sink, d, t, repr(v)))
+    _write_csv_rows(
+        solve_data_dir / "p_flow_min.csv",
+        ("process", "source", "sink", "period", "time", "value"),
+        rows,
+    )
+
+
+# ---- write_p_flow_max (mod L1661-1677) ------------------------------------
+
+
+def write_p_flow_max(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1661-1677 — ``p_flow_max{(p,source,sink,d,t) in peedt}``.
+
+    Two-branch value formula, see legacy docstring at
+    ``process_arc_unions.write_p_flow_max``.  Every peedt row gets a
+    value (mod's bare-decl has no default).
+    """
+    import csv
+    coeff_zero = frozenset(_read_n_col_csv(
+        solve_data_dir / "process_source_sink_coeff_zero.csv", 3
+    ))
+    has_indirect = frozenset(
+        p for p, _m in _read_pairs_csv(
+            solve_data_dir / "process__method_indirect.csv"
+        )
+    )
+    process_source = frozenset(_read_pairs_csv(input_dir / "process__source.csv"))
+    process_sink = frozenset(_read_pairs_csv(input_dir / "process__sink.csv"))
+    has_min_load = frozenset(
+        p for p, m in _read_pairs_csv(solve_data_dir / "process__ct_method.csv")
+        if m == "min_load_efficiency"
+    )
+
+    dcm: dict[tuple[str, str], float] = {}
+    pdcm_path = solve_data_dir / "p_entity_dispatch_capacity_max.csv"
+    if pdcm_path.exists():
+        with pdcm_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        dcm[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    unitsize: dict[str, float] = {}
+    pus_path = solve_data_dir / "p_entity_unitsize.csv"
+    if pus_path.exists():
+        with pus_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        unitsize[r[0]] = float(r[1])
+                    except ValueError:
+                        continue
+
+    slope: dict[tuple[str, str, str], float] = {}
+    section: dict[tuple[str, str, str], float] = {}
+    for fname, target in (
+        ("pdtProcess_slope.csv", slope),
+        ("pdtProcess_section.csv", section),
+    ):
+        path = solve_data_dir / fname
+        if path.exists():
+            with path.open() as fh:
+                reader = csv.reader(fh)
+                next(reader, None)
+                for r in reader:
+                    if len(r) >= 4 and r[0] and r[1] and r[2]:
+                        try:
+                            target[(r[0], r[1], r[2])] = float(r[3])
+                        except ValueError:
+                            continue
+
+    src_max_coef: dict[tuple[str, str], float] = {}
+    pms_path = input_dir / "p_process_source_max_capacity_coefficient.csv"
+    if pms_path.exists():
+        with pms_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        src_max_coef[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+    sink_max_coef: dict[tuple[str, str], float] = {}
+    pmk_path = input_dir / "p_process_sink_max_capacity_coefficient.csv"
+    if pmk_path.exists():
+        with pmk_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 3 and r[0] and r[1]:
+                    try:
+                        sink_max_coef[(r[0], r[1])] = float(r[2])
+                    except ValueError:
+                        continue
+
+    # p_unconstrained_flow_cap = max over models of
+    # p_max_flow_for_unconstrained_variables[m]; default 1e6 if absent.
+    p_uflow = 1_000_000.0
+    pmfu_path = input_dir / "p_max_flow_for_unconstrained_variables.csv"
+    if pmfu_path.exists():
+        max_v: float | None = None
+        with pmfu_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2 and r[0]:
+                    try:
+                        v = float(r[1])
+                    except ValueError:
+                        continue
+                    if max_v is None or v > max_v:
+                        max_v = v
+        if max_v is not None:
+            p_uflow = max_v
+
+    peedt = _read_n_col_csv(solve_data_dir / "peedt.csv", 5)
+    rows: list[tuple[str, ...]] = []
+    for p, src, sink, d, t in peedt:
+        if (p, src, sink) in coeff_zero:
+            value = p_uflow
+        else:
+            us = unitsize.get(p, 1.0)
+            dcm_v = dcm.get((p, d), 0.0)
+            if p in has_indirect and (p, src) in process_source:
+                if p in has_min_load:
+                    eff_term = (slope.get((p, d, t), 0.0)
+                                + section.get((p, d, t), 0.0))
+                else:
+                    eff_term = slope.get((p, d, t), 0.0)
+                src_coef = src_max_coef.get((p, src), 1.0)
+                base = eff_term * (dcm_v / us) / src_coef
+            else:
+                base = dcm_v / us
+            sink_coef = (sink_max_coef.get((p, sink), 1.0)
+                         if (p, sink) in process_sink else 1.0)
+            value = base * sink_coef
+        rows.append((p, src, sink, d, t, repr(value)))
+    _write_csv_rows(
+        solve_data_dir / "p_flow_max.csv",
+        ("process", "source", "sink", "period", "time", "value"),
+        rows,
+    )
+
+
+# ---- write_p_state_slack_share (mod L1689-1691) ---------------------------
+
+
+def write_p_state_slack_share(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1689-1691 — ``p_state_slack_share[g, n, d, t]``.
+
+    Inflow-weighted or equal share over the nodes of group ``g`` for
+    each ``(d, t) ∈ dt``, restricted to ``g ∈ group_loss_share``.
+    """
+    import csv
+    g_loss = frozenset(
+        _read_singles_csv(solve_data_dir / "group_loss_share.csv")
+    )
+    g_type: dict[str, str] = {}
+    for g, ty in _read_pairs_csv(input_dir / "group__loss_share_type.csv"):
+        g_type[g] = ty
+    nodes_in_g: dict[str, list[str]] = {}
+    for g, n in _read_pairs_csv(input_dir / "group__node.csv"):
+        nodes_in_g.setdefault(g, []).append(n)
+    inflow: dict[tuple[str, str, str], float] = {}
+    pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
+    if pdtni_path.exists():
+        with pdtni_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] and r[2]:
+                    try:
+                        inflow[(r[0], r[1], r[2])] = float(r[3])
+                    except ValueError:
+                        continue
+    dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
+
+    rows: list[tuple[str, str, str, str, str]] = []
+    for g in g_loss:
+        ngs = nodes_in_g.get(g, [])
+        if not ngs:
+            continue
+        share_type = g_type.get(g)
+        n_count = len(ngs)
+        for n in ngs:
+            for d, t in dt_pairs:
+                if share_type == "inflow_weighted":
+                    total = sum(inflow.get((ng, d, t), 0.0) for ng in ngs)
+                    v = (inflow.get((n, d, t), 0.0) / total
+                         if total != 0.0 else 0.0)
+                elif share_type == "equal":
+                    v = 1.0 / n_count
+                else:
+                    v = 0.0
+                rows.append((g, n, d, t, repr(v)))
+    _write_csv_rows(
+        solve_data_dir / "p_state_slack_share.csv",
+        ("group", "node", "period", "time", "value"), rows,
+    )
+
+
+# ---- write_p_storage_state_reference_price (mod L1693-1698) ---------------
+
+
+def write_p_storage_state_reference_price(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1693-1698 — ``p_storage_state_reference_price[n, d]``.
+
+    Sum of ``p_fix_storage_price`` over the ``(d2, t2)`` matched by
+    ``period__branch`` + ``period__time_last`` + ``dtt_timeline_matching``
+    if any match exists, otherwise fall back to
+    ``pdNode[n, 'storage_state_reference_price', d]`` for nodes with
+    ``(n, 'use_reference_price') ∈ node__storage_solve_horizon_method``,
+    else 0.
+    """
+    import csv
+    # (n, d2, t2) → value, keyed by (node, period, step) from fix_storage_price.
+    fix_price: dict[tuple[str, str, str], float] = {}
+    fsp_path = solve_data_dir / "fix_storage_price.csv"
+    if fsp_path.exists():
+        with fsp_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 4 and r[0] and r[1] and r[2]:
+                    try:
+                        fix_price[(r[2], r[0], r[1])] = float(r[3])
+                    except ValueError:
+                        continue
+
+    ptl = _read_pairs_csv(solve_data_dir / "last_timesteps.csv")
+    ptl_for_d: dict[str, list[str]] = {}
+    for d, t in ptl:
+        ptl_for_d.setdefault(d, []).append(t)
+    pb_d2_for_d: dict[str, list[str]] = {}
+    for d2, d in _read_pairs_csv(solve_data_dir / "period__branch.csv"):
+        pb_d2_for_d.setdefault(d, []).append(d2)
+    dtt_for_dt: dict[tuple[str, str], list[str]] = {}
+    for d, t, t2 in _read_n_col_csv(
+        solve_data_dir / "timeline_matching_map.csv", 3
+    ):
+        dtt_for_dt.setdefault((d, t), []).append(t2)
+
+    use_ref = frozenset(
+        n for n, m in _read_pairs_csv(
+            input_dir / "node__storage_solve_horizon_method.csv"
+        ) if m == "use_reference_price"
+    )
+
+    pd_ref_price: dict[tuple[str, str], float] = {}
+    pdn_path = solve_data_dir / "pdNode.csv"
+    if pdn_path.exists():
+        with pdn_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                if (len(r) >= 4 and r[0]
+                        and r[1] == "storage_state_reference_price"
+                        and r[2]):
+                    try:
+                        pd_ref_price[(r[0], r[2])] = float(r[3])
+                    except ValueError:
+                        continue
+
+    nodes_state = _read_singles_csv(solve_data_dir / "nodeState.csv")
+    period_in_use = _read_singles_csv(
+        solve_data_dir / "period_in_use_set.csv"
+    )
+
+    rows: list[tuple[str, str, str]] = []
+    for n in nodes_state:
+        for d in period_in_use:
+            sum_v = 0.0
+            has_match = False
+            for d2 in pb_d2_for_d.get(d, []):
+                for t in ptl_for_d.get(d, []):
+                    for t2 in dtt_for_dt.get((d, t), []):
+                        v = fix_price.get((n, d2, t2))
+                        if v is not None:
+                            has_match = True
+                            sum_v += v
+            if has_match:
+                value = sum_v
+            elif n in use_ref:
+                value = pd_ref_price.get((n, d), 0.0)
+            else:
+                value = 0.0
+            rows.append((n, d, repr(value)))
+    _write_csv_rows(
+        solve_data_dir / "p_storage_state_reference_price.csv",
+        ("node", "period", "value"), rows,
+    )
+
+
+# ---- write_node_group_dispatch_sets (mod L1596-1657) ----------------------
+
+
+def write_node_group_dispatch_sets(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1596-1657 — 12 nodeGroupDispatch sets.
+
+    Joins ``process_source_sink_alwaysProcess`` with ``nodeGroupDispatch``
+    + ``group__node`` + ``group__process__node`` + ``flowAggregator`` +
+    ``process_unit`` / ``process_connection``.  Eight base sets partition
+    the (g, p, source, sink) space by side (sink-in-group vs source-in-
+    group), kind (unit vs connection) and aggregator presence (with-ga
+    vs no-ga).  Four projection sets project pairs (g, p) or (g, ga) from
+    the relevant base sets.  All sets share the prefilter
+    ``(g, p) ∉ nodeGroupDispatch__process_fully_inside``.
+    """
+    ngd = _read_singles_csv(input_dir / "nodeGroupDispatch.csv")
+    fag = frozenset(_read_singles_csv(input_dir / "flowAggregator.csv"))
+    p_unit = frozenset(_read_singles_csv(input_dir / "process_unit.csv"))
+    p_conn = frozenset(_read_singles_csv(input_dir / "process_connection.csv"))
+
+    g_nodes_acc: dict[str, dict[str, None]] = {}
+    for g, n in _read_pairs_csv(input_dir / "group__node.csv"):
+        g_nodes_acc.setdefault(g, {})[n] = None
+    g_nodes: dict[str, frozenset[str]] = {
+        g: frozenset(d.keys()) for g, d in g_nodes_acc.items()
+    }
+
+    # group_process_node restricted to flowAggregator groups: (p, n) → [ga, ...]
+    pn_to_aggregators: dict[tuple[str, str], list[str]] = {}
+    for g, p, n in _read_n_col_csv(input_dir / "group__process__node.csv", 3):
+        if g in fag:
+            pn_to_aggregators.setdefault((p, n), []).append(g)
+
+    pss_always = _read_n_col_csv(
+        solve_data_dir / "process_source_sink_alwaysProcess.csv", 3
+    )
+    fully_inside = frozenset(_read_pairs_csv(
+        solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv"
+    ))
+
+    def _emit_4tuple(*, kind: frozenset[str], side: str,
+                     not_aggregated: bool) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
+        for g in ngd:
+            gnodes = g_nodes.get(g, frozenset())
+            if not gnodes:
+                continue
+            for p, src, sink in pss_always:
+                if p not in kind:
+                    continue
+                if (g, p) in fully_inside:
+                    continue
+                n = sink if side == "sink" else src
+                if n not in gnodes:
+                    continue
+                if not_aggregated and (p, n) in pn_to_aggregators:
+                    continue
+                out.append((g, p, src, sink))
+        return out
+
+    def _emit_5tuple(*, kind: frozenset[str], side: str
+                     ) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
+        for g in ngd:
+            gnodes = g_nodes.get(g, frozenset())
+            if not gnodes:
+                continue
+            for p, src, sink in pss_always:
+                if p not in kind:
+                    continue
+                if (g, p) in fully_inside:
+                    continue
+                n = sink if side == "sink" else src
+                if n not in gnodes:
+                    continue
+                for ga in pn_to_aggregators.get((p, n), ()):
+                    out.append((g, ga, p, src, sink))
+        return out
+
+    rows1 = _emit_4tuple(kind=p_unit, side="sink", not_aggregated=True)
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv",
+        ("group", "process", "unit", "node"), rows1,
+    )
+    rows2 = _emit_4tuple(kind=p_unit, side="source", not_aggregated=True)
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv",
+        ("group", "process", "node", "unit"), rows2,
+    )
+    rows3 = _emit_5tuple(kind=p_unit, side="sink")
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__unit__to_node.csv",
+        ("group", "group_aggregate", "unit", "source", "sink"), rows3,
+    )
+    rows4 = _emit_5tuple(kind=p_unit, side="source")
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__node__to_unit.csv",
+        ("group", "group_aggregate", "unit", "source", "sink"), rows4,
+    )
+    rows5 = _emit_4tuple(kind=p_conn, side="source", not_aggregated=True)
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv",
+        ("group", "process", "node", "connection"), rows5,
+    )
+    rows6 = _emit_4tuple(kind=p_conn, side="sink", not_aggregated=True)
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv",
+        ("group", "process", "connection", "node"), rows6,
+    )
+
+    # Set 7 — projection of 5 ∪ 6 to (g, connection).
+    seen7: dict[tuple[str, str], None] = {}
+    for g, p, _, _ in rows5:
+        seen7.setdefault((g, p), None)
+    for g, p, _, _ in rows6:
+        seen7.setdefault((g, p), None)
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__connection_Not_in_aggregate.csv",
+        ("group", "connection"), list(seen7.keys()),
+    )
+
+    rows8 = _emit_5tuple(kind=p_conn, side="sink")
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__connection__to_node.csv",
+        ("group", "group_aggregate", "connection", "source", "sink"), rows8,
+    )
+    rows9 = _emit_5tuple(kind=p_conn, side="source")
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__node__to_connection.csv",
+        ("group", "group_aggregate", "connection", "source", "sink"), rows9,
+    )
+
+    # Set 10 — projection of 8 ∪ 9 to (g, ga).
+    seen10: dict[tuple[str, str], None] = {}
+    for g, ga, _, _, _ in rows8:
+        seen10.setdefault((g, ga), None)
+    for g, ga, _, _, _ in rows9:
+        seen10.setdefault((g, ga), None)
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate_Connection.csv",
+        ("group", "group_aggregate"), list(seen10.keys()),
+    )
+    # Set 11 — projection of rows3 to (g, ga).
+    seen11: dict[tuple[str, str], None] = {}
+    for g, ga, _, _, _ in rows3:
+        seen11.setdefault((g, ga), None)
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate_Unit_to_group.csv",
+        ("group", "group_aggregate"), list(seen11.keys()),
+    )
+    # Set 12 — projection of rows4 to (g, ga).
+    seen12: dict[tuple[str, str], None] = {}
+    for g, ga, _, _, _ in rows4:
+        seen12.setdefault((g, ga), None)
+    _write_csv_rows(
+        solve_data_dir / "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
+        ("group", "group_aggregate"), list(seen12.keys()),
+    )
