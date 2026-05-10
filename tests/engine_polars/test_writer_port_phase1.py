@@ -33,6 +33,7 @@ from flextool.engine_polars import _writer_arc_unions as native_arc
 from flextool.engine_polars import _writer_calc_params as native_calc
 from flextool.engine_polars import _writer_leaf_sets as native
 from flextool.engine_polars import _writer_mid_sets as native_mid
+from flextool.engine_polars import _writer_pdt_params as native_pdt
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
     dc_angle_bounds as legacy_dc,
@@ -690,4 +691,108 @@ def test_p_process_source_sink_parity(tmp_path: Path, fixture: str) -> None:
     _assert_files_equal(
         lsd / "pProcess_source_sink.csv",
         nsd / "pProcess_source_sink.csv",
+    )
+
+
+# ---------------------------------------------------------------------------
+# pdtProcess / pdtNode / pdtProcess_source / pdtProcess_sink  (PdtLookup port)
+# ---------------------------------------------------------------------------
+
+# Extra fixture exercising the stochastic-branch and parent-period-branch
+# fold-in branches of PdtLookup (Branches 1-2).  The non-stochastic
+# fixtures only exercise branches 3+.
+FIXTURES_WITH_STOCH = FIXTURES + ["work_2day_stochastic_dispatch_full_storage"]
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_STOCH)
+def test_pdtProcess_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtProcess(lin, lsd)
+    native_pdt.write_pdtProcess(nin, nsd)
+    _assert_files_equal(lsd / "pdtProcess.csv", nsd / "pdtProcess.csv")
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_STOCH)
+def test_pdtNode_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtNode(lin, lsd)
+    native_pdt.write_pdtNode(nin, nsd)
+    _assert_files_equal(lsd / "pdtNode.csv", nsd / "pdtNode.csv")
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_STOCH)
+def test_pdtProcess_source_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtProcess_source(lin, lsd)
+    native_pdt.write_pdtProcess_source(nin, nsd)
+    _assert_files_equal(
+        lsd / "pdtProcess_source.csv", nsd / "pdtProcess_source.csv",
+    )
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_STOCH)
+def test_pdtProcess_sink_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtProcess_sink(lin, lsd)
+    native_pdt.write_pdtProcess_sink(nin, nsd)
+    _assert_files_equal(
+        lsd / "pdtProcess_sink.csv", nsd / "pdtProcess_sink.csv",
+    )
+
+
+# ---------------------------------------------------------------------------
+# process_source_sink_ramp_family (5 CSVs) + ramp_unions
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_RAMP)
+def test_process_source_sink_ramp_family_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_source_sink_ramp_family(lin, lsd)
+    native_arc.write_process_source_sink_ramp_family(nin, nsd)
+    for fname in (
+        "process_source_sink_ramp_limit_source_up.csv",
+        "process_source_sink_ramp_limit_sink_up.csv",
+        "process_source_sink_ramp_limit_source_down.csv",
+        "process_source_sink_ramp_limit_sink_down.csv",
+        "process_source_sink_ramp_cost.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_RAMP)
+def test_process_source_sink_ramp_unions_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    # The unions writer reads the 5 ramp CSVs produced by the family
+    # writer; seed both legacy and native trees with those files first.
+    legacy_arc_unions.write_process_source_sink_ramp_family(lin, lsd)
+    native_arc.write_process_source_sink_ramp_family(nin, nsd)
+    legacy_arc_unions.write_process_source_sink_ramp_unions(lin, lsd)
+    native_arc.write_process_source_sink_ramp_unions(nin, nsd)
+    _assert_files_equal(
+        lsd / "process_source_sink_ramp.csv",
+        nsd / "process_source_sink_ramp.csv",
+    )
+
+
+# ---------------------------------------------------------------------------
+# group_commodity_node_period_co2_total
+# ---------------------------------------------------------------------------
+
+FIXTURES_WITH_CO2 = FIXTURES + ["work_coal_co2_limit"]
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_CO2)
+def test_group_commodity_node_period_co2_total_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_group_commodity_node_period_co2_total(lin, lsd)
+    native_arc.write_group_commodity_node_period_co2_total(nin, nsd)
+    _assert_files_equal(
+        lsd / "group_commodity_node_period_co2_total.csv",
+        nsd / "group_commodity_node_period_co2_total.csv",
     )
