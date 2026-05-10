@@ -12,10 +12,10 @@ invoked the legacy FlexToolRunner method to populate the workdir's
 contract is "produce the workdir CSVs the cascade and the output writer
 adapter need."
 
-Writer-port Phase 1 (L0-L6)
+Writer-port Phase 1 (L0-L9)
 ---------------------------
 
-Twelve preprocessing families are now produced natively:
+Fourteen preprocessing families are now produced natively:
 
 * L0-L2 (:mod:`._writer_leaf_sets`): ``period_param_sets``,
   ``invest_method_sets``, ``co2_method_sets``, ``simple_projections``.
@@ -23,12 +23,16 @@ Twelve preprocessing families are now produced natively:
   ``dc_angle_bounds``, ``reserve_method_partitions``, ``nonsync_sets``,
   ``method_with_fallback_sets``, ``invest_total_sets``,
   ``structural_filters``.
+* L7-L9 (:mod:`._writer_calc_params`): ``entity_total_caps`` (first
+  calculated-param family; ``repr(float)`` precision-parity),
+  ``process_method_sets`` (process-method projections, ``process_VRE``,
+  10 method-gated arc-cross-product tables, 2 profile-method joins).
 
 The remaining ``input/*`` emission (DB → CSV per ``_PARAMETER_SPECS`` /
-``_ENTITY_SPECS``) and the heavier preprocessing families
-(``entity_total_caps``, ``process_method_sets``, ``process_arc_unions``,
-``entity_period_calc_params``) still delegate to the legacy
-``input_writer.write_input`` body.  The swap is implemented via
+``_ENTITY_SPECS``) and the two heaviest preprocessing families
+(``process_arc_unions`` ~2.3 kLOC, ``entity_period_calc_params``
+~2.4 kLOC) still delegate to the legacy ``input_writer.write_input``
+body — those are out of scope for this dispatch.  The swap is implemented via
 monkey-patch on the legacy preprocessing modules so the in-tree call
 sites in ``write_input`` route through native code without modifying
 the legacy module's source.
@@ -281,17 +285,18 @@ import contextlib  # noqa: E402  (placed near the override helper for locality)
 @contextlib.contextmanager
 def _native_leaf_set_override():
     """Monkey-patch legacy preprocessing families to invoke the native
-    polars writers in :mod:`._writer_leaf_sets` (L0-L2 families) and
-    :mod:`._writer_mid_sets` (L3-L6 families).
+    polars writers in :mod:`._writer_leaf_sets` (L0-L2),
+    :mod:`._writer_mid_sets` (L3-L6) and :mod:`._writer_calc_params`
+    (L7-L9).
 
     The legacy ``flextool.flextoolrunner.input_writer.write_input``
     imports each preprocessing module by name and calls its ``write_*``
     helpers directly.  We rebind those names on the legacy modules for
     the duration of the call so the native implementations are
-    consulted in production.  Other preprocessing families
-    (``entity_total_caps``, ``process_method_sets``,
-    ``process_arc_unions``, ``entity_period_calc_params``) still
-    delegate to legacy code — those are Phase 1 L7-L9 follow-ups.
+    consulted in production.  Two heavyweight preprocessing families
+    (``process_arc_unions``, ``entity_period_calc_params`` — together
+    ~4.7 kLOC) still delegate to legacy code — deferred out of
+    Phase 1 scope.
     """
     # L0-L2 — leaf-level set projections.
     from flextool.flextoolrunner.preprocessing import (
@@ -311,8 +316,14 @@ def _native_leaf_set_override():
         structural_filters as _legacy_struct,
         union_sets as _legacy_union,
     )
+    # L7-L9 — calculated-param + process-method families.
+    from flextool.flextoolrunner.preprocessing import (
+        entity_total_caps as _legacy_entity_total,
+        process_method_sets as _legacy_process_method,
+    )
     from flextool.engine_polars import _writer_leaf_sets as _native
     from flextool.engine_polars import _writer_mid_sets as _native_mid
+    from flextool.engine_polars import _writer_calc_params as _native_calc
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -365,6 +376,17 @@ def _native_leaf_set_override():
         (_legacy_struct, "write_commodity_node_co2", _native_mid.write_commodity_node_co2),
         (_legacy_struct, "write_process__commodity__node", _native_mid.write_process__commodity__node),
         (_legacy_struct, "write_process_coeff_zero_sets", _native_mid.write_process_coeff_zero_sets),
+        # ── L7-L9 ──────────────────────────────────────────────────────
+        # entity_total_caps (calculated-param family; repr(float) precision)
+        (_legacy_entity_total, "write_entity_total_caps", _native_calc.write_entity_total_caps),
+        # process_method_sets — 4 emitters
+        (_legacy_process_method, "write_process_method_projections",
+                                 _native_calc.write_process_method_projections),
+        (_legacy_process_method, "write_process_VRE", _native_calc.write_process_VRE),
+        (_legacy_process_method, "write_process_arc_method_joins",
+                                 _native_calc.write_process_arc_method_joins),
+        (_legacy_process_method, "write_process_profile_method_joins",
+                                 _native_calc.write_process_profile_method_joins),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
