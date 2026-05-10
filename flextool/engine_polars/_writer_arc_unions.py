@@ -1092,3 +1092,340 @@ def write_group_commodity_node_period_co2_total(
         ),
         solve_data_dir / "group_commodity_node_period_co2_total.csv",
     )
+
+
+# ===========================================================================
+# Phase 1 follow-up 4 — param_in_use family + dispatch-fully-inside set.
+# ===========================================================================
+
+
+# Per-class param taxonomies — mirror flextool_base.dat.  Pinned here to
+# avoid a transitive import from the legacy preprocessing tree (matches
+# the pattern used for ramp / method constants above).
+#
+# Update both sites in lockstep if base.dat changes; the parity tests
+# catch drift.
+
+# flextool_base.dat:144-152 — processPeriodParam family.
+_PROCESS_PERIOD_PARAM: frozenset[str] = frozenset((
+    "fixed_cost", "other_operational_cost", "lifetime", "existing",
+    "discount_rate", "invest_cost", "salvage_value",
+    "invest_max_period", "invest_min_period",
+    "cumulative_max_capacity", "cumulative_min_capacity",
+    "retire_forced", "retire_max_period", "retire_min_period", "startup_cost",
+))
+_PROCESS_PERIOD_PARAM_REQUIRED: frozenset[str] = frozenset((
+    "fixed_cost", "other_operational_cost", "lifetime", "existing",
+))
+_PROCESS_PERIOD_PARAM_INVEST: frozenset[str] = frozenset((
+    "discount_rate", "invest_cost", "salvage_value",
+    "invest_max_period", "invest_min_period",
+    "cumulative_max_capacity", "cumulative_min_capacity",
+    "retire_forced", "retire_max_period", "retire_min_period",
+))
+
+# flextool_base.dat:153-154 — processTimeParam family.
+_PROCESS_TIME_PARAM_REQUIRED: frozenset[str] = frozenset((
+    "efficiency", "other_operational_cost", "availability",
+))
+
+# flextool_base.dat:158-161 — sourceSinkTime/PeriodParam family
+# (period == time taxonomy in this version of base.dat).
+_SOURCE_SINK_TIME_PARAM: frozenset[str] = frozenset((
+    "efficiency", "efficiency_at_min_load", "min_load", "other_operational_cost",
+))
+_SOURCE_SINK_TIME_PARAM_REQUIRED: frozenset[str] = frozenset((
+    "efficiency", "other_operational_cost",
+))
+_SOURCE_SINK_PERIOD_PARAM: frozenset[str] = _SOURCE_SINK_TIME_PARAM
+_SOURCE_SINK_PERIOD_PARAM_REQUIRED: frozenset[str] = _SOURCE_SINK_TIME_PARAM_REQUIRED
+
+# flextool_base.dat:168-177 — nodePeriodParam family.
+_NODE_PERIOD_PARAM: frozenset[str] = frozenset((
+    "annual_flow", "peak_inflow", "fixed_cost", "discount_rate",
+    "invest_cost", "salvage_value",
+    "invest_max_period", "invest_min_period", "lifetime",
+    "cumulative_max_capacity", "cumulative_min_capacity",
+    "retire_forced", "retire_max_period", "retire_min_period",
+    "virtual_unitsize",
+    "storage_state_reference_price", "existing", "penalty_up", "penalty_down",
+))
+_NODE_PERIOD_PARAM_REQUIRED: frozenset[str] = frozenset((
+    "annual_flow", "peak_inflow", "fixed_cost", "lifetime",
+    "storage_state_reference_price", "existing",
+    "penalty_up", "penalty_down",
+))
+_NODE_PERIOD_PARAM_INVEST: frozenset[str] = frozenset((
+    "discount_rate", "invest_cost", "salvage_value",
+    "invest_max_period", "invest_min_period",
+    "cumulative_max_capacity", "cumulative_min_capacity",
+    "retire_forced", "retire_max_period", "retire_min_period",
+    "virtual_unitsize",
+))
+
+
+# ---- write_param_in_use_sets (mod L1247 / L1369) --------------------------
+#
+# Emits seven param-in-use CSVs.  Legacy implementation iterates a small
+# python dictionary keyed by (entity, param) and dedupes with
+# ``dict.fromkeys``; native polars wouldn't be faster for this shape —
+# the inputs are tiny enum cross-products.  We mirror the legacy loops
+# directly inside ``derive_*`` for code-shape parity.
+
+def _read_singles_list(path: Path) -> list[str]:
+    """Read column 0 of a small CSV into a list (preserves CSV order)."""
+    return [
+        r[0] for r in _read_n_col_rows(path, ["c0"])
+    ]
+
+
+def _derive_node_period_param_in_use(
+    nodes: list[str], invest_set: frozenset[str], divest_set: frozenset[str],
+) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for n in nodes:
+        is_invest = n in invest_set or n in divest_set
+        for param in _NODE_PERIOD_PARAM:
+            if param in _NODE_PERIOD_PARAM_REQUIRED:
+                rows.append((n, param))
+            elif is_invest and param in _NODE_PERIOD_PARAM_INVEST:
+                rows.append((n, param))
+    return list(dict.fromkeys(rows))
+
+
+def _derive_process_period_param_in_use(
+    processes: list[str], invest_set: frozenset[str],
+    divest_set: frozenset[str], process_online: frozenset[str],
+) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for p in processes:
+        is_invest = p in invest_set or p in divest_set
+        is_online = p in process_online
+        for param in _PROCESS_PERIOD_PARAM:
+            if param in _PROCESS_PERIOD_PARAM_REQUIRED:
+                rows.append((p, param))
+            elif is_invest and param in _PROCESS_PERIOD_PARAM_INVEST:
+                rows.append((p, param))
+            elif is_online and param == "startup_cost":
+                rows.append((p, param))
+    return list(dict.fromkeys(rows))
+
+
+def _derive_process_time_param_in_use(
+    processes: list[str], p_with_min_load: frozenset[str],
+) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for p in processes:
+        for param in _PROCESS_TIME_PARAM:
+            if param in _PROCESS_TIME_PARAM_REQUIRED:
+                rows.append((p, param))
+            elif (p in p_with_min_load
+                  and param in ("min_load", "efficiency_at_min_load")):
+                rows.append((p, param))
+    return list(dict.fromkeys(rows))
+
+
+def _derive_pss_param_in_use(
+    pairs: list[tuple[str, str]], p_with_min_load: frozenset[str],
+    enum: frozenset[str], required: frozenset[str],
+) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+    for p, side in pairs:
+        for param in enum:
+            if param in required:
+                rows.append((p, side, param))
+            elif (p in p_with_min_load
+                  and param in ("min_load", "efficiency_at_min_load")):
+                rows.append((p, side, param))
+    return list(dict.fromkeys(rows))
+
+
+def _rows_to_frame_2(rows: list[tuple[str, str]],
+                     cols: tuple[str, str]) -> pl.DataFrame:
+    return pl.DataFrame(
+        {cols[0]: [r[0] for r in rows], cols[1]: [r[1] for r in rows]},
+        schema={cols[0]: pl.Utf8, cols[1]: pl.Utf8},
+    )
+
+
+def _rows_to_frame_3(rows: list[tuple[str, str, str]],
+                     cols: tuple[str, str, str]) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            cols[0]: [r[0] for r in rows],
+            cols[1]: [r[1] for r in rows],
+            cols[2]: [r[2] for r in rows],
+        },
+        schema={c: pl.Utf8 for c in cols},
+    )
+
+
+def write_param_in_use_sets(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit the seven ``*_in_use`` CSVs that filter (entity, param) by
+    Required/Invest enum membership.
+
+    Outputs:
+      * ``node__PeriodParam_in_use.csv``
+      * ``process__PeriodParam_in_use.csv``
+      * ``process_TimeParam_in_use.csv``
+      * ``process_source_sourceSinkTimeParam_in_use.csv``
+      * ``process_sink_sourceSinkTimeParam_in_use.csv``
+      * ``process_source_sourceSinkPeriodParam_in_use.csv``
+      * ``process_sink_sourceSinkPeriodParam_in_use.csv``
+    """
+    nodes = _read_singles_list(input_dir / "node.csv")
+    processes = _read_singles_list(input_dir / "process.csv")
+    invest_set = frozenset(
+        _read_singles_list(solve_data_dir / "entityInvest.csv")
+    )
+    divest_set = frozenset(
+        _read_singles_list(solve_data_dir / "entityDivest.csv")
+    )
+    ctm = _read_n_col_rows(
+        solve_data_dir / "process__ct_method.csv", ["process", "method"],
+    )
+    p_with_min_load = frozenset(
+        p for p, m in ctm if m == "min_load_efficiency"
+    )
+    process_online = frozenset(
+        _read_singles_list(solve_data_dir / "process_online.csv")
+    )
+    sources = [
+        (p, src) for p, src in _read_n_col_rows(
+            input_dir / "process__source.csv", ["process", "source"],
+        )
+    ]
+    sinks = [
+        (p, snk) for p, snk in _read_n_col_rows(
+            input_dir / "process__sink.csv", ["process", "sink"],
+        )
+    ]
+
+    # node__PeriodParam_in_use
+    _write(
+        _rows_to_frame_2(
+            _derive_node_period_param_in_use(nodes, invest_set, divest_set),
+            ("node", "param"),
+        ),
+        solve_data_dir / "node__PeriodParam_in_use.csv",
+    )
+    # process__PeriodParam_in_use
+    _write(
+        _rows_to_frame_2(
+            _derive_process_period_param_in_use(
+                processes, invest_set, divest_set, process_online,
+            ),
+            ("process", "param"),
+        ),
+        solve_data_dir / "process__PeriodParam_in_use.csv",
+    )
+    # process_TimeParam_in_use
+    _write(
+        _rows_to_frame_2(
+            _derive_process_time_param_in_use(processes, p_with_min_load),
+            ("process", "param"),
+        ),
+        solve_data_dir / "process_TimeParam_in_use.csv",
+    )
+    # process_source / process_sink _sourceSinkTimeParam_in_use
+    _write(
+        _rows_to_frame_3(
+            _derive_pss_param_in_use(
+                sources, p_with_min_load,
+                _SOURCE_SINK_TIME_PARAM, _SOURCE_SINK_TIME_PARAM_REQUIRED,
+            ),
+            ("process", "source", "param"),
+        ),
+        solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv",
+    )
+    _write(
+        _rows_to_frame_3(
+            _derive_pss_param_in_use(
+                sinks, p_with_min_load,
+                _SOURCE_SINK_TIME_PARAM, _SOURCE_SINK_TIME_PARAM_REQUIRED,
+            ),
+            ("process", "sink", "param"),
+        ),
+        solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv",
+    )
+    # process_source / process_sink _sourceSinkPeriodParam_in_use
+    _write(
+        _rows_to_frame_3(
+            _derive_pss_param_in_use(
+                sources, p_with_min_load,
+                _SOURCE_SINK_PERIOD_PARAM, _SOURCE_SINK_PERIOD_PARAM_REQUIRED,
+            ),
+            ("process", "source", "param"),
+        ),
+        solve_data_dir / "process_source_sourceSinkPeriodParam_in_use.csv",
+    )
+    _write(
+        _rows_to_frame_3(
+            _derive_pss_param_in_use(
+                sinks, p_with_min_load,
+                _SOURCE_SINK_PERIOD_PARAM, _SOURCE_SINK_PERIOD_PARAM_REQUIRED,
+            ),
+            ("process", "sink", "param"),
+        ),
+        solve_data_dir / "process_sink_sourceSinkPeriodParam_in_use.csv",
+    )
+
+
+# ---- write_node_group_dispatch_process_fully_inside (mod L1789-1794) ------
+
+def derive_node_group_dispatch_process_fully_inside(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """For each ``g ∈ nodeGroupDispatch`` × ``p ∈ process``, include if
+    BOTH some source and some sink of ``p`` are in ``group__node[g]``
+    AND ``p`` is not a self-loop (no ``(p, n, n)`` in ``process_source_sink``).
+    """
+    ngd = _read_singles_list(input_dir / "nodeGroupDispatch.csv")
+    procs = _read_singles_list(input_dir / "process.csv")
+    process_source_pairs = _read_n_col_rows(
+        input_dir / "process__source.csv", ["process", "source"],
+    )
+    process_sink_pairs = _read_n_col_rows(
+        input_dir / "process__sink.csv", ["process", "sink"],
+    )
+    gn = _read_n_col_rows(input_dir / "group__node.csv", ["group", "node"])
+    triples = _read_n_col_rows(
+        solve_data_dir / "process_source_sink.csv",
+        ["process", "source", "sink"],
+    )
+
+    nodes_in_g: dict[str, set[str]] = {}
+    for g, n in gn:
+        nodes_in_g.setdefault(g, set()).add(n)
+    sources_of_p: dict[str, set[str]] = {}
+    for p, src in process_source_pairs:
+        sources_of_p.setdefault(p, set()).add(src)
+    sinks_of_p: dict[str, set[str]] = {}
+    for p, snk in process_sink_pairs:
+        sinks_of_p.setdefault(p, set()).add(snk)
+    self_loop_processes = frozenset(
+        p for p, src, snk in triples if src == snk
+    )
+
+    rows: list[tuple[str, str]] = []
+    for g in ngd:
+        gnodes = nodes_in_g.get(g, set())
+        if not gnodes:
+            continue
+        for p in procs:
+            if p in self_loop_processes:
+                continue
+            srcs = sources_of_p.get(p, set())
+            snks = sinks_of_p.get(p, set())
+            if (srcs & gnodes) and (snks & gnodes):
+                rows.append((g, p))
+    return _rows_to_frame_2(rows, ("group", "process"))
+
+
+def write_node_group_dispatch_process_fully_inside(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    _write(
+        derive_node_group_dispatch_process_fully_inside(input_dir, solve_data_dir),
+        solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv",
+    )

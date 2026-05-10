@@ -450,6 +450,24 @@ def _native_leaf_set_override():
                                 _native_period.write_pdtConversion_rate_section_slope),
         (_legacy_entity_period, "write_pdtProcess_source_sink",
                                 _native_period.write_pdtProcess_source_sink),
+        # ── Phase 1 follow-up 4 — group/commodity period-param fallbacks
+        #    and the positive/negative inflow split.
+        (_legacy_entity_period, "write_pdGroup",
+                                _native_period.write_pdGroup),
+        (_legacy_entity_period, "write_pdtGroup",
+                                _native_period.write_pdtGroup),
+        (_legacy_entity_period, "write_pdCommodity",
+                                _native_period.write_pdCommodity),
+        (_legacy_entity_period, "write_pdtCommodity",
+                                _native_period.write_pdtCommodity),
+        (_legacy_entity_period, "write_p_positive_negative_inflow",
+                                _native_period.write_p_positive_negative_inflow),
+        # ── Phase 1 follow-up 4 — param-in-use family + dispatch-inside ──
+        (_legacy_arc_unions, "write_param_in_use_sets",
+                             _native_arc.write_param_in_use_sets),
+        (_legacy_arc_unions, "write_node_group_dispatch_process_fully_inside",
+                             _native_arc
+                             .write_node_group_dispatch_process_fully_inside),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides

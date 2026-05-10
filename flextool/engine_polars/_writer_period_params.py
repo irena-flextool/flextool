@@ -753,3 +753,302 @@ def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
                         continue
                 # Branch 11: 0.
                 fh.write(f"{p},{src},{snk},{param},{d},{t},0.0\n")
+
+
+# ---------------------------------------------------------------------------
+# Writer-port Phase 1 follow-up 4 — group/commodity period-param fallbacks
+# and the inflow positive/negative split.
+#
+# Same procedural shape as the legacy emitters in
+# :mod:`flextool.flextoolrunner.preprocessing.entity_period_calc_params`.
+# The legacy code is already optimal for the per-row access pattern
+# (dict lookups in a nested loop); we mirror it byte-for-byte so the
+# parity tests can ``filecmp``.
+# ---------------------------------------------------------------------------
+
+
+# flextool_base.dat L196-201 — group period param taxonomies.
+_GROUP_PERIOD_PARAM: frozenset[str] = frozenset((
+    "capacity_margin", "co2_price", "co2_max_period", "co2_max_total",
+    "inertia_limit", "invest_max_period", "invest_min_period",
+    "max_cumulative_flow", "min_cumulative_flow", "non_synchronous_limit",
+    "penalty_inertia", "penalty_non_synchronous",
+    "max_instant_flow", "min_instant_flow", "penalty_capacity_margin",
+    "retire_max_period", "retire_min_period",
+    "cumulative_max_capacity", "cumulative_min_capacity",
+))
+_GROUP_TIME_PARAM: frozenset[str] = frozenset((
+    "co2_price", "max_instant_flow", "min_instant_flow",
+))
+_GROUP_PARAM_DEFAULT_5000: frozenset[str] = frozenset((
+    "penalty_inertia", "penalty_capacity_margin", "penalty_non_synchronous",
+))
+
+
+def _read_p_2(path: Path) -> dict[tuple[str, str], float]:
+    """Read a 3-col CSV ``(key1, key2, value)`` into a dict.
+
+    Mirrors legacy ``_read_p_2`` (entity_period_calc_params.py L1965).
+    """
+    out: dict[tuple[str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 3 and row[0] and row[1]:
+                try:
+                    out[(row[0], row[1])] = float(row[2])
+                except ValueError:
+                    continue
+    return out
+
+
+def _read_pd_2(path: Path) -> dict[tuple[str, str, str], float]:
+    """Read a 4-col CSV ``(k1, k2, k3, value)`` into a dict."""
+    out: dict[tuple[str, str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 4 and all(row[i] for i in range(3)):
+                try:
+                    out[(row[0], row[1], row[2])] = float(row[3])
+                except ValueError:
+                    continue
+    return out
+
+
+def _read_branches_for_d(period_branch_csv: Path) -> dict[str, list[str]]:
+    """``period__branch.csv`` is ``(branch_period, period)`` — index by
+    the child period (column 1) and gather branch list."""
+    out: dict[str, list[str]] = {}
+    if not period_branch_csv.exists():
+        return out
+    with period_branch_csv.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 2 and row[0] and row[1]:
+                out.setdefault(row[1], []).append(row[0])
+    return out
+
+
+# ---------------------------------------------------------------------------
+# write_pdGroup — flextool.mod L1115 (5-branch fallback).
+# ---------------------------------------------------------------------------
+
+
+def write_pdGroup(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdGroup.csv``.
+
+    Branches per (g, param, d):
+      1. ``pd_group[g, param, d]``                        — direct.
+      2. ``sum_{db ∈ branches_for_d[d]} pd_group[g, param, db]`` — fold.
+      3. ``p_group[g, param]``                            — scalar fallback.
+      4. ``5000`` when ``param`` is a 5000-default penalty.
+      5. ``0``.
+    """
+    pd_g = _read_pd_2(input_dir / "pd_group.csv")
+    p_g = _read_p_2(input_dir / "p_group.csv")
+    branches_for_d = _read_branches_for_d(solve_data_dir / "period__branch.csv")
+    groups = _read_singles(input_dir / "group.csv")
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+
+    out_path = solve_data_dir / "pdGroup.csv"
+    with out_path.open("w") as fh:
+        fh.write("group,param,period,value\n")
+        for g in groups:
+            for param in _GROUP_PERIOD_PARAM:
+                for d in period_in_use:
+                    if (g, param, d) in pd_g:
+                        v = pd_g[(g, param, d)]
+                    else:
+                        branched = [
+                            pd_g[(g, param, db)]
+                            for db in branches_for_d.get(d, ())
+                            if (g, param, db) in pd_g
+                        ]
+                        if branched:
+                            v = sum(branched)
+                        elif (g, param) in p_g:
+                            v = p_g[(g, param)]
+                        elif param in _GROUP_PARAM_DEFAULT_5000:
+                            v = 5000.0
+                        else:
+                            v = 0.0
+                    fh.write(f"{g},{param},{d},{repr(v)}\n")
+
+
+# ---------------------------------------------------------------------------
+# write_pdtGroup — flextool.mod L1126 (4-branch fallback: pt → pd → p → 0).
+# ---------------------------------------------------------------------------
+
+
+def write_pdtGroup(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtGroup.csv``.
+
+    Branches: ``pt_group[g, param, t]`` → ``pd_group[g, param, d]`` →
+    ``p_group[g, param]`` → 0.
+    """
+    pt_g = _read_pd_2(input_dir / "pt_group.csv")  # same (k1, k2, k3, v) shape
+    pd_g = _read_pd_2(input_dir / "pd_group.csv")
+    p_g = _read_p_2(input_dir / "p_group.csv")
+    groups = _read_singles(input_dir / "group.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    out_path = solve_data_dir / "pdtGroup.csv"
+    with out_path.open("w") as fh:
+        fh.write("group,param,period,time,value\n")
+        for g in groups:
+            for param in _GROUP_TIME_PARAM:
+                for (d, t) in dt:
+                    if (g, param, t) in pt_g:
+                        v = pt_g[(g, param, t)]
+                    elif (g, param, d) in pd_g:
+                        v = pd_g[(g, param, d)]
+                    elif (g, param) in p_g:
+                        v = p_g[(g, param)]
+                    else:
+                        v = 0.0
+                    fh.write(f"{g},{param},{d},{t},{repr(v)}\n")
+
+
+# ---------------------------------------------------------------------------
+# write_pdCommodity — flextool.mod L1101 (3-branch fallback).
+# ---------------------------------------------------------------------------
+
+# commodityPeriodParam = {price} (flextool_base.dat L134)
+_COMMODITY_PERIOD_PARAM: tuple[str, ...] = ("price",)
+
+
+def write_pdCommodity(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdCommodity.csv``.
+
+    Branches per (c, 'price', d):
+      1. ``pd_commodity[c, 'price', d]``                 — direct.
+      2. ``sum_{db ∈ branches_for_d[d]} pd_commodity[c, 'price', db]`` — fold.
+      3. ``p_commodity[c, 'price']``                     — scalar (default 0).
+    """
+    pd_c = _read_pd_2(input_dir / "pd_commodity.csv")
+    p_c = _read_p_2(input_dir / "p_commodity.csv")
+    branches_for_d = _read_branches_for_d(solve_data_dir / "period__branch.csv")
+    commodities = _read_singles(input_dir / "commodity.csv")
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+
+    out_path = solve_data_dir / "pdCommodity.csv"
+    with out_path.open("w") as fh:
+        fh.write("commodity,param,period,value\n")
+        for c in commodities:
+            for param in _COMMODITY_PERIOD_PARAM:
+                for d in period_in_use:
+                    if (c, param, d) in pd_c:
+                        v = pd_c[(c, param, d)]
+                    else:
+                        branched = [
+                            pd_c[(c, param, db)]
+                            for db in branches_for_d.get(d, ())
+                            if (c, param, db) in pd_c
+                        ]
+                        if branched:
+                            v = sum(branched)
+                        else:
+                            v = p_c.get((c, param), 0.0)
+                    fh.write(f"{c},{param},{d},{repr(v)}\n")
+
+
+# ---------------------------------------------------------------------------
+# write_pdtCommodity — flextool.mod L1108 (3-branch: pt → pd → p → 0).
+# ---------------------------------------------------------------------------
+
+# commodityTimeParam = {price} (flextool_base.dat L134)
+_COMMODITY_TIME_PARAM: tuple[str, ...] = ("price",)
+
+
+def write_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtCommodity.csv``.
+
+    Domain: commodity × commodityTimeParam × dt.
+    Branches: ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → 0.
+    """
+    pt = _read_pd_2(input_dir / "pt_commodity.csv")
+    pd_ = _read_pd_2(input_dir / "pd_commodity.csv")
+    p = _read_p_2(input_dir / "p_commodity.csv")
+    commodities = _read_singles(input_dir / "commodity.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+
+    out_path = solve_data_dir / "pdtCommodity.csv"
+    with out_path.open("w") as fh:
+        fh.write("commodity,param,period,time,value\n")
+        for c in commodities:
+            for param in _COMMODITY_TIME_PARAM:
+                for (d, t) in dt:
+                    v = pt.get((c, param, t))
+                    if v is None:
+                        v = pd_.get((c, param, d))
+                    if v is None:
+                        v = p.get((c, param), 0.0)
+                    fh.write(f"{c},{param},{d},{t},{repr(v)}\n")
+
+
+# ---------------------------------------------------------------------------
+# write_p_positive_negative_inflow — flextool.mod L1672 / L1675.
+# ---------------------------------------------------------------------------
+
+
+def write_p_positive_negative_inflow(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Emit ``p_positive_inflow.csv`` and ``p_negative_inflow.csv``
+    from ``solve_data/pdtNodeInflow.csv`` (native, written upstream).
+
+    * ``p_positive_inflow`` is restricted to non-``no_inflow`` nodes;
+      ``value = max(pdtNodeInflow, 0)``.
+    * ``p_negative_inflow`` covers all nodes — ``no_inflow`` nodes emit
+      explicit ``0.0`` (matches the mod's all-nodes domain).
+    """
+    nodes = _read_singles(input_dir / "node.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    inflow_method_pairs = frozenset(
+        _read_pairs(solve_data_dir / "node__inflow_method.csv")
+    )
+    no_inflow_nodes = frozenset(
+        n for n in nodes if (n, "no_inflow") in inflow_method_pairs
+    )
+
+    pdt_inflow: dict[tuple[str, str, str], float] = {}
+    pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
+    if pdtni_path.exists():
+        with pdtni_path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 4 and row[0] and row[1] and row[2]:
+                    try:
+                        pdt_inflow[(row[0], row[1], row[2])] = float(row[3])
+                    except ValueError:
+                        continue
+
+    pos_path = solve_data_dir / "p_positive_inflow.csv"
+    with pos_path.open("w") as fh:
+        fh.write("node,period,time,value\n")
+        for n in nodes:
+            if n in no_inflow_nodes:
+                continue
+            for (d, t) in dt:
+                v = pdt_inflow.get((n, d, t), 0.0)
+                fh.write(f"{n},{d},{t},{repr(v if v >= 0 else 0.0)}\n")
+
+    neg_path = solve_data_dir / "p_negative_inflow.csv"
+    with neg_path.open("w") as fh:
+        fh.write("node,period,time,value\n")
+        for n in nodes:
+            for (d, t) in dt:
+                if n in no_inflow_nodes:
+                    fh.write(f"{n},{d},{t},0.0\n")
+                else:
+                    v = pdt_inflow.get((n, d, t), 0.0)
+                    fh.write(f"{n},{d},{t},{repr(v if v < 0 else 0.0)}\n")
