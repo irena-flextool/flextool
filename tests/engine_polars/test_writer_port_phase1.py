@@ -873,3 +873,105 @@ def test_pdtProcess_source_sink_parity(tmp_path: Path, fixture: str) -> None:
         lsd / "pdtProcess_source_sink.csv",
         nsd / "pdtProcess_source_sink.csv",
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 follow-up 4 — pdGroup / pdtGroup / pdCommodity / pdtCommodity,
+# positive/negative inflow, param-in-use family, and the dispatch-inside set.
+# ---------------------------------------------------------------------------
+
+# Group / commodity fallback writers: stress co2_price / co2_max_total /
+# inertia / capacity_margin penalty defaults via the dedicated fixtures.
+FIXTURES_WITH_GROUP = FIXTURES + [
+    "work_coal_co2_limit",
+    "work_coal_co2_price",
+    "work_capacity_margin",
+    "work_coal_wind_inertia",
+]
+FIXTURES_WITH_COMMODITY = FIXTURES + [
+    "work_coal_co2_price",
+    "work_commodity_ladder_annual",
+    "work_commodity_ladder_cumulative",
+]
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_GROUP)
+def test_pdGroup_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdGroup(lin, lsd)
+    native_period.write_pdGroup(nin, nsd)
+    _assert_files_equal(lsd / "pdGroup.csv", nsd / "pdGroup.csv")
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_GROUP)
+def test_pdtGroup_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtGroup(lin, lsd)
+    native_period.write_pdtGroup(nin, nsd)
+    _assert_files_equal(lsd / "pdtGroup.csv", nsd / "pdtGroup.csv")
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_COMMODITY)
+def test_pdCommodity_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdCommodity(lin, lsd)
+    native_period.write_pdCommodity(nin, nsd)
+    _assert_files_equal(lsd / "pdCommodity.csv", nsd / "pdCommodity.csv")
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_COMMODITY)
+def test_pdtCommodity_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtCommodity(lin, lsd)
+    native_period.write_pdtCommodity(nin, nsd)
+    _assert_files_equal(lsd / "pdtCommodity.csv", nsd / "pdtCommodity.csv")
+
+
+# p_positive/negative_inflow consumes pdtNodeInflow.csv (already native);
+# we seed both legacy and native trees with the legacy-emitted pdtNodeInflow
+# to keep this test focused on the positive/negative split.
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_INFLOW)
+def test_p_positive_negative_inflow_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_pdtNodeInflow(lin, lsd)
+    legacy_entity_period.write_pdtNodeInflow(nin, nsd)
+    legacy_entity_period.write_p_positive_negative_inflow(lin, lsd)
+    native_period.write_p_positive_negative_inflow(nin, nsd)
+    for fname in ("p_positive_inflow.csv", "p_negative_inflow.csv"):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# param_in_use_sets emits 7 CSVs; FIXTURES_WITH_INVEST stresses the
+# invest-gated branches (NODE_PERIOD_PARAM_INVEST / PROCESS_PERIOD_PARAM_INVEST).
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_INVEST)
+def test_param_in_use_sets_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_param_in_use_sets(lin, lsd)
+    native_arc.write_param_in_use_sets(nin, nsd)
+    for fname in (
+        "node__PeriodParam_in_use.csv",
+        "process__PeriodParam_in_use.csv",
+        "process_TimeParam_in_use.csv",
+        "process_source_sourceSinkTimeParam_in_use.csv",
+        "process_sink_sourceSinkTimeParam_in_use.csv",
+        "process_source_sourceSinkPeriodParam_in_use.csv",
+        "process_sink_sourceSinkPeriodParam_in_use.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# nodeGroupDispatch__process_fully_inside: stress fixtures with multi-node
+# dispatch groups that contain non-trivial processes.
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_node_group_dispatch_process_fully_inside_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_node_group_dispatch_process_fully_inside(lin, lsd)
+    native_arc.write_node_group_dispatch_process_fully_inside(nin, nsd)
+    _assert_files_equal(
+        lsd / "nodeGroupDispatch__process_fully_inside.csv",
+        nsd / "nodeGroupDispatch__process_fully_inside.csv",
+    )
