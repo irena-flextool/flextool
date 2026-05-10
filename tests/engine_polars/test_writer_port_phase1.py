@@ -30,16 +30,27 @@ from pathlib import Path
 import pytest
 
 from flextool.engine_polars import _writer_leaf_sets as native
+from flextool.engine_polars import _writer_mid_sets as native_mid
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
+    dc_angle_bounds as legacy_dc,
     invest_method_sets as legacy_invest,
+    invest_total_sets as legacy_invest_total,
+    method_with_fallback_sets as legacy_method_fb,
+    node_type_sets as legacy_node_type,
+    nonsync_sets as legacy_nonsync,
     period_param_sets as legacy_period,
+    reserve_method_partitions as legacy_reserve_part,
     simple_projections as legacy_simple,
+    structural_filters as legacy_struct,
+    union_sets as legacy_union,
 )
 
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 FIXTURES = ["work_base", "work_coal", "work_test_a_lot"]
+# Extra fixture exercising DC power-flow bounds.
+FIXTURES_WITH_DC = FIXTURES + ["work_dc_power_flow"]
 
 
 def _seed_workdir(tmp_path: Path, fixture: str) -> tuple[Path, Path, Path, Path]:
@@ -232,3 +243,182 @@ def test_derive_returns_dataframe(tmp_path: Path) -> None:
     assert isinstance(native.derive_group_co2(lin, "price"), pl.DataFrame)
     assert isinstance(native.derive_process_side(), pl.DataFrame)
     assert isinstance(native.derive_optional_yes(lin), pl.DataFrame)
+    # L3-L6 native-derive return type smoke.
+    assert isinstance(native_mid.derive_node_effective_type(lin), pl.DataFrame)
+    assert isinstance(native_mid.derive_group_entity(lin), pl.DataFrame)
+    lower, upper = native_mid.derive_dc_angle_bounds(lin)
+    assert isinstance(lower, pl.DataFrame)
+    assert isinstance(upper, pl.DataFrame)
+    assert isinstance(native_mid.derive_reserve_universe(lin), pl.DataFrame)
+    assert isinstance(native_mid.derive_entity_lifetime_method(lin), pl.DataFrame)
+    assert isinstance(native_mid.derive_connection_param(lin), pl.DataFrame)
+
+
+# ===========================================================================
+# Phase 1 (L3-L6) — mid-level set / param families
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Family 5 — node_type_sets
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_node_type_sets_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_node_type.write_node_type_sets(lin, lsd)
+    native_mid.write_node_type_sets(nin, nsd)
+    for fname in (
+        "nodeCommodity.csv", "nodeBalance.csv",
+        "nodeState.csv", "nodeBalancePeriod.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Family 6 — union_sets
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_union_sets_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_union.write_group_entity(lin, lsd)
+    legacy_union.write_process_delayed__duration(lin, lsd)
+    native_mid.write_group_entity(nin, nsd)
+    native_mid.write_process_delayed__duration(nin, nsd)
+    for fname in ("group_entity.csv", "process_delayed__duration.csv"):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Family 7 — dc_angle_bounds (work_dc_power_flow exercises the non-empty path)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_DC)
+def test_dc_angle_bounds_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_dc.write_dc_angle_bounds(lin, lsd)
+    native_mid.write_dc_angle_bounds(nin, nsd)
+    for fname in ("p_angle_lower.csv", "p_angle_upper.csv"):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Family 8 — reserve_method_partitions
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_reserve_method_partitions_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_reserve_part.write_reserve_partitions(lin, lsd)
+    native_mid.write_reserve_partitions(nin, nsd)
+    for fname in (
+        "reserve.csv",
+        "reserve__upDown__group__method_timeseries.csv",
+        "reserve__upDown__group__method_dynamic.csv",
+        "reserve__upDown__group__method_n_1.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Family 9 — nonsync_sets
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_nonsync_sets_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_nonsync.write_process_group_inside_group_nonsync(lin, lsd)
+    legacy_nonsync.write_process__sink_nonSync(lin, lsd)
+    native_mid.write_process_group_inside_group_nonsync(nin, nsd)
+    native_mid.write_process__sink_nonSync(nin, nsd)
+    for fname in (
+        "process__sink_nonSync.csv",
+        "process__group_inside_group_nonSync.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Family 10 — method_with_fallback_sets
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_method_with_fallback_sets_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_method_fb.write_entity_lifetime_method(lin, lsd)
+    legacy_method_fb.write_process_ct_method(lin, lsd)
+    legacy_method_fb.write_process_startup_method(lin, lsd)
+    legacy_method_fb.write_node_inflow_method(lin, lsd)
+    legacy_method_fb.write_node_storage_binding_method(lin, lsd)
+    native_mid.write_entity_lifetime_method(nin, nsd)
+    native_mid.write_process_ct_method(nin, nsd)
+    native_mid.write_process_startup_method(nin, nsd)
+    native_mid.write_node_inflow_method(nin, nsd)
+    native_mid.write_node_storage_binding_method(nin, nsd)
+    for fname in (
+        "entity__lifetime_method.csv",
+        "process__ct_method.csv",
+        "process__startup_method.csv",
+        "node__inflow_method.csv",
+        "node__storage_binding_method.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Family 11 — invest_total_sets
+#
+# Depends on entityInvest/entityDivest/group_invest/group_divest being
+# written first (Phase 1 L0-L2 — invest_method_sets) and on
+# ``commodity_with_ladder_cumulative.csv`` existing in solve_data (it's
+# checked into the fixture directly).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_invest_total_sets_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    # Re-seed entityInvest / entityDivest / group_invest / group_divest
+    # using the legacy invest_method_sets writer so both chains have a
+    # consistent universe.
+    from flextool.flextoolrunner.preprocessing import invest_method_sets as _legacy_im
+    _legacy_im.write_invest_method_sets(lin, lsd)
+    _legacy_im.write_invest_method_sets(nin, nsd)
+    legacy_invest_total.write_invest_total_sets(lin, lsd)
+    legacy_invest_total.write_ci_ladder_cumulative(lin, lsd)
+    native_mid.write_invest_total_sets(nin, nsd)
+    native_mid.write_ci_ladder_cumulative(nin, nsd)
+    for fname in (
+        "e_invest_total.csv", "e_divest_total.csv",
+        "g_invest_total.csv", "g_divest_total.csv",
+        "g_invest_cumulative.csv",
+        "ci_ladder_cumulative.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Family 12 — structural_filters
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_structural_filters_parity(tmp_path: Path, fixture: str) -> None:
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_struct.write_connection_param(lin, lsd)
+    legacy_struct.write_nodegroup_dispatch_node(lin, lsd)
+    legacy_struct.write_commodity_node_co2(lin, lsd)
+    legacy_struct.write_process__commodity__node(lin, lsd)
+    legacy_struct.write_process_coeff_zero_sets(lin, lsd)
+    native_mid.write_connection_param(nin, nsd)
+    native_mid.write_nodegroup_dispatch_node(nin, nsd)
+    native_mid.write_commodity_node_co2(nin, nsd)
+    native_mid.write_process__commodity__node(nin, nsd)
+    native_mid.write_process_coeff_zero_sets(nin, nsd)
+    for fname in (
+        "connection__param.csv",
+        "nodeGroupDispatch_node.csv",
+        "commodity_node_co2.csv",
+        "process__commodity__node.csv",
+        "process_source_coeff_zero.csv",
+        "process_sink_coeff_zero.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
