@@ -32,6 +32,7 @@ import pytest
 from flextool.engine_polars import _writer_arc_unions as native_arc
 from flextool.engine_polars import _writer_calc_params as native_calc
 from flextool.engine_polars import _writer_chain_params as native_chain
+from flextool.engine_polars import _writer_dispatchers as native_disp
 from flextool.engine_polars import _writer_leaf_sets as native
 from flextool.engine_polars import _writer_mid_sets as native_mid
 from flextool.engine_polars import _writer_pdt_params as native_pdt
@@ -1383,5 +1384,60 @@ def test_p_entity_capacity_max_chain_parity(
         "p_entity_max_units.csv",
         "p_entity_invest_cumulative_max.csv",
         "p_entity_dispatch_capacity_max.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 closeout — top-level dispatcher own-compute.
+#
+# ``write_process_arc_unions`` emits 14 CSVs and is called from both
+# ``input_writer.write_input`` (Phase 1) and ``preprocessing.solve_time``
+# (Phase 2).  ``write_entity_period_calc_params`` emits 5 CSVs and is
+# called from ``preprocessing.solve_time``.  Both functions are pure
+# own-compute (no sub-writer calls), so the override hook can swap them
+# atomically without touching the per-solve chain wiring.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_write_process_arc_unions_parity(tmp_path: Path, fixture: str) -> None:
+    """Top-level dispatcher emits 14 CSVs from arc-union derivations."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_arc_unions.write_process_arc_unions(lin, lsd)
+    native_disp.write_process_arc_unions(nin, nsd)
+    for fname in (
+        "process__profileProcess__toSink.csv",
+        "process__source__toProfileProcess.csv",
+        "process_profile.csv",
+        "process_source_toProcess.csv",
+        "process_process_toSink.csv",
+        "process_source_sink_eff.csv",
+        "process_source_sink_noEff.csv",
+        "process_online.csv",
+        "process_minload.csv",
+        "process__commodity__node_co2.csv",
+        "process_co2.csv",
+        "process_source_sink.csv",
+        "process_source_sink_alwaysProcess.csv",
+        "process__source__sink__profile__profile_method_direct.csv",
+    ):
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+def test_write_entity_period_calc_params_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Top-level dispatcher emits pdProcess / pdNode + 3 ed_* CSVs."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_period.write_entity_period_calc_params(lin, lsd)
+    native_disp.write_entity_period_calc_params(nin, nsd)
+    for fname in (
+        "pdProcess.csv",
+        "pdNode.csv",
+        "edEntity_lifetime.csv",
+        "ed_fixed_cost.csv",
+        "p_entity_unitsize.csv",
     ):
         _assert_files_equal(lsd / fname, nsd / fname)

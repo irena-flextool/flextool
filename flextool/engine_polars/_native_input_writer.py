@@ -333,6 +333,7 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_chain_params as _native_chain
     from flextool.engine_polars import _writer_pdt_params as _native_pdt
     from flextool.engine_polars import _writer_period_params as _native_period
+    from flextool.engine_polars import _writer_dispatchers as _native_disp
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -524,6 +525,13 @@ def _native_leaf_set_override():
                                 _native_chain.write_p_entity_existing_chain),
         (_legacy_entity_period, "write_p_entity_capacity_max_chain",
                                 _native_chain.write_p_entity_capacity_max_chain),
+        # ── Phase 1 closeout — top-level dispatcher own-compute ──
+        # Both functions are own-compute (no sub-writer calls inside);
+        # porting them completes Phase 1's writer-port scope.
+        (_legacy_arc_unions, "write_process_arc_unions",
+                             _native_disp.write_process_arc_unions),
+        (_legacy_entity_period, "write_entity_period_calc_params",
+                                _native_disp.write_entity_period_calc_params),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
