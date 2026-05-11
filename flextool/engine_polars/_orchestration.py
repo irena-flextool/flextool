@@ -702,8 +702,10 @@ def _drive_cascade(
     # callers (legacy file-based path) keep their behaviour.
     _real_capture = _flx_orch.capture_post_solve
     _flx_orch.capture_post_solve = lambda state, solve_name: None
+    from flextool.engine_polars._native_input_writer import _native_leaf_set_override
     try:
-        _flx_orch.run_model(runner.state, _FlexpyCascadeSolver(runner.state))
+        with _native_leaf_set_override():
+            _flx_orch.run_model(runner.state, _FlexpyCascadeSolver(runner.state))
     finally:
         _flx_orch.capture_post_solve = _real_capture
     # Mirror the in-memory handoff dict back onto our state in case
