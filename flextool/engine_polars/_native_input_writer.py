@@ -340,6 +340,10 @@ def _native_leaf_set_override():
     from flextool.flextoolrunner.preprocessing import (
         period_calculated_params as _legacy_period_calc,
     )
+    # Phase 2 (sub-dispatch 4) — node inflow scaling params.
+    from flextool.flextoolrunner.preprocessing import (
+        node_inflow_scaling_params as _legacy_inflow_scaling,
+    )
     from flextool.engine_polars import _writer_leaf_sets as _native
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
@@ -352,6 +356,7 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_entity_annual as _native_entity_annual
     from flextool.engine_polars import _writer_lp_scaling as _native_lp_scaling
     from flextool.engine_polars import _writer_period_calc as _native_period_calc
+    from flextool.engine_polars import _writer_inflow_scaling as _native_inflow_scaling
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -590,6 +595,15 @@ def _native_leaf_set_override():
                               _native_period_calc.write_period_calculated_params),
         (_legacy_period_calc, "write_branch_weights",
                               _native_period_calc.write_branch_weights),
+        # ── Phase 2 (sub-dispatch 4) — node inflow scaling params ──
+        # Fired from ``preprocessing/solve_time.run`` at batch 17.
+        # Emits ``ptNode_inflow`` + 16 per-(n, d) inflow-scaling
+        # parameters consumed by the LP build via the
+        # ``scale_to_annual_flow`` / ``scale_in_proportion`` /
+        # ``scale_to_annual_and_peak_flow`` cascades.
+        (_legacy_inflow_scaling, "write_node_inflow_scaling_params",
+                                 _native_inflow_scaling
+                                 .write_node_inflow_scaling_params),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides

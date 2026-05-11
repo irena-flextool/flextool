@@ -37,6 +37,7 @@ from flextool.engine_polars import _writer_leaf_sets as native
 from flextool.engine_polars import _writer_mid_sets as native_mid
 from flextool.engine_polars import _writer_pdt_params as native_pdt
 from flextool.engine_polars import _writer_entity_annual as native_entity_annual
+from flextool.engine_polars import _writer_inflow_scaling as native_inflow_scaling
 from flextool.engine_polars import _writer_lp_scaling as native_lp_scaling
 from flextool.engine_polars import _writer_per_solve as native_per_solve
 from flextool.engine_polars import _writer_period_calc as native_period_calc
@@ -52,6 +53,7 @@ from flextool.flextoolrunner.preprocessing import (
     invest_total_sets as legacy_invest_total,
     lp_scaling_params as legacy_lp_scaling,
     method_with_fallback_sets as legacy_method_fb,
+    node_inflow_scaling_params as legacy_inflow_scaling,
     node_type_sets as legacy_node_type,
     nonsync_sets as legacy_nonsync,
     per_solve_sets as legacy_per_solve,
@@ -1686,4 +1688,60 @@ def test_branch_weights_parity(
     legacy_period_calc.write_branch_weights(lin, lsd)
     native_period_calc.write_branch_weights(nin, nsd)
     for fname in _BRANCH_WEIGHTS_OUTPUTS:
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (sub-dispatch 4) — node_inflow_scaling_params parity tests.
+# ---------------------------------------------------------------------------
+
+# ``work_scale_to_peak_flow`` exercises the full peak-flow cascade
+# (scale_to_annual_and_peak_flow with non-trivial peak_inflow);
+# ``work_capacity_margin`` exercises scale_to_annual_flow.  The baseline
+# fixtures stay in to cover the use_original / empty-domain paths.
+FIXTURES_WITH_INFLOW_SCALING = FIXTURES_WITH_PER_SOLVE + [
+    "work_scale_to_peak_flow",
+    "work_capacity_margin",
+]
+
+
+_INFLOW_SCALING_OUTPUTS = (
+    "ptNode_inflow.csv",
+    "_node_cap_inflow_fallback.csv",
+    "orig_flow_sum.csv",
+    "period_share_of_annual_flow.csv",
+    "period_flow_annual_multiplier.csv",
+    "period_flow_proportional_multiplier.csv",
+    "new_peak_sign.csv",
+    "old_peak_max.csv",
+    "old_peak_min.csv",
+    "old_peak_sign.csv",
+    "old_peak.csv",
+    "new_peak_divided_by_old_peak.csv",
+    "new_peak_divide_by_old_peak_sum_inflow.csv",
+    "new_peak_inflow_sum.csv",
+    "new_old_multiplier.csv",
+    "new_old_slope.csv",
+    "new_old_section.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_INFLOW_SCALING)
+def test_node_inflow_scaling_params_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Native ``write_node_inflow_scaling_params`` mirrors the legacy
+    17 CSVs byte-identically — covers ``ptNode_inflow`` plus the 16
+    per-(n, d) annual / proportional / peak-flow scaling parameters.
+
+    ``work_scale_to_peak_flow`` is the canonical peak-flow fixture
+    (single-node, ``scale_to_annual_and_peak_flow``, non-trivial
+    ``peak_inflow``); ``work_capacity_margin`` exercises the
+    ``scale_to_annual_flow``-only branch.  Other fixtures collapse to
+    empty domains and validate the empty-CSV / header-only emission.
+    """
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_inflow_scaling.write_node_inflow_scaling_params(lin, lsd)
+    native_inflow_scaling.write_node_inflow_scaling_params(nin, nsd)
+    for fname in _INFLOW_SCALING_OUTPUTS:
         _assert_files_equal(lsd / fname, nsd / fname)
