@@ -196,18 +196,18 @@ def write_outputs_for_solve(
     # adapter consumes it once.
     _rename_invest_columns(sol)
 
-    # ``scale_the_objective`` shim — flextool's GMPL-driven LP scales
-    # objective coefficients by ``scale_the_objective`` (default 1e-6)
-    # at LP construction; downstream writers undo the scaling by
-    # multiplying every dual / objective value by the reciprocal.  The
-    # polars LP does NOT apply that scaling — it solves at the absolute
-    # objective.  Emit a ``solve_data/scale_the_objective.csv`` with
-    # ``value=1.0`` so the writer's ``_resolve_inv_scale_the_objective``
-    # returns 1.0 (no-op) and our values land in the same units as
-    # flextool's reference parquets.  Idempotent — safe to overwrite.
-    scale_csv = work_folder / "solve_data" / "scale_the_objective.csv"
-    if scale_csv.parent.exists():
-        scale_csv.write_text("key,value\nscale_the_objective,1.0\n")
+    # ``scale_the_objective`` — the polars LP now applies the resolved
+    # per-solve ``scale_the_objective`` at LP construction (engine_polars/
+    # scaling.py auto-apply, commits 19aca81b / 2682cea1 / 4c3b49ca /
+    # 8bac7d70).  ``_orchestration._write_scale_csv_and_report`` already
+    # writes ``solve_data/scale_the_objective.csv`` with the effective
+    # value before this adapter runs; the downstream writers' multiplier
+    # (``_resolve_inv_scale_the_objective``) then un-scales objective /
+    # dual values back to user-facing units.  An earlier shim here
+    # forced the CSV to ``value=1.0`` from the era when the polars LP
+    # did NOT scale — that override is now destructive (it canceled
+    # the un-scale, leaving ``v_obj`` at the LP-internal magnitude
+    # ~1e6× too small).  Removed: trust the upstream CSV.
 
     # Late imports — keep the adapter's import surface narrow for the
     # 99% of callers that never instantiate it.
