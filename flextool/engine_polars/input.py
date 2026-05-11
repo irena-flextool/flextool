@@ -1259,9 +1259,22 @@ def _read_wide_e_d(path: Path) -> pl.DataFrame:
 
 
 def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
-                  pss: pl.DataFrame | None) -> dict:
+                  pss: pl.DataFrame | None,
+                  *,
+                  db_reader: "object | None" = None) -> dict:
     """Load invest/divest sets and per-(e, d) cost params.  Empty when
-    neither ed_invest nor ed_divest has any row."""
+    neither ed_invest nor ed_divest has any row.
+
+    Δ.19 — when ``db_reader`` is supplied AND the active solve is a
+    recognised synthetic ``<base>_<anchor>`` (see
+    :func:`_derived_params._resolve_synthetic_solve`), the 8 invest-set
+    seed reads (``ed_invest``, ``ed_divest``, ``ed_invest_forbidden``,
+    ``pd_invest``, ``pd_divest``, ``nd_invest``, ``nd_divest``,
+    ``edd_invest``) are skipped — :func:`apply_synthetic_invest_sets`
+    populates these fields from Spine during ``_apply_db_overrides``.
+    The cost-param seeds (``ed_lifetime_fixed_cost`` etc.) and per-
+    period cap seeds remain on the CSV path.
+    """
     blank = dict(
         ed_invest_set=None, ed_divest_set=None,
         pd_invest_set=None, pd_divest_set=None,
@@ -1278,6 +1291,28 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_invest_period_set=None, ed_divest_period_set=None,
         ed_invest_max_period=None, ed_divest_max_period=None,
     )
+    # Δ.19 — detect synthetic ``<base>_<anchor>`` solve.  When matched,
+    # the apply_synthetic_invest_sets path covers the 8 set frames, so
+    # we skip those reads entirely (set frames default to None and the
+    # override populates them after this loader returns).
+    skip_set_seeds = False
+    if db_reader is not None:
+        try:
+            scc = sd / "solve_current.csv"
+            if scc.exists():
+                from ._derived_params import (_read_active_solve,
+                                                _resolve_synthetic_solve,
+                                                _solve_in_spine)
+                # workdir = sd.parent (sd is solve_data/)
+                active_solve = _read_active_solve(sd.parent)
+                if (active_solve is not None
+                        and not _solve_in_spine(db_reader, active_solve)
+                        and _resolve_synthetic_solve(db_reader, active_solve)
+                            is not None):
+                    skip_set_seeds = True
+        except Exception:  # pragma: no cover — defensive
+            skip_set_seeds = False
+
     # Workdir-CSV seeds for the invest/divest cascade live in
     # ``_invest_seeds.py`` — keeps the synthetic-solve fallback I/O off
     # ``input.py`` so the override chain stays the dominant data path.
@@ -1288,26 +1323,46 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         read_edd_invest as _seed_edd_invest,
     )
 
-    ed_inv = _seed_invest_set(sd, "ed_invest", "e")
-    ed_div = _seed_invest_set(sd, "ed_divest", "e")
-    if ed_inv.height == 0 and ed_div.height == 0:
-        return blank
+    if skip_set_seeds:
+        # Set frames are populated by apply_synthetic_invest_sets after
+        # this loader returns; the dispatch-only empty case is detected
+        # from Spine directly (``solve.invest_periods`` for ``<base>``
+        # at the anchor key is empty → no invest activity).  No disk
+        # reads needed for the gate.
+        from ._derived_params import _solve_periods as _sp
+        invest_periods = _sp(db_reader, active_solve, "invest_periods")
+        if not invest_periods:
+            return blank
+        # Cost-cascade seeds + per-period caps continue below; skip the
+        # set-frame seeds (ed_inv/ed_div/forbid/pd/nd/edd).
+        ed_inv = None  # type: ignore[assignment]
+        ed_div = None  # type: ignore[assignment]
+        pd_inv = None  # type: ignore[assignment]
+        pd_div = None  # type: ignore[assignment]
+        nd_inv = None  # type: ignore[assignment]
+        nd_div = None  # type: ignore[assignment]
+        edd_inv = None  # type: ignore[assignment]
+    else:
+        ed_inv = _seed_invest_set(sd, "ed_invest", "e")
+        ed_div = _seed_invest_set(sd, "ed_divest", "e")
+        if ed_inv.height == 0 and ed_div.height == 0:
+            return blank
 
-    forbid = _seed_forbidden_ni(sd)
-    if forbid.height > 0:
-        ed_inv = ed_inv.join(forbid, on=["e", "d"], how="anti")
+        forbid = _seed_forbidden_ni(sd)
+        if forbid.height > 0:
+            ed_inv = ed_inv.join(forbid, on=["e", "d"], how="anti")
 
-    # Δ.18 — CSV-fallback seeds for pd/nd_invest_set, pd/nd_divest_set,
-    # edd_invest_set.  The override chain (``apply_derived_c`` via the
-    # lazy LFs in ``_derived_existing.py``) overlays these when active.
-    # For synthetic per-sub-solve fixtures the snapshot CSV is the only
-    # source.
-    pd_inv = _seed_set(sd, "pd_invest", "p")
-    pd_div = _seed_set(sd, "pd_divest", "p")
-    nd_inv = _seed_set(sd, "nd_invest", "n")
-    nd_div = _seed_set(sd, "nd_divest", "n")
+        # Δ.18 — CSV-fallback seeds for pd/nd_invest_set, pd/nd_divest_set,
+        # edd_invest_set.  The override chain (``apply_derived_c`` via the
+        # lazy LFs in ``_derived_existing.py``) overlays these when active.
+        # For synthetic per-sub-solve fixtures the snapshot CSV is the only
+        # source.
+        pd_inv = _seed_set(sd, "pd_invest", "p")
+        pd_div = _seed_set(sd, "pd_divest", "p")
+        nd_inv = _seed_set(sd, "nd_invest", "n")
+        nd_div = _seed_set(sd, "nd_divest", "n")
 
-    edd_inv = _seed_edd_invest(sd)
+        edd_inv = _seed_edd_invest(sd)
 
     edd_div = pl.DataFrame(
         schema={"p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
@@ -1405,14 +1460,17 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     # ``apply_existing_chain`` to run AFTER ``apply_derived_f`` (was inside
     # ``apply_derived_d``), the chain summation sees the carriers populated
     # by the override helper without the seed.
+    def _hnz(x):  # height-non-zero predicate that tolerates None
+        return x if (x is not None and x.height > 0) else None
+
     return dict(
-        ed_invest_set=ed_inv if ed_inv.height > 0 else None,
-        ed_divest_set=ed_div if ed_div.height > 0 else None,
-        pd_invest_set=pd_inv if pd_inv.height > 0 else None,
-        pd_divest_set=pd_div if pd_div.height > 0 else None,
-        nd_invest_set=nd_inv if nd_inv.height > 0 else None,
-        nd_divest_set=nd_div if nd_div.height > 0 else None,
-        edd_invest_set=edd_inv if edd_inv.height > 0 else None,
+        ed_invest_set=_hnz(ed_inv),
+        ed_divest_set=_hnz(ed_div),
+        pd_invest_set=_hnz(pd_inv),
+        pd_divest_set=_hnz(pd_div),
+        nd_invest_set=_hnz(nd_inv),
+        nd_divest_set=_hnz(nd_div),
+        edd_invest_set=_hnz(edd_inv),
         edd_invest_lookback_set=edd_inv_lookback if edd_inv_lookback.height > 0 else None,
         edd_divest_active=edd_div if edd_div.height > 0 else None,
         p_entity_max_units=p_max_units,
@@ -3084,7 +3142,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         online = _load_online(inp, sd, dt, proc["pss"], source=db_reader)
         ramp = _load_ramp(inp, sd, proc["pss"])
-        invest = _load_invest(sd, dt, inp, proc["pss"])
+        invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader)
         varcost = _load_varcost(sd, proc["pss"])
         fixed_cost = _load_fixed_cost(sd)
         capacity_for_scaling = _load_node_capacity_for_scaling(sd, nb)
@@ -3388,9 +3446,25 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # snapshot CSV is the canonical and the per-solve overrides must be
     # skipped entirely.  Direct + Projection Params (passes 1-2) are
     # solve-agnostic and remain authoritative.
+    #
+    # Δ.19 — for the synthetic ``<base>_<anchor>`` shape we additionally
+    # produce the 8 invest-set frames from ``<base>``'s Spine entries
+    # filtered to the anchor's period subset (see
+    # :func:`_derived_params._resolve_synthetic_solve` and
+    # :func:`_derived_params.apply_synthetic_invest_sets`).  This cuts the
+    # 8 invest-set disk reads in ``_invest_seeds.py``.  The cost cascade
+    # (``apply_derived_f`` NPV / fixed-cost) and per-period caps remain
+    # on the CSV-seed path because those bake in multi-year discounting
+    # that the per-sub-solve filter doesn't compose cleanly with —
+    # deferred to a future dispatch.
     active_solve = _drv._read_active_solve(workdir_path)
     if active_solve is not None and not _drv._solve_in_spine(db_reader,
                                                                   active_solve):
+        synth = _drv._resolve_synthetic_solve(db_reader, active_solve)
+        if synth is not None:
+            _timed("c.synth invest_sets",
+                   _drv.apply_synthetic_invest_sets,
+                   flex_data, db_reader, active_solve, synth, workdir_path)
         # Δ.28 — synthetic solve: apply_derived_a is skipped, but in the
         # slow path ``flex_data.dt`` is already populated from CSV (see
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct
