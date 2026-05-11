@@ -331,6 +331,11 @@ def _native_leaf_set_override():
         invest_divest_sets as _legacy_invest_divest,
         per_solve_sets as _legacy_per_solve,
     )
+    # Phase 2 (sub-dispatch 2) — annuity + lp-scaling per-solve writers.
+    from flextool.flextoolrunner.preprocessing import (
+        entity_annual_calc_params as _legacy_entity_annual,
+        lp_scaling_params as _legacy_lp_scaling,
+    )
     from flextool.engine_polars import _writer_leaf_sets as _native
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
@@ -340,6 +345,8 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_period_params as _native_period
     from flextool.engine_polars import _writer_dispatchers as _native_disp
     from flextool.engine_polars import _writer_per_solve as _native_per_solve
+    from flextool.engine_polars import _writer_entity_annual as _native_entity_annual
+    from flextool.engine_polars import _writer_lp_scaling as _native_lp_scaling
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -556,6 +563,18 @@ def _native_leaf_set_override():
         (_legacy_invest_divest, "write_ed_invest_forbidden_no_investment",
                                 _native_per_solve
                                 .write_ed_invest_forbidden_no_investment),
+        # ── Phase 2 (sub-dispatch 2) — annuity + lp-scaling ──
+        # Like sub-dispatch 1, these helpers are not invoked from
+        # ``input_writer.write_input``; they fire in
+        # ``preprocessing/solve_time.run``.  Listing them here keeps
+        # ``_native_leaf_set_override`` as the single source of truth
+        # for the writer-port surface and lets the future per-solve
+        # wire-up land as a one-line wrap.
+        (_legacy_entity_annual, "write_entity_annual_calc_params",
+                                _native_entity_annual
+                                .write_entity_annual_calc_params),
+        (_legacy_lp_scaling, "write_lp_scaling_params",
+                             _native_lp_scaling.write_lp_scaling_params),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides

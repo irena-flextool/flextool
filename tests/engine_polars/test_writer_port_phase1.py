@@ -36,16 +36,20 @@ from flextool.engine_polars import _writer_dispatchers as native_disp
 from flextool.engine_polars import _writer_leaf_sets as native
 from flextool.engine_polars import _writer_mid_sets as native_mid
 from flextool.engine_polars import _writer_pdt_params as native_pdt
+from flextool.engine_polars import _writer_entity_annual as native_entity_annual
+from flextool.engine_polars import _writer_lp_scaling as native_lp_scaling
 from flextool.engine_polars import _writer_per_solve as native_per_solve
 from flextool.engine_polars import _writer_period_params as native_period
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
     dc_angle_bounds as legacy_dc,
+    entity_annual_calc_params as legacy_entity_annual,
     entity_period_calc_params as legacy_entity_period,
     entity_total_caps as legacy_entity_total,
     invest_divest_sets as legacy_invest_divest,
     invest_method_sets as legacy_invest,
     invest_total_sets as legacy_invest_total,
+    lp_scaling_params as legacy_lp_scaling,
     method_with_fallback_sets as legacy_method_fb,
     node_type_sets as legacy_node_type,
     nonsync_sets as legacy_nonsync,
@@ -1562,3 +1566,58 @@ def test_ed_invest_forbidden_no_investment_parity(
         lsd / "ed_invest_forbidden_no_investment.csv",
         nsd / "ed_invest_forbidden_no_investment.csv",
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (sub-dispatch 2) — entity_annual + lp_scaling parity tests.
+# ---------------------------------------------------------------------------
+
+_ENTITY_ANNUAL_OUTPUTS = (
+    "ed_entity_annual.csv",
+    "ed_entity_annual_discounted.csv",
+    "ed_entity_annual_divest.csv",
+    "ed_entity_annual_divest_discounted.csv",
+    "ed_lifetime_fixed_cost.csv",
+    "ed_lifetime_fixed_cost_divest.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PER_SOLVE)
+def test_entity_annual_calc_params_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Native ``write_entity_annual_calc_params`` emits the six
+    annuity / discounted / lifetime-fixed-cost CSVs byte-identically
+    to the legacy helper.  Float values stress ``repr(float)``
+    precision parity."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_entity_annual.write_entity_annual_calc_params(lin, lsd)
+    native_entity_annual.write_entity_annual_calc_params(nin, nsd)
+    for fname in _ENTITY_ANNUAL_OUTPUTS:
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+_LP_SCALING_OUTPUTS = (
+    "_node_cap_unitsize_sum.csv",
+    "_node_cap_raw.csv",
+    "_node_cap_pow10.csv",
+    "node_capacity_for_scaling.csv",
+    "inv_node_cap.csv",
+    "_group_cap_raw.csv",
+    "_group_cap_pow10.csv",
+    "group_capacity_for_scaling.csv",
+    "inv_group_cap.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PER_SOLVE)
+def test_lp_scaling_params_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Native ``write_lp_scaling_params`` mirrors the legacy 9 CSVs
+    (node-level + group-level capacity proxies and their reciprocals)."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_lp_scaling.write_lp_scaling_params(lin, lsd)
+    native_lp_scaling.write_lp_scaling_params(nin, nsd)
+    for fname in _LP_SCALING_OUTPUTS:
+        _assert_files_equal(lsd / fname, nsd / fname)
