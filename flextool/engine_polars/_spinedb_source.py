@@ -311,9 +311,21 @@ class SpineDbSource:
                     self.state.handoffs.get(self.state.last_captured_solve)
                     if self.state.last_captured_solve is not None else None
                 )
+                # Phase 4 (Gap F) — pass the in-memory FlexData + parent
+                # handoff so the extractors skip the workdir CSV reads
+                # where the same data is already in scope.
+                parent_complete = getattr(
+                    self.state, "current_parent_complete", None
+                )
+                parent_handoff = (
+                    self.state.handoffs.get(parent_complete)
+                    if parent_complete is not None else None
+                )
                 handoff = build_handoff_from_flexpy(
                     sol, self.state.paths.work_folder,
                     complete_solve_name, prior_handoff=prior,
+                    flex_data=data,
+                    parent_handoff=parent_handoff,
                 )
                 self.state.handoffs[complete_solve_name] = handoff
                 return 0

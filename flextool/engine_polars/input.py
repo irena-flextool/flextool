@@ -3547,11 +3547,33 @@ def _read_singles_csv(path: Path) -> list[str]:
         return [r[0] for r in reader if r and r[0]]
 
 
-def _extract_cum_sim_hours(
-    sd: Path, *, prior_handoff=None,
+def _step_duration_frame(
+    sd: Path, flex_data: "FlexData | None",
 ) -> "pl.DataFrame | None":
-    """Δ.11 — derive ``cum_sim_hours[period]`` from the workdir's
-    ``p_step_duration.csv`` + ``realized_dispatch.csv``.
+    """Return the (period/d, time/t, value) frame for p_step_duration.
+
+    Phase 4 (Gap F) — prefer ``flex_data.p_step_duration`` (in-memory)
+    over the workdir's ``p_step_duration.csv``.  ``flex_data`` Param
+    frames use (d, t, value); the CSV uses (period, time, value).
+    Callers tolerate either schema.
+    """
+    if flex_data is not None and getattr(flex_data, "p_step_duration", None) is not None:
+        return flex_data.p_step_duration.frame
+    p = sd / "p_step_duration.csv"
+    if not p.exists():
+        return None
+    try:
+        return _read_csv_file(p)
+    except pl.exceptions.NoDataError:
+        return None
+
+
+def _extract_cum_sim_hours(
+    sd: Path, *, prior_handoff=None, flex_data: "FlexData | None" = None,
+) -> "pl.DataFrame | None":
+    """Δ.11 — derive ``cum_sim_hours[period]`` from
+    ``flex_data.p_step_duration`` (in-memory, when supplied) + the
+    workdir's ``realized_dispatch.csv``.
 
     Algorithm (mirror of
     ``cumulative_handoffs.py::write_ladder_rolling_accumulators``):
@@ -3559,11 +3581,15 @@ def _extract_cum_sim_hours(
       this_roll_hrs[d] = Σ_t step_duration[d, t]   for (d, t) ∈ realized_dispatch
       cum[d]           = prior[d] + this_roll[d]   ∀d ∈ keys(prior) ∪ keys(this_roll)
 
+    Phase 4 (Gap F) — ``p_step_duration.csv`` read is replaced by the
+    ``flex_data.p_step_duration`` Param when ``flex_data`` is supplied
+    (the cascade always supplies it).  Test fixtures that call this
+    helper directly without ``flex_data`` retain the disk fallback.
+
     Returns the wide ``[period, value]`` carrier frame, or ``None`` when
     neither prior nor the workdir's realized set contributes any rows.
     """
     rd_path = sd / "realized_dispatch.csv"
-    sd_path = sd / "p_step_duration.csv"
     realized: set[tuple[str, str]] = set()
     if rd_path.exists():
         try:
@@ -3574,14 +3600,14 @@ def _extract_cum_sim_hours(
             for r in rd_df.iter_rows(named=True):
                 realized.add((str(r["period"]), str(r["step"])))
     this_roll_hrs: dict[str, float] = {}
-    if realized and sd_path.exists():
-        try:
-            sd_df = _read_csv_file(sd_path)
-        except pl.exceptions.NoDataError:
-            sd_df = None
+    if realized:
+        sd_df = _step_duration_frame(sd, flex_data)
         if sd_df is not None and sd_df.height > 0:
-            d_col = "period" if "period" in sd_df.columns else None
-            t_col = "time" if "time" in sd_df.columns else "step" if "step" in sd_df.columns else None
+            d_col = "period" if "period" in sd_df.columns else (
+                "d" if "d" in sd_df.columns else None)
+            t_col = "time" if "time" in sd_df.columns else (
+                "step" if "step" in sd_df.columns else (
+                    "t" if "t" in sd_df.columns else None))
             v_col = "value" if "value" in sd_df.columns else (
                 "p_step_duration" if "p_step_duration" in sd_df.columns else None
             )
@@ -3605,7 +3631,7 @@ def _extract_cum_sim_hours(
 
 
 def _extract_cumulative_commodity(
-    sol, sd: Path, *, prior_handoff=None,
+    sol, sd: Path, *, prior_handoff=None, flex_data: "FlexData | None" = None,
 ) -> "pl.DataFrame | None":
     """Δ.11 — derive ``cumulative_commodity[c, i, d]`` from ``v_trade``
     on the LP solution + workdir-side accumulator metadata.
@@ -3630,76 +3656,93 @@ def _extract_cumulative_commodity(
         # through to the file-based propagation.
         return None
 
-    # Finite ladder tiers — cumulative restriction set.
-    cilc_path = sd / "ci_ladder_cumulative.csv"
+    # Finite ladder tiers — cumulative restriction set.  Phase 4 (Gap F):
+    # prefer in-memory ``flex_data.ci_ladder_cumulative`` over the workdir
+    # CSV when supplied.
     finite_tiers: set[tuple[str, int]] = set()
-    if cilc_path.exists():
-        try:
-            cilc_df = _read_csv_file(cilc_path)
-        except pl.exceptions.NoDataError:
-            cilc_df = None
-        if cilc_df is not None and cilc_df.height > 0:
+    cilc_df = None
+    if flex_data is not None and getattr(flex_data, "ci_ladder_cumulative", None) is not None:
+        cilc_df = flex_data.ci_ladder_cumulative
+    else:
+        cilc_path = sd / "ci_ladder_cumulative.csv"
+        if cilc_path.exists():
+            try:
+                cilc_df = _read_csv_file(cilc_path)
+            except pl.exceptions.NoDataError:
+                cilc_df = None
+    if cilc_df is not None and cilc_df.height > 0:
+        # FlexData carries (c, i); the CSV carries (commodity, tier).
+        c_col = "commodity" if "commodity" in cilc_df.columns else "c"
+        i_col = "tier" if "tier" in cilc_df.columns else "i"
+        if c_col in cilc_df.columns and i_col in cilc_df.columns:
             for r in cilc_df.iter_rows(named=True):
                 try:
-                    finite_tiers.add((str(r["commodity"]), int(r["tier"])))
+                    finite_tiers.add((str(r[c_col]), int(r[i_col])))
                 except (TypeError, ValueError, KeyError):
                     continue
     if not finite_tiers:
         return None
 
     # Per-period horizon vs realized hours (uniform-split fraction).
-    sd_path = sd / "p_step_duration.csv"
+    # Phase 4 (Gap F) — ``p_step_duration`` sourced from FlexData when
+    # supplied; ``realized_dispatch.csv`` remains workdir-only (no
+    # equivalent FlexData/SolveHandoff carrier).
     rd_path = sd / "realized_dispatch.csv"
     horizon_hrs: dict[str, float] = {}
     realized_hrs: dict[str, float] = {}
-    if sd_path.exists():
-        try:
-            sd_df = _read_csv_file(sd_path)
-        except pl.exceptions.NoDataError:
-            sd_df = None
-        if sd_df is not None and sd_df.height > 0:
-            d_col = "period" if "period" in sd_df.columns else None
-            t_col = "time" if "time" in sd_df.columns else "step" if "step" in sd_df.columns else None
-            v_col = "value" if "value" in sd_df.columns else (
-                "p_step_duration" if "p_step_duration" in sd_df.columns else None
-            )
-            realized_set: set[tuple[str, str]] = set()
-            if rd_path.exists():
+    sd_df = _step_duration_frame(sd, flex_data)
+    if sd_df is not None and sd_df.height > 0:
+        d_col = "period" if "period" in sd_df.columns else (
+            "d" if "d" in sd_df.columns else None)
+        t_col = "time" if "time" in sd_df.columns else (
+            "step" if "step" in sd_df.columns else (
+                "t" if "t" in sd_df.columns else None))
+        v_col = "value" if "value" in sd_df.columns else (
+            "p_step_duration" if "p_step_duration" in sd_df.columns else None
+        )
+        realized_set: set[tuple[str, str]] = set()
+        if rd_path.exists():
+            try:
+                rd_df = _read_csv_file(rd_path)
+            except pl.exceptions.NoDataError:
+                rd_df = None
+            if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
+                for r in rd_df.iter_rows(named=True):
+                    realized_set.add((str(r["period"]), str(r["step"])))
+        if d_col is not None and t_col is not None and v_col is not None:
+            for r in sd_df.iter_rows(named=True):
+                d_v = str(r[d_col])
                 try:
-                    rd_df = _read_csv_file(rd_path)
-                except pl.exceptions.NoDataError:
-                    rd_df = None
-                if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
-                    for r in rd_df.iter_rows(named=True):
-                        realized_set.add((str(r["period"]), str(r["step"])))
-            if d_col is not None and t_col is not None and v_col is not None:
-                for r in sd_df.iter_rows(named=True):
-                    d_v = str(r[d_col])
-                    try:
-                        dur = float(r[v_col])
-                    except (TypeError, ValueError):
-                        continue
-                    horizon_hrs[d_v] = horizon_hrs.get(d_v, 0.0) + dur
-                    if (d_v, str(r[t_col])) in realized_set:
-                        realized_hrs[d_v] = realized_hrs.get(d_v, 0.0) + dur
+                    dur = float(r[v_col])
+                except (TypeError, ValueError):
+                    continue
+                horizon_hrs[d_v] = horizon_hrs.get(d_v, 0.0) + dur
+                if (d_v, str(r[t_col])) in realized_set:
+                    realized_hrs[d_v] = realized_hrs.get(d_v, 0.0) + dur
 
     # Commodity unitsize (defaults 1.0 when absent — flextool default).
+    # Phase 4 (Gap F) — prefer in-memory ``flex_data.p_commodity_unitsize``.
     unitsize: dict[str, float] = {}
-    cu_path = sd / "p_commodity_unitsize.csv"
-    if cu_path.exists():
-        try:
-            cu_df = _read_csv_file(cu_path)
-        except pl.exceptions.NoDataError:
-            cu_df = None
-        if cu_df is not None and cu_df.height > 0:
-            c_col = "commodity" if "commodity" in cu_df.columns else "name"
-            v_col = "value" if "value" in cu_df.columns else "p_commodity_unitsize"
-            if c_col in cu_df.columns and v_col in cu_df.columns:
-                for r in cu_df.iter_rows(named=True):
-                    try:
-                        unitsize[str(r[c_col])] = float(r[v_col])
-                    except (TypeError, ValueError):
-                        continue
+    cu_df = None
+    if flex_data is not None and getattr(flex_data, "p_commodity_unitsize", None) is not None:
+        cu_df = flex_data.p_commodity_unitsize.frame
+    else:
+        cu_path = sd / "p_commodity_unitsize.csv"
+        if cu_path.exists():
+            try:
+                cu_df = _read_csv_file(cu_path)
+            except pl.exceptions.NoDataError:
+                cu_df = None
+    if cu_df is not None and cu_df.height > 0:
+        c_col = "commodity" if "commodity" in cu_df.columns else (
+            "c" if "c" in cu_df.columns else "name")
+        v_col = "value" if "value" in cu_df.columns else "p_commodity_unitsize"
+        if c_col in cu_df.columns and v_col in cu_df.columns:
+            for r in cu_df.iter_rows(named=True):
+                try:
+                    unitsize[str(r[c_col])] = float(r[v_col])
+                except (TypeError, ValueError):
+                    continue
 
     # v_trade extraction — schema from _commodity_ladder.add_variables.
     v_trade_df = sol.value("v_trade")
@@ -3746,7 +3789,10 @@ def _extract_cumulative_commodity(
 
 def build_handoff_from_flexpy(
     sol, work_folder: Path, solve_name: str,
-    *, prior_handoff=None,
+    prior_handoff=None,
+    *,
+    flex_data: "FlexData | None" = None,
+    parent_handoff=None,
 ):
     """Build a ``SolveHandoff`` from a flexpy ``Solution`` + the work
     folder's per-solve metadata, mirroring flextool's post-solve
@@ -4035,7 +4081,7 @@ def build_handoff_from_flexpy(
     # (the LP didn't expose the variable for this fixture) — preserves
     # the legacy propagation path.
     cumulative_commodity_df = _extract_cumulative_commodity(
-        sol, sd, prior_handoff=prior_handoff)
+        sol, sd, prior_handoff=prior_handoff, flex_data=flex_data)
     if cumulative_commodity_df is None:
         # Phase 4 (Gap F) — disk fallback retired.  When
         # ``_extract_cumulative_commodity`` returns None this solve had no
@@ -4061,7 +4107,8 @@ def build_handoff_from_flexpy(
     # Cumulative: prior_hrs + this_roll_hrs.  ``v_trade`` not required —
     # the carrier exists for every chained fixture even when the ladder
     # itself is inactive (CO2-cap normalisation also consumes it).
-    cum_sim_hours_df = _extract_cum_sim_hours(sd, prior_handoff=prior_handoff)
+    cum_sim_hours_df = _extract_cum_sim_hours(
+        sd, prior_handoff=prior_handoff, flex_data=flex_data)
     if cum_sim_hours_df is None:
         # Phase 4 (Gap F) — disk fallback retired.  ``_extract_cum_sim_hours``
         # returns None only when this solve has zero realized timesteps
@@ -4082,13 +4129,27 @@ def build_handoff_from_flexpy(
     # still bumps it post-solve).
 
     # ---- fix_storage_price / fix_storage_usage extraction ----
-    # The .csv reads above (sd / fix_storage_price.csv etc.) may already
-    # carry parent-deposited values when this is a child of a
-    # storage-fixing parent.  When fix_storage_df is already non-None
-    # from the v_state-based quantity extraction, fold the price / usage
-    # rows in via outer-join.  When the quantity extraction yielded
-    # nothing, build the wide frame purely from the on-disk metric files.
-    def _read_fix_csv(name: str, value_col: str) -> "pl.DataFrame | None":
+    # Phase 4 (Gap F) — the parent-deposited price/usage rows are sourced
+    # in-memory from ``parent_handoff.fix_storage`` (the carrier the
+    # orchestrator already threads via
+    # :func:`write_fix_storage_files_from_handoff`).  The two on-disk
+    # ``fix_storage_{price,usage}.csv`` reads are retired: when
+    # ``parent_handoff`` is supplied (cascade path) we pick price + usage
+    # columns straight off its wide frame.  When ``parent_handoff`` is
+    # None (single-solve or test paths) we fall back to the disk read so
+    # external fixtures that drop these CSVs into the workdir still work.
+    def _read_fix_csv(name: str, value_col: str, out_col: str) -> "pl.DataFrame | None":
+        # Parent-handoff path (in-memory, preferred).
+        if parent_handoff is not None and parent_handoff.fix_storage is not None:
+            fs = parent_handoff.fix_storage
+            if out_col in fs.columns:
+                sub = fs.filter(pl.col(out_col).is_not_null()) \
+                        .select("node", "period", "time",
+                                pl.col(out_col).alias(value_col))
+                if sub.height > 0:
+                    return sub
+            return None
+        # Disk fallback for callers without parent_handoff.
         p = sd / name
         if not p.exists():
             return None
@@ -4104,8 +4165,8 @@ def build_handoff_from_flexpy(
             .rename({"step": "time"})
             .select("node", "period", "time", value_col))
 
-    fp = _read_fix_csv("fix_storage_price.csv", "p_fix_storage_price")
-    fu = _read_fix_csv("fix_storage_usage.csv", "p_fix_storage_usage")
+    fp = _read_fix_csv("fix_storage_price.csv", "p_fix_storage_price", "price")
+    fu = _read_fix_csv("fix_storage_usage.csv", "p_fix_storage_usage", "usage")
     if fp is not None or fu is not None:
         merged = fix_storage_df  # may be None if no v_state quantity rows
         for src, value_col, out_col in (
@@ -4447,9 +4508,21 @@ def load_flextool_from_db(input_db_url: str | Path,
                 self.state.handoffs.get(self.state.last_captured_solve)
                 if self.state.last_captured_solve is not None else None
             )
+            # Phase 4 (Gap F) — thread in-memory carriers so the handoff
+            # extractor can skip the workdir CSV reads where the same
+            # data is already in scope.
+            parent_complete = getattr(
+                self.state, "current_parent_complete", None
+            )
+            parent_handoff = (
+                self.state.handoffs.get(parent_complete)
+                if parent_complete is not None else None
+            )
             handoff = build_handoff_from_flexpy(
                 sol, self.state.paths.work_folder, complete_solve_name,
                 prior_handoff=prior,
+                flex_data=data,
+                parent_handoff=parent_handoff,
             )
             self.state.handoffs[complete_solve_name] = handoff
             return 0

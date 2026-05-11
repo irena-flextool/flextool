@@ -757,7 +757,19 @@ def native_run_model(state, solver) -> int:
             state, complete_solve[solve], prior_handoff=prior_handoff,
         )
 
+        # Phase 4 (Gap F) — expose the upper-level (nesting) parent's
+        # complete solve name so ``_FlexpyCascadeSolver.run`` can look the
+        # parent's :class:`SolveHandoff` up out of ``state.handoffs`` and
+        # pass it to ``build_handoff_from_flexpy`` (which uses it to skip
+        # the workdir's ``fix_storage_{price,usage}.csv`` reads).  Resets
+        # to None for top-level solves.
+        _parent_solve = parent_roll.get(solve)
+        state.current_parent_complete = (
+            complete_solve.get(_parent_solve) if _parent_solve else None
+        )
+
         exit_status = solver.run(complete_solve[solve])
+        state.current_parent_complete = None
         state.current_scale_solve_name = None
         state.current_roll_index = None
 

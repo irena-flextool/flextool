@@ -659,9 +659,26 @@ def _drive_cascade(
                     f"{complete_solve_name}: {exc}"
                 )
 
+            # Phase 4 (Gap F) — thread the in-memory FlexData + the
+            # upper-level parent handoff so the extractors / fix_storage
+            # parent overlay skip their workdir CSV reads where the same
+            # data is already in scope.  ``parent_handoff`` is the upper
+            # nesting parent (used for fix_storage propagation, deposited
+            # by ``_native_run_model``); ``prior_handoff`` is the
+            # sequence predecessor (used for cumulative accumulators).
+            parent_complete = getattr(
+                self.state, "current_parent_complete", None
+            )
+            parent_handoff = (
+                self.state.handoffs.get(parent_complete)
+                if parent_complete is not None
+                and self.state.handoffs is not None else None
+            )
             handoff = build_handoff_from_flexpy(
                 sol, self.state.paths.work_folder, complete_solve_name,
                 prior_handoff=prior,
+                flex_data=data,
+                parent_handoff=parent_handoff,
             )
             # Deposit so flextool's consume side picks it up on the next
             # iteration's preprocessing AND so we have it for the result
