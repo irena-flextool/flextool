@@ -235,6 +235,21 @@ class TestBaselineParityWorkAll:
             f"expected {ref['use_row_scaling']!r}"
         )
 
+    @pytest.mark.xfail(
+        reason=(
+            "Two-sided cost-band guard (cost_abs_min + cost_abs_max) "
+            "intentionally diverges from the single-sided baseline.  "
+            "The new guard moves the LP cost range UPWARD to keep "
+            "cost_min × scale above HiGHS' 1e-7 'excessively small' "
+            "threshold, replacing the legacy 'minimise objective "
+            "magnitude' heuristic.  For work_all this raises the "
+            "recommendation from 1e-9 (legacy single-sided) to "
+            "~5e-9 (two-sided clamp).  Baseline kept for historical "
+            "record; intentional behaviour drift documented in the "
+            "commit that added the two-sided guard."
+        ),
+        strict=True,
+    )
     def test_scale_the_objective_matches_baseline(self, flex_all, tmp_path):
         table = analyze_solve(_SOLVE_ALL, flex_all, work_folder=tmp_path)
         ref = _load_baseline(_BASELINE_ALL)

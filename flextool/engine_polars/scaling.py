@@ -360,36 +360,69 @@ def _invest_cost_lp_coef_upper_bound(flex_data: "FlexData") -> Optional[float]:
 # ---------------------------------------------------------------------------
 
 
-# Lower bound for any cost coefficient after objective scaling.  HiGHS
-# warns ("Problem has some excessively small costs") when cost
-# coefficients drop below ~1e-7; we keep the largest cost above this
-# floor with comfortable margin.  Set conservatively so a wide cost
-# spread (rare-large + common-small terms) still has the large costs
-# inside HiGHS' usable range.
+# Two-sided cost-band guard thresholds.  HiGHS' "Coefficient ranges"
+# diagnostic warns on cost coefficients below ~1e-7 ("excessively
+# small costs") OR above ~1e+5 ("excessively large costs").  The
+# analyzer's cost_abs_min/max values are pre-row-multiplier
+# (analyzer-side) PROXIES — per-row multipliers (RP weights,
+# discount factors, period_share, years_represented) further
+# amplify both ends of the range BUT by approximately the same
+# factor at both ends, so the analyzer's log10-spread tracks the
+# LP's log10-spread closely.  Setting the guards to HiGHS' literal
+# thresholds keeps the analyzer's pre-multiplier band centered
+# inside HiGHS' tolerable zone.
+LP_COST_AFTER_SCALE_MIN_FLOOR = 1e-7
+LP_COST_AFTER_SCALE_MAX_CEILING = 1e+5
+
+# Legacy alias kept for downstream callers.  The new two-sided
+# logic uses LP_COST_AFTER_SCALE_*_FLOOR/CEILING; this constant
+# remains for ``_recommend_scale_the_objective`` callers that
+# still pass only ``cost_abs_max``.
 COST_AFTER_SCALE_MIN_FLOOR = 1e-3
 
 
 def _recommend_scale_the_objective(
     rough_obj: float,
     cost_abs_max: Optional[float] = None,
+    cost_abs_min: Optional[float] = None,
 ) -> float:
     """Recommend ``scale_the_objective`` from the rough objective magnitude.
 
-    Two-step rule:
+    Three-step rule:
 
     1. Pick a power-of-10 scalar that brings the rough total cost close
        to ``O(1)`` — i.e. ``scale = 10**-round(log10(rough_obj))``.
 
-    2. **Floor against tiny scaled costs.**  HiGHS warns when cost
-       coefficients fall below ~1e-7; if applying the recommended scale
-       would push the *largest* original cost coefficient below
-       :data:`COST_AFTER_SCALE_MIN_FLOOR`, raise the scale so
-       ``cost_abs_max * scale ≥ COST_AFTER_SCALE_MIN_FLOOR``.  Without
-       this guard, models with huge ``rough_obj`` (e.g. 1e15) but
-       moderate cost coefficients (e.g. 1e5) get scale=1e-15, which
-       maps the cost range to [···, 1e-10] — well below HiGHS' floor.
-       The fix sacrifices "objective ≈ O(1)" to keep cost magnitudes
-       inside HiGHS' usable band.
+    2. **Two-sided cost-band guard**.  When BOTH ``cost_abs_min`` and
+       ``cost_abs_max`` are provided, constrain ``scale`` so the
+       largest cost coefficient stays below
+       :data:`LP_COST_AFTER_SCALE_MAX_CEILING` AND the smallest cost
+       coefficient stays above :data:`LP_COST_AFTER_SCALE_MIN_FLOOR`:
+
+           cost_abs_min × scale  ≥  LP_COST_AFTER_SCALE_MIN_FLOOR
+           cost_abs_max × scale  ≤  LP_COST_AFTER_SCALE_MAX_CEILING
+
+       If the cost log10-spread fits inside HiGHS' band, BOTH
+       constraints are satisfiable; we clamp ``scale`` to
+       ``[scale_lo, scale_hi]``.
+
+    3. **Over-wide-spread fallback**.  If the cost spread *exceeds*
+       HiGHS' usable band (i.e. ``scale_lo > scale_hi``), NO scale
+       can satisfy both ends.  We use **geometric centering**: place
+       the geomean of the cost range at the geomean of HiGHS' band,
+       distributing the (unavoidable) violation symmetrically on both
+       sides:
+
+           scale  =  sqrt(MIN_FLOOR × MAX_CEILING)
+                  /  sqrt(cost_abs_min × cost_abs_max)
+
+       This minimises the symmetric (log-scale) HiGHS-floor /
+       ceiling violation rather than blowing out one end entirely.
+
+    4. **Legacy single-sided fallback**.  When only ``cost_abs_max``
+       is provided (no ``cost_abs_min``), fall back to the original
+       single-sided guard against tiny scaled costs:
+       ``cost_abs_max × scale ≥ COST_AFTER_SCALE_MIN_FLOOR``.
 
     Parameters
     ----------
@@ -397,13 +430,20 @@ def _recommend_scale_the_objective(
         Back-of-envelope total objective magnitude (positive, finite).
     cost_abs_max
         Largest absolute cost coefficient in the input (across all cost
-        families).  When ``None``, the floor step is skipped.
+        families).  When ``None``, both guards are skipped.
+    cost_abs_min
+        Smallest absolute cost coefficient in the input (across all
+        cost families).  When ``None``, falls back to single-sided
+        ``cost_abs_max`` guard.
 
     Returns
     -------
     float
-        A power-of-10 scalar in
-        ``[OBJECTIVE_SCALE_MIN, OBJECTIVE_SCALE_MAX]``.
+        A scalar in ``[OBJECTIVE_SCALE_MIN, OBJECTIVE_SCALE_MAX]``.
+        NOTE: when the two-sided guard binds (or the centering
+        fallback fires), the returned value is NOT restricted to a
+        power of 10 — the goal is to hit HiGHS' usable band as
+        closely as possible.
     """
     if not math.isfinite(rough_obj) or rough_obj <= 0.0:
         return DEFAULT_OBJECTIVE_SCALE
@@ -413,10 +453,40 @@ def _recommend_scale_the_objective(
         return DEFAULT_OBJECTIVE_SCALE
     scale = 10.0 ** -round(lg)
 
-    # Cost-floor guard: keep the scaled max cost above
-    # COST_AFTER_SCALE_MIN_FLOOR so HiGHS doesn't warn about
-    # excessively small costs (or worse, drop coefficients).
-    if cost_abs_max is not None and math.isfinite(cost_abs_max) and cost_abs_max > 0.0:
+    have_max = (
+        cost_abs_max is not None
+        and math.isfinite(cost_abs_max)
+        and cost_abs_max > 0.0
+    )
+    have_min = (
+        cost_abs_min is not None
+        and math.isfinite(cost_abs_min)
+        and cost_abs_min > 0.0
+    )
+
+    if have_max and have_min:
+        # Two-sided band guard.
+        scale_lo = LP_COST_AFTER_SCALE_MIN_FLOOR / cost_abs_min
+        scale_hi = LP_COST_AFTER_SCALE_MAX_CEILING / cost_abs_max
+        if scale_lo <= scale_hi:
+            # Cost spread fits inside HiGHS' band.  Clamp scale to
+            # ``[scale_lo, scale_hi]`` — keep the rough-obj
+            # recommendation when it's already inside the window.
+            if scale < scale_lo:
+                scale = scale_lo
+            elif scale > scale_hi:
+                scale = scale_hi
+        else:
+            # Cost spread exceeds HiGHS' band — geometric centering
+            # distributes the violation symmetrically.
+            geomean_cost = math.sqrt(cost_abs_min * cost_abs_max)
+            geomean_band = math.sqrt(
+                LP_COST_AFTER_SCALE_MIN_FLOOR * LP_COST_AFTER_SCALE_MAX_CEILING
+            )
+            scale = geomean_band / geomean_cost
+    elif have_max:
+        # Legacy single-sided guard (kept for backwards compat with
+        # callers that don't yet supply cost_abs_min).
         scale_floor_for_costs = COST_AFTER_SCALE_MIN_FLOOR / cost_abs_max
         if scale < scale_floor_for_costs:
             scale = scale_floor_for_costs
@@ -764,16 +834,27 @@ def analyze_solve(
 
     # ---- Objective scalar recommendation ---------------------------------
     rough_obj = _estimate_rough_obj_inmemory(family_arrays, flex_data)
-    # Pool all cost families to find the largest absolute cost
-    # coefficient — this is what guards against pushing scaled costs
-    # below HiGHS' "excessively small costs" threshold.
+    # Pool all cost families to find the largest AND smallest absolute
+    # cost coefficients — these guard against pushing scaled costs
+    # outside HiGHS' usable band.  ``cost_abs_max`` keeps the largest
+    # scaled cost below HiGHS' "excessively large" ceiling; ``cost_abs_min``
+    # keeps the smallest scaled cost above HiGHS' "excessively small"
+    # floor.  When both bind, the two-sided guard finds the best
+    # balanced scale (or, if the cost spread exceeds HiGHS' band,
+    # falls back to geometric centering — see
+    # :func:`_recommend_scale_the_objective`).
     cost_abs_max_pooled: Optional[float] = None
+    cost_abs_min_pooled: Optional[float] = None
     for fam in COST_FAMILIES:
         stats = family_stats.get(fam)
-        if stats is None or stats.abs_max is None:
+        if stats is None:
             continue
-        if cost_abs_max_pooled is None or stats.abs_max > cost_abs_max_pooled:
-            cost_abs_max_pooled = stats.abs_max
+        if stats.abs_max is not None and stats.abs_max > 0.0:
+            if cost_abs_max_pooled is None or stats.abs_max > cost_abs_max_pooled:
+                cost_abs_max_pooled = stats.abs_max
+        if stats.abs_min is not None and stats.abs_min > 0.0:
+            if cost_abs_min_pooled is None or stats.abs_min < cost_abs_min_pooled:
+                cost_abs_min_pooled = stats.abs_min
     # The LP cost coefficient on v_invest is
     #     p_unitsize × (ed_entity_annual_discounted + ed_lifetime_fixed_cost)
     # The family-stat pool above only sees the *raw* params (no unitsize
@@ -786,7 +867,9 @@ def analyze_solve(
     if invest_lp_max is not None and invest_lp_max > 0.0:
         if cost_abs_max_pooled is None or invest_lp_max > cost_abs_max_pooled:
             cost_abs_max_pooled = invest_lp_max
-    scale_obj = _recommend_scale_the_objective(rough_obj, cost_abs_max_pooled)
+    scale_obj = _recommend_scale_the_objective(
+        rough_obj, cost_abs_max_pooled, cost_abs_min_pooled,
+    )
 
     source_label = str(work_folder) if work_folder is not None else "<in-memory>"
 
