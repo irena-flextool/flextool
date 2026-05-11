@@ -698,6 +698,30 @@ def _native_leaf_set_override():
                                 _native_solve_writers.write_timesets),
         (_legacy_solve_writers, "write_hole_multiplier",
                                 _native_solve_writers.write_hole_multiplier),
+        # ── Phase 2 (sub-dispatch 7) — solve_writers second half ─────
+        # Scaling writers (Agent-5 / Agent-8 / Agent-21 path).
+        (_legacy_solve_writers, "write_p_use_row_scaling",
+                                _native_solve_writers.write_p_use_row_scaling),
+        (_legacy_solve_writers, "write_scale_the_objective",
+                                _native_solve_writers.write_scale_the_objective),
+        (_legacy_solve_writers, "write_scale_the_state",
+                                _native_solve_writers.write_scale_the_state),
+        (_legacy_solve_writers, "write_scale_the_objective_header_only",
+                                _native_solve_writers
+                                .write_scale_the_objective_header_only),
+        (_legacy_solve_writers, "write_scale_the_state_header_only",
+                                _native_solve_writers
+                                .write_scale_the_state_header_only),
+        # Delay-duration map.
+        (_legacy_solve_writers, "write_delayed_durations",
+                                _native_solve_writers.write_delayed_durations),
+        # Representative-period writers.
+        (_legacy_solve_writers, "write_rp_data",
+                                _native_solve_writers.write_rp_data),
+        (_legacy_solve_writers, "write_timeset_cost_weight",
+                                _native_solve_writers.write_timeset_cost_weight),
+        (_legacy_solve_writers, "write_empty_rp_data",
+                                _native_solve_writers.write_empty_rp_data),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides

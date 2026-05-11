@@ -1,8 +1,16 @@
-"""Writer-port Phase 2 (sub-dispatch 6) — first half of ``solve_writers.py``.
+"""Writer-port Phase 2 (sub-dispatch 6 + 7) — ``solve_writers.py`` port.
 
-Native re-implementation of ~26 of the ~36 functions in
-``flextool.flextoolrunner.solve_writers`` (legacy 948 LOC total, ~542
-LOC ported here).  Two functional groups:
+Native re-implementation of the ~36 functions in
+``flextool.flextoolrunner.solve_writers`` (legacy 948 LOC total).
+Sub-dispatch 6 ported the first 26 helpers (~542 LOC); sub-dispatch 7
+extends this module with the remaining nine writers (~406 LOC):
+the scaling-flag writer (``write_p_use_row_scaling``), the four
+``scale_the_objective`` / ``scale_the_state`` keyed-value writers
+(``write_scale_the_*`` + their header-only variants), the
+``write_delayed_durations`` chain emitter, and the three
+representative-period writers (``write_rp_data``,
+``write_timeset_cost_weight``, ``write_empty_rp_data``).  Two
+functional groups originally:
 
 Group A — timeline / period writers
 -----------------------------------
@@ -67,11 +75,39 @@ Function signatures match the legacy module verbatim because
 the legacy module's attributes by name; ``_native_run_model.py``
 imports the legacy module once and dispatches via attribute access.
 
-Out of scope for this dispatch (deferred to sub-dispatch 7): scaling
-writers (``write_p_use_row_scaling``, ``write_scale_the_objective``
-and its header-only / state companions), ``write_delayed_durations``,
-and the representative-period writers (``write_rp_data``,
-``write_timeset_cost_weight``, ``write_empty_rp_data``).
+Sub-dispatch 7 group — scaling / delay / representative period
+----------------------------------------------------------------
+
+* :func:`write_p_use_row_scaling` — ``p_use_row_scaling.csv`` (Agent-5
+  row-scaling opt-in flag, with the
+  ``FLEXTOOL_FORCE_ROW_SCALING`` env-var test hook preserved verbatim)
+* :func:`write_scale_the_objective` /
+  :func:`write_scale_the_objective_header_only` —
+  ``solve_data/scale_the_objective.csv`` (auto-scale value-or-header
+  variants; ``%.17g`` precision)
+* :func:`write_scale_the_state` /
+  :func:`write_scale_the_state_header_only` —
+  ``solve_data/scale_the_state.csv`` (companion to the objective
+  scalar, currently fixed at ``1.0``)
+* :func:`write_delayed_durations` — ``solve_data/delay_duration.csv``
+  + ``solve_data/dtt__delay_duration.csv`` (source/sink offset map
+  with wrap-around at end-of-period)
+* :func:`write_rp_data` — eight representative-period CSVs
+  (``rp_weights.csv``, ``rp_base_chain.csv``,
+  ``rp_base_first.csv`` / ``rp_base_last.csv``,
+  ``rp_block_first.csv`` / ``rp_block_last.csv``,
+  ``rp_block_start_last.csv``, ``rp_cost_weight.csv``)
+* :func:`write_timeset_cost_weight` — ``rp_cost_weight.csv`` from
+  per-timestep ``timeset_weights`` (non-RP normalised pathway)
+* :func:`write_empty_rp_data` — header-only seeds for the eight
+  representative-period CSVs (non-RP models)
+
+The scaling CSVs use ``%.17g`` repr formatting (so that
+``writerow([..., f"{float(v):.17g}"])`` produces a value that
+round-trips through GMPL's ``table data IN``).  ``write_rp_data``
+preserves the legacy ordering and the ``weight > 1e-10`` epsilon
+filter.  ``write_timeset_cost_weight`` uses ``%.10g`` for the
+normalised float (matches legacy).
 """
 from __future__ import annotations
 
@@ -749,3 +785,387 @@ def write_hole_multiplier(
         writer.writerow(["solve", "p_hole_multiplier"])
         if hole_multipliers[solve]:
             writer.writerow([solve, hole_multipliers[solve]])
+
+
+# ---------------------------------------------------------------------------
+# Sub-dispatch 7 — scaling writers
+# ---------------------------------------------------------------------------
+
+
+def write_p_use_row_scaling(
+    solve: str,
+    use_row_scaling: dict[str, str],
+    filename: str,
+) -> None:
+    """Emit ``p_use_row_scaling.csv`` — the Agent-5 row-scaling opt-in
+    flag as an integer 0/1.  Default is ``0`` (off) unless the user
+    explicitly sets the parameter to ``"yes"`` on the solve entity.
+    The row is always written so AMPL finds the current solve's value.
+
+    The ``FLEXTOOL_FORCE_ROW_SCALING`` env-var (``1`` / ``yes`` /
+    ``true`` / ``on``) forces ``flag=1`` regardless — Agent 9 test
+    hook for the Mode B un-scaling benchmark harness.  No effect in
+    production unless the env var is set.
+    """
+    import os as _os
+
+    value_str = (
+        use_row_scaling.get(solve, "no")
+        if isinstance(use_row_scaling, dict)
+        else "no"
+    )
+    flag = 1 if str(value_str).strip().lower() == "yes" else 0
+    if _os.environ.get("FLEXTOOL_FORCE_ROW_SCALING", "").strip().lower() in (
+        "1", "yes", "true", "on",
+    ):
+        flag = 1
+    with open(filename, "w", newline="") as outfile:
+        writer = csv.writer(outfile)
+        writer.writerow(["solve", "p_use_row_scaling"])
+        writer.writerow([solve, flag])
+
+
+def write_scale_the_objective(
+    solve_data_dir: Path | str,
+    value: float,
+) -> Path:
+    """Emit ``solve_data/scale_the_objective.csv`` — Agent-8 scaling
+    analyser's global objective scalar in a single keyed-row CSV.
+
+    GMPL ``table data IN`` requires a keyed read, so the row is stored
+    as ``("v", <scalar>)`` and pulled via
+    ``sum{k in _scale_obj_keys} _scale_obj_from_csv[k]`` on the
+    single-row file.  Value is formatted with ``%.17g`` for full
+    double precision round-trip.
+
+    See :func:`write_scale_the_objective_header_only` for the
+    default-mode header-only variant.
+    """
+    sd = Path(solve_data_dir)
+    sd.mkdir(parents=True, exist_ok=True)
+    path = sd / "scale_the_objective.csv"
+    with open(path, "w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["key", "value"])
+        writer.writerow(["v", f"{float(value):.17g}"])
+    return path
+
+
+def write_scale_the_state(
+    solve_data_dir: Path | str,
+    value: float,
+) -> Path:
+    """Emit ``solve_data/scale_the_state.csv`` — companion to
+    :func:`write_scale_the_objective`.  Currently fixed at ``1.0`` in
+    the analyser; the field is reserved for future tuning.  Layout
+    matches the objective CSV verbatim.
+    """
+    sd = Path(solve_data_dir)
+    sd.mkdir(parents=True, exist_ok=True)
+    path = sd / "scale_the_state.csv"
+    with open(path, "w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["key", "value"])
+        writer.writerow(["v", f"{float(value):.17g}"])
+    return path
+
+
+def write_scale_the_objective_header_only(
+    solve_data_dir: Path | str,
+) -> Path:
+    """Emit header-only ``solve_data/scale_the_objective.csv`` —
+    default-mode counterpart to :func:`write_scale_the_objective`.
+    The file exists (so ``table data IN`` does not fail) but has no
+    data rows; ``_scale_obj_keys`` stays empty and the
+    ``default 1e-6`` clause on ``param scale_the_objective`` applies.
+
+    Agent 21 rationale: the analyser's power-of-10 rounding is too
+    aggressive for models whose Matrix range is already wide; users
+    must opt in to auto-apply explicitly.
+    """
+    sd = Path(solve_data_dir)
+    sd.mkdir(parents=True, exist_ok=True)
+    path = sd / "scale_the_objective.csv"
+    with open(path, "w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["key", "value"])
+    return path
+
+
+def write_scale_the_state_header_only(solve_data_dir: Path | str) -> Path:
+    """Emit header-only ``solve_data/scale_the_state.csv`` —
+    default-mode counterpart to :func:`write_scale_the_state`.  Same
+    rationale as :func:`write_scale_the_objective_header_only`: the
+    CSV exists but has no data rows, so the ``default 1`` clause on
+    ``param scale_the_state`` applies.
+    """
+    sd = Path(solve_data_dir)
+    sd.mkdir(parents=True, exist_ok=True)
+    path = sd / "scale_the_state.csv"
+    with open(path, "w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["key", "value"])
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Sub-dispatch 7 — delay durations
+# ---------------------------------------------------------------------------
+
+
+def write_delayed_durations(
+    active_time_list: dict[str, list[tuple[str, ...]]],
+    solve: str,
+    delay_durations: dict[str, Any],
+    work_folder: Path | None = None,
+) -> None:
+    """Emit ``solve_data/delay_duration.csv`` (unique delay values used
+    by any delayed process) and ``solve_data/dtt__delay_duration.csv``
+    (source/sink offset map across every active timestep, with
+    end-of-period wrap-around to keep the relationship cyclic).
+
+    ``delay_durations`` may map an entity to either a scalar duration
+    or a list of ``(duration, ...)`` tuples — both shapes are
+    flattened into the unique duration set.
+    """
+    wf = work_folder if work_folder is not None else Path.cwd()
+    delay_duration_set: set[str] = set()
+    for entity, dur in delay_durations.items():
+        if isinstance(dur, list):
+            for delay_duration in dur:
+                delay_duration_set.add(str(delay_duration[0]))
+        else:
+            delay_duration_set.add(str(dur))
+
+    with open(
+        wf / "solve_data/delay_duration.csv", "w", newline="",
+    ) as realfile:
+        writer = csv.writer(realfile)
+        writer.writerow(["delay_duration"])
+        for delay_duration in delay_duration_set:
+            writer.writerow([str(delay_duration)])
+
+    with open(
+        wf / "solve_data/dtt__delay_duration.csv", "w", newline="",
+    ) as realfile:
+        writer = csv.writer(realfile)
+        writer.writerow(
+            ["period", "time_source", "time_sink", "delay_duration"]
+        )
+        for period_name, time_steps in active_time_list.items():
+            for k, time_step in enumerate(time_steps):
+                for delay_duration in delay_duration_set:
+                    offset = int(float(delay_duration))
+                    if k + offset < len(time_steps):
+                        sink_step = time_steps[k + offset].timestep
+                    else:
+                        # Wrap to the start of the same period.
+                        sink_step = time_steps[
+                            k - len(time_steps) + offset
+                        ].timestep
+                    writer.writerow([
+                        period_name, time_step.timestep,
+                        sink_step, str(delay_duration),
+                    ])
+
+
+# ---------------------------------------------------------------------------
+# Sub-dispatch 7 — representative period writers
+# ---------------------------------------------------------------------------
+
+
+def write_rp_data(
+    rp_weights: dict[str, dict[str, float]],
+    timeset_duration_entries: list[tuple[str, float]],
+    period_name: str,
+    work_folder: Path | None = None,
+) -> None:
+    """Emit the eight representative-period CSVs for the GMPL solver.
+
+    Args:
+        rp_weights: ``{base_start: {rep_start: weight}}`` — the full
+            weight matrix between base periods and representative
+            periods.
+        timeset_duration_entries: ``[(start_step, count), ...]`` for
+            the RP timeset; ``count`` is interpreted as a float (the
+            timeset CSV stores it as a stringified number).
+        period_name: FlexTool period name used as the ``period``
+            column on the per-step CSVs (e.g. ``"p2025"``).
+        work_folder: working directory containing ``solve_data/``.
+
+    Files written (all under ``solve_data/``):
+
+    * ``rp_weights.csv``         — (base, rep, weight) triples, with
+      a ``weight > 1e-10`` epsilon filter to drop numerical zeroes.
+    * ``rp_base_chain.csv``      — chronological predecessor chain
+      (excludes the very first base period).
+    * ``rp_base_first.csv``      — single-row first base period.
+    * ``rp_base_last.csv``       — single-row last base period.
+    * ``rp_block_first.csv`` / ``rp_block_last.csv`` — first/last
+      timestep of each RP block.
+    * ``rp_block_start_last.csv`` — start → last step mapping.
+    * ``rp_cost_weight.csv``     — per-timestep cost weight
+      ``w_r = (sum_d W[d,r]) * n_rp / n_base`` (so a uniform weight
+      input produces ``w_r = 1`` per step).
+    """
+    wf = work_folder if work_folder is not None else Path.cwd()
+    sd = wf / "solve_data"
+
+    # Determine RP block boundaries from the timeset_duration entries.
+    # Each entry is (start_step, count) with t-indexed names — the
+    # last step is computed as ``t{start_idx + count - 1:04d}``.
+    rp_starts: list[str] = []
+    rp_lasts: list[str] = []
+    for start_step, count in timeset_duration_entries:
+        start_step = str(start_step)
+        rp_starts.append(start_step)
+        start_idx = int(start_step[1:])  # 't0001' -> 1
+        last_idx = start_idx + int(float(count)) - 1
+        rp_lasts.append(f"t{last_idx:04d}")
+
+    # Base period starts in chronological order.
+    base_starts = sorted(rp_weights.keys(), key=lambda s: int(s[1:]))
+    n_base = len(base_starts)
+    n_rp = len(rp_starts)
+
+    # 1. rp_weights.csv — drop near-zero entries (matches legacy).
+    with open(sd / "rp_weights.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["base_start", "rep_start", "weight"])
+        for base in base_starts:
+            for rep, weight in rp_weights[base].items():
+                if weight > 1e-10:
+                    writer.writerow([base, rep, weight])
+
+    # 2. rp_base_chain.csv — predecessor chain (excludes first).
+    with open(sd / "rp_base_chain.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["base_start", "prev_base_start"])
+        for i in range(1, n_base):
+            writer.writerow([base_starts[i], base_starts[i - 1]])
+
+    # 3. rp_base_first.csv / rp_base_last.csv
+    with open(sd / "rp_base_first.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["base_start"])
+        writer.writerow([base_starts[0]])
+
+    with open(sd / "rp_base_last.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["base_start"])
+        writer.writerow([base_starts[-1]])
+
+    # 4. rp_block_first.csv / rp_block_last.csv
+    with open(sd / "rp_block_first.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["period", "step"])
+        for start in rp_starts:
+            writer.writerow([period_name, start])
+
+    with open(sd / "rp_block_last.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["period", "step"])
+        for last in rp_lasts:
+            writer.writerow([period_name, last])
+
+    # 5. rp_block_start_last.csv — start → last step mapping.
+    with open(sd / "rp_block_start_last.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["rep_start", "last_step"])
+        for start, last in zip(rp_starts, rp_lasts):
+            writer.writerow([start, last])
+
+    # 6. rp_cost_weight.csv — normalised per-timestep weight.
+    #    W_r = sum_d W[d,r] across base periods; we then scale by
+    #    n_rp / n_base so a uniform weight matrix produces w_r = 1.
+    w_r: dict[str, float] = {r: 0.0 for r in rp_starts}
+    for base_weights in rp_weights.values():
+        for rep, weight in base_weights.items():
+            if rep in w_r:
+                w_r[rep] += weight
+    for rep in w_r:
+        w_r[rep] = w_r[rep] * n_rp / n_base if n_base > 0 else 1.0
+
+    with open(sd / "rp_cost_weight.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["period", "time", "weight"])
+        for start, last in zip(rp_starts, rp_lasts):
+            start_idx = int(start[1:])
+            last_idx = int(last[1:])
+            weight = w_r[start]
+            for t_idx in range(start_idx, last_idx + 1):
+                writer.writerow([period_name, f"t{t_idx:04d}", weight])
+
+
+def write_timeset_cost_weight(
+    active_time_list: dict[str, list],
+    timesets_used_by_solve: list[tuple[str, str]],
+    timeset_weights: dict[str, dict[str, float]],
+    work_folder: Path | None = None,
+) -> bool:
+    """Emit ``rp_cost_weight.csv`` from user-supplied per-timestep
+    ``timeset_weights`` (non-RP pathway).
+
+    For each (period, timeset) pair, look up the timeset's weight map
+    and the period's active step list.  Per-step weights are
+    normalised to sum to 1 across the period, then scaled by the
+    number of active steps so that a uniform input reproduces the
+    default ``weight = 1`` per step.  Timesteps absent from the user
+    map are treated as ``0`` before normalisation.
+
+    Returns ``True`` if any rows were written, ``False`` when no
+    active timeset on the current solve has ``timeset_weights``
+    defined (orchestrator falls back to default unit weights).
+    """
+    wf = work_folder if work_folder is not None else Path.cwd()
+    sd = wf / "solve_data"
+
+    rows: list[tuple[str, str, float]] = []
+    any_written = False
+    for period, timeset in timesets_used_by_solve:
+        weights = timeset_weights.get(timeset)
+        active_steps = active_time_list.get(period, [])
+        if weights is None or not active_steps:
+            continue
+        raw = [float(weights.get(step.timestep, 0.0)) for step in active_steps]
+        total = sum(raw)
+        n = len(raw)
+        if total <= 0 or n == 0:
+            continue
+        scale = n / total
+        for step, w in zip(active_steps, raw):
+            rows.append((period, step.timestep, w * scale))
+        any_written = True
+
+    if not any_written:
+        return False
+
+    with open(sd / "rp_cost_weight.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["period", "time", "weight"])
+        for row in rows:
+            writer.writerow([row[0], row[1], f"{row[2]:.10g}"])
+    return True
+
+
+def write_empty_rp_data(work_folder: Path | None = None) -> None:
+    """Seed the eight representative-period CSVs with header-only
+    files (used by non-RP models so ``table data IN`` declarations in
+    ``flextool.mod`` find the expected files).
+    """
+    wf = work_folder if work_folder is not None else Path.cwd()
+    sd = wf / "solve_data"
+    empty_files = {
+        "rp_weights.csv": ["base_start", "rep_start", "weight"],
+        "rp_base_chain.csv": ["base_start", "prev_base_start"],
+        "rp_base_first.csv": ["base_start"],
+        "rp_base_last.csv": ["base_start"],
+        "rp_block_first.csv": ["period", "step"],
+        "rp_block_last.csv": ["period", "step"],
+        "rp_block_start_last.csv": ["rep_start", "last_step"],
+        "rp_cost_weight.csv": ["period", "time", "weight"],
+    }
+    for filename, headers in empty_files.items():
+        with open(sd / filename, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)

@@ -2282,3 +2282,265 @@ def test_write_hole_multiplier_parity(tmp_path: Path, mult: dict) -> None:
     legacy_sw.write_hole_multiplier("solve_A", mult, str(legacy_path))
     native_sw.write_hole_multiplier("solve_A", mult, str(native_path))
     _assert_files_equal(legacy_path, native_path)
+
+
+# ===========================================================================
+# Phase 2 (sub-dispatch 7) — solve_writers second half parity tests.
+#
+# Scaling writers (``write_p_use_row_scaling`` + the four
+# ``scale_the_*`` keyed-value / header-only variants), the
+# ``write_delayed_durations`` chain emitter, and the three
+# representative-period writers (``write_rp_data``,
+# ``write_timeset_cost_weight``, ``write_empty_rp_data``).
+# ===========================================================================
+
+
+# ---- Scaling writers --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "use_row_scaling,solve",
+    [
+        ({"solve_A": "yes"}, "solve_A"),       # opt-in -> 1
+        ({"solve_A": "no"}, "solve_A"),        # explicit no -> 0
+        ({"solve_B": "yes"}, "solve_A"),       # missing key -> 0
+        ({}, "solve_A"),                       # empty dict -> 0
+    ],
+)
+def test_write_p_use_row_scaling_parity(
+    tmp_path: Path,
+    use_row_scaling: dict,
+    solve: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the four resolution branches.  We also clear the
+    ``FLEXTOOL_FORCE_ROW_SCALING`` env var so the test hook does not
+    perturb parity between legacy and native."""
+    monkeypatch.delenv("FLEXTOOL_FORCE_ROW_SCALING", raising=False)
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_p_use_row_scaling(solve, use_row_scaling, str(legacy_path))
+    native_sw.write_p_use_row_scaling(solve, use_row_scaling, str(native_path))
+    _assert_files_equal(legacy_path, native_path)
+
+
+@pytest.mark.parametrize(
+    "force_val",
+    ["1", "yes", "true", "on", "YES", "True"],
+)
+def test_write_p_use_row_scaling_env_force_parity(
+    tmp_path: Path,
+    force_val: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``FLEXTOOL_FORCE_ROW_SCALING`` accepts several truthy forms;
+    each forces ``flag = 1`` even when the user setting is ``no``."""
+    monkeypatch.setenv("FLEXTOOL_FORCE_ROW_SCALING", force_val)
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_p_use_row_scaling(
+        "solve_A", {"solve_A": "no"}, str(legacy_path),
+    )
+    native_sw.write_p_use_row_scaling(
+        "solve_A", {"solve_A": "no"}, str(native_path),
+    )
+    _assert_files_equal(legacy_path, native_path)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [1.0, 1e-6, 1e-10, 3.14159265358979, 1.234567890123456e-7, 0.0],
+)
+def test_write_scale_the_objective_parity(
+    tmp_path: Path, value: float,
+) -> None:
+    """Verify ``%.17g`` precision across typical Agent-8 scalars."""
+    lw, nw = _two_root_workdirs(tmp_path)
+    legacy_sw.write_scale_the_objective(lw / "solve_data", value)
+    native_sw.write_scale_the_objective(nw / "solve_data", value)
+    _assert_files_equal(
+        lw / "solve_data/scale_the_objective.csv",
+        nw / "solve_data/scale_the_objective.csv",
+    )
+
+
+@pytest.mark.parametrize("value", [1.0, 0.5, 2.71828])
+def test_write_scale_the_state_parity(
+    tmp_path: Path, value: float,
+) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    legacy_sw.write_scale_the_state(lw / "solve_data", value)
+    native_sw.write_scale_the_state(nw / "solve_data", value)
+    _assert_files_equal(
+        lw / "solve_data/scale_the_state.csv",
+        nw / "solve_data/scale_the_state.csv",
+    )
+
+
+def test_write_scale_the_objective_header_only_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    legacy_sw.write_scale_the_objective_header_only(lw / "solve_data")
+    native_sw.write_scale_the_objective_header_only(nw / "solve_data")
+    _assert_files_equal(
+        lw / "solve_data/scale_the_objective.csv",
+        nw / "solve_data/scale_the_objective.csv",
+    )
+
+
+def test_write_scale_the_state_header_only_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    legacy_sw.write_scale_the_state_header_only(lw / "solve_data")
+    native_sw.write_scale_the_state_header_only(nw / "solve_data")
+    _assert_files_equal(
+        lw / "solve_data/scale_the_state.csv",
+        nw / "solve_data/scale_the_state.csv",
+    )
+
+
+# ---- Delay durations --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "delay_durations",
+    [
+        {"proc_a": 2, "proc_b": 3},                            # scalar values
+        {"proc_a": [(1,), (3,)]},                              # list of tuples
+        {"proc_a": [(2,)], "proc_b": 1},                       # mixed
+    ],
+)
+def test_write_delayed_durations_parity(
+    tmp_path: Path, delay_durations: dict,
+) -> None:
+    """Cover scalar / list shapes for the delay-duration writer.
+    Both branches of the wrap-around clause are exercised: when the
+    offset stays inside the period (``k + offset < len``) the direct
+    sink is picked, otherwise the wrap-around tail is used.
+
+    Legacy assumes ``offset < len`` (anything larger raises an
+    IndexError on the wrap-around branch) so all parametrisations
+    here use offsets <= period length."""
+    lw, nw = _two_root_workdirs(tmp_path)
+    atl = {
+        "p2025": _ate_list(
+            [(f"t{i:04d}", i - 1, "1.0") for i in range(1, 9)]
+        ),
+        "p2030": _ate_list(
+            [(f"t{i:04d}", i - 1, "1.0") for i in range(10, 17)]
+        ),
+    }
+    legacy_sw.write_delayed_durations(
+        atl, "solve_A", delay_durations, work_folder=lw,
+    )
+    native_sw.write_delayed_durations(
+        atl, "solve_A", delay_durations, work_folder=nw,
+    )
+    # ``delay_duration.csv`` iteration order over a Python ``set`` is
+    # stable within a single process but not across calls — the file
+    # contains the same rows in both cases under one test run.
+    _assert_files_equal(
+        lw / "solve_data/delay_duration.csv",
+        nw / "solve_data/delay_duration.csv",
+    )
+    _assert_files_equal(
+        lw / "solve_data/dtt__delay_duration.csv",
+        nw / "solve_data/dtt__delay_duration.csv",
+    )
+
+
+# ---- Representative period --------------------------------------------------
+
+
+def test_write_rp_data_parity(tmp_path: Path) -> None:
+    """Three base periods, two representative periods.  Exercises the
+    weight matrix expansion, the chain construction, and the
+    per-timestep weight scaling.  Includes a near-zero weight that
+    must be dropped by the ``> 1e-10`` filter."""
+    lw, nw = _two_root_workdirs(tmp_path)
+    rp_weights = {
+        "t0001": {"t0001": 1.0, "t0005": 1e-15},  # last weight dropped
+        "t0010": {"t0001": 0.6, "t0005": 0.4},
+        "t0020": {"t0001": 0.2, "t0005": 0.8},
+    }
+    timeset_duration_entries = [("t0001", 4.0), ("t0005", 4.0)]
+    legacy_sw.write_rp_data(
+        rp_weights, timeset_duration_entries, "p2025", work_folder=lw,
+    )
+    native_sw.write_rp_data(
+        rp_weights, timeset_duration_entries, "p2025", work_folder=nw,
+    )
+    for fname in (
+        "rp_weights.csv",
+        "rp_base_chain.csv",
+        "rp_base_first.csv",
+        "rp_base_last.csv",
+        "rp_block_first.csv",
+        "rp_block_last.csv",
+        "rp_block_start_last.csv",
+        "rp_cost_weight.csv",
+    ):
+        _assert_files_equal(
+            lw / "solve_data" / fname, nw / "solve_data" / fname,
+        )
+
+
+def test_write_timeset_cost_weight_parity_written(tmp_path: Path) -> None:
+    """User-supplied weights pathway — writes
+    ``rp_cost_weight.csv`` with normalised per-step weights."""
+    lw, nw = _two_root_workdirs(tmp_path)
+    atl = {
+        "p2025": _ate_list([
+            ("t0001", 0, "1.0"), ("t0002", 1, "1.0"),
+            ("t0003", 2, "1.0"), ("t0004", 3, "1.0"),
+        ]),
+    }
+    tsus = [("p2025", "ts_a")]
+    ts_w = {"ts_a": {"t0001": 0.5, "t0002": 0.5, "t0003": 1.0, "t0004": 2.0}}
+    wrote_lw = legacy_sw.write_timeset_cost_weight(
+        atl, tsus, ts_w, work_folder=lw,
+    )
+    wrote_nw = native_sw.write_timeset_cost_weight(
+        atl, tsus, ts_w, work_folder=nw,
+    )
+    assert wrote_lw is True
+    assert wrote_nw is True
+    _assert_files_equal(
+        lw / "solve_data/rp_cost_weight.csv",
+        nw / "solve_data/rp_cost_weight.csv",
+    )
+
+
+def test_write_timeset_cost_weight_parity_skipped(tmp_path: Path) -> None:
+    """No weights present anywhere -> both return False, no file
+    written."""
+    lw, nw = _two_root_workdirs(tmp_path)
+    atl = {"p2025": _ate_list([("t0001", 0, "1.0")])}
+    tsus = [("p2025", "ts_a")]
+    wrote_lw = legacy_sw.write_timeset_cost_weight(
+        atl, tsus, {}, work_folder=lw,
+    )
+    wrote_nw = native_sw.write_timeset_cost_weight(
+        atl, tsus, {}, work_folder=nw,
+    )
+    assert wrote_lw is False
+    assert wrote_nw is False
+    assert not (lw / "solve_data/rp_cost_weight.csv").exists()
+    assert not (nw / "solve_data/rp_cost_weight.csv").exists()
+
+
+def test_write_empty_rp_data_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    legacy_sw.write_empty_rp_data(work_folder=lw)
+    native_sw.write_empty_rp_data(work_folder=nw)
+    for fname in (
+        "rp_weights.csv",
+        "rp_base_chain.csv",
+        "rp_base_first.csv",
+        "rp_base_last.csv",
+        "rp_block_first.csv",
+        "rp_block_last.csv",
+        "rp_block_start_last.csv",
+        "rp_cost_weight.csv",
+    ):
+        _assert_files_equal(
+            lw / "solve_data" / fname, nw / "solve_data" / fname,
+        )
