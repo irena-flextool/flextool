@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -144,6 +145,68 @@ class OrchestrationStep:
     obj: float | None = None
     warm_used: bool = False
     flex_data: "FlexData | None" = None
+
+
+# ---------------------------------------------------------------------------
+# Scaling-output helper  (shared by cascade & single-solve paths)
+# ---------------------------------------------------------------------------
+
+
+def _write_scale_csv_and_report(
+    *,
+    solve_data_dir: Path,
+    output_raw_dir: Path,
+    solve_name: str,
+    scale_table: "_scaling.ScaleTable",
+    effective_row_scaling: str,
+    effective_obj_scale: float,
+    user_row_scaling: object | None,
+    flex_data: "FlexData",
+    solution: "Solution | None",
+    logger: logging.Logger,
+) -> None:
+    """Emit ``scale_the_objective.csv`` and ``scaling_report.txt``.
+
+    The CSV is required by the downstream parquet/CSV writers — they read
+    it via :func:`flextool.process_outputs.read_highs_solution.
+    _resolve_inv_scale_the_objective` to un-scale variable values back to
+    user-facing units.  The TXT report is a human-readable diagnostic.
+
+    Both writes are best-effort: failures log a warning but do not raise.
+    """
+    try:
+        from flextool.flextoolrunner.solve_writers import (
+            write_scale_the_objective,
+        )
+        write_scale_the_objective(solve_data_dir, effective_obj_scale)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "scale_the_objective.csv write failed for %s: %s",
+            solve_name, exc,
+        )
+
+    try:
+        from flextool.engine_polars.scaling_report import write_scaling_report
+        write_scaling_report(
+            scale_table=scale_table,
+            flex_data=flex_data,
+            solve_data_dir=solve_data_dir,
+            solve_name=solve_name,
+            solution=solution,
+            output_raw_dir=output_raw_dir,
+            applied_row_scaling=effective_row_scaling,
+            applied_obj_scale=effective_obj_scale,
+            override_source=(
+                "user_db_setting"
+                if isinstance(user_row_scaling, str)
+                and user_row_scaling.strip().lower() in ("yes", "no")
+                else None
+            ),
+            stdout_summary=True,
+            logger=logger,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("scaling report failed for %s: %s", solve_name, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -419,15 +482,62 @@ def _drive_cascade(
                 db_reader=cascade_db_reader,
             )
 
+            # --- LP scaling -------------------------------------------------
+            # The analyser is keyed on the base solve name (the rolling
+            # ``_roll_N`` suffix is stripped) so every iteration of a
+            # rolling cascade reuses the first iteration's ScaleTable
+            # via ``_scale_cache``.  The user's per-solve DB overrides
+            # win when present and well-formed; otherwise we apply the
+            # analyser's recommendation.
+            base_solve_name = re.sub(r"_roll_\d+$", "", complete_solve_name)
+            scale_table = _scaling.analyze_solve(
+                solve_name=base_solve_name,
+                flex_data=data,
+                work_folder=self.state.paths.work_folder,
+                logger=self.state.logger,
+            )
+            user_row_scaling = state.solve.use_row_scaling.get(complete_solve_name)
+            user_obj_scale = state.solve.scale_the_objective.get(complete_solve_name)
+            effective_row_scaling, effective_obj_scale = (
+                _scaling.resolve_effective_scaling(
+                    scale_table, user_row_scaling, user_obj_scale,
+                )
+            )
+            # ``user_bound_scale`` resolution: explicit DB override wins
+            # (typically the value HiGHS recommends in its "user-scaled
+            # problem has some excessively large row bounds" warning);
+            # otherwise fall back to the input-data heuristic in
+            # ``recommended_highs_options``.
+            user_bound_scale_override = _scaling.resolve_user_bound_scale_override(
+                state.solve.user_bound_scale.get(complete_solve_name)
+            )
+
+            # HiGHS solver options are picked AFTER the LP is built so we
+            # can read the actual coefficient ranges off the assembled
+            # numpy arrays (via ``Problem.peek_lp_ranges``) instead of
+            # guessing from input-data ranges.  ``simplex_scale_strategy``
+            # = advanced (Curtis-Reid) is always-on; ``user_bound_scale``
+            # comes from the explicit DB override → LP-range
+            # recommendation → input-data heuristic (in priority order).
+            # Cap solve time via env var if the operator requested it.
+            _diag_tlim = os.environ.get("FLEXTOOL_HIGHS_TIME_LIMIT")
+
+            def _finalise_highs_options(opts: dict) -> dict:
+                if _diag_tlim:
+                    try:
+                        opts["time_limit"] = float(_diag_tlim)
+                    except ValueError:
+                        pass
+                return opts
+
+            # --- LP build & solve ------------------------------------------
             # Δ.12d — warm-LP per-iteration decision.  When ``warm`` is
-            # True AND the prior iteration left a live WarmProblem
-            # whose fingerprint matches this iteration's data, attempt
-            # to push the Param diff into the live LP.  Any
-            # _IncompatibleUpdate (unmapped Param differs, gate
-            # transitions to inactive while Param contributed cells,
-            # …) drops back to a cold rebuild.  Cold rebuild also
-            # fires on the first iteration and on any structural
-            # fingerprint mismatch.
+            # True AND the prior iteration left a live WarmProblem whose
+            # fingerprint matches this iteration's data, we push the
+            # Param diff into the live LP.  Any ``_IncompatibleUpdate``
+            # (unmapped Param differs, gate transitions, …) drops back
+            # to a cold rebuild.  Cold rebuild also fires on the first
+            # iteration and on any structural fingerprint mismatch.
             warm_used = False
             if warm:
                 fp = _fingerprint(data)
@@ -446,7 +556,25 @@ def _drive_cascade(
                         # branch builds a fresh one.
                         self._warm_problem = None
                 if not warm_used:
-                    self._warm_problem = _build_warm_problem(data)
+                    # Build the warm problem first WITHOUT solver
+                    # options so we can inspect LP ranges, then push the
+                    # finalised HiGHS options through ``set_solver_options``
+                    # on the underlying Problem.
+                    self._warm_problem = _build_warm_problem(
+                        data,
+                        scale_the_objective=effective_obj_scale,
+                        solver_options=None,
+                    )
+                    inner_pb = self._warm_problem.problem
+                    lp_ranges = inner_pb.peek_lp_ranges()
+                    highs_options = _finalise_highs_options(
+                        _scaling.recommended_highs_options(
+                            scale_table,
+                            user_bound_scale_override=user_bound_scale_override,
+                            lp_ranges=lp_ranges,
+                        )
+                    )
+                    inner_pb.set_solver_options(highs_options)
                 # ``WarmProblem.solve`` always keeps the HiGHS instance
                 # alive on ``Solution.highs`` — that's the whole point
                 # of warm reuse — so the output writer adapter
@@ -458,25 +586,16 @@ def _drive_cascade(
                 self._prior_fp = fp
             else:
                 pb = Problem()
-                build_flextool(pb, data)
-                # --- scaling analysis -------------------------------------------
-                _scale_table = _scaling.analyze_solve(
-                    solve_name=complete_solve_name,
-                    flex_data=data,
-                    work_folder=self.state.paths.work_folder,
-                    logger=self.state.logger,
+                build_flextool(pb, data, scale_the_objective=effective_obj_scale)
+                lp_ranges = pb.peek_lp_ranges()
+                highs_options = _finalise_highs_options(
+                    _scaling.recommended_highs_options(
+                        scale_table,
+                        user_bound_scale_override=user_bound_scale_override,
+                        lp_ranges=lp_ranges,
+                    )
                 )
-                _user_row_scaling = state.solve.use_row_scaling.get(
-                    complete_solve_name
-                )
-                _effective_row_scaling = (
-                    _user_row_scaling
-                    if _user_row_scaling in ("yes", "no")
-                    else _scale_table.use_row_scaling
-                )
-                if _effective_row_scaling == "yes":
-                    pb.set_solver_options({"simplex_scale_strategy": 2})
-                # ----------------------------------------------------------------
+                pb.set_solver_options(highs_options)
                 # Δ.12c-fix: ``keep_solver=True`` so ``sol.highs``
                 # carries the live HiGHS instance the output writer
                 # adapter consumes (``write_all_variables`` /
@@ -487,6 +606,21 @@ def _drive_cascade(
                 # ``test_native_cascade_emits_reference_output_raw_files``
                 # surfaced in Δ.12c-fix.
                 sol = pb.solve(keep_solver=True)
+            # Write scaling diagnostic (CSV + report incl. section 8.5)
+            # BEFORE the optimality check, so a non-optimal / time-limited
+            # solve still produces actionable scaling info.
+            _write_scale_csv_and_report(
+                solve_data_dir=self.state.paths.work_folder / "solve_data",
+                output_raw_dir=self.state.paths.work_folder / "output_raw",
+                solve_name=complete_solve_name,
+                scale_table=scale_table,
+                effective_row_scaling=effective_row_scaling,
+                effective_obj_scale=effective_obj_scale,
+                user_row_scaling=user_row_scaling,
+                flex_data=data,
+                solution=sol,
+                logger=self.state.logger,
+            )
             if not sol.optimal:
                 self.state.logger.error(
                     f"flexpy non-optimal for {complete_solve_name}"
@@ -546,11 +680,17 @@ def _drive_cascade(
             # this loop in ``_drive_cascade`` below — the override
             # restores it on exit.
             self.state.handoffs[complete_solve_name] = handoff
+            # Un-scale the objective value back to user-facing units.
+            # ``build_flextool`` multiplied the objective coefficients by
+            # ``effective_obj_scale``, so HiGHS reports a scaled value.
+            unscaled_obj = (
+                sol.obj / effective_obj_scale if sol.obj is not None else None
+            )
             self._all_steps[complete_solve_name] = OrchestrationStep(
                 solve_name=complete_solve_name,
                 solution=sol,
                 handoff=handoff,
-                obj=sol.obj,
+                obj=unscaled_obj,
                 warm_used=warm_used,
                 flex_data=data,
             )
@@ -823,27 +963,45 @@ def run_single_solve_from_db(
     from polar_high import Problem
     from flextool.engine_polars.model import build_flextool
 
-    _t0 = _time.perf_counter()
-    problem = Problem()
-    build_flextool(problem, flex_data)
-    print(f"Input: LP build: {_time.perf_counter() - _t0:.3f}s")
-
-    # --- scaling analysis ---------------------------------------------------
-    _scale_table = _scaling.analyze_solve(
+    # --- LP scaling -------------------------------------------------------
+    # Single-solve has no rolling cascade, so the cache key equals the
+    # scenario name.  Resolve user overrides defensively (helper handles
+    # malformed / non-finite / non-positive DB values).
+    scale_table = _scaling.analyze_solve(
         solve_name=scenario_name,
         flex_data=flex_data,
         work_folder=work_folder,
         logger=logger,
     )
-    _user_row_scaling = sc.use_row_scaling.get(scenario_name)
-    _effective_row_scaling = (
-        _user_row_scaling
-        if _user_row_scaling in ("yes", "no")
-        else _scale_table.use_row_scaling
+    user_row_scaling = sc.use_row_scaling.get(scenario_name)
+    user_obj_scale = sc.scale_the_objective.get(scenario_name)
+    effective_row_scaling, effective_obj_scale = (
+        _scaling.resolve_effective_scaling(
+            scale_table, user_row_scaling, user_obj_scale,
+        )
     )
-    if _effective_row_scaling == "yes":
-        problem.set_solver_options({"simplex_scale_strategy": 2})
-    # ------------------------------------------------------------------------
+    user_bound_scale_override = _scaling.resolve_user_bound_scale_override(
+        sc.user_bound_scale.get(scenario_name)
+    )
+
+    _t0 = _time.perf_counter()
+    problem = Problem()
+    build_flextool(problem, flex_data, scale_the_objective=effective_obj_scale)
+    print(f"Input: LP build: {_time.perf_counter() - _t0:.3f}s")
+
+    # HiGHS solver options (always-on advanced row scaling + explicit
+    # ``user_bound_scale`` override OR LP-coefficient-range based
+    # recommendation from ``problem.peek_lp_ranges()`` — the actual
+    # arrays HiGHS will see — falling back to the input-data heuristic
+    # when LP introspection isn't available).
+    lp_ranges = problem.peek_lp_ranges()
+    highs_options = _scaling.recommended_highs_options(
+        scale_table,
+        user_bound_scale_override=user_bound_scale_override,
+        lp_ranges=lp_ranges,
+    )
+
+    problem.set_solver_options(highs_options)
 
     # 5. Solve.  ``keep_solver=True`` so the output writer can read MPS
     # column / row names off the live HiGHS instance.
@@ -889,15 +1047,39 @@ def run_single_solve_from_db(
             writer_state=writer_state,
         )
 
+    # Always emit the scaling CSV + report (even on non-optimal solves —
+    # the diagnostic report is most useful when the solve is degenerate).
+    _write_scale_csv_and_report(
+        solve_data_dir=Path(work_folder) / "solve_data",
+        output_raw_dir=Path(work_folder) / "output_raw",
+        solve_name=scenario_name,
+        scale_table=scale_table,
+        effective_row_scaling=effective_row_scaling,
+        effective_obj_scale=effective_obj_scale,
+        user_row_scaling=user_row_scaling,
+        flex_data=flex_data,
+        solution=sol,
+        logger=logger,
+    )
+
     # 7. Build a stub SolveHandoff (no carriers in single-solve mode).
     from flextool.engine_polars._solve_handoff import SolveHandoff
     handoff = SolveHandoff()
+
+    # Un-scale the objective value back to user-facing units.
+    # ``build_flextool`` multiplied the objective coefficients by
+    # ``effective_obj_scale``, so HiGHS reports a scaled value.
+    unscaled_obj = (
+        sol.obj / effective_obj_scale
+        if sol.optimal and sol.obj is not None
+        else None
+    )
 
     return OrchestrationStep(
         solve_name=scenario_name,
         solution=sol,
         handoff=handoff,
-        obj=sol.obj if sol.optimal else None,
+        obj=unscaled_obj,
         warm_used=False,
         flex_data=flex_data,
     )

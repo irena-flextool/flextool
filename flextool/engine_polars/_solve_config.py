@@ -214,6 +214,8 @@ class SolveConfig:
         delay_durations: dict,
         logger: logging.Logger,
         use_row_scaling: dict | None = None,
+        scale_the_objective: dict | None = None,
+        user_bound_scale: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -232,6 +234,17 @@ class SolveConfig:
         # solve-name → "yes"/"no" string from the DB (default off everywhere).
         self.use_row_scaling: dict = (
             use_row_scaling if use_row_scaling is not None else {}
+        )
+        self.scale_the_objective: dict = (
+            scale_the_objective if scale_the_objective is not None else {}
+        )
+        # solve-name → integer user_bound_scale override.  When set, overrides
+        # the heuristic in scaling.recommend_user_bound_scale().  Pass the
+        # value HiGHS recommends in its "user-scaled problem has some
+        # excessively large row bounds — Consider setting the user_bound_scale
+        # option to <N>" warning for the most reliable result.
+        self.user_bound_scale: dict = (
+            user_bound_scale if user_bound_scale is not None else {}
         )
 
         # Computed fields — populated by load_from_db after construction.
@@ -340,6 +353,12 @@ class SolveConfig:
         use_row_scaling: dict = params_to_dict(
             db=db, cl="solve", par="use_row_scaling", mode=DictMode.DICT
         )
+        scale_the_objective: dict = params_to_dict(
+            db=db, cl="solve", par="scale_the_objective", mode=DictMode.DICT
+        )
+        user_bound_scale: dict = params_to_dict(
+            db=db, cl="solve", par="user_bound_scale", mode=DictMode.DICT
+        )
 
         # rolling_times: assemble per-solve [jump, horizon, duration].
         rolling_duration: dict = params_to_dict(
@@ -394,6 +413,8 @@ class SolveConfig:
             delay_durations=delay_durations,
             logger=logger,
             use_row_scaling=use_row_scaling,
+            scale_the_objective=scale_the_objective,
+            user_bound_scale=user_bound_scale,
         )
 
         # Computed fields — loading order MUST be preserved exactly.

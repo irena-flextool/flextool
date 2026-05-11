@@ -351,7 +351,8 @@ def _add_non_anticipativity_constraints(
                 )
 
 
-def build_flextool(m, d, *, include_existing_fixed_cost: bool = False) -> None:
+def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
+                   scale_the_objective: float = 1.0) -> None:
     """Build the flextool LP into ``m`` from data ``d``.
 
     Each feature block runs only when its 'switch' field is non-empty:
@@ -372,6 +373,11 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False) -> None:
 
     ``include_existing_fixed_cost``: when True, adds the §8.1 constant
     (``Σ p_entity_all_existing[e,d] · ed_fixed_cost[e,d] · p_inflation_op[d]``)
+    
+    ``scale_the_objective``: scalar to multiply the entire objective by.
+    Default 1.0 (no scaling).  Set to a power-of-10 (e.g., 1e-6) to scale
+    objective coefficients, matching the original GMPL model's
+    ``scale_the_objective`` parameter.
     to the objective via ``Problem.add_obj_constant``.  Default False
     because flextool's published v_obj parquet (written from
     ``h.getObjectiveValue()``) does NOT include this constant — the
@@ -2724,6 +2730,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False) -> None:
                 has_minload_eff  = has_minload_eff,
             )
 
+    # Apply objective scaling if provided (default 1.0 = no scaling).
+    if scale_the_objective != 1.0:
+        obj = obj * scale_the_objective
     m.set_objective(obj, sense="min")
 
     # ─── Wire flextool's HiGHS solver options through to Problem.solve() ──

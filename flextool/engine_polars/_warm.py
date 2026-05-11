@@ -765,10 +765,26 @@ def _apply_warm_updates(warm: WarmProblem,
     return n_updates
 
 
-def _build_warm_problem(data: "FlexData") -> WarmProblem:
+def _build_warm_problem(
+    data: "FlexData",
+    *,
+    scale_the_objective: float = 1.0,
+    solver_options: dict | None = None,
+) -> WarmProblem:
     """Build a fresh :class:`polar_high.WarmProblem` from a FlexData
     snapshot, with all :data:`_MUTABLE_PARAMS` declared mutable so the
     per-cell tracking side-table is populated during the build.
+
+    Parameters
+    ----------
+    data
+        The :class:`FlexData` bundle for this iteration.
+    scale_the_objective
+        Multiplier applied to the objective inside ``build_flextool``.
+    solver_options
+        HiGHS options to apply via ``pb.set_solver_options`` BEFORE
+        wrapping in :class:`WarmProblem`.  Typically the dict returned
+        by :func:`flextool.engine_polars.scaling.recommended_highs_options`.
 
     Late-imports ``build_flextool`` to avoid a build-time cycle between
     this module and ``model.py``.
@@ -776,7 +792,9 @@ def _build_warm_problem(data: "FlexData") -> WarmProblem:
     from flextool.engine_polars.model import build_flextool
 
     pb = Problem()
-    build_flextool(pb, data)
+    build_flextool(pb, data, scale_the_objective=scale_the_objective)
+    if solver_options:
+        pb.set_solver_options(solver_options)
     warm = WarmProblem(pb)
     warm.declare_mutable(*_MUTABLE_PARAMS)
     return warm
