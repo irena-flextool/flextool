@@ -3768,10 +3768,11 @@ def build_handoff_from_flexpy(
     * ``cumulative_co2`` — per-(group, period), summed from
       ``solve_data/co2_cum_realized_tonnes.csv`` if present.
     * ``cumulative_commodity`` — per-(commodity, tier, period),
-      summed from ``solve_data/commodity_ladder_cumulative.csv`` if
-      present.
-    * ``cum_sim_hours`` — per-period running sim-hour total, sourced
-      from ``solve_data/ladder_cum_sim_hours.csv`` if present.
+      derived via :func:`_extract_cumulative_commodity` (this-roll
+      v_trade + ``prior_handoff.cumulative_commodity``).
+    * ``cum_sim_hours`` — per-period running sim-hour total, derived
+      via :func:`_extract_cum_sim_hours` (this-roll realized hours +
+      ``prior_handoff.cum_sim_hours``).
     (Δ.1 — ``periods_already_emitted`` was here; it moved to
     ``_output_writer.OutputWriterState`` since it's a writer-side
     emission gate, not a solver handoff carrier.  The on-disk source
@@ -4036,30 +4037,17 @@ def build_handoff_from_flexpy(
     cumulative_commodity_df = _extract_cumulative_commodity(
         sol, sd, prior_handoff=prior_handoff)
     if cumulative_commodity_df is None:
-        # Legacy file fallback (chain runner that ran flextool's
-        # preprocessing already wrote the file).
-        cc_path = sd / "commodity_ladder_cumulative.csv"
-        if cc_path.exists():
-            try:
-                cc_df = _read_csv_file(cc_path)
-            except pl.exceptions.NoDataError:
-                cc_df = None
-            if cc_df is not None and cc_df.height > 0:
-                if "mwh" in cc_df.columns:
-                    value_col = "mwh"
-                elif "p_ladder_cum_realized_mwh" in cc_df.columns:
-                    value_col = "p_ladder_cum_realized_mwh"
-                else:
-                    value_col = None
-                if value_col is not None and {"commodity", "tier", "period"}.issubset(
-                        cc_df.columns):
-                    cumulative_commodity_df = (
-                        cc_df.with_columns(
-                            mwh=pl.col(value_col).cast(pl.Float64, strict=False)
-                                    .fill_null(0.0))
-                          .select("commodity", "tier", "period", "mwh"))
-        if (cumulative_commodity_df is None
-                and prior_handoff is not None
+        # Phase 4 (Gap F) — disk fallback retired.  When
+        # ``_extract_cumulative_commodity`` returns None this solve had no
+        # this-roll increment to add (no ``v_trade`` in the LP, or no
+        # finite ladder tiers), so the carrier reduces to whatever the
+        # prior solve deposited.  The legacy
+        # ``solve_data/commodity_ladder_cumulative.csv`` fallback is
+        # unreachable in the cascade path: ``write_ladder_rolling_accumulators``
+        # writes ``ladder_cum_realized_mwh.csv`` (different name), and
+        # ``commodity_ladder_cumulative.csv`` lives under ``input/`` not
+        # ``solve_data/`` in production.
+        if (prior_handoff is not None
                 and prior_handoff.cumulative_commodity is not None):
             cumulative_commodity_df = prior_handoff.cumulative_commodity
 
@@ -4075,22 +4063,16 @@ def build_handoff_from_flexpy(
     # itself is inactive (CO2-cap normalisation also consumes it).
     cum_sim_hours_df = _extract_cum_sim_hours(sd, prior_handoff=prior_handoff)
     if cum_sim_hours_df is None:
-        csh_path = sd / "ladder_cum_sim_hours.csv"
-        if csh_path.exists():
-            try:
-                csh_df = _read_csv_file(csh_path)
-            except pl.exceptions.NoDataError:
-                csh_df = None
-            if csh_df is not None and csh_df.height > 0 and \
-                    "p_ladder_cum_sim_hours" in csh_df.columns:
-                cum_sim_hours_df = (
-                    csh_df.with_columns(
-                        value=pl.col("p_ladder_cum_sim_hours")
-                                .cast(pl.Float64, strict=False)
-                                .fill_null(0.0))
-                       .select("period", "value"))
-        if (cum_sim_hours_df is None
-                and prior_handoff is not None
+        # Phase 4 (Gap F) — disk fallback retired.  ``_extract_cum_sim_hours``
+        # returns None only when this solve has zero realized timesteps
+        # AND ``prior_handoff`` carries no prior hours.  At that moment
+        # the post-solve ``write_ladder_rolling_accumulators`` has not yet
+        # run, so ``solve_data/ladder_cum_sim_hours.csv`` still holds the
+        # PRIOR running total — i.e. exactly what ``prior_handoff``
+        # already carries in memory.  Re-reading the disk file would be a
+        # round-trip through bytes that ``capture_post_solve`` has already
+        # absorbed for us.
+        if (prior_handoff is not None
                 and prior_handoff.cum_sim_hours is not None):
             cum_sim_hours_df = prior_handoff.cum_sim_hours
 
