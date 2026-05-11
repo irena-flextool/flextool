@@ -2482,25 +2482,99 @@ def apply_derived_b(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_synthetic_solve(source: "InputSource",
+                                  active_solve: str | None,
+                                  ) -> tuple[str, str] | None:
+    """Recognise a synthetic per-sub-solve name of the form
+    ``<base>_<anchor>`` and return ``(base, anchor)``.
+
+    Δ.19 — flextool's orchestrator synthesises per-period sub-solve
+    names at runtime by joining a Spine ``solve`` name with one of its
+    ``invest_periods`` anchor keys (see ``_solve_config.py:618-660`` —
+    ``periods_to_tuples`` walks the outer Map and calls
+    ``duplicate_solve(<base>, <base>_<anchor>)``).  These synthetic
+    names don't exist as rows in Spine; the per-solve override chain
+    would otherwise return None for every ``solve``-keyed parameter.
+
+    Algorithm: try every suffix split (rightmost underscore first) and
+    return the first ``(base, anchor)`` where ``base`` is a Spine
+    ``solve`` entity.  ``base`` may itself contain underscores
+    (``invest_5weeks_p2020`` splits as ``base='invest_5weeks'``,
+    ``anchor='p2020'``).
+
+    Returns ``None`` when no split matches a Spine solve.
+    """
+    if active_solve is None or "_" not in active_solve:
+        return None
+    try:
+        ents = source.entities("solve")
+    except KeyError:
+        return None
+    if ents is None or ents.height == 0:
+        return None
+    name_col = "name" if "name" in ents.columns else ents.columns[0]
+    spine_solves = set(ents[name_col].to_list())
+    parts = active_solve.split("_")
+    for i in range(len(parts) - 1, 0, -1):
+        base = "_".join(parts[:i])
+        anchor = "_".join(parts[i:])
+        if base in spine_solves:
+            return base, anchor
+    return None
+
+
 def _solve_periods(source: "InputSource", active_solve: str,
                     parameter_name: str) -> list[str] | None:
-    """Read the array-valued ``solve.<parameter>`` for the active solve.
+    """Read the period-list-valued ``solve.<parameter>`` for the active solve.
 
-    ``solve.realized_periods`` and ``solve.invest_periods`` are stored as
-    Spine Arrays — :class:`SpineDbReader` returns them with columns
-    ``[name, i, value]`` where ``i`` is the array index.  Filter to the
-    active solve, sort by ``i``, and return the period list.
+    ``solve.realized_periods`` is stored as a Spine Array
+    (``[name, i (int), value=period]``); ``solve.invest_periods`` is
+    stored either as an Array (single-anchor solves) or as a 2D Map
+    (nested multi-invest solves: ``[name, x=anchor, i=period,
+    value="yes"]``).  This helper returns the period list regardless of
+    shape.
+
+    Δ.19 — when ``active_solve`` doesn't appear in the param table,
+    fall back to the synthetic ``<base>_<anchor>`` recognition: for
+    Map-shaped params filter ``name==base AND x==anchor`` and return
+    the ``i`` values; for Array-shaped params return ``[anchor]``
+    (the single realised period of the synthetic sub-solve).
     """
     if active_solve is None:
         return None
     df = _try_param(source, "solve", parameter_name)
     if df is None:
         return None
+    is_map = "x" in df.columns
+    period_col = "i" if is_map else "value"
     sub = df.filter(pl.col("name") == active_solve)
     if sub.height == 0:
-        return None
-    if "i" in sub.columns:
+        # Synthetic fallback — split active_solve as <base>_<anchor>.
+        resolved = _resolve_synthetic_solve(source, active_solve)
+        if resolved is None:
+            return None
+        base, anchor = resolved
+        if is_map:
+            sub = df.filter((pl.col("name") == base)
+                              & (pl.col("x") == anchor))
+            if sub.height == 0:
+                return None
+            return sub[period_col].cast(pl.Utf8, strict=False).to_list()
+        # Array param: synthetic sub-solve realises only its anchor.
+        # Confirm the anchor is in base's array; if not, return None.
+        base_sub = df.filter(pl.col("name") == base)
+        if base_sub.height == 0:
+            return None
+        base_periods = set(base_sub["value"].cast(pl.Utf8, strict=False).to_list())
+        return [anchor] if anchor in base_periods else None
+    # Non-synthetic path.  For Map params filter to the (most-common)
+    # anchor's row set; in practice the non-synthetic Map case doesn't
+    # surface (orchestrator always synthesises sub-solves), but if it
+    # ever did we'd return the union of inner periods deterministically.
+    if "i" in sub.columns and not is_map:
         sub = sub.sort("i")
+    if is_map:
+        return sub[period_col].cast(pl.Utf8, strict=False).unique(maintain_order=True).to_list()
     return sub["value"].to_list()
 
 
@@ -8287,6 +8361,105 @@ def pdt_branch_weight_full_from_source(
     """
     from flextool.engine_polars._derived_branch import pdt_branch_weight_param
     return pdt_branch_weight_param(workdir, source, active_solve, dt)
+
+
+def apply_synthetic_invest_sets(flex_data: object,
+                                     source: "InputSource",
+                                     active_solve: str,
+                                     synthetic: tuple[str, str],
+                                     workdir: "Path | None" = None) -> None:
+    """Δ.19 — populate the invest-set FlexData fields for a synthetic
+    ``<base>_<anchor>`` solve, replacing the matching disk reads in
+    ``_invest_seeds.py``.
+
+    The synthetic-aware :func:`_solve_periods` returns the right period
+    list for the anchor (Map-shaped ``invest_periods`` filtered to the
+    synthetic anchor); the eager helpers in this module and the lazy
+    partition helpers in :mod:`._derived_existing` are pure derivations
+    on top of that period list so they work as-is.  Fields populated
+    (mirrors the seed names in ``_invest_seeds.py``):
+
+      * ``ed_invest_set`` / ``ed_divest_set``
+      * ``pd_invest_set`` / ``nd_invest_set`` (process / node partition
+        of ``ed_invest_set``)
+      * ``pd_divest_set`` / ``nd_divest_set`` (process / node partition
+        of ``ed_divest_set``)
+      * ``edd_invest_set`` (history-extended triple; requires workdir
+        for ``period_with_history.csv`` + ``period_in_use_set.csv``).
+      * ``ed_invest_forbidden_no_investment`` (no-investment lifetime
+        gate; needed by ``apply_existing_chain``).
+
+    The per-period cap subsets (``ed_invest_period_set`` /
+    ``ed_divest_period_set``) and the NPV cost cascade
+    (``ed_lifetime_fixed_cost`` etc.) are NOT touched — they stay on
+    the ``_invest_seeds.py`` / ``_load_invest`` CSV-seed path because
+    those values bake in multi-year discounting and the per-sub-solve
+    filter doesn't compose cleanly with the existing derivation
+    (deferred per the Gap D dispatch).
+    """
+    base, anchor = synthetic
+    # ed_invest_set / ed_divest_set — eager helpers use _solve_periods
+    # which is synthetic-aware (Δ.19); pass the synthetic name through.
+    # Γ.6.D forbidden filter is applied internally by the helper.
+    ed_inv = ed_invest_set_from_source(source, active_solve, workdir=workdir)
+    if ed_inv is not None and ed_inv.height > 0:
+        flex_data.ed_invest_set = ed_inv
+    ed_div = ed_divest_set_from_source(source, active_solve)
+    if ed_div is not None and ed_div.height > 0:
+        flex_data.ed_divest_set = ed_div
+
+    # ed_invest_forbidden_no_investment — derived from the lifetime
+    # gate; consumed by apply_existing_chain.
+    try:
+        forbidden = ed_invest_forbidden_no_investment_from_source(
+            source, active_solve, workdir, ed_inv)
+    except Exception:  # pragma: no cover — defensive
+        forbidden = None
+    if forbidden is not None and forbidden.height > 0:
+        flex_data.ed_invest_forbidden_no_investment = forbidden
+
+    # pd/nd_invest_set, pd/nd_divest_set partitions — pure entity-class
+    # projections, no solve dependency beyond the input ed_*_set frame.
+    from flextool.engine_polars._derived_existing import (
+        pd_invest_set_lf as _pd_invest_lf,
+        nd_invest_set_lf as _nd_invest_lf,
+        pd_divest_set_lf as _pd_divest_lf,
+        nd_divest_set_lf as _nd_divest_lf,
+        edd_invest_set_lf as _edd_invest_lf,
+    )
+    if ed_inv is not None and ed_inv.height > 0:
+        ed_inv_lf = ed_inv.lazy()
+        pd_inv = _pd_invest_lf(source, ed_inv_lf).collect()
+        if pd_inv.height > 0:
+            flex_data.pd_invest_set = pd_inv
+        nd_inv = _nd_invest_lf(source, ed_inv_lf).collect()
+        if nd_inv.height > 0:
+            flex_data.nd_invest_set = nd_inv
+    if ed_div is not None and ed_div.height > 0:
+        ed_div_lf = ed_div.lazy()
+        pd_div = _pd_divest_lf(source, ed_div_lf).collect()
+        if pd_div.height > 0:
+            flex_data.pd_divest_set = pd_div
+        nd_div = _nd_divest_lf(source, ed_div_lf).collect()
+        if nd_div.height > 0:
+            flex_data.nd_divest_set = nd_div
+
+    # edd_invest_set — history-extended triple.  Uses workdir CSV for
+    # period_with_history + period_in_use_set (both anchor-specific in
+    # the synthetic-solve snapshot).
+    if (ed_inv is not None and ed_inv.height > 0
+            and workdir is not None):
+        period_in_use = _period_in_use_set(source, active_solve, workdir)
+        period_with_history = (_read_period_with_history(workdir)
+                                  or list(period_in_use))
+        try:
+            edd_inv = _edd_invest_lf(
+                source, active_solve, ed_inv.lazy(),
+                period_with_history, period_in_use, workdir).collect()
+        except Exception:  # pragma: no cover — defensive
+            edd_inv = None
+        if edd_inv is not None and edd_inv.height > 0:
+            flex_data.edd_invest_set = edd_inv
 
 
 # ---------------------------------------------------------------------------
