@@ -24,6 +24,7 @@ Anchored on the four families (legacy line ranges in
 from __future__ import annotations
 
 import filecmp
+import logging
 import shutil
 from pathlib import Path
 
@@ -43,6 +44,7 @@ from flextool.engine_polars import _writer_per_solve as native_per_solve
 from flextool.engine_polars import _writer_period_calc as native_period_calc
 from flextool.engine_polars import _writer_period_params as native_period
 from flextool.engine_polars import _writer_reserve as native_reserve
+from flextool.engine_polars import _writer_solve_writers as native_sw
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
     dc_angle_bounds as legacy_dc,
@@ -68,6 +70,7 @@ from flextool.flextoolrunner.preprocessing import (
     structural_filters as legacy_struct,
     union_sets as legacy_union,
 )
+from flextool.flextoolrunner import solve_writers as legacy_sw
 
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -1845,3 +1848,437 @@ def test_process_reserve_filters_and_reliability_parity(
     )
     for fname in _RESERVE_FILTERS_OUTPUTS:
         _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ===========================================================================
+# Phase 2 (sub-dispatch 6) — solve_writers parity tests.
+#
+# Unlike Phase 1 / earlier sub-dispatches, these helpers operate on in-
+# memory Python data structures (timeline dicts, period lists, etc.),
+# not on ``input/`` CSVs.  We construct deterministic in-memory fixtures
+# and drive both implementations against them; byte-identical CSV output
+# is verified via ``filecmp.cmp(shallow=False)``.
+# ===========================================================================
+
+from flextool.flextoolrunner.runner_state import ActiveTimeEntry as _ATE
+
+
+def _two_root_workdirs(tmp_path: Path) -> tuple[Path, Path]:
+    """Build two parallel ``solve_data/`` + ``input/`` workdirs.  Used
+    by the in-memory-driven solve_writers tests where there is no
+    fixture CSV to seed."""
+    legacy = tmp_path / "legacy"
+    native = tmp_path / "native"
+    for root in (legacy, native):
+        (root / "solve_data").mkdir(parents=True)
+        (root / "input").mkdir(parents=True)
+    return legacy, native
+
+
+def _ate_list(steps: list[tuple[str, int, str]]) -> list[_ATE]:
+    """Build a list of ``ActiveTimeEntry`` namedtuples for a period."""
+    return [_ATE(*s) for s in steps]
+
+
+# ---- Group A — timeline / period writers -----------------------------------
+
+
+def test_write_full_timelines_parity(tmp_path: Path) -> None:
+    """Single-period + stochastic-tail emission."""
+    stochastic = [("p2025", "t0005"), ("p2025", "t0006")]
+    pts = [("p2025", "ts_a")]
+    tsts_tl = {"ts_a": "tl_default"}
+    timelines = {"tl_default": [("t0001",), ("t0002",), ("t0003",)]}
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_full_timelines(stochastic, pts, tsts_tl, timelines, str(legacy_path))
+    native_sw.write_full_timelines(stochastic, pts, tsts_tl, timelines, str(native_path))
+    _assert_files_equal(legacy_path, native_path)
+
+
+@pytest.mark.parametrize("complete", [False, True])
+def test_write_active_timelines_parity(tmp_path: Path, complete: bool) -> None:
+    """Both ``complete=False`` (``step_duration`` header) and
+    ``complete=True`` (``complete_step_duration`` header) paths."""
+    tl = {
+        "p2025": _ate_list([("t0001", 0, "1.0"), ("t0002", 1, "1.0")]),
+        "p2030": _ate_list([("t0001", 0, "2.0")]),
+    }
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_active_timelines(tl, str(legacy_path), complete=complete)
+    native_sw.write_active_timelines(tl, str(native_path), complete=complete)
+    _assert_files_equal(legacy_path, native_path)
+
+
+def test_write_step_jump_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    step_lengths = [
+        ("p2025", "t0002", "t0001", "t0001", "p2025", "t0001", "1"),
+        ("p2025", "t0003", "t0002", "t0002", "p2025", "t0002", "1"),
+    ]
+    legacy_sw.write_step_jump(step_lengths, work_folder=lw)
+    native_sw.write_step_jump(step_lengths, work_folder=nw)
+    _assert_files_equal(
+        lw / "solve_data/step_previous.csv",
+        nw / "solve_data/step_previous.csv",
+    )
+
+
+def test_write_period_block_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    pbt = [("p2025", "t0001", "t0001"), ("p2025", "t0001", "t0002")]
+    pbs = [("p2025", "t0001", "t0010")]
+    legacy_sw.write_period_block(pbt, pbs, work_folder=lw)
+    native_sw.write_period_block(pbt, pbs, work_folder=nw)
+    _assert_files_equal(
+        lw / "solve_data/period_block_time.csv",
+        nw / "solve_data/period_block_time.csv",
+    )
+    _assert_files_equal(
+        lw / "solve_data/period_block_succ.csv",
+        nw / "solve_data/period_block_succ.csv",
+    )
+
+
+@pytest.mark.parametrize("years", [
+    [("p2025", "1"), ("p2030", "5"), ("p2040", "0.5")],
+    [("p2025", "0"), ("p2030", "2.7")],
+])
+def test_write_years_represented_parity(
+    tmp_path: Path, years: list,
+) -> None:
+    """Covers integer, fractional, and skipped (R<=0) paths.  Also
+    exercises the branch-expansion sub-loop with a non-trivial
+    ``period__branch`` map."""
+    pb = [("p2025", "p2025"), ("p2030", "p2030_b1"), ("p2030", "p2030_b2")]
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_years_represented(pb, years, str(legacy_path))
+    native_sw.write_years_represented(pb, years, str(native_path))
+    _assert_files_equal(legacy_path, native_path)
+
+
+def test_write_period_years_parity(tmp_path: Path) -> None:
+    years = [("p2025", "5"), ("p2030", "10")]
+    pb = [("p2025", "p2025"), ("p2030", "p2030_b1")]
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_period_years(pb, years, str(legacy_path))
+    native_sw.write_period_years(pb, years, str(native_path))
+    _assert_files_equal(legacy_path, native_path)
+
+
+@pytest.mark.parametrize("solve", ["solve_A", "missing_solve"])
+def test_write_periods_parity(tmp_path: Path, solve: str) -> None:
+    periods_dict = {
+        "solve_A": [("solve_A", "p2025"), ("solve_A", "p2030")],
+        "solve_B": [("solve_B", "p2040")],
+    }
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_periods(solve, periods_dict, str(legacy_path))
+    native_sw.write_periods(solve, periods_dict, str(native_path))
+    _assert_files_equal(legacy_path, native_path)
+
+
+def test_write_first_and_last_periods_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    atl = {
+        "p2025": _ate_list([("t0001", 0, "1"), ("t0002", 1, "1")]),
+        "p2030": _ate_list([("t0001", 0, "1"), ("t0002", 1, "1")]),
+    }
+    pts = [("p2025", "ts_a"), ("p2030", "ts_a")]
+    pb = [("p2025", "p2025"), ("p2030", "p2030")]
+    legacy_sw.write_first_and_last_periods(atl, pts, pb, work_folder=lw)
+    native_sw.write_first_and_last_periods(atl, pts, pb, work_folder=nw)
+    for fname in (
+        "period_last.csv", "period_first_of_solve.csv", "period_first.csv",
+    ):
+        _assert_files_equal(lw / "solve_data" / fname, nw / "solve_data" / fname)
+
+
+@pytest.mark.parametrize(
+    "first,last,nested",
+    [(True, False, False), (False, True, False),
+     (True, True, True), (False, False, True)],
+)
+def test_write_solve_status_parity(
+    tmp_path: Path, first: bool, last: bool, nested: bool,
+) -> None:
+    """Cross product of ``first/last`` flags × ``nested`` filename
+    selector (``p_model.csv`` vs ``p_nested_model.csv``)."""
+    lw, nw = _two_root_workdirs(tmp_path)
+    legacy_sw.write_solve_status(first, last, nested=nested, work_folder=lw)
+    native_sw.write_solve_status(first, last, nested=nested, work_folder=nw)
+    fname = "p_nested_model.csv" if nested else "p_model.csv"
+    _assert_files_equal(
+        lw / "solve_data" / fname, nw / "solve_data" / fname,
+    )
+
+
+def test_write_current_solve_parity(tmp_path: Path) -> None:
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_current_solve("solve_X", str(legacy_path))
+    native_sw.write_current_solve("solve_X", str(native_path))
+    _assert_files_equal(legacy_path, native_path)
+
+
+@pytest.mark.parametrize("last", [False, True])
+def test_write_period_boundary_step_parity(tmp_path: Path, last: bool) -> None:
+    tl = {
+        "p2025": _ate_list([("t0001", 0, "1"), ("t0002", 1, "1"), ("t0003", 2, "1")]),
+        "p2030": _ate_list([("t0001", 0, "1")]),
+    }
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_period_boundary_step(tl, str(legacy_path), last=last)
+    native_sw.write_period_boundary_step(tl, str(native_path), last=last)
+    _assert_files_equal(legacy_path, native_path)
+
+
+def test_write_first_and_last_steps_parity(tmp_path: Path) -> None:
+    """The ``write_first_steps`` / ``write_last_steps`` shims dispatch
+    to ``write_period_boundary_step``.  Validates parity through the
+    public wrappers."""
+    tl = {"p2025": _ate_list([("t0001", 0, "1"), ("t0002", 1, "1")])}
+    for kind, native_fn, legacy_fn in (
+        ("first", native_sw.write_first_steps, legacy_sw.write_first_steps),
+        ("last",  native_sw.write_last_steps,  legacy_sw.write_last_steps),
+    ):
+        legacy_path = tmp_path / f"legacy_{kind}.csv"
+        native_path = tmp_path / f"native_{kind}.csv"
+        legacy_fn(tl, str(legacy_path))
+        native_fn(tl, str(native_path))
+        _assert_files_equal(legacy_path, native_path)
+
+
+def test_get_first_steps_pure_helper() -> None:
+    """Pure data helper — verify return shape matches the legacy."""
+    steplists = {
+        "s1": ["t0001", "t0002"],
+        "s2": ["t0050", "t0051"],
+        "s3": ["t0100"],
+    }
+    assert native_sw.get_first_steps(steplists) == legacy_sw.get_first_steps(steplists)
+
+
+@pytest.mark.parametrize("realized_periods", [
+    [("solve_A", "p2025"), ("solve_A", "p2030")],
+    [],
+])
+def test_write_last_realized_step_parity(
+    tmp_path: Path, realized_periods: list,
+) -> None:
+    """Empty-realized branch + non-empty branch (covers the
+    ``has_realized_period`` gate)."""
+    realized_tl = {
+        "p2025": _ate_list([("t0001", 0, "1"), ("t0002", 1, "1")]),
+        "p2030": _ate_list([("t0010", 9, "1"), ("t0011", 10, "1")]),
+    }
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_last_realized_step(
+        realized_tl, "solve_A", realized_periods, str(legacy_path),
+    )
+    native_sw.write_last_realized_step(
+        realized_tl, "solve_A", realized_periods, str(native_path),
+    )
+    _assert_files_equal(legacy_path, native_path)
+
+
+def test_write_realized_dispatch_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    realized_tl = {
+        "p2025": _ate_list([("t0001", 0, "1"), ("t0002", 1, "1")]),
+        "p2030": _ate_list([("t0010", 9, "1")]),
+    }
+    realized_periods = [("solve_A", "p2025"), ("solve_A", "p2030")]
+    legacy_sw.write_realized_dispatch(
+        realized_tl, "solve_A", realized_periods, work_folder=lw,
+    )
+    native_sw.write_realized_dispatch(
+        realized_tl, "solve_A", realized_periods, work_folder=nw,
+    )
+    _assert_files_equal(
+        lw / "solve_data/realized_dispatch.csv",
+        nw / "solve_data/realized_dispatch.csv",
+    )
+
+
+def test_write_fix_storage_timesteps_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    atl = {
+        "p2025": _ate_list([("t0001", 0, "1"), ("t0002", 1, "1")]),
+        "p2030": _ate_list([("t0001", 0, "1")]),
+    }
+    fix_periods = [("solve_A", "p2025")]
+    legacy_sw.write_fix_storage_timesteps(
+        atl, "solve_A", fix_periods, work_folder=lw,
+    )
+    native_sw.write_fix_storage_timesteps(
+        atl, "solve_A", fix_periods, work_folder=nw,
+    )
+    _assert_files_equal(
+        lw / "solve_data/fix_storage_timesteps.csv",
+        nw / "solve_data/fix_storage_timesteps.csv",
+    )
+
+
+# ---- Group B — branch / empty / header writers -----------------------------
+
+
+def test_write_branch__period_relationship_parity(tmp_path: Path) -> None:
+    pb = [("p2025", "p2025"), ("p2030", "p2030_b1"), ("p2030", "p2030_b2")]
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_branch__period_relationship(pb, str(legacy_path))
+    native_sw.write_branch__period_relationship(pb, str(native_path))
+    _assert_files_equal(legacy_path, native_path)
+
+
+def test_write_all_branches_parity(tmp_path: Path) -> None:
+    """Exercise the pbt_*.csv union by seeding minimal input CSVs."""
+    lw, nw = _two_root_workdirs(tmp_path)
+    # Seven pbt_*.csv files with a single data row (matches legacy's
+    # branch-column-1 read).  Branch column = "tb_a".
+    pbt_names = [
+        "pbt_node_inflow.csv", "pbt_node.csv", "pbt_process.csv",
+        "pbt_profile.csv", "pbt_process_source.csv", "pbt_process_sink.csv",
+        "pbt_reserve__upDown__group.csv",
+    ]
+    for fn in pbt_names:
+        for root in (lw, nw):
+            (root / "input" / fn).write_text(
+                "entity,branch,col3,col4\nfoo,tb_a,1,2\n"
+            )
+    pbl = {"solve_A": [("p2025", "p2025"), ("p2030", "p2030_b1")]}
+    sb_tb = [("p2025", "tb_a"), ("p2030_b1", "tb_b")]
+    logger = logging.getLogger("test_all_branches")
+    legacy_sw.write_all_branches(pbl, sb_tb, logger, work_folder=lw)
+    native_sw.write_all_branches(pbl, sb_tb, logger, work_folder=nw)
+    _assert_files_equal(
+        lw / "solve_data/branch_all.csv",
+        nw / "solve_data/branch_all.csv",
+    )
+    _assert_files_equal(
+        lw / "solve_data/time_branch_all.csv",
+        nw / "solve_data/time_branch_all.csv",
+    )
+
+
+def test_write_branch_weights_and_map_parity(tmp_path: Path) -> None:
+    """Both the self-pair (weight = 1.0) and stochastic-branch
+    weighted-row paths."""
+    lw, nw = _two_root_workdirs(tmp_path)
+    sb_tb = [("p2025", "tb_a"), ("p2030_b1", "tb_b"), ("p2030_b2", "tb_c")]
+    atl = {
+        "p2025": _ate_list([("t0001", 0, "1")]),
+        "p2030_b1": _ate_list([("t0010", 9, "1")]),
+        "p2030_b2": _ate_list([("t0010", 9, "1")]),
+    }
+    branch_start_time = ("p2025", "ts_a")
+    pb_lists = [("p2025", "p2025"), ("p2030_b1", "p2030_b1")]
+    # stochastic_branches[complete_solve] is a list of rows;
+    # row[0]=period, row[1]=time_branch, row[2]=timeset,
+    # row[3]=anything, row[4]=weight
+    stochastic = {
+        "solve_A": [
+            ("p2025", "tb_b", "ts_a", "_", "0.4"),
+            ("p2025", "tb_c", "ts_a", "_", "0.6"),
+        ],
+    }
+    legacy_sw.write_branch_weights_and_map(
+        "solve_A", atl, sb_tb, branch_start_time, pb_lists, stochastic,
+        work_folder=lw,
+    )
+    native_sw.write_branch_weights_and_map(
+        "solve_A", atl, sb_tb, branch_start_time, pb_lists, stochastic,
+        work_folder=nw,
+    )
+    _assert_files_equal(
+        lw / "solve_data/solve_branch_weight.csv",
+        nw / "solve_data/solve_branch_weight.csv",
+    )
+    _assert_files_equal(
+        lw / "solve_data/solve_branch__time_branch.csv",
+        nw / "solve_data/solve_branch__time_branch.csv",
+    )
+
+
+def test_write_empty_investment_file_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    legacy_sw.write_empty_investment_file(work_folder=lw)
+    native_sw.write_empty_investment_file(work_folder=nw)
+    for fname in (
+        "p_entity_invested.csv", "p_entity_divested.csv",
+        "p_entity_period_existing_capacity.csv",
+    ):
+        _assert_files_equal(
+            lw / "solve_data" / fname, nw / "solve_data" / fname,
+        )
+
+
+def test_write_empty_cumulative_files_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    legacy_sw.write_empty_cumulative_files(work_folder=lw)
+    native_sw.write_empty_cumulative_files(work_folder=nw)
+    for fname in (
+        "ladder_cum_realized_mwh.csv",
+        "ladder_cum_sim_hours.csv",
+        "co2_cum_realized_tonnes.csv",
+    ):
+        _assert_files_equal(
+            lw / "solve_data" / fname, nw / "solve_data" / fname,
+        )
+
+
+def test_write_empty_storage_fix_file_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    legacy_sw.write_empty_storage_fix_file(work_folder=lw)
+    native_sw.write_empty_storage_fix_file(work_folder=nw)
+    for fname in (
+        "fix_storage_price.csv", "fix_storage_quantity.csv",
+        "fix_storage_usage.csv", "p_roll_continue_state.csv",
+    ):
+        _assert_files_equal(
+            lw / "solve_data" / fname, nw / "solve_data" / fname,
+        )
+
+
+def test_write_headers_for_empty_output_files_parity(tmp_path: Path) -> None:
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    header = "col_a,col_b,col_c"
+    legacy_sw.write_headers_for_empty_output_files(str(legacy_path), header)
+    native_sw.write_headers_for_empty_output_files(str(native_path), header)
+    _assert_files_equal(legacy_path, native_path)
+
+
+def test_write_timesets_parity(tmp_path: Path) -> None:
+    lw, nw = _two_root_workdirs(tmp_path)
+    tsus = {
+        "solve_A": [("p2025", "ts_a"), ("p2030", "ts_a")],
+        "solve_B": [("p2040", "ts_b")],
+    }
+    ts_tl = {"ts_a": "tl_default", "ts_b": "tl_other"}
+    legacy_sw.write_timesets(tsus, ts_tl, work_folder=lw)
+    native_sw.write_timesets(tsus, ts_tl, work_folder=nw)
+    _assert_files_equal(
+        lw / "input/timesets_in_use.csv",
+        nw / "input/timesets_in_use.csv",
+    )
+    _assert_files_equal(
+        lw / "input/timesets__timeline.csv",
+        nw / "input/timesets__timeline.csv",
+    )
+
+
+@pytest.mark.parametrize("mult", [{"solve_A": "1.5"}, {"solve_A": ""}])
+def test_write_hole_multiplier_parity(tmp_path: Path, mult: dict) -> None:
+    legacy_path = tmp_path / "legacy.csv"
+    native_path = tmp_path / "native.csv"
+    legacy_sw.write_hole_multiplier("solve_A", mult, str(legacy_path))
+    native_sw.write_hole_multiplier("solve_A", mult, str(native_path))
+    _assert_files_equal(legacy_path, native_path)

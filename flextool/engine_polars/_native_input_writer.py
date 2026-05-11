@@ -348,6 +348,12 @@ def _native_leaf_set_override():
     from flextool.flextoolrunner.preprocessing import (
         reserve_calc_params as _legacy_reserve_calc,
     )
+    # Phase 2 (sub-dispatch 6) — first half of ``solve_writers``
+    # (timeline / period / branch / empty / header writers).  These
+    # patches target the ``flextool.flextoolrunner.solve_writers`` module
+    # directly because ``_native_run_model.py`` imports it as a module
+    # and dispatches via attribute access (``solve_writers.write_X(...)``).
+    from flextool.flextoolrunner import solve_writers as _legacy_solve_writers
     from flextool.engine_polars import _writer_leaf_sets as _native
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
@@ -362,6 +368,9 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_period_calc as _native_period_calc
     from flextool.engine_polars import _writer_inflow_scaling as _native_inflow_scaling
     from flextool.engine_polars import _writer_reserve as _native_reserve
+    from flextool.engine_polars import (
+        _writer_solve_writers as _native_solve_writers,
+    )
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -625,6 +634,70 @@ def _native_leaf_set_override():
         (_legacy_reserve_calc,
          "write_process_reserve_filters_and_reliability",
          _native_reserve.write_process_reserve_filters_and_reliability),
+        # ── Phase 2 (sub-dispatch 6) — solve_writers first half ──────
+        # Group A — timeline / period writers fired from
+        # ``_native_run_model.py`` per-solve loop.
+        (_legacy_solve_writers, "write_full_timelines",
+                                _native_solve_writers.write_full_timelines),
+        (_legacy_solve_writers, "write_active_timelines",
+                                _native_solve_writers.write_active_timelines),
+        (_legacy_solve_writers, "write_step_jump",
+                                _native_solve_writers.write_step_jump),
+        (_legacy_solve_writers, "write_period_block",
+                                _native_solve_writers.write_period_block),
+        (_legacy_solve_writers, "write_years_represented",
+                                _native_solve_writers.write_years_represented),
+        (_legacy_solve_writers, "write_period_years",
+                                _native_solve_writers.write_period_years),
+        (_legacy_solve_writers, "write_periods",
+                                _native_solve_writers.write_periods),
+        (_legacy_solve_writers, "write_first_and_last_periods",
+                                _native_solve_writers
+                                .write_first_and_last_periods),
+        (_legacy_solve_writers, "write_solve_status",
+                                _native_solve_writers.write_solve_status),
+        (_legacy_solve_writers, "write_current_solve",
+                                _native_solve_writers.write_current_solve),
+        (_legacy_solve_writers, "write_period_boundary_step",
+                                _native_solve_writers.write_period_boundary_step),
+        (_legacy_solve_writers, "write_first_steps",
+                                _native_solve_writers.write_first_steps),
+        (_legacy_solve_writers, "write_last_steps",
+                                _native_solve_writers.write_last_steps),
+        (_legacy_solve_writers, "get_first_steps",
+                                _native_solve_writers.get_first_steps),
+        (_legacy_solve_writers, "write_last_realized_step",
+                                _native_solve_writers.write_last_realized_step),
+        (_legacy_solve_writers, "write_realized_dispatch",
+                                _native_solve_writers.write_realized_dispatch),
+        (_legacy_solve_writers, "write_fix_storage_timesteps",
+                                _native_solve_writers
+                                .write_fix_storage_timesteps),
+        # Group B — branch / empty / header writers.
+        (_legacy_solve_writers, "write_branch__period_relationship",
+                                _native_solve_writers
+                                .write_branch__period_relationship),
+        (_legacy_solve_writers, "write_all_branches",
+                                _native_solve_writers.write_all_branches),
+        (_legacy_solve_writers, "write_branch_weights_and_map",
+                                _native_solve_writers
+                                .write_branch_weights_and_map),
+        (_legacy_solve_writers, "write_empty_investment_file",
+                                _native_solve_writers
+                                .write_empty_investment_file),
+        (_legacy_solve_writers, "write_empty_cumulative_files",
+                                _native_solve_writers
+                                .write_empty_cumulative_files),
+        (_legacy_solve_writers, "write_empty_storage_fix_file",
+                                _native_solve_writers
+                                .write_empty_storage_fix_file),
+        (_legacy_solve_writers, "write_headers_for_empty_output_files",
+                                _native_solve_writers
+                                .write_headers_for_empty_output_files),
+        (_legacy_solve_writers, "write_timesets",
+                                _native_solve_writers.write_timesets),
+        (_legacy_solve_writers, "write_hole_multiplier",
+                                _native_solve_writers.write_hole_multiplier),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
