@@ -433,9 +433,16 @@ def _recommend_scale_the_objective(
 # ---------------------------------------------------------------------------
 
 
-# user_bound_scale clamp.  HiGHS itself recommends |N| ≤ 10 in its
-# warning text; deeper values trigger numerical issues in crossover.
-USER_BOUND_SCALE_MIN = -10
+# user_bound_scale clamp.  HiGHS interprets ``user_bound_scale`` as a
+# **power of 2** (bounds × 2^N), so the magnitude per step is ~3×, not
+# 10×.  HiGHS itself rejects values outside [-30, 30]; -30 (= × 2^-30
+# ≈ 1e-9) is the practical floor for very wide row-bound spreads
+# (e.g. cumulative-ladder caps at 1e+8 paired with annual fractions
+# at 1e-6).  HiGHS' "Consider setting the user_bound_scale option
+# to <N>" warning text was the source of the older |N| ≤ 10
+# guidance — that was about the per-warning increment, not the
+# safe operating range.
+USER_BOUND_SCALE_MIN = -30
 USER_BOUND_SCALE_MAX = 0
 
 # Threshold (decades) above which we apply ``user_bound_scale``.
@@ -473,8 +480,8 @@ def recommend_user_bound_scale(
 ) -> int:
     """Heuristic ``user_bound_scale`` based on input parameter ranges.
 
-    HiGHS' ``user_bound_scale`` option scales every column / row bound by
-    ``10**N`` *during LP loading* (so it composes with our
+    HiGHS' ``user_bound_scale`` option scales every column / row bound
+    by ``2**N`` *during LP loading* (so it composes with our
     ``scale_the_objective``).  A negative ``N`` shrinks bounds toward 1,
     which helps when a model has large physical capacities or annual
     flows.
@@ -483,8 +490,9 @@ def recommend_user_bound_scale(
 
     * If ``rough_obj`` is enormous (≥ 1e+12) we expect the LP RHS to be
       similarly large (energy balances aggregate inflows × duration).
-      Pick ``N`` to bring the largest input bound close to ``1.0``,
-      clamped to ``[USER_BOUND_SCALE_MIN, 0]``.
+      Pick ``N`` so ``2**N × bound_proxy ≈ 1`` — i.e.
+      ``N = -round(log2(bound_proxy))`` — clamped to
+      ``[USER_BOUND_SCALE_MIN, 0]``.
     * Otherwise return ``0`` (let HiGHS' own scaling handle it).
 
     This is intentionally a *coarse* heuristic — proper bound-stat
@@ -499,7 +507,7 @@ def recommend_user_bound_scale(
     if bound_proxy is None:
         return 0
     try:
-        n = -int(round(math.log10(bound_proxy)))
+        n = -int(round(math.log2(bound_proxy)))
     except ValueError:
         return 0
     if n > USER_BOUND_SCALE_MAX:
@@ -520,8 +528,10 @@ def recommend_user_bound_scale_from_lp(
     ..., 'row_bound': ...}``.  We look at the larger ``abs_max`` of the
     row and column bound ranges — that's what HiGHS itself flags when
     it prints "user-scaled problem has some excessively large row
-    bounds" — and choose ``N`` so ``10**N`` brings that max close to
-    ``1.0``.
+    bounds" — and choose ``N`` so ``2**N`` brings that max close to
+    ``1.0``.  HiGHS' ``user_bound_scale`` is a power of 2, NOT a power
+    of 10 — using ``log10`` here was a longstanding bug that left the
+    recommended scaling ~3.3× too gentle per "decade".
 
     Returns an integer in
     ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]``.  ``0`` means
@@ -543,10 +553,13 @@ def recommend_user_bound_scale_from_lp(
     if not bounds:
         return 0
     max_bound = max(bounds)
-    if max_bound <= 1e3:
+    # Trigger: ~2^10 = 1024 — matches the "max_bound > 1e3" heuristic
+    # used pre-fix, kept as 2^10 to make the threshold consistent with
+    # the new log2 scaling.
+    if max_bound <= 1024.0:
         return 0
     try:
-        n = -int(round(math.log10(max_bound)))
+        n = -int(round(math.log2(max_bound)))
     except ValueError:
         return 0
     if n > USER_BOUND_SCALE_MAX:
@@ -610,8 +623,10 @@ def recommended_highs_options(
         "simplex_scale_strategy": SIMPLEX_SCALE_STRATEGY_ADVANCED,
     }
     if user_bound_scale_override is not None and user_bound_scale_override != 0:
-        # Clamp to the same range the heuristic uses; HiGHS itself rejects
-        # values outside [-30, 30] but [-10, 10] is the practical safe zone.
+        # Clamp to the same range the heuristic uses.  HiGHS itself
+        # rejects values outside [-30, 30].  ``user_bound_scale`` is a
+        # power of 2 (× 2^N), not a power of 10, so [-30, 30] covers
+        # roughly 9 decades each way — plenty for any realistic LP.
         n = int(user_bound_scale_override)
         if n > USER_BOUND_SCALE_MAX:
             n = USER_BOUND_SCALE_MAX
