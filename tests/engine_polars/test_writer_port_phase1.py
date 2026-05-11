@@ -42,6 +42,7 @@ from flextool.engine_polars import _writer_lp_scaling as native_lp_scaling
 from flextool.engine_polars import _writer_per_solve as native_per_solve
 from flextool.engine_polars import _writer_period_calc as native_period_calc
 from flextool.engine_polars import _writer_period_params as native_period
+from flextool.engine_polars import _writer_reserve as native_reserve
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
     dc_angle_bounds as legacy_dc,
@@ -61,6 +62,7 @@ from flextool.flextoolrunner.preprocessing import (
     period_param_sets as legacy_period,
     process_arc_unions as legacy_arc_unions,
     process_method_sets as legacy_process_method,
+    reserve_calc_params as legacy_reserve_calc,
     reserve_method_partitions as legacy_reserve_part,
     simple_projections as legacy_simple,
     structural_filters as legacy_struct,
@@ -1744,4 +1746,102 @@ def test_node_inflow_scaling_params_parity(
     legacy_inflow_scaling.write_node_inflow_scaling_params(lin, lsd)
     native_inflow_scaling.write_node_inflow_scaling_params(nin, nsd)
     for fname in _INFLOW_SCALING_OUTPUTS:
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (sub-dispatch 5) — reserve_calc_params parity tests.
+#
+# Three public writers cover seven CSVs.  The reserve fixtures
+# (``work_network_coal_wind_reserve``,
+# ``work_network_coal_wind_reserve_n_1``,
+# ``work_network_coal_wind_reserve_co2_capacity_margin``) exercise
+# populated ``reserve__upDown__group`` / ``process__reserve__upDown__node``
+# domains; the baseline fixtures cover the empty-set / header-only path.
+# ---------------------------------------------------------------------------
+
+FIXTURES_WITH_RESERVE = FIXTURES + [
+    "work_network_coal_wind_reserve",
+    "work_network_coal_wind_reserve_n_1",
+    "work_network_coal_wind_reserve_co2_capacity_margin",
+]
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_RESERVE)
+def test_pdtReserve_upDown_group_parity(tmp_path: Path, fixture: str) -> None:
+    """Native ``write_pdtReserve_upDown_group`` mirrors the legacy
+    4-branch hourly reserve param resolution byte-identically.  Stresses
+    ``repr(float)`` precision parity on the (r, ud, g, param, d, t)
+    value column."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_reserve_calc.write_pdtReserve_upDown_group(lin, lsd)
+    native_reserve.write_pdtReserve_upDown_group(nin, nsd)
+    _assert_files_equal(
+        lsd / "pdtReserve_upDown_group.csv",
+        nsd / "pdtReserve_upDown_group.csv",
+    )
+
+
+_RESERVE_ACTIVE_PRUNDT_OUTPUTS = (
+    "process_reserve_upDown_node_active.csv",
+    "prundt.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_RESERVE)
+def test_process_reserve_upDown_node_active_and_prundt_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Native writer mirrors the legacy 2-CSV ``active`` filter +
+    ``prundt`` cross-product byte-identically.  Depends on
+    ``pdtReserve_upDown_group.csv`` so we run the predecessor writer
+    first to ensure both legacy + native consume identical input."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    # Seed pdtReserve_upDown_group.csv freshly (the checked-in fixture
+    # copy may be from a different model state).
+    legacy_reserve_calc.write_pdtReserve_upDown_group(lin, lsd)
+    native_reserve.write_pdtReserve_upDown_group(nin, nsd)
+    legacy_reserve_calc.write_process_reserve_upDown_node_active_and_prundt(
+        lin, lsd,
+    )
+    native_reserve.write_process_reserve_upDown_node_active_and_prundt(
+        nin, nsd,
+    )
+    for fname in _RESERVE_ACTIVE_PRUNDT_OUTPUTS:
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+_RESERVE_FILTERS_OUTPUTS = (
+    "p_process_reserve_upDown_node_reliability.csv",
+    "process_reserve_upDown_node_increase_reserve_ratio.csv",
+    "process_reserve_upDown_node_large_failure_ratio.csv",
+    "process_large_failure.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_RESERVE)
+def test_process_reserve_filters_and_reliability_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Native writer mirrors the legacy 4-CSV reliability fallback +
+    two ``> 0`` filter sets + ``process_large_failure`` projection
+    byte-identically.  Depends on
+    ``process_reserve_upDown_node_active.csv`` so we run the
+    predecessor chain first."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_reserve_calc.write_pdtReserve_upDown_group(lin, lsd)
+    native_reserve.write_pdtReserve_upDown_group(nin, nsd)
+    legacy_reserve_calc.write_process_reserve_upDown_node_active_and_prundt(
+        lin, lsd,
+    )
+    native_reserve.write_process_reserve_upDown_node_active_and_prundt(
+        nin, nsd,
+    )
+    legacy_reserve_calc.write_process_reserve_filters_and_reliability(
+        lin, lsd,
+    )
+    native_reserve.write_process_reserve_filters_and_reliability(
+        nin, nsd,
+    )
+    for fname in _RESERVE_FILTERS_OUTPUTS:
         _assert_files_equal(lsd / fname, nsd / fname)

@@ -344,6 +344,10 @@ def _native_leaf_set_override():
     from flextool.flextoolrunner.preprocessing import (
         node_inflow_scaling_params as _legacy_inflow_scaling,
     )
+    # Phase 2 (sub-dispatch 5) — reserve calculated params.
+    from flextool.flextoolrunner.preprocessing import (
+        reserve_calc_params as _legacy_reserve_calc,
+    )
     from flextool.engine_polars import _writer_leaf_sets as _native
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
@@ -357,6 +361,7 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_lp_scaling as _native_lp_scaling
     from flextool.engine_polars import _writer_period_calc as _native_period_calc
     from flextool.engine_polars import _writer_inflow_scaling as _native_inflow_scaling
+    from flextool.engine_polars import _writer_reserve as _native_reserve
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -604,6 +609,22 @@ def _native_leaf_set_override():
         (_legacy_inflow_scaling, "write_node_inflow_scaling_params",
                                  _native_inflow_scaling
                                  .write_node_inflow_scaling_params),
+        # ── Phase 2 (sub-dispatch 5) — reserve calculated params ──
+        # Fired from ``preprocessing/solve_time.run`` at batches 43, 44,
+        # and 49.  Emits 7 CSVs (``pdtReserve_upDown_group``, the
+        # ``process_reserve_upDown_node_active`` filter and ``prundt``
+        # cross-product, plus the reliability fallback, two ``> 0``
+        # filter sets and the ``process_large_failure`` projection).
+        # These feed the reserve LP-build module
+        # (``engine_polars._reserve``) as RHS / domain inputs.
+        (_legacy_reserve_calc, "write_pdtReserve_upDown_group",
+                               _native_reserve.write_pdtReserve_upDown_group),
+        (_legacy_reserve_calc,
+         "write_process_reserve_upDown_node_active_and_prundt",
+         _native_reserve.write_process_reserve_upDown_node_active_and_prundt),
+        (_legacy_reserve_calc,
+         "write_process_reserve_filters_and_reliability",
+         _native_reserve.write_process_reserve_filters_and_reliability),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
