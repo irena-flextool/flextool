@@ -326,6 +326,11 @@ def _native_leaf_set_override():
         entity_period_calc_params as _legacy_entity_period,
         process_arc_unions as _legacy_arc_unions,
     )
+    # Phase 2 (sub-dispatch 1) — per-solve set + invest-divest writers.
+    from flextool.flextoolrunner.preprocessing import (
+        invest_divest_sets as _legacy_invest_divest,
+        per_solve_sets as _legacy_per_solve,
+    )
     from flextool.engine_polars import _writer_leaf_sets as _native
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
@@ -334,6 +339,7 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_pdt_params as _native_pdt
     from flextool.engine_polars import _writer_period_params as _native_period
     from flextool.engine_polars import _writer_dispatchers as _native_disp
+    from flextool.engine_polars import _writer_per_solve as _native_per_solve
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -532,6 +538,24 @@ def _native_leaf_set_override():
                              _native_disp.write_process_arc_unions),
         (_legacy_entity_period, "write_entity_period_calc_params",
                                 _native_disp.write_entity_period_calc_params),
+        # ── Phase 2 (sub-dispatch 1) — per-solve set + invest/divest ──
+        # ``write_per_solve_sets`` / ``write_invest_divest_sets`` /
+        # ``write_ed_invest_forbidden_no_investment`` are not called
+        # from ``input_writer.write_input`` so this rebind is currently
+        # a no-op at the workdir-population call site.  Wiring into the
+        # per-solve preprocessing chain (around ``_flx_orch.run_model``
+        # in ``_orchestration._drive_cascade``) is deferred to a
+        # follow-up dispatch — see the dispatch report.  Listing them
+        # here ahead of wiring keeps a single source of truth for the
+        # writer-port override surface and lets the follow-up land as a
+        # one-line wrap in ``_drive_cascade``.
+        (_legacy_per_solve, "write_per_solve_sets",
+                            _native_per_solve.write_per_solve_sets),
+        (_legacy_invest_divest, "write_invest_divest_sets",
+                                _native_per_solve.write_invest_divest_sets),
+        (_legacy_invest_divest, "write_ed_invest_forbidden_no_investment",
+                                _native_per_solve
+                                .write_ed_invest_forbidden_no_investment),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides

@@ -36,18 +36,21 @@ from flextool.engine_polars import _writer_dispatchers as native_disp
 from flextool.engine_polars import _writer_leaf_sets as native
 from flextool.engine_polars import _writer_mid_sets as native_mid
 from flextool.engine_polars import _writer_pdt_params as native_pdt
+from flextool.engine_polars import _writer_per_solve as native_per_solve
 from flextool.engine_polars import _writer_period_params as native_period
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
     dc_angle_bounds as legacy_dc,
     entity_period_calc_params as legacy_entity_period,
     entity_total_caps as legacy_entity_total,
+    invest_divest_sets as legacy_invest_divest,
     invest_method_sets as legacy_invest,
     invest_total_sets as legacy_invest_total,
     method_with_fallback_sets as legacy_method_fb,
     node_type_sets as legacy_node_type,
     nonsync_sets as legacy_nonsync,
     period_param_sets as legacy_period,
+    per_solve_sets as legacy_per_solve,
     process_arc_unions as legacy_arc_unions,
     process_method_sets as legacy_process_method,
     reserve_method_partitions as legacy_reserve_part,
@@ -1441,3 +1444,121 @@ def test_write_entity_period_calc_params_parity(
         "p_entity_unitsize.csv",
     ):
         _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ===========================================================================
+# Writer-port Phase 2 (sub-dispatch 1) — per-solve set + invest-divest writers.
+#
+# Both families are called from
+# ``flextool.flextoolrunner.preprocessing.solve_time.run`` rather than from
+# ``input_writer.write_input``.  The override hook in
+# ``_native_input_writer.py`` does not currently wrap solve_time, so wiring
+# is deferred to a follow-up dispatch; these tests assert native parity in
+# isolation against the legacy emitter so the wiring step can land safely.
+# ===========================================================================
+
+
+# Fixtures with a populated per-solve solve_data state (period__branch,
+# steps_in_use, ed_invest seeds etc.).  ``work_base`` / ``work_coal`` /
+# ``work_test_a_lot`` all check those in.  Invest-cumulative covers richer
+# ed_invest / edd_history scenarios.
+FIXTURES_WITH_PER_SOLVE = FIXTURES + [
+    "work_network_coal_wind_battery_invest_cumulative",
+]
+
+
+_PER_SOLVE_OUTPUTS = (
+    "branch_set.csv",
+    "year_set.csv",
+    "period_from_period_time_set.csv",
+    "period_in_use_set.csv",
+    "time_in_use_set.csv",
+    "complete_time_in_use_set.csv",
+    "rp_base_period_set.csv",
+    "rp_rep_period_set.csv",
+    "period_block_set.csv",
+    "dtt_set.csv",
+    "d_fix_storage_period_set.csv",
+    "period_set.csv",
+    "periodAll_set.csv",
+    "block_set.csv",
+    "period__timeline_set.csv",
+    "dt_realize_dispatch_set.csv",
+    "d_realized_period_set.csv",
+    "d_realize_dispatch_or_invest_set.csv",
+    "dt_non_anticipativity_set.csv",
+    "pdt_uptime_set.csv",
+    "pdt_downtime_set.csv",
+    "cnd_ladder_set.csv",
+    "cndi_ladder_cum_set.csv",
+    "cndi_ladder_ann_set.csv",
+    "cndi_ladder_set.csv",
+    "dtdt_next_set.csv",
+    "n_fix_storage_quantity_set.csv",
+    "n_fix_storage_price_set.csv",
+    "n_fix_storage_usage_set.csv",
+    "p_online_dt_set.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PER_SOLVE)
+def test_per_solve_sets_parity(tmp_path: Path, fixture: str) -> None:
+    """Native ``write_per_solve_sets`` emits the same 30 CSVs as the legacy
+    helper, byte-for-byte."""
+    _lin, lsd, _nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_per_solve.write_per_solve_sets(lsd)
+    native_per_solve.write_per_solve_sets(nsd)
+    for fname in _PER_SOLVE_OUTPUTS:
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+_INVEST_DIVEST_OUTPUTS = (
+    "ed_invest.csv",
+    "ed_divest.csv",
+    "ed_invest_period.csv",
+    "ed_divest_period.csv",
+    "ed_invest_cumulative.csv",
+    "pd_invest.csv",
+    "nd_invest.csv",
+    "pd_divest.csv",
+    "nd_divest.csv",
+    "edd_history_choice.csv",
+    "edd_history_automatic.csv",
+    "edd_history_no_investment.csv",
+    "edd_history.csv",
+    "edd_history_invest.csv",
+    "edd_invest.csv",
+    "gd_invest.csv",
+    "gd_divest.csv",
+    "gd_invest_period.csv",
+    "gd_divest_period.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PER_SOLVE)
+def test_invest_divest_sets_parity(tmp_path: Path, fixture: str) -> None:
+    """Native ``write_invest_divest_sets`` mirrors the legacy 19 CSVs."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_invest_divest.write_invest_divest_sets(lin, lsd)
+    native_per_solve.write_invest_divest_sets(nin, nsd)
+    for fname in _INVEST_DIVEST_OUTPUTS:
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PER_SOLVE)
+def test_ed_invest_forbidden_no_investment_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Native ``write_ed_invest_forbidden_no_investment`` mirrors legacy."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    # Seed ed_invest.csv (consumed by both legacy + native helpers) by
+    # running the predecessor write first; the seeded workdir's
+    # solve_data/ed_invest.csv may be from a different model state.
+    legacy_invest_divest.write_invest_divest_sets(lin, lsd)
+    native_per_solve.write_invest_divest_sets(nin, nsd)
+    legacy_invest_divest.write_ed_invest_forbidden_no_investment(lin, lsd)
+    native_per_solve.write_ed_invest_forbidden_no_investment(nin, nsd)
+    _assert_files_equal(
+        lsd / "ed_invest_forbidden_no_investment.csv",
+        nsd / "ed_invest_forbidden_no_investment.csv",
+    )
