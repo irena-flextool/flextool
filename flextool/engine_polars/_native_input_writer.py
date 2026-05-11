@@ -336,6 +336,10 @@ def _native_leaf_set_override():
         entity_annual_calc_params as _legacy_entity_annual,
         lp_scaling_params as _legacy_lp_scaling,
     )
+    # Phase 2 (sub-dispatch 3) — per-period calculated params + branch weights.
+    from flextool.flextoolrunner.preprocessing import (
+        period_calculated_params as _legacy_period_calc,
+    )
     from flextool.engine_polars import _writer_leaf_sets as _native
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
@@ -347,6 +351,7 @@ def _native_leaf_set_override():
     from flextool.engine_polars import _writer_per_solve as _native_per_solve
     from flextool.engine_polars import _writer_entity_annual as _native_entity_annual
     from flextool.engine_polars import _writer_lp_scaling as _native_lp_scaling
+    from flextool.engine_polars import _writer_period_calc as _native_period_calc
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -575,6 +580,16 @@ def _native_leaf_set_override():
                                 .write_entity_annual_calc_params),
         (_legacy_lp_scaling, "write_lp_scaling_params",
                              _native_lp_scaling.write_lp_scaling_params),
+        # ── Phase 2 (sub-dispatch 3) — per-period calculated params ──
+        # Fired from ``preprocessing/solve_time.run`` at batches 13
+        # (``write_period_calculated_params``) and 63
+        # (``write_branch_weights``).  Like the prior sub-dispatches,
+        # neither helper is called from ``input_writer.write_input`` —
+        # the per-solve wiring activates these in production.
+        (_legacy_period_calc, "write_period_calculated_params",
+                              _native_period_calc.write_period_calculated_params),
+        (_legacy_period_calc, "write_branch_weights",
+                              _native_period_calc.write_branch_weights),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides

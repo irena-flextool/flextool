@@ -39,6 +39,7 @@ from flextool.engine_polars import _writer_pdt_params as native_pdt
 from flextool.engine_polars import _writer_entity_annual as native_entity_annual
 from flextool.engine_polars import _writer_lp_scaling as native_lp_scaling
 from flextool.engine_polars import _writer_per_solve as native_per_solve
+from flextool.engine_polars import _writer_period_calc as native_period_calc
 from flextool.engine_polars import _writer_period_params as native_period
 from flextool.flextoolrunner.preprocessing import (
     co2_method_sets as legacy_co2,
@@ -53,8 +54,9 @@ from flextool.flextoolrunner.preprocessing import (
     method_with_fallback_sets as legacy_method_fb,
     node_type_sets as legacy_node_type,
     nonsync_sets as legacy_nonsync,
-    period_param_sets as legacy_period,
     per_solve_sets as legacy_per_solve,
+    period_calculated_params as legacy_period_calc,
+    period_param_sets as legacy_period,
     process_arc_unions as legacy_arc_unions,
     process_method_sets as legacy_process_method,
     reserve_method_partitions as legacy_reserve_part,
@@ -1620,4 +1622,68 @@ def test_lp_scaling_params_parity(
     legacy_lp_scaling.write_lp_scaling_params(lin, lsd)
     native_lp_scaling.write_lp_scaling_params(nin, nsd)
     for fname in _LP_SCALING_OUTPUTS:
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (sub-dispatch 3) — period_calculated_params parity tests.
+# ---------------------------------------------------------------------------
+
+# Multi-period / stochastic fixtures stress branch summation logic and the
+# global-year inflation cascade.
+FIXTURES_WITH_PERIOD_CALC = FIXTURES_WITH_PER_SOLVE + [
+    "work_2day_stochastic_dispatch_full_storage",
+]
+
+
+_PERIOD_CALC_OUTPUTS = (
+    "p_timeline_duration_in_years.csv",
+    "hours_in_period.csv",
+    "period_share_of_year.csv",
+    "p_years_d.csv",
+    "p_years_represented_d_calc.csv",
+    "complete_hours_in_period.csv",
+    "complete_period_share_of_year_calc.csv",
+    "p_years_until_invest.csv",
+    "p_years_until_dispatch.csv",
+    "p_inflation_factor_investment_yearly.csv",
+    "p_inflation_factor_operations_yearly.csv",
+    "f_d_k.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PERIOD_CALC)
+def test_period_calculated_params_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Native ``write_period_calculated_params`` mirrors the legacy 12
+    CSVs byte-identically (hour aggregates, year coverage,
+    inflation-discount cascades, f_d_k ladder fractions)."""
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_period_calc.write_period_calculated_params(lin, lsd)
+    native_period_calc.write_period_calculated_params(nin, nsd)
+    for fname in _PERIOD_CALC_OUTPUTS:
+        _assert_files_equal(lsd / fname, nsd / fname)
+
+
+_BRANCH_WEIGHTS_OUTPUTS = (
+    "pd_branch_weight.csv",
+    "pdt_branch_weight.csv",
+)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PERIOD_CALC)
+def test_branch_weights_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Native ``write_branch_weights`` mirrors the legacy 2 CSVs.
+
+    The stochastic fixture exercises the sibling-branch sum across
+    multiple ``(d2, b)`` pairs; the deterministic fixtures collapse to
+    a single-branch diagonal.
+    """
+    lin, lsd, nin, nsd = _seed_workdir(tmp_path, fixture)
+    legacy_period_calc.write_branch_weights(lin, lsd)
+    native_period_calc.write_branch_weights(nin, nsd)
+    for fname in _BRANCH_WEIGHTS_OUTPUTS:
         _assert_files_equal(lsd / fname, nsd / fname)
