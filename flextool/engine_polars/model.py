@@ -1513,18 +1513,31 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # — that's the entities/periods flagged with a per-period limit (e.g.
     # invest_method = "invest_period_total").  Entities with invest_method
     # = "invest_total" or "invest_no_limit" don't appear in this set.
+    #
+    # The mathematical relation is
     #     v_invest[e, d] * unitsize  ≤  ed_invest_max_period[e, d]
+    # but we PRE-DIVIDE the cap by unitsize and emit the LP as
+    #     v_invest[e, d]            ≤  ed_invest_max_period[e, d] / unitsize
+    # so the LP coefficient on v_invest is 1 (not ``unitsize``) and the
+    # RHS is in the same "units of v_invest" scale as the bound from
+    # ``maxInvest_var_bound`` above.  Numerically: a 1 GW max_period
+    # with unitsize=1000 lands as RHS=1 and coefficient=1 instead of
+    # RHS=1e6 and coefficient=1e3 — much friendlier to HiGHS scaling.
     if has_invest_p and d.ed_invest_period_set is not None and d.ed_invest_period_set.height > 0:
         ed_p_period = d.ed_invest_period_set.rename({"e": "p"}).join(
             d.pd_invest_set, on=["p", "d"], how="inner")
         if ed_p_period.height > 0 and d.ed_invest_max_period is not None:
             cap_p = Param(("p", "d"),
-                d.ed_invest_max_period.frame.rename({"e": "p"}))
+                d.ed_invest_max_period.frame.rename({"e": "p"})
+                .join(d.p_unitsize.frame.rename({"value": "_us"}),
+                      on="p", how="left")
+                .with_columns(value=pl.col("value") / pl.col("_us"))
+                .select("p", "d", "value"))
             m.add_cstr(
                 "maxInvest_entity_period_p",
                 over      = ed_p_period,
                 sense     = "<=",
-                lhs_terms = {"invest": v_invest_p * d.p_unitsize},
+                lhs_terms = {"invest": v_invest_p},
                 rhs_terms = {"cap":    cap_p},
             )
     if has_invest_n and d.ed_invest_period_set is not None and d.ed_invest_period_set.height > 0:
@@ -1532,26 +1545,34 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.nd_invest_set, on=["n", "d"], how="inner")
         if ed_n_period.height > 0 and d.ed_invest_max_period is not None:
             cap_n = Param(("n", "d"),
-                d.ed_invest_max_period.frame.rename({"e": "n"}))
-            us_n_per = Param(("n",), d.p_state_unitsize.frame)
+                d.ed_invest_max_period.frame.rename({"e": "n"})
+                .join(d.p_state_unitsize.frame.rename({"value": "_us"}),
+                      on="n", how="left")
+                .with_columns(value=pl.col("value") / pl.col("_us"))
+                .select("n", "d", "value"))
             m.add_cstr(
                 "maxInvest_entity_period_n",
                 over      = ed_n_period,
                 sense     = "<=",
-                lhs_terms = {"invest": v_invest_n * us_n_per},
+                lhs_terms = {"invest": v_invest_n},
                 rhs_terms = {"cap":    cap_n},
             )
+    # Divest period caps: same pre-divide treatment as invest above.
     if has_divest_p and d.ed_divest_period_set is not None and d.ed_divest_period_set.height > 0:
         ed_p_dperiod = d.ed_divest_period_set.rename({"e": "p"}).join(
             d.pd_divest_set, on=["p", "d"], how="inner")
         if ed_p_dperiod.height > 0 and d.ed_divest_max_period is not None:
             cap_dp = Param(("p", "d"),
-                d.ed_divest_max_period.frame.rename({"e": "p"}))
+                d.ed_divest_max_period.frame.rename({"e": "p"})
+                .join(d.p_unitsize.frame.rename({"value": "_us"}),
+                      on="p", how="left")
+                .with_columns(value=pl.col("value") / pl.col("_us"))
+                .select("p", "d", "value"))
             m.add_cstr(
                 "maxDivest_entity_period_p",
                 over      = ed_p_dperiod,
                 sense     = "<=",
-                lhs_terms = {"divest": v_divest_p * d.p_unitsize},
+                lhs_terms = {"divest": v_divest_p},
                 rhs_terms = {"cap":    cap_dp},
             )
     if has_divest_n and d.ed_divest_period_set is not None and d.ed_divest_period_set.height > 0:
@@ -1559,13 +1580,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.nd_divest_set, on=["n", "d"], how="inner")
         if ed_n_dperiod.height > 0 and d.ed_divest_max_period is not None:
             cap_dn = Param(("n", "d"),
-                d.ed_divest_max_period.frame.rename({"e": "n"}))
-            us_n_dper = Param(("n",), d.p_state_unitsize.frame)
+                d.ed_divest_max_period.frame.rename({"e": "n"})
+                .join(d.p_state_unitsize.frame.rename({"value": "_us"}),
+                      on="n", how="left")
+                .with_columns(value=pl.col("value") / pl.col("_us"))
+                .select("n", "d", "value"))
             m.add_cstr(
                 "maxDivest_entity_period_n",
                 over      = ed_n_dperiod,
                 sense     = "<=",
-                lhs_terms = {"divest": v_divest_n * us_n_dper},
+                lhs_terms = {"divest": v_divest_n},
                 rhs_terms = {"cap":    cap_dn},
             )
     # Per-entity totals: Σ_d v_invest[e, d] * unitsize ≤ e_invest_max_total[e]
