@@ -341,8 +341,8 @@ def main():
     t_total_start = time.perf_counter()
 
     # ``effective_precision`` is the only GMPL-era knob still consumed
-    # on the native path — by ``--region`` (input filter) and by
-    # ``--decomposition lagrangian``.  The GMPL-pipeline-only flags
+    # on the native path — by ``--region`` (input filter).  The
+    # GMPL-pipeline-only flags
     # (``--use-old-raw-csv``, ``--ipm``, ``--auto-scale``,
     # ``--relax-feasibility``, ``--glpsol-timing``,
     # ``--report-near-duplicates``, and ``--highs-threads``) were
@@ -376,21 +376,29 @@ def main():
         )
         sys.exit(0)
 
-    # --- Lagrangian decomposition mode (Agent 3.2) ----------------------
+    # --- Lagrangian decomposition mode ----------------------------------
     # ``--decomposition lagrangian`` drives the spatial Lagrangian
     # coordinator instead of the monolithic orchestrator.  Requires the
     # scenario to declare ≥ 2 decomposition-region groups; we bail out
-    # with a clear error if that precondition is unmet.
+    # with a clear error if that precondition is unmet.  The native
+    # coordinator lives in ``engine_polars._lagrangian`` (see
+    # specs/lagrangian_port_handoff.md for the Δ.22 rewiring history).
     if args.decomposition == 'lagrangian':
-        from flextool.flextoolrunner.lagrangian import run_lagrangian
-        from flextool.flextoolrunner import region_filter as _region_filter
+        from flextool.flextoolrunner.region_filter import (
+            discover_decomposition_regions_from_db,
+        )
+        if not scenario_name:
+            with DatabaseMapping(input_db_url) as db_map:
+                _filters = db_map.get_filter_configs()
+                if _filters:
+                    scenario_name = name_from_dict(_filters[0])
         if not scenario_name:
             logging.error(
                 "--decomposition lagrangian requires --scenario-name (the "
                 "group filter needs to know which DB scenario to read)."
             )
             sys.exit(-1)
-        regions_detected = _region_filter.discover_decomposition_regions_from_db(input_db_url)
+        regions_detected = discover_decomposition_regions_from_db(input_db_url)
         if len(regions_detected) < 2:
             logging.error(
                 "--decomposition lagrangian needs at least two groups with "
@@ -399,16 +407,19 @@ def main():
             )
             sys.exit(-1)
         try:
-            lag_logger = logging.getLogger("flextool.lagrangian")
-            result = run_lagrangian(
-                db_url=input_db_url,
-                scenario=scenario_name,
+            from flextool.engine_polars import load_flextool_from_db
+            from flextool.engine_polars._lagrangian import solve_lagrangian
+            flex_data = load_flextool_from_db(
+                input_db_url,
+                scenario_name,
+                work_folder=wf,
+            )
+            result = solve_lagrangian(
+                flex_data,
+                work_dir=wf,
                 alpha=args.lagrangian_alpha,
-                max_iterations=args.lagrangian_max_iter,
-                tolerance=args.lagrangian_tolerance,
-                work_folder=work_folder,
-                logger=lag_logger,
-                precision_digits=effective_precision,
+                max_iters=args.lagrangian_max_iter,
+                tol=args.lagrangian_tolerance,
             )
         except Exception as exc:
             logging.error("Lagrangian coordinator failed: %s", exc, exc_info=True)

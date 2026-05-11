@@ -19,7 +19,9 @@ invocation against the smallest in-tree fixture (``work_base``).
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +38,9 @@ from flextool.cli.cmd_run_flextool import (
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]
+LH2_FIXTURE_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "lh2_three_region.json"
+LH2_GOLDEN_OBJ = FLEXTOOL_ROOT / "tests" / "engine_polars" / "data" / \
+    "work_lh2_three_region" / "golden_obj.json"
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +273,110 @@ def test_cli_engine_gmpl_rejected_subprocess(work_base_db_with_scenario, tmp_pat
     combined = result.stdout + result.stderr
     assert _ENGINE_RETIRED_GMPL_MESSAGE in combined, (
         f"retirement banner missing from --engine=gmpl rejection:\n{combined}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# --decomposition lagrangian — CLI dispatch onto the native coordinator
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def lh2_three_region_db(tmp_path):
+    """Materialise the committed LH2 three-region JSON fixture into a
+    fresh SQLite and return ``(db_url, scenario_name)``.
+
+    The native ``solve_lagrangian`` coordinator and its DB schema piece
+    (``group.decomposition_method``) are exercised here through the CLI;
+    the JSON fixture pins three groups (``region_A/B/C``) at
+    ``lagrangian_region`` plus the cross-region pipes ``pipe_AB`` and
+    ``pipe_BC``.
+    """
+    if not LH2_FIXTURE_JSON.exists():
+        pytest.skip(f"LH2 JSON fixture not present: {LH2_FIXTURE_JSON}")
+    tests_dir = FLEXTOOL_ROOT / "tests"
+    if str(tests_dir) not in sys.path:
+        sys.path.insert(0, str(tests_dir))
+    from db_utils import json_to_db  # noqa: E402
+    db_path = tmp_path / "lh2_three_region.sqlite"
+    db_url = json_to_db(LH2_FIXTURE_JSON, db_path)
+    return db_url, "lh2_three_region"
+
+
+@pytest.mark.solver
+def test_cli_decomposition_lagrangian_runs_native(
+    lh2_three_region_db, tmp_path,
+) -> None:
+    """``cmd_run_flextool --decomposition lagrangian`` drives the native
+    coordinator (``engine_polars._lagrangian.solve_lagrangian``) end-to-end
+    on the LH2 three-region fixture.
+
+    Acceptance bar (cf. ``specs/lagrangian_port_handoff.md``):
+
+    1. Exit code 0 (converged) or 1 (max-iters hit) — the dual
+       subgradient on LH2 oscillates around a 0.1 % gap due to
+       bang-bang LP response on the pipeline flows, so non-convergence
+       to a tight ``tol`` is normal; the CLI maps that to exit 1 by
+       design.  We assert the dispatch ran to completion either way.
+    2. Stdout contains ``total_objective=`` with a value within 2 % of
+       the LH2 monolithic optimum pinned in ``golden_obj.json``.
+    3. λ output is present for both cross-region pipes (``pipe_AB`` and
+       ``pipe_BC``).
+
+    Coordinator tuning matches the algorithm-level parity test in
+    ``tests/engine_polars/test_lagrangian.py`` (``alpha=10``,
+    ``max_iters=100``, ``tol=0.5``) — the CLI defaults were chosen for
+    smaller, less-coupled scenarios and don't converge on LH2 within
+    the budget.
+    """
+    db_url, scenario = lh2_three_region_db
+    work_folder = tmp_path / "work"
+    work_folder.mkdir()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "flextool.cli.cmd_run_flextool",
+            db_url,
+            "--scenario-name", scenario,
+            "--decomposition", "lagrangian",
+            "--lagrangian-alpha", "10.0",
+            "--lagrangian-max-iter", "100",
+            "--lagrangian-tolerance", "0.5",
+            "--work-folder", str(work_folder),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(FLEXTOOL_ROOT),
+        timeout=600,
+    )
+
+    assert result.returncode in (0, 1), (
+        f"CLI failed (rc={result.returncode}, expected 0 or 1):\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    combined = result.stdout + result.stderr
+
+    # Total objective line is present and parseable.
+    match = re.search(r"total_objective=([0-9.eE+\-]+)", combined)
+    assert match, (
+        f"total_objective=... line missing from CLI stdout:\n{combined}"
+    )
+    reported = float(match.group(1))
+
+    # λ output for both cross-region pipes (4 couplings total: each
+    # pipe carries two directions, but it's enough to find each name).
+    assert "pipe_AB" in combined, f"λ for pipe_AB missing:\n{combined}"
+    assert "pipe_BC" in combined, f"λ for pipe_BC missing:\n{combined}"
+
+    # Within 2 % of monolithic optimum (cf. handoff acceptance bar).
+    golden = json.loads(LH2_GOLDEN_OBJ.read_text())["obj"]
+    rel_gap = abs(reported - golden) / abs(golden)
+    assert rel_gap <= 0.02, (
+        f"reported total_objective={reported:.6e} vs monolithic "
+        f"golden={golden:.6e} → {rel_gap*100:.3f}% gap exceeds 2%.\n"
+        f"CLI output:\n{combined}"
     )
 
 
