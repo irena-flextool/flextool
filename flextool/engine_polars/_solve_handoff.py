@@ -115,10 +115,31 @@ class SolveHandoff:
     # File equivalent: solve_data/ladder_cum_sim_hours.csv.
     cum_sim_hours: pl.DataFrame | None = None
 
+    # Gap F final — (period, step) set of fix_storage timesteps for the
+    # CURRENT solve.  Sibling to the price/usage metrics that already
+    # ride ``fix_storage``; this carrier is the underlying index set.
+    # File equivalent: solve_data/fix_storage_timesteps.csv.
+    fix_storage_timesteps: pl.DataFrame | None = None
+
+    # Gap F final — cross-solve invest history (first-realized periods).
+    # Mirrors ``ed_history_realized`` seed from the prior solve's
+    # ``ed_history_realized_first.csv`` (used by
+    # ``_overlay_handoff`` for ``p_entity_previously_invested_capacity``).
+    # File equivalent: solve_data/ed_history_realized_first.csv.
+    ed_history_realized_first: pl.DataFrame | None = None
+
+    # Gap F final — cross-solve invest-period-period history.
+    # ``[entity, period_history, period]`` rows: for each current period
+    # ``d``, the historical periods ``d_h`` whose realized invest feeds
+    # ``p_entity_previously_invested_capacity[e, d]``.
+    # File equivalent: solve_data/edd_history.csv.
+    edd_history: pl.DataFrame | None = None
+
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
         "roll_end_state", "fix_storage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
+        "fix_storage_timesteps", "ed_history_realized_first", "edd_history",
     )
 
     def is_empty(self) -> bool:
@@ -270,6 +291,18 @@ def capture_post_solve(state, solve_name: str) -> None:
                         .cast(pl.Float64, strict=False)
                         .fill_null(0.0))
                .select("period", "value"))
+
+    # Gap F final — fix_storage_timesteps / ed_history_realized_first /
+    # edd_history.  Populated leniently: file missing → field stays None.
+    fst = _read("fix_storage_timesteps.csv")
+    if fst is not None and {"period", "step"}.issubset(fst.columns):
+        handoff.fix_storage_timesteps = fst.select("period", "step")
+    ehrf = _read("ed_history_realized_first.csv")
+    if ehrf is not None and {"entity", "period"}.issubset(ehrf.columns):
+        handoff.ed_history_realized_first = ehrf.select("entity", "period")
+    edd = _read("edd_history.csv")
+    if edd is not None and {"entity", "period_history", "period"}.issubset(edd.columns):
+        handoff.edd_history = edd.select("entity", "period_history", "period")
 
     # Δ.1 — ``periods_already_emitted`` removed from SolveHandoff (lived
     # at the wrong layer; relocated to OutputWriterState in the writer
