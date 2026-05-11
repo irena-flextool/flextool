@@ -381,8 +381,8 @@ def _drive_cascade(
     # Late imports — keep the orchestration module's import surface narrow
     # for callers that only need the dataclass.
     from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
-    from flextool.flextoolrunner import orchestration as _flx_orch
     from flextool.flextoolrunner.solver_runner import SolverRunner
+    from flextool.engine_polars._native_run_model import native_run_model
 
     from polar_high import Problem, WarmProblem
     from flextool.engine_polars.input import (
@@ -696,16 +696,22 @@ def _drive_cascade(
             )
             return 0
 
-    # Monkey-patch ``capture_post_solve`` at the orchestration module's
-    # binding so the file-based capture doesn't overwrite our flexpy-
-    # extracted handoffs.  The patch is restored on exit so other
-    # callers (legacy file-based path) keep their behaviour.
+    # Phase 3 — drive the cascade via the native ``native_run_model``.
+    # The legacy ``flextoolrunner.orchestration.run_model`` is no longer
+    # invoked from the engine_polars cascade.  ``native_run_model``
+    # deliberately omits the ``capture_post_solve`` call after each
+    # ``solver.run`` — equivalent to the previous monkey-patch-to-no-op
+    # but cleaner.  Belt-and-suspenders: also patch the legacy hook in
+    # ``flextool.flextoolrunner.orchestration`` so any other consumer
+    # that may still reference it via that module keeps the no-op
+    # semantic for the duration of the cascade.
+    from flextool.flextoolrunner import orchestration as _flx_orch
+    from flextool.engine_polars._native_input_writer import _native_leaf_set_override
     _real_capture = _flx_orch.capture_post_solve
     _flx_orch.capture_post_solve = lambda state, solve_name: None
-    from flextool.engine_polars._native_input_writer import _native_leaf_set_override
     try:
         with _native_leaf_set_override():
-            _flx_orch.run_model(runner.state, _FlexpyCascadeSolver(runner.state))
+            native_run_model(runner.state, _FlexpyCascadeSolver(runner.state))
     finally:
         _flx_orch.capture_post_solve = _real_capture
     # Mirror the in-memory handoff dict back onto our state in case
