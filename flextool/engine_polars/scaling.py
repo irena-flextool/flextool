@@ -317,6 +317,45 @@ def _estimate_rough_obj_inmemory(
 
 
 # ---------------------------------------------------------------------------
+# LP-level invest-cost coefficient upper bound (for the cost-floor guard)
+# ---------------------------------------------------------------------------
+
+
+def _invest_cost_lp_coef_upper_bound(flex_data: "FlexData") -> Optional[float]:
+    """Upper-bound estimate for the LP cost coefficient on v_invest cols.
+
+    The objective contribution for invest variables (model.py §8.0) is
+    ``Sum(v_invest * p_unitsize * (ed_entity_annual_discounted +
+    ed_lifetime_fixed_cost))`` so the LP coefficient on a v_invest
+    column is bounded above by ``p_unitsize[e] × max(annu[e,d] +
+    lf[e,d])``.
+
+    Returns ``max(p_unitsize) × max(annu + lf)`` — a conservative upper
+    bound that doesn't require joining the parameters on entity.  This
+    overestimates when the entity with max unitsize is not the entity
+    with max capex (the typical case), but the cost-floor guard only
+    needs an upper bound, not the exact value.
+
+    Returns ``None`` when neither invest-cost param is available.
+    """
+    annu_arr = _extract_param_values(flex_data.ed_entity_annual_discounted)
+    lf_arr = _extract_param_values(flex_data.ed_lifetime_fixed_cost)
+    if annu_arr.size == 0 and lf_arr.size == 0:
+        return None
+    annu_max = float(np.abs(annu_arr).max()) if annu_arr.size > 0 else 0.0
+    lf_max = float(np.abs(lf_arr).max()) if lf_arr.size > 0 else 0.0
+    # Conservative: ``max(annu) + max(lf)`` rather than ``max(annu + lf)``
+    # — would require an aligned join; the sum bound is tighter than
+    # either alone and adequate for floor-guard purposes.
+    param_upper = annu_max + lf_max
+    unitsize_arr = _extract_param_values(flex_data.p_all_entity_unitsize)
+    unitsize_max = (
+        float(np.abs(unitsize_arr).max()) if unitsize_arr.size > 0 else 1.0
+    )
+    return unitsize_max * param_upper
+
+
+# ---------------------------------------------------------------------------
 # Objective scalar recommendation
 # ---------------------------------------------------------------------------
 
@@ -720,6 +759,18 @@ def analyze_solve(
             continue
         if cost_abs_max_pooled is None or stats.abs_max > cost_abs_max_pooled:
             cost_abs_max_pooled = stats.abs_max
+    # The LP cost coefficient on v_invest is
+    #     p_unitsize × (ed_entity_annual_discounted + ed_lifetime_fixed_cost)
+    # The family-stat pool above only sees the *raw* params (no unitsize
+    # multiplier), so for high-unitsize / high-capex models it understates
+    # the actual LP cost magnitude and the cost-floor guard fails to keep
+    # scaled coefs out of HiGHS' "excessively large costs" zone.  Include
+    # ``p_unitsize × max(invest-cost params)`` here so the floor reflects
+    # the LP coefficient.
+    invest_lp_max = _invest_cost_lp_coef_upper_bound(flex_data)
+    if invest_lp_max is not None and invest_lp_max > 0.0:
+        if cost_abs_max_pooled is None or invest_lp_max > cost_abs_max_pooled:
+            cost_abs_max_pooled = invest_lp_max
     scale_obj = _recommend_scale_the_objective(rough_obj, cost_abs_max_pooled)
 
     source_label = str(work_folder) if work_folder is not None else "<in-memory>"
