@@ -2544,3 +2544,108 @@ def test_write_empty_rp_data_parity(tmp_path: Path) -> None:
         _assert_files_equal(
             lw / "solve_data" / fname, nw / "solve_data" / fname,
         )
+
+
+# ===========================================================================
+# Writer-port Phase 2 (sub-dispatch 8) — preprocessing.solve_time.run.
+#
+# Whole-orchestrator parity: build a minimal RunnerState pointing at the
+# fixture workdir, run the legacy and native ``run`` against parallel
+# workdir copies, then compare every CSV under ``solve_data/`` byte-for-
+# byte.  ``solve_time.run`` is an orchestrator over ~95 sub-writer calls,
+# all of which are already individually parity-tested above; this test
+# locks the call-ordering / dependency contract in.
+# ===========================================================================
+
+
+def _build_minimal_state(workdir: Path):
+    """Construct the tiniest legitimate ``RunnerState`` for orchestrator
+    invocation.
+
+    ``preprocessing.solve_time.run`` only reads ``state.paths.work_folder``;
+    every sub-writer takes plain ``Path`` arguments derived from it.
+    SolveConfig / TimelineConfig are not consulted by any sub-writer in
+    the per-solve preprocessing chain, so we pass ``None`` for them via
+    ``object.__new__`` so RunnerState's dataclass init validates and we
+    skip the real ``__init__`` of those config classes (which require
+    DB-derived inputs).
+    """
+    import logging
+
+    from flextool.flextoolrunner.runner_state import (
+        PathConfig as _PathConfig,
+        RunnerState as _RunnerState,
+    )
+    from flextool.flextoolrunner.solve_config import (
+        SolveConfig as _SolveConfig,
+    )
+    from flextool.flextoolrunner.timeline_config import (
+        TimelineConfig as _TimelineConfig,
+    )
+
+    log = logging.getLogger("test.writer_port.solve_time")
+    paths = _PathConfig(
+        flextool_dir=workdir,
+        bin_dir=workdir,
+        root_dir=workdir,
+        output_path=workdir,
+        work_folder=workdir,
+    )
+    # Bypass SolveConfig / TimelineConfig __init__ — solve_time.run
+    # never reads them, but RunnerState's dataclass init requires
+    # *something* to be passed for parity with the legacy signature.
+    solve_stub = object.__new__(_SolveConfig)
+    timeline_stub = object.__new__(_TimelineConfig)
+    return _RunnerState(
+        paths=paths,
+        solve=solve_stub,
+        timeline=timeline_stub,
+        logger=log,
+    )
+
+
+def _all_csvs(directory: Path) -> set[str]:
+    if not directory.exists():
+        return set()
+    return {p.name for p in directory.iterdir() if p.suffix == ".csv"}
+
+
+@pytest.mark.parametrize("fixture", FIXTURES_WITH_PER_SOLVE)
+def test_preprocessing_solve_time_run_orchestrator_parity(
+    tmp_path: Path, fixture: str,
+) -> None:
+    """Run legacy and native ``preprocessing.solve_time.run`` against
+    parallel fixture copies; assert ``solve_data/`` is byte-identical.
+
+    Verifies (a) every sub-writer invocation lands at the right place
+    and (b) call ordering matches the legacy contract (dependencies
+    between sub-writers are preserved).
+    """
+    from flextool.flextoolrunner.preprocessing import (
+        solve_time as legacy_solve_time,
+    )
+    from flextool.engine_polars import _writer_solve_time as native_solve_time
+
+    # Two parallel workdir copies — full fixture (input/ + solve_data/).
+    src = DATA_DIR / fixture
+    legacy_root = tmp_path / "legacy"
+    native_root = tmp_path / "native"
+    shutil.copytree(src / "input", legacy_root / "input")
+    shutil.copytree(src / "solve_data", legacy_root / "solve_data")
+    shutil.copytree(src / "input", native_root / "input")
+    shutil.copytree(src / "solve_data", native_root / "solve_data")
+
+    legacy_state = _build_minimal_state(legacy_root)
+    native_state = _build_minimal_state(native_root)
+
+    # Invoke both — legacy module's run (untouched) and native run.
+    legacy_solve_time.run(legacy_state, "solve")
+    native_solve_time.run(native_state, "solve")
+
+    # Diff: every CSV in either solve_data/ must match.
+    lsd = legacy_root / "solve_data"
+    nsd = native_root / "solve_data"
+    union = _all_csvs(lsd) | _all_csvs(nsd)
+    assert union, "no CSVs produced — fixture or invocation broken"
+    for fname in sorted(union):
+        _assert_files_equal(lsd / fname, nsd / fname)

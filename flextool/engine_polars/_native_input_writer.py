@@ -354,6 +354,13 @@ def _native_leaf_set_override():
     # directly because ``_native_run_model.py`` imports it as a module
     # and dispatches via attribute access (``solve_writers.write_X(...)``).
     from flextool.flextoolrunner import solve_writers as _legacy_solve_writers
+    # Phase 2 (sub-dispatch 8) — ``preprocessing.solve_time.run``
+    # orchestrator.  ``_native_run_model.py`` imports the module as
+    # ``preprocessing_solve_time`` and calls ``preprocessing_solve_time.run``
+    # at attribute-lookup time, so a module-attribute patch suffices.
+    from flextool.flextoolrunner.preprocessing import (
+        solve_time as _legacy_solve_time,
+    )
     from flextool.engine_polars import _writer_leaf_sets as _native
     from flextool.engine_polars import _writer_mid_sets as _native_mid
     from flextool.engine_polars import _writer_calc_params as _native_calc
@@ -371,6 +378,7 @@ def _native_leaf_set_override():
     from flextool.engine_polars import (
         _writer_solve_writers as _native_solve_writers,
     )
+    from flextool.engine_polars import _writer_solve_time as _native_solve_time
 
     overrides: list[tuple[object, str, object]] = [
         # ── L0-L2 ──────────────────────────────────────────────────────
@@ -722,6 +730,14 @@ def _native_leaf_set_override():
                                 _native_solve_writers.write_timeset_cost_weight),
         (_legacy_solve_writers, "write_empty_rp_data",
                                 _native_solve_writers.write_empty_rp_data),
+        # ── Phase 2 (sub-dispatch 8) — preprocessing.solve_time.run ──
+        # Closes out Phase 2: the per-solve preprocessing orchestrator
+        # itself is now natively overridable.  Every helper called from
+        # ``preprocessing.solve_time.run`` is already intercepted by
+        # one of the entries above, so the native ``run`` simply
+        # sequences the same call chain through the legacy module
+        # references (which are themselves patched).
+        (_legacy_solve_time, "run", _native_solve_time.run),
     ]
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
