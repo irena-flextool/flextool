@@ -4205,36 +4205,47 @@ def build_handoff_from_flexpy(
                         fix_storage_df = fq_rows
 
     # ---- cumulative_co2: per-(group, period) running total ----
-    # Producer: written by flextool's preprocessing into
-    # ``solve_data/co2_cum_realized_tonnes.csv`` between solves.  When the
-    # snapshot already carries the file, propagate it; when prior_handoff
-    # has the carrier, prefer that (in-memory beats disk).  When neither
-    # is present, leave None so unexercised fixtures don't pay the cost.
-    #
-    # Gap F final — the disk read here is the ONE remaining read we keep:
-    # the on-disk file is written by
-    # ``write_co2_rolling_accumulators`` (legacy, ~200 LOC) which already
-    # combines prior + this-roll using v_flow × CO2 content × slope etc.
-    # Computing the delta natively is a deep port beyond the 400-LOC
-    # close-out budget — documented and skipped per the task's "leave
-    # the disk read in place for that one field" guidance.
+    # Gap F final close-out — native compute via
+    # ``_writer_co2_accumulators.compute_co2_rolling_accumulator`` when
+    # ``flex_data`` + ``sol`` are available (cascade path).  Falls back to
+    # the disk read for legacy / test callers that only pass ``sol``.
     cumulative_co2_df = None
     if prior_handoff is not None and prior_handoff.cumulative_co2 is not None:
         cumulative_co2_df = prior_handoff.cumulative_co2
-    co2_path = sd / "co2_cum_realized_tonnes.csv"
-    if co2_path.exists():
-        try:
-            co2_df = _read_csv_file(co2_path)
-        except pl.exceptions.NoDataError:
-            co2_df = None
-        if co2_df is not None and co2_df.height > 0 and \
-                "p_co2_cum_realized_tonnes" in co2_df.columns:
-            cumulative_co2_df = (
-                co2_df.with_columns(
+    used_native_co2 = False
+    if flex_data is not None and sol is not None:
+        from flextool.engine_polars._writer_co2_accumulators import (
+            compute_co2_rolling_accumulator,
+        )
+        prior_df = (prior_handoff.cumulative_co2
+                    if prior_handoff is not None else None)
+        native_co2 = compute_co2_rolling_accumulator(
+            flex_data, sol, work_folder=work_folder,
+            prior_cumulative_co2=prior_df,
+        )
+        if native_co2.height > 0:
+            cumulative_co2_df = (native_co2
+                .with_columns(
                     value=pl.col("p_co2_cum_realized_tonnes")
                             .cast(pl.Float64, strict=False)
                             .fill_null(0.0))
-                  .select("group", "period", "value"))
+                .select("group", "period", "value"))
+            used_native_co2 = True
+    if not used_native_co2:
+        co2_path = sd / "co2_cum_realized_tonnes.csv"
+        if co2_path.exists():
+            try:
+                co2_df = _read_csv_file(co2_path)
+            except pl.exceptions.NoDataError:
+                co2_df = None
+            if co2_df is not None and co2_df.height > 0 and \
+                    "p_co2_cum_realized_tonnes" in co2_df.columns:
+                cumulative_co2_df = (
+                    co2_df.with_columns(
+                        value=pl.col("p_co2_cum_realized_tonnes")
+                                .cast(pl.Float64, strict=False)
+                                .fill_null(0.0))
+                      .select("group", "period", "value"))
 
     # ---- cumulative_commodity: per-(commodity, tier, period) running mwh ----
     # Δ.11 — derive from sol when v_trade is in the LP and prior_handoff

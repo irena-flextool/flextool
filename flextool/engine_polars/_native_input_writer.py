@@ -739,6 +739,25 @@ def _native_leaf_set_override():
         # references (which are themselves patched).
         (_legacy_solve_time, "run", _native_solve_time.run),
     ]
+    # ── Gap F final — native CO2 rolling accumulator writer ────────────
+    # ``write_co2_rolling_accumulators`` (legacy in
+    # ``flextool.process_outputs.cumulative_handoffs``) is the last
+    # disk-reading writer on the handoff path.  The native impl in
+    # :mod:`._writer_co2_accumulators` consumes FlexData + the LP
+    # solution directly; the override is a forward-compat seam so any
+    # straggling legacy caller routes through the native shim (which
+    # falls back to the legacy disk-reading body when ``flex_data`` /
+    # ``sol`` aren't supplied).
+    from flextool.process_outputs import (
+        cumulative_handoffs as _legacy_cum_handoffs,
+    )
+    from flextool.engine_polars import (
+        _writer_co2_accumulators as _native_co2_acc,
+    )
+    overrides.append((
+        _legacy_cum_handoffs, "write_co2_rolling_accumulators",
+        _native_co2_acc.write_co2_rolling_accumulators_native,
+    ))
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
     ]
