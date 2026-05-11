@@ -621,6 +621,17 @@ class FlexData:
     groupStochastic: pl.DataFrame | None = None   # (g,) — groups enabling storage non-anticipativity
     period_in_use_set: pl.DataFrame | None = None  # (d,) — periods active this solve (filters branches)
 
+    # ─── Gap F final — handoff-path auxiliaries ───────────────────────────
+    # Per-solve in-memory carriers for fields that ``build_handoff_from_flexpy``
+    # would otherwise re-read from ``solve_data/`` to capture the post-solve
+    # handoff.  Populated by :func:`load_flextool` from the corresponding
+    # CSVs when present; ``None`` falls through to the disk-read fallback in
+    # the handoff extractor (preserves test paths that construct FlexData by
+    # hand).
+    realized_dispatch: pl.DataFrame | None = None         # (period, step)
+    period__time_last: pl.DataFrame | None = None         # (period, step)
+    node__storage_nested_fix_method: pl.DataFrame | None = None  # (node, method)
+
     # ─── HiGHS solver options (read from input/solve_mode.csv) ───────────
     # Maps HiGHS option name → value (str / int / float / bool).  flextool
     # writes ``highs_method``, ``highs_parallel``, ``highs_presolve`` rows
@@ -3235,6 +3246,24 @@ def load_flextool(source: "Path | str | FlexInputSource",
             solver_options = _load_solver_options(sd),
         )
 
+        # Gap F final — handoff-path auxiliaries: surface the three CSVs
+        # that ``build_handoff_from_flexpy`` would otherwise re-read.
+        # Each is lenient: file missing or empty → field stays ``None``
+        # and the handoff extractor's disk fallback kicks in.
+        flex_data.realized_dispatch = _load_handoff_aux_pair(
+            sd / "realized_dispatch.csv", ("period", "step"))
+        flex_data.period__time_last = _load_handoff_aux_pair(
+            sd / "period__time_last.csv", ("period", "step"))
+        # ``node__storage_nested_fix_method`` lives in solve_data/ for
+        # cascade solves; fall back to input/ if not yet copied.  Explicit
+        # ``is None`` chain (DataFrame is non-truthy in polars).
+        nsfm = _load_handoff_aux_pair(
+            sd / "node__storage_nested_fix_method.csv", ("node", "method"))
+        if nsfm is None:
+            nsfm = _load_handoff_aux_pair(
+                inp / "node__storage_nested_fix_method.csv", ("node", "method"))
+        flex_data.node__storage_nested_fix_method = nsfm
+
         # Δ.3/Δ.4 — DB-direct construction.  Replaces the previous 3-pass
         # override layering (CSV → first_wave_overrides → projection_overrides
         # → derived_overrides_a..g).  Δ.3 collapsed the dict-overlay
@@ -3398,6 +3427,27 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # of the carriers, the seed in ``_load_invest`` becomes redundant.
     from flextool.engine_polars import _derived_existing as _ex
     _timed("10 existing_chain", _ex.apply_existing_chain, flex_data, db_reader, workdir_path, ctx=ctx)
+
+
+def _load_handoff_aux_pair(path: Path, expected: tuple[str, str]) -> "pl.DataFrame | None":
+    """Gap F final — load a 2-col handoff-auxiliary CSV into a polars
+    frame, tolerating empty / missing files.  ``expected`` lists the two
+    canonical column names the caller wants; we select them and drop
+    anything else.  Returns ``None`` when the file is missing, empty,
+    or doesn't carry the expected columns.
+    """
+    if not path.exists():
+        return None
+    try:
+        df = _read_csv_file(path)
+    except pl.exceptions.NoDataError:
+        return None
+    if df.height == 0:
+        return None
+    a, b = expected
+    if a not in df.columns or b not in df.columns:
+        return None
+    return df.select(a, b)
 
 
 def _read_period_set(path: Path) -> set[str]:
@@ -3568,6 +3618,23 @@ def _step_duration_frame(
         return None
 
 
+def _realized_dispatch_frame(
+    sd: Path, flex_data: "FlexData | None",
+) -> "pl.DataFrame | None":
+    """Gap F final — prefer ``flex_data.realized_dispatch`` (in-memory)
+    over the workdir's ``realized_dispatch.csv``.
+    """
+    if flex_data is not None and getattr(flex_data, "realized_dispatch", None) is not None:
+        return flex_data.realized_dispatch
+    p = sd / "realized_dispatch.csv"
+    if not p.exists():
+        return None
+    try:
+        return _read_csv_file(p)
+    except pl.exceptions.NoDataError:
+        return None
+
+
 def _extract_cum_sim_hours(
     sd: Path, *, prior_handoff=None, flex_data: "FlexData | None" = None,
 ) -> "pl.DataFrame | None":
@@ -3589,16 +3656,11 @@ def _extract_cum_sim_hours(
     Returns the wide ``[period, value]`` carrier frame, or ``None`` when
     neither prior nor the workdir's realized set contributes any rows.
     """
-    rd_path = sd / "realized_dispatch.csv"
+    rd_df = _realized_dispatch_frame(sd, flex_data)
     realized: set[tuple[str, str]] = set()
-    if rd_path.exists():
-        try:
-            rd_df = _read_csv_file(rd_path)
-        except pl.exceptions.NoDataError:
-            rd_df = None
-        if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
-            for r in rd_df.iter_rows(named=True):
-                realized.add((str(r["period"]), str(r["step"])))
+    if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
+        for r in rd_df.iter_rows(named=True):
+            realized.add((str(r["period"]), str(r["step"])))
     this_roll_hrs: dict[str, float] = {}
     if realized:
         sd_df = _step_duration_frame(sd, flex_data)
@@ -3685,9 +3747,8 @@ def _extract_cumulative_commodity(
 
     # Per-period horizon vs realized hours (uniform-split fraction).
     # Phase 4 (Gap F) — ``p_step_duration`` sourced from FlexData when
-    # supplied; ``realized_dispatch.csv`` remains workdir-only (no
-    # equivalent FlexData/SolveHandoff carrier).
-    rd_path = sd / "realized_dispatch.csv"
+    # supplied.  Gap F final — ``realized_dispatch`` also flows through
+    # ``flex_data.realized_dispatch`` via ``_realized_dispatch_frame``.
     horizon_hrs: dict[str, float] = {}
     realized_hrs: dict[str, float] = {}
     sd_df = _step_duration_frame(sd, flex_data)
@@ -3701,14 +3762,10 @@ def _extract_cumulative_commodity(
             "p_step_duration" if "p_step_duration" in sd_df.columns else None
         )
         realized_set: set[tuple[str, str]] = set()
-        if rd_path.exists():
-            try:
-                rd_df = _read_csv_file(rd_path)
-            except pl.exceptions.NoDataError:
-                rd_df = None
-            if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
-                for r in rd_df.iter_rows(named=True):
-                    realized_set.add((str(r["period"]), str(r["step"])))
+        rd_df = _realized_dispatch_frame(sd, flex_data)
+        if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
+            for r in rd_df.iter_rows(named=True):
+                realized_set.add((str(r["period"]), str(r["step"])))
         if d_col is not None and t_col is not None and v_col is not None:
             for r in sd_df.iter_rows(named=True):
                 d_v = str(r[d_col])
@@ -3945,17 +4002,26 @@ def build_handoff_from_flexpy(
     # period_last.  See flextool/process_outputs/handoff_writers.py:425-468.
     roll_end_state_df = None
     nodes_state = _read_singles_csv(sd / "nodeState.csv")
-    pt_last_path = sd / "period__time_last.csv"
-    if not pt_last_path.exists():
-        pt_last_path = sd / "block_period_time_last.csv"
-    if nodes_state and pt_last_path.exists() and "v_state" in sol._vars:
+    # Gap F final — prefer ``flex_data.period__time_last`` (in-memory).
+    last_pairs_df = None
+    if flex_data is not None and getattr(flex_data, "period__time_last", None) is not None:
+        last_pairs_df = flex_data.period__time_last
+    else:
+        pt_last_path = sd / "period__time_last.csv"
+        if not pt_last_path.exists():
+            pt_last_path = sd / "block_period_time_last.csv"
+        if pt_last_path.exists():
+            try:
+                last_pairs_df = _read_csv_file(pt_last_path)
+            except pl.exceptions.NoDataError:
+                last_pairs_df = None
+    if nodes_state and last_pairs_df is not None and "v_state" in sol._vars:
         # Schema: ``period, step`` for period__time_last, or
         # ``block, period, step`` for block_period_time_last.  We want the
         # LAST (period, step) — flextool's writer iterates over the file
         # and overwrites, so the LAST row of the file's per-period entries
         # wins.  For block_period_time_last each block writes one row per
         # period; we just take the unique (period, step) at the maximum.
-        last_pairs_df = _read_csv_file(pt_last_path)
         if last_pairs_df.height > 0:
             cols = last_pairs_df.columns
             d_col = "period" if "period" in cols else "d"
@@ -3996,19 +4062,42 @@ def build_handoff_from_flexpy(
     # the quantity case and isn't exercised by the multi_invest fixture.
     fix_storage_df = None
     fq_nodes: set[str] = set()
-    nsfm_path = sd / "node__storage_nested_fix_method.csv"
-    if nsfm_path.exists():
-        nsfm_df = _read_csv_file(nsfm_path)
-        if nsfm_df.height > 0 and "method" in nsfm_df.columns:
-            fq_nodes = set(
-                nsfm_df.filter(pl.col("method") == "fix_quantity")["node"]
-                .cast(pl.Utf8).to_list()
-            )
-    fix_steps_path = sd / "fix_storage_timesteps.csv"
+    # Gap F final — prefer ``flex_data.node__storage_nested_fix_method``.
+    nsfm_df = None
+    if flex_data is not None and getattr(
+            flex_data, "node__storage_nested_fix_method", None) is not None:
+        nsfm_df = flex_data.node__storage_nested_fix_method
+    else:
+        nsfm_path = sd / "node__storage_nested_fix_method.csv"
+        if nsfm_path.exists():
+            try:
+                nsfm_df = _read_csv_file(nsfm_path)
+            except pl.exceptions.NoDataError:
+                nsfm_df = None
+    if nsfm_df is not None and nsfm_df.height > 0 and "method" in nsfm_df.columns:
+        fq_nodes = set(
+            nsfm_df.filter(pl.col("method") == "fix_quantity")["node"]
+            .cast(pl.Utf8).to_list()
+        )
+    # Gap F final — prefer the in-memory fix_storage_timesteps carriers:
+    # ``parent_handoff.fix_storage_timesteps`` deposits the (period, step)
+    # set for child solves; otherwise this solve writes its own set as
+    # part of ``solve_writers.write_fix_storage_timesteps`` which we then
+    # read from disk.
+    fs_steps_df = None
+    if parent_handoff is not None and getattr(
+            parent_handoff, "fix_storage_timesteps", None) is not None:
+        fs_steps_df = parent_handoff.fix_storage_timesteps
+    else:
+        fix_steps_path = sd / "fix_storage_timesteps.csv"
+        if fix_steps_path.exists():
+            try:
+                fs_steps_df = _read_csv_file(fix_steps_path)
+            except pl.exceptions.NoDataError:
+                fs_steps_df = None
     if (fq_nodes
-            and fix_steps_path.exists()
+            and fs_steps_df is not None
             and "v_state" in sol._vars):
-        fs_steps_df = _read_csv_file(fix_steps_path)
         if fs_steps_df.height > 0 and {"period", "step"}.issubset(
                 fs_steps_df.columns):
             fs_steps = (fs_steps_df
@@ -4047,6 +4136,14 @@ def build_handoff_from_flexpy(
     # snapshot already carries the file, propagate it; when prior_handoff
     # has the carrier, prefer that (in-memory beats disk).  When neither
     # is present, leave None so unexercised fixtures don't pay the cost.
+    #
+    # Gap F final — the disk read here is the ONE remaining read we keep:
+    # the on-disk file is written by
+    # ``write_co2_rolling_accumulators`` (legacy, ~200 LOC) which already
+    # combines prior + this-roll using v_flow × CO2 content × slope etc.
+    # Computing the delta natively is a deep port beyond the 400-LOC
+    # close-out budget — documented and skipped per the task's "leave
+    # the disk read in place for that one field" guidance.
     cumulative_co2_df = None
     if prior_handoff is not None and prior_handoff.cumulative_co2 is not None:
         cumulative_co2_df = prior_handoff.cumulative_co2
