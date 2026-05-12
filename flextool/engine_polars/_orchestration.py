@@ -101,6 +101,132 @@ def _ensure_flextool_importable() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Opt-in memory diagnostics
+# ---------------------------------------------------------------------------
+
+
+class _MemoryRecorder:
+    """Opt-in tracemalloc + RSS checkpoint recorder.
+
+    Activated by ``FLEXTOOL_MEMORY_DIAGNOSTICS=1``.  When the env var is
+    not set, callers should construct :class:`_NoopMemoryRecorder`
+    instead (or simply skip construction); :meth:`checkpoint` here is the
+    hot-path no-op fallback only when ``enabled`` is False.
+
+    Each :meth:`checkpoint` call appends one row to
+    ``<work_folder>/solve_data/memory_diagnostics.csv`` with schema::
+
+        checkpoint,t_elapsed_s,traced_current_mb,traced_peak_mb,rss_mb
+
+    The file is open/append/closed per row (same atomicity pattern as
+    :class:`flextool.flextoolrunner.timing_recorder.TimingRecorder.record`)
+    so a crash mid-cascade still leaves a parseable trail.
+
+    A one-liner is also logged at INFO level via the supplied logger so
+    progress is visible in stdout even when the GUI buffers.
+
+    ``tracemalloc.start()`` is invoked lazily on first checkpoint to keep
+    the cost localised to instrumented runs.
+    """
+
+    _HEADER = (
+        "checkpoint",
+        "t_elapsed_s",
+        "traced_current_mb",
+        "traced_peak_mb",
+        "rss_mb",
+    )
+
+    def __init__(self, csv_path: Path, enabled: bool = True) -> None:
+        self.enabled = enabled
+        self.t0 = time.perf_counter()
+        self._path = Path(csv_path)
+        self._started = False
+        if not self.enabled:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        import csv as _csv
+        with open(self._path, "w", newline="") as f:
+            _csv.writer(f).writerow(self._HEADER)
+
+    @staticmethod
+    def _read_rss_mb() -> float:
+        """Read VmRSS (kB) from /proc/self/status and return MB.
+
+        Returns 0.0 if /proc isn't available (non-Linux) or the line
+        isn't found.  We never want diagnostics to raise.
+        """
+        try:
+            with open("/proc/self/status", "r") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        # "VmRSS:    123456 kB"
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            return float(parts[1]) / 1024.0
+        except OSError:
+            pass
+        return 0.0
+
+    def checkpoint(self, label: str, logger: logging.Logger) -> None:
+        if not self.enabled:
+            return
+        import tracemalloc
+        if not self._started:
+            tracemalloc.start()
+            self._started = True
+        current, peak = tracemalloc.get_traced_memory()
+        rss_mb = self._read_rss_mb()
+        t_elapsed = time.perf_counter() - self.t0
+        current_mb = current / (1024.0 * 1024.0)
+        peak_mb = peak / (1024.0 * 1024.0)
+        row = (
+            str(label),
+            f"{t_elapsed:.6f}",
+            f"{current_mb:.3f}",
+            f"{peak_mb:.3f}",
+            f"{rss_mb:.3f}",
+        )
+        import csv as _csv
+        try:
+            with open(self._path, "a", newline="") as f:
+                _csv.writer(f).writerow(row)
+        except OSError:
+            pass
+        # Always emit one-liner so the user sees phase progress even when
+        # the inner runner's logger has been silenced (run_orchestration
+        # sets ``runner.state.logger.setLevel(ERROR)``).  The caller's
+        # logger gets the INFO record (cheap when level filters it out);
+        # the unconditional stdout write is what surfaces in the GUI.
+        logger.info(
+            "[mem] %s @ t=%.1fs  rss=%.0f MB  traced_peak=%.0f MB",
+            label, t_elapsed, rss_mb, peak_mb,
+        )
+        try:
+            print(
+                f"[mem] {label} @ t={t_elapsed:.1f}s  "
+                f"rss={rss_mb:.0f} MB  traced_peak={peak_mb:.0f} MB",
+                flush=True,
+            )
+        except OSError:
+            pass
+
+
+class _NoopMemoryRecorder:
+    """Zero-overhead drop-in when ``FLEXTOOL_MEMORY_DIAGNOSTICS`` is unset.
+
+    Both attributes accessed by the rest of the module
+    (:meth:`checkpoint` and :attr:`enabled`) are present so callers don't
+    need to branch on ``is None`` at every site.
+    """
+
+    enabled = False
+
+    def checkpoint(self, label: str, logger: logging.Logger) -> None:  # noqa: D401, ARG002
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
 
@@ -435,6 +561,11 @@ def _drive_cascade(
     # from the same dict.
     runner.state.handoffs = state.handoffs
     runner.state.logger.setLevel(logger_level := logging.ERROR)
+    # Forward the opt-in memory recorder (no-op when env var unset) so
+    # ``_FlexpyCascadeSolver.run`` can fire the first-iter checkpoints.
+    runner.state._memory_recorder = getattr(  # type: ignore[attr-defined]
+        state, "_memory_recorder", _NoopMemoryRecorder()
+    )
 
     # Δ.12c — build a SpineDbReader once and reuse it across the cascade.
     # When db_url + scenario_name are supplied (run_chain_from_db wires
@@ -477,6 +608,9 @@ def _drive_cascade(
             # always emit it once for actionable diagnostics).
             self._scale_csv_written: set[str] = set()
             self._scale_report_written: set[str] = set()
+            # Opt-in memory diagnostics — fire the first-iter checkpoints
+            # exactly once (subsequent iterations leave the flag set).
+            self._mem_first_load_done: bool = False
 
         def run(self, complete_solve_name: str) -> int:
             # Optional per-iter phase-timing (opt-in via env var).  Emits
@@ -515,6 +649,12 @@ def _drive_cascade(
                 handoff=prior_for_load,
                 db_reader=cascade_db_reader,
             )
+            # Memory checkpoint (opt-in, first iteration only).
+            _memrec_local = getattr(self.state, "_memory_recorder", None)
+            if _memrec_local is not None and not self._mem_first_load_done:
+                _memrec_local.checkpoint(
+                    "first_load_flextool_end", self.state.logger,
+                )
 
             # --- LP scaling -------------------------------------------------
             # The analyser is keyed on the base solve name (the rolling
@@ -625,6 +765,13 @@ def _drive_cascade(
                         scale_the_objective=effective_obj_scale,
                         solver_options=None,
                     )
+                    if (
+                        _memrec_local is not None
+                        and not self._mem_first_load_done
+                    ):
+                        _memrec_local.checkpoint(
+                            "first_lp_build_end", self.state.logger,
+                        )
                     inner_pb = self._warm_problem.problem
                     lp_ranges = inner_pb.peek_lp_ranges()
                     highs_options = _finalise_highs_options(
@@ -653,6 +800,13 @@ def _drive_cascade(
             else:
                 pb = Problem()
                 build_flextool(pb, data, scale_the_objective=effective_obj_scale)
+                if (
+                    _memrec_local is not None
+                    and not self._mem_first_load_done
+                ):
+                    _memrec_local.checkpoint(
+                        "first_lp_build_end", self.state.logger,
+                    )
                 lp_ranges = pb.peek_lp_ranges()
                 highs_options = _finalise_highs_options(
                     _scaling.recommended_highs_options(
@@ -681,6 +835,14 @@ def _drive_cascade(
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+            # Memory checkpoint after the first solve completes — and
+            # latch the first-iter flag so the four first-iter
+            # checkpoints don't re-fire on subsequent rolls.
+            if _memrec_local is not None and not self._mem_first_load_done:
+                _memrec_local.checkpoint(
+                    "first_solve_end", self.state.logger,
+                )
+                self._mem_first_load_done = True
             # Emit per-iter lp_build / solve / warm_used rows now that
             # the solve is done and we have valid timestamps from
             # whichever branch ran.  handoff is recorded at end-of-run.
@@ -1027,12 +1189,29 @@ def run_chain_from_db(
         write_workdir_inputs,
     )
 
+    # Opt-in memory diagnostics (FLEXTOOL_MEMORY_DIAGNOSTICS=1).  Pin the
+    # CSV under ``solve_data/`` so it sits next to ``timings.csv`` and the
+    # other workdir artefacts.  When the env var is unset we still
+    # construct a no-op recorder so downstream sites can call
+    # ``.checkpoint(...)`` unconditionally — at zero cost.
+    _mem_enabled = os.environ.get("FLEXTOOL_MEMORY_DIAGNOSTICS") == "1"
+    if _mem_enabled:
+        (work_folder / "solve_data").mkdir(parents=True, exist_ok=True)
+        _memrec: _MemoryRecorder | _NoopMemoryRecorder = _MemoryRecorder(
+            work_folder / "solve_data" / "memory_diagnostics.csv",
+            enabled=True,
+        )
+    else:
+        _memrec = _NoopMemoryRecorder()
+    _memrec.checkpoint("cascade_start", logger)
+
     write_workdir_inputs(
         db_url,
         scenario_name,
         work_folder,
         logger=logger,
     )
+    _memrec.checkpoint("write_workdir_inputs_end", logger)
 
     # Construct the underlying FlexToolRunner — still needed to carry
     # the cross-cutting ``RunnerState`` (timeline, solve config, handoff
@@ -1070,6 +1249,11 @@ def run_chain_from_db(
         timeline=tc,
         handoffs={},
     )
+    # Stash the memory recorder so ``run_orchestration`` →
+    # ``_FlexpyCascadeSolver`` can fire the remaining first-iter
+    # checkpoints (load / build / solve) without having to plumb it
+    # through additional keyword arguments.
+    state._memory_recorder = _memrec  # type: ignore[attr-defined]
 
     return run_orchestration(
         state, work_folder, runner_factory=_runner_factory,
