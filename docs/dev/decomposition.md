@@ -101,10 +101,11 @@ for r in ("A", "B"):
 ```
 
 The reference catalogue entry is `group.decomposition_method` in
-[reference.md](../reference.md); the schema documents the value
-`lagrangian_region` (the legacy alias ``lagrangian`` is also accepted
-in some doc passes — the source of truth is
-`flextool/engine_polars/_region_filter.py:load_decomposition_method`).
+[reference.md](../reference.md); the only accepted value is
+`lagrangian_region` (the `_region` suffix makes the geographic flavour
+explicit, leaving naming room for any future temporal Lagrangian
+variant). The source of truth is
+`flextool/engine_polars/_region_filter.py:load_decomposition_method`.
 
 ### 2.3 Half-flow rewriting
 

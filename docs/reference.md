@@ -430,7 +430,7 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 
 ### Decomposition (spatial Lagrangian)
 
-- `decomposition_method` - Decomposition strategy to apply to this group. Currently supported: `none` (no decomposition; default) and `lagrangian` (the group becomes a spatial region for `--decomposition lagrangian`). See [dev/decomposition.md](dev/decomposition.md) for the algorithm, gap tolerances, and the membership classes the decomposer expects.
+- `decomposition_method` - Decomposition strategy to apply to this group. Currently supported: `none` (no decomposition; default) and `lagrangian_region` (the group becomes a spatial region for `--decomposition lagrangian` — the `_region` suffix emphasises that this is the *geographic* flavour, distinct from any future temporal Lagrangian variant). See [dev/decomposition.md](dev/decomposition.md) for the algorithm, gap tolerances, and the membership classes the decomposer expects.
 
 ### Flex-temporal decomposition (per-group step duration)
 
