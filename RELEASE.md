@@ -1,20 +1,17 @@
 ## Release 3.32.0 (5.5.2026)
 **Bug fixes**
-- O(N²×T²) hot loop in `node_inflow_scaling_params.has_node_time_inflow` collapsed to O(N + |pairs|)
-- Quadratic linear scan in `blocks::derive_blocks::_assign_entity_to_group` replaced with a precomputed `(entity → group)` lookup
-- O(8 × G × A) cross-product scan in `process_arc_unions::write_node_group_dispatch_sets` replaced with side-node indexing
 - Excel template link-sheet retention: drop link sheets where the link's own class has no surviving data (e.g. `connection_node` when `constraint` is unselected)
 - `group.{include_stochastics, new_stepduration}` retagged from `model`/`timeline` to `solve_advanced`
 - `timeset.{timeset_weights, representative_period_weights}` retagged to `solve_advanced`
+- Quadratic linear scan in `blocks::derive_blocks::_assign_entity_to_group` replaced with a precomputed `(entity → group)` lookup
 
 **New features**
 - `--groups` CLI flag on `cmd_export_to_tabular` to restrict the Excel template to a parameter-group set; sheets with no surviving columns are dropped
 - GUI parameter-group picker on "Add empty FlexTool input Excel" — DB-driven checkbox tree, required groups (`timeline`, `model`, `solve_basics`, `basics`) highlighted with hover tooltip; theme-aware colours
 - Default-value row in v2 Excel sheets where any parameter on the sheet has a default (Map/Array defaults stringified)
-- `default 0` declarations on six dense `pdt*` parameters (`pdtProcess`, `pdtNode`, `pdtNodeInflow`, `pdtProfile`, `pdtProcess_source_sink`, `pdtProcess__source__sink__dt_varCost{,_alwaysProcess}`) — paired with sparse Python writers that skip zero rows
-- `is_static(entity, param)` fast-path in `PdtLookup`/`PdtLookupPerSide` — entries with no time-/period-varying source emit `|dt|` repeated rows from a single `lookup.get` call
-- `pandas.read_csv` + vectorised mask in `_read_pdt_at_param` and the `pdtProcess__source__sink__dt_varCost.csv` reader (5–10× over Python `csv.reader`)
-- `_write_5col` switched to `pd.DataFrame.to_csv` and the four `pssdt_varCost_*` filter builds now sparse-iterate via pre-built `(p, src, snk) → (d, t)` indices
+- Representative-period clustering input drops scalar-valued profiles/inflows
+
+**Note** — `new-outputs` also landed four hot-path optimisations on the legacy `flextool/flextoolrunner/preprocessing/*` writers (`is_static` fast-path on `PdtLookup`, sparse-emit + `default 0` on the six dense `pdt*` CSVs, `pandas.read_csv` swap in `_read_pdt_at_param`, sparse iteration in `pssdt_varCost_*`, the O(N²×T²) → O(N + |pairs|) fix on `node_inflow_scaling_params.has_node_time_inflow`, and side-node indexing for `process_arc_unions::write_node_group_dispatch_sets`).  Those edits target a code path that the `engine_polars` writer port (Writer Phase 1-4) is retiring, so they were not carried across in the merge — the performance lessons are preserved as actionable items for the native polars writers in `specs/sparse_writer_lessons_for_engine_polars.md`.
 
 ## Release 3.31.0 (4.5.2026)
 **Bug fixes**
