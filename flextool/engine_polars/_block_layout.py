@@ -489,6 +489,270 @@ class BlockLayout:
         return layout
 
     # ------------------------------------------------------------------
+    # Source-only constructor (Phase 1 of the fast-path multi-block plan)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_source(
+        cls,
+        source,
+        solve_config: "SolveConfig",
+        timeline_config: "TimelineConfig",
+        *,
+        active_solve: str | None = None,
+        validate: bool = True,
+    ) -> "BlockLayout":
+        """Construct a :class:`BlockLayout` directly from a Spine
+        :class:`~flextool.engine_polars._input_source.InputSource`.
+
+        Source-only counterpart to :meth:`load_from_solve_data`: pulls
+        every input that :meth:`build` needs from the source / configs
+        (no workdir CSV reads), then delegates.  Intended for the fast
+        single-solve path where ``solve_data/`` is empty.
+
+        Parameters
+        ----------
+        source : InputSource
+            Scenario-resolved per-(entity_class, parameter_name)
+            reader (e.g. :class:`SpineDbReader`,
+            :class:`InMemoryReader`).
+        solve_config, timeline_config :
+            Already-loaded configs.  ``timeline_config`` must have had
+            :meth:`TimelineConfig.create_assumptive_parts` /
+            :meth:`TimelineConfig.create_timeline_from_timestep_duration`
+            applied so :func:`_timeline.get_active_time` succeeds for
+            ``active_solve``.
+        active_solve : str | None
+            Active solve name.  When ``None`` we pick the first solve
+            entity in the scenario (single-solve fixtures).
+        validate : bool
+            Forwarded to :meth:`build` — when ``True`` runs
+            :func:`validate_group_membership` on the assembled inputs.
+
+        Returns
+        -------
+        BlockLayout
+            Fully populated, identical surface to what
+            :meth:`load_from_solve_data` produces from the slow-path's
+            ``solve_data/`` block CSVs (on the same scenario).
+
+        Notes
+        -----
+        Phase 1 of the multi-block fast-path plan only builds the
+        constructor — it is **not** yet wired into ``_fast_load.py``.
+        See the audit doc / Phase-2 task for the wiring step.
+        """
+        # ── 1. Resolve the active solve name ───────────────────────────
+        from flextool.engine_polars._projection_params import (
+            _try_entities,
+            _try_param,
+        )
+
+        if active_solve is None:
+            solves_param = _try_param(source, "model", "solves")
+            if solves_param is not None and solves_param.height > 0:
+                val_col = (
+                    "value" if "value" in solves_param.columns
+                    else solves_param.columns[-1]
+                )
+                active_solve = str(solves_param[val_col][0])
+            else:
+                solve_ents = _try_entities(source, "solve")
+                if solve_ents is None or solve_ents.height == 0:
+                    raise FlexToolConfigError(
+                        "BlockLayout.from_source: no active solve could be "
+                        "resolved — pass ``active_solve`` explicitly or "
+                        "populate ``model.solves`` / the ``solve`` entity "
+                        "class in the source."
+                    )
+                name_col = next(
+                    c for c in solve_ents.columns if c != "id"
+                )
+                active_solve = str(solve_ents[name_col][0])
+
+        # ── 2. Entity universes ────────────────────────────────────────
+        units_df = _try_entities(source, "unit")
+        units = units_df["name"].to_list() if units_df is not None else []
+        conns_df = _try_entities(source, "connection")
+        connections = (
+            conns_df["name"].to_list() if conns_df is not None else []
+        )
+        nodes_df = _try_entities(source, "node")
+        nodes = nodes_df["name"].to_list() if nodes_df is not None else []
+
+        # ── 3. Group resolution (new_stepduration / decomposition_method)
+        resolution_groups: dict[str, float] = {}
+        rg_param = _try_param(source, "group", "new_stepduration")
+        if rg_param is not None:
+            name_col = (
+                "name" if "name" in rg_param.columns
+                else rg_param.columns[0]
+            )
+            for row in rg_param.iter_rows(named=True):
+                v = row["value"]
+                if v is None:
+                    continue
+                try:
+                    resolution_groups[row[name_col]] = float(v)
+                except (TypeError, ValueError):
+                    continue
+
+        decomposition_groups: dict[str, str] = {}
+        dg_param = _try_param(source, "group", "decomposition_method")
+        if dg_param is not None:
+            name_col = (
+                "name" if "name" in dg_param.columns
+                else dg_param.columns[0]
+            )
+            for row in dg_param.iter_rows(named=True):
+                v = row["value"]
+                if v is None:
+                    continue
+                decomposition_groups[row[name_col]] = str(v)
+
+        # ── 4. Group memberships ───────────────────────────────────────
+        def _pairs(cls_name: str, dim: str) -> list[tuple[str, str]]:
+            df = _try_entities(source, cls_name)
+            if df is None or df.height == 0:
+                return []
+            return list(zip(df["group"].to_list(), df[dim].to_list()))
+
+        group_node = _pairs("group__node", "node")
+        group_unit = _pairs("group__unit", "unit")
+        group_connection = _pairs("group__connection", "connection")
+
+        # ── 5. Reserve membership (optional; absent on most fixtures) ──
+        reserve_upDown_group: list[tuple[str, str, str]] = []
+        rug_df = _try_entities(source, "reserve__upDown__group")
+        if rug_df is not None and rug_df.height > 0:
+            # Filter rows whose ``method`` (if defined) is not ``no_reserve``.
+            method_param = _try_param(
+                source, "reserve__upDown__group", "method",
+            )
+            excluded: set[tuple[str, str, str]] = set()
+            if method_param is not None:
+                for row in method_param.iter_rows(named=True):
+                    if str(row.get("value", "")) == "no_reserve":
+                        excluded.add(
+                            (row["reserve"], row["upDown"], row["group"])
+                        )
+            for r, ud, g in zip(
+                rug_df["reserve"].to_list(),
+                rug_df["upDown"].to_list(),
+                rug_df["group"].to_list(),
+            ):
+                if (r, ud, g) in excluded:
+                    continue
+                reserve_upDown_group.append((r, ud, g))
+
+        process_reserve_upDown_node: list[tuple[str, str, str, str]] = []
+        for cls_name, p_col in (
+            ("reserve__upDown__unit__node", "unit"),
+            ("reserve__upDown__connection__node", "connection"),
+        ):
+            df = _try_entities(source, cls_name)
+            if df is None or df.height == 0:
+                continue
+            for p, r, ud, n in zip(
+                df[p_col].to_list(),
+                df["reserve"].to_list(),
+                df["upDown"].to_list(),
+                df["node"].to_list(),
+            ):
+                process_reserve_upDown_node.append((p, r, ud, n))
+
+        # ── 6. process_source_sink (first source / first sink per process)
+        # Built directly from ``unit__inputNode`` / ``unit__outputNode`` /
+        # ``connection__node__node`` — matching the slow path's
+        # ``process__source.csv`` / ``process__sink.csv`` derivation
+        # (input_writer.py emits one row per (process, input-or-output
+        # node) pair; first one wins per `derive_blocks`'s usage).
+        first_source: dict[str, str] = {}
+        first_sink: dict[str, str] = {}
+        uin = _try_entities(source, "unit__inputNode")
+        if uin is not None:
+            for u, n in zip(uin["unit"].to_list(), uin["node"].to_list()):
+                first_source.setdefault(u, n)
+        uout = _try_entities(source, "unit__outputNode")
+        if uout is not None:
+            for u, n in zip(uout["unit"].to_list(), uout["node"].to_list()):
+                first_sink.setdefault(u, n)
+        cnn = _try_entities(source, "connection__node__node")
+        if cnn is not None:
+            for c, a, b in zip(
+                cnn["connection"].to_list(),
+                cnn["node_1"].to_list(),
+                cnn["node_2"].to_list(),
+            ):
+                first_source.setdefault(c, a)
+                first_sink.setdefault(c, b)
+        process_source_sink: list[tuple[str, str, str]] = []
+        all_procs = set(first_source) | set(first_sink)
+        for p in all_procs:
+            process_source_sink.append(
+                (p, first_source.get(p, ""), first_sink.get(p, ""))
+            )
+
+        # ── 7. process_ct_method ──────────────────────────────────────
+        # Slow-path ``process__ct_method.csv`` = union of
+        # ``unit.conversion_method`` and ``connection.transfer_method``
+        # (input_writer.py:394).
+        process_ct_method: dict[str, str] = {}
+        cm_unit = _try_param(source, "unit", "conversion_method")
+        if cm_unit is not None:
+            for row in cm_unit.iter_rows(named=True):
+                process_ct_method[row["name"]] = str(row["value"])
+        cm_conn = _try_param(source, "connection", "transfer_method")
+        if cm_conn is not None:
+            for row in cm_conn.iter_rows(named=True):
+                process_ct_method[row["name"]] = str(row["value"])
+
+        # ── 8. active_time_list — derived from timeline + solve configs.
+        from flextool.engine_polars._timeline import get_active_time
+
+        active_time_list = get_active_time(
+            current_solve=active_solve,
+            timesets_used_by_solves=(
+                solve_config.timesets_used_by_solves
+            ),
+            timesets=timeline_config.timeset_durations,
+            timelines=timeline_config.timelines,
+            timesets__timelines=timeline_config.timesets__timeline,
+        )
+
+        # ── 9. default_jump_list:
+        # Phase-1 scope deliberately defers building this from
+        # ``make_step_jump`` (needs ``period__branch`` /
+        # ``solve_branch__time_branch_list``, which require additional
+        # source plumbing).  Passing ``None`` lets ``build`` fall back
+        # to ``_cyclic_block_predecessors`` — on simple single-period
+        # non-stochastic fixtures the slow-path's ``step_previous.csv``
+        # produces the same rows (verified by the parity test below
+        # and by the existing ``test_load_from_solve_data_bridge_*``).
+        return cls.build(
+            solve=active_solve,
+            solve_config=solve_config,
+            timeline_config=timeline_config,
+            nodes=nodes,
+            units=units,
+            connections=connections,
+            resolution_groups=resolution_groups,
+            group_unit=group_unit,
+            group_connection=group_connection,
+            group_node=group_node,
+            process_source_sink=process_source_sink,
+            process_ct_method=process_ct_method,
+            decomposition_groups=decomposition_groups,
+            reserve_upDown_group=reserve_upDown_group or None,
+            process_reserve_upDown_node=(
+                process_reserve_upDown_node or None
+            ),
+            active_time_list=active_time_list,
+            default_jump_list=None,
+            validate=validate,
+        )
+
+    # ------------------------------------------------------------------
     # Phase 1: block tagging (entity + process side)
     # ------------------------------------------------------------------
 

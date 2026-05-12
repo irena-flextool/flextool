@@ -749,3 +749,129 @@ def test_default_block_only_emits_identity_overlap() -> None:
     assert ov.height == 2
     assert (ov["block_coarse"] == DEFAULT_BLOCK).all()
     assert (ov["step_coarse"] == ov["step_fine"]).all()
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 of the multi-block fast-path plan:
+# ``BlockLayout.from_source`` parity vs ``load_from_solve_data``.
+# ---------------------------------------------------------------------------
+
+
+def _sorted_rows(df: pl.DataFrame) -> list[tuple]:
+    """Sort a frame's rows for order-insensitive comparison.  Some
+    frames are insertion-determined (overlap, predecessors); the LP
+    build is order-insensitive, so multiset-equality is the right
+    parity check."""
+    return sorted(df.iter_rows())
+
+
+def test_block_layout_from_source_matches_load_from_solve_data_lh2():
+    """Source-only :meth:`BlockLayout.from_source` must produce frames
+    multiset-equal to :meth:`BlockLayout.load_from_solve_data` on the
+    LH2 three-region fixture (canonical multi-block test case).
+
+    Phase 1 of the multi-block fast-path plan — verifies the
+    constructor in isolation before it is wired into ``_fast_load.py``.
+    """
+    from flextool.engine_polars import SpineDbReader
+    from flextool.engine_polars._solve_config import SolveConfig
+    from flextool.engine_polars._timeline import TimelineConfig
+
+    fixture = DATA / "work_lh2_three_region"
+    db = fixture / "tests.sqlite"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+
+    # CSV-loader baseline.
+    bl_csv = BlockLayout.load_from_solve_data(fixture / "solve_data")
+
+    # Source-only constructor.
+    reader = SpineDbReader(str(db), scenario="lh2_three_region")
+    sc = SolveConfig.load_from_source(reader)
+    tc = TimelineConfig.load_from_source(reader)
+    tc.create_assumptive_parts(sc)
+    tc.create_timeline_from_timestep_duration(sc)
+    bl_src = BlockLayout.from_source(
+        reader, sc, tc, active_solve="lh2_week",
+    )
+
+    frame_attrs = (
+        "entity_block_frame",
+        "process_side_block_frame",
+        "process_block_frame",
+        "block_step_duration_frame",
+        "overlap_set_frame",
+        "block_step_previous_frame",
+        "block_period_time_first_frame",
+        "block_period_time_last_frame",
+    )
+    for attr in frame_attrs:
+        f_csv = getattr(bl_csv, attr)
+        f_src = getattr(bl_src, attr)
+        assert f_csv.columns == f_src.columns, (
+            f"{attr}: columns differ — "
+            f"csv={f_csv.columns} src={f_src.columns}"
+        )
+        a = _sorted_rows(f_csv)
+        b = _sorted_rows(f_src)
+        assert a == b, (
+            f"{attr} diverges:\n"
+            f"  csv-loader rows={f_csv.height}, "
+            f"first5={a[:5]}\n"
+            f"  from_source rows={f_src.height}, "
+            f"first5={b[:5]}\n"
+            f"  only_csv[:3]={[r for r in a if r not in set(b)][:3]}\n"
+            f"  only_src[:3]={[r for r in b if r not in set(a)][:3]}"
+        )
+
+
+def test_block_layout_from_source_single_block_fixture():
+    """On a single-block fixture (``work_base``) the source-only
+    constructor must produce the trivial layout — every entity on the
+    default block, identity-only overlap — exactly as the CSV loader
+    does today.
+
+    Negative control on Phase 1 of the fast-path plan: confirms the
+    new constructor isn't fabricating multi-block frames where none
+    should exist.
+    """
+    from flextool.engine_polars import SpineDbReader
+    from flextool.engine_polars._solve_config import SolveConfig
+    from flextool.engine_polars._timeline import TimelineConfig
+
+    fixture = DATA / "work_base"
+    db = fixture / "tests.sqlite"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+
+    reader = SpineDbReader(str(db), scenario="base")
+    sc = SolveConfig.load_from_source(reader)
+    tc = TimelineConfig.load_from_source(reader)
+    tc.create_assumptive_parts(sc)
+    tc.create_timeline_from_timestep_duration(sc)
+    bl_src = BlockLayout.from_source(reader, sc, tc)
+
+    # Default block only, every node assigned to default,
+    # overlap_set is identity rows.
+    assert set(bl_src.block_step_duration) == {DEFAULT_BLOCK}
+    if bl_src.node_block:
+        assert set(bl_src.node_block.values()) == {DEFAULT_BLOCK}
+
+    ov = bl_src.overlap_set_frame
+    assert ov.height > 0
+    assert (ov["block_coarse"] == DEFAULT_BLOCK).all()
+    assert (ov["block_fine"] == DEFAULT_BLOCK).all()
+    assert (ov["step_coarse"] == ov["step_fine"]).all()
+    assert (ov["fraction"] == 1.0).all()
+
+    # CSV-loader bridge produces the same trivial frames.
+    bl_csv = BlockLayout.load_from_solve_data(fixture / "solve_data")
+    if bl_csv.block_step_duration_frame.height > 0:
+        assert (
+            _sorted_rows(bl_src.block_step_duration_frame)
+            == _sorted_rows(bl_csv.block_step_duration_frame)
+        )
+        assert (
+            _sorted_rows(bl_src.entity_block_frame)
+            == _sorted_rows(bl_csv.entity_block_frame)
+        )

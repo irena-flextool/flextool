@@ -418,6 +418,13 @@ class FlexData:
     period_branch: pl.DataFrame | None = None         # (d_upper, d) — period→branch map
     period_last: pl.DataFrame | None = None           # (d,)
     nodeState_last_dt: pl.DataFrame | None = None     # (n, d, t) — block_period_time_last × node__block × nodeState
+    # In-memory BlockLayout shared between slow and fast paths.  Populated
+    # by load_flextool (slow) and load_flextool_source_only (fast); consumed
+    # by nodeStateBlock_from_source and period_block_family_from_source's
+    # multi-resolution synthesis branches, plus arc_block_dt_from_source and
+    # load_block_bundle, so the fast path doesn't have to look for the
+    # solve_data/ block CSVs that won't exist when preprocessing is skipped.
+    block_layout: "BlockLayout | None" = None
     # ─── Intraperiod-block storage (bind_intraperiod_blocks) ─────────────
     nodeStateBlock: pl.DataFrame | None = None             # set: (n,)
     period_block: pl.DataFrame | None = None               # set: (d, b_first)
@@ -3302,6 +3309,14 @@ def load_flextool(source: "Path | str | FlexInputSource",
             p_arc_sink_weight = p_arc_sink_weight,
             p_arc_source_weight = p_arc_source_weight,
             solver_options = _load_solver_options(sd),
+            # Phase 2 multi-block fast-path: stash the per-solve BlockLayout
+            # built above on the FlexData so the override chain helpers
+            # (period_block_family_from_source, nodeStateBlock_from_source,
+            # arc_block_dt_from_source, load_block_bundle) can consume the
+            # in-memory frames instead of re-reading solve_data/ CSVs on the
+            # fast path.  On the slow path this is the same layout that
+            # was just used to load process topology a few lines above.
+            block_layout = block_layout,
         )
 
         # Gap F final — handoff-path auxiliaries: surface the three CSVs

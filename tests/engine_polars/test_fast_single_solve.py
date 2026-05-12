@@ -368,3 +368,54 @@ def test_fast_single_solve_p_node_capacity_for_scaling_lh2(tmp_path: Path) -> No
         "fast path: every p_node_capacity_for_scaling row should "
         "carry the default scalar 1.0 (scaling-inactive path)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Multi-block fast-path sentinel — Phase 0 of the multi-block plan.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.solver
+def test_lh2_three_region_fast_path_obj_parity(tmp_path: Path) -> None:
+    """Multi-block fast-path obj must match slow-path within 1e-6 rel err.
+
+    Anchors the multi-block fast-path parity bar from
+    specs/multi_block_fast_path_handoff.md.  Closed by Phase 1 +
+    Phase 2 (``BlockLayout.from_source`` + threading through
+    ``apply_derived_b/e``); current rel_err ≤ 1e-14 on LH2.
+    """
+    import json
+
+    from polar_high import Problem
+    from flextool.engine_polars import build_flextool, SpineDbReader
+    from flextool.engine_polars._fast_load import load_flextool_source_only
+
+    fixture = DATA / "work_lh2_three_region"
+    db = fixture / "tests.sqlite"
+    golden = fixture / "golden_obj.json"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+    if not golden.exists():
+        pytest.skip(f"fixture golden missing: {golden}")
+
+    work = tmp_path / "fast_lh2"
+    work.mkdir()
+    reader = SpineDbReader(db, scenario="lh2_three_region")
+    fd = load_flextool_source_only(reader, work)
+
+    pb = Problem()
+    build_flextool(pb, fd)
+    sol = pb.solve()
+
+    assert sol is not None, "fast path: solve() returned no Solution"
+    assert sol.optimal, (
+        f"fast path: HiGHS non-optimal "
+        f"(status={getattr(sol, 'status', None)})"
+    )
+
+    golden_obj = json.loads(golden.read_text())["obj"]
+    rel_err = abs(sol.obj - golden_obj) / abs(golden_obj)
+    assert rel_err < 1e-6, (
+        f"fast path obj={sol.obj} differs from golden "
+        f"{golden_obj} by rel_err={rel_err:.3e}"
+    )

@@ -2337,8 +2337,15 @@ def apply_derived_b(
             flow_from_nodeBalance_seed,
             load_block_bundle,
         )
+        # Phase 2 multi-block fast-path: thread the in-memory layout
+        # (built source-only by the fast loader and stashed on
+        # ``FlexData``) so the block-aware filter fires on the fast path
+        # too — without it, multi-block fixtures produce un-filtered
+        # ``flow_from_nodeBalance_*`` seeds and the resulting LP is
+        # over-constrained.
+        fd_layout_b = getattr(flex_data, "block_layout", None)
         try:
-            bundle = load_block_bundle(workdir)
+            bundle = load_block_bundle(workdir, block_layout=fd_layout_b)
         except Exception:
             bundle = None
         ftn_db = flow_to_n_block_filtered(pss_frame, bundle)
@@ -5836,6 +5843,8 @@ def dtttdt_from_source(source: "InputSource",
 def period_block_family_from_source(source: "InputSource",
                                        active_solve: str | None,
                                        workdir: Path | None = None,
+                                       *,
+                                       block_layout: "BlockLayout | None" = None,
                                        ) -> dict | None:
     """Build the ``period_block_set`` / ``period_block_succ`` /
     ``period_block_time`` frames mirrored on
@@ -5897,11 +5906,16 @@ def period_block_family_from_source(source: "InputSource",
 
     # Multi-resolution synthesis (input.py:1985-2126 mirror).  Δ.2:
     # consume frames via BlockLayout.load_from_solve_data instead of
-    # re-reading the CSVs at the call site.
-    if workdir is not None:
+    # re-reading the CSVs at the call site.  Phase 2 multi-block fast-
+    # path: prefer the in-memory ``block_layout`` (built source-only by
+    # the fast loader and stashed on FlexData) over the workdir CSV
+    # read — on the fast path the workdir's solve_data/ is empty.
+    bl = block_layout
+    if bl is None and workdir is not None:
         from flextool.engine_polars._block_layout import BlockLayout
         sd = Path(workdir) / "solve_data"
         bl = BlockLayout.load_from_solve_data(sd)
+    if bl is not None:
         eb = bl.entity_block_frame
         bsd = bl.block_step_duration_frame
         if eb.height > 0 and bsd.height > 0:
@@ -6035,6 +6049,8 @@ def _coarse_blocks_from_source(source: "InputSource"
 
 def nodeStateBlock_from_source(source: "InputSource",
                                   workdir: Path | None,
+                                  *,
+                                  block_layout: "BlockLayout | None" = None,
                                   ) -> pl.DataFrame | None:
     """Synthesise the ``nodeStateBlock`` set per audit §3.9.2.
 
@@ -6071,10 +6087,15 @@ def nodeStateBlock_from_source(source: "InputSource",
             rows.extend(intraperiod["n"].to_list())
     # Branch 2: multi-resolution synthesis via in-memory BlockLayout
     # (Δ.2: consolidated through ``BlockLayout.load_from_solve_data``).
-    if workdir is not None:
+    # Phase 2 multi-block fast-path: prefer the in-memory ``block_layout``
+    # (built source-only by the fast loader and stashed on FlexData) so
+    # the workdir CSV read can be skipped when ``solve_data/`` is empty.
+    bl = block_layout
+    if bl is None and workdir is not None:
         from flextool.engine_polars._block_layout import BlockLayout
         sd = Path(workdir) / "solve_data"
         bl = BlockLayout.load_from_solve_data(sd)
+    if bl is not None:
         eb = bl.entity_block_frame
         bsd = bl.block_step_duration_frame
         if eb.height > 0 and bsd.height > 0:
@@ -6113,6 +6134,8 @@ def arc_block_dt_from_source(source: "InputSource",
                                  nodeStateBlock_df: pl.DataFrame | None,
                                  period_block_time_df: pl.DataFrame | None,
                                  pss: pl.DataFrame | None,
+                                 *,
+                                 block_layout: "BlockLayout | None" = None,
                                  ) -> dict | None:
     """Build per-arc daily-block aggregation frames.
 
@@ -6141,10 +6164,16 @@ def arc_block_dt_from_source(source: "InputSource",
         return None
     # Δ.2: consume block frames via BlockLayout instead of reading
     # process_side_block.csv + block_step_duration.csv directly.
-    from flextool.engine_polars._block_layout import BlockLayout
-    sd = Path(workdir) / "solve_data"
-    bl = BlockLayout.load_from_solve_data(sd)
-    if (bl.process_side_block_frame.height == 0
+    # Phase 2 multi-block fast-path: prefer the in-memory ``block_layout``
+    # (built source-only by the fast loader and stashed on FlexData) so
+    # the workdir CSV read can be skipped when ``solve_data/`` is empty.
+    bl = block_layout
+    if bl is None:
+        from flextool.engine_polars._block_layout import BlockLayout
+        sd = Path(workdir) / "solve_data"
+        bl = BlockLayout.load_from_solve_data(sd)
+    if (bl is None
+            or bl.process_side_block_frame.height == 0
             or bl.block_step_duration_frame.height == 0):
         return None
     psb = bl.process_side_block_frame.rename(
@@ -6691,8 +6720,13 @@ def apply_derived_e(
     # Δ.9 — single BlockBundle per solve (replaces 4× CSV reads).
     # Δ.12b — bundle-load failure is non-fatal (workdir without block
     # CSVs is legitimate for fixtures without explicit blocks).
+    # Phase 2 multi-block fast-path: thread the in-memory layout (built
+    # source-only by the fast loader and stashed on ``FlexData``) so
+    # ``load_block_bundle`` returns a populated bundle even when the
+    # workdir's solve_data/ is empty.
+    fd_layout = getattr(flex_data, "block_layout", None)
     try:
-        block_bundle = load_block_bundle(workdir)
+        block_bundle = load_block_bundle(workdir, block_layout=fd_layout)
     except Exception:
         block_bundle = None
 
@@ -6717,7 +6751,7 @@ def apply_derived_e(
     pb_family = None
     if has_state:
         pb_family = period_block_family_from_source(
-            source, active_solve, workdir)
+            source, active_solve, workdir, block_layout=fd_layout)
     period_block_time_for_arc: pl.DataFrame | None = None
     if pb_family is not None:
         flex_data.period_block = pb_family["period_block"]
@@ -6740,7 +6774,8 @@ def apply_derived_e(
     # 3. nodeStateBlock synthesis (storage-only) ----------------------
     nsb_db = None
     if has_state:
-        nsb_db = nodeStateBlock_from_source(source, workdir)
+        nsb_db = nodeStateBlock_from_source(
+            source, workdir, block_layout=fd_layout)
         flex_data.nodeStateBlock = nsb_db
 
     # 4. arc block weights --------------------------------------------
@@ -6756,7 +6791,8 @@ def apply_derived_e(
     if (nsb_db is not None and period_block_time_for_arc is not None
             and pss is not None):
         arc = arc_block_dt_from_source(
-            source, workdir, nsb_db, period_block_time_for_arc, pss)
+            source, workdir, nsb_db, period_block_time_for_arc, pss,
+            block_layout=fd_layout)
         if arc is not None:
             for k in ("arc_sink_block_dt", "arc_source_block_dt",
                        "p_arc_sink_weight", "p_arc_source_weight"):

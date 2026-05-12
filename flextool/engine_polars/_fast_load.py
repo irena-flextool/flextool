@@ -458,6 +458,33 @@ def load_flextool_source_only(
         input_dir=work_folder / "input",
     )
 
+    # Phase 2 multi-block fast-path: build BlockLayout source-only
+    # (Phase 1's ``BlockLayout.from_source``) so the override chain's
+    # block-aware helpers (``nodeStateBlock_from_source`` Branch 2,
+    # ``period_block_family_from_source`` multi-resolution synthesis,
+    # ``arc_block_dt_from_source``, ``load_block_bundle``) can consume
+    # the in-memory frames instead of looking for ``solve_data/`` CSVs
+    # that won't exist on the fast path (no preprocessing has run).
+    try:
+        from flextool.engine_polars._block_layout import BlockLayout
+        from flextool.engine_polars._solve_config import SolveConfig
+        from flextool.engine_polars._timeline import TimelineConfig
+
+        sc = SolveConfig.load_from_source(reader)
+        tc = TimelineConfig.load_from_source(reader)
+        tc.create_assumptive_parts(sc)
+        tc.create_timeline_from_timestep_duration(sc)
+        flex_data.block_layout = BlockLayout.from_source(
+            reader, sc, tc, active_solve=active_solve,
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            "fast path: failed to build in-memory BlockLayout: %s; "
+            "multi-block helpers will see no block data and the LP may "
+            "be over-constrained on fixtures that use coarse blocks.",
+            exc,
+        )
+
     # 3-4. Override chain.  Late-import to avoid cycles.
     from flextool.engine_polars.input import _apply_db_overrides
     _apply_db_overrides(flex_data, reader, source_shim, ctx=None)
@@ -491,6 +518,27 @@ def _validate_required_fields(flex_data: "FlexData") -> None:
         ("nodeBalance", "DataFrame"),
         ("p_inflow", "Param"),
     ]
+    # If BlockLayout carries non-default (intraperiod-block) storage,
+    # require the storage block sets.  This guards future regressions:
+    # a helper that silently returns None for nodeStateBlock would
+    # currently produce a wrong-but-non-zero obj (the +21.6 % bug
+    # Phase 2 fixed); the dense vs block-relaxed LP substitution is
+    # invisible without an explicit invariant.  Note that every fixture
+    # has at least the trivial ``default`` block in the layout, so
+    # ``is_empty()`` is not a useful trigger here — we gate on the
+    # presence of non-default block names.
+    bl = getattr(flex_data, "block_layout", None)
+    if bl is not None and not bl.is_empty():
+        block_names = set(
+            bl.block_step_duration_frame["block"].unique().to_list()
+        )
+        if block_names - {"default"}:
+            required.extend([
+                ("nodeStateBlock", "DataFrame"),
+                ("period_block", "DataFrame"),
+                ("period_block_succ", "DataFrame"),
+                ("period_block_time", "DataFrame"),
+            ])
     for field, kind in required:
         v = getattr(flex_data, field, None)
         if v is None:

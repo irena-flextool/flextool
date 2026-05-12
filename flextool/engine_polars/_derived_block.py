@@ -215,14 +215,30 @@ class BlockBundle:
 # ---------------------------------------------------------------------------
 
 
-def load_block_bundle(workdir: Path | None) -> BlockBundle | None:
+def load_block_bundle(
+    workdir: Path | None,
+    *,
+    block_layout: "BlockLayout | None" = None,
+) -> BlockBundle | None:
     """Load a :class:`BlockBundle` from ``workdir/solve_data``.
 
-    Returns ``None`` if *workdir* is None or the bundle would be empty.
+    When ``block_layout`` is supplied (Phase 2 multi-block fast-path),
+    wrap that in-memory layout directly and skip the workdir CSV read
+    entirely — the fast loader's :meth:`BlockLayout.from_source` builds
+    an identical layout without preprocessing and stashes it on
+    ``FlexData.block_layout``.  Callers in ``apply_derived_*`` thread
+    ``flex_data.block_layout`` here so single- and multi-block fixtures
+    behave the same on both paths.
+
+    Returns ``None`` if neither input yields a non-empty layout.
     Empty here means: no ``entity_block``, no ``process_side_block``,
     no ``block_step_duration`` rows.  Callers fall back to no-op
     behaviour when ``None`` is returned.
     """
+    if block_layout is not None:
+        if block_layout.is_empty():
+            return None
+        return BlockBundle(layout=block_layout)
     if workdir is None:
         return None
     sd = Path(workdir) / "solve_data"
