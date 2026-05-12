@@ -69,6 +69,13 @@ class FlexToolRunner:
                     logger.error(message)
                     raise FlexToolConfigError(message)
 
+                # Pre-warm both entity and parameter_value caches so
+                # every find_* call downstream (SolveConfig, TimelineConfig,
+                # input_writer) hits memory.  Adding fetch_all("entity")
+                # matches the spinedb-api docs' performance guidance and
+                # mirrors the engine_polars _solve_config / _timeline
+                # load_from_db_url paths.
+                db.fetch_all("entity")
                 db.fetch_all("parameter_value")
                 check_version(db=db, logger=logger)
                 # Solve-level fields — delegated to SolveConfig

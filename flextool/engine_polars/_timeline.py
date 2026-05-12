@@ -249,6 +249,11 @@ class TimelineConfig:
             url = f"sqlite:///{url}"
         with DatabaseMapping(url) as db:
             apply_scenario_filter_to_subqueries(db, scenario)
+            # Pre-warm caches — see SolveConfig.load_from_db_url for
+            # the rationale.  Measured 1.76× speedup on large customer
+            # DBs (H2_trade), insignificant noise on small test DBs.
+            db.fetch_all("entity")
+            db.fetch_all("parameter_value")
             return cls.load_from_db(db, logger)
 
     @classmethod
