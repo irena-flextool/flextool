@@ -1,8 +1,10 @@
-## Release 4.0.0 (TBD) — `glpsol` retired; HiGHS via `polar-high` becomes the sole LP backend
+## Release 3.33.0 (TBD) — `glpsol` retired; HiGHS via `polar-high` becomes the sole LP backend
 
 This release closes out the largest architectural change since FlexTool went open source: the GLPK/GMPL pipeline that built the LP via `glpsol`, wrote MPS files to disk, and re-loaded them into HiGHS is gone.  The new path builds the LP in process via [`polar-high`](https://pypi.org/project/polar-high/) on top of the [`polars`](https://pola.rs/) DataFrame engine, hands it to HiGHS through `highspy`, and stays in memory for the entire solve → handoff → output-writer chain.
 
 There are no binary build artefacts left to ship: `glpsol` is gone, the `bin/glpsol*` binaries that the previous releases bundled have been deleted, and the `flextool.mod` GMPL model file is deleted.  FlexTool is now a pure-Python install — `pip install flextool` is sufficient.
+
+The version is held at 3.x rather than bumped to 4.0.0 until the new engine reaches full parity with the old one across the test suite.  A 4.0.0 semantic bump will follow once that bar is met; this release ships the backend swap behind the existing 3.x API surface.
 
 **Breaking changes**
 - `bin/glpsol*` removed; `flextool/flextool.mod` and `flextool/flextool_base.dat` removed
