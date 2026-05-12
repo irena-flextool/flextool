@@ -540,16 +540,23 @@ def migrate_database(database_path, up_to: int | None = None):
                         continue
                     hb = has_balance_by_key.get(key, False)
                     hs = has_storage_by_key.get(key, False)
-                    if hs and not hb:
-                        raise SpineDBAPIError(
-                            f"Node '{key[0][0]}' (alternative '{key[1]}') has "
-                            f"has_storage=yes but has_balance is not 'yes'.  "
-                            f"This combination was rejected at solve time "
-                            f"prior to v38 and cannot be migrated "
-                            f"automatically.  Set has_balance=yes (or remove "
-                            f"has_storage) before running the migration."
-                        )
-                    if hb and hs:
+                    if hs:
+                        if not hb:
+                            # Pre-v38 this combination was rejected at solve
+                            # time, but the data is recoverable: storage
+                            # implies balance, so migrate as
+                            # node_type='storage' and warn so the user can
+                            # verify intent.
+                            logging.warning(
+                                "Node '%s' (alternative '%s'): "
+                                "has_storage=yes with has_balance!=yes — "
+                                "this combination was rejected at solve time "
+                                "prior to v38.  Migrating as "
+                                "node_type='storage' (storage implies "
+                                "balance).  Verify that the resulting node "
+                                "balance is the intended behaviour.",
+                                key[0][0], key[1],
+                            )
                         new_type = "storage"
                     elif hb:
                         new_type = "balance"
