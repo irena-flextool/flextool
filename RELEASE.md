@@ -1,4 +1,35 @@
-## Release 3.33.0 (TBD) — `glpsol` retired; HiGHS via `polar-high` becomes the sole LP backend
+## Release 3.34.0 (12.5.2026) — Multi-solver support + documentation overhaul
+
+This release ships the two user-facing additions on top of 3.33.0's engine swap: per-solve commercial-solver selection and a documentation refresh organised around the Spine Toolbox GUI as the primary FlexTool interface.
+
+**Multi-solver support**
+- New per-solve parameters (v52 migration) on the `solve` entity: `solver`, `solver_io_api`, `solver_options`, `solver_time_limit`, `solver_mip_gap`, `solver_threads`, `solver_log_level`. HiGHS remains the default — existing scenarios with no solver parameters are unaffected.
+- Backends supported via [polar-high](https://pypi.org/project/polar-high/): **HiGHS** (default, ships with FlexTool), **Gurobi**, **CPLEX**, **Xpress**, **COPT**. Each commercial solver requires its own Python wrapper + license; FlexTool itself never imports the commercial wrappers and never inspects licenses (vendor's discovery path handles it).
+- The three convenience knobs (`solver_time_limit`, `solver_mip_gap`, `solver_threads`) are normalised across solvers; FlexTool translates them to each backend's native parameter name. `solver_options` passes raw key/value pairs through unchanged.
+- Cascade startup probes each available solver with a trivial 1-var LP and logs a per-solver license status line, e.g. `Solver license status: gurobi=licensed, cplex=licensed, xpress=licensed, copt=not-installed, highs=licensed`.
+- Cold rebuilds in the cascade dispatch through `polar_high.solvers.solve(...)` and normalise the result via a new `LiteSolution` adapter so downstream output writers stay unchanged. Warm-start and Lagrangian decomposition remain HiGHS-only by polar-high design — selecting another solver on a warm cascade logs a warning and falls back to cold rebuilds; selecting another solver on a Lagrangian-decomposed scenario raises a clear configuration error.
+- Per-solver documentation pages under `docs/solvers/` (install, licensing, common errors, how to set the solver in FlexTool).
+
+**Documentation overhaul**
+- Site reorganised around the Spine Toolbox GUI as the primary FlexTool interface; CLI flows are documented but no longer the default story.
+- New developer guide and how-to recipes for the engine_polars-era codebase.
+- `decomposition_method` parameter description tightened; superseded GUI screenshot removed.
+
+**Bug fixes**
+- `_writer_mid_sets.derive_commodity_node_co2` no longer crashes with `ComputeError: cannot compare string with numeric type (f64)` on customer DBs where `p_commodity.csv`'s value column is inferred as Float64 by polars. `_read_csv` now forces every column to Utf8 on read via `infer_schema_length=0`.
+- `process_outputs.calc_storage_vre` no longer raises `KeyError` when `node_self_discharge_loss` is authored on nodes that have no `v_state` LP variable (supply-curve / commodity nodes). The self-discharge multiply is now restricted to the intersection of authored nodes and storage nodes.
+- CLI cascade exception handler distinguishes `FlexToolUserError` (configuration problem — clean message, exit 1) from other exceptions (real flextool bug — full traceback). Users hitting unknown-solver / missing-license errors no longer see a stack trace.
+- `update_flextool` now refreshes declared dependencies for editable installs too — `pip install -e .` with new core deps in `pyproject.toml` would previously be missed, causing `ModuleNotFoundError` on the next solver invocation. The `--upgrade` is now passed without `--upgrade-strategy=eager` so transitive dependencies aren't churned.
+
+**Performance**
+- Spine DB read: `SolveConfig.load_from_db_url` and `TimelineConfig.load_from_db_url` now pre-warm with `db.fetch_all("entity")` + `db.fetch_all("parameter_value")` before any `find_*` call, mirroring the legacy `FlexToolRunner.__init__` pattern. Measured 5.5–6.4× speedup on large customer DBs (~1.8 s saved per cascade run); sub-MB test DBs see no change.
+
+**Other**
+- v52 schema migration renames the legacy `solver` value list to `solvers` in place: members expanded from `[glpsol, highs, cplex]` to `[highs, gurobi, cplex, xpress, copt]`; pre-existing `solve.solver = "glpsol"` values are rewritten to `"highs"` (GLPK retired in Δ.22). Parameter_definition foreign key is preserved through the rename so no data is lost.
+
+---
+
+## Release 3.33.0 (12.5.2026) — `glpsol` retired; HiGHS via `polar-high` becomes the sole LP backend
 
 This release closes out the largest architectural change since FlexTool went open source: the GLPK/GMPL pipeline that built the LP via `glpsol`, wrote MPS files to disk, and re-loaded them into HiGHS is gone.  The new path builds the LP in process via [`polar-high`](https://pypi.org/project/polar-high/) on top of the [`polars`](https://pola.rs/) DataFrame engine, hands it to HiGHS through `highspy`, and stays in memory for the entire solve → handoff → output-writer chain.
 

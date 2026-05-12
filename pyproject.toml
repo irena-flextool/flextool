@@ -3,13 +3,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flextool"
-# Held at 3.33.0.dev0 until the engine_polars cascade reaches full
-# parity with the (now-retired) GMPL pipeline.  The retirement work is
-# done from the engine side, but a handful of process_outputs / output
-# downstream paths and the Writer Phase 2-4 hot path still need
-# coverage before this earns a real 3.33.0 tag, let alone a 4.0.0
-# semantic-bump.
-version = "3.33.0.dev0"
+# 3.34.0 — multi-solver support + documentation overhaul.  Engine_polars
+# / GMPL retirement work was tagged separately as 3.33.0; 4.0.0
+# semantic bump is held until the new engine demonstrates full parity
+# with the old one across the test suite.
+version = "3.34.0"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
