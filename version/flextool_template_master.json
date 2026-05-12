@@ -655,6 +655,50 @@
       "cplex"
     ],
     [
+      "solver_io_apis",
+      "direct"
+    ],
+    [
+      "solver_io_apis",
+      "mps"
+    ],
+    [
+      "solver_io_apis",
+      "lp"
+    ],
+    [
+      "solver_log_levels",
+      "silent"
+    ],
+    [
+      "solver_log_levels",
+      "normal"
+    ],
+    [
+      "solver_log_levels",
+      "verbose"
+    ],
+    [
+      "solvers",
+      "highs"
+    ],
+    [
+      "solvers",
+      "gurobi"
+    ],
+    [
+      "solvers",
+      "cplex"
+    ],
+    [
+      "solvers",
+      "xpress"
+    ],
+    [
+      "solvers",
+      "copt"
+    ],
+    [
       "startup_methods",
       "no_startup"
     ],
@@ -1608,7 +1652,7 @@
     [
       "model",
       "version",
-      51.0,
+      52.0,
       null,
       "Contains database version information.",
       "model"
@@ -2161,9 +2205,9 @@
       "solve",
       "solver",
       "highs",
-      "solver",
-      "Choice of solver. HIGHs used as default. GLPSOL is another open source option. Out of commercial solvers CPLEX has been tested.",
-      "solve_basics"
+      "solvers",
+      "Solver to use for this solve. One of polar-high's available_solvers ('highs', 'gurobi', 'cplex', 'xpress', 'copt'). HiGHS is the bundled default; commercial solvers require a separate install and license.",
+      "solve_advanced"
     ],
     [
       "solve",
@@ -2175,10 +2219,58 @@
     ],
     [
       "solve",
+      "solver_io_api",
+      "direct",
+      "solver_io_apis",
+      "How the model is handed to the solver: 'direct' (in-process API, fastest), 'mps' or 'lp' (file fallback for solvers or environments without a direct binding).",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "solver_log_level",
+      "normal",
+      "solver_log_levels",
+      "Verbosity of the solver log: 'silent' (suppress), 'normal' (default summary output), 'verbose' (detailed per-iteration output).",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "solver_mip_gap",
+      null,
+      null,
+      "Relative MIP optimality gap at which the solver may stop early. Normalised across solvers by polar-high. None = solver default.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "solver_options",
+      null,
+      null,
+      "Map of solver-specific option name -> value, forwarded raw to the chosen solver. Use the convenience parameters (solver_time_limit, solver_mip_gap, solver_threads) for the common cases; this map is for anything else.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "solver_precommand",
       null,
       null,
       "Additional command to execute before calling the solver. Can be used to e.g. reserve a floating license for a commercial solver.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "solver_threads",
+      null,
+      null,
+      "Maximum number of solver worker threads. Normalised across solvers by polar-high. None = solver default (usually all available cores).",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "solver_time_limit",
+      null,
+      null,
+      "Wall-clock time limit for the solver in seconds. Normalised across solvers by polar-high. None = no limit.",
       "solve_advanced"
     ],
     [
@@ -3979,8 +4071,44 @@
     ],
     [
       "solve",
+      "solver_io_api",
+      "str",
+      0
+    ],
+    [
+      "solve",
+      "solver_log_level",
+      "str",
+      0
+    ],
+    [
+      "solve",
+      "solver_mip_gap",
+      "float",
+      0
+    ],
+    [
+      "solve",
+      "solver_options",
+      "map",
+      0
+    ],
+    [
+      "solve",
       "solver_precommand",
       "str",
+      0
+    ],
+    [
+      "solve",
+      "solver_threads",
+      "int",
+      0
+    ],
+    [
+      "solve",
+      "solver_time_limit",
+      "float",
       0
     ],
     [
