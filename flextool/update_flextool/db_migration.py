@@ -1225,6 +1225,14 @@ def migrate_database(database_path, up_to: int | None = None):
                 #
                 # Also adds the ``decomposition_methods`` value list.
                 _migrate_v51_group_block_resolution(db)
+            elif next_version == 52:
+                # Multi-solver dispatch (Phase 1 of the polar-high
+                # multi-solver handoff).  Adds seven new solver-selection
+                # parameters on the ``solve`` entity so a user can choose
+                # a solver per-solve (HiGHS stays default; Gurobi /
+                # CPLEX / Xpress / COPT become opt-in via polar-high).
+                # No LP / engine behaviour changes here — schema only.
+                _migrate_v52_solver_selection(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -2324,6 +2332,238 @@ def _migrate_v51_group_block_resolution(db) -> None:
             "v51: added group.new_stepduration and "
             "group.decomposition_method (Agent 1.1 flex-temporal + "
             "decomposition foundation); no LP behaviour yet."
+        )
+    except SpineDBAPIError:
+        pass
+
+
+def _migrate_v52_solver_selection(db) -> None:
+    """Add per-solve solver-selection parameters (Phase 1 multi-solver).
+
+    Rationale
+    ---------
+    FlexTool historically had a single ``solve.solver`` parameter bound
+    to a small value list (``glpsol`` / ``highs`` / ``cplex``) and ran
+    HiGHS via highspy in-process.  Phase 1 of the polar-high multi-
+    solver handoff (see ``specs/flextool-multi-solver-handoff.md``)
+    moves solver dispatch behind polar-high and exposes per-solve user
+    controls.  This migration lands the schema:
+
+    * New value lists ``solvers``, ``solver_io_apis``, ``solver_log_levels``.
+    * ``solver`` re-bound to the new ``solvers`` value list (HiGHS stays
+      default; commercial solvers Gurobi / CPLEX / Xpress / COPT are
+      opt-in).
+    * Six new parameters: ``solver_io_api``, ``solver_options`` (free-
+      form map forwarded to the solver), ``solver_time_limit``,
+      ``solver_mip_gap``, ``solver_threads``, ``solver_log_level``.
+
+    All seven parameters attach to the ``solve_advanced`` parameter
+    group (consistent with ``solver_precommand`` / ``solver_arguments``
+    in v44).  No LP / writer behaviour changes here — engine wiring
+    arrives in later phases.
+    """
+
+    # --- Value lists ---------------------------------------------------
+    add_value_list_manual(db, [
+        ["solvers", "highs"],
+        ["solvers", "gurobi"],
+        ["solvers", "cplex"],
+        ["solvers", "xpress"],
+        ["solvers", "copt"],
+        ["solver_io_apis", "direct"],
+        ["solver_io_apis", "mps"],
+        ["solver_io_apis", "lp"],
+        ["solver_log_levels", "silent"],
+        ["solver_log_levels", "normal"],
+        ["solver_log_levels", "verbose"],
+    ])
+
+    has_solve_advanced = (
+        db.item(db.mapped_table("parameter_group"), name="solve_advanced")
+        is not None
+    )
+
+    # --- solve.solver (rebind to new ``solvers`` value list) -----------
+    # Existing parameter from v1; only the value list and description
+    # change.  ``add_update_item`` keyed on (entity_class_name, name)
+    # is idempotent and preserves any user-set defaults via
+    # parameter_value rows (we only touch the definition's default).
+    default_val, default_type = to_database("highs")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="solver",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="solvers",
+        parameter_type_list=("str",),
+        description=(
+            "Solver to use for this solve. One of polar-high's "
+            "available_solvers ('highs', 'gurobi', 'cplex', 'xpress', "
+            "'copt'). HiGHS is the bundled default; commercial solvers "
+            "require a separate install and license."
+        ),
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="solver",
+            parameter_group_name="solve_advanced",
+        )
+
+    # --- solve.solver_io_api ------------------------------------------
+    default_val, default_type = to_database("direct")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="solver_io_api",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="solver_io_apis",
+        parameter_type_list=("str",),
+        description=(
+            "How the model is handed to the solver: 'direct' (in-process "
+            "API, fastest), 'mps' or 'lp' (file fallback for solvers or "
+            "environments without a direct binding)."
+        ),
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="solver_io_api",
+            parameter_group_name="solve_advanced",
+        )
+
+    # --- solve.solver_options -----------------------------------------
+    # Free-form map of key->value options passed through to the solver.
+    # Default is left unset (None); user must populate the map
+    # explicitly.  This mirrors the pre-existing convention for
+    # solver_arguments (array, ``parameter_type_list=("array",)``):
+    # awkward defaults are avoided by leaving the slot empty.
+    default_val, default_type = to_database(None)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="solver_options",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("map",),
+        description=(
+            "Map of solver-specific option name -> value, forwarded "
+            "raw to the chosen solver. Use the convenience parameters "
+            "(solver_time_limit, solver_mip_gap, solver_threads) for "
+            "the common cases; this map is for anything else."
+        ),
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="solver_options",
+            parameter_group_name="solve_advanced",
+        )
+
+    # --- solve.solver_time_limit --------------------------------------
+    default_val, default_type = to_database(None)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="solver_time_limit",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=(
+            "Wall-clock time limit for the solver in seconds. "
+            "Normalised across solvers by polar-high. None = no limit."
+        ),
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="solver_time_limit",
+            parameter_group_name="solve_advanced",
+        )
+
+    # --- solve.solver_mip_gap -----------------------------------------
+    default_val, default_type = to_database(None)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="solver_mip_gap",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=(
+            "Relative MIP optimality gap at which the solver may stop "
+            "early. Normalised across solvers by polar-high. None = "
+            "solver default."
+        ),
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="solver_mip_gap",
+            parameter_group_name="solve_advanced",
+        )
+
+    # --- solve.solver_threads -----------------------------------------
+    default_val, default_type = to_database(None)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="solver_threads",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("int",),
+        description=(
+            "Maximum number of solver worker threads. Normalised "
+            "across solvers by polar-high. None = solver default "
+            "(usually all available cores)."
+        ),
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="solver_threads",
+            parameter_group_name="solve_advanced",
+        )
+
+    # --- solve.solver_log_level ---------------------------------------
+    default_val, default_type = to_database("normal")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="solver_log_level",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="solver_log_levels",
+        parameter_type_list=("str",),
+        description=(
+            "Verbosity of the solver log: 'silent' (suppress), "
+            "'normal' (default summary output), 'verbose' (detailed "
+            "per-iteration output)."
+        ),
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="solver_log_level",
+            parameter_group_name="solve_advanced",
+        )
+
+    try:
+        _commit_step(db,
+            "v52: added solver-selection parameters on solve "
+            "(solver rebound to 'solvers' value list; new "
+            "solver_io_api, solver_options, solver_time_limit, "
+            "solver_mip_gap, solver_threads, solver_log_level) "
+            "for Phase 1 multi-solver dispatch via polar-high."
         )
     except SpineDBAPIError:
         pass
