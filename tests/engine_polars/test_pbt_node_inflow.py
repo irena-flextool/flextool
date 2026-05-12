@@ -178,3 +178,240 @@ def test_pbt_node_inflow_branch1_parity_hydro_reservoir(
         f"max abs diff = {max_diff!r}; first mismatches:\n"
         f"{diffs.sort('diff', descending=True).head(5)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase C — Fixture A: multi-``time_start`` Branch 1 fold on ``downriver``.
+# ---------------------------------------------------------------------------
+
+
+def _prepare_workdir(json_fixture: Path, tmp_path: Path) -> tuple[str, Path]:
+    """Migrate ``json_fixture`` into a sqlite db, run the cascade to
+    materialise the workdir CSVs, and return ``(db_url, workdir)``.
+
+    Used by the Phase C parity tests (which then mutate
+    ``first_timesteps.csv`` in the workdir before invoking the fold-in).
+
+    The cascade is invoked the same way the Phase B parity test does it
+    (``run_chain_from_db`` on the ``2_day_stochastic_dispatch`` scenario);
+    we tolerate the model build potentially raising once preprocessing has
+    completed, since we only need the ``solve_data/`` CSVs.
+    """
+    from flextool.engine_polars import run_chain_from_db
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_path = tmp_path / "fixture.sqlite"
+    url = json_to_db(json_fixture, db_path)
+    migrate_database(url)
+
+    workdir = tmp_path / "work"
+    workdir.mkdir(exist_ok=True)
+    cwd = os.getcwd()
+    try:
+        os.chdir(workdir)
+        try:
+            run_chain_from_db(
+                url, "2_day_stochastic_dispatch", work_folder=workdir,
+            )
+        except Exception:
+            # Preprocessing has already written ``solve_data/`` by the
+            # time the model build runs; downstream failures are fine
+            # for our purposes (we only inspect the workdir CSVs).
+            pass
+    finally:
+        os.chdir(cwd)
+    return url, workdir
+
+
+def _build_dt_from_workdir(workdir: Path) -> pl.DataFrame:
+    """Build the active ``(d, t)`` frame from ``steps_in_use.csv``."""
+    su_path = workdir / "solve_data" / "steps_in_use.csv"
+    assert su_path.exists(), f"missing {su_path}"
+    dt_rows: list[tuple[str, str]] = []
+    with su_path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 2 and row[0] and row[1]:
+                dt_rows.append((row[0], row[1]))
+    assert dt_rows, "steps_in_use.csv is empty"
+    return pl.DataFrame(
+        {"d": [r[0] for r in dt_rows], "t": [r[1] for r in dt_rows]}
+    )
+
+
+def _invoke_fold(db_url: str, workdir: Path, dt: pl.DataFrame) -> pl.DataFrame:
+    """Run :func:`apply_p_inflow_with_scaling` and return the resulting
+    ``p_inflow.frame``.
+    """
+    from flextool.engine_polars._spinedb_reader import SpineDbReader
+    from flextool.engine_polars._inflow_scaling import (
+        apply_p_inflow_with_scaling,
+    )
+
+    source = SpineDbReader(db_url, scenario="2_day_stochastic_dispatch")
+
+    class _FlexData:
+        p_inflow: object | None = None
+        nodeBalance: object | None = None
+
+    flex_data = _FlexData()
+
+    nb_path = workdir / "solve_data" / "nodeBalance.csv"
+    if nb_path.exists():
+        try:
+            flex_data.nodeBalance = pl.read_csv(nb_path)
+        except Exception:
+            flex_data.nodeBalance = None
+
+    ok = apply_p_inflow_with_scaling(
+        flex_data, source, workdir, dt, per_solve_aggs=None,
+    )
+    assert ok, "apply_p_inflow_with_scaling returned False"
+    p_inflow = flex_data.p_inflow
+    assert p_inflow is not None
+    fr = p_inflow.frame if hasattr(p_inflow, "frame") else p_inflow
+    assert fr.height > 0
+    return fr
+
+
+def _mutate_first_timesteps(
+    workdir: Path, extra_rows: list[tuple[str, str]]
+) -> None:
+    """Append ``extra_rows`` to ``solve_data/first_timesteps.csv``.
+
+    Legacy preprocessing always writes exactly one ``time_start`` per
+    period, so the multi-``ts`` fold-in branches are structurally
+    unreachable from real scenarios.  This helper injects additional
+    rows so the parity tests can lock in the multi-``ts`` algorithm.
+    """
+    fts_path = workdir / "solve_data" / "first_timesteps.csv"
+    assert fts_path.exists(), f"missing {fts_path}"
+    with fts_path.open("a", newline="") as fh:
+        writer = csv.writer(fh)
+        for d, t in extra_rows:
+            writer.writerow([d, t])
+
+
+def test_pbt_branch1_multi_time_start(tmp_path: Path) -> None:
+    """Branch 1 stochastic fold-in correctly sums over multiple
+    ``time_starts`` per period when ``ts_for_d[d]`` has cardinality > 1.
+
+    Fixture A (``multi_ts_branch1.json``) adds ``downriver`` to
+    ``add_stochastics`` and authors a 3d_map with branches
+    ``(realized, upper)`` × time_starts ``(t0001, t0025)`` × all 48
+    timesteps, using ``value(b_idx, ts_idx, t_idx) = b_idx*100 +
+    ts_idx*10 + t_idx``.
+
+    The test mutates ``first_timesteps.csv`` to add a 2nd ``time_start``
+    (``t0025``) under ``period1`` BEFORE invoking the fold-in.  Because
+    ``tb_for_d[period1] = [realized]`` only, Branch 1 for
+    ``(downriver, period1, t)`` becomes a sum over ``ts ∈ {t0001, t0025}``
+    of ``pbt[downriver, realized, ts, t]``.
+
+    Hand-derived oracle (see the augmentation script docstring):
+
+    * ``(downriver, period1, t0001)`` → 0 + 10 = 10
+    * ``(downriver, period1, t0005)`` → 4 + 14 = 18
+    * ``(downriver, period1, t0048)`` → 47 + 57 = 104
+    * ``(downriver, period1_upper, t0001)`` (single ts) →
+      pbt[upper, t0001, t0001] = 1*100 + 0*10 + 0 = 100
+    * ``(downriver, period1_upper, t0010)`` →
+      pbt[upper, t0001, t0010] = 1*100 + 0*10 + 9 = 109
+    """
+    db_url, workdir = _prepare_workdir(
+        FIXTURES_DIR / "multi_ts_branch1.json", tmp_path
+    )
+    # Inject a 2nd time_start for period1.
+    _mutate_first_timesteps(workdir, [("period1", "t0025")])
+
+    dt = _build_dt_from_workdir(workdir)
+    fr = _invoke_fold(db_url, workdir, dt)
+
+    got = (fr.filter(pl.col("n") == "downriver")
+             .select("d", "t", "value")
+             .sort("d", "t"))
+    assert got.height > 0, "no downriver rows produced"
+
+    def _value(d: str, t: str) -> float:
+        sub = got.filter((pl.col("d") == d) & (pl.col("t") == t))
+        assert sub.height == 1, f"missing/duplicate ({d}, {t}): {sub}"
+        return float(sub["value"][0])
+
+    # Multi-ts Branch 1 cells (period1 has ts ∈ {t0001, t0025}).
+    assert _value("period1", "t0001") == pytest.approx(10.0, abs=1e-9), (
+        f"period1/t0001 = {_value('period1', 't0001')} (expected 10)"
+    )
+    assert _value("period1", "t0005") == pytest.approx(18.0, abs=1e-9)
+    assert _value("period1", "t0048") == pytest.approx(104.0, abs=1e-9)
+
+    # Single-ts Branch 1 cells (period1_upper has only ts=t0001 ;
+    # tb_for_d[period1_upper] = [upper]).
+    assert _value("period1_upper", "t0001") == pytest.approx(100.0, abs=1e-9)
+    assert _value("period1_upper", "t0010") == pytest.approx(109.0, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Phase C — Fixture B: Branch 2 parent-period fold on ``downriver``.
+# ---------------------------------------------------------------------------
+
+
+def test_pbt_branch2_parent_period_fold(tmp_path: Path) -> None:
+    """Branch 2 parent-period fold-in fires for child periods whose
+    parent (via ``period__branch``) has pbt data, when the node itself
+    isn't in ``stoch_node``.
+
+    Fixture B (``branch2_parent_period.json``) authors ``downriver.inflow``
+    as a 3d_map with branches ``(realized,)`` × time_starts
+    ``(t0001, t0025)`` × all 48 timesteps, using
+    ``value(ts_idx, t_idx) = ts_idx*10 + t_idx + 1``.
+    ``downriver`` is NOT added to ``add_stochastics`` → Branch 1 does
+    not fire → Branch 2 takes over.
+
+    The test mutates ``first_timesteps.csv`` to add ``(period1_upper,
+    t0025)`` so the multi-ts Branch 2 fold actually iterates.
+
+    Hand-derived oracle (see the augmentation script docstring):
+
+    * ``(downriver, period1, t0001)`` (Branch 2 from itself):
+        pe_for_d[period1] = [period1]; tb_for_d[period1] = [realized];
+        ts_for_d[period1] = [t0001]
+        → pbt[realized, t0001, t0001] = 1
+
+    * ``(downriver, period1_lower, t0001)``  → pbt[realized, t0001, t0001] = 1
+    * ``(downriver, period1_mid, t0005)``    → pbt[realized, t0001, t0005] = 5
+    * ``(downriver, period1_upper, t0001)``  (mutated, multi-ts):
+        ts_for_d[period1_upper] = [t0001, t0025]
+        → pbt[realized, t0001, t0001] + pbt[realized, t0025, t0001]
+        = 1 + 11 = 12
+    * ``(downriver, period1_upper, t0010)`` (multi-ts):
+        → pbt[realized, t0001, t0010] + pbt[realized, t0025, t0010]
+        = (0*10 + 9 + 1) + (1*10 + 9 + 1) = 10 + 20 = 30
+    """
+    db_url, workdir = _prepare_workdir(
+        FIXTURES_DIR / "branch2_parent_period.json", tmp_path
+    )
+    # Inject a 2nd time_start for period1_upper.
+    _mutate_first_timesteps(workdir, [("period1_upper", "t0025")])
+
+    dt = _build_dt_from_workdir(workdir)
+    fr = _invoke_fold(db_url, workdir, dt)
+
+    got = (fr.filter(pl.col("n") == "downriver")
+             .select("d", "t", "value")
+             .sort("d", "t"))
+    assert got.height > 0, "no downriver rows produced"
+
+    def _value(d: str, t: str) -> float:
+        sub = got.filter((pl.col("d") == d) & (pl.col("t") == t))
+        assert sub.height == 1, f"missing/duplicate ({d}, {t}): {sub}"
+        return float(sub["value"][0])
+
+    # Single-ts Branch 2 cells.
+    assert _value("period1", "t0001") == pytest.approx(1.0, abs=1e-9)
+    assert _value("period1_lower", "t0001") == pytest.approx(1.0, abs=1e-9)
+    assert _value("period1_mid", "t0005") == pytest.approx(5.0, abs=1e-9)
+
+    # Multi-ts Branch 2 cells (period1_upper has ts ∈ {t0001, t0025}).
+    assert _value("period1_upper", "t0001") == pytest.approx(12.0, abs=1e-9)
+    assert _value("period1_upper", "t0010") == pytest.approx(30.0, abs=1e-9)
