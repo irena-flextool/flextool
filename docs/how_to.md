@@ -45,7 +45,7 @@ FlexTool allows to build models for different kinds of purposes and has therefor
 
 The names of these alternatives hint at the intended use of each timeline. Even when you are building a large model with a long timeline, it is better to use a short 48 hour timeline for testing purposes when building the model. Using five one-week periods, i.e. "a representative periods", in an investment model is a method to reduce the model size and consequently solve time. More about that in [How to run solves in a sequence (investment + dispatch)](#how-to-run-solves-in-a-sequence-investment-dispatch)
 
-![Time_settings](./time_settings.png)
+![Time_settings](./img/tutorial/time_settings.png)
 
 To define a temporal structure for a model instance, you need to create the following entities:
 
@@ -63,7 +63,7 @@ To define a temporal structure for a model instance, you need to create the foll
 
 Be careful when choosing datatypes! Maps need to be maps not arrays. You will see a red exclamation mark if you are using the wrong datatype. (In the future, an update is coming to toolbox to ensure compliance.) 
 
-![Time_parameters](./first_model.png)
+![Time_parameters](./img/tutorial/first_model.png)
 
 The tool includes some assumptions about the time structure, in case something is missing. These will work if there is only one option for the model to choose. The assuptions are the following:
 
@@ -103,7 +103,7 @@ The `unit__node__profile` entity needs a parameter `profile_method` that has thr
 
 The same profile can be used for multiple `unit__outputnode`s (and that is why the profile is not a unit parameter but its own entity).
 
-![Add another unit](./add_unit2.png)
+![Add another unit](./img/toolbox/add_unit2.png)
 
 ## How to connect nodes in the same energy network
 **(connections.sqlite)**
@@ -144,7 +144,7 @@ The results of connections can be seen from the node_balance table. However, the
 
 The example database shows a connection between a two node system where the other node has a wind power plant and the other node has a coal power plant. 
 
-![Connections](./connections.PNG)
+![Connections](./img/concept/connections.png)
 
 ## How to set the demand in a node
 **(demand.sqlite)**
@@ -170,7 +170,7 @@ where c =
 
 Examples of all these options are shown in the demand.sqlite.
 
-![Demand](./Demand.PNG)
+![Demand](./img/concept/demand.png)
 
 ## How to add a storage unit (battery) 
 
@@ -240,7 +240,7 @@ Additional parameters:
 
 Finally `connection_node_node` is needed between inverter, the battery and the demand node (west). 
 
-![Add a battery](./battery.png)
+![Add a battery](./img/concept/battery.png)
 
 ##  How to make investments (storage/unit) 
 **(examples.sqlite scenario: wind_battery_invest)**
@@ -321,7 +321,7 @@ Finally, FlexTool can mix several types of constraint coefficients: `constraint_
   where 'capacity' is existing capacity plus invested capacity
 ```
 
-![Add battery investments](./battery_invest.png)
+![Add battery investments](./img/concept/battery_invest.png)
 
 ## How to create combined heat and power (CHP) 
 
@@ -371,7 +371,7 @@ Again, the negative value can be turned positive by arranging it to the right si
 1 x *electricity* = 0.5 x *heat*, which is true only if *heat* is 2 x *electricity*
 ```
 
-![Add CHP](./coal_chp.png)
+![Add CHP](./img/tutorial/coal_chp.png)
 
 ## How to create a hydro reservoir
 **hydro_reservoir.sq**
@@ -417,7 +417,7 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *demand_
 - Create entities `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*demand_node*.
 - `is_active`: yes  (if Toolbox 0.7, before 5/2024)
 
-![Hydro reservoir](./hydro_reservoir.PNG)
+![Hydro reservoir](./img/concept/hydro_reservoir.png)
 
 ### River system with multiple reservoirs
 **(scenario: hydro_with_downriver_spill_unit)**
@@ -477,13 +477,13 @@ And parameters:
 - `existing`: A large enough number to not be a limit
 -  `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
-![Hydro reservoir with downriver](./hydro_reservoir_with_downriver.PNG)
+![Hydro reservoir with downriver](./img/concept/hydro_reservoir_with_downriver.png)
 
 The database also includes an example of a river system with two additional reservoirs and plants. Both of them flow to the reservoir already made in this how to. These two are created the exact same way as above, but with just different values and the relation `unit_outputNode`: (hydro_plant_2| reservoir) and `unit_outputNode`: (hydro_plant_3| reservoir).
 
 In principle you can create as large river systems as you want, but each reservoir adds extra computational burden. Think about the possibility to combine the reservoirs and plants in the system and what information you lose with this approximation.
 
-![River system](./hydro_river_system.PNG)
+![River system](./img/concept/hydro_river_system.png)
 
 ## How to create a hydro pump storage
 **(hydro_with_pump.sqlite)**
@@ -521,7 +521,7 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* 
 - `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - Create entities `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*nodeA*.
 
-![Hydro reservoir for pump](./hydro_reservoir_for_pump.PNG)
+![Hydro reservoir for pump](./img/concept/hydro_reservoir_for_pump.png)
 
 Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and have same the parameters as the reservoir:
 
@@ -556,7 +556,7 @@ Set the entities as follows:
 
 Your system should look something like:
 
-![Hydro pump](./hydro_pump.PNG)
+![Hydro pump](./img/concept/hydro_pump.png)
 
 Next comes the tricky part of preserving the water and energy as both are represented as generic energy in the model. This is done by setting extra coefficents and constraints to the flows. First the hydro_plant needs to both create the energy for the demand node and pass the mass to the pump_storage. This is done by doubling the efficiency in this example to 2 and setting a extra constraint to force the output flows to both the demand node and the storage to be the same. 
 
@@ -607,8 +607,8 @@ Note that here the (`constraint_flow_coefficient ` Map: plant_storage_nodeA_spli
 This means that here only half of the electricity used by the pump can be recovered when that amount of water is used by the hydro_plant. (Two units of energy are used to move 1 unit of water_energy)
 The `constraint_flow_coefficient` for pump_input should therefore be (1/efficiency)
 
-![Hydro pump parameters](./hydro_pump_parameters.PNG)
-![Hydro pump relation](./hydro_pump_relations.PNG)
+![Hydro pump parameters](./img/concept/hydro_pump_parameters.png)
+![Hydro pump relation](./img/concept/hydro_pump_relations.png)
 
 ## How to add a reserve
 **(examples.sqlite: scenario network_coal_wind_reserve)**
@@ -620,7 +620,7 @@ Next, the reserve requirement will be defined. An entity between the `reserve__u
 
 Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Note that the entities in this class need to be added to the `Entity Alternative` sheet. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant* may be limited by ramp constraint to provide only 1% of its capacity to an upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. *wind_plant* may contribute only 80% of its generation to reserve due to uncertainty).
 
- ![Add a reserve](./reserves.png)
+ ![Add a reserve](./img/concept/reserves.png)
 
 
 ## How to add a minimum load, start-up and ramp
@@ -649,7 +649,7 @@ By default, `input_coefficient` and `output_coefficient` are 1, but if there is 
 
 The input is required at different ouput levels is shown in the figure below, when Capacity = 100, Efficiency = 0.8, Minimum load = 0.6 and Efficiency at minimum load = 0.5.
 
-![Min load figure](./Minimum_load.png)
+![Min load figure](./img/tutorial/minimum_load.png)
 
 Next we will add ramp limits. With the ramping limits, the user can force the change of a flow from a unit to be below a certain value each timestep. The ramping is an attribute of the flow. Therefore it does not require the minimum load behaviour and its parameters are added to the `unit_outputNode` entity:
 
@@ -658,7 +658,7 @@ Next we will add ramp limits. With the ramping limits, the user can force the ch
 - `ramp_speed_down`: Limit on how fast the plant can ramp down. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour.
 - `ramp_cost`: NOT YET IMPLEMENTED. The cost of ramping the capacity. [CUR/MW] 
 
-![Add min_load](./coal_min_load.png)
+![Add min_load](./img/tutorial/coal_min_load.png)
 
 ## How to add minimum uptime and downtime
 
@@ -698,7 +698,7 @@ Alternatively one can set a limit on the co2 used by setting the `co2_method` pa
 There methods can be combined by setting the `co2_method` to *price_period*, *price_total*, *period_total* or *price_period_total*.
 
 
-![Add CO2](./coal_co2.png)
+![Add CO2](./img/tutorial/coal_co2.png)
 
 ## How to create a non-synchronous limit
 **(non_sync_and_curtailment.sqlite)**
@@ -740,7 +740,7 @@ This emits a flow-group summary table (currently `cumulative_flow` MWh and `aver
 Here we have *coal_flow* `group` with `group__unit__node` relation coal_flow|coal_plant|nodeA
 and *wind_flow* `group` with `group__unit__node` relation wind_flow|wind_plant|nodeA.
 
-![non-sync](./non_sync.PNG)
+![non-sync](./img/concept/non_sync.png)
 
 ## How to see the VRE curtailment and VRE share results for a node
 **(non_sync_and_curtailment.sqlite)**
@@ -765,16 +765,16 @@ These changes were done to the previous non-sync example database.
 
 Note: The results are the share of curtailment in relation to the inflow (demand) so it can exceed 100% as seen in the figure.
 
-![Curtailment](./curtailment.PNG)
+![Curtailment](./img/output/curtailment.png)
 
-![Curtailment results](./curtailment_results.PNG)
+![Curtailment results](./img/output/curtailment_results.png)
 
 ## How to create a delay between two nodes
 **(examples.sqlite scenario: water_pump_delayed)**
 
 Sometimes a flow between two nodes needs to be delayed, for example water flow in river systems can take hours between two power plants. This can be approximated using `delay` parameter available for units (and unidirectional connections). Delay can be expressed using a constant value (hours) or as a weighted map of time delays (index: time delay in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Delay requires that the time resolutions in the model are always integer multiples of these time differences.
 
-![Delay](./delay.png)
+![Delay](./img/concept/delay.png)
 
 ## How to run solves in a sequence (investment + dispatch)
 **(examples.sqlite scenario: 5weeks_invest_fullYear_dispatch_coal_wind)**
@@ -806,13 +806,13 @@ The sequence of solves is defined by the `model` parameter `solves`. Here it is 
 
 Note that the picture has two `model`: *solves* parameters defined one for each alternative. Only the parameter from the *5weeks_only_invest* is used as the lower alternatives in the scenario tree override the values from the higher alternatives and only one model can be run.
 
-![Invest_and_dispatch](./Invest_and_dispatch.PNG)
+![Invest_and_dispatch](./img/concept/invest_and_dispatch.png)
 
 ## How to create a multi-year model
 
 A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be an `inflation_rate` parameter set for the `model` entity *flexTool* if something else than the model default of 0 is to be used (set to expected inflation when inputs are in nominal terms).
 
-![Multi-year inflow](./multi_year_inflow.PNG)
+![Multi-year inflow](./img/concept/multi_year_inflow.png)
 
 A multi-year model could be solved at one go (multi_year_one_solve) or by rolling through several solves (multi-year) where each solve has a foresight horizon and a realisation horizon. Next we will go through both options.
 
@@ -826,7 +826,7 @@ In this example, one solve is used for all the four periods. All the four period
 - `realized_periods` the periods that will be realized in this solve (outputs dispatch results for these periods).
 - `period_timeset` defines the set of representative 'periods' (timesets in FlexTool) to be used in each FlexTool `period`.
 
-![Multi-year one solve](./multi_year_one_solve.PNG)
+![Multi-year one solve](./img/concept/multi_year_one_solve.png)
 
 ### Multi year with rolling solves 
 **(examples.sqlite scenario: multi_year)**
@@ -837,7 +837,7 @@ When dealing with investments the splitting only works if the different periods 
 
 The model rolls through several solves and therefore, the `model` entity *flexTool* has four values in the `solves` array. Each value represents one solve and it's position in the sequence of solves. The next figure illustrates the realization (blue) and foresight horizons (grey). The first solve will solve both the year 2020 and year 2025, but it will only output the year 2020. The next will solve both 2025 and 2030 but only output 2025.
 
-![One vs multi solve](./one_multi_solve.png)
+![One vs multi solve](./img/concept/one_multi_solve.png)
 
 Next figure shows the values needed to define one solve (out of the four solves in the example). Each of these need to be repeated for each solve in the model.
 
@@ -851,7 +851,7 @@ Note the the `solve_mode`: *rolling_window* is not used! This is not for investm
 
 In the examples.sqlite, the solve entities have solver parameters: `highs_method`, `highs_parallel` and `highs_presolve`. They only affect the speed and not the results, but usually the default values are good enough and the user should only change them if they understand how the solvers work.
 
-![Solve data](./data_for_one_solve.png)
+![Solve data](./img/concept/data_for_one_solve.png)
 
 ## How to use a rolling window for a dispatch model
 
@@ -867,7 +867,7 @@ The rolling window solve splits the time dimension into overlapping parts and so
 - 5: [9,10,11,12] ->[9,10]
 - 6: [11,12] -> [11,12]
 
-![Rolling](./Rolling.PNG)
+![Rolling](./img/concept/rolling.png)
 
 The rolling solve could be setup also manually as described in the 'How to run a multi year model' - just using shorter periods. 
 
@@ -920,7 +920,7 @@ When to use nested solves?
 - Investment model takes too long to solve, even with manual rolling [How to create a multi-year model](#how-to-create-a-multi-year-model). With nesting you can have smaller rolls for dispatch solve than the investment solve. (Nesting without the storage solve)
 - Investment model takes too long and you have long term storages to consider. (Three level nesting, graph below)
 
-![Nested graph](./Nested_graph.PNG)
+![Nested graph](./img/concept/nested_graph.png)
 
 However, the obvious issue is that investment and storage solves cannot be solved using the old complete solve as it wouldn't make the solve time any shorter. Therefore, we need to decrease the information for investment and storage solves as well. There are a few options for this:
 
@@ -992,7 +992,7 @@ To create a lower resolution (longer timesteps) solve:
 - Set `solve` parameter `new_stepduration`: Hours
 
 The model will create a new timeline for this solve with the `new_stepduration`. All the timestep map data like `inflow` or `profile` will be either summed or averaged for the new timeline. Again, the `new_stepduration` should be multiple of the old step duration. If the `timeset_duration` is not a multiple of the `new_stepduration` the last timestep will be shorter than the rest.
-![New step duration](./new_stepduration.PNG)
+![New step duration](./img/concept/new_stepduration.png)
 
 Note that if the last timestep of the dispatch horizon is not in the storage solve timeline, it will use the last available timestep to fix the storage. This can happen at the end of the timeline when the dispatch solve with a lower step size can fit an extra step after the last time step of the storage solve.
 Other reason might be that both dispatch and storage solves are aggregated with the `new_stepduration`. In that case, it is usually best to use values for the `new_stepduration` that are dividable.  
@@ -1001,7 +1001,7 @@ To create a sample solve with representative periods:
 
 The tutorial contains an example of representaive periods under alternative *5weeks* where the year is represented with five sample weeks. It is done with the `timeset` parameter `timeset_duration` where instead of choosing the whole timeline by setting the first timestep and the duration of whole timeline, you choose multiple starting points with smaller durations. The example for the *5weeks* is below.
 
-![New step duration](./5weeks.PNG)
+![New step duration](./img/concept/5weeks.png)
 
 To create an investment solve sequence, you have two options:
 
@@ -1015,7 +1015,7 @@ The other option is to use only one investment `solve` entity:
 
 You can use the same lower level solve with each the investment solves as the lower level solves will exclude the periods that are not included in either of the upper level realized periods: `realized_invest_periods` or `fix_storage_periods`. So, the lower level solve should have all the periods that it is used for in any the solves.
 
-![2D_map](./2d_map.PNG)
+![2D_map](./img/concept/2d_map.png)
 
 
 Note that the results of a nested rolling solve run are not fully optimal, because the information in the model is decreased. This is the price you pay for the speed. Therefore, the results should not be taken as they are, instead it is important to know how to interpret the results: What phenomena are missing? How will they affect the results? Where should extra investments go to satisfy the demand (there is a possibility to use the `capacity_margin` method to force extra investments)?
@@ -1038,7 +1038,7 @@ The split sample investment run produces in this case similar results as the one
 
 Stochastics are used to represent the uncertainty of the future in the decision making. The main idea is to represent the distribution of possible futures by discrete scenarios (branches). These are all connected to the same starting point with the realized branch. A non-anticipatory constraint forces the branches to share the decisions that affect multiple timesteps with the realized branch during the realized part of the horizon. These decisions are investments, storage usage and online status of units. The model then optimizes the system to get the minimize the total cost all the branches (weighted by their probability). Only the realized timeline of the realized branch, will be output. The realized branch can continue to the end of the horizon (and be also a forecast) or just to the end of the realized part as in the picture.
 
-![Stochastic system](./non-anticipatory.png)
+![Stochastic system](./img/concept/non-anticipatory.png)
 
 For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take (e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch. Only one period investment stochastic models are supported currently.
 
@@ -1061,7 +1061,7 @@ Notes about the storage options with stochastics:
 
 - Do not use any of the `storage_binding_methods`, they do not work correctly with stochastics (there is no unambigious end state that could circle back to the first time step). 
 
-![Stocahstic system](./stochastic_system.PNG)
+![Stocahstic system](./img/concept/stochastic_system.png)
 
 ### Single solve stochastics
 **(stochastics.sqlite scenario: 2_day_stochastic_dispatch)**
@@ -1080,7 +1080,7 @@ An option exists to output the stochastic horizons for debugging your system. Th
 
 If you change the weights of the stochastic branches, you should see the results change.
 
-![2day stochastics](./2day_stochastics.PNG)
+![2day stochastics](./img/concept/2day_stochastics.png)
 
 ### Rolling horizon stochastics
 **(stochastics.sqlite scenario: 1_week_rolling_wind)**
@@ -1096,34 +1096,24 @@ For the *solve* parameter `stochastic_branches` this means analysis times (t0001
 Otherwise there is no difference to the previous example.
 
 
-![Rolling Branching](./rolling_non-anticipatory.png)
+![Rolling Branching](./img/concept/rolling_non-anticipatory.png)
 
-![1Week stochastics](./1week_stochastics.PNG)
+![1Week stochastics](./img/concept/1week_stochastics.png)
 
 ## How to use CPLEX as the solver
 
-Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.
+CPLEX remains wireable as an advanced option for licensed users. Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.
 
-CPLEX is used when the **solve** parameter *solver* is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solution file to a filetype suitable for CPLEX. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.
-
-The tool uses [Interactive Optimizer](https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer) to pass the problem to the solver. The default command used:
-  
-```shell
-cplex -c 'read flexModel3.mps' 'opt' 'write flexModel3_cplex.sol' 'quit'
-```
+CPLEX is invoked via the **solve** parameter *solver*. FlexTool now builds the LP in memory through polars + polar-high, so the on-disk MPS handoff that previous versions used is no longer the default flow — the CPLEX path passes the problem to the [Interactive Optimizer](https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer) and produces two additional files in the work directory: a CPLEX log file and the solution file in CPLEX format.
 
 Additional parameters:
 
 - `solver_precommand` creates a text in front of the cplex call. This is useful when dealing with floating licences. The command allows to call the licence server to reserve the licence for the duration of the cplex program with a command line argument.
 - `solver_arguments` is an array containing additional CPLEX solver commands
 
-With these parameters, the command line call is:
+<!-- TODO: expand in dev/engine_polars.md — document the exact CPLEX command line under the polars-based LP build. -->
 
-```shell
-'solver_precommand' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
-```
-
-![Cplex parameters](./CPLEX.PNG)
+![Cplex parameters](./img/concept/cplex.png)
 
 ## How to create aggregate outputs
 
@@ -1160,15 +1150,15 @@ Note that here the `node` has to be either *nodeA* or *nodeB*, not the heat node
 
 Connections are simplified by creating groups *connections_country_x* and *connections_country_y* and adding the relevant connections with `group__connection__node`. Again the `node` must be *nodeA* or *nodeB* to be collapsed in the dispatch output.
 
-![Output aggregate flows graph](./output_flows_graph.PNG)
+![Output aggregate flows graph](./img/output/output_flows_graph.png)
 
 The *focus_nodes* group needs `output_nodeGroup_dispatch: yes` and the unit and connection groups need `flow_aggregator: yes`. 
 
-![Output aggregate flows](./output_flows_input.PNG)
+![Output aggregate flows](./img/output/output_flows_input.png)
 
 The resulting table has the flows to the *focus_nodes* group from units and connections. Additionally, the internal losses of the group are calculated. These are the flows between the nodes of the group and the storage losses. Here the losses come from the connection between *nodeA* and *nodeB*. Possible slacks to balance the nodes are included too.
 
-![Output aggregate flows result](./output_flows_result.png)
+![Output aggregate flows result](./img/output/output_flows_result.png)
 
 ## How to enable/disable outputs
 
@@ -1182,7 +1172,7 @@ Some of the outputs are optional. Some of these optional outputs are output by d
 - `output_unit__node_ramp_t`: Default, no. Produces the ramps of individual units for all timesteps.
 - `output_horizon`: Outputs the timesteps of the horizon outside the realized timesteps. Useful when constructing a stochastic model.
 
-![Optional outputs](./optional_outputs.PNG)
+![Optional outputs](./img/concept/optional_outputs.png)
 
 
 ## How to make the Flextool run faster

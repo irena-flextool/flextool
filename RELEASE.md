@@ -597,8 +597,8 @@ General:
 
 **New features**
 - *Breaking change*: `realized_periods` (solve objects) is supplemented with a `realized_invest_periods` so that the user can state from which solves the results should take investment results and from which solves dispatch results.
-- New parameters for solve objects: `solve_mode`, `rolling_duration`, `rolling_solve_horizon`, `rolling_solve_jump` and `rolling_start_time` that enable to build rolling window models. See [How to use a rolling window for a dispatch model](#How-to-use-a-rolling-window-for-a-dispatch-model).
-- New parameter `contains_solves` that enables nesting solves inside solves (e.g. to calculate shadow values for long term storages or to implement rolling dispatch inside a multi-year investment model). See [How to use Nested Rolling window solves (investments and long term storage)](#How-to-use-nested-rolling-window-solves).
+- New parameters for solve objects: `solve_mode`, `rolling_duration`, `rolling_solve_horizon`, `rolling_solve_jump` and `rolling_start_time` that enable to build rolling window models. See [How to use a rolling window for a dispatch model](how_to.md#how-to-use-a-rolling-window-for-a-dispatch-model).
+- New parameter `contains_solves` that enables nesting solves inside solves (e.g. to calculate shadow values for long term storages or to implement rolling dispatch inside a multi-year investment model). See [How to use Nested Rolling window solves (investments and long term storage)](how_to.md#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage).
 - New outputs: For groups: `VRE_share_t`. For unit__nodes (VRE units): `curtailment_share`, `curtailment_share_t`.
 - Name changes to outputs: `flow` to `flow_annualized`, `sum_flow` to `sum_flow_annualized`.
 - Add migration for results database (parameter descriptions can be migrated).

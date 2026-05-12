@@ -20,7 +20,7 @@ Entities with two or more dimensions:
 
 See below for more detailed explanations.
 
-![Simple example grid](./simple_grid.png)
+![Simple example grid](./img/tutorial/simple_grid.png)
 
 
 ## How to define the temporal properties of the model
@@ -37,7 +37,7 @@ A parameter of particular type can be either constant/time-varying or constant/p
 
 Timesets pick one or more sections from the `timeline` to form a `timeset`. Each timeset defines a start and a duration. The aim of timesets is to allow the modeller to create models with representative periods often used in the investment planning.
 
-![Time structure](./time_structure.png)
+![Time structure](./img/tutorial/time_structure.png)
 
 ### Definitions
 
@@ -47,21 +47,26 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - *inflation_rate*: [e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0 (default). When inputs are in nominal terms, set to expected inflation.
   - *inflation_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
   - *inflation_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
-  - *available_periods*: (Optional) Array of periods available for the model. Use this for periods that are in the data, but are not in period_timeset.
+  - *periods_available*: (Optional) Array of periods available for the model. Use this for periods that are in the data, but are not in period_timeset.
+  - *max_flow_for_unconstrained_variables*: [MW] Upper bound assigned to LP variables that have no other cap (e.g. flows on edges with `invest_method = no_limit` and no `existing` capacity). Acts as a numerical safety net to keep the LP bounded. Default is large; lower it when scaling problems appear (see [dev/scaling.md](dev/scaling.md)).
+  - *debug*: Instruction set for performing model debugging and testing.
+  - *version*: Database schema version. Written by the migration chain — do not edit manually.
   
-- `solve`: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timesets to connect with a timeline.
+- `solve`: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timesets to connect with a timeline. Parameters are split into two parameter-group tags in the master template — `solve_basics` (knobs a typical user touches) and `solve_advanced` (rolling/nested/stochastic structures, solver options, cross-solve handoff). The split is purely cosmetic in the Spine DB editor; behaviour is identical.
 
   - *period_timeset*: map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.
-  - *new_stepduration*: Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps. All timesets used by the solve must resolve to the same underlying timeline.
+  - *new_stepduration*: Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps. All timesets used by the solve must resolve to the same underlying timeline. See also the group-level `new_stepduration` for flex-temporal decomposition.
   - *realized_periods*: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve
   - *realized_invest_periods* Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods are used to realize the invests as well
   - *invest_periods*: array of periods where investements are allowed in this solve (applies only to entities that can be invested in)
   - *years_represented*: Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.
-  - *solver*: choice of a solver ('highs'(default), 'glpsol', 'cplex' (requires a licence))
+  - *solver*: choice of a solver. HiGHS is the default and only fully supported backend (called via the `highspy` Python bindings). CPLEX can still be wired in as an advanced option for licensed users via `solver_precommand` / `solver_arguments`; see the how-to.
   - *highs_method*: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.
   - *highs_parallel*: HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
-  - *highs_presolve*: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large. 
-  - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence 
+  - *highs_presolve*: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.
+  - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence
+  - *timeline_hole_multiplier*: [unitless, default 1.0] Multiplier applied to the inverse-step-duration term in the `nodeBalance_eq` for variable-step timelines. Tunes how strongly an unrepresented gap between two timesteps is amortised into the storage state equation. Leave at the default unless investigating large-step / sparse-timeline numerical issues.
+  - *use_row_scaling*: Enable automatic LP row scaling (experimental). Per-solve flag (set to `yes` to enable); see [dev/scaling.md](dev/scaling.md) for what it does and when to use it.
   - Rolling window parameters:
 
     - *rolling_solve_jump*: Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Also the output interval. This should be smaller than the horizon
@@ -134,7 +139,7 @@ These parameters will define how the node will behave and use the data it is giv
  - `is_active` - is the model/node/unit active in a specific scenario: *yes* (if not defined, then not active).
 Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 
-![image.png](./nodes.png)
+![image.png](./img/concept/nodes.png)
 
 ### Data for nodes
 
@@ -142,6 +147,7 @@ Input data is set with the following parameters:
 
 - `inflow` - [MWh] Inflow into the node (negative is outflow). Constant or time series.
 - `annual_flow` - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.
+- `peak_inflow` - [MWh] Highest flow for scaling the inflow. Used only with `inflow_method = scale_to_annual_and_peak_flow`.
 - `existing` - [MWh] Existing storage capacity (requires `node_type=storage`). Constant or period.
 - `invest_cost` - [CUR/kWh] Investment cost for new storage capacity. Constant or period.
 - `salvage_value` - [CUR/kWh] Salvage value of the storage. Constant or period.
@@ -158,7 +164,11 @@ Input data is set with the following parameters:
 - `penalty_down` - [CUR/MWh] Penalty cost for excess energy (increasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, Period or Time.
 - `virtual_unitsize` - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
 - `self_discharge_loss` - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
-- `availablity` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.
+- `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.
+- `invest_forced` - Used by the investment planner to force a specific investment volume in a given period (overrides `invest_max_period` / `invest_min_period` for that entry).
+- `constraint_state_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the storage state variable on the left side of a user-defined `constraint`.
+- `constraint_invested_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build storage capacity `v_invest[node, d]` on the left side of a user-defined `constraint`. Not multiplied by unitsize.
+- `constraint_cumulative_pre_built_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built storage capacity at period d on the left side of a user-defined `constraint`. Not multiplied by unitsize.
 
 
 ### Using nodes as storages
@@ -249,12 +259,15 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - `cumulative_max_capacity` - [MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
 - `cumulative_min_capacity` - [MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
 - `fixed_cost` - [CUR/kW] Annual fixed cost for capacity. Constant or period. 
+- `delay` - [hours] A time delay between the input nodes and the output nodes of the unit. Either a constant or a period value. Used when modelling process delays (e.g. heat-storage charge cycles or production lag).
+- `constraint_invested_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing this unit's current-period new-build capacity `v_invest[unit, d]` on the left side of a user-defined `constraint`. Not multiplied by unitsize.
+- `constraint_cumulative_pre_built_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built capacity at period d (baseline plus investments in periods strictly before d, retirements ignored) on the left side of a user-defined `constraint`. Not multiplied by unitsize.
 - `virtual_unitsize` - [MW] Size of a single unit — used for integer investments (lumped investments) and, in conjunction with `startup_method = binary`, for unit commitment granularity.  **Set this to the actual physical sub-unit size** (e.g. the size of one boiler, turbine, string or module inside the modeled entity).  If not given, the value of `existing` is used, which means every commitment decision moves the full plant — correct only when the modeled entity is inherently a single indivisible unit.
     - FlexTool represents unit commitment with a single general-integer variable per process per timestep, counting how many sub-units are online.  Its upper bound is `capacity / unit_size_for_commitment`, where `unit_size_for_commitment` is `virtual_unitsize` if set, otherwise the physical `existing` capacity.  So a plant with `existing = 1000` MW and `virtual_unitsize = 200` MW is literally the same MIP as a plant with `existing = 1000` MW built from five physical 200 MW units (commitment variable ∈ [0, 5]).
     - **`virtual_unitsize` is not a free tuning knob.**  Picking a value smaller than the real sub-unit size (e.g. 50 MW for a plant whose boilers are actually 200 MW) lets the solver commit fractions that don't physically exist, mis-representing minimum load, startup fuel use and minimum-uptime/downtime behavior.  Pick the value that reflects reality.  If reality genuinely is a single 1 GW boiler, accept the slower MIP or use `startup_method = linear`; see [How to make the Flextool run faster](./how_to.md) for the trade-offs.
 
 
-![image](./generators.png)
+![image](./img/concept/generators.png)
 
 ### Discount calculations
 
@@ -302,6 +315,7 @@ Note that in the case of unit--outputNode the `flow_coefficient` affects *after*
 - `ramp_cost` - [CUR/MW] Cost of ramping the unit. Constant.
 - `ramp_speed_up` - [per unit / minute] Maximum ramp up speed. Constant.
 - `ramp_speed_down` - [per unit / minute] Maximum ramp down speed. Constant.
+- `constraint_flow_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing this flow variable on the left side of a user-defined `constraint`. Applied per timestep to the directional flow between the unit and the node.
 
 ### Units constrained by profiles
 
@@ -324,8 +338,11 @@ Connections can transfer energy between two nodes. Parameters for the connection
 
 ### Main data items for connections
 
-- `existing` - [MW] Existing capacity. Constant.
+- `existing` - [MW] Existing capacity. Constant or period.
 - `efficiency` - [factor, typically between 0-1] Efficiency of a connection. Constant or time.
+- `delay` - [hours] A time delay between the input node and the output node of the connection. Works only with `transfer_method = no_losses_no_variable_cost`.
+- `startup_cost` - [CUR/MW] Cost of starting up one MW of virtual capacity (used when `startup_method` activates online variables on the connection).
+- `reactance` - [p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the enclosing `group__node` has `transfer_method = dc_power_flow_with_angles`.
 - `constraint_invested_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build capacity `v_invest[e, d]` on the left side of the user-defined constraint. Not multiplied by unitsize. Renamed from `constraint_capacity_coefficient`; the old expression summed `v_invest` once per active investment period, giving incorrect results in multi-period models — this one emits just `v_invest[e, d]`.
 - `constraint_cumulative_pre_built_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built capacity at period d — data baseline plus every `v_invest` made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits (pair with `constraint_invested_capacity_coefficient` on the same constraint). Not multiplied by unitsize.
 - `other_operational_cost` - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period or time.
@@ -342,14 +359,24 @@ Connections can transfer energy between two nodes. Parameters for the connection
 
 These are the same as for units, see [here](#investment-parameters-for-capacity-expansion)
 
+### connection__node (per-endpoint properties)
+
+On the membership entity between a `connection` and one of its endpoint `node`s:
+
+- `constraint_flow_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing this connection-to-node flow variable on the left side of a user-defined `constraint`. Applied per timestep.
+
 ## Commodities
 
 Some `nodes` can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a `price` and be connected to those `nodes` that serve (or buy) that particular `commodity` at the given `price`. In other words, `commodity` is separate from `node` so that the user can use the same `commodity` properties for multiple nodes. Commodities can also have a `co2_content`. The `commodity` and its `nodes` are connected by establishing a new entity between the `commodity` and each of its `nodes` (e.g. *coal--coal_market*).
 
-- `price` - [CUR/MWh or other unit] Price of the commodity. Constant or period.
+- `price` - [CUR/MWh or other unit] Price of the commodity. Constant, period or time.
 - `co2_content` - [CO2 ton per MWh] Constant.
+- `price_method` - How the commodity price enters the LP. `price` (default) treats `price` as the marginal cost of every traded MWh. `price_ladder_annual` / `price_ladder_cumulative` activate a stepped supply curve authored via the parameters below; the engine then represents commodity trade as a sum of tier variables, one per ladder step.
+- `price_ladder_annual` - Stepped supply curve for `price_method = price_ladder_annual`. 2d map of (tier, period) → price/volume entries.
+- `price_ladder_cumulative` - Stepped supply curve for `price_method = price_ladder_cumulative`. 2d map with rolling cumulative breakpoints.
+- `unitsize` - Numeric scaling for the `v_trade` variable (analogous to `virtual_unitsize` on units). Used with the price-ladder methods to keep tier-step variables well scaled; default 1.0.
 
-![image-1.png](./commodities.PNG)
+![image-1.png](./img/concept/commodities.png)
 
 ## Groups
 
@@ -365,7 +392,10 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 
 ### Transfer method override for connections in a group
 
-- `transfer_method` - Overrides the `transfer_method` chosen on each individual `connection` whose both endpoints belong to this group (`group__node`). Options: *use_connection_transfer_methods* (default, no override), *no_losses_no_variable_cost*, *regular*, *exact*, *variable_cost_only*, *unidirectional*, *dc_power_flow_with_angles*. The connection-level options work exactly as in the [connection reference](#defining-how-the-connection-functions); *dc_power_flow_with_angles* activates B-theta DC power flow on the subnet and requires each member connection to have `reactance` (and optionally `base_MVA` / `reference_node` on the group).
+- `transfer_method` - Overrides the `transfer_method` chosen on each individual `connection` whose both endpoints belong to this group (`group__node`). Options: *use_connection_transfer_methods* (default, no override), *no_losses_no_variable_cost*, *regular*, *exact*, *variable_cost_only*, *unidirectional*, *dc_power_flow_with_angles*. The connection-level options work exactly as in the [connection reference](#defining-how-the-connection-functions); *dc_power_flow_with_angles* activates B-theta DC power flow on the subnet and requires each member connection to have `reactance`.
+- `base_MVA` - [MVA] Base power for the per-unit system used in DC power flow. Default 100. Only relevant when this group's `transfer_method = dc_power_flow_with_angles`.
+- `reference_node` - Name of the reference bus node (angle fixed to zero) for DC power flow. Optional; if not set the engine picks one deterministically.
+- `candidate_precapacity_to_avoid_big_m` - [MW] Small pre-existing capacity assigned to investment-candidate connections in DC power-flow subnets to avoid big-M angle constraints. Tuning parameter for numerical stability of the angle formulation.
 
 ### Cumulative and instant flow limits for `unit__node`s and `connection__node`s
 
@@ -397,6 +427,14 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 ### Stochastics
 
 - `include_stochastics` Flag to choose if stochastic timeseries are to be used for the units/nodes/connections of this group 
+
+### Decomposition (spatial Lagrangian)
+
+- `decomposition_method` - Decomposition strategy to apply to this group. Currently supported: `none` (no decomposition; default) and `lagrangian` (the group becomes a spatial region for `--decomposition lagrangian`). See [dev/decomposition.md](dev/decomposition.md) for the algorithm, gap tolerances, and the membership classes the decomposer expects.
+
+### Flex-temporal decomposition (per-group step duration)
+
+- `new_stepduration` - Hours. Members of this group operate at this step duration in the LP. Overrides the solve-level `new_stepduration` for the entities in this group. Enables mixed-resolution dispatch (e.g. hourly electricity on default-resolution nodes, daily hydrogen on a coarsened group). See the per-entity blocks logic in `engine_polars` for how block-aware constraints handle the mix.
 
 ### Controlling outputs
 
@@ -448,9 +486,9 @@ Reserve requirement is defined for groups of nodes. This means that multiple nod
 
 For `reserve__upDown__group` entities:
 
-- `reserve_method` - Choice of reserve method (timeseries, large_failure, dynamic or their combination).
-- `reservation` - [MWh] Amount of reserve required. Constant or time.
-- `reserve_penalty` - [€/MWh] Penalty cost for not fulfilling the reserve requirement.
+- `reserve_method` - Choice of reserve method (`no_reserve`, `timeseries_only`, `dynamic_only`, `large_failure_only` or their combinations).
+- `reservation` - [MW] Amount of reserve required. Constant or time.
+- `penalty_reserve` - [CUR/MW] Penalty cost for not fulfilling the reserve requirement. Constant.
 - `increase_reserve_ratio` - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.
 
 ### Reserve provision by units
@@ -520,5 +558,8 @@ After editing the migration, run `python -m flextool.update_flextool.sync_master
 
 ## Additional entities for further functionality
 
-- `constraint`: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)
+- `constraint`: a user-defined linear constraint between flow, state, and capacity variables on nodes, units and connections. The left-hand side is assembled by tagging the relevant entities with the matching coefficient parameter (`constraint_flow_coefficient` on `unit__inputNode` / `unit__outputNode` / `connection__node`, `constraint_state_coefficient` on `node`, `constraint_invested_capacity_coefficient` / `constraint_cumulative_pre_built_capacity_coefficient` on `node` / `unit` / `connection`); the constraint entity itself carries:
+
+    - `sense` - The sense of the constraint: `greater_than`, `less_than`, or `equal`.
+    - `constant` - A constant offset placed on the right-hand side of the constraint (typically zero). Constant or period.
 

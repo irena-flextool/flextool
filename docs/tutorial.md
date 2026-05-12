@@ -1,213 +1,246 @@
 # IRENA FlexTool tutorial
 
-The instructions for installing IRENA FlexTool are at [Interface overview](https://irena-flextool.github.io/flextool/interface_overview).
+This tutorial walks you through building a small Coal + Wind power system from scratch over a 48-hour timeline. You will create one node at a time, add generation, connect a small transmission network, and watch each change move the dispatch and the slack penalties. Allow roughly 30–45 minutes the first time through. The tutorial assumes the **FlexTool GUI** is already installed — if not, follow [Install with FlexTool GUI](install_gui.md) first.
 
-This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. IRENA FlexTool concepts are explained in more depth at [Model Parameters](https://irena-flextool.github.io/flextool/reference). 
-Video tutorial for Building a small test system can be watched [here](https://youtu.be/O94zHxYcS94).
+!!! tip "Alternative execution interface: Spine Toolbox"
+    If you prefer the Spine Toolbox workflow editor — typically for integrating FlexTool with other models, or for building custom input / output processing steps — the same Coal + Wind example can be built there. See [Spine Toolbox](spine_toolbox.md) and [Install with Spine Toolbox](install_toolbox.md).
 
-This tutorial can be used in couple of different ways - the best way depends on your familiarity with energy system modelling. 
+!!! tip "Alternative data editor: Excel / LibreOffice"
+    The model data shown in the screenshots below is edited in the **Spine database editor**, which the FlexTool GUI launches when you double-click an input source. If you would rather edit in a spreadsheet, export an Excel template, edit it, and re-import. See [Excel as input/output](excel_interface.md). The modelling concepts in this tutorial are identical regardless of the editor.
 
-First, **all users who are not familiar with the way FlexTool manages data using Spine Toolbox functionalities**, should read the [page on Spine Toolbox workflow](https://irena-flextool.github.io/flextool/spine_toolbox)
+!!! note "Just want to see the finished version?"
+    The same Coal + Wind scenarios are pre-built in `templates/examples.sqlite`. Add that file as an input source in a fresh project and you can run every scenario in this tutorial without building anything by hand. Building it step-by-step is the recommended way to learn the concepts.
 
-**If you are new to energy system modelling**, it is probably best to try to build the test system yourself while following the tutorial. This will take time and you will have to look up many data items from the ***Init*** database, but it will also force you to learn the concepts. You can also copy-paste data from the ***Init*** database to the ***Input data*** database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference) from the beginning of the FlexTool reference page to get an initial understanding of the concepts that will then grow as you learn more. 
+## What you're building
 
-**If you have experience in using other types of energy system models** - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the ***Init*** database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process. The concept [reference](https://irena-flextool.github.io/flextool/reference) page can also be useful.
+A three-node electricity system with a coal plant, a wind plant, and three interconnections, dispatched over a two-day timeline:
 
-Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference). 
+![System graph](./img/tutorial/tutorial_fig.png)
 
+The model grows one **alternative** at a time. Each alternative is a self-contained piece of data — the first node, the coal plant, the wind plant, the three-node network — and scenarios are assembled by stacking alternatives on top of each other. That way every step can be run on its own and compared to the previous one.
 
-## Building a small test system
+## Setting up the project
 
-The system contains three demand nodes, connections between them, a coal plant and a wind plant to provide the energy to the time varying demand. The system is run over a 48 hour timeline. 
+1. **Launch the FlexTool GUI** from the FlexTool installation directory:
 
-![System graph](./tutorial_fig.png)
+    ```
+    python -m flextool.gui
+    ```
 
-The small system to be built is also directly available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. The default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database (and not from the ***Init*** SQLite database). The ***Input data*** database is empty by default. Therefore, if you want to use directly the contents of the ***Init*** database (instead of building the small system step-by-step), you need to copy them to the ***Input data*** database before running the scenarios in this tutorial. To copy the data, you need to execute the ***Initialize*** workflow item: select the item, press ***Execute selection*** from the toolbar.
+2. **Create a new project.** From the **Project** menu choose *New project*, name it `tutorial`, and pick a location. The GUI creates `projects/tutorial/` with an empty `input_sources/` folder and a `settings.yaml`.
 
-Remark: in case you had already populated the ***Input data*** database, you need to delete the data before importing from ***Init*** SQLite database. This can be done with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge.
+3. **Add the seed input source.** Click **Add** in the **Input sources** panel and pick `templates/time_settings_only.sqlite` from the FlexTool repository. The GUI copies the file into your project's `input_sources/` (migrating it to the current schema version if needed) and renames it to whatever you typed in the dialog — `tutorial.sqlite` is a good name. This seed database already contains the basic time settings (`init` and `init_2day-test` alternatives) that every FlexTool model needs. See [How to create basic time settings](how_to.md) if you want to know how those were built.
 
-- [Building a small test system](#building-a-small-test-system)
-  - [1st step - a node with no units](#1st-step-a-node-with-no-units)
-  - [2nd step - add a coal unit](#2nd-step-add-a-coal-unit)
-  - [3rd step - add a wind power plant](#3rd-step-add-a-wind-power-plant)
-  - [4th step - add a network](#4th-step-add-a-network)
-- [More functionality](#more-functionality)
+4. **Open the input source in the Spine database editor.** Double-click the `tutorial.sqlite` row in **Input sources** (or select it and press **Edit**). The Spine database editor opens in its own window — that is where the rest of the modelling steps happen.
 
-### Choosing the database
+!!! warning "Always commit before running"
+    The Spine database editor stages changes locally until you **commit** them with **Ctrl-Enter** (or *Session → Commit…* from the menu). Until you commit, the FlexTool GUI sees the previous, uncommitted state. Every step below ends with a commit reminder for this reason.
 
-You should have the FlexTool project open in the Spine Toolbox. For this tutorial a database *time_settings_only.sqlite* is provided in the Flextool folder. As the name suggests, it includes the basic time settings needed for running the tool. If you want to know how it is done or how to make your own time settings go to [How-to-create-basic-time-settings](https://irena-flextool.github.io/flextool/how_to#how-to-create-basic-time-settings). How to -section includes simple examples on specific parts of the system. You can explore it after the tutorial.
+## Step 1 — A node with no units
 
-First make a copy of the database and name it *tutorial.sqlite*. (In the future a new project should be started by copying *time_settings_only.sqlite* or the empty database *input_data_template.sqlite*. Use copy and rename, not directly! Otherwise the progress might be lost when updating the tool, as these databases are part of the repository). Then choose it to be the Input_data:
-![Choose a database](./choosing_database.png)
+The first alternative holds nothing but a single demand node. Running it on its own forces the model to fall back on slack variables, which is a useful sanity check: it shows what happens when there is no way to meet demand.
 
-### 1st step - a node with no units
+### Add the alternative
 
-Open the ***Input data*** database by double-clicking it in the Spine Toolbox workflow.
+In the **Alternative tree** widget of the Spine database editor, add a new alternative called *west*. Every entity and parameter added in this step will live under this alternative, so it can be combined into scenarios cleanly later on.
 
-The test system is built using `alternatives`. Alternative is a subset of the system than one can include to a `scenario` that is optimized by Flextool. For example when adding a wind plant, all the entities related to only the wind plant should be under their own alternative, so that the wind plant can be included or excluded form the `scenario` seamlessly.
+![Add alternative](./img/toolbox/add_alternative.png)
 
-- Each step will add a new `alternative`, and the data it contains, on top of the previous ones. 
-- The first `alternative` will be called *west* to hold the data for the first `node` in the model.
-- The alternative is added in the 'Alternative tree' widget of the 'Spine Database Editor', see figure below.
+### Add the entity
 
-![Add alternative](./add_alternative.png)
+Right-click the `node` class in the **Entity tree** and choose **Add entities**. Name the new node *west* and click **OK**.
 
-Next step is to add an entity for the first `node` that will be called *west*. 
+![Add object](./img/toolbox/add_object_dialog.png)
+![Add object dialog](./img/toolbox/add_object_dialog2.png)
 
-- Right-click on the `node` class in the entity tree to select 'Add entities'. 
-- Use the dialog to add the *west* `node` and click ok. See the figures below.
-- Later other entities will need to be added in the same manner.
+Open the **Entity Alternative** sheet and activate *west* in the *west* alternative. `Entity Alternative` decides whether an entity is part of a given alternative; parameter rows have their own `alternative_name` column and are independent.
 
-![Add object1](./add_object_dialog.png) 
-![Add object2](./add_object_dialog2.png)
+![Entity alternative](./img/concept/entity_alternative.png)
 
-Next, add the *west* node to be active in the *west* `alternative`. This can be done from the `Entity Alternative` sheet. `Entity Alternative` chooses if the entity is part of the alternative or not. (If you are in 0.7 Toolbox, last update before 5/2024, this does not exist. Instead, use parameter `is_active`: yes)
+### Add parameters
 
-![Add object3](./entity_alternative.PNG)
+Set the following parameters on the *west* node, all under the *west* alternative:
 
-Then, add parameter data to the newly minted *west* `node`:
-*west* node represents the demand in a part of the system.
+- `inflow` — a map of negative values, one per timestep, representing demand. Map-type parameters take a column of timestep names and a column of values. Typing 48 rows by hand is tedious, so the easiest way is to copy the column from `templates/examples.sqlite` (opened as a second input source) and paste it into your *west* node.
+- `penalty_up` — e.g. `9000`. Cost of unmet upward demand. If nothing else can meet demand, the model "creates" energy at this price using an upward slack variable.
+- `penalty_down` — e.g. `8000`. Cost of unabsorbed downward energy.
+- `node_type` — *balance*. Forces the node to maintain an energy balance at every timestep. This is the default, so it can be left blank.
 
-- First add an `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. This is tedious to do by hand, so you can also copy-paste this from the init database.
-- There are no electricity generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. This represents the cost of not fulfilling the demand. Also downward `penalty_down` is defined although the model is not using it at this stage. Here values of 9000 and 8000 are used respectively. By default the model uses the value 10 000 for these. Therefore, it is not mandatory to set them, but sometimes these values need to be changed, so understanding how they work is nessesary.
-- Penalties and slack variables are tools of linear optimization. They ensure that the problem is feasable at all timesteps even when the in-out-balance of the nodes is violated. If no real penalty values are known, one should just use large enough numbers, so that the system won't prefer penalty to energy production. In the results, you can see at which timesteps the penalties are used.
-- The parameter `node_type` is related to this and should be set to *balance* (the default). It forces the node to have a balance on inflow and outflow. If the demand is not fulfilled, balance is forced by the slack variable that will "create" the energy with the penalty associated with it. 
-- All parameters here should be part of the *west* `alternative` (column alternative_name) - they will be used whenever a `scenario` includes the *west* `alternative`. The difference between parameter `alternative` and `Entity Alternative` is that the former includes only that specific parameter and the latter includes the entity itself.
+Penalties and slack variables keep the LP feasible at every timestep even when supply and demand do not match. They default to `10000` if not set; you change them only when you have real values, or when you want one node to be preferred over another for last-resort balancing (Step 4 uses this).
 
-![First_node](./west_node.png)
+![First node parameters](./img/tutorial/west_node.png)
 
-The new entities and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be **committed** first. This can be done from the menu of the Database Editor (there is a *commit* command) or by pressing *ctrl-enter*. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the *history* menu item.
+Commit with **Ctrl-Enter** and write an informative commit message. Until you commit, the staged changes are invisible to the FlexTool GUI.
 
-### Interlude - creating a scenario and running the model
+### Execute and inspect
 
-Even though the model is very simple and will not do anything interesting, it can be executed. It is first necessary to create the scenario to be executed. Scenarios are created from `alternatives` in the Scenario tree widget of the Database Editor. In the figure below, a `scenario` called *Test-scenario* is created that should contain `alternatives` *west*, *init* and *init_2day-test* in order to have both a node and a model structure included in the model. The new `scenario` must also be **committed**, before it can be used. A new scenario should be added after each step in the tutorial process. 
+Back in the FlexTool GUI:
 
-![Add scenario](./add_scenario.png)
+1. The **Available scenarios** panel rescans `tutorial.sqlite` automatically when you commit, but if it does not, press the **Refresh** button on the **Input sources** panel.
+2. You need a scenario to execute. Switch to the Spine database editor's **Scenario tree** and create a scenario *Test-scenario* that includes the alternatives *init*, *init_2day-test*, and *west*, in that order. Commit.
 
-Note that the order of the alternatives matters if there are conflicts between the alternatives. The alternatives lower down override the alternatives higher up on the list. In this example the *init* alternative has a full-year timeset, but because the *init_2day-test* is lower in the scenario tree, the tool uses its `model`-*flextool*: solves parameter which points to the solve to be included in the model (*2day-dispatch*) and only it will be solved.
+    ![Add scenario](./img/toolbox/add_scenario.png)
 
-Same logic will apply if you would add a parameter `inflow` with a value -100 to the *west* node in the alternative `init`. The model would use that instead of the previously set timeseries, because the `init` alternative is lower down in the alternative list of the scenario.
+3. In **Available scenarios**, check *Test-scenario* and click **Add checked scenarios to the execution list** (or press **F9**).
+4. Press **Execute** in the **Execution jobs** panel. The job appears in the queue and produces a parquet result tree under `output_parquet/Test-scenario/` when it finishes.
+5. Press **Results viewer** under **Output actions** to inspect dispatch and slack. With no generators present, you should see the upward slack variable taking the full demand at penalty cost.
 
-Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the ***Input data*** database. At this point, there will be only the *Test-scenario* available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
+!!! info "Alternative order matters"
+    Lower alternatives override higher ones if they touch the same parameter. *Test-scenario* uses *init_2day-test* below *init*, so the 2-day timeset wins over *init*'s full-year timeset — only 48 hours are solved.
 
-![Select scenario](./select_scenario.png)
+## Step 2 — Add a coal unit
 
-Next, we want to run three tools: ***Export_to_CSV*** (that will make input files suitable for FlexTool), ***FlexTool3*** (which is a Python script that calls the FlexTool model generator for each solve) and ***Import_results*** (which will take output files from FlexTool and drop their contents to the ***Results*** database with a particular `alternative` name). First, select the three tools (select with left click while ctrl is pressed or draw an area with ctrl pressed, see figure below). Then, press ***Execute selection*** from the menu bar. The three items should be executed and if all goes well, then green check marks appear on each of the tool once it has finished. You can explore the outputs of each item by selecting the item and looking at the ***Console*** widget window.
+Add a coal power plant feeding the *west* node from a fuel commodity.
 
-![Choose workflow items](./choose_workflow_items.png) 
-![Executed selected items](./execute_selected.png)
+### Alternative and entities
 
+Add a new alternative *coal*. Then add the following entities (all under *coal* in **Entity Alternative**, except `commodity` which is active by default):
 
-It is now possible to explore model results for the *Test-scenario* using either the ***Results*** database or the Excel file that can be exported by executing the ***To_Excel*** exporter tool. When doing that, no scenarios should be selected so that the tool will create one Excel file with data from all the alternatives that are in the results database (which will make more sense once there are more scenario results). The generated Excel file can be found by selecting the ***To_Excel*** tool and clicking on the folder icon on top-right of the ***Link properties*** widget window.
+- `unit` *coal_plant*
+- `node` *coal_market*
+- `commodity` *coal*
+- `unit__inputNode` *coal_plant, coal_market* — the coal plant draws from the coal market.
+- `unit__outputNode` *coal_plant, west* — and outputs electricity to *west*.
+- `commodity__node` *coal, coal_market* — links the *coal* commodity to its market node.
 
-By running the `Open_summary` tool, a quick summary csv file will open. This supports only runs with one scenario.
+### Parameters
 
-### 2nd step - add a coal unit
+On *coal_plant* (all under *coal*):
 
-In the second step, a coal unit is added. 
+- `efficiency` = `0.4` — 40 % thermal efficiency.
+- `existing` = `500` — 500 MW of existing capacity.
 
-- The first thing is to add a new `alternative` *coal* so that all new data added in this step will become part of the *coal* `alternative`.
+On the *coal* commodity:
 
-- Then one needs to add the entities:
+- `price` = `20` — €/MWh of fuel.
 
-  - `unit` *coal_plant*
-  - `node` *coal_market* 
-  - `commodity` *coal*
+![Add unit](./img/toolbox/add_unit.png)
 
-The `unit` *coal_plant* and the `node` *coal_market* need to be added to the *coal* alternative from the `Entity Alternative` sheet.
+Commit with **Ctrl-Enter**.
 
-You might be wondering why `commodity` does not need to be added to the `Entity Alternative`. The direct reason is that it is active by default. This can be assumed, since it does not matter if a commodity is in a model, but it is not used. It will be used only if the node using the commodity is included in the model.
+### Execute and inspect
 
-- Add entities:
+In the Spine database editor, create a new scenario *coal* with alternatives *init*, *init_2day-test*, *west*, *coal* (in that order), and commit. In the FlexTool GUI:
 
-  - `unit__inputNode` *coal_plant, coal_market* to indicate that the *coal_plant* is using inputs from the *coal_market*
-  - `unit__outputNode` *coal_plant, west* to indicate that the *coal_plant* will output electricity to the *west* node
-  - `commodity__node` *coal, coal_market*
+1. Check *coal* in **Available scenarios**, **Add checked** to the queue, and **Execute**.
+2. Open the **Result viewer** and switch to comparison view (press **X**) to compare *Test-scenario* and *coal* side by side. The coal scenario should show the coal plant doing most of the work and the upward slack falling sharply.
 
-- *coal_plant* needs the following parameters (all set for the *coal* alternative): 
+## Step 3 — Add a wind plant
 
-  - `efficiency` (e.g. 0.4 for 40% efficiency)
-  - `existing` to indicate the existing capacity in the coal_plant (e.g. 500 MW)
+Wind generation is modelled as a unit whose maximum output follows a time-varying profile instead of consuming a fuel.
 
-- *coal* `commodity` needs just one parameter for `price` (e.g. 20 €/MWh of fuel)
-- All these new parameters should be now part of the *coal* `alternative`. 
+### Alternative and entities
 
-![Add unit](./add_unit.png)
+Add alternative *wind*, then:
 
-To see how the results change due to the coal power plant, make a new scenario *coal* that has the `alternatives` *init*, *init_2day-test*, *west* and *coal*. Run the ***Export_to_CSV***, ***FlexTool3*** and ***Import_results*** to get the results to the ***Results*** database. If you start to get too many result `alternatives` in the ***Results*** database (e.g. if you happen to run the same scenario multiple times), you can delete old ones by removing the unwanted `alternatives` (right-click on the `alternative`) and then **committing** the database.
+- `unit` *wind_plant*
+- `profile` *wind_profile* — time-varying capacity factor (no commodity).
+- `unit__node__profile` *wind_plant, west, wind_profile* — binds the profile to this unit and node.
+- `unit__outputNode` *wind_plant, west*
 
-If you now want to only export the results of the *coal* run to excel, you can do this by choosing the Alternative filter and choosing the run you want to export.
+Add *wind_plant* to **Entity Alternative** under *wind*. `profile` is active by default and is only used when bound through `unit__node__profile` (or `node_profile`).
 
-![Choosing_alternative](./choose_alternative_to_excel.png)
+### Parameters
 
-### Interlude - visualizing the system in a graph
-In Spine Toolbox, it is possible to visualize your system in a graph, which will show all entities, and how they are related to each other.
-To open this visualization mode, open the ***Input data*** database. In the top right corner, click on the menu. Select ***Graph*** in the *View* section.
-You may visualize all entities by selecting *root* in the *Entity tree*, or choose specifically the entities you want to display by selecting them in the *Entity tree* (maintain ctrl to select multiple entities).
+On *wind_plant* (under *wind*):
 
-![Graph_view](./graph_view.png)
-![Graph_view_example](./graph_view_example.png)
+- `conversion_method` = *constant_efficiency*.
+- `efficiency` = `1`.
+- `existing` = `1000` — 1000 MW of installed capacity.
 
-### 3rd step - add a wind power plant
+On *wind_profile*:
 
-Next, a wind power plant is added.
+- `profile` — a map of hourly capacity factors (0–1). Copy this from `templates/examples.sqlite` the same way you copied the `inflow` map.
 
-- Add a new `alternative` *wind*
-- Add entities:
+On the *wind_plant, west, wind_profile* relationship:
 
-  - `unit` *wind_plant*
-  - `profile` *wind_profile* since *wind_plant* does not require a commodity, but instead uses a profile to limit the generation to the available wind.
-    
-  - `unit__node__profile` *wind_plant, west, wind_profile*
-  - `unit__outputNode` *wind_plant, west*
+- `profile_method` = *upper_limit*. The wind plant generates at or below the available capacity factor every hour.
 
-- Add the `unit` *wind_plant* to the *wind* `Entity Alternative`. Again, the `profile` does not need to be added, because it active by default and is only part of the model if connected by a `unit__node__profile` or `node_profile`.
+![Add wind plant](./img/toolbox/add_unit2.png)
 
-- *wind_plant* needs the following parameters (all set for the *wind* alternative):
+Commit with **Ctrl-Enter**.
 
-  - `conversion_method` to choose a method for the conversion process (in this case *constant_efficiency*)
-  - `efficiency` for *wind_plant* should be set to 1.
-  - `existing` capacity can be set to 1000 MW
+### Execute and inspect
 
-- *wind_profile* needs the the parameter `profile` with a map of values where each time step gets the maximum available capacity factor for that time step (see figure). Again, you can copy this from the init database.
-- *wind_plant, west, wind_profile* entity needs a parameter `profile_method` with the choice *upper_limit* selected. This means that the *wind_plant* must generate at or below its capacity factor.
+Create a scenario *wind* with alternatives *init*, *init_2day-test*, *west*, *coal*, *wind*. Commit, then in the FlexTool GUI check *wind*, queue it, and execute. With both coal and wind feeding *west*, the upward slack should be zero across all 48 hours — demand is fully met. In the Result viewer, compare *coal* against *wind* to see the wind output displacing coal during high-wind hours.
 
-You can now create a new scenario *wind*,  that has the `alternatives` *init*, *west*, *coal* and *wind*.
-Remember to **commit**, execute and have a look at the results (there should be no more penalty values used, since the coal and wind plant can together meet the demand in all hours).
+## Step 4 — Connect a three-node network
 
-![Add another unit](./add_unit2.png)
+The final alternative widens the model from one demand node to three, joined by three transmission connections of different capacities.
 
-### 4th step - add a network
+### Alternative and entities
 
- A *network* `alternative` introduces 
+Add alternative *network*. Then add:
 
- - two new `nodes` (*east* and *north*) 
- - three new `connections` between `nodes` (*east_north*, *west_east* and *west_north*). 
+- `node` *east*
+- `node` *north*
+- `connection` *east_north*
+- `connection` *west_east*
+- `connection` *west_north*
+- `connection__node__node` *east_north, east, north*
+- `connection__node__node` *west_east, west, east*
+- `connection__node__node` *west_north, west, north*
 
-- All new `nodes` and `connections` are added to the `Entity Alternative` *network*
+Activate all five new entities (two nodes + three connections) in **Entity Alternative** under *network*.
 
-The new nodes are kept simple: 
+### Parameters
 
-- they have a `node_type` parameter set to *balance* (to force the node to maintain an energy balance — this is the default, so it can be left blank)
-- they have a constant negative `inflow` (i.e. demand)
-- penalty values for violating their energy balance
+On *east* and *north* (under *network*):
 
-The three connections have the following parameters:
+- `node_type` = *balance* (default, can be left blank).
+- `inflow` — a constant negative number (demand).
+- `penalty_up`, `penalty_down` — give *north* a lower `penalty_up` than *east* and *west*. The optimiser will then prefer to shed unmet demand at *north* whenever the transmission network is not strong enough to deliver everything, which makes the comparison plots more interesting.
 
-- they have a `existing` parameter to indicate the existing interconnection capacity between the nodes
-- they have a `efficiency` parameter  (e.g. 0.9 for 90% efficiency).
+On each of the three connections (under *network*):
 
-It is also necessary to create the entities `connection__node__node` for *east_north | east | north*, *west_north | west | north* and *west_east | west | east*.
+- `existing` — interconnection capacity (MW). Pick values that occasionally constrain flow.
+- `efficiency` = `0.9` — 90 % transfer efficiency.
 
-The *north* `node` has the lowest upward penalty, so the model will prefer to use that whenever the *coal* and *wind* units cannot meet all the demand. Sometimes the `existing` capacity of the new `connections` will not be sufficient to carry all the needed power, since both generators are producing to the *west* `node`. **Commit**, execute and explore.
+![Add network](./img/toolbox/add_network.png)
 
- ![Add network](./add_network.png)
+Commit with **Ctrl-Enter**.
 
+### Execute and inspect
 
-### More functionality
+Create a scenario *network* with alternatives *init*, *init_2day-test*, *west*, *coal*, *wind*, *network*. Commit, queue, execute. In the Result viewer:
 
-Now you have learned how to create a small model. Remember that you can change which database is used as the *Input_data* by clicking the tool icon. You can make a copy of the *Results* database if you want to keep them. The database can also be purged from previous results with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge. Purging by itself will not reduce the file size, you will have to `Vacuum` it to do this.
+- Switch to comparison view and tick all four executed scenarios — *Test-scenario*, *coal*, *wind*, *network*.
+- Watch the dispatch shift: with a wider network and the *north* node providing the cheapest slack, you should see the model trade off transmission limits against slack penalty at *north*.
+- Use **PgUp / PgDn** to flick through plot variants (per-node, per-unit, totals).
 
-More instructions on how to create individual parts of the model can be found in the [How to](https://irena-flextool.github.io/flextool/how_to) section.
+!!! tip "Enable Auto-generate for repeated runs"
+    The **Auto-generate** checkboxes in the main GUI window (Scenario plots, Comparison plots, Comparison Excel, …) run the same outputs automatically after each execution. Tick them once and every subsequent **Execute** produces a fresh set of PNGs and workbooks without further input.
 
-You can also look and play with the ready scenarios from the init database. Purge *Input_data* and *Initialize* it to copy the init database to it. Purging is done the same way as above: This can be done with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge. Then select the initialize tool and run it to copy the examples.sqlite to the input_data.sqlite.
+## Inspecting and comparing results
+
+The **Result viewer** reads parquet directly, so it is always live: changing scenarios or plots does not re-run anything.
+
+- **Single-scenario view** (press **V**) — one scenario at a time. Use **↑ / ↓** to navigate plots; **← / →** cycles through variants of the current plot.
+- **Comparison view** (press **X**) — Ctrl-A to select all rows, Alt-↑ / Alt-↓ to reorder. Useful for stacking *Test-scenario*, *coal*, *wind*, *network* and reading the convergence story top to bottom.
+
+For static output:
+
+- **Output actions → Re-plot scenarios** writes PNGs into `output_plots/<scenario>/`.
+- **Output actions → Scenarios to Excel** dumps the parquet to `output_excel/<scenario>.xlsx`.
+- **Output actions → Comparison to Excel** writes a cross-scenario workbook into `output_plot_comparisons/`.
+- The same generators run automatically after each execution if their **Auto-generate** checkboxes are ticked.
+
+If you want PNGs trimmed to a specific window of the timeline, open **Png settings** in the top-right of the central column and set **Start timestep** and **Duration**. The Result viewer ignores these settings — they only constrain pre-rendered PNGs.
+
+## Cleaning up between runs
+
+After many iterations the database accumulates committed alternatives and scenarios you no longer need. Two cleanup paths:
+
+- **Inside the Spine database editor**: *Session → Purge…*. Tick *Select scenario items* (and *Select entity and value items* if you want a full reset), purge, then *Session → Vacuum* to actually shrink the file.
+- **From the FlexTool GUI**: select an executed scenario and click **Delete selected results irrevocably** to drop its parquet plus any derived plots / Excel / CSV from disk. Input data is untouched.
+
+## More functionality
+
+You now have the building blocks: alternatives, scenarios, units, profiles, connections, commodities, and the FlexTool GUI's execute / inspect loop.
+
+- [How-to recipes](how_to.md) — small focused examples (storage, investments, reserves, CHP, hydro, …).
+- [Model parameters](reference.md) — every entity class and parameter, organised by topic.
+- [Model outputs](results.md) — what every parquet column means.
+- [Advanced concepts](advanced_concepts.md) — stochastics, representative periods, multi-year solves.
+- [FlexTool GUI](flextool_gui_interface.md) — full reference for the GUI used here.
+- [Spine database](spine_database.md) — the data model behind the database editor.

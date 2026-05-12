@@ -158,9 +158,6 @@ pip install . --force-reinstall
 
 ### Solver issues
 
-FlexTool includes two open-source solvers by default:
+FlexTool uses **HiGHS** by default — installed automatically via the `highspy` Python bindings, no additional setup needed.
 
-- **HiGHS** — installed automatically via `highspy`. No additional setup needed.
-- **GLPK (glpsol)** — a pre-built binary is included in the `bin/` directory for Linux and Windows. For macOS, the binary `bin/glpsol_macos15_arm64` is provided for Apple Silicon Macs. If you encounter issues, check that the binary has execute permissions: `chmod +x bin/glpsol*`.
-
-It is also possible to add commercial solvers, further instructions in the documentation.
+It is also possible to wire in commercial solvers (e.g. CPLEX) for licensed users; see the documentation for details.

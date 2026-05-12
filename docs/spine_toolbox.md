@@ -4,7 +4,7 @@ IRENA FlexTool uses Spine Toolbox as a workflow and data manager. Open IRENA Fle
 
 If you are using the **IRENA FlexTool browser-interface**, then you will not directly see the Spine Toolbox workflow, but the FlexTool web-server will be executing parts of the workflow in the background as you develop and run the model.
 
-![IRENA FlexTool workflow](./flextool_workflow.png)
+![Spine Toolbox showing the FlexTool workflow](./img/toolbox/flextool_toolbox_gui.png)
 
 The panel on the right shows the different `scenarios` that are available in the database. 
 The user can choose which scenarios will be processed by the workflow (until item ***Results***, 
@@ -25,8 +25,8 @@ copies the contents of the ***Init*** database to the ***Input data*** database.
 ***Export_to_csv*** workflow item is a Spine Toolbox exporter that has been set to write csv files that IRENA FlexTool model code will read.
 
 ***FlexTool*** workflow item contains a Python script that calls FlexTool model code for each solve 
-and passes data between these solves. FlexTool model is written in MathProg and it calls HiGHS 
-solver by default to solve the model. The outputs are csv files.
+and passes data between these solves. FlexTool builds the LP in memory using polars + polar-high 
+and solves with HiGHS via the highspy Python bindings. The outputs are csv files.
 
 ***Import_results*** is a Spine Toolbox importer that takes the output csv files and writes them 
 in the Results database.
@@ -47,7 +47,7 @@ More instructions for Spine Toolbox in [Toolbox User Guide](https://spine-toolbo
 
 Spine databases use Entity-Attribute-Value with Classes and Relationships (EAV-CR). Entity classes define the categories of data. These can be one-dimensional object classes (e.g. `node` or `unit`) or multi-dimensional relationship classes formed from the object classes (e.g. `unit__node`). Spine Toolbox user can define these classes to suit their modelling needs. For FlexTool the entity classes have been pre-defined. Instead, FlexTool user needs to add the entity instances: objects and relationships that define the particular network structure to be modelled (e.g. *coal_plant* `unit` or *west* `node`). Furthermore, each entity class (object or relationship) can hold only parameters that have been defined for that particular class. Again, FlexTool user does not need to add the parameter types - the user should just add needed parameter values for the entities the user has created.
 
-![EAV data structure](./EAV_CR.png)
+![EAV data structure](./img/toolbox/eav_cr.png)
 
 ## Database editor in brief
 
@@ -70,6 +70,6 @@ Whenever data is modified, the data is staged in separate database tables (altho
 
 The database editor menu has options for how to display the data: table view, different pivot views and a graph view. It also contains a tool to delete data (`purge`) and decrease database size by removing unused allocations (`vacuum`). You can also bring back dock windows that have been closed by the user. `History` will show the history of data changes based on the commits made by the user.
 
-![Database editor](./database_editor.png)
+![Database editor](./img/toolbox/database_editor.png)
 
 More on Spine Database editor in [Database Editor User Guide](https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html).
