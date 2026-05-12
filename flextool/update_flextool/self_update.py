@@ -14,8 +14,8 @@ from flextool.update_flextool.initialize_database import initialize_database
 def _reinstall_if_needed():
     """Re-install flextool and refresh its declared dependencies.
 
-    Runs ``pip install --upgrade --upgrade-strategy=eager [-e] <repo_root>``
-    after every ``git pull``.  Two reasons:
+    Runs ``pip install --upgrade [-e] <repo_root>`` after every
+    ``git pull``.  Three reasons:
 
     1. **Editable installs need this too.**  ``pip install -e .`` picks up
        source-tree changes immediately but does NOT pull in new
@@ -23,10 +23,17 @@ def _reinstall_if_needed():
        reinstall, an editable user pulling a commit that adds (say)
        ``polar-high`` to ``[project.dependencies]`` would see
        ``ModuleNotFoundError`` on the next solver invocation.
-    2. **``--upgrade-strategy=eager``** forces pip to bump every transitive
-       dependency to the latest version compatible with the new pins —
-       not just direct deps.  Replaces the previous bespoke
+    2. **``--upgrade``** re-resolves the install target and bumps any
+       direct dependency whose pyproject pin moved past the currently
+       installed version (e.g. ``highspy>=1.14`` floor bumps land
+       automatically).  Replaces the previous bespoke
        ``pip install --upgrade highspy>=1.14`` workaround.
+    3. **NO ``--upgrade-strategy=eager``** — pip's default
+       ``only-if-needed`` semantics keep transitive dependencies stable
+       unless flextool's own pins force a move.  This is deliberate:
+       eager upgrades churn the user's whole environment (numpy,
+       pandas, SQLAlchemy, etc.) and break other editable installs
+       (spinedb-api, toolbox extras) that pin to specific versions.
 
     The install target is resolved from ``__file__`` rather than ``.``
     so the re-install always targets THIS repo, regardless of the
@@ -53,15 +60,13 @@ def _reinstall_if_needed():
     )
     target = ["-e", repo_root] if is_editable else [repo_root]
     completed = subprocess.run(
-        [sys.executable, "-m", "pip", "install",
-         "--upgrade", "--upgrade-strategy=eager", *target],
+        [sys.executable, "-m", "pip", "install", "--upgrade", *target],
     )
     if completed.returncode != 0:
         flag = "-e " if is_editable else ""
         print(
             f"Warning: pip install failed.  Run "
-            f"'pip install --upgrade --upgrade-strategy=eager "
-            f"{flag}{repo_root}' manually."
+            f"'pip install --upgrade {flag}{repo_root}' manually."
         )
 
 
