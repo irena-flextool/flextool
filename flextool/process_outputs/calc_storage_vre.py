@@ -57,11 +57,27 @@ def compute_storage_and_vre(par, s, v, r) -> None:
     r.node_state_change_d = r.node_state_change_dt.groupby(level='period').sum()
 
     # self_discharge_loss
-    r.self_discharge_loss_dt = (
-        v.state[par.node_self_discharge_loss.columns]
-        .mul(par.node_self_discharge_loss, axis=1, level=0)
-        .mul(unitsize[par.node_self_discharge_loss.columns], axis='columns', level=0)
+    # par.node_self_discharge_loss broadcasts the authored
+    # ``state_self_discharge`` param across every node that carries it,
+    # including supply-curve / commodity nodes that have no ``v_state``
+    # LP variable.  Self-discharge is only meaningful on storage nodes,
+    # so restrict to the intersection with ``v.state.columns`` before
+    # multiplying — otherwise pandas raises ``KeyError: None of [...] are
+    # in the [columns]`` on real scenarios with non-storage authored
+    # values.
+    loss_cols = par.node_self_discharge_loss.columns.intersection(
+        v.state.columns
     )
+    if len(loss_cols) > 0:
+        r.self_discharge_loss_dt = (
+            v.state[loss_cols]
+            .mul(par.node_self_discharge_loss[loss_cols], axis=1, level=0)
+            .mul(unitsize[loss_cols], axis='columns', level=0)
+        )
+    else:
+        r.self_discharge_loss_dt = pd.DataFrame(
+            0.0, index=v.state.index, columns=[],
+        )
     r.self_discharge_loss_d = r.self_discharge_loss_dt.mul(step_duration, axis=0).groupby('period').sum()
 
     # node_inflow_d
