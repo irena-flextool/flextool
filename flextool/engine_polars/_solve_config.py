@@ -37,9 +37,9 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import spinedb_api as api
 
@@ -182,6 +182,52 @@ class SolverSettings:
     arguments: defaultdict[str, list]
 
 
+@dataclass
+class SolverConfig:
+    """Per-solve multi-solver dispatch configuration (v52 schema).
+
+    Holds the seven solver-selection parameters introduced by the
+    v52 migration (see ``specs/flextool-multi-solver-handoff.md``
+    Step 1).  Defaults match the v52 parameter definition defaults so
+    a solve that does not author any ``solver_*`` parameter still
+    constructs a meaningful :class:`SolverConfig` (HiGHS via the
+    direct in-process API, no convenience knobs set, "normal" log).
+
+    Fields
+    ------
+    name
+        Solver name; one of polar-high's ``available_solvers``
+        ("highs", "gurobi", "cplex", "xpress", "copt").  Default
+        ``"highs"``.
+    io_api
+        "direct" (in-process binding, fastest), "mps" or "lp" (file
+        fallback).  Default ``"direct"``.
+    options
+        Free-form key→value dict forwarded raw to the solver.  Empty
+        by default; user populates via the ``solver_options`` Map
+        parameter.
+    time_limit
+        Wall-clock seconds; ``None`` means no limit.  Translated to
+        each solver's native parameter name by
+        :func:`flextool.engine_polars._solver_dispatch.build_solver_options`.
+    mip_gap
+        Relative MIP gap; ``None`` means solver default.
+    threads
+        Worker thread cap; ``None`` means solver default.
+    log_level
+        ``"silent"`` / ``"normal"`` / ``"verbose"``.  Default
+        ``"normal"``.
+    """
+
+    name: str = "highs"
+    io_api: str = "direct"
+    options: dict[str, Any] = field(default_factory=dict)
+    time_limit: float | None = None
+    mip_gap: float | None = None
+    threads: int | None = None
+    log_level: str = "normal"
+
+
 # ---------------------------------------------------------------------------
 # SolveConfig — main container
 # ---------------------------------------------------------------------------
@@ -216,6 +262,7 @@ class SolveConfig:
         use_row_scaling: dict | None = None,
         scale_the_objective: dict | None = None,
         user_bound_scale: dict | None = None,
+        solver_configs: dict[str, "SolverConfig"] | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -245,6 +292,12 @@ class SolveConfig:
         # option to <N>" warning for the most reliable result.
         self.user_bound_scale: dict = (
             user_bound_scale if user_bound_scale is not None else {}
+        )
+        # v52 multi-solver dispatch — solve-name → :class:`SolverConfig`.
+        # Empty when no ``solver_*`` parameters are authored on any solve;
+        # callers fall back to ``SolverConfig()`` defaults (HiGHS/direct).
+        self.solver_configs: dict[str, SolverConfig] = (
+            solver_configs if solver_configs is not None else {}
         )
 
         # Computed fields — populated by load_from_db after construction.
@@ -322,6 +375,61 @@ class SolveConfig:
             par="solver_arguments",
             mode=DictMode.DEFAULTDICT,
         )
+        # v52 multi-solver dispatch params.  Each per-solve value is
+        # rolled up into one :class:`SolverConfig` keyed by solve name
+        # (see ``specs/flextool-multi-solver-handoff.md`` Steps 1-3).
+        # The seven params are read individually here and aggregated
+        # into ``solver_configs`` below.  ``solver_options`` is a Map of
+        # str→Any forwarded raw to the chosen solver; everything else is
+        # a scalar default-None convenience knob (None means "no override").
+        #
+        # NOTE: ``solver`` is also read via the older ``solvers``
+        # variable above for the legacy :class:`SolverSettings` dataclass
+        # (which downstream callers still consume); we reuse that dict
+        # here rather than re-querying.
+        solver_io_api: dict = params_to_dict(
+            db=db, cl="solve", par="solver_io_api", mode=DictMode.DICT
+        )
+        solver_log_level: dict = params_to_dict(
+            db=db, cl="solve", par="solver_log_level", mode=DictMode.DICT
+        )
+        # solver_time_limit / solver_mip_gap come back as the stringified
+        # float that ``params_to_dict`` produces for scalar floats
+        # (see line ~141); ``solver_threads`` is an int default-None scalar
+        # but Spine stores integer parameters as floats — coerce to int.
+        solver_time_limit_raw: dict = params_to_dict(
+            db=db, cl="solve", par="solver_time_limit", mode=DictMode.DICT
+        )
+        solver_mip_gap_raw: dict = params_to_dict(
+            db=db, cl="solve", par="solver_mip_gap", mode=DictMode.DICT
+        )
+        solver_threads_raw: dict = params_to_dict(
+            db=db, cl="solve", par="solver_threads", mode=DictMode.DICT
+        )
+        # ``solver_options`` is a Map of str→str|float, read directly via
+        # the Spine API.  ``params_to_dict`` would return a list of
+        # (index, value) tuples — convert to a dict here so the
+        # :class:`SolverConfig.options` field stays a dict (raw
+        # pass-through to the solver).
+        solver_options: dict[str, dict[str, Any]] = {}
+        for param in db.find_parameter_values(
+            entity_class_name="solve", parameter_definition_name="solver_options"
+        ):
+            pv = api.from_database(param["value"], param["type"])
+            if isinstance(pv, api.Map):
+                solver_options[param["entity_name"]] = dict(
+                    zip(list(pv.indexes), list(pv.values))
+                )
+            elif pv is None:
+                continue
+            else:
+                # Defensive: a user could mis-author solver_options as a
+                # scalar.  Treat as empty rather than crash, but log.
+                logger.warning(
+                    "solve.%s.solver_options is not a Map (%r) — ignoring",
+                    param["entity_name"],
+                    type(pv).__name__,
+                )
         stochastic_branches: defaultdict = params_to_dict(
             db=db,
             cl="solve",
@@ -398,6 +506,42 @@ class SolveConfig:
             arguments=solver_arguments,
         )
 
+        # Roll the seven v52 per-solve param dicts into a single
+        # ``solver_configs[solve_name] -> SolverConfig`` mapping.  Keys
+        # are the union of solve names appearing across any of the
+        # seven dicts — a solve that authors *any* solver_* param gets
+        # an explicit entry; solves with no override remain absent and
+        # callers fall back to ``SolverConfig()`` defaults.
+        solver_config_keys = (
+            set(solvers)
+            | set(solver_io_api)
+            | set(solver_options)
+            | set(solver_time_limit_raw)
+            | set(solver_mip_gap_raw)
+            | set(solver_threads_raw)
+            | set(solver_log_level)
+        )
+
+        def _opt_float(raw: dict, key: str) -> float | None:
+            v = raw.get(key)
+            return float(v) if v is not None else None
+
+        def _opt_int(raw: dict, key: str) -> int | None:
+            v = raw.get(key)
+            return int(float(v)) if v is not None else None
+
+        solver_configs: dict[str, SolverConfig] = {}
+        for key in solver_config_keys:
+            solver_configs[key] = SolverConfig(
+                name=solvers.get(key, "highs"),
+                io_api=solver_io_api.get(key, "direct"),
+                options=dict(solver_options.get(key, {})),
+                time_limit=_opt_float(solver_time_limit_raw, key),
+                mip_gap=_opt_float(solver_mip_gap_raw, key),
+                threads=_opt_int(solver_threads_raw, key),
+                log_level=solver_log_level.get(key, "normal"),
+            )
+
         obj = cls(
             model=model,
             model_solve=model_solve,
@@ -415,6 +559,7 @@ class SolveConfig:
             use_row_scaling=use_row_scaling,
             scale_the_objective=scale_the_objective,
             user_bound_scale=user_bound_scale,
+            solver_configs=solver_configs,
         )
 
         # Computed fields — loading order MUST be preserved exactly.
@@ -723,6 +868,7 @@ class SolveConfig:
 __all__ = [
     "DictMode",
     "HiGHSConfig",
+    "SolverConfig",
     "SolverSettings",
     "SolveConfig",
     "get_single_entities",

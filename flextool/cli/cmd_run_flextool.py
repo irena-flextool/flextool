@@ -409,17 +409,37 @@ def main():
         try:
             from flextool.engine_polars import load_flextool_from_db
             from flextool.engine_polars._lagrangian import solve_lagrangian
+            from flextool.engine_polars._solve_config import SolveConfig
             flex_data = load_flextool_from_db(
                 input_db_url,
                 scenario_name,
                 work_folder=wf,
             )
+            # Phase 3 — Lagrangian decomposition is HiGHS-only.  Read the
+            # active solve's :class:`SolverConfig` and let
+            # ``solve_lagrangian`` raise ``FlexToolUserError`` with an
+            # actionable hint when the user picked a commercial solver.
+            try:
+                _sc = SolveConfig.load_from_db_url(
+                    input_db_url, scenario_name,
+                )
+                _active_solve = next(
+                    iter(_sc.model_solve.values()), None
+                )
+                _active_solve_name = (
+                    _active_solve[0]
+                    if _active_solve else scenario_name
+                )
+                _solver_cfg = _sc.solver_configs.get(_active_solve_name)
+            except Exception:  # noqa: BLE001
+                _solver_cfg = None
             result = solve_lagrangian(
                 flex_data,
                 work_dir=wf,
                 alpha=args.lagrangian_alpha,
                 max_iters=args.lagrangian_max_iter,
                 tol=args.lagrangian_tolerance,
+                solver_config=_solver_cfg,
             )
         except Exception as exc:
             logging.error("Lagrangian coordinator failed: %s", exc, exc_info=True)

@@ -179,12 +179,24 @@ def write_outputs_for_solve(
     """
     h = getattr(sol, "highs", None)
     if h is None:
-        _logger.warning(
-            "write_outputs_for_solve: Solution carries no live HiGHS "
-            "instance (sol.highs is None); skipping output emission for "
-            "solve '%s'", solve_name,
-        )
-        return
+        # Commercial-solver path — the LiteSolution carries no live HiGHS
+        # instance but exposes ``make_shim()`` returning a thin
+        # ``highspy.Highs`` API shim built from the SolverResult + LpView.
+        # Feed that into ``write_all_variables`` / ``write_all_handoffs``
+        # so the same writer code paths work for both the HiGHS path
+        # (live ``highspy.Highs``) and the commercial path (LpNamesShim).
+        make_shim = getattr(sol, "make_shim", None)
+        if make_shim is None:
+            _logger.warning(
+                "write_outputs_for_solve: Solution carries no live HiGHS "
+                "instance (sol.highs is None) AND no make_shim() factory; "
+                "skipping output emission for solve '%s'", solve_name,
+            )
+            return
+        h = make_shim()
+        commercial_path = True
+    else:
+        commercial_path = False
 
     work_folder = Path(work_folder)
     output_dir = work_folder / "output_raw"
@@ -193,8 +205,12 @@ def write_outputs_for_solve(
     # Variable-name shim — flextool's writers see ``v_invest[…]`` /
     # ``v_divest[…]`` after this call.  In-place mutation on the live
     # HiGHS; safe because the Solution is read-only post-solve and the
-    # adapter consumes it once.
-    _rename_invest_columns(sol)
+    # adapter consumes it once.  On the commercial path the LiteSolution
+    # already applied the rename at construction time and the shim's
+    # ``passColName`` is a no-op — calling here is harmless and lets the
+    # code path stay branch-free.
+    if not commercial_path:
+        _rename_invest_columns(sol)
 
     # ``scale_the_objective`` — the polars LP now applies the resolved
     # per-solve ``scale_the_objective`` at LP construction (engine_polars/

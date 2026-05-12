@@ -136,8 +136,33 @@ def solve_lagrangian(
     decomposition_method: dict[str, str] | None = None,
     initial_lambda: float = 0.0,
     min_iters: int = 1,
+    solver_config: "object | None" = None,
 ) -> LagrangianResult:
-    """Run Lagrangian decomposition on whole-system *data*."""
+    """Run Lagrangian decomposition on whole-system *data*.
+
+    Parameters
+    ----------
+    solver_config
+        Optional :class:`flextool.engine_polars._solve_config.SolverConfig`.
+        Lagrangian decomposition is currently HiGHS-only (upstream
+        polar-high gap: :class:`polar_high.LagrangianProblem` does not
+        accept ``solver_name``).  When *solver_config* is provided and
+        its ``name != "highs"``, this function raises
+        :class:`flextool.engine_polars._solver_dispatch.FlexToolUserError`
+        rather than silently running on HiGHS.  When omitted (the
+        legacy code path), HiGHS is assumed without checking.
+    """
+    if solver_config is not None and getattr(solver_config, "name", "highs") != "highs":
+        from flextool.engine_polars._solver_dispatch import FlexToolUserError
+
+        raise FlexToolUserError(
+            f"Lagrangian decomposition currently requires HiGHS (polar-high "
+            f"upstream gap: LagrangianProblem.solve does not accept "
+            f"solver_name).  Solve has solver={solver_config.name!r}; either "
+            f"set ``solver = highs`` for this solve or remove "
+            f"``decomposition_method = lagrangian_region`` from the group "
+            f"to use the cascade dispatch."
+        )
     if decomposition_method is None and work_dir is not None:
         decomposition_method = _region_filter.load_decomposition_method(work_dir)
     if decomposition_method is None:

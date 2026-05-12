@@ -538,8 +538,34 @@ def _drive_cascade(
             # (unmapped Param differs, gate transitions, …) drops back
             # to a cold rebuild.  Cold rebuild also fires on the first
             # iteration and on any structural fingerprint mismatch.
+            #
+            # Phase 3 — warm-LP is a HiGHS-only design (polar-high's
+            # WarmProblem wraps a single live HiGHS instance).  When the
+            # active solve picks a commercial solver we disable warm
+            # reuse for this iteration, log a one-time warning, and
+            # cold-rebuild + dispatch through ``run_one_solve``.
+            from flextool.engine_polars._solve_config import (
+                SolverConfig as _SolverConfig,
+            )
+            _active_solver_cfg = state.solve.solver_configs.get(
+                complete_solve_name, _SolverConfig()
+            )
+            _warm_disabled_by_solver = (
+                warm and _active_solver_cfg.name != "highs"
+            )
+            if _warm_disabled_by_solver and not getattr(
+                self, "_warm_disabled_warned", False
+            ):
+                state.logger.warning(
+                    "warm-start is unavailable for solver %r; falling back "
+                    "to cold rebuilds per sub-solve, expect slower per-iter "
+                    "wall-clock.",
+                    _active_solver_cfg.name,
+                )
+                self._warm_disabled_warned = True
             warm_used = False
-            if warm:
+            warm_active = warm and not _warm_disabled_by_solver
+            if warm_active:
                 fp = _fingerprint(data)
                 tried_warm = (
                     self._warm_problem is not None
@@ -596,16 +622,19 @@ def _drive_cascade(
                     )
                 )
                 pb.set_solver_options(highs_options)
-                # Δ.12c-fix: ``keep_solver=True`` so ``sol.highs``
-                # carries the live HiGHS instance the output writer
-                # adapter consumes (``write_all_variables`` /
-                # ``write_all_handoffs`` read MPS column / row names
-                # directly off the solver).  Without this the adapter
-                # no-ops and the native cascade emits zero parquets —
-                # the regression
-                # ``test_native_cascade_emits_reference_output_raw_files``
-                # surfaced in Δ.12c-fix.
-                sol = pb.solve(keep_solver=True)
+                # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
+                # ``pb.solve(keep_solver=True)`` for the default HiGHS path
+                # (byte-identical to the pre-Phase-3 behaviour); routes to
+                # ``polar_high.solvers.solve`` + LiteSolution wrapping on
+                # the commercial path.  The cascade-level SolverConfig
+                # lookup uses the active solve name with the standard
+                # default-when-absent fallback.
+                from flextool.engine_polars._solver_dispatch import (
+                    run_one_solve,
+                )
+                sol = run_one_solve(
+                    pb, _active_solver_cfg, logger=state.logger,
+                )
             # Write scaling diagnostic (CSV + report incl. section 8.5)
             # BEFORE the optimality check, so a non-optimal / time-limited
             # solve still produces actionable scaling info.
@@ -803,6 +832,19 @@ def run_chain_from_db(
         logger = logging.getLogger(
             f"flexpy.run_chain_from_db[{scenario_name}]"
         )
+
+    # v52 multi-solver dispatch (Phase 2 startup hint).  Log the
+    # polar-high-detected solver set once per cascade so users can
+    # confirm a commercial solver they expected to be installed is in
+    # fact available before the solve loop selects it.  See
+    # ``specs/flextool-multi-solver-handoff.md`` Step 4b.
+    try:
+        from polar_high.solvers import available_solvers
+        logger.info(
+            "Available solvers on this system: %s", available_solvers
+        )
+    except ImportError:  # pragma: no cover — older polar_high without dispatch
+        pass
 
     db_url = str(input_db_url)
     if not db_url.startswith("sqlite:") and not db_url.startswith("postgresql"):
@@ -1028,9 +1070,17 @@ def run_single_solve_from_db(
 
     problem.set_solver_options(highs_options)
 
-    # 5. Solve.  ``keep_solver=True`` so the output writer can read MPS
-    # column / row names off the live HiGHS instance.
-    sol = problem.solve(keep_solver=True)
+    # 5. Solve.  Phase 3 — dispatch through ``run_one_solve`` so the
+    # commercial-solver path works end-to-end.  The default HiGHS path
+    # is byte-identical to the pre-Phase-3 ``problem.solve(keep_solver=True)``
+    # call (``run_one_solve`` short-circuits to that exact invocation when
+    # ``solver_config.name == 'highs'``).
+    from flextool.engine_polars._solver_dispatch import run_one_solve
+    from flextool.engine_polars._solve_config import (
+        SolverConfig as _SolverConfig,
+    )
+    solver_cfg = sc.solver_configs.get(scenario_name, _SolverConfig())
+    sol = run_one_solve(problem, solver_cfg, logger=logger)
     if not sol.optimal:
         logger.error(
             "fast single-solve: HiGHS returned non-optimal status "

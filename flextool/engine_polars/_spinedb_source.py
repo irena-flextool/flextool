@@ -298,10 +298,26 @@ class SpineDbSource:
                 # Local imports to avoid build-time cycles.
                 from polar_high import Problem
                 from flextool.engine_polars.model import build_flextool as _build
+                from flextool.engine_polars._solver_dispatch import (
+                    run_one_solve,
+                )
+                from flextool.engine_polars._solve_config import (
+                    SolverConfig as _SolverConfig,
+                )
                 data = load_flextool(self.state.paths.work_folder)
                 pb = Problem()
                 _build(pb, data)
-                sol = pb.solve()
+                # Phase 3 — route through ``run_one_solve``.  This is the
+                # SpineDbSource fixture-test cascade path; HiGHS is the
+                # default and ``run_one_solve`` short-circuits to
+                # ``pb.solve(keep_solver=True)`` for that case (note: the
+                # earlier call here used bare ``pb.solve()`` without
+                # ``keep_solver``; ``run_one_solve`` always passes
+                # ``keep_solver=True`` which is harmless on this path).
+                solver_cfg = self.state.solve.solver_configs.get(
+                    complete_solve_name, _SolverConfig()
+                )
+                sol = run_one_solve(pb, solver_cfg, logger=self.state.logger)
                 if not sol.optimal:
                     self.state.logger.error(
                         f"flexpy non-optimal for {complete_solve_name}"
