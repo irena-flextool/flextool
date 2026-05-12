@@ -12,38 +12,57 @@ from flextool.update_flextool.initialize_database import initialize_database
 
 
 def _reinstall_if_needed():
-    """Re-install the flextool package when it is not an editable install,
-    and upgrade pinned dependencies that may have moved forward.
+    """Re-install flextool and refresh its declared dependencies.
 
-    Editable installs (``pip install -e .``) pick up source changes
-    immediately, so no reinstall is necessary.  Non-editable installs
-    need ``pip install .`` after ``git pull`` to update the installed code.
+    Runs ``pip install --upgrade --upgrade-strategy=eager [-e] <repo_root>``
+    after every ``git pull``.  Two reasons:
 
-    In both cases we also upgrade ``highspy`` to satisfy any newly-raised
-    lower bound in pyproject.toml — pip otherwise keeps the already-
-    installed version if it happens to satisfy the earlier (looser) pin.
+    1. **Editable installs need this too.**  ``pip install -e .`` picks up
+       source-tree changes immediately but does NOT pull in new
+       dependencies that appeared in ``pyproject.toml``.  Without this
+       reinstall, an editable user pulling a commit that adds (say)
+       ``polar-high`` to ``[project.dependencies]`` would see
+       ``ModuleNotFoundError`` on the next solver invocation.
+    2. **``--upgrade-strategy=eager``** forces pip to bump every transitive
+       dependency to the latest version compatible with the new pins —
+       not just direct deps.  Replaces the previous bespoke
+       ``pip install --upgrade highspy>=1.14`` workaround.
+
+    The install target is resolved from ``__file__`` rather than ``.``
+    so the re-install always targets THIS repo, regardless of the
+    caller's CWD (Spine Toolbox typically invokes from the project
+    directory, not the flextool repo root).
     """
     import sys
+    import os
+
+    # flextool/update_flextool/self_update.py  →  flextool/  →  repo root.
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)
+    )))
+
     result = subprocess.run(
         [sys.executable, "-m", "pip", "show", "flextool"],
         capture_output=True, text=True,
     )
     is_editable = "Editable project location" in result.stdout
 
-    # Always bring highspy up to the floor declared in pyproject.toml.
-    # Users on an older version get the newer solver automatically.
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", "highspy>=1.14"],
+    print(
+        f"Refreshing flextool install and dependencies "
+        f"({'editable' if is_editable else 'non-editable'}, target={repo_root})..."
     )
-
-    if is_editable:
-        return
-    print("Reinstalling flextool package to pick up code changes...")
+    target = ["-e", repo_root] if is_editable else [repo_root]
     completed = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "."],
+        [sys.executable, "-m", "pip", "install",
+         "--upgrade", "--upgrade-strategy=eager", *target],
     )
     if completed.returncode != 0:
-        print("Warning: pip install failed. You may need to run 'pip install .' manually.")
+        flag = "-e " if is_editable else ""
+        print(
+            f"Warning: pip install failed.  Run "
+            f"'pip install --upgrade --upgrade-strategy=eager "
+            f"{flag}{repo_root}' manually."
+        )
 
 
 def update_flextool(skip_git):
