@@ -753,9 +753,23 @@ def native_run_model(state, solver) -> int:
             if state.handoffs is not None and last_captured_solve is not None
             else None
         )
+        _phase_timing = (
+            os.environ.get("FLEXTOOL_PHASE_TIMING") == "1"
+            and timing_recorder is not None
+        )
+        _t_preproc_start = time.perf_counter() if _phase_timing else 0.0
         preprocessing_solve_time.run(
             state, complete_solve[solve], prior_handoff=prior_handoff,
         )
+        if _phase_timing:
+            timing_recorder.record(
+                "per_iter",
+                subphase="preprocessing",
+                solve=complete_solve[solve],
+                roll_index=i,
+                seconds=time.perf_counter() - _t_preproc_start,
+                t_start=_t_preproc_start,
+            )
 
         # Phase 4 (Gap F) — expose the upper-level (nesting) parent's
         # complete solve name so ``_FlexpyCascadeSolver.run`` can look the
@@ -831,27 +845,41 @@ def native_run_model(state, solver) -> int:
             state.last_captured_solve = last_captured_solve
 
         # ---- Scaling report (Agent 10) ----
-        try:
-            write_scaling_report(
-                scale_table=scale_table,
-                input_dir=wf / "input",
-                solve_data_dir=wf / "solve_data",
-                solve_name=solve,
-                highs_log_path=wf / "HiGHS.log",
-                output_raw_dir=wf / "output_raw",
-                applied_row_scaling=state.solve.use_row_scaling.get(solve),
-                override_source=(
-                    ("auto-scale" if applied is not None else "db")
-                    if state.solve.use_row_scaling.get(solve) is not None
-                    else None
-                ),
-                stdout_summary=True,
-                logger=state.logger,
-            )
-        except Exception as exc:  # diagnostic only — never fail the solve
-            state.logger.warning(
-                f"scaling_report generation failed (non-fatal): {exc}"
-            )
+        # The diagnostic TXT report is gated behind
+        # ``FLEXTOOL_SCALING_REPORT=1`` and emitted at most once per base
+        # solve name (the ``_roll_N`` suffix is stripped) — matching the
+        # cascade-level gate in ``_orchestration._write_scale_csv_and_report``.
+        # Across a 72-roll cascade this saves ~44s of redundant work.
+        import re as _re
+        _report_env = os.environ.get("FLEXTOOL_SCALING_REPORT") == "1"
+        _native_base = _re.sub(r"_roll_\d+$", "", solve)
+        _native_seen = getattr(state, "_native_report_seen", None)
+        if _native_seen is None:
+            _native_seen = set()
+            state._native_report_seen = _native_seen
+        if _report_env and _native_base not in _native_seen:
+            _native_seen.add(_native_base)
+            try:
+                write_scaling_report(
+                    scale_table=scale_table,
+                    input_dir=wf / "input",
+                    solve_data_dir=wf / "solve_data",
+                    solve_name=solve,
+                    highs_log_path=wf / "HiGHS.log",
+                    output_raw_dir=wf / "output_raw",
+                    applied_row_scaling=state.solve.use_row_scaling.get(solve),
+                    override_source=(
+                        ("auto-scale" if applied is not None else "db")
+                        if state.solve.use_row_scaling.get(solve) is not None
+                        else None
+                    ),
+                    stdout_summary=True,
+                    logger=state.logger,
+                )
+            except Exception as exc:  # diagnostic only — never fail the solve
+                state.logger.warning(
+                    f"scaling_report generation failed (non-fatal): {exc}"
+                )
 
         # Save this level's storage fix for child solves to consume.
         if complete_solve[solve] in state.solve.fix_storage_periods:

@@ -65,6 +65,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -164,6 +165,8 @@ def _write_scale_csv_and_report(
     flex_data: "FlexData",
     solution: "Solution | None",
     logger: logging.Logger,
+    write_csv: bool = True,
+    write_report: bool = True,
 ) -> None:
     """Emit ``scale_the_objective.csv`` and ``scaling_report.txt``.
 
@@ -173,18 +176,26 @@ def _write_scale_csv_and_report(
     user-facing units.  The TXT report is a human-readable diagnostic.
 
     Both writes are best-effort: failures log a warning but do not raise.
-    """
-    try:
-        from flextool.flextoolrunner.solve_writers import (
-            write_scale_the_objective,
-        )
-        write_scale_the_objective(solve_data_dir, effective_obj_scale)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "scale_the_objective.csv write failed for %s: %s",
-            solve_name, exc,
-        )
 
+    ``write_csv`` / ``write_report`` allow callers to suppress either
+    artifact independently — e.g. the cascade gates the CSV per
+    ``base_solve_name`` (its value is invariant across rolls) and gates
+    the diagnostic report behind ``FLEXTOOL_SCALING_REPORT=1``.
+    """
+    if write_csv:
+        try:
+            from flextool.flextoolrunner.solve_writers import (
+                write_scale_the_objective,
+            )
+            write_scale_the_objective(solve_data_dir, effective_obj_scale)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "scale_the_objective.csv write failed for %s: %s",
+                solve_name, exc,
+            )
+
+    if not write_report:
+        return
     try:
         from flextool.engine_polars.scaling_report import write_scaling_report
         write_scaling_report(
@@ -456,8 +467,31 @@ def _drive_cascade(
             self._warm_problem: "WarmProblem | None" = None
             self._prior_data = None
             self._prior_fp: "tuple | None" = None
+            # Per-base-solve gating for the scaling CSV + diagnostic report.
+            # The CSV value (effective_obj_scale) is invariant across rolls
+            # of the same base solve — and the TXT report is diagnostic
+            # only.  We track which base solve names we've already written
+            # each artifact for, so subsequent rolls skip the work.  The
+            # TXT report additionally requires ``FLEXTOOL_SCALING_REPORT=1``
+            # to be set, unless the solve is non-optimal (in which case we
+            # always emit it once for actionable diagnostics).
+            self._scale_csv_written: set[str] = set()
+            self._scale_report_written: set[str] = set()
 
         def run(self, complete_solve_name: str) -> int:
+            # Optional per-iter phase-timing (opt-in via env var).  Emits
+            # `per_iter` rows to the workdir's timings.csv covering
+            # lp_build / solve / handoff and a warm_used marker.  See
+            # specs/warm_start_phase_breakdown_handoff.md.
+            _phase_timing = (
+                os.environ.get("FLEXTOOL_PHASE_TIMING") == "1"
+                and getattr(self.state, "timing_recorder", None) is not None
+            )
+            _tr = self.state.timing_recorder if _phase_timing else None
+            _roll_idx = getattr(self.state, "current_roll_index", "")
+            if _roll_idx is None:
+                _roll_idx = ""
+            _t_build_start = time.perf_counter() if _phase_timing else 0.0
             # Δ.12 — wire ``handoff=`` through ``load_flextool`` so the
             # in-memory carriers from the prior solve flow into this
             # solve's FlexData directly.  Replaces the previous
@@ -607,7 +641,13 @@ def _drive_cascade(
                 # (``write_all_variables`` / ``write_all_handoffs``)
                 # sees the live solver as it does for cold rebuilds
                 # under ``keep_solver=True``.  No extra kwarg required.
+                _t_solve_start = (
+                    time.perf_counter() if _phase_timing else 0.0
+                )
                 sol = self._warm_problem.solve()
+                _t_solve_end = (
+                    time.perf_counter() if _phase_timing else 0.0
+                )
                 self._prior_data = data
                 self._prior_fp = fp
             else:
@@ -632,24 +672,94 @@ def _drive_cascade(
                 from flextool.engine_polars._solver_dispatch import (
                     run_one_solve,
                 )
+                _t_solve_start = (
+                    time.perf_counter() if _phase_timing else 0.0
+                )
                 sol = run_one_solve(
                     pb, _active_solver_cfg, logger=state.logger,
                 )
+                _t_solve_end = (
+                    time.perf_counter() if _phase_timing else 0.0
+                )
+            # Emit per-iter lp_build / solve / warm_used rows now that
+            # the solve is done and we have valid timestamps from
+            # whichever branch ran.  handoff is recorded at end-of-run.
+            if _phase_timing:
+                _tr.record(
+                    "per_iter",
+                    subphase="lp_build",
+                    solve=complete_solve_name,
+                    roll_index=_roll_idx,
+                    seconds=_t_solve_start - _t_build_start,
+                    t_start=_t_build_start,
+                )
+                _tr.record(
+                    "per_iter",
+                    subphase="solve",
+                    solve=complete_solve_name,
+                    roll_index=_roll_idx,
+                    seconds=_t_solve_end - _t_solve_start,
+                    t_start=_t_solve_start,
+                )
+                _tr.record(
+                    "per_iter",
+                    subphase="warm_used",
+                    solve=complete_solve_name,
+                    roll_index=_roll_idx,
+                    seconds=1.0 if warm_used else 0.0,
+                )
+            _t_handoff_start = (
+                time.perf_counter() if _phase_timing else 0.0
+            )
             # Write scaling diagnostic (CSV + report incl. section 8.5)
             # BEFORE the optimality check, so a non-optimal / time-limited
             # solve still produces actionable scaling info.
-            _write_scale_csv_and_report(
-                solve_data_dir=self.state.paths.work_folder / "solve_data",
-                output_raw_dir=self.state.paths.work_folder / "output_raw",
-                solve_name=complete_solve_name,
-                scale_table=scale_table,
-                effective_row_scaling=effective_row_scaling,
-                effective_obj_scale=effective_obj_scale,
-                user_row_scaling=user_row_scaling,
-                flex_data=data,
-                solution=sol,
-                logger=self.state.logger,
+            #
+            # Per-base-solve gating: the CSV value is invariant across
+            # rolls of the same base solve, so emit it only on the first
+            # roll.  The diagnostic TXT is gated behind
+            # ``FLEXTOOL_SCALING_REPORT=1`` (also once per base solve),
+            # except for non-optimal solves which always force one emit
+            # for actionable diagnostics.
+            _t_scale_start = time.perf_counter() if _phase_timing else 0.0
+            _report_env = os.environ.get("FLEXTOOL_SCALING_REPORT") == "1"
+            _force_report = not sol.optimal
+            _write_csv = base_solve_name not in self._scale_csv_written
+            _write_report = (
+                _force_report
+                or (
+                    _report_env
+                    and base_solve_name not in self._scale_report_written
+                )
             )
+            if _write_csv or _write_report:
+                _write_scale_csv_and_report(
+                    solve_data_dir=self.state.paths.work_folder / "solve_data",
+                    output_raw_dir=self.state.paths.work_folder / "output_raw",
+                    solve_name=complete_solve_name,
+                    scale_table=scale_table,
+                    effective_row_scaling=effective_row_scaling,
+                    effective_obj_scale=effective_obj_scale,
+                    user_row_scaling=user_row_scaling,
+                    flex_data=data,
+                    solution=sol,
+                    logger=self.state.logger,
+                    write_csv=_write_csv,
+                    write_report=_write_report,
+                )
+                if _write_csv:
+                    self._scale_csv_written.add(base_solve_name)
+                if _write_report:
+                    self._scale_report_written.add(base_solve_name)
+            if _phase_timing:
+                _tr.record(
+                    "handoff_part",
+                    subphase="scale_csv_report",
+                    solve=complete_solve_name,
+                    roll_index=_roll_idx,
+                    seconds=time.perf_counter() - _t_scale_start,
+                    t_start=_t_scale_start,
+                )
             if not sol.optimal:
                 self.state.logger.error(
                     f"flexpy non-optimal for {complete_solve_name}"
@@ -663,17 +773,28 @@ def _drive_cascade(
             # legacy preprocessing already wrote most of these but
             # dump_csvs ensures the in-memory canonical wins, keeping
             # FlexData → CSV in sync per solve.
+            _t_dump_start = time.perf_counter() if _phase_timing else 0.0
             try:
                 data.dump_csvs(self.state.paths.work_folder)
             except Exception as exc:  # noqa: BLE001
                 self.state.logger.warning(
                     f"dump_csvs failed for {complete_solve_name}: {exc}"
                 )
+            if _phase_timing:
+                _tr.record(
+                    "handoff_part",
+                    subphase="dump_csvs",
+                    solve=complete_solve_name,
+                    roll_index=_roll_idx,
+                    seconds=time.perf_counter() - _t_dump_start,
+                    t_start=_t_dump_start,
+                )
             # Δ.1 — emit TIER A output_raw artefacts BEFORE the in-memory
             # handoff is built.  ``write_all_handoffs`` (called by the
             # adapter) refreshes ``solve_data/period_capacity.csv`` and
             # other handoff CSVs; ``build_handoff_from_flexpy`` then
             # reads those refreshed files for the in-memory handoff.
+            _t_wofs_start = time.perf_counter() if _phase_timing else 0.0
             try:
                 write_outputs_for_solve(
                     sol,
@@ -686,6 +807,15 @@ def _drive_cascade(
                 self.state.logger.warning(
                     f"write_outputs_for_solve failed for "
                     f"{complete_solve_name}: {exc}"
+                )
+            if _phase_timing:
+                _tr.record(
+                    "handoff_part",
+                    subphase="write_outputs_for_solve",
+                    solve=complete_solve_name,
+                    roll_index=_roll_idx,
+                    seconds=time.perf_counter() - _t_wofs_start,
+                    t_start=_t_wofs_start,
                 )
 
             # Phase 4 (Gap F) — thread the in-memory FlexData + the
@@ -703,12 +833,22 @@ def _drive_cascade(
                 if parent_complete is not None
                 and self.state.handoffs is not None else None
             )
+            _t_bhf_start = time.perf_counter() if _phase_timing else 0.0
             handoff = build_handoff_from_flexpy(
                 sol, self.state.paths.work_folder, complete_solve_name,
                 prior_handoff=prior,
                 flex_data=data,
                 parent_handoff=parent_handoff,
             )
+            if _phase_timing:
+                _tr.record(
+                    "handoff_part",
+                    subphase="build_handoff_from_flexpy",
+                    solve=complete_solve_name,
+                    roll_index=_roll_idx,
+                    seconds=time.perf_counter() - _t_bhf_start,
+                    t_start=_t_bhf_start,
+                )
             # Deposit so flextool's consume side picks it up on the next
             # iteration's preprocessing AND so we have it for the result
             # dict.
@@ -740,6 +880,15 @@ def _drive_cascade(
                 warm_used=warm_used,
                 flex_data=data,
             )
+            if _phase_timing:
+                _tr.record(
+                    "per_iter",
+                    subphase="handoff",
+                    solve=complete_solve_name,
+                    roll_index=_roll_idx,
+                    seconds=time.perf_counter() - _t_handoff_start,
+                    t_start=_t_handoff_start,
+                )
             return 0
 
     # Phase 3 — drive the cascade via the native ``native_run_model``.
