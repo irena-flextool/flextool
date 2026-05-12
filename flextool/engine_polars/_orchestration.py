@@ -227,6 +227,53 @@ class _NoopMemoryRecorder:
 
 
 # ---------------------------------------------------------------------------
+# Heap release (glibc malloc_trim)
+# ---------------------------------------------------------------------------
+#
+# The polars/Rust allocator routes through glibc malloc, and glibc's main
+# arena holds freed pages internally instead of returning them to the OS.
+# After a heavy allocation+free cycle (``write_workdir_inputs``,
+# ``load_flextool``, the broadcast cascade) we leak hundreds of MB to
+# multiple GB of unmapped-but-untrimmed heap.  Direct measurement on
+# H2_trade y2050 (2026-05-13):  RSS 3.8 GB → 2.25 GB after a single
+# ``malloc_trim(0)`` call (1.6 GB / 41 % drop).  ``pa.default_memory_pool
+# ().release_unused()`` and ``gc.collect()`` had zero effect — polars
+# does not route through pyarrow's pool, so only the libc-level trim
+# releases anything.
+#
+# The helper is a no-op on non-glibc systems (musl Alpine containers,
+# macOS, Windows).  Safe to call freely; cost is ~10-50ms per call.
+_libc_malloc_trim = None
+
+
+def _try_malloc_trim() -> bool:
+    """Call ``libc.so.6.malloc_trim(0)`` if available; return True on success.
+
+    Cached lookup after the first call.  Failures (non-glibc systems,
+    missing libc, etc.) are logged once at DEBUG level and the helper
+    becomes a permanent no-op for the process lifetime.
+    """
+    global _libc_malloc_trim
+    if _libc_malloc_trim is False:
+        return False
+    if _libc_malloc_trim is None:
+        try:
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6")
+            # malloc_trim(size_t pad) -> int.  pad=0 means trim aggressively.
+            _libc_malloc_trim = libc.malloc_trim
+        except (OSError, AttributeError):
+            _libc_malloc_trim = False
+            return False
+    try:
+        _libc_malloc_trim(0)
+        return True
+    except Exception:  # noqa: BLE001
+        _libc_malloc_trim = False
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
 
@@ -649,6 +696,10 @@ def _drive_cascade(
                 handoff=prior_for_load,
                 db_reader=cascade_db_reader,
             )
+            # Release heap held by the broadcast cascade scratch frames.
+            # On H2_trade y2050 this drops RSS ~1.6 GB / 41 %; expected
+            # to scale with timeline size.  No-op on non-glibc.
+            _try_malloc_trim()
             # Memory checkpoint (opt-in, first iteration only).
             _memrec_local = getattr(self.state, "_memory_recorder", None)
             if _memrec_local is not None and not self._mem_first_load_done:
@@ -1211,6 +1262,11 @@ def run_chain_from_db(
         work_folder,
         logger=logger,
     )
+    # The legacy CSV writer (2.4 kLOC pure-Python loops) allocates and
+    # frees a lot of pandas/dict scratch state; glibc's heap retains the
+    # freed pages.  Release them before the polars-heavy ``load_flextool``
+    # starts so the heap watermark doesn't compound.
+    _try_malloc_trim()
     _memrec.checkpoint("write_workdir_inputs_end", logger)
 
     # Construct the underlying FlexToolRunner — still needed to carry
