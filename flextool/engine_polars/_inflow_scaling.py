@@ -1,5 +1,15 @@
 """Δ.12c-fix2 — Inflow-method scaling cascade for ``p_inflow``.
 
+Phase B (2026-05-12) — stochastic + parent-period fold-in (branches 1
+and 2 of ``write_pdtNodeInflow``) is now ported natively.  When the
+source carries a 3d_map ``node.inflow`` (``pbt_node_inflow`` in legacy
+preprocessing dialect), the per-(n, d, t) Branch-1 fold (over stochastic
+nodes' ``solve_branch[d] × first_timesteps[d]``) and Branch-2 fold
+(over ``period__branch[d]`` parents) take precedence over the
+deterministic Branch 3 additive sum.  See
+``specs/pbt_node_inflow_handoff.md`` for the resolution log.
+
+
 Native polars-lazy port of
 ``flextool/flextoolrunner/preprocessing/node_inflow_scaling_params.py``
 (~430 LOC procedural — read once, re-implemented here lazy/joined).
@@ -192,8 +202,29 @@ def _pt_node_inflow_lf(source: "InputSource",
         return zero_lf.select("n", "t", "value"), empty_explicit_lf
     cols = raw.columns
     if "branch" in cols:
-        # Stochastic 3d_map — caller falls through to flextool branch 1/2.
-        return None, None  # type: ignore[return-value]
+        # Phase B: the source carries a 3d_map(branch, time_start, time)
+        # somewhere in the inflow parameter.  Pbt rows themselves carry
+        # non-null ``branch`` and feed the Branch 1+2 fold-in (handled
+        # separately by :func:`_pbt_node_inflow_fold_lf`).  Rows with
+        # ``branch IS NULL`` are scalar / 1d_map(t) authoring on
+        # non-stochastic nodes that happen to share the same parameter
+        # definition — keep them so Branch 3 (deterministic) still
+        # covers those nodes.
+        non_pbt = raw.filter(pl.col("branch").is_null())
+        # Drop the branch / time_start scaffolding columns; keep only
+        # whatever (t / period / scalar) remains.
+        drop_cols = [c for c in ("branch", "time_start") if c in non_pbt.columns]
+        if drop_cols:
+            non_pbt = non_pbt.drop(drop_cols)
+        if non_pbt.height == 0:
+            # Every row is pbt — Branch 3 has nothing; broadcast zeros
+            # so Branch 3's domain is still complete (the fold-in helper
+            # overlays the actual values).
+            zero_lf = (nodes_lf.join(time_lf, how="cross")
+                                .with_columns(value=pl.lit(0.0)))
+            return zero_lf.select("n", "t", "value"), empty_explicit_lf
+        raw = non_pbt
+        cols = raw.columns
     has_t = "t" in cols
     has_period = "period" in cols
     if has_t and not has_period:
@@ -527,27 +558,247 @@ def _compute_peak_scaling(
 
 
 # ---------------------------------------------------------------------------
-# pbt_node_inflow stochastic / parent-period folds (branch 1 + 2 of
-# entity_period_calc_params.write_pdtNodeInflow).  Currently a thin
-# placeholder: when the source carries pbt_node_inflow data the helper
-# returns None and the caller falls back to the CSV path (preserves
-# pre-Δ.12c-fix2 behaviour for stochastic fixtures).
+# pbt_node_inflow stochastic / parent-period folds (Branch 1 + 2 of
+# entity_period_calc_params.write_pdtNodeInflow).  Phase B (2026-05-12):
+# the helpers below produce a per-(n, d, t) overlay frame that wins
+# over the deterministic Branch 3 additive sum at the cells where any
+# pbt row hits.  See ``specs/pbt_node_inflow_handoff.md`` for the
+# resolution log.
 # ---------------------------------------------------------------------------
 
 
 def _has_pbt_node_inflow(source: "InputSource") -> bool:
     """True if the source carries a ``pbt_node_inflow`` (stochastic) shape.
 
-    Detection heuristic: ``node.inflow`` returns a frame with a
-    ``branch`` column (3d_map(period, branch, t)).  In that case we
-    can't yet compose the additive sum lazily — stochastic fold-in
-    requires the full preprocessing topology (group__node /
-    groupIncludeStochastics / first_timesteps / solve_branch__time_branch).
+    Detection: ``node.inflow`` returns a frame with a ``branch`` column
+    AND at least one row has a non-null branch (3d_map authoring).  The
+    Branch 1+2 fold-in helper :func:`_pbt_node_inflow_fold_lf` takes
+    over when this is True; the deterministic Branch 3 still fires on
+    the (n, d, t) cells where no pbt row hits.
     """
     raw = _try_param(source, "node", "inflow")
     if raw is None:
         return False
-    return "branch" in raw.columns
+    if "branch" not in raw.columns:
+        return False
+    # Defensive: a frame with the column but every value null isn't
+    # actually carrying pbt data.
+    return raw.filter(pl.col("branch").is_not_null()).height > 0
+
+
+def _pbt_node_inflow_frame(source: "InputSource") -> "pl.DataFrame | None":
+    """Return the source's ``node.inflow`` 3d_map frame as
+    ``[n, branch, time_start, t, value]``.
+
+    Returns None when the source doesn't carry pbt rows.  Rows where
+    ``branch`` is null are scalar / 1d_map authoring for other nodes
+    sharing the same parameter — those are not pbt and are excluded.
+    """
+    raw = _try_param(source, "node", "inflow")
+    if raw is None or "branch" not in raw.columns:
+        return None
+    pbt = raw.filter(pl.col("branch").is_not_null())
+    if pbt.height == 0:
+        return None
+    # The SpineDbReader normalises the inner time index to "t" (see
+    # ``_discover_index_cols``).  ``time_start`` stays under its
+    # authored label.
+    keep = ["name", "value", "branch", "time_start", "t"]
+    missing = [c for c in keep if c not in pbt.columns]
+    if missing:
+        return None
+    return pbt.select(
+        pl.col("name").alias("n"),
+        pl.col("branch").cast(pl.Utf8).alias("tb"),
+        pl.col("time_start").cast(pl.Utf8).alias("ts"),
+        pl.col("t").cast(pl.Utf8),
+        pl.col("value").cast(pl.Float64),
+    )
+
+
+def _read_csv_pairs_dict(path: Path, key_col: int) -> dict[str, list[str]]:
+    """Read a 2-col CSV (with header) into ``{col[key_col]: [col[1-key_col]]}``.
+
+    Mirrors :func:`_writer_period_params._read_pairs_to_dict` semantics
+    (we don't import it to avoid a writer-side dependency in the
+    derived-param helper).
+    """
+    import csv
+    out: dict[str, list[str]] = {}
+    if not path.exists():
+        return out
+    other_col = 1 - key_col
+    try:
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] and row[1]:
+                    out.setdefault(row[key_col], []).append(row[other_col])
+    except Exception:
+        return {}
+    return out
+
+
+def _read_singles_set(path: Path) -> set[str]:
+    """Read first column of a CSV (with header) into a set."""
+    import csv
+    out: set[str] = set()
+    if not path.exists():
+        return out
+    try:
+        with path.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if row and row[0]:
+                    out.add(row[0])
+    except Exception:
+        return set()
+    return out
+
+
+def _stoch_nodes_from_workdir(workdir: Path) -> set[str]:
+    """``stoch_node = { n : exists g ∈ groupIncludeStochastics with (g, n)
+    ∈ group__node }`` — mirrors
+    :func:`_writer_period_params._read_stochastic_entities`.
+    """
+    import csv
+    inp = Path(workdir) / "input"
+    groups_stoch = _read_singles_set(inp / "groupIncludeStochastics.csv")
+    out: set[str] = set()
+    p = inp / "group__node.csv"
+    if not p.exists() or not groups_stoch:
+        return out
+    try:
+        with p.open() as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 2 and row[0] in groups_stoch and row[1]:
+                    out.add(row[1])
+    except Exception:
+        return set()
+    return out
+
+
+def _pbt_node_inflow_fold_lf(
+    source: "InputSource",
+    workdir: Path | None,
+    dt_lf: pl.LazyFrame,
+) -> "pl.LazyFrame | None":
+    """Branch 1 + Branch 2 fold-in of ``write_pdtNodeInflow``.
+
+    Branch 1 — Stochastic fold-in.  For every stochastic node n
+    (``n ∈ groupIncludeStochastics × group__node``) and every (d, t) in
+    the active solve, sum ``pbt_node_inflow[n, tb, ts, t]`` over
+    ``tb ∈ solve_branch[d]`` and ``ts ∈ first_timesteps[d]``.
+
+    Branch 2 — Parent-period fold-in.  For every (n, d, t) NOT covered
+    by Branch 1, sum ``pbt_node_inflow[n, tb, ts, t]`` over
+    ``tb ∈ solve_branch[pe]`` and ``ts ∈ first_timesteps[d]`` for each
+    parent period ``pe ∈ period__branch[d]``.
+
+    Returns a lazy frame ``[n, d, t, value]`` covering only the cells
+    that actually hit a pbt row in Branch 1 OR Branch 2.  The caller
+    coalesces this onto the deterministic Branch 3 frame.
+
+    Workdir CSVs consumed (always-present after preprocessing):
+
+    * ``solve_data/first_timesteps.csv``         → ts_for_d
+    * ``solve_data/solve_branch__time_branch.csv`` → tb_for_d
+    * ``solve_data/period__branch.csv``          → pe_for_d
+    * ``input/groupIncludeStochastics.csv`` + ``input/group__node.csv``
+      → stoch_node gate
+
+    Returns ``None`` when the source carries no pbt rows OR when the
+    workdir lacks the required scaffolding.
+    """
+    pbt = _pbt_node_inflow_frame(source)
+    if pbt is None or pbt.height == 0:
+        return None
+    if workdir is None:
+        return None
+    workdir = Path(workdir)
+    sd = workdir / "solve_data"
+    ts_for_d = _read_csv_pairs_dict(sd / "first_timesteps.csv", key_col=0)
+    tb_for_d = _read_csv_pairs_dict(
+        sd / "solve_branch__time_branch.csv", key_col=0,
+    )
+    # period__branch.csv stores (db, d) — child period is column 1.
+    pe_for_d = _read_csv_pairs_dict(sd / "period__branch.csv", key_col=1)
+    if not ts_for_d:
+        # No scaffolding; can't fold.
+        return None
+
+    stoch_nodes = _stoch_nodes_from_workdir(workdir)
+
+    pbt_lf = pbt.lazy()
+    d_lf = dt_lf.select("d").unique()
+
+    parts: list[pl.LazyFrame] = []
+
+    # ── Branch 1 — stochastic fold-in ────────────────────────────────
+    if stoch_nodes and tb_for_d:
+        # Materialise the (d, tb, ts) tuples for Branch 1.
+        b1_rows: list[tuple[str, str, str]] = []
+        for d, tbs in tb_for_d.items():
+            tss = ts_for_d.get(d, [])
+            for tb in tbs:
+                for ts in tss:
+                    b1_rows.append((d, tb, ts))
+        if b1_rows:
+            d_tb_ts_b1 = pl.LazyFrame({
+                "d":  [r[0] for r in b1_rows],
+                "tb": [r[1] for r in b1_rows],
+                "ts": [r[2] for r in b1_rows],
+            })
+            b1 = (pbt_lf
+                    .filter(pl.col("n").is_in(list(stoch_nodes)))
+                    .join(d_tb_ts_b1, on=["tb", "ts"], how="inner")
+                    .group_by(["n", "d", "t"])
+                    .agg(pl.col("value").sum())
+                    .with_columns(_prio=pl.lit(1, dtype=pl.Int8)))
+            parts.append(b1)
+
+    # ── Branch 2 — parent-period fold-in ─────────────────────────────
+    if pe_for_d and tb_for_d:
+        b2_rows: list[tuple[str, str, str]] = []
+        for d, parents in pe_for_d.items():
+            tss = ts_for_d.get(d, [])
+            for pe in parents:
+                tbs = tb_for_d.get(pe, [])
+                for tb in tbs:
+                    for ts in tss:
+                        b2_rows.append((d, tb, ts))
+        if b2_rows:
+            d_tb_ts_b2 = pl.LazyFrame({
+                "d":  [r[0] for r in b2_rows],
+                "tb": [r[1] for r in b2_rows],
+                "ts": [r[2] for r in b2_rows],
+            })
+            b2 = (pbt_lf
+                    .join(d_tb_ts_b2, on=["tb", "ts"], how="inner")
+                    .group_by(["n", "d", "t"])
+                    .agg(pl.col("value").sum())
+                    .with_columns(_prio=pl.lit(2, dtype=pl.Int8)))
+            parts.append(b2)
+
+    if not parts:
+        return None
+
+    # Combine parts, keep the lowest-priority (= highest precedence)
+    # value per (n, d, t).  Branch 1 wins over Branch 2 where both fire.
+    union = pl.concat(parts, how="vertical")
+    folded = (union
+                .sort(["n", "d", "t", "_prio"])
+                .group_by(["n", "d", "t"])
+                .agg(pl.col("value").first())
+                .select("n", "d", "t", "value"))
+    # Restrict to active periods (defensive — the source's pbt may carry
+    # rows for periods outside the active solve).
+    folded = folded.join(d_lf, on="d", how="inner")
+    return folded
 
 
 # ---------------------------------------------------------------------------
@@ -604,11 +855,16 @@ def p_inflow_with_scaling_from_source(
     """Compute the per-(n, d, t) scaled inflow Param.
 
     Returns ``None`` when:
-      * the source has stochastic ``pbt_node_inflow`` (branch 1/2 of
-        ``write_pdtNodeInflow`` — caller falls back to CSV); or
       * the source lacks the timeline scaffolding required for
         ``complete_period_share_of_year`` / ``p_timeline_duration_in_years``
         (preprocessing-only fixtures — out of scope for this helper).
+
+    Phase B (2026-05-12): stochastic ``pbt_node_inflow`` (branch 1/2 of
+    ``write_pdtNodeInflow``) is now folded in natively.  When the source
+    carries 3d_map inflow data, :func:`_pbt_node_inflow_fold_lf` produces
+    a per-(n, d, t) frame for stochastic / parent-period folds, which
+    overlays the deterministic Branch 3 additive sum at the cells where
+    a pbt row hits.
 
     The returned frame includes one row per (n, d, t) ∈ dt for every
     node whose ``inflow_method`` is anything BUT ``no_inflow``,
@@ -631,9 +887,13 @@ def p_inflow_with_scaling_from_source(
     if dt is None or dt.height == 0:
         return None
 
+    # Phase B: stochastic + parent-period fold-in is now native.  Build
+    # the Branch 1+2 frame ahead of time; the deterministic Branch 3
+    # below runs unchanged on its (n, d, t) cells, and we coalesce
+    # Branch 1+2 over the top before returning the final Param.
+    pbt_fold_lf: "pl.LazyFrame | None" = None
     if _has_pbt_node_inflow(source):
-        # Stochastic — defer to CSV (caller handles None).
-        return None
+        pbt_fold_lf = _pbt_node_inflow_fold_lf(source, workdir, dt.lazy())
 
     method_lf = _inflow_method_lf(source)
     method_eager = method_lf.collect()
@@ -782,8 +1042,22 @@ def p_inflow_with_scaling_from_source(
                 .then(pl.col("pti"))
                 .otherwise(pl.lit(0.0))
         )
-    ).select("n", "d", "t", "value").sort("n", "d", "t")
-    out = out_lf.collect()
+    ).select("n", "d", "t", "value")
+
+    # Phase B — overlay stochastic / parent-period fold-in on the
+    # deterministic Branch 3 frame.  Branch 1+2 produce values only for
+    # cells where a pbt row actually hits; Branch 3 covers the rest.
+    if pbt_fold_lf is not None:
+        out_lf = (out_lf
+                    .join(pbt_fold_lf.rename({"value": "_pbt_value"}),
+                          on=["n", "d", "t"], how="left")
+                    .with_columns(
+                        value=pl.when(pl.col("_pbt_value").is_not_null())
+                                .then(pl.col("_pbt_value"))
+                                .otherwise(pl.col("value")))
+                    .drop("_pbt_value"))
+
+    out = out_lf.sort("n", "d", "t").collect()
     if out.height == 0:
         return None
     return Param(("n", "d", "t"), out)
