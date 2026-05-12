@@ -3,30 +3,86 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flextool"
-version = "3.8.0"
+version = "4.0.0.dev0"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
+readme = "README.md"
+license = { file = "LICENSE.txt" }
 requires-python = ">=3.9"
+authors = [
+    { name = "IRENA FlexTool contributors" },
+]
+keywords = [
+    "energy-systems",
+    "optimization",
+    "linear-programming",
+    "mixed-integer-programming",
+    "power-systems",
+    "investment-planning",
+    "highs",
+    "spine",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = [
+    # Solver backend — pure-Python; replaces the retired glpsol pipeline.
+    "polar-high>=1.1.3",
+    "highspy>=1.14",
+    "polars",
+    # Core data + I/O.
     "pandas",
+    "spinedb-api",
     "openpyxl",
     "odfpy",
-    "spinedb-api",
     "python-calamine",
     "xlsxwriter",
     "pyyaml",
-    "sv-ttk",
-    "highspy>=1.14",
     "matplotlib",
     "psutil",
+    # GUI runtime — sv-ttk pulls tkinter theming.  Headless installs that
+    # never import flextool.gui won't actually load this, but it's
+    # listed as core to keep the existing CLI ↔ GUI installs symmetric.
+    # Move to an optional [gui] extra in a future release if headless
+    # users complain about the install size.
+    "sv-ttk",
     "pywin32; sys_platform == 'win32'",
 ]
+
+[project.urls]
+Documentation = "https://irena-flextool.github.io/flextool/"
+Repository = "https://github.com/irena-flextool/flextool"
+Issues = "https://github.com/irena-flextool/flextool/issues"
 
 [project.optional-dependencies]
 toolbox = ["spinetoolbox"]
 viewer = ["tsdownsample>=0.1.3", "networkx>=3.0"]
-engine-polars = ["polar-high", "polars"]
+# Backward-compat alias — engine-polars is now the only engine and its
+# dependencies are part of the core install.  Empty list kept so any
+# automation pinned to ``pip install flextool[engine-polars]`` keeps
+# working.
+engine-polars = []
 
 [project.scripts]
+# Primary entry points — kept hyphen-cased for `flextool-*` CLI uniformity.
+flextool-run = "flextool.cli.cmd_run_flextool:main"
+flextool-update = "flextool.cli.cmd_update_flextool:main"
+flextool-write-outputs = "flextool.cli.cmd_write_outputs:main"
+flextool-migrate-database = "flextool.cli.cmd_migrate_database:main"
+flextool-scenario-results = "flextool.cli.cmd_scenario_results:main"
+flextool-execute-workflow = "flextool.cli.cmd_execute_flextool_workflow:main"
+flextool-export-to-tabular = "flextool.cli.cmd_export_to_tabular:main"
+flextool-read-tabular-input = "flextool.cli.cmd_read_tabular_input:main"
+flextool-read-self-describing-tabular-input = "flextool.cli.cmd_read_self_describing_tabular_input:main"
+# Existing entry points retained.
 flextool-gui = "flextool.gui.__main__:main"
 flextool-read-old = "flextool.cli.cmd_read_old_flextool:main"
 flextool-import-sensitivities = "flextool.cli.cmd_import_sensitivities:main"

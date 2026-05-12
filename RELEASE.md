@@ -1,3 +1,49 @@
+## Release 4.0.0 (TBD) — `glpsol` retired; HiGHS via `polar-high` becomes the sole LP backend
+
+This release closes out the largest architectural change since FlexTool went open source: the GLPK/GMPL pipeline that built the LP via `glpsol`, wrote MPS files to disk, and re-loaded them into HiGHS is gone.  The new path builds the LP in process via [`polar-high`](https://pypi.org/project/polar-high/) on top of the [`polars`](https://pola.rs/) DataFrame engine, hands it to HiGHS through `highspy`, and stays in memory for the entire solve → handoff → output-writer chain.
+
+There are no binary build artefacts left to ship: `glpsol` is gone, the `bin/glpsol*` binaries that the previous releases bundled have been deleted, and the `flextool.mod` GMPL model file is deleted.  FlexTool is now a pure-Python install — `pip install flextool` is sufficient.
+
+**Breaking changes**
+- `bin/glpsol*` removed; `flextool/flextool.mod` and `flextool/flextool_base.dat` removed
+- `--engine=gmpl` hard-rejected with a clear retirement banner
+- Legacy GMPL-pipeline CLI flags removed: `--use-old-raw-csv`, `--ipm`, `--auto-scale`, `--relax-feasibility`, `--glpsol-timing`, `--report-near-duplicates`
+- The stubbed `flextool/flextoolrunner/lagrangian.py` (legacy GMPL coordinator) is deleted; `--decomposition lagrangian` now drives the native polars coordinator (see below)
+- `--highs-threads` accepted as a no-op stub for GUI/Toolbox compat; the native cascade is single-threaded
+
+**New solver backend (`engine_polars`)**
+- Whole-system `FlexData` is built directly from a Spine DB or pre-staged workdir CSVs; the LP build, solve, and output handoff all happen in memory through `engine_polars.run_chain_from_db`
+- HiGHS is consulted via `polar-high.Problem` / `WarmProblem` / `LagrangianProblem`; no MPS roundtrip
+- New experimental `--fast-single-solve` CLI path for simple single-solve workloads — bypasses `write_input` entirely and reads inputs from Spine via `SpineDbReader`
+- Native `engine_polars/_writer_*` ports of 150+ preprocessing sets and calculated parameters (Writer Phase 1-4: `L0-L9`, follow-ups 1-8, closeout, Phase 2 sub-dispatches 1-8, Phase 3 cascade adoption, Phase 4 Gap F handoff)
+- Automatic LP scaling — analyser, scaling-report, two-sided cost-band guard, geometric-centering fallback, objective and bound scaling
+- Δ.31: in-memory `FlexData` + `solution` threaded into `process_outputs.write_outputs` so the output writers no longer round-trip through `solve_data/*.csv`
+
+**Spatial Lagrangian decomposition — native rewire**
+- `--decomposition lagrangian` CLI rewired onto `engine_polars._lagrangian.solve_lagrangian`: per-region builds via `LagrangianProblem`, damped subgradient outer loop, primal averaging on the cross-region pipeline flows
+- Smoke-test coverage on the LH2 three-region fixture pins the CLI contract within a 2 % gap-to-monolithic tolerance
+
+**Flex-temporal decomposition** (carried over from `new-outputs` 3.29.0, fully integrated)
+- Per-entity temporal blocks make mixed-resolution dispatch possible (hourly power + daily hydrogen in the same solve)
+- `v50` + `v51` migrations land `solve.new_stepduration` and group-level `new_stepduration` + `decomposition_method`
+- Constraints made block-aware: storage, conversion, flow capacity, DC flow, UC, ramp, profile, reserve; node balance generalised via overlap-set aggregation
+- Output writers expand coarse-block variables back onto the fine timeline for the user
+
+**Test infrastructure**
+- Layer-1/2/3 test pyramid scaffolded, with golden objectives pinned on 10 scenarios and per-scenario timing budgets
+- `@pytest.mark.solver` and `@pytest.mark.smoke` markers
+- GitHub Actions CI on the smoke tier
+- LH2 three-region JSON fixture + per-fixture native parity tests
+- MPS-parity harness retired alongside the GMPL pipeline
+
+**Packaging / installation**
+- All binary dependencies retired — FlexTool is now a pure-Python install
+- `polar-high` is now a core dependency (was an optional `engine-polars` extra)
+- `pip install flextool` is sufficient on Linux, macOS, and Windows (HiGHS arrives via the `highspy` wheel)
+- PyPI release in preparation (see `specs/pypi_release_checklist.md` for the remaining steps)
+
+---
+
 ## Release 3.32.0 (5.5.2026)
 **Bug fixes**
 - Excel template link-sheet retention: drop link sheets where the link's own class has no surviving data (e.g. `connection_node` when `constraint` is unselected)
