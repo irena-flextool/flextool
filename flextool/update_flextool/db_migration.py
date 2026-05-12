@@ -2,9 +2,29 @@ import json
 import os
 import argparse
 from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database
+from spinedb_api.exception import NothingToCommit
 import logging
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
+
+
+def _commit_step(db, message):
+    """Commit a migration step, tolerating the no-op case.
+
+    spinedb_api raises ``NothingToCommit`` when ``add_update_item`` /
+    ``update_item`` calls produced zero net changes — typically because
+    the requested rows already exist with identical fields (a step that
+    has been hand-applied or carried in by an earlier partial migration
+    that never bumped ``model.version``).  Treating that signal as
+    fatal aborts the rest of the migration mid-chain and the version
+    bump never persists, leaving the DB stuck at the pre-step version.
+    Log and continue so subsequent steps still run.
+    """
+    try:
+        db.commit_session(message)
+    except NothingToCommit:
+        logging.info("Migration step idempotent (no changes): %s", message)
+
 
 def migrate_database(database_path, up_to: int | None = None):
     """Migrate a FlexTool database to a target schema version.
@@ -122,7 +142,7 @@ def migrate_database(database_path, up_to: int | None = None):
                 db.update_item("parameter_definition", entity_class_name= "unit__inputNode", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.")
                 db.update_item("parameter_definition", entity_class_name= "connection", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.")
                 db.update_item("parameter_definition", entity_class_name= "solve", name= "solve_mode", description = "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence.")
-                db.commit_session("Added cumulative investments")
+                _commit_step(db,"Added cumulative investments")
             elif next_version == 23:
                 db.add_update_item("parameter_definition", entity_class_name= "commodity", name= "price", description = "[CUR/MWh or other unit] Price of the commodity. Constant, period or time.")
                 db.add_update_item("parameter_definition", entity_class_name= "group", name= "co2_price", description = "[CUR/ton] CO2 price for a group of nodes. Constant, period or time.")
@@ -150,7 +170,7 @@ def migrate_database(database_path, up_to: int | None = None):
                 db.add_update_item("parameter_definition", entity_class_name="group", name="reference_node",
                     parameter_type_list=("str",),
                     description="Name of the reference bus node (angle fixed to zero) for DC power flow. Optional — if not specified, automatically selected as the node with the largest existing capacity in each connected component of the DC power flow network.")
-                db.commit_session("Added DC power flow parameters")
+                _commit_step(db,"Added DC power flow parameters")
             elif next_version == 27:
                 add_value_list_manual(db, [["minimum_time_methods", "none"]])
                 db.update_item("parameter_definition", entity_class_name="unit", name="minimum_time_method",
@@ -168,7 +188,7 @@ def migrate_database(database_path, up_to: int | None = None):
                     description="[CUR/kW] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so the value is not directly comparable to annualized investment costs. Constant or period.")
                 db.update_item("parameter_definition", entity_class_name="group", name="penalty_inertia",
                     description="[CUR/MWs] Penalty for violating the inertia constraint. Cost scales with the duration of the violation. Constant or period.")
-                db.commit_session("Added minimum time method support and fixed penalty descriptions")
+                _commit_step(db,"Added minimum time method support and fixed penalty descriptions")
             elif next_version == 28:
                 parameter_definitions = db.mapped_table("parameter_definition")
                 # Rename entity-level interest_rate -> discount_rate on unit, connection, node
@@ -198,7 +218,7 @@ def migrate_database(database_path, up_to: int | None = None):
                 if param:
                     db.update_parameter_definition(id=param["id"], name="inflation_offset_operations",
                         description="[years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).")
-                db.commit_session("Renamed economic parameters: interest_rate->discount_rate, discount_rate->inflation_rate")
+                _commit_step(db,"Renamed economic parameters: interest_rate->discount_rate, discount_rate->inflation_rate")
             elif next_version == 29:
                 add_value_list_manual(db, [
                     ["transfer_methods_group", "use_connection_transfer_methods"],
@@ -213,7 +233,7 @@ def migrate_database(database_path, up_to: int | None = None):
                     default_value=default_val, default_type=default_type,
                     parameter_value_list_name="transfer_methods_group",
                     description="Override transfer_method for all connections within this nodeGroup. Options: use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, variable_cost_only, dc_power_flow_with_angles. When set to dc_power_flow_with_angles, connections between member nodes use B-theta DC power flow (requires reactance parameter on connections).")
-                db.commit_session("Added transfer_methods_group parameter_value_list for group transfer_method")
+                _commit_step(db,"Added transfer_methods_group parameter_value_list for group transfer_method")
             elif next_version == 30:
                 add_value_list_manual(db, [
                     ["storage_binding_methods", "bind_using_blended_weights"],
@@ -262,7 +282,7 @@ def migrate_database(database_path, up_to: int | None = None):
                         entity_class_name=cls,
                         name="constraint_cumulative_pre_built_capacity_coefficient",
                         description=prebuilt_desc)
-                db.commit_session(
+                _commit_step(db,
                     "Renamed constraint_capacity_coefficient → "
                     "constraint_invested_capacity_coefficient; added "
                     "constraint_cumulative_pre_built_capacity_coefficient")
@@ -280,7 +300,7 @@ def migrate_database(database_path, up_to: int | None = None):
                         "active timesteps so that uniform input reproduces the "
                         "default (weight = 1 per step). Must not be combined "
                         "with representative_period_weights on the same timeset."))
-                db.commit_session("Added timeset.timeset_weights parameter")
+                _commit_step(db,"Added timeset.timeset_weights parameter")
             elif next_version == 34:
                 # New lifetime_method 'no_investment': asset retires after
                 # lifetime (like reinvest_choice) but no further v_invest is
@@ -348,7 +368,7 @@ def migrate_database(database_path, up_to: int | None = None):
                         default_value=default_one_val,
                         default_type=default_one_type,
                         description=mincap_desc)
-                db.commit_session(
+                _commit_step(db,
                     "Renamed coefficient → flow_coefficient; added "
                     "max_capacity_coefficient and min_capacity_coefficient "
                     "on unit__inputNode and unit__outputNode")
@@ -396,7 +416,7 @@ def migrate_database(database_path, up_to: int | None = None):
                                 alternative_name=pv["alternative_name"],
                                 value=value, type=vtype)
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "Backfilled max_capacity_coefficient and "
                         "min_capacity_coefficient from flow_coefficient for "
                         "entities where flow_coefficient ≠ 1.0")
@@ -430,7 +450,7 @@ def migrate_database(database_path, up_to: int | None = None):
                         id=pv["id"],
                         value=new_val, type=new_type)
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "Flipped unit__outputNode.flow_coefficient values "
                         "to 1/x to match the new multiplicative semantics "
                         "on the sink side of the balance")
@@ -604,7 +624,7 @@ def migrate_database(database_path, up_to: int | None = None):
                         db.remove_items("parameter_value_list", vl["id"])
 
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "v38: consolidated has_balance, has_storage and "
                         "node_type ('balance_within_period') into a single "
                         "node_type parameter with four values"
@@ -636,7 +656,7 @@ def migrate_database(database_path, up_to: int | None = None):
                     ),
                 )
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "v39: added model.max_flow_for_unconstrained_variables "
                         "(replaces hard-coded 1e6 in flextool.mod)"
                     )
@@ -730,7 +750,7 @@ def migrate_database(database_path, up_to: int | None = None):
                     parameter_type_list=("float",),
                 )
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "v40: added commodity.price_method, commodity.unitsize, "
                         "commodity.price_ladder_cumulative and "
                         "commodity.price_ladder_annual (no LP behaviour yet); "
@@ -808,7 +828,7 @@ def migrate_database(database_path, up_to: int | None = None):
                     )
 
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "v41: fix storate_state_end typo -> storage_state_end"
                     )
                 except SpineDBAPIError:
@@ -984,18 +1004,21 @@ def migrate_database(database_path, up_to: int | None = None):
                 ])
 
                 # 5. Remove old value lists now that nothing references them.
+                # Use find_parameter_value_lists (plural) so a DB rebuilt from
+                # a JSON fixture that pre-dates these legacy lists (e.g.
+                # tests.json was exported after v38, never carrying the v8-era
+                # output_node_flows list) doesn't blow up on a strict ``db.item``
+                # lookup that raises when the row is absent.
                 for vl_name in ("output_node_flows", "output_results"):
-                    vl = db.item(
-                        db.mapped_table("parameter_value_list"), name=vl_name,
-                    )
-                    if vl:
+                    vls = list(db.find_parameter_value_lists(name=vl_name))
+                    if vls:
                         try:
-                            db.remove_items("parameter_value_list", vl["id"])
+                            db.remove_items("parameter_value_list", vls[0]["id"])
                         except SpineDBAPIError:
                             pass
 
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "v42: renamed output_node_flows -> "
                         "output_nodeGroup_dispatch, output_aggregate_flows "
                         "-> flow_aggregator; split output_results into "
@@ -1034,7 +1057,7 @@ def migrate_database(database_path, up_to: int | None = None):
                         parameter_group_name="Outputs",
                     )
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "v43: added 'Outputs' parameter_group and tagged "
                         "the four group-level output parameters "
                         "(output_nodeGroup_dispatch, "
@@ -1103,7 +1126,7 @@ def migrate_database(database_path, up_to: int | None = None):
                     ),
                 )
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "Added 'unidirectional' to transfer_methods and "
                         "transfer_methods_group value lists"
                     )
@@ -1126,7 +1149,7 @@ def migrate_database(database_path, up_to: int | None = None):
                         default_type=default_type,
                     )
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "v48: set default_value=0.05 on "
                         "connection/node/unit discount_rate "
                         "(fixes 0/0 in annuity factor when unset)"
@@ -1156,7 +1179,7 @@ def migrate_database(database_path, up_to: int | None = None):
                         default_type=dt,
                     )
                 try:
-                    db.commit_session(
+                    _commit_step(db,
                         "v49: restore advisory enum defaults — "
                         "node.inflow_method=use_original; "
                         "constraint.sense=equal; "
@@ -1203,7 +1226,7 @@ def migrate_database(database_path, up_to: int | None = None):
             version_up = [["model", "version", new_version, None, "Contains database version information."]]
             (num,log) = import_data(db, object_parameters = version_up)
             print(database_path+ " updated to version "+ str(new_version))
-            db.commit_session("Updated Flextool data structure to version " + str(new_version))
+            _commit_step(db,"Updated Flextool data structure to version " + str(new_version))
         else:
             print(database_path+ " already up-to-date at version "+ str(version))
 
@@ -1212,7 +1235,7 @@ def add_version(db):
 
     version_up = [["model", "version", 1, None, "Contains database version information."]]
     (num,log) = import_data(db, object_parameters = version_up)
-    db.commit_session("Added version parameter")
+    _commit_step(db,"Added version parameter")
 
     return 0
 
@@ -1228,7 +1251,7 @@ def remove_parameters_manual(db,obj_param_names):
 
     try:
         db.remove_items('parameter_definition', *id_list)
-        db.commit_session("Removed parameters")
+        _commit_step(db,"Removed parameters")
     except SpineDBAPIError:
         print("This removal has been done before, continuing")
     return 0
@@ -1236,7 +1259,7 @@ def remove_parameters_manual(db,obj_param_names):
 def add_parameters_manual(db,new_parameters):
     (num,log) = import_data(db, object_parameters = new_parameters)
     try:
-        db.commit_session("Added new parameters")
+        _commit_step(db,"Added new parameters")
     except SpineDBAPIError:
         print("These parameters have been added before, continuing") 
     return 0
@@ -1244,7 +1267,7 @@ def add_parameters_manual(db,new_parameters):
 def add_relationships_manual(db, new_relationships):
     (num,log) = import_data(db, relationship_parameters = new_relationships)
     try:
-        db.commit_session("Added new parameters")
+        _commit_step(db,"Added new parameters")
     except SpineDBAPIError:
         print("These parameters have been added before, continuing") 
     return 0
@@ -1252,7 +1275,7 @@ def add_relationships_manual(db, new_relationships):
 def add_value_list_manual(db, new_value_lists):
     (num,log) = import_data(db,parameter_value_lists = new_value_lists)
     try:
-        db.commit_session("Added new parameter value lists")
+        _commit_step(db,"Added new parameter value lists")
     except SpineDBAPIError:
         print("These value lists have been added before, continuing")
     return 0
@@ -1271,7 +1294,7 @@ def add_new_parameters(db, filepath):
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
 
     try:
-        db.commit_session("Added new parameters")
+        _commit_step(db,"Added new parameters")
     except SpineDBAPIError:
         print("These parameters have been added before, continuing") 
     return 0
@@ -1327,7 +1350,7 @@ def change_optional_output_type(db, filepath):
     if enable_parameter_definition != None:
         db.remove_items('parameter_definition', *[enable_parameter_definition.id,disable_parameter_definition.id])
     try:
-        db.commit_session("Changed optional outputs")
+        _commit_step(db,"Changed optional outputs")
     except SpineDBAPIError:
         print("This change has been done before, continuing") 
     return 0
@@ -1794,9 +1817,9 @@ def _v44_build_parameter_group_map() -> dict[tuple[str, str], str]:
         m[("solve", p)] = "solve_basics"
 
     # --- solve_advanced -----------------------------------------------
-    # timeline_hole_multiplier belongs here "if present" (proposal).  The
-    # migration below handles that conditionally, so we don't pre-declare
-    # it in this map.
+    # timeline_hole_multiplier is created + tagged in v44 Step 4 (it
+    # didn't exist in the schema before that step).  Listing it here too
+    # would be a no-op since Step 3's loop pre-dates its existence.
     for p in (
         "solver_arguments", "solver_precommand", "highs_presolve",
         "highs_method", "highs_parallel", "rolling_duration",
@@ -1845,17 +1868,26 @@ def _migrate_v44_parameter_groups(db) -> None:
       3. Assign every parameter_definition to its group from the
          data-driven membership map built by
          :func:`_v44_build_parameter_group_map`.
-      4. If ``solve.timeline_hole_multiplier`` exists in this database,
-         assign it to ``solve_advanced`` (proposal says "if present").
-         Otherwise skip silently.
+      4. Define ``solve.timeline_hole_multiplier`` (float, default 1.0)
+         and assign it to ``solve_advanced``.  The parameter has been
+         consumed end-to-end by the writer chain
+         (``input_writer._WRITE_ENTITY_PARAMETER_SPECS`` →
+         ``solve_writers.write_hole_multiplier`` → ``solve_data/
+         solve_hole_multiplier.csv`` → mod's ``p_hole_multiplier``)
+         since well before v44, but was never declared in the schema —
+         flextool relied on a Python-convention default of 1.0.  This
+         step closes the gap so the schema is the single source of
+         truth (matters for downstream consumers like flexpy that read
+         defaults from ``parameter_definition.default_value``).
     """
     # Step 1: rename the existing Outputs group (or create it if it is
     # somehow missing) and update its priority.  Doing an id-keyed update
     # preserves the link to the four output-parameter_definitions that
-    # v43 already tagged.
-    outputs_group = db.item(
-        db.mapped_table("parameter_group"), name="Outputs",
-    )
+    # v43 already tagged.  Use find_parameter_groups (plural) so a
+    # re-iterated migration on a DB that already has "output" (post-v44
+    # state, version rolled back) doesn't blow up on the lookup.
+    outputs_groups = list(db.find_parameter_groups(name="Outputs"))
+    outputs_group = outputs_groups[0] if outputs_groups else None
     if outputs_group is not None:
         db.update_item(
             "parameter_group",
@@ -1894,26 +1926,42 @@ def _migrate_v44_parameter_groups(db) -> None:
             parameter_group_name=group_name,
         )
 
-    # Step 4: conditionally tag timeline_hole_multiplier if present.
-    thm = list(db.find_parameter_definitions(
-        entity_class_name="solve", name="timeline_hole_multiplier",
-    ))
-    if thm:
-        db.add_update_item(
-            "parameter_definition",
-            entity_class_name="solve",
-            name="timeline_hole_multiplier",
-            parameter_group_name="solve_advanced",
-        )
+    # Step 4: declare solve.timeline_hole_multiplier (float, default 1.0)
+    # and tag it to solve_advanced.  add_update_item is idempotent on
+    # (entity_class_name, name) so re-running on a DB that already has
+    # the parameter (e.g. one carried in by hand) is a no-op except for
+    # back-filling missing fields (default, type, group).
+    thm_default_val, thm_default_type = to_database(1.0)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="timeline_hole_multiplier",
+        parameter_type_list=("float",),
+        default_value=thm_default_val,
+        default_type=thm_default_type,
+        parameter_group_name="solve_advanced",
+        description=(
+            "[unitless] Multiplier applied to the inverse-step-duration "
+            "term in nodeBalance_eq and storage-binding constraints "
+            "across timeline gaps (holes).  Tunes how strongly state "
+            "differences are penalised across discontinuities in the "
+            "timeline.  Default 1.0 mirrors the .mod default and matches "
+            "pre-v44 Python-convention behaviour."
+        ),
+    )
 
     try:
-        db.commit_session(
+        _commit_step(db,
             "v44: renamed 'Outputs' parameter_group to 'output'; added 14 "
             "new parameter_groups (basics, investment, retirement, storage, "
             "tech_advanced, reserve, emission, network, flow_limit, "
             "constraint, model, solve_basics, solve_advanced, timeline); "
             "assigned every parameter_definition to its group per "
-            "rivendell/PROPOSAL_parameter_groups.md"
+            "rivendell/PROPOSAL_parameter_groups.md; "
+            "declared solve.timeline_hole_multiplier (float, default 1.0) "
+            "in solve_advanced — closes the schema gap for a parameter "
+            "the writer chain has consumed for some time via a "
+            "Python-convention default."
         )
     except SpineDBAPIError:
         pass
@@ -1976,7 +2024,7 @@ def _migrate_v45_parameter_group_colors(db) -> None:
             color=color,
         )
     try:
-        db.commit_session(
+        _commit_step(db,
             "v45: updated parameter_group colours to a mid-tone palette "
             "(readable on both light and dark IDE themes); calm cool tones "
             "for the common groups, warm tones for advanced / risk-prone "
@@ -2167,7 +2215,7 @@ def _migrate_v50_new_stepduration_to_solve(db) -> None:
         db.remove_parameter_definition(id=timeset_def["id"])
 
     try:
-        db.commit_session(
+        _commit_step(db,
             "v50: move new_stepduration from timeset to solve; "
             "propagate values via solve.period_timeset; drop "
             "timeset.new_stepduration (parameter was already "
@@ -2265,7 +2313,7 @@ def _migrate_v51_group_block_resolution(db) -> None:
         )
 
     try:
-        db.commit_session(
+        _commit_step(db,
             "v51: added group.new_stepduration and "
             "group.decomposition_method (Agent 1.1 flex-temporal + "
             "decomposition foundation); no LP behaviour yet."
@@ -2302,7 +2350,7 @@ def _migrate_v46_use_row_scaling(db) -> None:
             name="use_row_scaling",
             parameter_group_name="solve_advanced",
         )
-        db.commit_session(
+        _commit_step(db,
             "v46: added solve.use_row_scaling parameter (Agent 5 LP-scaling): "
             "per-solve opt-in for automatic row scaling; default 'no' "
             "preserves pre-scaling behaviour."
