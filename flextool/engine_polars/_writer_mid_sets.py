@@ -41,13 +41,25 @@ import polars as pl
 # ---------------------------------------------------------------------------
 
 def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
-    """Read a tiny flextool CSV with positional column rename."""
+    """Read a tiny flextool CSV with positional column rename.
+
+    Forces every column to ``Utf8`` (via ``infer_schema_length=0``)
+    regardless of the CSV's header names or data shape.  This matters
+    because the ``columns=`` arg is the *post-rename* target — it
+    cannot be used as ``schema_overrides=`` keys, since those match
+    CSV header names (e.g. ``p_commodity.csv`` carries the header
+    ``commodity,commodityParam,p_commodity`` and gets renamed to
+    ``commodity,param,value`` here).  Without forcing Utf8, polars
+    type-inference picks Float64 for all-numeric value columns and
+    downstream ``pl.col(...) != ""`` filters raise
+    ``cannot compare string with numeric type``.
+    """
     if not path.exists() or path.stat().st_size == 0:
         return pl.DataFrame({c: [] for c in columns}, schema={c: pl.Utf8 for c in columns})
     df = pl.read_csv(
         path,
         has_header=True,
-        schema_overrides={c: pl.Utf8 for c in columns},
+        infer_schema_length=0,
         truncate_ragged_lines=True,
     )
     keep = df.columns[: len(columns)]
