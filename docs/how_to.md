@@ -37,6 +37,12 @@ General:
 - [How to create aggregate outputs](#how-to-create-aggregate-outputs)
 - [How to enable/disable outputs](#how-to-enabledisable-outputs)
 - [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
+- [How to enable a fast single-solve](#how-to-enable-a-fast-single-solve)
+- [How to use Lagrangian decomposition (spatial)](#how-to-use-lagrangian-decomposition-spatial)
+- [How to use timeset weights (non-RP weighted timesteps)](#how-to-use-timeset-weights-non-rp-weighted-timesteps)
+- [How to read the LP scaling diagnostic report](#how-to-read-the-lp-scaling-diagnostic-report)
+- [How to export a partial Excel template (parameter-group picker)](#how-to-export-a-partial-excel-template-parameter-group-picker)
+- [How to use representative-period clustering with scalar profiles](#how-to-use-representative-period-clustering-with-scalar-profiles)
 
 ## How to create basic temporal structures for your model
 **(time_settings_only.sqlite)**
@@ -1206,3 +1212,109 @@ Model changes (potentially large changes to the results --> need to understand h
 [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model),
 [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
 - Aggregate data. Technological: Combine power plants that are using the same technology. Spatial: Combine nodes. Temporal: Use longer timesteps.
+
+## How to enable a fast single-solve
+
+For small, simple workloads FlexTool offers an experimental fast path that bypasses the full preprocessing / `write_input` phase and reads the inputs straight from the Spine DB. It is selected with the `--fast-single-solve` flag on the FlexTool runner. Use it only when **all** of the following hold:
+
+- exactly one `solve` (no chained solves, no rolling window, no nested solves)
+- `solve_mode` is *single_solve*
+- no stochastic branches
+- no Lagrangian decomposition
+- the scenario name is supplied via `--scenario-name` (the fast path does not auto-pick a scenario)
+
+The flag is dispatched in `flextool/cli/cmd_run_flextool.py` and the source-only loader lives in `flextool/engine_polars/_fast_load.py`. The loader builds the `FlexData` stub directly from `SpineDbReader` via the same override chain the slow path uses, and feeds it straight into the in-memory LP build. There is no support-CSV materialisation in the work folder.
+
+```bash
+python -m flextool.cli.cmd_run_flextool \
+    sqlite:///input_data.sqlite \
+    --scenario-name my_scenario \
+    --fast-single-solve
+```
+
+!!! note "Single-threaded and non-production"
+    The fast path runs single-threaded and is marked experimental. Any input that the override chain cannot fully populate raises a `FastLoadError` with the missing field — the loader does not silently fall back. If you hit one, drop the flag and use the regular path; the slow path remains the canonical driver for everything except trivial fixtures.
+
+## How to use Lagrangian decomposition (spatial)
+
+Large systems that naturally split into regions (e.g. an interconnected pan-continental network where each country's internal grid is cheap but the joint solve is large) can be solved with a spatial Lagrangian decomposition. The coordinator builds one HiGHS instance per region via `LagrangianProblem`, prices the cross-region pipeline flows with a damped subgradient on λ, and returns the primal-averaged solution once the tail-averaged imbalance is below tolerance.
+
+Set up the regions in the database:
+
+- create one `group` per region, list its `node` members via `group__node`
+- set the group parameter `decomposition_method` to *lagrangian_region* on each region group
+- declare at least two such region groups in the active scenario
+
+See the `group.decomposition_method` parameter in [Reference](reference.md) and the algorithm write-up in [dev/decomposition.md](dev/decomposition.md).
+
+Then run the solve with `--decomposition lagrangian`:
+
+```bash
+python -m flextool.cli.cmd_run_flextool \
+    sqlite:///input_data.sqlite \
+    --scenario-name multi_region \
+    --decomposition lagrangian \
+    --lagrangian-alpha 0.1 \
+    --lagrangian-max-iter 80 \
+    --lagrangian-tolerance 1.0
+```
+
+The CLI surface is defined in `flextool/cli/cmd_run_flextool.py` and the coordinator in `flextool/engine_polars/_lagrangian.py`. `--lagrangian-alpha` is the base step size (per-iteration step is `α / √k`), `--lagrangian-max-iter` caps the outer loop, and `--lagrangian-tolerance` is the primal-units imbalance threshold for declaring convergence. Use this when the per-region solve is cheap but the monolithic solve is expensive; if the regions are tightly coupled (i.e. cross-region flows dominate the dispatch) the subgradient loop may need many iterations and a monolithic solve is usually better.
+
+## How to use timeset weights (non-RP weighted timesteps)
+
+`timeset.timeset_weights` lets each timestep within a `timeset` carry a custom weight that is applied to the cost and slack terms in the objective. The typical use case is a coarse, OSeMOSYS-style timeslice structure where some timesteps cover more year-hours than others (wet vs. dry season, peak vs. off-peak day-types) — `timeset_duration` already controls how long each step is, but `timeset_weights` is what scales the *contribution to the annual cost* when those slices are uneven.
+
+The parameter is a flat Map on the `timeset` entity: index is the timestep name, value is a float. Weights are normalised per period to sum to 1 and then re-scaled by the number of active timesteps, so uniform input reproduces weight = 1 per step (the default behaviour) and the absolute magnitude of the weights does not matter — only the relative shape does. Decoder lives in `flextool/engine_polars/_timeline.py` (`_decode_timeset_weights`) and the per-period normalisation is documented under `TimelineConfig.timeset_weights` in the same file. See also the `timeset_weights` entry in [Reference](reference.md).
+
+!!! note "Mutually exclusive: timeset_weights and representative_period_weights"
+    A single `timeset` may carry **either** `timeset_weights` (per-step weights for non-RP timeslice models) **or** `representative_period_weights` (per-period weights for RP-clustered models), not both. The runner errors out if both are set on the same timeset.
+
+## How to read the LP scaling diagnostic report
+
+Every solve runs an auto-scaling pass before handing the LP to the solver and writes two diagnostic artefacts into `solve_data/<solve>/`:
+
+- `scaling_report.txt` — human-readable summary
+- `scaling_analysis.json` — machine-readable companion (same data, structured)
+
+The text report covers (in order):
+
+- matrix / cost / bound coefficient ranges per family
+- bimodal-coefficient detection — flags coefficient families whose log10 distribution splits into two clusters separated by a wide gap (often a sign of mixing units, e.g. MW and kW values for the same parameter)
+- composite-scale mismatches — large unitsize-ratio jumps between directly-connected entities (a 1 GW plant feeding a 1 kW node, for example)
+- near-duplicate parameter clusters — coefficients that differ only by float noise and could be aggregated for symmetry detection
+
+Auto-scaling never changes the LP optimum: every variable and constraint is unscaled back to the user's units before the solution is written out. The report is purely diagnostic. Read it when:
+
+- the solver runs slowly or hits its time limit
+- HiGHS reports numerical trouble (ill-conditioning warnings, suspect infeasibility)
+- you are about to file a bug — attaching the report saves a round-trip
+- you are tuning a freshly-converted model and want to spot unit-mix mistakes early
+
+Generators live in `flextool/engine_polars/scaling.py` (`write_scaling_analysis_json`) and `flextool/engine_polars/scaling_report.py` (`write_scaling_report`). For the user-facing guide and section-by-section interpretation tips, see [dev/scaling.md](dev/scaling.md).
+
+## How to export a partial Excel template (parameter-group picker)
+
+When you only need a subset of the parameter universe — say, a small dispatch sandbox without investments or stochastics — you can export an Excel template restricted to selected parameter groups instead of the full reference template. The CLI supports this via the `--groups` flag on the export-to-tabular command:
+
+```bash
+python -m flextool.cli.cmd_export_to_tabular \
+    sqlite:///input_data.sqlite \
+    partial_template.xlsx \
+    --groups "vre,storage,reserves"
+```
+
+The flag takes a comma-separated list of `parameter_group` names. Parameters outside the listed groups are dropped, and sheets with no surviving parameter columns are removed unless they are explicitly listed in `always_include_with_groups` in `flextool/export_to_tabular/export_settings.yaml`.
+
+The following groups are **always kept** regardless of the `--groups` selection (declared as `required_groups` in `export_settings.yaml`):
+
+- `timeline`
+- `model`
+- `solve_basics`
+- `basics`
+
+These provide the structural backbone of any FlexTool model. Implementation: `flextool/cli/cmd_export_to_tabular.py` and `flextool/export_to_tabular/sheet_config.py`. The FlexTool GUI exposes the same picker under the "Add empty FlexTool input Excel" action (3.32.0). See also [Excel interface](excel_interface.md) for the Excel-as-input workflow.
+
+## How to use representative-period clustering with scalar profiles
+
+The representative-period preprocessor in `flextool/representative_periods/preprocess.py` builds its clustering matrix from time-varying `profile` and `node.inflow` series. Constant-valued (scalar) profiles and inflows are now dropped from the clustering input on the way in — a constant series has zero variance, contributes no information to the period-similarity distance, and was previously causing per-character iteration crashes when `params_to_dict` returned the scalar as a string. The preprocessor prints a one-line note such as `Skipping 3 scalar profile(s) and 1 scalar inflow(s) — clustering only considers time-varying series.` so you can see exactly how many series were filtered out. There is nothing to configure: scalar profiles and inflows are still used by the model as constants, they just no longer participate in choosing the representative periods.

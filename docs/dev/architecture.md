@@ -2,7 +2,32 @@
 
 ## Project Purpose
 
-FlexTool is an energy and power systems optimization model (IRENA FlexTool). It reads input data from a Spine database, generates a linear programming (LP) model, solves it using HiGHS (or GLPK/CPLEX), and writes results to parquet files, Excel, CSV, and plots. Input databases can be populated from tabular input files (Excel, ODS, CSV) or imported from old FlexTool v2 formats. A Tkinter GUI and Spine Toolbox integration provide user interfaces.
+FlexTool is an energy and power systems optimization model (IRENA FlexTool). It reads input data from a Spine database, builds a linear programming (LP) model in memory using polars, solves it with HiGHS via `highspy`, and writes results to parquet, Excel, CSV, and plots. Input databases can be populated from tabular input files (Excel, ODS, CSV) or imported from old FlexTool v2 formats. A Tkinter GUI and Spine Toolbox integration provide user interfaces.
+
+!!! note "Engine swap (3.33+)"
+    The old `flextoolrunner → flextool.mod → glpsol` pipeline has been retired.
+    LP build, solve, and post-solve handoff now live in `flextool/engine_polars/`.
+    `flextool/flextoolrunner/` is now a thin solve-coordinator for rolling /
+    nested / stochastic structures on top of that engine.
+
+## CLI and module map
+
+```mermaid
+flowchart LR
+  root["Root wrapper scripts<br/>run_flextool.py, write_outputs.py,<br/>scenario_results.py, ..."] --> cli["flextool/cli/cmd_*"]
+  cli --> runner["flextool/flextoolrunner<br/>solve coordinator"]
+  cli --> engine["flextool/engine_polars<br/>LP build + solve"]
+  cli --> inputs["flextool/process_inputs<br/>tabular -> Spine DB"]
+  cli --> outputs["flextool/process_outputs<br/>solution -> parquet/Excel/plots"]
+  cli --> export["flextool/export_to_tabular<br/>Spine DB -> Excel"]
+  cli --> update["flextool/update_flextool<br/>schema migration"]
+  cli --> gui["flextool/gui<br/>python -m flextool.gui"]
+  runner --> engine
+  engine --> outputs
+```
+
+Each `cmd_*.py` is a thin argparse wrapper; the work happens in the linked
+packages below.
 
 ## Repository Layout
 
@@ -11,17 +36,16 @@ flextool/                          Python package (core library)
 ├── __init__.py                    Re-exports: FlexToolRunner, write_outputs, migrate_database,
 │                                    initialize_database, update_flextool
 ├── cli/                           CLI entry points (argparse + delegation)
-├── flextoolrunner/                Optimization engine (DB → LP → solver)
+├── engine_polars/                 Optimization engine: FlexData → LP (polars) → HiGHS
+├── flextoolrunner/                Solve coordinator (rolling / nested / stochastic)
 ├── process_inputs/                Read tabular/Excel/old-format data → Spine DB
-├── process_outputs/               Read solver CSV → post-process → write results
+├── process_outputs/               Read solver outputs → post-process → write results
 ├── plot_outputs/                  Generate line/bar/stacked-area plots
 ├── scenario_comparison/           Multi-scenario analysis and dispatch plots
 ├── export_to_tabular/             Export Spine DB → Excel (.xlsx)
 ├── update_flextool/               DB schema migration, GitHub update, DB init
 ├── gui/                           Tkinter GUI application
 ├── helpers/                       Debugging/analysis utilities
-├── flextool.mod                   GLPK/LP model definition file
-├── flextool_base.dat              Base data file for solver
 └── import_excel_input.json        Excel import specification
 
 Root scripts (backward compat with Spine Toolbox):
@@ -33,11 +57,9 @@ Root scripts (backward compat with Spine Toolbox):
 ├── execute_flextool_workflow.py   → flextool.cli.cmd_execute_flextool_workflow:main
 └── update_flextool.py             → flextool.cli.cmd_update_flextool:main
 
-bin/                               Solver binaries
-├── highs / highs.exe              HiGHS LP/MIP solver
+bin/                               Solver binaries (HiGHS standalone; the
+├── highs / highs.exe                main solve path uses highspy in-process)
 ├── highs.opt                      HiGHS solver options
-├── glpsol / glpsol.exe            GLPK LP/MIP solver
-├── GLPK-master.zip                GLPK source archive
 └── *.dll                          Windows runtime dependencies
 
 templates/                         Example databases and configuration
@@ -131,22 +153,160 @@ Each `cmd_*.py` file defines a `main()` function using argparse.
 | `cmd_migrate_database.py` | Upgrade DB schema to latest version |
 | `cmd_update_flextool.py` | Git pull + project migration |
 
-### flextool/flextoolrunner/ — Optimization Engine
+### flextool/engine_polars/ — Optimization Engine
 
-Reads Spine DB → writes LP model files → calls solver → coordinates solve sequence.
+The dominant package. An in-memory, polars-based LP builder that consumes a
+single `FlexData` dataclass and emits a `polar_high.Problem` (a thin eDSL on
+top of `highspy`), solves it, and hands the solution off to the next solve
+or to `process_outputs`. Replaces the retired `flextool.mod → glpsol → MPS
+→ HiGHS → CSV` pipeline that lived in `flextoolrunner/` through 3.32.
+
+```mermaid
+flowchart LR
+  src["Spine DB / CSVs"] --> reader["SpineDbReader<br/>InMemoryReader"]
+  reader --> flexdata["FlexData<br/>(polars frames + Params)"]
+  flexdata --> derived["Derived params<br/>(writer + _derived_ ports)"]
+  derived --> build["build_flextool<br/>(polar_high.Problem)"]
+  build --> solve["HiGHS via highspy<br/>(Problem / WarmProblem /<br/>LagrangianProblem)"]
+  solve --> handoff["SolveHandoff<br/>(invest, divest, storage,<br/>roll-state, CO2 ladder, ...)"]
+  handoff --> next["next solve<br/>(rolling / nested)"]
+  solve --> outputs["process_outputs.write_outputs"]
+```
+
+#### Public API
+
+Exported from `flextool.engine_polars` (see `__init__.py`):
+
+| Symbol | Purpose |
+|---|---|
+| `FlexData` | The single input dataclass — polars frames + `polar_high.Param`s. Naming: sets unprefixed, parameters `p_*`. See `_param_shapes.py` for the full inventory. |
+| `load_flextool(source)` | Build `FlexData` from an on-disk `input/` + `solve_data/` workdir. |
+| `load_flextool_from_db(url)` | Build `FlexData` directly from a Spine input DB. |
+| `load_flextool_source_only(...)` | Fast-load shortcut that skips most preprocessing for single-solve scenarios; raises `FastLoadError` if a feature requires the full path. |
+| `build_flextool(m, d, ...)` | Add all variables, constraints, and the objective to a `Problem` (or `WarmProblem`) from `FlexData`. Feature-conditional — see table below. |
+| `run_chain(steps, ...)` / `run_chain_from_db(...)` | Run a sequence of `ChainStep`s, threading `SolveHandoff` between them. |
+| `run_orchestration(state, work_folder, ...)` | The native coordinator: reads `RunnerState` (built by `flextoolrunner`), drives the cascade of solves, returns one `OrchestrationStep` per solve. |
+| `run_single_solve_from_db(...)` | Surgical fast path for a single solve. |
+| `SolveHandoff` | Per-solve output carrier (invest, divest, storage, roll-state, CO2 ladder, commodity ladder, cumulative sim-hours, history sets). |
+| `capture_post_solve(state, name)` | Extracts a `SolveHandoff` from the just-solved problem. |
+| `write_fix_storage_files_from_handoff(...)` | Materialises the three `fix_storage_*` CSVs from a handoff. |
+| `SpineDbReader` / `InMemoryReader` / `SpineDbSource` / `CsvSource` / `FlexInputSource` | Pluggable readers — Spine DB, in-memory test fixture, or CSV workdir. |
+
+#### Feature blocks in `build_flextool`
+
+The LP is built feature-by-feature; each block runs only when its switch
+field on `FlexData` is populated. The required-field lists are declared as
+module-level tuples in `model.py`:
+
+| Constant | Switch field | Adds |
+|---|---|---|
+| `ALWAYS` | (floor) | `vq_state_up/down`, `nodeBalance_eq`, the slack-only objective. |
+| `PROCESSES` | `process_source_sink` | `v_flow`, `maxToSink`, source/sink contributions to `nodeBalance_eq`, commodity buy. |
+| `INDIRECT` | `process_indirect` | `conversion_indirect_eq` for multi-flow processes (CHP). |
+| `CO2_PRICE` | `flow_from_co2_priced` | CO2 emission term in the objective. |
+| `CO2_CAP` | `flow_from_co2_capped` / `group_d_co2_capped` | Per-period CO2 cap constraint. |
+| `USER_CSTR` | `flow_constraint_idx` | User-defined `process_constraint_{eq,le,ge}` rows. |
+| `PROFILES` | `process_profile_{upper,lower,fixed}` | Profile bounds on `v_flow`. |
+| `STORAGE` | `nodeState` | `v_state`, storage transition, fix-start / fix-storage, end-state binding. |
+| `ONLINE` | `process_online` | `v_online`, min-load, uptime / downtime windows. |
+| `RAMP` | any `process_source_sink_ramp_limit_*` | Ramp-up / ramp-down constraints per arc side. |
+| `INVEST` / `DIVEST` | `pd_invest_set` / `pd_divest_set` (or `nd_*`) | `v_invest` / `v_divest`, cumulative caps, lifetime cost. |
+| `STARTUP_COST_*` | `pdt_online_{linear,integer}` | Startup-cost objective term. |
+| `MINLOAD_EFF` | `process_min_load_eff` | min_load_efficiency reformulation. |
+
+The check is fail-fast: if a switch is set but a required field is missing,
+`build_flextool` raises `ValueError` rather than silently degrading.
+
+#### Solve modes
+
+The same `build_flextool` body backs three solver wrappers from `polar_high`:
+
+- **Monolithic** — `polar_high.Problem`. One LP per call. Used for plain
+  single-shot solves.
+- **Warm-start cascade** — `polar_high.WarmProblem`. Rolling-horizon and
+  nested solves rebuild the same LP shell once and then mutate marked Params
+  (`_apply_warm_updates` in `_solve_handoff.py`) between rolls. Avoids the
+  per-roll polars-to-HiGHS round-trip.
+- **Lagrangian** — `polar_high.LagrangianProblem` driven by
+  `engine_polars._lagrangian.solve_lagrangian`. Slices `FlexData` by region
+  via `_region_filter`, builds one sub-problem per region, and couples
+  half-flow pairs with subgradient-updated multipliers. See
+  [decomposition.md](decomposition.md).
+
+#### Writer ports
+
+Roughly 150 sets and calculated parameters that used to be `param := ...`
+declarations in `flextool.mod` are now produced in Python by the
+`_writer_*.py` and `_derived_*.py` modules (Writer Phases 1-4 in
+`RELEASE.md`). Examples: `_derived_npv.py` for the annualized investment /
+divestment carriers, `_writer_pdt_params.py` for the `pdt*` per-step
+parameter family, `_writer_arc_unions.py` for the arc set algebra,
+`_writer_co2_accumulators.py` for the cumulative-CO2 ladder. These run
+during `load_flextool` / `load_flextool_from_db` and populate the optional
+fields of `FlexData`.
+
+#### Auto-scaling
+
+`scaling.py` walks the loaded cost / flow / unitsize / penalty Param
+families and recommends row scaling + objective scaling; `scaling_report.py`
+writes the per-solve human-readable report. See [scaling.md](scaling.md).
+
+#### File map (most important)
+
+```
+__init__.py                       Public re-exports (table above)
+input.py                          FlexData dataclass + loader from CSV workdir
+model.py                          build_flextool — LP build, feature blocks
+chain.py                          run_chain + ChainStep dataclass
+_orchestration.py                 run_orchestration / run_chain_from_db
+                                  / run_single_solve_from_db, native cascade
+_solve_handoff.py                 SolveHandoff carrier + capture_post_solve
+_fast_load.py                     load_flextool_source_only + FastLoadError
+_lagrangian.py                    solve_lagrangian + Coupling/Result
+_warm.py                          WarmProblem update routine
+_param_shapes.py                  Canonical shape per FlexData field
+_spinedb_reader.py                Spine DB → FlexData (slow path)
+_spinedb_source.py                Spine DB source object
+_inmemory_reader.py               In-memory test fixture loader
+_input_source.py                  FlexInputSource / CsvSource / InputSource
+_recursive_solve.py               Rolling / nested solve tree builder
+_stochastic.py                    Stochastic branch handler
+_timeline.py                      Timeline / timeset construction
+_block_layout.py                  Multi-resolution period-block layout
+scaling.py / scaling_report.py    Auto-scaling pipeline
+_derived_*.py                     Calculated-parameter ports (existing,
+                                  NPV, branch, walks, profile, block, etc.)
+_writer_*.py                      Set/parameter writer ports (period_params,
+                                  arc_unions, calc_params, co2_accumulators,
+                                  pdt_params, reserve, leaf_sets, mid_sets,
+                                  inflow_scaling, lp_scaling, ...)
+_native_input_writer.py           Optional CSV dump of FlexData (debugging)
+_native_run_model.py              Self-contained run helper used by tests
+_dump_csvs.py                     Diagnostic dumps of intermediate frames
+_output_writer.py                 Solution → output_raw parquet bridge
+```
+
+### flextool/flextoolrunner/ — Solve Coordinator
+
+Pre-3.33 this was the optimization engine itself. Post-3.33 it is a thin
+coordinator: it parses the Spine DB into `RunnerState` / `SolveConfig` /
+`TimelineConfig`, expands the solve list for rolling / nested / stochastic
+structures, then hands each step to `engine_polars.run_orchestration` (or
+`run_chain_from_db`) for the actual LP build, solve, and handoff. The LP
+model file `flextool.mod` and the `glpsol` invocation are gone.
 
 ```
 FlexToolRunner (flextoolrunner.py)    Main class: .write_input(), .run_model()
 ├── runner_state.py                   RunnerState, PathConfig dataclasses
 ├── db_reader.py                      Read spinedb_api: check_version, entities_to_dict, params_to_dict
 ├── input_writer.py                   Write input/ CSV files from DB data
-├── orchestration.py                  Main solve loop (run_model entry point)
+├── orchestration.py                  Solve-list dispatch (delegates to engine_polars)
 ├── recursive_solves.py               Rolling/nested/recursive solve structure builder
 ├── stochastic.py                     Stochastic branch handling
 ├── solve_config.py                   SolveConfig: all solve-level parameters from DB
 ├── timeline_config.py                TimelineConfig: timeline definitions and timeset mappings
 ├── solve_writers.py                  Write solve_data/ CSV files for each solve step
-└── solver_runner.py                  Invoke glpsol/HiGHS/CPLEX solver binaries
+└── solver_runner.py                  Solver invocation surface (now mostly a thin shim)
 ```
 
 ### flextool/process_inputs/ — Input Data Handling
@@ -315,253 +475,91 @@ from flextool.helpers import compare_files, find_largest_numbers, parse_mps_to_m
 
 ## Data Flow
 
-```
-┌──────────────────────────────────────────────────────┐
-│                  INPUT DATA SOURCES                  │
-│  Excel/ODS/CSV  │  Old FlexTool .xlsm  │  Spine DB  │
-└────────┬────────────────┬───────────────────┬────────┘
-         │                │                   │
-    TabularReader    read_old_flextool   (direct use)
-    read_self_describing_excel
-         │                │                   │
-         └───── write_*_to_db ────────────────┘
-                          │
-              ┌───────────▼────────────┐
-              │    Spine Input DB      │
-              │  (input_data.sqlite)   │
-              └───────────┬────────────┘
-                          │
-          ┌───────────────┼───────────────┐
-          │               │               │
-   FlexToolRunner    export_to_excel   DB Editor
-   write_input()      (→ .xlsx)       (manual)
-   run_model()
-          │
-          │ input/ CSVs → flextool.mod → LP
-          │
-    ┌─────▼──────────┐
-    │  HiGHS / GLPK  │
-    │  / CPLEX       │
-    └─────┬──────────┘
-          │ output/ CSVs
-          │
-   ┌──────▼──────────────────────────────────┐
-   │           write_outputs                  │
-   │  read CSV → calc_* → out_* → write      │
-   └──┬───────────────────────────────────────┘
-      │
-      ├── parquet files (per output type)
-      ├── Excel summary
-      ├── PNG/SVG plots (via plot_outputs)
-      └── Spine output DB
-      │
-      │ (multiple scenarios)
-      │
-   ┌──▼──────────────────┐
-   │  scenario_comparison │
-   │  combine parquets    │
-   │  → comparison plots  │
-   │  → dispatch plots    │
-   │  → comparison Excel  │
-   └──────────────────────┘
+```mermaid
+flowchart TD
+  excel["Excel / ODS / CSV"] -->|TabularReader<br/>read_self_describing_excel| db
+  oldxlsm["Old FlexTool .xlsm"] -->|read_old_flextool| db
+  manual["Spine DB Editor"] --> db[("Spine Input DB<br/>input_data.sqlite")]
+
+  db --> runner["flextoolrunner<br/>(solve coordinator)<br/>RunnerState, recursive_solves,<br/>stochastic, timeline_config"]
+  db --> excel_out["export_to_excel<br/>(.xlsx)"]
+
+  runner --> engine["engine_polars<br/>load_flextool_from_db<br/>+ _writer_*/_derived_* ports"]
+  engine --> flexdata["FlexData<br/>(polars frames + Params)"]
+  flexdata --> build["build_flextool<br/>(polar_high.Problem)"]
+  build --> solve["HiGHS via highspy"]
+  solve --> handoff["SolveHandoff"]
+  handoff -->|next roll / sub-solve| engine
+
+  solve --> outputs["process_outputs.write_outputs<br/>(read solution -> calc_* -> out_*)"]
+  outputs --> parquet[("output_parquet/<scenario>/")]
+  outputs --> csv[("output_csv/<scenario>/")]
+  outputs --> xlsx[("output_excel/")]
+  outputs --> plots[("output_plots/")]
+  outputs --> spinedb[("Spine output DB")]
+
+  parquet --> comp["scenario_comparison<br/>combine parquets -><br/>comparison plots / dispatch / Excel"]
 ```
 
-## Solver outputs: folder layout and two parallel pathways
+## Solver outputs: folder layout
 
-**Folder convention** (the direction we're migrating toward):
+A scenario run lays files out under the work folder like this:
 
-- **`input/`** — files that do NOT change between solves in a single
-  model run.  Written once up front by the Python input writer
-  (entity definitions, parameters, sets that are pure input).
-- **`solve_data/`** — files that DO change between solves (rolling
-  window / nested / stochastic branches).  Written freshly for each
-  solve.  Includes time-dependent parameters, the six solve-to-solve
-  handoff files, and — once phase 3 retires — also the solver-output
-  parquet files (variables / duals per solve).
-- **`output/`** — user-facing aggregated outputs (Excel, parquet
-  summaries, plots) produced by `write_outputs` after the solve loop
-  completes.
+| Folder | Cadence | Producer | Contents |
+|---|---|---|---|
+| `input/` | once per run | `flextoolrunner.input_writer` | Entity / set / parameter CSVs that do not change across sub-solves. |
+| `solve_data/<solve>/` | per sub-solve | `engine_polars._orchestration` + handoff writers | Per-solve preprocessing inputs, the `SolveHandoff` carriers (`fix_storage_*`, `p_entity_period_existing_capacity`, `p_entity_divested`, `p_roll_continue_state`, ladder CSVs), and `scaling_analysis.json` / `scaling_report.txt`. |
+| `output_parquet/<scenario>/` | end of run | `process_outputs.write_outputs` | Canonical results — one parquet per output type. |
+| `output_csv/<scenario>/` | end of run, optional | `process_outputs.write_outputs` | CSV mirror of the parquet outputs. |
+| `output_excel/` | end of run, optional | `process_outputs.write_outputs` | Summary workbook. |
+| `output_plots/` | end of run, optional | `plot_outputs` | PNG / SVG plots driven by `default_plots.yaml`. |
 
-- **`output_raw/`** — TRANSITIONAL.  Phase 3 still writes ~140 CSVs
-  here; the new HiGHS → parquet pathway also writes here for now.
-  Target state: gone.  Its contents get redistributed to the above
-  three folders.
-
-`glpsol` is invoked **twice** per solve:
-
-- **Phase 1** — `--check --wfreemps flextool.mps`.  Reads the model +
-  input CSVs and writes the MPS file.  This stays.  *Anything the
-  model can compute before `solve;` — including all Category B
-  parameters below — can be printf-written in this phase, eliminating
-  the need to re-run glpsol after the solver.*
-- **Phase 3** — runs AFTER HiGHS has solved, re-reads the model + the
-  `.sol`, and executes all the `printf` statements at the end of
-  `flextool.mod`.  This is what the new pathway is retiring.
-
-Two pathways currently run in parallel after the solver returns:
-
-1. **Legacy GLPSOL phase 3** — produces ~140 CSVs.  Per-file audit
-   (see the classification appendix in the git history of this file;
-   counts vary slightly by scenario):
-
-   - **Category A — pure input dumps** (~76 files, all `set_*.csv`).
-     Same content as the corresponding `input/` file.  Belongs in
-     `input/` (one-time write) and the Python readers should look
-     there, not in `output_raw/`.
-   - **Category B — model-derived pre-solve** (~57 files: `p_*`,
-     `pd_*`, `pdt_*`, `ed_*`).  Computed by GMPL `param := ...`
-     declarations BEFORE `solve;`.  Split by update cadence:
-     * time-indexed / period-indexed parameters that change each
-       solve (e.g. `pdtProcess_slope`, `pdt_commodity_price` slices)
-       → `solve_data/`.
-     * static derivations (e.g. `p_entity_unitsize`,
-       `ed_entity_annuity`, entity-level financial constants) →
-       `input/` (written once on the first solve, unchanged after).
-     Either way, moving the printfs above `solve;` in `flextool.mod`
-     lets phase 1 produce them — no Python re-derivation required.
-   - **Category C — solver-derived outputs** (~34 files: `v_*`,
-     `vq_*`, `v_dual_*`, `v_obj`).  Require a solver run.  Go in
-     `solve_data/` (per-solve) as parquet once phase 3 retires.  Most
-     already covered by `VARIABLE_SPECS` in `read_highs_solution.py`;
-     remaining: complex duals (`v_dual_node_balance` with inflation
-     transform, `v_dual_reserve_balance`, CO2 duals with `/1000`),
-     synthesised duals (`v_dual_invest_unit/_connection/_node`),
-     scalar `v_obj`.
-
-   The six solve-to-solve handoff CSVs are already written to
-   `solve_data/` — they belong there by the convention above.  See
-   the "Solve-to-solve handoff" subsection below.
-
-2. **HiGHS → parquet** (new) — `flextool/process_outputs/read_highs_solution.py`
-   reads variable names and solution arrays directly from the live
-   `highspy.Highs` instance and writes one parquet file per
-   `VariableSpec` entry in `VARIABLE_SPECS` (see the module docstring).
-   Covers the ~26 "simple" variable and dual outputs (v_flow, v_state,
-   v_ramp, v_reserve, v_online/startup/shutdown_{linear,integer},
-   v_invest, v_divest, v_angle, vq_*, and the six period-only
-   investment-cap duals).  Written in wide layout via
-   `flextool.lean_parquet.write_lean_parquet` so the on-disk MultiIndex
-   round-trips exactly and downstream code can load each file with
-   `read_lean_parquet(path)` (same shape as `read_variables.v.*`).
-
-   **HiGHS-only by construction** — the hook lives inside
-   `solver_runner._run_highs` and reads the live `Highs` instance's
-   `getSolution()`.  CPLEX takes a different code path; the hook cannot
-   fire for CPLEX until someone verifies that the CPLEX → glpsol-format
-   `.sol` round-trip preserves the same `col_value` / `row_dual`
-   semantics.
-
-The `--use-old-raw-csv` CLI flag on `run_flextool.py` disables the
-new extractor (falls back to the pure-glpsol pathway) and is the
-documented fallback while parquet coverage grows.
+!!! note "`output_raw/` is retired"
+    The transitional `output_raw/` folder that held the GLPSOL phase-3 CSVs
+    no longer exists. Solver outputs are extracted directly from the live
+    `highspy.Highs` instance by the writer ports in `engine_polars/` and
+    `process_outputs/`, then written straight to `output_parquet/`.
 
 ### Solve-to-solve handoff
 
-These six files are written by phase 3 and read again by `flextool.mod`
-on the *next* solve.  All six are now also written from the live
-`Highs` instance by
-`flextool.process_outputs.handoff_writers.write_all_handoffs`, called
-AFTER phase 3 inside `solver_runner._run_highs_or_cplex`.  The
-Python writer's output matches phase 3's byte-for-byte (verified
-end-to-end on `wind_battery_invest`,
-`multi_fullYear_battery_nested_24h_invest_one_solve`, `fullYear_roll`,
-and `network_all_tech`; see `tests/test_handoff_writers.py`).
+When a solve is part of a rolling-horizon, nested, or sub-solve chain, the
+just-solved problem produces a `SolveHandoff` (in
+`engine_polars/_solve_handoff.py`) that seeds the next solve's
+preprocessing. The carriers are kept in memory between solves; mirrored
+CSVs in `solve_data/<solve>/` are written by
+`write_fix_storage_files_from_handoff` and the writer ports for downstream
+tooling and debugging.
 
-| File | Contains | `.sol` source |
+| Carrier (`SolveHandoff` field) | Mirror file (under `solve_data/<solve>/`) | Meaning |
 |---|---|---|
-| `solve_data/p_entity_period_existing_capacity.csv` | Cumulative capacity carried forward | `v_invest[e,d]` × unitsize, accumulated with prior file |
-| `solve_data/p_entity_divested.csv` | Cumulative divestments | `v_divest[e,d]` × unitsize, summed across periods, plus prior |
-| `solve_data/fix_storage_quantity.csv` | Storage state at boundary | `v_state[n,d,t]` × unitsize at fix-storage steps |
-| `solve_data/fix_storage_price.csv` | Shadow price at boundary | `−nodeBalance_eq.dual / inflation × period_share / scale` |
-| `solve_data/fix_storage_usage.csv` | Net flow through storage node | `(outflow − inflow) × step_duration`; outflow/inflow = `v_flow × unitsize` summed across connected processes.  Simplified formula — exact for method_nvar and simple method_1var_per_way; approximate when processes attached to the storage node use min_load_efficiency or non-unity unit coefficients |
-| `solve_data/p_roll_continue_state.csv` | State at last realized step | `v_state[n,d,t]` × unitsize at last realized timestep |
+| `realized_invest` | `p_entity_period_existing_capacity.csv` (period column) | New capacity built this solve, in absolute units. |
+| `realized_existing` | `p_entity_period_existing_capacity.csv` (existing column) | Cumulative existing capacity history per `(entity, period)`. |
+| `divest_cumulative` | `p_entity_divested.csv` | Cumulative divest per entity carried forward. |
+| `roll_end_state` | `p_roll_continue_state.csv` | `v_state` at the end of the realized window, pinning the next roll's first timestep. |
+| `fix_storage` | `fix_storage_{quantity,price,usage}.csv` | Parent-imposed storage quota at the boundary (any subset of the three metrics). |
+| `fix_storage_timesteps` | `fix_storage_timesteps.csv` | Index set of `(period, step)` where `fix_storage` applies. |
+| `cumulative_co2` | `co2_cum_realized_tonnes.csv` | Running CO2 totals across rolls (cumulative cap). |
+| `cumulative_commodity` | `commodity_ladder_cumulative.csv` | Per-tier commodity consumption (ladder pricing). |
+| `cum_sim_hours` | `ladder_cum_sim_hours.csv` | Running simulated-hour total per period. |
+| `ed_history_realized_first` / `edd_history` | `ed_history_realized_first.csv` / `edd_history.csv` | Cross-solve invest-period history feeding `p_entity_previously_invested_capacity`. |
 
-For now `handoff_writers` reads Category-B parameters (unitsize,
-pre-existing, inflation, period-share) from `output_raw/` — i.e. from
-what phase 3 just wrote.  This is intentional during the transition:
-phase 3 still runs unconditionally, and the Python writer overwrites
-its output with values computed directly from the `.sol`, acting as a
-live validator.  Once the Category B printfs move above `solve;` in
-`flextool.mod`, `handoff_writers` will switch its parameter source to
-`input/` + `solve_data/` (per the update-cadence split above) and
-`output_raw/` can be dropped.
+`capture_post_solve(state, solve_name)` populates a `SolveHandoff` from the
+just-solved problem; the next iteration of `run_chain_from_db` /
+`run_orchestration` reads it back through `_overlay_handoff` in
+`input.py`.
 
-### Update cadence — where each printf should land
+### Solution extraction
 
-Combining Category A/B with a trace of each file's transitive
-dependencies against `solve_data/*.csv` reads:
-
-**Write-once (target: `input/`) — 76 files, depend only on
-`input/` data.**  All the entity / node / process / commodity / group
-sets (~36) and the static parameter dumps already gated by `if
-p_model['solveFirst']` in `flextool.mod` (~40: `p_node`, `p_unit`,
-`p_connection`, `p_entity_unitsize`, `p_entity_{all_existing,pre_existing,max_units}`,
-the process coefficient / capacity parameters, `p_commodity_co2_content`,
-`p_reserve_upDown_group_penalty`, `group_entity_invest`,
-`set_process_{VRE,source_sink}`, `set_enable_optional_outputs`, …).
-
-**Write-per-solve (target: `solve_data/`) — ~33 files, depend on at
-least one `solve_data/*.csv` (typically `steps_in_use.csv` → `dt`,
-`period_first_of_solve.csv`, `p_years_represented.csv`, or
-`realized_dispatch.csv`).**
-
-| Group | Representative files |
-|---|---|
-| Solver variables / duals (Cat. C) (~20) | `v_flow`, `v_ramp`, `v_reserve`, `v_state`, `v_{online,startup,shutdown}_{linear,integer}`, `v_angle`, `v_dual_node_balance`, `vq_state_{up,down}`, `vq_{reserve,inertia,non_synchronous,state_up_group}`, `v_obj` |
-| Solve-specific derived params (~13) | `p_step_duration`, `p_rp_cost_weight`, `p_flow_{min,max}`, `pdtProcess_{slope,section,availability,source_sink_varCost}`, `pdtNode_{self_discharge_loss,penalty_up,penalty_down}`, `pdtNodeInflow`, `entity_all_capacity` |
-| Period-scoped (~10) | `v_invest`, `v_divest`, `vq_capacity_margin`, `ed_entity_{annuity,annual_discounted,annual_divest_discounted}`, `p_inflation_factor_{operations,investment}_yearly`, `{node,group}_capacity_for_scaling`, `complete_period_share_of_year` |
-| Solve-state sets (~10) | `set_period`, `set_d_{realize_invest,realize_dispatch_or_invest,realized_period}`, `set_dt{,t,ttdt,_realize_dispatch,_fix_storage_timesteps}`, `set_period_{in_use,first_of_solve,__time_first}`, `timeline_breaks` |
-| Per-entity invest sets (3) | `set_ed_invest`, `set_ed_divest`, `set_edd_invest` |
-
-Plus the **six solve-to-solve handoff files** already in
-`solve_data/` (handoff subsection above).
-
-### Retiring phase 3
-
-The three steps below, in order, remove the need for the second
-`glpsol` invocation on HiGHS runs:
-
-1. **Move the 76 write-once printfs above `solve;`** in
-   `flextool.mod`, redirected at `input/`.  No Python work — phase 1
-   already runs the param/set derivations, so it just needs to emit
-   them before hitting `solve;`.  Guard with `if p_model['solveFirst']`
-   so only the first solve writes them.
-2. **Move the ~13 write-per-solve derived-parameter printfs above
-   `solve;`** (the derived-parameter subset — everything in the
-   write-per-solve list EXCEPT the ~20 solver-output `v_*`/`vq_*`/
-   `v_dual_*` group and the per-entity invest sets), redirected at
-   `solve_data/`.  Phase 1 runs every solve, so this correctly
-   re-emits them with the current solve's active periods.
-3. **Finish Category C coverage in `read_highs_solution.py`** — DONE.
-   Coverage for all solver-dependent outputs the downstream pipeline
-   reads, via ``VARIABLE_SPECS`` and a set of custom writers:
-
-   | Output | Pathway |
-   |---|---|
-   | `v_flow`, `v_ramp`, `v_reserve`, `v_state`, `v_online/startup/shutdown_{linear,integer}`, `v_angle`, `v_invest`, `v_divest`, `vq_*` | `VARIABLE_SPECS` — wide parquet per solve |
-   | `v_dual_maxInvest_{period,total}`, `v_dual_maxCumulative`, `v_dual_maxInvestGroup_{period,total,cumulative}` | `VARIABLE_SPECS` — `source="row_dual"`, `value_scale=1e6` |
-   | `v_dual_co2_max_{period,total}` | `VARIABLE_SPECS` — the `total` variant is the first use of `has_period=False` |
-   | `v_obj` | `write_v_obj` — `h.getObjectiveValue() * 1e6`, scalar-per-solve |
-   | `v_dual_invest_{unit,connection,node}` | `write_v_dual_invest_by_class` — `source="col_dual"` on `v_invest`, split by entity class loaded from `input/{process_unit,process_connection,node}.csv` |
-   | `v_dual_node_balance` | `write_v_dual_node_balance` — `source="row_dual"` on `nodeBalance_eq` with `leading_ignore=1` (skip `c`) + `trailing_ignore=4` (skip `tp, tpwt, dp, tpws`), then `× −1e6 / inflation[period]` |
-   | `v_dual_reserve_balance` | `write_v_dual_reserve_balance` — `reserveBalance_timeseries_eq` row duals aggregated across `method` level then `× period_share / inflation`.  **Simplified** — treats the model formula as if only the `timeseries_only` method were active.  Groups using `dynamic` or `n_1` reserve methods will be under-reported until the full `max()` of three constraints is ported. |
-   | `nodeBalanceBlock_eq` aggregation for block-storage nodes (used in representative-period scenarios) | **NOT YET** in `write_v_dual_node_balance` — `nodeStateBlock` nodes see zeroes until ported |
-
-   All solver-output files validated end-to-end against phase 3 on
-   `multi_year_wind_growth_cap`, `test_a_lot`, `wind_battery_invest`,
-   and `network_all_tech` — match within `%.8g` CSV format precision.
-
-After steps 1-3, repoint `read_parameters.py` / `read_sets.py` at
-`input/` + `solve_data/` instead of `output_raw/`, and phase 3 can be
-removed from `solver_runner` for HiGHS.  `output_raw/` becomes empty
-and the directory can be deleted.
-
-### Extension pattern
+Variables and duals are extracted directly from the live `highspy.Highs`
+instance. `process_outputs.read_highs_solution.VARIABLE_SPECS` declares
+which variables, row duals, and column duals to harvest (`v_flow`,
+`v_state`, `v_invest`, `v_divest`, `vq_*`, all the period / total /
+cumulative invest-cap duals, the `co2_max_*` duals, the inflation-adjusted
+`v_dual_node_balance`, etc.). The downstream `process_outputs` pipeline
+reads these parquets, runs `calc_*`, and writes the user-facing outputs.
 
 To add a new variable or dual to the parquet pipeline, append a
-`VariableSpec(name, col_names, has_time, is_dual, value_scale,
-output_name)` to `VARIABLE_SPECS` in `read_highs_solution.py`.  No code
-changes elsewhere.
+`VariableSpec` to `VARIABLE_SPECS` — no other changes required.
 
 ## Numerical scaling
 
@@ -580,7 +578,7 @@ of spread.
    units of `p_entity_unitsize` per entity, so the raw values stay
    near O(1).  Predates the scaling project — this is the single
    biggest contributor to well-conditioned inputs.
-2. **Single-variable slack convention (`flextool/SLACK_CONVENTION.md`).**
+2. **Single-variable slack convention** (see [slack_convention.md](slack_convention.md)).
    Every `vq_*` is a single non-negative variable, relative to its
    row-scaler where one applies.  The user-supplied penalty coefficient
    is the only valve: high enough to keep the slack quiescent on
@@ -600,7 +598,7 @@ of spread.
    numeric CSV cell is rounded to 10 significant figures before
    write.  Removes benign precision artifacts that would otherwise
    trip the near-duplicate detector and waste HiGHS scaling passes.
-5. **ScaleAnalyzer (`flextool/flextoolrunner/scaling.py`).**  After
+5. **ScaleAnalyzer (`flextool/engine_polars/scaling.py`).**  After
    the input CSVs are written but before the solver runs, a pure-
    stdlib analyzer walks the cost / flow / unitsize / penalty CSV
    families, computes per-family log10 spread stats, and recommends:
@@ -619,7 +617,7 @@ of spread.
    into the user's absolute units before parquet / CSV write.
    Downstream consumers see no change regardless of whether row
    scaling was active.
-8. **Diagnostic report (`flextool/flextoolrunner/scaling_report.py`).**
+8. **Diagnostic report (`flextool/engine_polars/scaling_report.py`).**
    After the solve, `scaling_report.txt` is written next to the
    solve's `scaling_analysis.json`.  Nine sections (header, decisions,
    family ranges, bimodal detection, composite-scale mismatch,
@@ -640,8 +638,8 @@ of spread.
 
 ### Where to look
 
-- **User-facing guide**: `flextool/SCALING_USER_GUIDE.md`.
-- **Slack implementation reference**: `flextool/SLACK_CONVENTION.md`.
+- **User-facing guide**: [scaling.md](scaling.md).
+- **Slack implementation reference**: [slack_convention.md](slack_convention.md).
 - **Benchmark harness + validation**: `benchmarks/scaling/README.md`
   and `benchmarks/scaling/VALIDATION_REPORT.md`.
 - **Design memo**:
