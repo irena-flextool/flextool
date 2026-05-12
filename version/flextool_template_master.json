@@ -4089,20 +4089,8 @@
     ],
     [
       "solve",
-      "solver_options",
-      "map",
-      0
-    ],
-    [
-      "solve",
       "solver_precommand",
       "str",
-      0
-    ],
-    [
-      "solve",
-      "solver_threads",
-      "int",
       0
     ],
     [

@@ -8,9 +8,8 @@ solver. Its Python API is intentionally Gurobi-shaped, so polar-high's COPT
 adapter mirrors the Gurobi adapter closely. FlexTool dispatches through
 polar-high; it never imports `coptpy` directly.
 
-Official site: <https://www.copt.de/> (Cardinal Operations product portal)
-[FIXME: confirm canonical URL — also <https://www.shanshu.ai/> hosts COPT
-information.]
+Official site: <https://www.copt.de/> (Cardinal Operations product portal).
+Also <https://www.shanshu.ai/> offers licensing options.
 
 ## License options
 

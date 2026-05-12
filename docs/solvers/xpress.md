@@ -5,8 +5,8 @@
 FICO Xpress is a commercial linear, mixed-integer, and nonlinear programming
 solver. Its Python API uses a column-oriented `loadproblem` entry point,
 which polar-high's adapter feeds directly with the CSC arrays already
-produced by the engine, so model construction is fast. FlexTool dispatches
-through polar-high; it never imports `xpress` directly.
+produced by the engine. FlexTool dispatches through polar-high; it never
+imports `xpress` directly.
 
 Official site: <https://www.fico.com/en/products/fico-xpress-optimization>
 
@@ -19,7 +19,7 @@ Official site: <https://www.fico.com/en/products/fico-xpress-optimization>
 - **Community Edition.** Free, no-registration size-limited build with a
   hard cap (historically **5000 variables / 5000 rows** for LPs and MIPs;
   exact cap and small-print may change by release — confirm against the
-  current FICO documentation [FIXME: confirm URL]). Useful for tutorials
+  current FICO documentation). Useful for tutorials
   and small validation models, too small for typical FlexTool dispatch
   scenarios.
 

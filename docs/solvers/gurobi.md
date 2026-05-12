@@ -3,12 +3,11 @@
 ## What it is
 
 Gurobi is a commercial linear, mixed-integer, and quadratic programming
-solver widely regarded as the industry-standard fast option for large
-energy-system optimisation models. FlexTool dispatches to Gurobi through
-polar-high's adapter; FlexTool itself never imports `gurobipy` directly and
-never inspects a licence. Pre-configured `gurobipy.Env` objects (for example
-with WLS credentials) can be passed through, but the licence-discovery path
-is Gurobi's own.
+solver used widely on large energy-system optimisation models. FlexTool
+dispatches to Gurobi through polar-high's adapter; FlexTool itself never
+imports `gurobipy` directly and never inspects a licence. Pre-configured
+`gurobipy.Env` objects (for example with WLS credentials) can be passed
+through, but the licence-discovery path is Gurobi's own.
 
 Official site: <https://www.gurobi.com/>
 

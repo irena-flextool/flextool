@@ -833,16 +833,20 @@ def run_chain_from_db(
             f"flexpy.run_chain_from_db[{scenario_name}]"
         )
 
-    # v52 multi-solver dispatch (Phase 2 startup hint).  Log the
-    # polar-high-detected solver set once per cascade so users can
-    # confirm a commercial solver they expected to be installed is in
-    # fact available before the solve loop selects it.  See
-    # ``specs/flextool-multi-solver-handoff.md`` Step 4b.
+    # v52 multi-solver dispatch (Phase 2 startup hint).  Probe each
+    # solver in polar-high's catalog with a trivial 1-var LP so users
+    # see at a glance which are licensed on this machine (vs wrapper-
+    # installed-but-no-license vs not-installed-at-all) before the
+    # solve loop selects one.  See ``specs/flextool-multi-solver-handoff.md``
+    # Step 4b.  Cached at module level so repeat cascade runs don't
+    # re-probe.
     try:
-        from polar_high.solvers import available_solvers
-        logger.info(
-            "Available solvers on this system: %s", available_solvers
+        from flextool.engine_polars._solver_dispatch import (
+            probe_solver_licenses,
         )
+        statuses = probe_solver_licenses()
+        formatted = ", ".join(f"{n}={s}" for n, s in statuses.items())
+        logger.info("Solver license status: %s", formatted)
     except ImportError:  # pragma: no cover — older polar_high without dispatch
         pass
 

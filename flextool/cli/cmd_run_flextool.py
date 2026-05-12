@@ -482,10 +482,24 @@ def main():
             args, scenario_name, work_folder, timing_recorder,
         )
     except Exception as e:
-        logging.error(
-            f"Native cascade failed: {str(e)}\n"
-            f"Traceback:\n{traceback.format_exc()}"
-        )
+        # FlexToolUserError signals a user-visible configuration problem
+        # (unknown solver, missing license, model-level solver error).
+        # The message is already human-readable; logging the traceback
+        # on top is just noise.  Other exceptions get the full
+        # traceback because they're (probably) bugs in flextool.
+        try:
+            from flextool.engine_polars._solver_dispatch import (
+                FlexToolUserError,
+            )
+        except Exception:  # noqa: BLE001
+            FlexToolUserError = ()  # type: ignore[assignment]
+        if isinstance(e, FlexToolUserError):
+            logging.error(str(e))
+        else:
+            logging.error(
+                f"Native cascade failed: {str(e)}\n"
+                f"Traceback:\n{traceback.format_exc()}"
+            )
         sys.exit(1)
 
     # If successful and requested, write outputs

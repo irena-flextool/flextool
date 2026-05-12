@@ -11,13 +11,13 @@ large dispatch LP on Gurobi with a small validation solve on HiGHS.
 
 ## Supported solvers
 
-| Solver  | License                                       | LP        | MIP       | Notes                                  |
-|---------|-----------------------------------------------|-----------|-----------|----------------------------------------|
-| HiGHS   | Free, open source                             | Fast      | OK        | Default, ships with FlexTool           |
-| Gurobi  | Commercial / academic free / WLS              | Very fast | Very fast | Industry standard                      |
-| CPLEX   | Commercial / academic free / subscription     | Very fast | Very fast |                                        |
-| Xpress  | Commercial / community (5000 var/row cap)     | Very fast | Very fast |                                        |
-| COPT    | Commercial / academic free                    | Very fast | Very fast | Newer entrant                          |
+| Solver  | License                                       |
+|---------|-----------------------------------------------|
+| HiGHS   | Free, open source                             |
+| Gurobi  | Commercial / academic free / WLS              |
+| CPLEX   | Commercial / academic free / subscription     |
+| Xpress  | Commercial / community (5000 var/row cap)     |
+| COPT    | Commercial / academic free                    |
 
 Per-solver installation, licensing, and verification:
 
@@ -26,6 +26,9 @@ Per-solver installation, licensing, and verification:
 - [CPLEX](cplex.md)
 - [Xpress](xpress.md)
 - [COPT](copt.md)
+
+PLEASE NOTE: The instructions can be out-of-date.
+Let us know if this is the case by opening an issue.
 
 ## How to switch solvers
 

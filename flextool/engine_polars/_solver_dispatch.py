@@ -233,9 +233,93 @@ def run_one_solve(
     return LiteSolution.from_solver_result(result, problem)
 
 
+_LICENSE_PROBE_CACHE: dict[str, str] | None = None
+
+
+def probe_solver_licenses() -> dict[str, str]:
+    """Return ``{solver_name: status}`` for every solver in
+    ``polar_high.solvers.available_solvers``.
+
+    Status values:
+
+    - ``"licensed"`` — wrapper installed, license check passed, trivial
+      solve completed.
+    - ``"no-license"`` — wrapper installed but the solver refused on
+      license grounds (commercial trial expired, no licence file, etc.).
+    - ``"not-installed"`` — Python wrapper isn't on this system.
+    - ``"probe-failed"`` — any other exception during the probe; the
+      solver may or may not be functional on a real problem.
+
+    The probe runs a 1-variable, 0-constraint LP through
+    ``polar_high.solvers.solve(...)`` per solver.  Solver chatter on
+    stdout is suppressed.  Result cached at module level so repeat
+    cascade runs in the same Python process don't re-probe.
+
+    Used by ``_orchestration.run_chain_from_db`` to print one INFO line
+    per cascade, giving users a quick "is gurobi actually working on
+    this machine" hint.
+    """
+    global _LICENSE_PROBE_CACHE
+    if _LICENSE_PROBE_CACHE is not None:
+        return _LICENSE_PROBE_CACHE
+    import io
+    import os
+    from contextlib import redirect_stdout, redirect_stderr
+    import polars as pl
+    from polar_high import Problem
+    from polar_high.solvers import (
+        LicenseError,
+        SolverError,
+        SolverNotAvailableError,
+        available_solvers,
+    )
+    from polar_high.solvers import solve as polar_solve
+
+    statuses: dict[str, str] = {}
+    # HiGHS / Xpress write probe chatter via C-level handles that
+    # ``redirect_stdout`` alone can't catch.  Redirect the underlying
+    # file descriptors for the duration of each probe so the startup
+    # log stays clean.
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    saved_stdout_fd = os.dup(1)
+    saved_stderr_fd = os.dup(2)
+    try:
+        for solver_name in available_solvers:
+            try:
+                p = Problem()
+                df = pl.DataFrame({"i": [0]})
+                v = p.add_var(
+                    "x", dims=("i",), index=df, lower=0.0, upper=10.0,
+                )
+                p.set_objective(v.to_expr())
+                os.dup2(devnull_fd, 1)
+                os.dup2(devnull_fd, 2)
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    polar_solve(p, solver_name=solver_name)
+                statuses[solver_name] = "licensed"
+            except LicenseError:
+                statuses[solver_name] = "no-license"
+            except SolverNotAvailableError:
+                statuses[solver_name] = "not-installed"
+            except SolverError:
+                statuses[solver_name] = "solver-error"
+            except Exception:  # noqa: BLE001 — probe should never crash startup
+                statuses[solver_name] = "probe-failed"
+            finally:
+                os.dup2(saved_stdout_fd, 1)
+                os.dup2(saved_stderr_fd, 2)
+    finally:
+        os.close(devnull_fd)
+        os.close(saved_stdout_fd)
+        os.close(saved_stderr_fd)
+    _LICENSE_PROBE_CACHE = statuses
+    return statuses
+
+
 __all__ = [
     "_PARAM_MAP",
     "FlexToolUserError",
     "build_solver_options",
+    "probe_solver_licenses",
     "run_one_solve",
 ]

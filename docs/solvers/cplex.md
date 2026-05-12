@@ -3,11 +3,10 @@
 ## What it is
 
 IBM ILOG CPLEX is a long-established commercial linear, mixed-integer, and
-quadratic programming solver. Like Gurobi it is fast on large energy-system
-LPs and MIPs; its Python API is more verbose than Gurobi's, and FlexTool's
-polar-high adapter accommodates that by feeding row-major sparse data and
-using CPLEX's native ranged-row support. FlexTool itself never imports
-`cplex` directly.
+quadratic programming solver. Its Python API is more verbose than Gurobi's,
+and FlexTool's polar-high adapter accommodates that by feeding row-major
+sparse data and using CPLEX's native ranged-row support. FlexTool itself
+never imports `cplex` directly.
 
 Official site: <https://www.ibm.com/products/ilog-cplex-optimization-studio>
 
@@ -23,9 +22,6 @@ Official site: <https://www.ibm.com/products/ilog-cplex-optimization-studio>
 - **Community Edition.** A size-limited free version exists (limits change
   by release; check IBM's documentation). Not recommended for FlexTool
   models above toy size.
-
-Licence and download portal: <https://www.ibm.com/academic/topic/data-science>
-for academic, or IBM's CPLEX product page above for commercial.
 
 ## Installation
 

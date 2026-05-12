@@ -2363,7 +2363,76 @@ def _migrate_v52_solver_selection(db) -> None:
     arrives in later phases.
     """
 
+    # --- Migrate legacy 'glpsol' values to 'highs' --------------------
+    # GLPK/glpsol was retired in Δ.22 (binary deleted, model file
+    # deleted).  Any pre-existing ``solve.solver == "glpsol"`` value
+    # would point at a non-functional solver and would also fail the
+    # new ``solvers`` value-list check below (glpsol is no longer a
+    # member).  Rewrite in place to 'highs' while the parameter is
+    # still bound to the legacy ``solver`` value list (which contains
+    # 'highs' as well as 'glpsol').
+    highs_value, highs_type = to_database("highs")
+    for pv in db.find_parameter_values(
+        entity_class_name="solve",
+        parameter_definition_name="solver",
+    ):
+        if pv["parsed_value"] == "glpsol":
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name="solve",
+                entity_byname=pv["entity_byname"],
+                parameter_definition_name="solver",
+                alternative_name=pv["alternative_name"],
+                value=highs_value,
+                type=highs_type,
+            )
+
+    # --- Transform legacy ``solver`` value list into ``solvers`` ------
+    # Pre-v52 ``solve.solver`` was bound to a list named ``solver``
+    # with members [glpsol, highs, cplex].  v52 expands this to
+    # [highs, gurobi, cplex, xpress, copt] and renames to ``solvers``.
+    #
+    # Update the existing list in place (rather than drop + recreate)
+    # so the parameter_definition's foreign-key reference stays valid
+    # and dependent parameter_value rows keep their list_value_ref
+    # entries through the migration.  Spine cascades the drop to
+    # dependent rows, which made the drop-and-readd path unreliable.
+    pvl_table = db.mapped_table("parameter_value_list")
+    legacy_solver_list = db.item(pvl_table, name="solver")
+    if legacy_solver_list is not None:
+        legacy_id = legacy_solver_list["id"]
+        # Add missing members: gurobi, xpress, copt.
+        for member in ("gurobi", "xpress", "copt"):
+            v_bytes, v_type = to_database(member)
+            db.add_update_item(
+                "list_value",
+                parameter_value_list_name="solver",  # current (pre-rename) name
+                value=v_bytes,
+                type=v_type,
+            )
+        # Remove the glpsol member.  No parameter_value rows reference
+        # it after the glpsol→highs rewrite above, so the cascade-delete
+        # is a no-op here.  ``db.item`` raises when no match exists,
+        # so iterate via ``find_list_values`` and match by value.
+        glpsol_value_bytes, _ = to_database("glpsol")
+        for lv in db.find_list_values(
+            parameter_value_list_name="solver",
+        ):
+            if lv["value"] == glpsol_value_bytes:
+                db.remove_item("list_value", lv["id"])
+                break
+        # Rename the list to ``solvers`` (plural).  The
+        # parameter_definition's FK is by id; parameter_value rows'
+        # list_value_ref entries are unaffected.
+        db.update_item(
+            "parameter_value_list", id=legacy_id, name="solvers",
+        )
+
     # --- Value lists ---------------------------------------------------
+    # ``solvers`` either already exists from the transform above (when
+    # the legacy ``solver`` list was renamed) OR needs to be created
+    # from scratch (fresh DB / no pre-v52 history).  ``add_value_list_manual``
+    # is idempotent on member names so we can call it either way.
     add_value_list_manual(db, [
         ["solvers", "highs"],
         ["solvers", "gurobi"],
@@ -2449,7 +2518,12 @@ def _migrate_v52_solver_selection(db) -> None:
         name="solver_options",
         default_value=default_val,
         default_type=default_type,
-        parameter_type_list=("map",),
+        # Spine encodes Map rank inline: "1d_map" means Map rank 1
+        # (single index level → scalar value).  ``solver_options`` is
+        # a flat key→value mapping (option_name → string/float), so
+        # rank 1 is correct.  Bare "map" is invalid (Map requires
+        # rank ≥ 1).
+        parameter_type_list=("1d_map",),
         description=(
             "Map of solver-specific option name -> value, forwarded "
             "raw to the chosen solver. Use the convenience parameters "
@@ -2518,7 +2592,11 @@ def _migrate_v52_solver_selection(db) -> None:
         name="solver_threads",
         default_value=default_val,
         default_type=default_type,
-        parameter_type_list=("int",),
+        # Spine has no integer value type; everything numeric is
+        # stored as float.  Users entering ``4`` get a float on
+        # disk; the runtime coerces back to int via ``_opt_int``
+        # in _solve_config.py.
+        parameter_type_list=("float",),
         description=(
             "Maximum number of solver worker threads. Normalised "
             "across solvers by polar-high. None = solver default "
@@ -2557,13 +2635,15 @@ def _migrate_v52_solver_selection(db) -> None:
             parameter_group_name="solve_advanced",
         )
 
+
     try:
         _commit_step(db,
             "v52: added solver-selection parameters on solve "
             "(solver rebound to 'solvers' value list; new "
             "solver_io_api, solver_options, solver_time_limit, "
-            "solver_mip_gap, solver_threads, solver_log_level) "
-            "for Phase 1 multi-solver dispatch via polar-high."
+            "solver_mip_gap, solver_threads, solver_log_level); "
+            "migrated legacy 'glpsol' values to 'highs'; "
+            "removed legacy 'solver' value list."
         )
     except SpineDBAPIError:
         pass
