@@ -105,7 +105,11 @@ def _maybe_csv_lf(path: Path,
     return lf
 
 
-def period_branch_pairs_lf(workdir: Path | None) -> pl.LazyFrame:
+def period_branch_pairs_lf(
+    workdir: Path | None,
+    *,
+    ctx: "object | None" = None,
+) -> pl.LazyFrame:
     """Read ``solve_data/period__branch.csv`` as a lazy ``(d, b)`` frame.
 
     Returns an empty frame (with the correct schema) when the file is
@@ -113,9 +117,21 @@ def period_branch_pairs_lf(workdir: Path | None) -> pl.LazyFrame:
 
     The ``b`` column is the *sibling branch* name (in non-stochastic
     fixtures, ``d == b`` for every row).
+
+    Path B Cat B (WriterSnapshot top-7): when ``ctx`` is supplied, the
+    cached ``ctx.period_branch`` (canonical ``[d_anchor, b]``) is
+    rewritten to ``[d, b]`` lazily — avoids re-reading the CSV on every
+    cascade pass.
     """
     schema = {"d": schema_dtype(_enums, "d"),
               "b": schema_dtype(_enums, "b")}
+    if ctx is not None:
+        pb_df = getattr(ctx, "period_branch", None)
+        if pb_df is not None and pb_df.height > 0:
+            return (pb_df.lazy()
+                          .select(pl.col("d_anchor").alias("d"),
+                                  pl.col("b"))
+                          .unique())
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "period__branch.csv"
@@ -128,7 +144,11 @@ def period_branch_pairs_lf(workdir: Path | None) -> pl.LazyFrame:
     ).unique()
 
 
-def solve_branch_weights_lf(workdir: Path | None) -> pl.LazyFrame:
+def solve_branch_weights_lf(
+    workdir: Path | None,
+    *,
+    ctx: "object | None" = None,
+) -> pl.LazyFrame:
     """Read ``solve_data/solve_branch_weight.csv`` as ``(b, w)`` lazy.
 
     The flextool CSV header is either ``branch,p_branch_weight_input``
@@ -136,8 +156,18 @@ def solve_branch_weights_lf(workdir: Path | None) -> pl.LazyFrame:
     normalise to ``(b, w)``.
 
     Defaults to the empty frame (schema only) when the file is absent.
+
+    Path B Cat B (WriterSnapshot top-7): when ``ctx`` is supplied, the
+    cached ``ctx.solve_branch_weight`` (canonical
+    ``[b, p_branch_weight_input]``) is used directly.
     """
     schema = {"b": schema_dtype(_enums, "b"), "w": pl.Float64}
+    if ctx is not None:
+        sbw = getattr(ctx, "solve_branch_weight", None)
+        if sbw is not None and sbw.height > 0:
+            return (sbw.lazy()
+                          .select(pl.col("b"),
+                                  pl.col("p_branch_weight_input").alias("w")))
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "solve_branch_weight.csv"
@@ -189,6 +219,8 @@ def first_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
 def period_in_use_set_lf(workdir: Path | None,
                           source: "InputSource | None" = None,
                           active_solve: str | None = None,
+                          *,
+                          ctx: "object | None" = None,
                           ) -> pl.LazyFrame:
     """Read ``solve_data/period_in_use_set.csv`` as ``(d,)`` lazy.
 
@@ -197,10 +229,14 @@ def period_in_use_set_lf(workdir: Path | None,
     ``solve`` parameters.  This is sufficient for non-stochastic
     fixtures.
 
-    The chain-runner-resident scaffolding will surface this set
-    in-memory at the ``SolveContext`` boundary in Δ.9+.
+    Path B Cat B (WriterSnapshot top-7): when ``ctx`` is supplied, the
+    cached ``ctx.period_in_use`` (canonical ``[d]``) is used directly.
     """
     schema = {"d": schema_dtype(_enums, "d")}
+    if ctx is not None:
+        piu_df = getattr(ctx, "period_in_use", None)
+        if piu_df is not None and piu_df.height > 0:
+            return piu_df.lazy().select("d").unique()
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if p.exists():
@@ -307,6 +343,8 @@ def pd_branch_weight_lf(
     workdir: Path | None,
     source: "InputSource | None" = None,
     active_solve: str | None = None,
+    *,
+    ctx: "object | None" = None,
 ) -> pl.LazyFrame:
     """Per-period branch weight (lazy) — full multi-branch cascade.
 
@@ -331,8 +369,8 @@ def pd_branch_weight_lf(
     Returns a lazy ``(d, value)`` frame.  Empty frame when no
     ``period_in_use`` rows exist.
     """
-    pb = period_branch_pairs_lf(workdir).collect()
-    piu = period_in_use_set_lf(workdir, source, active_solve).collect()
+    pb = period_branch_pairs_lf(workdir, ctx=ctx).collect()
+    piu = period_in_use_set_lf(workdir, source, active_solve, ctx=ctx).collect()
     if piu.height == 0:
         return _empty_lf({"d": pl.Utf8, "value": pl.Float64})
     if pb.height == 0:
@@ -341,7 +379,7 @@ def pd_branch_weight_lf(
                   .select(pl.col("d"))
                   .with_columns(value=pl.lit(1.0))
                   .sort("d"))
-    bw = solve_branch_weights_lf(workdir).collect()
+    bw = solve_branch_weights_lf(workdir, ctx=ctx).collect()
     ft = first_timesteps_lf(workdir).collect()
     # weights mapping with fallback 1.0 (mirrors flextool's
     # ``branch_weight.get(b, 1.0)``).
@@ -391,6 +429,8 @@ def pdt_branch_weight_lf(
     source: "InputSource | None" = None,
     active_solve: str | None = None,
     dt: pl.DataFrame | None = None,
+    *,
+    ctx: "object | None" = None,
 ) -> pl.LazyFrame:
     """Per-(d, t) branch weight (lazy) — full multi-branch cascade.
 
@@ -424,7 +464,7 @@ def pdt_branch_weight_lf(
         dt_pairs_df = dt_lf
     else:
         dt_pairs_df = dt.select("d", "t").unique()
-    pb = period_branch_pairs_lf(workdir).collect()
+    pb = period_branch_pairs_lf(workdir, ctx=ctx).collect()
     if pb.height == 0:
         # Default 1.0 per (d, t).
         return (dt_pairs_df.lazy()
@@ -432,7 +472,7 @@ def pdt_branch_weight_lf(
                           pl.col("t").cast(pl.Utf8, strict=False))
                   .with_columns(value=pl.lit(1.0))
                   .sort("d", "t"))
-    bw = solve_branch_weights_lf(workdir).collect()
+    bw = solve_branch_weights_lf(workdir, ctx=ctx).collect()
     w_lookup = {row["b"]: float(row["w"]) for row in bw.iter_rows(named=True)
                 if row["w"] is not None}
     pb_set = {(row["d"], row["b"]) for row in pb.iter_rows(named=True)}
@@ -530,13 +570,15 @@ def pd_branch_weight_param(
     workdir: Path | None,
     source: "InputSource | None" = None,
     active_solve: str | None = None,
+    *,
+    ctx: "object | None" = None,
 ) -> Param | None:
     """Public ``pd_branch_weight`` :class:`Param` builder.
 
     Returns ``None`` when no realised periods are available (matches
     the ``apply_derived_g`` skip-on-None contract).
     """
-    df = pd_branch_weight_lf(workdir, source, active_solve).collect()
+    df = pd_branch_weight_lf(workdir, source, active_solve, ctx=ctx).collect()
     if df.height == 0:
         return None
     return Param(("d",), df)
@@ -547,9 +589,11 @@ def pdt_branch_weight_param(
     source: "InputSource | None" = None,
     active_solve: str | None = None,
     dt: pl.DataFrame | None = None,
+    *,
+    ctx: "object | None" = None,
 ) -> Param | None:
     """Public ``pdt_branch_weight`` :class:`Param` builder."""
-    df = pdt_branch_weight_lf(workdir, source, active_solve, dt).collect()
+    df = pdt_branch_weight_lf(workdir, source, active_solve, dt, ctx=ctx).collect()
     if df.height == 0:
         return None
     return Param(("d", "t"), df)
@@ -575,9 +619,11 @@ def period_in_use_set_df(
     workdir: Path | None,
     source: "InputSource | None" = None,
     active_solve: str | None = None,
+    *,
+    ctx: "object | None" = None,
 ) -> pl.DataFrame | None:
     """Public ``period_in_use_set`` plain-DataFrame builder."""
-    df = period_in_use_set_lf(workdir, source, active_solve).collect()
+    df = period_in_use_set_lf(workdir, source, active_solve, ctx=ctx).collect()
     if df.height == 0:
         return None
     return df
@@ -594,6 +640,8 @@ def apply_branch_cluster(
     source: "InputSource",
     workdir: Path,
     active_solve: str | None = None,
+    *,
+    ctx: "object | None" = None,
 ) -> None:
     """Apply Cluster D Params to ``flex_data``.
 
@@ -621,15 +669,17 @@ def apply_branch_cluster(
     # 1-2. Set frames — None == "no branches / no realized periods" is
     # the legitimate inactive-feature signal.
     flex_data.period_branch_full = period_branch_full_df(workdir)
-    flex_data.period_in_use_set = period_in_use_set_df(workdir, source, active_solve)
+    flex_data.period_in_use_set = period_in_use_set_df(
+        workdir, source, active_solve, ctx=ctx)
     flex_data.dt_non_anticipativity = dt_non_anticipativity_df(workdir)
 
     # 3-4. Branch-weight Params (lazy ports of the previous eager
     # helpers in ``_derived_params.py``).
     flex_data.pd_branch_weight = pd_branch_weight_param(
-        workdir, source, active_solve)
+        workdir, source, active_solve, ctx=ctx)
 
-    pdt_bw = pdt_branch_weight_param(workdir, source, active_solve, dt)
+    pdt_bw = pdt_branch_weight_param(workdir, source, active_solve, dt,
+                                          ctx=ctx)
     if pdt_bw is not None and dt is not None and dt.height > 0:
         # Match input.py's dense-dt semantics: when dt is supplied,
         # build a (d, t)-dense Param via left-join + coalesce default

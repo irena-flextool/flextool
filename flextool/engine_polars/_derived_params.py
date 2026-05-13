@@ -7937,6 +7937,8 @@ def p_f_d_k_from_source(
     source: "InputSource",
     active_solve: str | None,
     workdir: Path | None,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> "Param | None":
     """Per-period "fraction realised this solve" for the price-ladder
     feature (audit §3.17.1).
@@ -7981,29 +7983,46 @@ def p_f_d_k_from_source(
         ladder = method.filter(pl.col("value") != "price")
         if ladder.height == 0:
             return None
-    siu = sd / "steps_in_use.csv"
-    if not siu.exists():
-        return None
-    df = _read_csv_file(siu)
-    if df.height == 0 or "period" not in df.columns:
-        return None
-    sum_step = (df.lazy()
-                  .with_columns(pl.col("step_duration")
-                                  .cast(pl.Float64, strict=False))
-                  .group_by("period")
-                  .agg(pl.col("step_duration").sum().alias("sum_step"))
-                  .rename({"period": "d"}))
+    # Path B Cat B (WriterSnapshot top-7): prefer SolveContext's typed
+    # ``steps_in_use`` and ``period_share_of_year`` accessors when
+    # available — already in canonical ``d`` / ``t`` / ``step_duration``
+    # form, so we skip the per-call rename + select allocation.  Falls
+    # back to the CSV-read path for legacy callers without ``ctx``.
+    if ctx is not None and ctx.steps_in_use.height > 0:
+        siu_df = ctx.steps_in_use
+        if "d" not in siu_df.columns or "step_duration" not in siu_df.columns:
+            return None
+        sum_step = (siu_df.lazy()
+                      .group_by("d")
+                      .agg(pl.col("step_duration").sum().alias("sum_step")))
+    else:
+        siu = sd / "steps_in_use.csv"
+        if not siu.exists():
+            return None
+        df = _read_csv_file(siu)
+        if df.height == 0 or "period" not in df.columns:
+            return None
+        sum_step = (df.lazy()
+                      .with_columns(pl.col("step_duration")
+                                      .cast(pl.Float64, strict=False))
+                      .group_by("period")
+                      .agg(pl.col("step_duration").sum().alias("sum_step"))
+                      .rename({"period": "d"}))
     # complete_period_share_of_year[d]
-    csy_path = sd / "complete_period_share_of_year_calc.csv"
-    if not csy_path.exists():
-        # Try the non-_calc variant (some fixtures only emit the latter).
-        csy_path = sd / "complete_period_share_of_year.csv"
-    if not csy_path.exists():
-        return None
-    csy = (_read_csv_file(csy_path).lazy()
-              .rename({"period": "d"})
-              .with_columns(pl.col("value").cast(pl.Float64, strict=False)
-                                  .alias("share")))
+    if ctx is not None and ctx.period_share_of_year.height > 0:
+        csy = (ctx.period_share_of_year.lazy()
+                  .with_columns(pl.col("value").alias("share")))
+    else:
+        csy_path = sd / "complete_period_share_of_year_calc.csv"
+        if not csy_path.exists():
+            # Try the non-_calc variant (some fixtures only emit the latter).
+            csy_path = sd / "complete_period_share_of_year.csv"
+        if not csy_path.exists():
+            return None
+        csy = (_read_csv_file(csy_path).lazy()
+                  .rename({"period": "d"})
+                  .with_columns(pl.col("value").cast(pl.Float64, strict=False)
+                                      .alias("share")))
     # ladder_cum_sim_hours — default 0.0 when absent.
     cum_path = sd / "ladder_cum_sim_hours.csv"
     if cum_path.exists():
@@ -8018,13 +8037,17 @@ def p_f_d_k_from_source(
             cum_lf = None
     else:
         cum_lf = None
-    # period_in_use as the output domain
-    piu_path = sd / "period_in_use_set.csv"
-    if not piu_path.exists():
-        return None
-    piu_lf = (_read_csv_file(piu_path).lazy()
-                .rename({"period": "d"})
-                .select("d"))
+    # period_in_use as the output domain — Path B Cat B: prefer
+    # SolveContext's typed accessor (already canonical ``[d]``).
+    if ctx is not None and ctx.period_in_use.height > 0:
+        piu_lf = ctx.period_in_use.lazy().select("d")
+    else:
+        piu_path = sd / "period_in_use_set.csv"
+        if not piu_path.exists():
+            return None
+        piu_lf = (_read_csv_file(piu_path).lazy()
+                    .rename({"period": "d"})
+                    .select("d"))
     out_lf = (piu_lf
                 .join(sum_step.select("d", "sum_step"), on="d", how="left")
                 .join(csy.select("d", "share"), on="d", how="left"))
@@ -8618,7 +8641,8 @@ def apply_derived_g(
     # no delayed processes, etc.).  Hard exceptions propagate.
 
     # ─── §3.17.1 p_f_d_k ───────────────────────────────────────────
-    flex_data.p_f_d_k = p_f_d_k_from_source(source, active_solve, workdir)
+    flex_data.p_f_d_k = p_f_d_k_from_source(source, active_solve, workdir,
+                                                  ctx=ctx)
 
     # ─── §3.17.2 p_ladder_cum_realized_mwh ─────────────────────────
     flex_data.p_ladder_cum_realized_mwh = (
@@ -8645,6 +8669,6 @@ def apply_derived_g(
     # Δ.12b: defensive try/except removed; apply_branch_cluster is
     # parity-bound (cluster D tests gate it).
     from flextool.engine_polars._derived_branch import apply_branch_cluster
-    apply_branch_cluster(flex_data, source, workdir, active_solve)
+    apply_branch_cluster(flex_data, source, workdir, active_solve, ctx=ctx)
 
 

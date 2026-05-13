@@ -149,6 +149,41 @@ class SolveContext:
         default_factory=lambda: pl.DataFrame(schema={}), repr=False,
     )
 
+    # ── Path B Cat B (WriterSnapshot top-7) extensions ──────────────────
+    # Per-solve preprocessing artefacts written by ``_writer_solve_writers``
+    # / ``_writer_period_calc`` and consumed by the cascade (audit
+    # `specs/in_cascade_csv_audit.md` §Category B).  Lazy-loaded on first
+    # attribute access — same pattern as ``period_in_use`` /
+    # ``period_branch`` above.  Schemas mirror the renamed canonical form
+    # the cascade helpers themselves construct, so callers can swap a
+    # ``_read_csv_file + rename + select + unique`` chain for a single
+    # attribute access.
+    _steps_in_use_loaded: bool = field(default=False, repr=False)
+    _steps_in_use: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={"d": pl.Utf8, "t": pl.Utf8, "step_duration": pl.Float64}
+        ),
+        repr=False,
+    )
+    _period_share_loaded: bool = field(default=False, repr=False)
+    _period_share: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={"d": pl.Utf8, "value": pl.Float64}
+        ),
+        repr=False,
+    )
+    _p_entity_all_existing_loaded: bool = field(default=False, repr=False)
+    _p_entity_all_existing: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
+    )
+    _solve_branch_weight_loaded: bool = field(default=False, repr=False)
+    _solve_branch_weight: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={"b": pl.Utf8, "p_branch_weight_input": pl.Float64}
+        ),
+        repr=False,
+    )
+
     # Internal: ad-hoc CSV cache.  Keyed by ``str(path)`` (no syscall).
     # Values are ``None`` when the file is absent so we don't re-stat
     # repeatedly.
@@ -334,6 +369,73 @@ class SolveContext:
             self._ppe_loaded = True
         return self._ppe
 
+    # ── Path B Cat B (WriterSnapshot top-7) accessors ─────────────────
+    @property
+    def steps_in_use(self) -> pl.DataFrame:
+        """``[d, t, step_duration]`` from ``steps_in_use.csv`` —
+        canonical column names.  Empty when the file is missing.
+
+        Path B / audit §Category B: cascade helpers that previously
+        re-read the CSV (``_derived_params.py:5421, 7974``;
+        ``_derived_branch.py:285``) should prefer this typed accessor.
+        """
+        if not self._steps_in_use_loaded:
+            self._steps_in_use = _load_steps_in_use(
+                self.solve_data_dir / "steps_in_use.csv"
+            )
+            self._steps_in_use_loaded = True
+        return self._steps_in_use
+
+    @property
+    def period_share_of_year(self) -> pl.DataFrame:
+        """``[d, value]`` from ``complete_period_share_of_year_calc.csv``
+        (canonical form: ``period`` → ``d``).  Falls back to the non-
+        ``_calc`` variant when only that file exists.  Empty when neither
+        is present.
+
+        Path B / audit §Category B: cascade helpers that previously
+        re-read the CSV (``_derived_params.py:7990``) should prefer this
+        typed accessor.
+        """
+        if not self._period_share_loaded:
+            self._period_share = _load_period_share(self.solve_data_dir)
+            self._period_share_loaded = True
+        return self._period_share
+
+    @property
+    def p_entity_all_existing(self) -> pl.DataFrame:
+        """``p_entity_all_existing.csv`` — preserved schema (canonical
+        column names already present at writer side).  Empty when the
+        file is missing.
+
+        Path B / audit §Category B: cascade helpers that previously
+        re-read the CSV (``_derived_params.py:4940``) should prefer this
+        typed accessor.
+        """
+        if not self._p_entity_all_existing_loaded:
+            self._p_entity_all_existing = _maybe_read(
+                self.solve_data_dir / "p_entity_all_existing.csv"
+            )
+            self._p_entity_all_existing_loaded = True
+        return self._p_entity_all_existing
+
+    @property
+    def solve_branch_weight(self) -> pl.DataFrame:
+        """``[b, p_branch_weight_input]`` from
+        ``solve_branch_weight.csv`` (rename ``branch`` → ``b``).  Empty
+        when the file is missing.
+
+        Path B / audit §Category B: cascade helpers that previously
+        re-read the CSV (``_derived_params.py:7623``) should prefer
+        this typed accessor.
+        """
+        if not self._solve_branch_weight_loaded:
+            self._solve_branch_weight = _load_solve_branch_weight(
+                self.solve_data_dir / "solve_branch_weight.csv"
+            )
+            self._solve_branch_weight_loaded = True
+        return self._solve_branch_weight
+
     # ------------------------------------------------------------------
     # Typed-field convenience accessors
     # ------------------------------------------------------------------
@@ -490,6 +592,105 @@ def _load_edd_history(path: Path) -> pl.DataFrame:
         return _read_csv_file(path)
     except pl.exceptions.NoDataError:
         return pl.DataFrame()
+
+
+def _load_steps_in_use(path: Path) -> pl.DataFrame:
+    """Load ``steps_in_use.csv`` and rename to canonical ``[d, t,
+    step_duration]``.  Empty frame when missing.
+
+    Audit §Category B (WriterSnapshot top-7): the cascade helpers
+    consume this frame after renaming ``period`` → ``d`` and
+    ``step`` / ``time`` → ``t``; this helper centralises that rename
+    so the cascade sees the canonical form directly.
+    """
+    empty = pl.DataFrame(
+        schema={"d": pl.Utf8, "t": pl.Utf8, "step_duration": pl.Float64}
+    )
+    if not path.exists():
+        return empty
+    try:
+        df = _read_csv_file(path)
+    except pl.exceptions.NoDataError:
+        return empty
+    if df.height == 0:
+        return empty
+    period_col = next((c for c in ("period", "d") if c in df.columns), None)
+    step_col = next(
+        (c for c in ("step", "t", "time") if c in df.columns), None
+    )
+    if period_col is None or step_col is None:
+        return empty
+    out = df.rename({period_col: "d", step_col: "t"})
+    if "step_duration" in out.columns:
+        out = out.with_columns(
+            pl.col("step_duration").cast(pl.Float64, strict=False)
+        )
+    cols = [c for c in ("d", "t", "step_duration") if c in out.columns]
+    return out.select(cols)
+
+
+def _load_period_share(solve_data_dir: Path) -> pl.DataFrame:
+    """Load ``complete_period_share_of_year_calc.csv`` (preferred) or
+    its non-``_calc`` variant — rename ``period`` → ``d``.
+
+    Audit §Category B (WriterSnapshot top-7): the cascade currently
+    falls through both names at its read sites (e.g.
+    ``_derived_params.py:7984-7988``).  Centralising the fallback here
+    gives every consumer the same semantics.
+    """
+    empty = pl.DataFrame(schema={"d": pl.Utf8, "value": pl.Float64})
+    cand_paths = (
+        solve_data_dir / "complete_period_share_of_year_calc.csv",
+        solve_data_dir / "complete_period_share_of_year.csv",
+    )
+    for path in cand_paths:
+        if path.exists():
+            try:
+                df = _read_csv_file(path)
+            except pl.exceptions.NoDataError:
+                continue
+            if df.height == 0:
+                continue
+            out = df
+            if "period" in out.columns:
+                out = out.rename({"period": "d"})
+            if "value" in out.columns:
+                out = out.with_columns(
+                    pl.col("value").cast(pl.Float64, strict=False)
+                )
+            cols = [c for c in ("d", "value") if c in out.columns]
+            if cols:
+                return out.select(cols)
+    return empty
+
+
+def _load_solve_branch_weight(path: Path) -> pl.DataFrame:
+    """Load ``solve_branch_weight.csv`` and rename to canonical
+    ``[b, p_branch_weight_input]``.
+
+    Audit §Category B (WriterSnapshot top-7).
+    """
+    empty = pl.DataFrame(
+        schema={"b": pl.Utf8, "p_branch_weight_input": pl.Float64}
+    )
+    if not path.exists():
+        return empty
+    try:
+        df = _read_csv_file(path)
+    except pl.exceptions.NoDataError:
+        return empty
+    if df.height == 0:
+        return empty
+    ren = {}
+    if "branch" in df.columns:
+        ren["branch"] = "b"
+    out = df.rename(ren)
+    if "p_branch_weight_input" in out.columns:
+        out = out.with_columns(
+            pl.col("p_branch_weight_input").cast(pl.Float64, strict=False)
+        )
+    cols = [c for c in ("b", "p_branch_weight_input") if c in out.columns]
+    return out.select(cols) if cols else empty
 
 
 __all__ = ["SolveContext"]
