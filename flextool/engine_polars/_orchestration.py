@@ -1102,6 +1102,10 @@ def _drive_cascade(
                     seconds=time.perf_counter() - _t_handoff_start,
                     t_start=_t_handoff_start,
                 )
+            # End-of-iter heap trim — release per-roll scratch frames so
+            # the next iter's load_flextool doesn't compound on stale heap.
+            # No-op on non-glibc.  Cost: ~10-50ms per iter.
+            _try_malloc_trim()
             return 0
 
     # Phase 3 — drive the cascade via the native ``native_run_model``.
