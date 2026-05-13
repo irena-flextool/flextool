@@ -120,7 +120,7 @@ class AddDialog(tk.Toplevel):
         lh: int = _metrics.lh
 
         # ── Dialog size ─────────────────────────────────────────────
-        self.geometry(f"{self._cw * 55}x{lh * 32}")
+        self.geometry(f"{self._cw * 77}x{lh * 45}")
         self.resizable(False, False)
 
         self._build_widgets()

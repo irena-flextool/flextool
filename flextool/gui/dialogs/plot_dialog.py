@@ -309,9 +309,9 @@ class PlotDialog(tk.Toplevel):
         lh: int = _metrics.lh
 
         # ── Dialog size ──────────────────────────────────────────
-        self.geometry(f"{cw * 110}x{lh * 30}")
+        self.geometry(f"{cw * 198}x{lh * 42}")
         self.resizable(True, True)
-        self.minsize(cw * 80, lh * 20)
+        self.minsize(cw * 144, lh * 28)
 
         self._build_widgets()
 

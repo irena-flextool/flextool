@@ -263,6 +263,10 @@ class ExecutionWindow(tk.Toplevel):
         # resized narrower than the Progress pane's minimum and then
         # widened again.
         self._jobs_min_width: int = cw * 30
+        # First-open default: 3× the minimum, so the Jobs columns fit
+        # without horizontal scrolling. Overridden by the saved sash
+        # (exec_jobs_sash) when there is one.
+        self._jobs_default_width: int = cw * 90
         self._paned.bind("<Configure>", self._enforce_jobs_min_width)
 
         # ── Jobs list (left) ──────────────────────────────────────────
@@ -286,8 +290,8 @@ class ExecutionWindow(tk.Toplevel):
         self._job_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
         self._job_tree.column("source", width=cw * 4, minwidth=cw * 3, stretch=False)
         self._job_tree.column("scenario", width=cw * 20, minwidth=cw * 10, stretch=True)
-        self._job_tree.column("peak", width=cw * 6, minwidth=cw * 6, stretch=False)
-        self._job_tree.column("timestamp", width=cw * 13, minwidth=cw * 13, stretch=False)
+        self._job_tree.column("peak", width=cw * 8, minwidth=cw * 8, stretch=False)
+        self._job_tree.column("timestamp", width=cw * 18, minwidth=cw * 18, stretch=False)
 
         self._job_tree.grid(row=0, column=0, sticky="nsew")
 
@@ -380,9 +384,8 @@ class ExecutionWindow(tk.Toplevel):
         # ── Window close handler ─────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close_attempt)
 
-        # ── Restore saved sash position ──────────────────────────────
-        if self._global_settings and self._global_settings.exec_jobs_sash > 0:
-            self.after(50, self._restore_sash)
+        # ── Restore saved sash position (or apply default) ───────────
+        self.after(50, self._restore_sash)
 
         # ── Initial population and start polling ─────────────────────
         self._refresh_job_list()
@@ -870,23 +873,31 @@ class ExecutionWindow(tk.Toplevel):
     def _restore_sash(self) -> None:
         """Restore the saved Jobs/Progress sash position, clamped to the
         current pane width so a value saved at a different DPI cannot
-        collapse the Progress pane to zero.
+        collapse the Progress pane to zero. When no saved value exists,
+        apply ``_jobs_default_width`` so the Jobs columns are visible
+        on first open.
         """
-        if self._global_settings is None:
-            return
         from flextool.gui.ui_metrics import clamp_sash, rescale_pixels
         try:
             self.update_idletasks()
             paned_total = self._paned.winfo_width()
-            target = clamp_sash(
-                rescale_pixels(
-                    self._global_settings.exec_jobs_sash,
-                    self._global_settings.exec_jobs_layout_cw,
-                    self._char_width,
-                ),
-                paned_total,
-                min_px=self._jobs_min_width,
-            )
+            saved = 0
+            saved_cw = 0
+            if self._global_settings is not None:
+                saved = self._global_settings.exec_jobs_sash
+                saved_cw = self._global_settings.exec_jobs_layout_cw
+            if saved > 0:
+                target = clamp_sash(
+                    rescale_pixels(saved, saved_cw, self._char_width),
+                    paned_total,
+                    min_px=self._jobs_min_width,
+                )
+            else:
+                target = clamp_sash(
+                    self._jobs_default_width,
+                    paned_total,
+                    min_px=self._jobs_min_width,
+                )
             if target > 0:
                 self._paned.sashpos(0, target)
         except (tk.TclError, IndexError):

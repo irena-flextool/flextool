@@ -132,13 +132,13 @@ class MainWindow(tk.Tk):
         # call here before any widgets exist.
         self.global_settings = load_global_settings(get_projects_dir())
 
-        # Configure role-aware named fonts (body/heading/tooltip/code)
+        # Configure role-aware named fonts (body/heading/tooltip/code).
+        # code_font_size_pt = 0 means "auto" → derive as body + 2 so logs
+        # render at a comfortably readable size next to body text.
         from flextool.gui.ui_metrics import setup_fonts
-        setup_fonts(
-            self,
-            body_pt=self.global_settings.font_size_pt,
-            code_pt=self.global_settings.code_font_size_pt,
-        )
+        _body_pt = self.global_settings.font_size_pt or 10
+        _code_pt = self.global_settings.code_font_size_pt or (_body_pt + 2)
+        setup_fonts(self, body_pt=_body_pt, code_pt=_code_pt)
 
         self.title("FlexTool")
 
@@ -330,9 +330,9 @@ class MainWindow(tk.Tk):
             command=self._sort_input_by_number,
         )
         self.input_sources_tree.heading("status", text="")
-        self.input_sources_tree.column("check", width=int(cw * 2.3), minwidth=int(cw * 2.3), stretch=False)
+        self.input_sources_tree.column("check", width=int(cw * 4.6), minwidth=int(cw * 4.6), stretch=False)
         self.input_sources_tree.column("name", width=cw * 25, minwidth=cw * 12)
-        self.input_sources_tree.column("number", width=cw * 2, minwidth=cw * 2, stretch=False)
+        self.input_sources_tree.column("number", width=cw * 4, minwidth=cw * 4, stretch=False)
         self.input_sources_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.input_sources_tree.grid(row=0, column=0, sticky="nsew")
 
@@ -917,11 +917,8 @@ class MainWindow(tk.Tk):
             logger.warning("Failed to save font size", exc_info=True)
 
         from flextool.gui.ui_metrics import setup_fonts, get_metrics
-        setup_fonts(
-            self,
-            body_pt=size_pt,
-            code_pt=self.global_settings.code_font_size_pt,
-        )
+        _code_pt = self.global_settings.code_font_size_pt or (size_pt + 2)
+        setup_fonts(self, body_pt=size_pt, code_pt=_code_pt)
         # Treeview rowheight depends on line-height — recompute & re-apply.
         _m = get_metrics(self)
         ttk.Style().configure("Treeview", rowheight=_m.row_height)
@@ -3064,7 +3061,7 @@ class MainWindow(tk.Tk):
         from flextool.gui.ui_metrics import setup_fonts, get_metrics
         from tkinter import ttk
         body_pt = self.global_settings.font_size_pt or 10
-        code_pt = self.global_settings.code_font_size_pt or 10
+        code_pt = self.global_settings.code_font_size_pt or (body_pt + 2)
         setup_fonts(self, body_pt=body_pt, code_pt=code_pt)
         _m = get_metrics(self)
         ttk.Style().configure("Treeview", rowheight=_m.row_height)

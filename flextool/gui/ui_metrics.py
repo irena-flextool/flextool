@@ -139,7 +139,7 @@ def setup_fonts(root: tk.Misc, *, body_pt: int = 10, code_pt: int = 10) -> None:
 
     Sets:
       TkDefaultFont / TkTextFont / TkMenuFont = body_pt
-      TkHeadingFont                          = body_pt + 1, bold
+      TkHeadingFont                          = body_pt + 2, bold
       TkTooltipFont                          = body_pt - 1
       TkFixedFont                            = code_pt
 
@@ -155,10 +155,12 @@ def setup_fonts(root: tk.Misc, *, body_pt: int = 10, code_pt: int = 10) -> None:
         except tk.TclError:
             pass
 
-    # heading — one point larger, bold
+    # heading — two points larger, bold. +1 read as "still smaller" under
+    # sv_ttk because bold and proportional bodies render heavier; +2
+    # reliably looks like a heading.
     try:
         heading = tkfont.nametofont("TkHeadingFont")
-        heading.configure(size=body_pt + 1, weight="bold")
+        heading.configure(size=body_pt + 2, weight="bold")
     except tk.TclError:
         pass
 
