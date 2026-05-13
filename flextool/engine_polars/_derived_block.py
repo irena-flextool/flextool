@@ -59,7 +59,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine_polars._axis_enums import schema_dtype
+from flextool.engine_polars._axis_enums import cast_dim, schema_dtype
 from flextool.engine_polars._block_layout import (
     DEFAULT_BLOCK,
     BlockLayout,
@@ -613,17 +613,22 @@ def period_block_multi_resolution_lf(
         n = len(bfs)
         for i in range(n):
             succ_rows.append((dval, bfs[i], bfs[(i + 1) % n]))
-    new_pbs = (
-        pl.DataFrame(
+    if succ_rows:
+        new_pbs = pl.DataFrame(
             succ_rows,
             schema=["d", "b_first", "b_next"],
             orient="row",
-        ) if succ_rows else pl.DataFrame(schema={
+        ).with_columns(
+            cast_dim(pl.col("d"), _enums, "d").alias("d"),
+            cast_dim(pl.col("b_first"), _enums, "b_first").alias("b_first"),
+            cast_dim(pl.col("b_next"), _enums, "b_next").alias("b_next"),
+        )
+    else:
+        new_pbs = pl.DataFrame(schema={
             "d": schema_dtype(_enums, "d"),
             "b_first": schema_dtype(_enums, "b_first"),
             "b_next": schema_dtype(_enums, "b_next"),
         })
-    )
 
     # period_block_time: (d, b_first, t) — overlap_set rows where
     # b_coarse=coarse, b_fine=default.
@@ -851,6 +856,11 @@ def dtttdt_block_interior_lf(
                 rows,
                 schema=["d", "t", "t_previous"],
                 orient="row",
+            )
+            .with_columns(
+                cast_dim(pl.col("d"), _enums, "d").alias("d"),
+                cast_dim(pl.col("t"), _enums, "t").alias("t"),
+                cast_dim(pl.col("t_previous"), _enums, "t_previous").alias("t_previous"),
             )
             .unique()
             .lazy()
