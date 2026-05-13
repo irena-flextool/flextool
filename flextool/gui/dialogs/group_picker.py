@@ -137,9 +137,13 @@ class GroupPickerDialog(tk.Toplevel):
         )
         list_frame.pack(fill="both", expand=True)
 
+        # Canvas size derived from font metrics so the dialog scales with
+        # the user's font size instead of being pinned at 360×570 px.
+        from flextool.gui.ui_metrics import get_metrics
+        _m = get_metrics(self)
         canvas = tk.Canvas(
             list_frame, bg=self._theme_bg, highlightthickness=0,
-            width=360, height=570,
+            width=_m.cw * 36, height=_m.lh * 30,
         )
         canvas.pack(side="left", fill="both", expand=True)
 

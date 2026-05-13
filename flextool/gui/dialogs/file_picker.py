@@ -102,24 +102,31 @@ class FilePickerDialog(tk.Toplevel):
         self.grab_set()
 
         # ── Dialog size ──────────────────────────────────────────
+        # Em-derive defaults so the picker scales with the user's font size.
+        from flextool.gui.ui_metrics import get_metrics
+        _m = get_metrics(self)
+        _default_w = _m.cw * 70
+        _default_h = _m.lh * 25
+        _min_w = _m.cw * 40
+        _min_h = _m.lh * 15
         if width is None:
             try:
                 width = parent.winfo_width()
             except Exception:
-                width = 700
-            if width < 400:
-                width = 700
+                width = _default_w
+            if width < _min_w:
+                width = _default_w
         if height is None:
             try:
                 height = int(parent.winfo_screenheight() * 0.6)
             except Exception:
-                height = 500
-            if height < 300:
-                height = 500
+                height = _default_h
+            if height < _min_h:
+                height = _default_h
 
         self.geometry(f"{width}x{height}")
         self.resizable(True, True)
-        self.minsize(400, 300)
+        self.minsize(_min_w, _min_h)
 
         self._build_widgets()
         self._populate()
@@ -200,9 +207,11 @@ class FilePickerDialog(tk.Toplevel):
             command=lambda: self._on_sort("modified"),
         )
 
-        # Column widths
-        self._tree.column("name", width=350, minwidth=150, stretch=True)
-        self._tree.column("modified", width=130, minwidth=100, stretch=False)
+        # Column widths — em-derived so they scale with the user's font size
+        from flextool.gui.ui_metrics import get_metrics
+        cw = get_metrics(self).cw
+        self._tree.column("name", width=cw * 35, minwidth=cw * 15, stretch=True)
+        self._tree.column("modified", width=cw * 14, minwidth=cw * 10, stretch=False)
 
         # Scrollbar
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
