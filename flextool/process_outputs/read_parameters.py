@@ -315,7 +315,9 @@ def _entity_all_capacity(
     if (flex_data.p_entity_all_existing is not None
             and flex_data.p_entity_all_existing.frame.height > 0):
         existing_lf = flex_data.p_entity_all_existing.frame.lazy().select(
-            "e", "d", pl.col("value").alias("existing"),
+            pl.col("e").cast(pl.Utf8),
+            pl.col("d").cast(pl.Utf8),
+            pl.col("value").alias("existing"),
         )
     else:
         existing_lf = pl.DataFrame(
@@ -328,7 +330,7 @@ def _entity_all_capacity(
             and flex_data.p_unitsize.frame.height > 0):
         unitsize_pieces.append(
             flex_data.p_unitsize.frame.lazy().select(
-                pl.col("p").alias("e"),
+                pl.col("p").cast(pl.Utf8).alias("e"),
                 pl.col("value").alias("unitsize"),
             )
         )
@@ -336,7 +338,7 @@ def _entity_all_capacity(
             and flex_data.p_state_unitsize.frame.height > 0):
         unitsize_pieces.append(
             flex_data.p_state_unitsize.frame.lazy().select(
-                pl.col("n").alias("e"),
+                pl.col("n").cast(pl.Utf8).alias("e"),
                 pl.col("value").alias("unitsize"),
             )
         )
@@ -366,7 +368,11 @@ def _entity_all_capacity(
                 rename[src] = dst
         if rename:
             df = df.rename(rename)
-        return df.select("e", "d", "value")
+        return df.select(
+            pl.col("e").cast(pl.Utf8),
+            pl.col("d").cast(pl.Utf8),
+            "value",
+        )
 
     invest_pieces = []
     divest_pieces = []
@@ -378,6 +384,11 @@ def _entity_all_capacity(
         f = _try_value(nm)
         if f.height > 0:
             divest_pieces.append(f)
+    # FlexData / solution dim columns may be Enum dtype (from
+    # ``cast_flexdata_axes`` at the end of ``load_flextool``); empty
+    # fallback frames declare Utf8.  ``_try_value`` casts the
+    # populated side to Utf8 (see above) so every concat input shares
+    # the empty-fallback dtype — no per-input cast needed here.
     invest = (pl.concat(invest_pieces, how="vertical") if invest_pieces
               else pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64}))
     divest = (pl.concat(divest_pieces, how="vertical") if divest_pieces
@@ -400,6 +411,11 @@ def _entity_all_capacity(
             rename[cols[2]] = "d"
         if rename:
             edd = edd.rename(rename)
+        edd = edd.with_columns(
+            pl.col("e").cast(pl.Utf8),
+            pl.col("d_invest").cast(pl.Utf8),
+            pl.col("d").cast(pl.Utf8),
+        )
         invest_contrib = (
             edd.join(invest.lazy().rename({"d": "d_invest", "value": "v_inv"}),
                      on=["e", "d_invest"], how="inner")
@@ -445,6 +461,11 @@ def _entity_all_capacity(
             rename[cols[2]] = "d"
         if rename:
             edd_dv = edd_dv.rename(rename)
+        edd_dv = edd_dv.with_columns(
+            pl.col("e").cast(pl.Utf8),
+            pl.col("d_divest").cast(pl.Utf8),
+            pl.col("d").cast(pl.Utf8),
+        )
         divest_contrib = (
             edd_dv.join(divest.lazy().rename({"d": "d_divest", "value": "v_dv"}),
                         on=["e", "d_divest"], how="inner")
@@ -471,6 +492,10 @@ def _entity_all_capacity(
             rename[cols[1]] = "d"
         if rename:
             edd_dv = edd_dv.rename(rename)
+        edd_dv = edd_dv.with_columns(
+            pl.col("e").cast(pl.Utf8),
+            pl.col("d").cast(pl.Utf8),
+        )
         divest_contrib = (
             edd_dv.join(divest.lazy().rename({"value": "v_dv"}),
                         on=["e", "d"], how="inner")
@@ -486,7 +511,9 @@ def _entity_all_capacity(
         ).lazy()
 
     # Combine: outer-join on (e, d) and sum.  ``how="full"`` requires
-    # explicit coalesce on the join keys.
+    # explicit coalesce on the join keys.  Every input has already
+    # been normalised to Utf8 ``e`` / ``d`` above (so Enum-typed
+    # populated frames don't clash with the Utf8 empty fallbacks).
     j1 = existing_lf.join(
         invest_contrib, on=["e", "d"], how="full", coalesce=True,
     )
