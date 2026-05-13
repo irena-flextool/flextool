@@ -6904,9 +6904,22 @@ def apply_derived_e(
             storage_use_reference_value_from_source(source, nsb_db))
 
     # 7. rolling-handoff (storage-only — read-from-disk handoff) ------
+    # Path B Cat A: ``_load_storage`` (input.py:2083-2104, 2106-2133)
+    # already reads ``p_roll_continue_state.csv`` and
+    # ``fix_storage_quantity.csv`` and assigns the resulting Params to
+    # ``flex_data.p_roll_continue_state`` / ``p_fix_storage_quantity``
+    # at load time.  Re-reading the same CSV here duplicates the IO and
+    # the polars allocation.  Audit `specs/in_cascade_csv_audit.md`
+    # §Category A entries `_derived_params.py:6562` and `:6582`.
+    # Prefer the already-populated FlexData fields when available; fall
+    # back to the workdir reader for legacy/test callers that bypass
+    # ``_load_storage`` or when the seed produced None (e.g. CSV absent
+    # at seed time but produced later by a prior solve).
     if has_state:
-        flex_data.p_roll_continue_state = p_roll_continue_state_from_workdir(workdir)
-        flex_data.p_fix_storage_quantity = p_fix_storage_quantity_from_workdir(workdir)
+        if getattr(flex_data, "p_roll_continue_state", None) is None:
+            flex_data.p_roll_continue_state = p_roll_continue_state_from_workdir(workdir)
+        if getattr(flex_data, "p_fix_storage_quantity", None) is None:
+            flex_data.p_fix_storage_quantity = p_fix_storage_quantity_from_workdir(workdir)
         flex_data.dtt_timeline_matching = dtt_timeline_matching_from_workdir(workdir)
         flex_data.period_branch = period_branch_from_source(source, workdir)
 
