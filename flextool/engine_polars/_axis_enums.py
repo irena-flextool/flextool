@@ -548,6 +548,31 @@ def empty_like(frame: "pl.DataFrame | pl.LazyFrame",
     return pl.DataFrame(schema=out_schema)
 
 
+def cast_dim(col_expr: "pl.Expr",
+              enums: "dict[str, pl.Enum] | None",
+              axis: str) -> "pl.Expr":
+    """Align a populated-frame ``pl.Expr`` with its empty-frame
+    :func:`schema_dtype` counterpart.
+
+    Used at every cascade-helper site that pairs an empty-frame branch
+    declared with ``schema_dtype(_enums, axis)`` against a populated
+    branch that emits dim columns from raw String CSV reads.  When
+    ``enums`` is populated, casts ``col_expr`` to the canonical Enum
+    dtype for ``axis``; otherwise (and for axes absent from the
+    mapping) returns the expression unchanged — preserving current
+    behaviour when ``_enums`` is ``None``.
+
+    The non-strict cast nulls out values not in the Enum vocabulary
+    (consistent with :func:`cast_frame_axes` defaults).
+    """
+    if enums is None:
+        return col_expr
+    dt = enums.get(axis)
+    if dt is None:
+        return col_expr
+    return col_expr.cast(dt, strict=False)
+
+
 def schema_dtype(enums: "dict[str, pl.Enum] | None",
                    axis: str) -> "pl.DataType":
     """Return the Enum dtype for ``axis`` if ``enums`` is populated.
@@ -648,6 +673,7 @@ def cast_flexdata_axes(flex_data: "FlexData",
 
 __all__ = [
     "build_axis_enums",
+    "cast_dim",
     "cast_frame_axes",
     "cast_value_axes",
     "cast_flexdata_axes",

@@ -59,7 +59,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import schema_dtype
+from ._axis_enums import cast_dim, schema_dtype
 from ._input_source import _read_csv_file
 
 # Branch-cluster helpers take ``workdir`` only — no FlexData in scope.
@@ -129,8 +129,9 @@ def period_branch_pairs_lf(
         pb_df = getattr(ctx, "period_branch", None)
         if pb_df is not None and pb_df.height > 0:
             return (pb_df.lazy()
-                          .select(pl.col("d_anchor").alias("d"),
-                                  pl.col("b"))
+                          .select(cast_dim(pl.col("d_anchor").alias("d"),
+                                            _enums, "d"),
+                                  cast_dim(pl.col("b"), _enums, "b"))
                           .unique())
     if workdir is None:
         return _empty_lf(schema)
@@ -139,8 +140,8 @@ def period_branch_pairs_lf(
     if lf is None:
         return _empty_lf(schema)
     return lf.select(
-        pl.col("d").cast(pl.Utf8, strict=False),
-        pl.col("b").cast(pl.Utf8, strict=False),
+        cast_dim(pl.col("d"), _enums, "d"),
+        cast_dim(pl.col("b"), _enums, "b"),
     ).unique()
 
 
@@ -166,7 +167,7 @@ def solve_branch_weights_lf(
         sbw = getattr(ctx, "solve_branch_weight", None)
         if sbw is not None and sbw.height > 0:
             return (sbw.lazy()
-                          .select(pl.col("b"),
+                          .select(cast_dim(pl.col("b"), _enums, "b"),
                                   pl.col("p_branch_weight_input").alias("w")))
     if workdir is None:
         return _empty_lf(schema)
@@ -187,7 +188,7 @@ def solve_branch_weights_lf(
     else:
         return _empty_lf(schema)
     return (df.lazy()
-              .select(pl.col(b_col).cast(pl.Utf8, strict=False).alias("b"),
+              .select(cast_dim(pl.col(b_col).alias("b"), _enums, "b"),
                       pl.col(v_col).cast(pl.Float64, strict=False).alias("w")))
 
 
@@ -212,7 +213,7 @@ def first_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
     s_col = ("step" if "step" in cols else
              ("time" if "time" in cols else cols[1]))
     return (df.lazy()
-              .select(pl.col(d_col).cast(pl.Utf8, strict=False).alias("d"),
+              .select(cast_dim(pl.col(d_col).alias("d"), _enums, "d"),
                       pl.col(s_col).cast(pl.Utf8, strict=False).alias("ts")))
 
 
@@ -244,8 +245,8 @@ def period_in_use_set_lf(workdir: Path | None,
             if df.height > 0 and df.columns:
                 col = df.columns[0]
                 return (df.lazy()
-                          .select(pl.col(col).cast(pl.Utf8, strict=False)
-                                                .alias("d"))
+                          .select(cast_dim(pl.col(col).alias("d"),
+                                            _enums, "d"))
                           .unique())
     # Fall back to source-derived realized + invest.
     if source is None or active_solve is None:
@@ -261,8 +262,8 @@ def period_in_use_set_lf(workdir: Path | None,
             continue
         parts.append(df.lazy()
                        .filter(pl.col("name") == active_solve)
-                       .select(pl.col("value").cast(pl.Utf8, strict=False)
-                                                  .alias("d")))
+                       .select(cast_dim(pl.col("value").alias("d"),
+                                         _enums, "d")))
     if not parts:
         return _empty_lf(schema)
     return pl.concat(parts).unique()
@@ -285,8 +286,8 @@ def realized_dispatch_lf(workdir: Path | None) -> pl.LazyFrame:
     t_col = ("step" if "step" in cols else
              ("time" if "time" in cols else cols[1]))
     return (df.lazy()
-              .select(pl.col(d_col).cast(pl.Utf8, strict=False).alias("d"),
-                      pl.col(t_col).cast(pl.Utf8, strict=False).alias("t"))
+              .select(cast_dim(pl.col(d_col).alias("d"), _enums, "d"),
+                      cast_dim(pl.col(t_col).alias("t"), _enums, "t"))
               .unique())
 
 
@@ -307,8 +308,8 @@ def fix_storage_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
     t_col = ("step" if "step" in cols else
              ("time" if "time" in cols else cols[1]))
     return (df.lazy()
-              .select(pl.col(d_col).cast(pl.Utf8, strict=False).alias("d"),
-                      pl.col(t_col).cast(pl.Utf8, strict=False).alias("t"))
+              .select(cast_dim(pl.col(d_col).alias("d"), _enums, "d"),
+                      cast_dim(pl.col(t_col).alias("t"), _enums, "t"))
               .unique())
 
 
@@ -329,8 +330,8 @@ def steps_in_use_lf(workdir: Path | None) -> pl.LazyFrame:
     t_col = ("step" if "step" in cols else
              ("time" if "time" in cols else cols[1]))
     return (df.lazy()
-              .select(pl.col(d_col).cast(pl.Utf8, strict=False).alias("d"),
-                      pl.col(t_col).cast(pl.Utf8, strict=False).alias("t"))
+              .select(cast_dim(pl.col(d_col).alias("d"), _enums, "d"),
+                      cast_dim(pl.col(t_col).alias("t"), _enums, "t"))
               .unique())
 
 
@@ -468,8 +469,8 @@ def pdt_branch_weight_lf(
     if pb.height == 0:
         # Default 1.0 per (d, t).
         return (dt_pairs_df.lazy()
-                  .select(pl.col("d").cast(pl.Utf8, strict=False),
-                          pl.col("t").cast(pl.Utf8, strict=False))
+                  .select(cast_dim(pl.col("d"), _enums, "d"),
+                          cast_dim(pl.col("t"), _enums, "t"))
                   .with_columns(value=pl.lit(1.0))
                   .sort("d", "t"))
     bw = solve_branch_weights_lf(workdir, ctx=ctx).collect()

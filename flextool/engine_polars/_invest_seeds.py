@@ -25,7 +25,7 @@ from pathlib import Path
 
 import polars as pl
 
-from ._axis_enums import schema_dtype
+from ._axis_enums import cast_dim, schema_dtype
 from ._input_source import _read_csv_file
 
 # These helpers run at the workdir-CSV seed phase — before FlexData is
@@ -65,7 +65,10 @@ def read_invest_set(workdir_solve_data: Path, name: str,
     rename_src = ("entity" if "entity" in df.columns
                   else "node" if "node" in df.columns
                   else "process")
-    return df.rename({rename_src: kind_col, "period": "d"}).select(kind_col, "d")
+    return df.rename({rename_src: kind_col, "period": "d"}).select(
+        cast_dim(pl.col(kind_col), _enums, kind_col),
+        cast_dim(pl.col("d"), _enums, "d"),
+    )
 
 
 def read_forbidden_no_investment(workdir_solve_data: Path) -> pl.DataFrame:
@@ -89,7 +92,10 @@ def read_forbidden_no_investment(workdir_solve_data: Path) -> pl.DataFrame:
     df = _read_csv_file(path)
     if df.height == 0:
         return empty
-    return df.rename({"entity": "e", "period": "d"}).select("e", "d")
+    return df.rename({"entity": "e", "period": "d"}).select(
+        cast_dim(pl.col("e"), _enums, "e"),
+        cast_dim(pl.col("d"), _enums, "d"),
+    )
 
 
 def read_set_seed(workdir_solve_data: Path, name: str,
@@ -111,7 +117,10 @@ def read_set_seed(workdir_solve_data: Path, name: str,
                   else None)
     if rename_src is None or "period" not in df.columns:
         return empty
-    return df.rename({rename_src: kind_col, "period": "d"}).select(kind_col, "d")
+    return df.rename({rename_src: kind_col, "period": "d"}).select(
+        cast_dim(pl.col(kind_col), _enums, kind_col),
+        cast_dim(pl.col("d"), _enums, "d"),
+    )
 
 
 def read_edd_invest(workdir_solve_data: Path) -> pl.DataFrame:
@@ -140,7 +149,11 @@ def read_edd_invest(workdir_solve_data: Path) -> pl.DataFrame:
     df = df.rename(ren)
     if not {"e", "d_invest", "d"}.issubset(df.columns):
         return empty
-    return df.select("e", "d_invest", "d")
+    return df.select(
+        cast_dim(pl.col("e"), _enums, "e"),
+        cast_dim(pl.col("d_invest"), _enums, "d_invest"),
+        cast_dim(pl.col("d"), _enums, "d"),
+    )
 
 
 def read_period_set(workdir_solve_data: Path, name: str) -> pl.DataFrame | None:
@@ -158,4 +171,7 @@ def read_period_set(workdir_solve_data: Path, name: str) -> pl.DataFrame | None:
     df = _read_csv_file(path)
     if df.height == 0:
         return None
-    return df.rename({"entity": "e", "period": "d"}).select("e", "d")
+    return df.rename({"entity": "e", "period": "d"}).select(
+        cast_dim(pl.col("e"), _enums, "e"),
+        cast_dim(pl.col("d"), _enums, "d"),
+    )
