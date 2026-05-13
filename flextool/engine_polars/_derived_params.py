@@ -3519,6 +3519,8 @@ def p_entity_max_units_from_source(source: "InputSource",
                                        active_solve: str | None = None,
                                        workdir: Path | None = None,
                                        p_entity_all_existing: "Param | None" = None,
+                                       *,
+                                       ctx: "SolveContext | None" = None,
                                        ) -> "Param | None":
     """Per-(e, d) maximum new-unit count = ``max_capacity / unitsize``.
 
@@ -3545,7 +3547,7 @@ def p_entity_max_units_from_source(source: "InputSource",
     if ed_invest is None or ed_invest.height == 0:
         return None
 
-    piu = _period_in_use_set(source, active_solve, workdir)
+    piu = _period_in_use_set(source, active_solve, workdir, ctx=ctx)
     if not piu:
         return None
     period_set = set(piu)
@@ -3586,7 +3588,8 @@ def p_entity_max_units_from_source(source: "InputSource",
         }
     else:
         pae_param = p_entity_all_existing_from_source(source, active_solve,
-                                                         workdir=workdir)
+                                                         workdir=workdir,
+                                                         ctx=ctx)
         if pae_param is None:
             existing_map = {}
         else:
@@ -4864,7 +4867,7 @@ def apply_derived_c(
         pae_for_max_units = getattr(flex_data, "p_entity_all_existing", None)
         pemu_db = p_entity_max_units_from_source(
             source, ed_inv_used, active_solve, workdir=workdir,
-            p_entity_all_existing=pae_for_max_units)
+            p_entity_all_existing=pae_for_max_units, ctx=ctx)
     except Exception:
         pemu_db = None
     if pemu_db is not None:
@@ -4896,6 +4899,8 @@ def apply_derived_c(
 def p_entity_all_existing_from_source(source: "InputSource",
                                         active_solve: str | None,
                                         workdir: Path | None = None,
+                                        *,
+                                        ctx: "SolveContext | None" = None,
                                         ) -> "Param | None":
     """§3.11 — sum of pre-existing capacity per (entity, period).
 
@@ -4920,7 +4925,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
     that aren't covered by ``entity.existing`` — captures the
     multi-solve state passed via ``apply_handoff``.
     """
-    piu = _period_in_use_set(source, active_solve, workdir)
+    piu = _period_in_use_set(source, active_solve, workdir, ctx=ctx)
     if not piu:
         return None
 
@@ -4933,7 +4938,27 @@ def p_entity_all_existing_from_source(source: "InputSource",
     # When the CSV is absent (single-solve fixtures, or DB-direct sweep
     # tooling without preprocessing), fall back to deriving from
     # ``entity.existing`` + lifetime gate.
-    if workdir is not None:
+    #
+    # Path B Cat B: when ``ctx`` is provided, the in-memory
+    # :pyattr:`SolveContext.p_entity_all_existing` frame is consulted
+    # first.  Falls back to the CSV-read path when ``ctx`` is None /
+    # the typed accessor is empty.
+    if ctx is not None:
+        pae_ctx = ctx.p_entity_all_existing
+        if pae_ctx.height > 0 \
+                and "entity" in pae_ctx.columns \
+                and "period" in pae_ctx.columns \
+                and "value" in pae_ctx.columns:
+            df2 = (pae_ctx.rename({"entity": "e", "period": "d"})
+                          .with_columns(value=pl.col("value")
+                                                  .cast(pl.Float64,
+                                                          strict=False)
+                                                  .fill_null(0.0))
+                          .select("e", "d", "value")
+                          .sort("e", "d"))
+            if df2.height > 0:
+                return Param(("e", "d"), df2)
+    elif workdir is not None:
         pae_path = Path(workdir) / "solve_data" / "p_entity_all_existing.csv"
         if pae_path.exists():
             try:
@@ -5271,7 +5296,7 @@ def apply_derived_d(
 
     # ─── §3.11 p_entity_all_existing — Δ.12b: unconditional ──────────
     flex_data.p_entity_all_existing = p_entity_all_existing_from_source(
-        source, active_solve, workdir)
+        source, active_solve, workdir, ctx=ctx)
 
     # Δ.12c — ``apply_existing_chain`` was previously invoked here, but
     # it consumes the handoff carriers (``p_entity_previously_invested_capacity``
@@ -5342,6 +5367,8 @@ def apply_derived_d(
 
 def _expand_branch_periods(period_order: list[str],
                               workdir: Path | None,
+                              *,
+                              ctx: "SolveContext | None" = None,
                               ) -> list[str]:
     """Given a period_order coming from solve.realized_periods +
     period_timeset, add stochastic-branch periods read from
@@ -5351,30 +5378,49 @@ def _expand_branch_periods(period_order: list[str],
 
     For each anchor in period_order, append all unique in-use branches
     whose anchor is the anchor — preserving anchor's relative position.
+
+    Path B Cat B: when ``ctx`` is provided, the in-memory
+    :pyattr:`SolveContext.period_branch` and
+    :pyattr:`SolveContext.period_in_use` frames are preferred over the
+    workdir CSVs.  Falls back to reading the CSVs when ``ctx`` is None
+    or the typed accessors are empty (and the workdir path exists).
     """
-    if workdir is None:
-        return list(period_order)
-    p = Path(workdir) / "solve_data" / "period__branch.csv"
-    if not p.exists():
-        return list(period_order)
-    try:
-        df = _read_csv_file(p)
-    except Exception:
-        return list(period_order)
-    if df.height == 0:
-        return list(period_order)
+    # Try ctx-side first: canonical in-memory carriers.
+    pb_df: pl.DataFrame | None = None
     in_use: set[str] = set()
-    piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-    if piu_path.exists():
+    if ctx is not None:
+        pb_ctx = ctx.period_branch
+        if pb_ctx.height > 0:
+            # Canonical schema is [d_anchor, b]; remap to legacy ('period', 'branch')
+            # only for the local iteration below.
+            pb_df = pb_ctx.rename({"d_anchor": "anchor", "b": "br"})
+        piu_ctx = ctx.period_in_use
+        if piu_ctx.height > 0:
+            in_use = set(piu_ctx["d"].to_list())
+    if pb_df is None:
+        if workdir is None:
+            return list(period_order)
+        p = Path(workdir) / "solve_data" / "period__branch.csv"
+        if not p.exists():
+            return list(period_order)
         try:
-            piu = _read_csv_file(piu_path)
-            if piu.height > 0:
-                in_use = set(piu["period"].to_list())
+            df = _read_csv_file(p)
         except Exception:
-            in_use = set()
-    df = df.rename({"period": "anchor", "branch": "br"})
+            return list(period_order)
+        if df.height == 0:
+            return list(period_order)
+        if not in_use:
+            piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
+            if piu_path.exists():
+                try:
+                    piu = _read_csv_file(piu_path)
+                    if piu.height > 0:
+                        in_use = set(piu["period"].to_list())
+                except Exception:
+                    in_use = set()
+        pb_df = df.rename({"period": "anchor", "branch": "br"})
     anchor_to_branches: dict[str, list[str]] = {}
-    for row in df.iter_rows(named=True):
+    for row in pb_df.iter_rows(named=True):
         anchor_to_branches.setdefault(row["anchor"], []).append(row["br"])
     out: list[str] = []
     seen: set[str] = set()
@@ -6296,6 +6342,9 @@ def p_state_existing_capacity_from_source(source: "InputSource",
                                                 nodeState_df: pl.DataFrame
                                                   | None,
                                                 workdir: Path | None = None,
+                                                *,
+                                                ctx: "SolveContext | None"
+                                                  = None,
                                                 ) -> "Param | None":
     """``p_state_existing_capacity`` per (n, d) — node existing capacity
     restricted to nodes carrying state (``nodeState`` set).
@@ -6309,10 +6358,10 @@ def p_state_existing_capacity_from_source(source: "InputSource",
         return None
     state_n = set(nodeState_df["n"].to_list())
     # Full period set (realized + invest + stochastic-branch siblings).
-    piu_base = _period_in_use_set(source, active_solve) if active_solve \
+    piu_base = _period_in_use_set(source, active_solve, ctx=ctx) if active_solve \
                 else []
-    full_periods = _expand_branch_periods(piu_base, workdir)
-    pae = p_entity_all_existing_from_source(source, active_solve, workdir)
+    full_periods = _expand_branch_periods(piu_base, workdir, ctx=ctx)
+    pae = p_entity_all_existing_from_source(source, active_solve, workdir, ctx=ctx)
     if pae is not None and pae.frame.height > 0:
         base = (pae.frame.lazy()
                   .rename({"e": "n"})
@@ -6323,7 +6372,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
         # anchor's existing value.
         if full_periods and len(full_periods) > base["d"].n_unique():
             anchor_branches = _expand_branch_periods(
-                base["d"].unique().to_list(), workdir)
+                base["d"].unique().to_list(), workdir, ctx=ctx)
             # Build (anchor → list of d) mapping
             extra_rows: list[tuple[str, str, float]] = []
             covered = set(base["d"].to_list())
@@ -6332,7 +6381,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
                     continue
                 # Find anchor whose row to copy: any anchor it expanded
                 # from.  Walk period__branch.csv to find anchor mapping.
-                anchor_for_d = _branch_anchor(d, workdir)
+                anchor_for_d = _branch_anchor(d, workdir, ctx=ctx)
                 if anchor_for_d is None:
                     continue
                 rows_for_anchor = base.filter(
@@ -6374,10 +6423,26 @@ def p_state_existing_capacity_from_source(source: "InputSource",
     return Param(("n", "d"), df)
 
 
-def _branch_anchor(branch: str, workdir: Path | None) -> str | None:
+def _branch_anchor(branch: str, workdir: Path | None,
+                      *, ctx: "SolveContext | None" = None,
+                      ) -> str | None:
     """Return the anchor period whose ``period__branch.csv`` row maps
     to *branch*.  None if no mapping found.
+
+    Path B Cat B: when ``ctx`` is provided, the in-memory
+    :pyattr:`SolveContext.period_branch` frame is consulted first.
+    Falls back to the CSV-read path when ``ctx`` is None or the typed
+    accessor is empty.
     """
+    if ctx is not None:
+        pb = ctx.period_branch
+        if pb.height > 0:
+            cand = pb.filter(pl.col("b") == branch)
+            if cand.height > 0:
+                return cand["d_anchor"][0]
+            # Typed accessor is authoritative when populated; don't fall
+            # through to the CSV path even if branch isn't in it.
+            return None
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "period__branch.csv"
@@ -6616,6 +6681,8 @@ def dtt_timeline_matching_from_workdir(workdir: Path | None
 
 def period_branch_from_source(source: "InputSource",
                                 workdir: Path | None,
+                                *,
+                                ctx: "SolveContext | None" = None,
                                 ) -> pl.DataFrame | None:
     """``period_branch`` rolling-handoff helper — (d_upper, d) anchor →
     branch map per audit §3.9.8.
@@ -6625,7 +6692,21 @@ def period_branch_from_source(source: "InputSource",
     written by ``solve_writers`` to ``solve_data/period__branch.csv``
     with columns ``(period, branch)``.  Read that file when present
     (workdir-aware path).
+
+    Path B Cat B: when ``ctx`` is provided, the in-memory
+    :pyattr:`SolveContext.period_branch` frame is consulted first
+    (canonical schema ``[d_anchor, b]`` → remapped to the legacy
+    ``[d_upper, d]`` shape this helper exposes).
     """
+    if ctx is not None:
+        pb = ctx.period_branch
+        if pb.height > 0:
+            # ctx.period_branch schema: [d_anchor, b]; downstream consumer
+            # expects (d_upper, d) where d_upper == branch, d == anchor.
+            return (pb
+                    .rename({"d_anchor": "d", "b": "d_upper"})
+                    .select("d_upper", "d")
+                    .unique())
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period__branch.csv"
         if p.exists():
@@ -6888,7 +6969,7 @@ def apply_derived_e(
     # 5. p_state_existing_capacity / p_state_upper --------------------
     if has_state:
         pse = p_state_existing_capacity_from_source(
-            source, active_solve, nodeState_df, workdir)
+            source, active_solve, nodeState_df, workdir, ctx=ctx)
         flex_data.p_state_existing_capacity = pse
         flex_data.p_state_upper = p_state_upper_from_source(
             source, pse, nodeState_df)
@@ -6921,7 +7002,7 @@ def apply_derived_e(
         if getattr(flex_data, "p_fix_storage_quantity", None) is None:
             flex_data.p_fix_storage_quantity = p_fix_storage_quantity_from_workdir(workdir)
         flex_data.dtt_timeline_matching = dtt_timeline_matching_from_workdir(workdir)
-        flex_data.period_branch = period_branch_from_source(source, workdir)
+        flex_data.period_branch = period_branch_from_source(source, workdir, ctx=ctx)
 
 
 
