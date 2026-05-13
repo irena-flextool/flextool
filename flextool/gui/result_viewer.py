@@ -2674,14 +2674,20 @@ class ResultViewer(tk.Toplevel):
                 self._file_count = plan.total_file_count
                 self._file_index = min(self._file_index, max(0, self._file_count - 1))
                 self._update_file_nav()
-                fig = build_figure_from_plan(plan, self._file_index, plot_rows)
-                if fig is not None:
-                    self._plot_canvas.display_figure(fig)
-                    logger.info(
-                        "Plot %s: from plan [file %d/%d]",
-                        variant.result_key, self._file_index, plan.total_file_count,
-                    )
-                    return
+                # build_figure_from_plan can be slow for plots with many
+                # bars / ticks (matplotlib does the heavy lifting). Run it
+                # on the background executor and display when ready so the
+                # UI thread stays responsive.
+                self._render_gen += 1
+                gen = self._render_gen
+                self._plot_canvas.show_message(
+                    f"Rendering {variant.full_name}…"
+                )
+                self._executor.submit(
+                    self._build_figure_from_plan_async,
+                    gen, plan, self._file_index, plot_rows, variant,
+                )
+                return
         except Exception:
             logger.warning("Plan path failed for %s", variant.result_key, exc_info=True)
 
@@ -2714,6 +2720,41 @@ class ResultViewer(tk.Toplevel):
             plot_rows, break_times, self._file_index,
             scenario, variant, start, duration,
         )
+
+    def _build_figure_from_plan_async(
+        self, generation: int, plan, file_index, plot_rows, variant,
+    ) -> None:
+        """Run plan-based figure building on the background executor.
+
+        Mirrors :meth:`_build_figure_async` but for the precomputed-plan
+        path. The plan-path is "instant" for most plots, but bar plots
+        with hundreds of items per file (matplotlib's barh + per-tick
+        formatter loop) can take tens of seconds — long enough for the
+        UI to freeze if we run it on the Tk main thread.
+        """
+        from flextool.plot_outputs.plan import build_figure_from_plan
+        t0 = time.perf_counter()
+        try:
+            fig = build_figure_from_plan(plan, file_index, plot_rows)
+        except Exception as exc:
+            self.after(0, self._on_figure_error, generation, str(exc), variant.result_key)
+            return
+        t1 = time.perf_counter()
+        logger.info(
+            "Plot %s: from plan build=%.0fms [file %d/%d, bg thread]",
+            variant.result_key, (t1 - t0) * 1000,
+            file_index, plan.total_file_count,
+        )
+        self.after(0, self._on_plan_figure_ready, generation, fig, variant)
+
+    def _on_plan_figure_ready(self, generation: int, fig, variant) -> None:
+        """Main-thread display callback for a plan-path build."""
+        if generation != self._render_gen:
+            return  # stale — user moved on
+        if fig is not None:
+            self._plot_canvas.display_figure(fig)
+        else:
+            self._plot_canvas.show_message(f"No plottable data for {variant.full_name}")
 
     def _build_figure_async(
         self, generation: int, df, config, plot_name, plot_rows,
