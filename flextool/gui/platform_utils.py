@@ -300,25 +300,6 @@ def _xrandr_dpi_for_window(x: int | None, y: int | None) -> float | None:
     return None
 
 
-def normalize_default_font_size(root: tk.Tk, size: int = 10) -> None:
-    """Force TkDefaultFont and TkFixedFont to a consistent size across OS.
-
-    Tk picks a platform-specific default (Segoe UI 9 on Windows,
-    DejaVu Sans 10 on Linux, etc.) which causes layout differences.
-    Calling this after theme initialisation normalises the size so that
-    widget geometry is identical regardless of the operating system.
-    """
-    import tkinter.font as tkfont
-
-    for name in ("TkDefaultFont", "TkTextFont", "TkFixedFont",
-                 "TkMenuFont", "TkHeadingFont", "TkTooltipFont"):
-        try:
-            font = tkfont.nametofont(name)
-            font.configure(size=size)
-        except Exception:
-            pass
-
-
 def scale_theme_fonts(root: tk.Tk, factor: float) -> None:
     """Rescale hardcoded theme fonts (e.g. sv_ttk's SunValley* fonts).
 
