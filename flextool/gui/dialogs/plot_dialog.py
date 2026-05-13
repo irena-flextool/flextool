@@ -414,7 +414,8 @@ class DispatchConfigEditor(tk.Toplevel):
         _metrics = get_metrics(self)
         cw = _metrics.cw
         lh = _metrics.lh
-        mono_font = tkfont.nametofont("TkFixedFont")
+        # Use the named-font string so live size changes reach tk.Text.
+        mono_font = "TkFixedFont"
 
         self.geometry(f"{cw * 90}x{lh * 40}")
         self.resizable(True, True)

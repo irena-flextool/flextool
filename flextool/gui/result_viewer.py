@@ -329,7 +329,9 @@ class ResultViewer(tk.Toplevel):
 
         # ── Scenario listbox ─────────────────────────────────────────
         from flextool.gui.hover_tooltip import attach_tooltip
-        _lf_font = tkfont.nametofont("TkDefaultFont")
+        # Use the named-font string so size changes via _set_font_size
+        # reach the label live.
+        _lf_font = "TkDefaultFont"
         scen_label = ttk.Label(left, text=" Scenarios [S] ", font=_lf_font)
         scen_frame = ttk.LabelFrame(self._left_paned, labelwidget=scen_label, padding=5)
         attach_tooltip(scen_label, (

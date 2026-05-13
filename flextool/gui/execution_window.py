@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import tkinter as tk
-import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus, JobType
@@ -69,8 +68,8 @@ class ExecutionWindow(tk.Toplevel):
         cw: int = _metrics.cw
         lh: int = _metrics.lh
         self._char_width = cw
-        mono_font = tkfont.nametofont("TkFixedFont")
-        self._mono_font = mono_font
+        # Use the named-font string so live size changes reach tk.Text.
+        self._mono_font = "TkFixedFont"
 
         # ── Window sizing & positioning ────────────────────────────────
         self._line_height = lh

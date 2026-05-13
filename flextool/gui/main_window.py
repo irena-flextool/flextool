@@ -156,7 +156,11 @@ class MainWindow(tk.Tk):
         _metrics = get_metrics(self)
         self._char_width: int = _metrics.cw
         self._line_height: int = _metrics.lh
-        self._bold_font = _metrics.bold_font
+        # Use the named heading font for bold labels so live size changes
+        # via _set_font_size reach widgets that already exist. Passing the
+        # string name (rather than a Font object copy) keeps tkinter
+        # bound to the named font.
+        self._bold_font = "TkHeadingFont"
 
         # ── Treeview row height and selection visibility ──────────
         # Add ~25% vertical padding so rows don't touch the row above —
@@ -168,8 +172,9 @@ class MainWindow(tk.Tk):
         row_height = _metrics.row_height
         style.configure("Treeview", rowheight=row_height)
 
-        # Make LabelFrame titles the same font size as everything else
-        style.configure("TLabelframe.Label", font=tkfont.nametofont("TkDefaultFont"))
+        # Make LabelFrame titles track the body font live (named-font
+        # string reference, not a snapshot Font object).
+        style.configure("TLabelframe.Label", font="TkDefaultFont")
 
         # Selected rows stay blue regardless of which tree currently
         # holds focus. The "selected !focus" mapping is listed first so
@@ -443,7 +448,7 @@ class MainWindow(tk.Tk):
         theme_fg = style.lookup("TLabel", "foreground") or "white"
         output_label = tk.Label(
             outer, text=" Output actions ", bg=theme_bg, fg=theme_fg,
-            font=tkfont.nametofont("TkDefaultFont"),
+            font="TkDefaultFont",
         )
         self.output_frame = tk.LabelFrame(
             outer, labelwidget=output_label, padx=5, pady=5,
@@ -922,14 +927,10 @@ class MainWindow(tk.Tk):
         ttk.Style().configure("Treeview", rowheight=_m.row_height)
         self._char_width = _m.cw
         self._line_height = _m.lh
-        # _bold_font is a *copy* of TkDefaultFont taken at construction
-        # time, so it does NOT auto-track the reconfigured TkDefaultFont.
-        # Refresh our handle so future widgets pick up the new size.
-        # NOTE: widgets that captured the OLD self._bold_font at __init__
-        # time still reference the stale copy — those won't update until
-        # they're re-created (e.g. by restarting the app). That's a known
-        # limitation; we don't try to rebuild every label here.
-        self._bold_font = _m.bold_font
+        # _bold_font is the *string* "TkHeadingFont" — the named font has
+        # already been reconfigured by setup_fonts above, so every widget
+        # using font="TkHeadingFont" picks up the new size live. Nothing
+        # to refresh here.
 
     def _on_font_size_custom(self) -> None:
         """Prompt for a custom font size in points."""
@@ -3069,7 +3070,8 @@ class MainWindow(tk.Tk):
         ttk.Style().configure("Treeview", rowheight=_m.row_height)
         self._char_width = _m.cw
         self._line_height = _m.lh
-        self._bold_font = _m.bold_font
+        # _bold_font is the named-font string "TkHeadingFont" — already
+        # reconfigured by setup_fonts above.
 
     def _focus_tree(self, tree: ttk.Treeview) -> None:
         """Give keyboard focus to a treeview, ensuring arrow keys work."""

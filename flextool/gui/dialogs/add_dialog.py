@@ -6,7 +6,6 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -152,10 +151,10 @@ class AddDialog(tk.Toplevel):
         lh = get_metrics(self).lh
         section_pad = dict(padx=10, pady=(lh, 5))
 
-        # Use default font for LabelFrame labels (same size as everything else)
-        default_font = tkfont.nametofont("TkDefaultFont")
+        # Use the named-font string so a live UI font size change reaches
+        # these LabelFrame titles.
         style = ttk.Style()
-        style.configure("AddDialog.TLabelframe.Label", font=default_font)
+        style.configure("AddDialog.TLabelframe.Label", font="TkDefaultFont")
 
         # ── Copy to project section ─────────────────────────────────
         copy_frame = ttk.LabelFrame(
