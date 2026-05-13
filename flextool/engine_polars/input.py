@@ -18,12 +18,47 @@ preprocessing state directly, skipping the CSV roundtrip.
 from __future__ import annotations
 
 import csv
+import os
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 import polars as pl
 from polar_high import Param
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic gate for `__setattr__` on FlexData.  Production code never
+# arms this — it's a tool for ``tests/engine_polars/test_native_cascade_parity.py``
+# (and ad-hoc investigation) to compare the cascade's native-override
+# objective against the CSV-seed-preserved objective on the same
+# fixture.  See ``specs/native_cascade_parity.md`` for the bug class
+# this diagnoses.
+#
+# When ``_CASCADE_GATE_ACTIVE`` is True (set via ``_cascade_gate()``),
+# ``FlexData.__setattr__`` drops any reassignment of a field that
+# already carries a non-None value.  Construction, handoff overlay,
+# and ``apply_existing_chain`` are unaffected — only direct
+# assignments inside the gated context window are filtered.
+
+_CASCADE_GATE_ACTIVE = False
+
+
+@contextmanager
+def _cascade_gate():
+    """Test-only: while active, ``FlexData.__setattr__`` drops
+    reassignments of fields that already have a seeded value.  Used
+    by the cascade parity test to A/B the cascade override path
+    against the CSV-seed preservation path.
+    """
+    global _CASCADE_GATE_ACTIVE
+    prev = _CASCADE_GATE_ACTIVE
+    _CASCADE_GATE_ACTIVE = True
+    try:
+        yield
+    finally:
+        _CASCADE_GATE_ACTIVE = prev
 
 from . import _group_slack
 from . import _reserve
@@ -684,6 +719,16 @@ class FlexData:
         from flextool.engine_polars._dump_csvs import dump_csvs as _impl
         return _impl(self, workdir, copy_meta_from=copy_meta_from,
                      include_heavy=include_heavy)
+
+    def __setattr__(self, name: str, value):
+        # Diagnostic gate: only armed by ``_cascade_gate()`` (used by
+        # the cascade parity test).  Production code paths never see
+        # this branch — the module-level flag stays False end-to-end.
+        if _CASCADE_GATE_ACTIVE:
+            current = self.__dict__.get(name)
+            if current is not None and value is not current:
+                return
+        object.__setattr__(self, name, value)
 
 
 # ---------------------------------------------------------------------------
