@@ -78,7 +78,16 @@ import polars as pl
 
 from polar_high import Param
 
+from ._axis_enums import schema_dtype
 from ._input_source import _read_csv_file
+
+# Inflow-scaling helpers run during ``_load_node`` (before
+# ``build_axis_enums`` can populate FlexData with the full vocabulary)
+# and operate on a source/workdir, not FlexData.  ``_enums`` is always
+# ``None`` here; the flexible-lookup form is kept so a follow-up
+# dispatch can thread an explicit ``axis_enums`` kwarg if these scratch
+# frames need to participate in Enum joins.
+_enums: dict | None = None
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -148,7 +157,9 @@ def _node_period_scalar_lf(source: "InputSource", parameter_name: str,
     Returns an empty 3-col LazyFrame when the parameter is absent / empty.
     """
     raw = _try_param(source, "node", parameter_name)
-    schema = {"n": pl.Utf8, "d": pl.Utf8, "value": pl.Float64}
+    schema = {"n": schema_dtype(_enums, "n"),
+              "d": schema_dtype(_enums, "d"),
+              "value": pl.Float64}
     empty = pl.LazyFrame(schema=schema)
     if raw is None:
         return empty
@@ -193,8 +204,12 @@ def _pt_node_inflow_lf(source: "InputSource",
     fallback ``0.0``.
     """
     raw = _try_param(source, "node", "inflow")
-    schema = {"n": pl.Utf8, "t": pl.Utf8, "value": pl.Float64}
-    empty_explicit_lf = pl.LazyFrame(schema={"n": pl.Utf8, "t": pl.Utf8})
+    schema = {"n": schema_dtype(_enums, "n"),
+              "t": schema_dtype(_enums, "t"),
+              "value": pl.Float64}
+    empty_explicit_lf = pl.LazyFrame(schema={
+        "n": schema_dtype(_enums, "n"),
+        "t": schema_dtype(_enums, "t")})
     if raw is None:
         # All zeros over (nodes × time).
         zero_lf = (nodes_lf.join(time_lf, how="cross")
@@ -316,7 +331,7 @@ def _inflow_method_lf(source: "InputSource") -> pl.LazyFrame:
     """
     raw = _try_param(source, "node", "inflow_method")
     nodes = _try_entities(source, "node")
-    schema = {"n": pl.Utf8, "method": pl.Utf8}
+    schema = {"n": schema_dtype(_enums, "n"), "method": pl.Utf8}
     if nodes is None:
         if raw is None:
             return pl.LazyFrame(schema=schema)
@@ -1121,10 +1136,12 @@ def _timeline_aggregates(source: "InputSource",
     workdir is freshly-materialised by load_flextool's tempdir path.
     """
     # Empty fall-throughs — preserved when neither path produces data.
-    empty_cpsoy = pl.LazyFrame(schema={"d": pl.Utf8, "value": pl.Float64})
+    empty_cpsoy = pl.LazyFrame(schema={"d": schema_dtype(_enums, "d"),
+                                         "value": pl.Float64})
     empty_tdy = pl.LazyFrame(schema={"timeline": pl.Utf8,
                                        "value": pl.Float64})
-    empty_pt = pl.LazyFrame(schema={"d": pl.Utf8, "timeline": pl.Utf8})
+    empty_pt = pl.LazyFrame(schema={"d": schema_dtype(_enums, "d"),
+                                      "timeline": pl.Utf8})
 
     cpsoy = empty_cpsoy
     p_tdy = empty_tdy
@@ -1219,7 +1236,8 @@ def _derive_timeline_aggregates(
     if p_ts is None or ts_tl is None:
         return p_tdy.with_columns(value=pl.col("value")), \
                p_tdy.select("timeline", "value"), \
-               pl.LazyFrame(schema={"d": pl.Utf8, "timeline": pl.Utf8})
+               pl.LazyFrame(schema={"d": schema_dtype(_enums, "d"),
+                                    "timeline": pl.Utf8})
     period_col = next((c for c in ("period", "x") if c in p_ts.columns),
                       None)
     if period_col is None:

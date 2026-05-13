@@ -44,6 +44,7 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine_polars.input import FlexData
+from flextool.engine_polars._axis_enums import schema_dtype
 from flextool.engine_polars._input_source import _read_csv_file
 
 
@@ -327,11 +328,14 @@ def _build_region_data(
         if not cross_arcs_by_pss:
             return df
         # Build a 3-col anti-join key.
+        _enums = getattr(src, "_axis_enums", None)
         key_df = pl.DataFrame({
             "p":      [t[0] for t in cross_arcs_by_pss],
             "source": [t[1] for t in cross_arcs_by_pss],
             "sink":   [t[2] for t in cross_arcs_by_pss],
-        }, schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+        }, schema={"p": schema_dtype(_enums, "p"),
+                   "source": schema_dtype(_enums, "source"),
+                   "sink": schema_dtype(_enums, "sink")})
         return df.join(key_df, on=("p", "source", "sink"), how="anti")
 
     def _filter_arc_by_proc(df: pl.DataFrame | None) -> pl.DataFrame | None:
@@ -349,11 +353,14 @@ def _build_region_data(
         f = p.frame
         if cross_arcs_by_pss and all(c in f.columns
                                      for c in ("p", "source", "sink")):
+            _enums = getattr(src, "_axis_enums", None)
             key_df = pl.DataFrame({
                 "p":      [t[0] for t in cross_arcs_by_pss],
                 "source": [t[1] for t in cross_arcs_by_pss],
                 "sink":   [t[2] for t in cross_arcs_by_pss],
-            }, schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+            }, schema={"p": schema_dtype(_enums, "p"),
+                       "source": schema_dtype(_enums, "source"),
+                       "sink": schema_dtype(_enums, "sink")})
             f = f.join(key_df, on=("p", "source", "sink"), how="anti")
         f = f.filter(pl.col("p").is_in(list(keep_procs)))
         return Param(p.dims, f, name=p.name)
@@ -503,8 +510,10 @@ def _inject_half_flows(
                 & (pl.col("sink") == hf.original_sink)
             ).select("d", "t")
         else:
+            _enums = getattr(src, "_axis_enums", None)
             arc_dt = pl.DataFrame({"d": [], "t": []},
-                                  schema={"d": pl.Utf8, "t": pl.Utf8})
+                                  schema={"d": schema_dtype(_enums, "d"),
+                                          "t": schema_dtype(_enums, "t")})
 
         # Classification inherits from the original arc.
         is_eff = (hf.original_p, hf.original_source, hf.original_sink) in orig_eff_keys
@@ -713,70 +722,81 @@ def _inject_half_flows(
                           new_df.select(list(schema.keys()))],
                          how="vertical")
 
+    _enums_loc = getattr(src, "_axis_enums", None)
+    _pss_schema = {"p": schema_dtype(_enums_loc, "p"),
+                    "source": schema_dtype(_enums_loc, "source"),
+                    "sink": schema_dtype(_enums_loc, "sink")}
+    _pssn_schema = {**_pss_schema, "n": schema_dtype(_enums_loc, "n")}
     rd.process_source_sink = _concat(
-        rd.process_source_sink, new_pss_rows,
-        {"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+        rd.process_source_sink, new_pss_rows, _pss_schema)
     if new_pss_eff_rows:
         rd.process_source_sink_eff = _concat(
-            rd.process_source_sink_eff, new_pss_eff_rows,
-            {"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+            rd.process_source_sink_eff, new_pss_eff_rows, _pss_schema)
     if new_pss_noEff_rows:
         rd.process_source_sink_noEff = _concat(
-            rd.process_source_sink_noEff, new_pss_noEff_rows,
-            {"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+            rd.process_source_sink_noEff, new_pss_noEff_rows, _pss_schema)
     rd.pss_dt = _concat(
         rd.pss_dt, new_pss_dt_rows,
-        {"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8,
-         "d": pl.Utf8, "t": pl.Utf8})
+        {**_pss_schema,
+         "d": schema_dtype(_enums_loc, "d"),
+         "t": schema_dtype(_enums_loc, "t")})
     if new_flow_to_n_rows:
         rd.flow_to_n = _concat(
-            rd.flow_to_n, new_flow_to_n_rows,
-            {"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "n": pl.Utf8})
+            rd.flow_to_n, new_flow_to_n_rows, _pssn_schema)
     if new_flow_from_n_rows:
         rd.flow_from_n = _concat(
-            rd.flow_from_n, new_flow_from_n_rows,
-            {"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "n": pl.Utf8})
+            rd.flow_from_n, new_flow_from_n_rows, _pssn_schema)
     if new_flow_from_nb_eff_rows:
         rd.flow_from_nodeBalance_eff = _concat(
-            rd.flow_from_nodeBalance_eff, new_flow_from_nb_eff_rows,
-            {"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "n": pl.Utf8})
+            rd.flow_from_nodeBalance_eff, new_flow_from_nb_eff_rows, _pssn_schema)
     if new_flow_from_nb_noEff_rows:
         rd.flow_from_nodeBalance_noEff = _concat(
-            rd.flow_from_nodeBalance_noEff, new_flow_from_nb_noEff_rows,
-            {"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "n": pl.Utf8})
+            rd.flow_from_nodeBalance_noEff, new_flow_from_nb_noEff_rows, _pssn_schema)
 
     # Append unitsize Param.
     if rd.p_unitsize is not None and new_unitsize_rows:
+        _enums = getattr(src, "_axis_enums", None)
         new_us = pl.DataFrame(new_unitsize_rows,
-                              schema={"p": pl.Utf8, "value": pl.Float64})
+                              schema={"p": schema_dtype(_enums, "p"),
+                                      "value": pl.Float64})
         merged_us = pl.concat([rd.p_unitsize.frame.select("p", "value"),
                                new_us], how="vertical")
         rd.p_unitsize = Param(("p",), merged_us, name=rd.p_unitsize.name)
 
     # Append p_slope rows for half-flows that are eff-classified.
     if rd.p_slope is not None and new_p_slope_rows:
+        _enums = getattr(src, "_axis_enums", None)
         new_sl = pl.DataFrame(new_p_slope_rows,
-                              schema={"p": pl.Utf8, "d": pl.Utf8,
-                                      "t": pl.Utf8, "value": pl.Float64})
+                              schema={"p": schema_dtype(_enums, "p"),
+                                      "d": schema_dtype(_enums, "d"),
+                                      "t": schema_dtype(_enums, "t"),
+                                      "value": pl.Float64})
         merged_sl = pl.concat([rd.p_slope.frame.select("p", "d", "t", "value"),
                                new_sl], how="vertical")
         rd.p_slope = Param(("p", "d", "t"), merged_sl, name=rd.p_slope.name)
 
     # Append flow_upper Param rows.
     if rd.p_flow_upper is not None and new_flow_upper_rows:
+        _enums = getattr(src, "_axis_enums", None)
         new_fu = pl.DataFrame(new_flow_upper_rows,
-                              schema={"p": pl.Utf8, "source": pl.Utf8,
-                                      "sink": pl.Utf8, "d": pl.Utf8,
-                                      "t": pl.Utf8, "value": pl.Float64})
+                              schema={"p": schema_dtype(_enums, "p"),
+                                      "source": schema_dtype(_enums, "source"),
+                                      "sink": schema_dtype(_enums, "sink"),
+                                      "d": schema_dtype(_enums, "d"),
+                                      "t": schema_dtype(_enums, "t"),
+                                      "value": pl.Float64})
         merged_fu = pl.concat([rd.p_flow_upper.frame.select(
                                   "p", "source", "sink", "d", "t", "value"),
                                new_fu], how="vertical")
         rd.p_flow_upper = Param(("p", "source", "sink", "d", "t"),
                                 merged_fu, name=rd.p_flow_upper.name)
     if rd.p_flow_upper_existing is not None and new_flow_upper_existing_rows:
+        _enums = getattr(src, "_axis_enums", None)
         new_fue = pl.DataFrame(new_flow_upper_existing_rows,
-                               schema={"p": pl.Utf8, "source": pl.Utf8,
-                                       "sink": pl.Utf8, "d": pl.Utf8,
+                               schema={"p": schema_dtype(_enums, "p"),
+                                       "source": schema_dtype(_enums, "source"),
+                                       "sink": schema_dtype(_enums, "sink"),
+                                       "d": schema_dtype(_enums, "d"),
                                        "value": pl.Float64})
         merged_fue = pl.concat([rd.p_flow_upper_existing.frame.select(
                                     "p", "source", "sink", "d", "value"),
@@ -826,13 +846,18 @@ def _inject_half_flows(
     src_w_rows = [r for r in new_p_arc_sink_weight_rows if r["_side"] == "source"]
     snk_w_rows = [r for r in new_p_arc_sink_weight_rows if r["_side"] == "sink"]
 
+    _enums = getattr(src, "_axis_enums", None)
     if rd.arc_source_block_dt is not None and src_block_rows:
         new_df = pl.DataFrame(
             [{k: r[k] for k in ("p", "source", "sink", "d", "b_first", "t", "weight")}
              for r in src_block_rows],
-            schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8,
-                    "d": pl.Utf8, "b_first": pl.Utf8,
-                    "t": pl.Utf8, "weight": pl.Float64})
+            schema={"p": schema_dtype(_enums, "p"),
+                    "source": schema_dtype(_enums, "source"),
+                    "sink": schema_dtype(_enums, "sink"),
+                    "d": schema_dtype(_enums, "d"),
+                    "b_first": schema_dtype(_enums, "b_first"),
+                    "t": schema_dtype(_enums, "t"),
+                    "weight": pl.Float64})
         rd.arc_source_block_dt = pl.concat([
             rd.arc_source_block_dt.select(*new_df.columns), new_df],
             how="vertical")
@@ -840,9 +865,13 @@ def _inject_half_flows(
         new_df = pl.DataFrame(
             [{k: r[k] for k in ("p", "source", "sink", "d", "b_first", "t", "weight")}
              for r in snk_block_rows],
-            schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8,
-                    "d": pl.Utf8, "b_first": pl.Utf8,
-                    "t": pl.Utf8, "weight": pl.Float64})
+            schema={"p": schema_dtype(_enums, "p"),
+                    "source": schema_dtype(_enums, "source"),
+                    "sink": schema_dtype(_enums, "sink"),
+                    "d": schema_dtype(_enums, "d"),
+                    "b_first": schema_dtype(_enums, "b_first"),
+                    "t": schema_dtype(_enums, "t"),
+                    "weight": pl.Float64})
         rd.arc_sink_block_dt = pl.concat([
             rd.arc_sink_block_dt.select(*new_df.columns), new_df],
             how="vertical")
@@ -850,8 +879,12 @@ def _inject_half_flows(
         new_df = pl.DataFrame(
             [{k: r[k] for k in ("p", "source", "sink", "d", "t", "value")}
              for r in src_w_rows],
-            schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8,
-                    "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64})
+            schema={"p": schema_dtype(_enums, "p"),
+                    "source": schema_dtype(_enums, "source"),
+                    "sink": schema_dtype(_enums, "sink"),
+                    "d": schema_dtype(_enums, "d"),
+                    "t": schema_dtype(_enums, "t"),
+                    "value": pl.Float64})
         rd.p_arc_source_weight = Param(
             ("p", "source", "sink", "d", "t"),
             pl.concat([rd.p_arc_source_weight.frame.select(*new_df.columns),
@@ -861,8 +894,12 @@ def _inject_half_flows(
         new_df = pl.DataFrame(
             [{k: r[k] for k in ("p", "source", "sink", "d", "t", "value")}
              for r in snk_w_rows],
-            schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8,
-                    "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64})
+            schema={"p": schema_dtype(_enums, "p"),
+                    "source": schema_dtype(_enums, "source"),
+                    "sink": schema_dtype(_enums, "sink"),
+                    "d": schema_dtype(_enums, "d"),
+                    "t": schema_dtype(_enums, "t"),
+                    "value": pl.Float64})
         rd.p_arc_sink_weight = Param(
             ("p", "source", "sink", "d", "t"),
             pl.concat([rd.p_arc_sink_weight.frame.select(*new_df.columns),

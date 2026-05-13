@@ -59,7 +59,13 @@ import polars as pl
 
 from polar_high import Param
 
+from ._axis_enums import schema_dtype
 from ._input_source import _read_csv_file
+
+# Branch-cluster helpers take ``workdir`` only — no FlexData in scope.
+# ``schema_dtype(None, ...)`` returns ``pl.Utf8`` so default schemas
+# stay String-typed.  Pattern is uniform across the cascade.
+_enums: dict | None = None
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -108,7 +114,8 @@ def period_branch_pairs_lf(workdir: Path | None) -> pl.LazyFrame:
     The ``b`` column is the *sibling branch* name (in non-stochastic
     fixtures, ``d == b`` for every row).
     """
-    schema = {"d": pl.Utf8, "b": pl.Utf8}
+    schema = {"d": schema_dtype(_enums, "d"),
+              "b": schema_dtype(_enums, "b")}
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "period__branch.csv"
@@ -130,7 +137,7 @@ def solve_branch_weights_lf(workdir: Path | None) -> pl.LazyFrame:
 
     Defaults to the empty frame (schema only) when the file is absent.
     """
-    schema = {"b": pl.Utf8, "w": pl.Float64}
+    schema = {"b": schema_dtype(_enums, "b"), "w": pl.Float64}
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "solve_branch_weight.csv"
@@ -161,7 +168,7 @@ def first_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
     discriminator the ``pd_branch_weight`` algorithm uses for grouping
     sibling branches.
     """
-    schema = {"d": pl.Utf8, "ts": pl.Utf8}
+    schema = {"d": schema_dtype(_enums, "d"), "ts": pl.Utf8}
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "first_timesteps.csv"
@@ -193,7 +200,7 @@ def period_in_use_set_lf(workdir: Path | None,
     The chain-runner-resident scaffolding will surface this set
     in-memory at the ``SolveContext`` boundary in Δ.9+.
     """
-    schema = {"d": pl.Utf8}
+    schema = {"d": schema_dtype(_enums, "d")}
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if p.exists():
@@ -227,7 +234,8 @@ def period_in_use_set_lf(workdir: Path | None,
 
 def realized_dispatch_lf(workdir: Path | None) -> pl.LazyFrame:
     """Read ``solve_data/realized_dispatch.csv`` as ``(d, t)`` lazy."""
-    schema = {"d": pl.Utf8, "t": pl.Utf8}
+    schema = {"d": schema_dtype(_enums, "d"),
+              "t": schema_dtype(_enums, "t")}
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "realized_dispatch.csv"
@@ -248,7 +256,8 @@ def realized_dispatch_lf(workdir: Path | None) -> pl.LazyFrame:
 
 def fix_storage_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
     """Read ``solve_data/fix_storage_timesteps.csv`` as ``(d, t)`` lazy."""
-    schema = {"d": pl.Utf8, "t": pl.Utf8}
+    schema = {"d": schema_dtype(_enums, "d"),
+              "t": schema_dtype(_enums, "t")}
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "fix_storage_timesteps.csv"
@@ -269,7 +278,8 @@ def fix_storage_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
 
 def steps_in_use_lf(workdir: Path | None) -> pl.LazyFrame:
     """Read ``solve_data/steps_in_use.csv`` as ``(d, t)`` lazy."""
-    schema = {"d": pl.Utf8, "t": pl.Utf8}
+    schema = {"d": schema_dtype(_enums, "d"),
+              "t": schema_dtype(_enums, "t")}
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "steps_in_use.csv"
@@ -370,7 +380,8 @@ def pd_branch_weight_lf(
         rows.append((d, w(d) / denom))
     if not rows:
         return _empty_lf({"d": pl.Utf8, "value": pl.Float64})
-    out = pl.DataFrame(rows, schema={"d": pl.Utf8, "value": pl.Float64},
+    out = pl.DataFrame(rows, schema={"d": schema_dtype(_enums, "d"),
+                                       "value": pl.Float64},
                        orient="row").sort("d")
     return out.lazy()
 
@@ -402,7 +413,9 @@ def pdt_branch_weight_lf(
 
     Returns a lazy ``(d, t, value)`` frame.
     """
-    schema = {"d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64}
+    schema = {"d": schema_dtype(_enums, "d"),
+              "t": schema_dtype(_enums, "t"),
+              "value": pl.Float64}
     if dt is None or dt.height == 0:
         # Fall back to steps_in_use as the dense domain.
         dt_lf = steps_in_use_lf(workdir).collect()
@@ -478,7 +491,8 @@ def dt_non_anticipativity_lf(workdir: Path | None) -> pl.LazyFrame:
     activity is present — which keeps the model layer's
     non-anticipativity constraints disabled by default.
     """
-    schema = {"d": pl.Utf8, "t": pl.Utf8}
+    schema = {"d": schema_dtype(_enums, "d"),
+              "t": schema_dtype(_enums, "t")}
     rd = realized_dispatch_lf(workdir).collect()
     fs = fix_storage_timesteps_lf(workdir).collect()
     if rd.height == 0 and fs.height == 0:

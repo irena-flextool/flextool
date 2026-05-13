@@ -25,7 +25,16 @@ from pathlib import Path
 
 import polars as pl
 
+from ._axis_enums import schema_dtype
 from ._input_source import _read_csv_file
+
+# These helpers run at the workdir-CSV seed phase — before FlexData is
+# materialised — so ``_enums`` is always ``None`` here.  Using
+# :func:`schema_dtype` (returning ``pl.Utf8`` when ``_enums is None``)
+# keeps the schema declarations consistent with the rest of the cascade
+# while preserving String dtype as the default.  A follow-up dispatch
+# may thread an explicit ``axis_enums`` kwarg through these readers.
+_enums: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +54,8 @@ def read_invest_set(workdir_solve_data: Path, name: str,
     be used as inputs — using them silently drops invest variables for
     non-realized periods.
     """
-    empty = pl.DataFrame(schema={kind_col: pl.Utf8, "d": pl.Utf8})
+    empty = pl.DataFrame(schema={kind_col: schema_dtype(_enums, kind_col),
+                                  "d": schema_dtype(_enums, "d")})
     path = workdir_solve_data / f"{name}.csv"
     if not path.exists():
         return empty
@@ -71,7 +81,8 @@ def read_forbidden_no_investment(workdir_solve_data: Path) -> pl.DataFrame:
 
     Returns an empty (e, d) frame when the CSV is absent or empty.
     """
-    empty = pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+    empty = pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                  "d": schema_dtype(_enums, "d")})
     path = workdir_solve_data / "ed_invest_forbidden_no_investment.csv"
     if not path.exists():
         return empty
@@ -86,7 +97,8 @@ def read_set_seed(workdir_solve_data: Path, name: str,
     """Read ``pd_invest.csv`` / ``pd_divest.csv`` / ``nd_invest.csv``
     / ``nd_divest.csv``.  Each is a per-(entity, period) seed frame.
     """
-    empty = pl.DataFrame(schema={kind_col: pl.Utf8, "d": pl.Utf8})
+    empty = pl.DataFrame(schema={kind_col: schema_dtype(_enums, kind_col),
+                                  "d": schema_dtype(_enums, "d")})
     path = workdir_solve_data / f"{name}.csv"
     if not path.exists():
         return empty
@@ -109,7 +121,9 @@ def read_edd_invest(workdir_solve_data: Path) -> pl.DataFrame:
     column names.
     """
     empty = pl.DataFrame(schema={
-        "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
+        "e": schema_dtype(_enums, "e"),
+        "d_invest": schema_dtype(_enums, "d_invest"),
+        "d": schema_dtype(_enums, "d")})
     path = workdir_solve_data / "edd_invest.csv"
     if not path.exists():
         return empty

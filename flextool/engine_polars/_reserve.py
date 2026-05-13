@@ -43,7 +43,16 @@ import polars as pl
 from polar_high import Sum, Where, Param
 from polar_high.engine import Var
 
+from ._axis_enums import schema_dtype
 from ._input_source import _read_csv_file
+
+# Reserve loader runs at workdir-CSV seed phase — no FlexData in scope.
+# ``schema_dtype(None, ...)`` returns ``pl.Utf8`` so the empty/default
+# frames here keep String dtype (same as before).  Sites are written in
+# the flexible-lookup form so a future dispatch that threads
+# ``axis_enums`` through ``load_data`` can activate Enum allocation
+# without touching this file again.
+_enums: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -141,11 +150,17 @@ def load_data(inp: Path | str, sd: Path | str,
                 df = df.rename({"reserve": "r", "upDown": "ud", "group": "g"}) \
                        .select("r", "ud", "g", "method")
             else:
-                df = pl.DataFrame(schema={"r": pl.Utf8, "ud": pl.Utf8,
-                                          "g": pl.Utf8, "method": pl.Utf8})
+                df = pl.DataFrame(schema={
+                    "r": schema_dtype(_enums, "r"),
+                    "ud": schema_dtype(_enums, "ud"),
+                    "g": schema_dtype(_enums, "g"),
+                    "method": pl.Utf8})
         else:
-            df = pl.DataFrame(schema={"r": pl.Utf8, "ud": pl.Utf8,
-                                      "g": pl.Utf8, "method": pl.Utf8})
+            df = pl.DataFrame(schema={
+                "r": schema_dtype(_enums, "r"),
+                "ud": schema_dtype(_enums, "ud"),
+                "g": schema_dtype(_enums, "g"),
+                "method": pl.Utf8})
         out[attr] = df
 
     # Δ.12-drop: ``prundt`` produced authoritatively by
@@ -163,8 +178,11 @@ def load_data(inp: Path | str, sd: Path | str,
                                "upDown": "ud", "node": "n"}) \
                       .select("p", "r", "ud", "n")
         else:
-            irr = pl.DataFrame(schema={"p": pl.Utf8, "r": pl.Utf8,
-                                        "ud": pl.Utf8, "n": pl.Utf8})
+            irr = pl.DataFrame(schema={
+                "p": schema_dtype(_enums, "p"),
+                "r": schema_dtype(_enums, "r"),
+                "ud": schema_dtype(_enums, "ud"),
+                "n": schema_dtype(_enums, "n")})
         out["process_reserve_upDown_node_increase_reserve_ratio"] = irr
 
     # ── process_reserve_upDown_node_large_failure_ratio (n-1 RHS) ──────
@@ -176,8 +194,11 @@ def load_data(inp: Path | str, sd: Path | str,
                                "upDown": "ud", "node": "n"}) \
                       .select("p", "r", "ud", "n")
         else:
-            lfr = pl.DataFrame(schema={"p": pl.Utf8, "r": pl.Utf8,
-                                        "ud": pl.Utf8, "n": pl.Utf8})
+            lfr = pl.DataFrame(schema={
+                "p": schema_dtype(_enums, "p"),
+                "r": schema_dtype(_enums, "r"),
+                "ud": schema_dtype(_enums, "ud"),
+                "n": schema_dtype(_enums, "n")})
         out["process_reserve_upDown_node_large_failure_ratio"] = lfr
 
     # ── group_node ────────────────────────────────────────────────────
@@ -196,7 +217,9 @@ def load_data(inp: Path | str, sd: Path | str,
     if gn is not None:
         out["group_node"] = gn
     elif (sd / "group_node.csv").exists() or (inp / "group__node.csv").exists():
-        out["group_node"] = pl.DataFrame(schema={"g": pl.Utf8, "n": pl.Utf8})
+        out["group_node"] = pl.DataFrame(schema={
+            "g": schema_dtype(_enums, "g"),
+            "n": schema_dtype(_enums, "n")})
 
     # Δ.12-drop: ``p_process_reserve_upDown_node_reliability`` produced
     # authoritatively by ``apply_direct_params`` (Δ.4b).  Seed dropped.

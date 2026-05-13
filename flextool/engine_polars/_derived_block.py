@@ -59,10 +59,16 @@ import polars as pl
 
 from polar_high import Param
 
+from flextool.engine_polars._axis_enums import schema_dtype
 from flextool.engine_polars._block_layout import (
     DEFAULT_BLOCK,
     BlockLayout,
 )
+
+# BlockBundle helpers operate on a ``BlockLayout`` (block-flavoured
+# CSVs); there is no FlexData in scope here, so ``_enums`` is ``None``
+# and ``schema_dtype`` returns ``pl.Utf8`` — same dtype as before.
+_enums: dict | None = None
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from flextool.engine_polars._input_source import InputSource
@@ -118,7 +124,9 @@ class BlockBundle:
         f = self.layout.process_side_block_frame
         if f.height == 0:
             return pl.LazyFrame(schema={
-                "p": pl.Utf8, "side": pl.Utf8, "b_f": pl.Utf8,
+                "p": schema_dtype(_enums, "p"),
+                "side": pl.Utf8,
+                "b_f": pl.Utf8,
             })
         return f.lazy().rename({"process": "p", "block": "b_f"})
 
@@ -127,7 +135,10 @@ class BlockBundle:
         """Lazy ``(n, b)`` frame, or empty when no block data."""
         f = self.layout.entity_block_frame
         if f.height == 0:
-            return pl.LazyFrame(schema={"n": pl.Utf8, "b": pl.Utf8})
+            return pl.LazyFrame(schema={
+                "n": schema_dtype(_enums, "n"),
+                "b": schema_dtype(_enums, "b"),
+            })
         return f.lazy().rename({"entity": "n", "block": "b"})
 
     @property
@@ -136,7 +147,9 @@ class BlockBundle:
         f = self.layout.block_step_duration_frame
         if f.height == 0:
             return pl.LazyFrame(schema={
-                "b_f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+                "b_f": pl.Utf8,
+                "d": schema_dtype(_enums, "d"),
+                "t": schema_dtype(_enums, "t"),
                 "weight": pl.Float64,
             })
         return f.lazy().rename({
@@ -149,7 +162,9 @@ class BlockBundle:
         f = self.layout.block_period_time_first_frame
         if f.height == 0:
             return pl.LazyFrame(schema={
-                "b": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+                "b": schema_dtype(_enums, "b"),
+                "d": schema_dtype(_enums, "d"),
+                "t": schema_dtype(_enums, "t"),
             })
         return f.lazy().rename({"block": "b", "period": "d", "step": "t"})
 
@@ -158,7 +173,9 @@ class BlockBundle:
         f = self.layout.block_period_time_last_frame
         if f.height == 0:
             return pl.LazyFrame(schema={
-                "b": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+                "b": schema_dtype(_enums, "b"),
+                "d": schema_dtype(_enums, "d"),
+                "t": schema_dtype(_enums, "t"),
             })
         return f.lazy().rename({"block": "b", "period": "d", "step": "t"})
 
@@ -345,8 +362,10 @@ def flow_to_n_block_filtered(
     """
     if pss is None or pss.height == 0:
         return pl.DataFrame(schema={
-            "p": pl.Utf8, "source": pl.Utf8,
-            "sink": pl.Utf8, "n": pl.Utf8,
+            "p": schema_dtype(_enums, "p"),
+            "source": schema_dtype(_enums, "source"),
+            "sink": schema_dtype(_enums, "sink"),
+            "n": schema_dtype(_enums, "n"),
         })
     base = (
         pss.lazy()
@@ -365,8 +384,10 @@ def flow_from_n_block_filtered(
     """Build ``flow_from_n`` (``n = source``) with block-aware filter."""
     if pss is None or pss.height == 0:
         return pl.DataFrame(schema={
-            "p": pl.Utf8, "source": pl.Utf8,
-            "sink": pl.Utf8, "n": pl.Utf8,
+            "p": schema_dtype(_enums, "p"),
+            "source": schema_dtype(_enums, "source"),
+            "sink": schema_dtype(_enums, "sink"),
+            "n": schema_dtype(_enums, "n"),
         })
     base = (
         pss.lazy()
@@ -525,7 +546,7 @@ def nodeStateBlock_lf(
                     pl.col("n").is_in(list(node_set)))
             parts.append(picked.unique())
     if not parts:
-        return pl.LazyFrame(schema={"n": pl.Utf8})
+        return pl.LazyFrame(schema={"n": schema_dtype(_enums, "n")})
     out = pl.concat(parts).unique().sort("n")
     return out
 
@@ -598,7 +619,9 @@ def period_block_multi_resolution_lf(
             schema=["d", "b_first", "b_next"],
             orient="row",
         ) if succ_rows else pl.DataFrame(schema={
-            "d": pl.Utf8, "b_first": pl.Utf8, "b_next": pl.Utf8,
+            "d": schema_dtype(_enums, "d"),
+            "b_first": schema_dtype(_enums, "b_first"),
+            "b_next": schema_dtype(_enums, "b_next"),
         })
     )
 
@@ -620,7 +643,9 @@ def period_block_multi_resolution_lf(
     )
     if ov_keep.height == 0:
         new_pbt = pl.DataFrame(schema={
-            "d": pl.Utf8, "b_first": pl.Utf8, "t": pl.Utf8,
+            "d": schema_dtype(_enums, "d"),
+            "b_first": schema_dtype(_enums, "b_first"),
+            "t": schema_dtype(_enums, "t"),
         })
     else:
         new_pbt = ov_keep.select("d", "b_first", "t").unique()
@@ -749,7 +774,9 @@ def nodeState_last_dt_lf(
     Mirror of ``input.py:2233-2253``.
     """
     empty = pl.LazyFrame(schema={
-        "n": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+        "n": schema_dtype(_enums, "n"),
+        "d": schema_dtype(_enums, "d"),
+        "t": schema_dtype(_enums, "t"),
     })
     if nodeState is None or nodeState.height == 0:
         return empty
@@ -792,7 +819,9 @@ def dtttdt_block_interior_lf(
     helper detects automatically.
     """
     empty = pl.LazyFrame(schema={
-        "d": pl.Utf8, "t": pl.Utf8, "t_previous": pl.Utf8,
+        "d": schema_dtype(_enums, "d"),
+        "t": schema_dtype(_enums, "t"),
+        "t_previous": schema_dtype(_enums, "t_previous"),
     })
     if dtttdt is None or dtttdt.height == 0:
         return empty

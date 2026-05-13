@@ -55,6 +55,15 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from ._axis_enums import schema_dtype
+
+# ``_empty_flex_data`` runs before any FlexData is materialised — the
+# returned sentinel frames are immediately overwritten by the override
+# chain.  ``_enums`` is always ``None`` here, so ``schema_dtype`` falls
+# back to ``pl.Utf8`` (same dtype as before).  Pattern is uniform with
+# the rest of the cascade for the dtype-flexible refactor.
+_enums: dict | None = None
+
 if TYPE_CHECKING:
     from flextool.engine_polars._spinedb_reader import SpineDbReader
     from flextool.engine_polars.input import FlexData
@@ -94,15 +103,27 @@ def _empty_flex_data() -> "FlexData":
 
     from flextool.engine_polars.input import FlexData
 
-    empty_dt = pl.DataFrame(schema={"d": pl.Utf8, "t": pl.Utf8})
-    empty_2 = pl.DataFrame(schema={"d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64})
-    empty_d = pl.DataFrame(schema={"d": pl.Utf8, "value": pl.Float64})
-    empty_node = pl.DataFrame(schema={"n": pl.Utf8})
+    empty_dt = pl.DataFrame(schema={
+        "d": schema_dtype(_enums, "d"),
+        "t": schema_dtype(_enums, "t")})
+    empty_2 = pl.DataFrame(schema={
+        "d": schema_dtype(_enums, "d"),
+        "t": schema_dtype(_enums, "t"),
+        "value": pl.Float64})
+    empty_d = pl.DataFrame(schema={
+        "d": schema_dtype(_enums, "d"),
+        "value": pl.Float64})
+    empty_node = pl.DataFrame(schema={"n": schema_dtype(_enums, "n")})
     empty_node_dt = pl.DataFrame(
-        schema={"n": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8}
+        schema={"n": schema_dtype(_enums, "n"),
+                "d": schema_dtype(_enums, "d"),
+                "t": schema_dtype(_enums, "t")}
     )
     empty_ndt = pl.DataFrame(
-        schema={"n": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64}
+        schema={"n": schema_dtype(_enums, "n"),
+                "d": schema_dtype(_enums, "d"),
+                "t": schema_dtype(_enums, "t"),
+                "value": pl.Float64}
     )
 
     return FlexData(

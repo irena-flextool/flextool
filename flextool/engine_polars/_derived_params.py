@@ -43,7 +43,16 @@ import polars as pl
 
 from polar_high import Param
 
+from ._axis_enums import schema_dtype
 from ._input_source import _read_csv_file
+
+# Derived-param helpers operate on a ``source`` (InputSource); FlexData
+# is not yet built when the broadcast cascade runs.  ``_enums = None``
+# keeps every empty-scratch frame allocated as ``pl.Utf8`` (matching
+# today's behaviour); the flexible-lookup form is in place so a
+# follow-up dispatch can thread an explicit ``axis_enums`` and have
+# every site allocate as Enum without further file changes.
+_enums: dict | None = None
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -1375,7 +1384,8 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         ))
     if not parts:
         return pl.DataFrame(schema={
-            "p": pl.Utf8, "ct": pl.Utf8, "startup": pl.Utf8,
+            "p": schema_dtype(_enums, "p"),
+            "ct": pl.Utf8, "startup": pl.Utf8,
             "fork": pl.Utf8, "method": pl.Utf8, "klass": pl.Utf8,
         })
     base = pl.concat(parts).unique()
@@ -1542,7 +1552,7 @@ def process_indirect_set(source: "InputSource",
     if classified is None:
         classified = _classify_process_method(source)
     if classified.height == 0:
-        return pl.DataFrame(schema={"p": pl.Utf8})
+        return pl.DataFrame(schema={"p": schema_dtype(_enums, "p")})
     return (classified.lazy()
               .filter((pl.col("klass") == "unit")
                       & pl.col("method").is_in(list(_METHOD_INDIRECT)))
@@ -1568,7 +1578,8 @@ def _zero_flow_coef_pairs(source: "InputSource",
         col = "sink"
     df = _try_param(source, ec, "flow_coefficient")
     if df is None or df.height == 0:
-        return pl.DataFrame(schema={"p": pl.Utf8, col: pl.Utf8})
+        return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
+                                     col: schema_dtype(_enums, col)})
     cols = df.columns
     rename: dict[str, str] = {}
     for c in cols:
@@ -1595,8 +1606,9 @@ def process_input_flows(source: "InputSource",
     """
     pi = process_indirect_set(source, classified)
     if pss is None or pss.height == 0 or pi.height == 0:
-        return pl.DataFrame(schema={"p": pl.Utf8, "source": pl.Utf8,
-                                      "sink": pl.Utf8})
+        return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
+                                      "source": schema_dtype(_enums, "source"),
+                                      "sink": schema_dtype(_enums, "sink")})
     out_lf = (pss.lazy()
                 .filter(pl.col("sink") == pl.col("p"))
                 .join(pi.lazy(), on="p", how="inner"))
@@ -1617,8 +1629,9 @@ def process_output_flows(source: "InputSource",
     """
     pi = process_indirect_set(source, classified)
     if pss is None or pss.height == 0 or pi.height == 0:
-        return pl.DataFrame(schema={"p": pl.Utf8, "source": pl.Utf8,
-                                      "sink": pl.Utf8})
+        return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
+                                      "source": schema_dtype(_enums, "source"),
+                                      "sink": schema_dtype(_enums, "sink")})
     out_lf = (pss.lazy()
                 .filter(pl.col("source") == pl.col("p"))
                 .join(pi.lazy(), on="p", how="inner"))
@@ -1635,8 +1648,9 @@ def process_indirect_dt(source: "InputSource",
     """``process_indirect × dt`` cross-product.  Schema ``[p, d, t]``."""
     pi = process_indirect_set(source, classified)
     if pi.height == 0 or dt is None or dt.height == 0:
-        return pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8,
-                                      "t": pl.Utf8})
+        return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
+                                      "d": schema_dtype(_enums, "d"),
+                                      "t": schema_dtype(_enums, "t")})
     return (pi.lazy()
               .join(dt.lazy(), how="cross")
               .sort("p", "d", "t")
@@ -1662,8 +1676,10 @@ def flow_to_n(source: "InputSource",
     — explicitly deferred to Batch C in the task spec).
     """
     if pss is None or pss.height == 0:
-        return pl.DataFrame(schema={"p": pl.Utf8, "source": pl.Utf8,
-                                      "sink": pl.Utf8, "n": pl.Utf8})
+        return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
+                                      "source": schema_dtype(_enums, "source"),
+                                      "sink": schema_dtype(_enums, "sink"),
+                                      "n": schema_dtype(_enums, "n")})
     return (pss.lazy()
               .with_columns(n=pl.col("sink"))
               .select("p", "source", "sink", "n")
@@ -1675,8 +1691,10 @@ def flow_from_n(source: "InputSource",
                 pss: pl.DataFrame) -> pl.DataFrame:
     """Augment pss with ``n = source``.  Schema ``[p, source, sink, n]``."""
     if pss is None or pss.height == 0:
-        return pl.DataFrame(schema={"p": pl.Utf8, "source": pl.Utf8,
-                                      "sink": pl.Utf8, "n": pl.Utf8})
+        return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
+                                      "source": schema_dtype(_enums, "source"),
+                                      "sink": schema_dtype(_enums, "sink"),
+                                      "n": schema_dtype(_enums, "n")})
     return (pss.lazy()
               .with_columns(n=pl.col("source"))
               .select("p", "source", "sink", "n")
@@ -1893,7 +1911,9 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
         parts.append(rp.lazy().select(pl.col("value").alias("d")))
     if not parts:
         return pl.DataFrame(schema={
-            "p": pl.Utf8, "d": pl.Utf8, "cap": pl.Float64,
+            "p": schema_dtype(_enums, "p"),
+            "d": schema_dtype(_enums, "d"),
+            "cap": pl.Float64,
         }).lazy()
     pd_lf = pl.concat(parts).unique()
     return (df.lazy()
@@ -2678,7 +2698,7 @@ def _entity_invest_filter(source: "InputSource",
     """
     eim = _entity_invest_method(source)
     if eim is None:
-        return pl.DataFrame(schema={"e": pl.Utf8}).lazy()
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e")}).lazy()
     return (eim.filter(pl.col("method").is_in(list(allowed)))
                 .select("e").unique())
 
@@ -2702,7 +2722,7 @@ def _has_capacity_constraint_invest_set(source: "InputSource"
                 parts.append(df.lazy().select(
                     pl.col("name").alias("e")).unique())
     if not parts:
-        return pl.DataFrame(schema={"e": pl.Utf8}).lazy()
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e")}).lazy()
     return pl.concat(parts).unique()
 
 
@@ -2751,15 +2771,18 @@ def _eea_predicate(source: "InputSource",
     composition.
     """
     if not period_invest:
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8}).lazy()
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "d": schema_dtype(_enums, "d")}).lazy()
     eim = _entity_invest_method(source)
     if eim is None:
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8}).lazy()
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "d": schema_dtype(_enums, "d")}).lazy()
     has_method = (eim.filter(pl.col("method").is_in(list(allowed)))
                        .select("e").unique())
     cost_lf = _per_entity_period_cost(source, cost_param, period_invest)
     if cost_lf is None:
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8}).lazy()
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "d": schema_dtype(_enums, "d")}).lazy()
     return (has_method.join(entity_lf, on="e", how="inner")
                        .join(cost_lf, on="e", how="inner")
                        .filter(pl.col("v") != 0.0)
@@ -2970,23 +2993,27 @@ def ed_invest_forbidden_no_investment_from_source(
     """
     period_invest = _solve_periods(source, active_solve, "invest_periods")
     if not period_invest:
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "d": schema_dtype(_enums, "d")})
     forbidden = _lifetime_expired_pairs(
         source, active_solve, workdir, methods=("no_investment",))
     if not forbidden:
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "d": schema_dtype(_enums, "d")})
     # Universe = entityInvest × period_invest (canonical's source set,
     # before the forbidden filter is applied).
     ei_lf = _entityInvest_set(source)
     ei_df = ei_lf.collect() if ei_lf is not None else pl.DataFrame(
-        schema={"e": pl.Utf8})
+        schema={"e": schema_dtype(_enums, "e")})
     if ei_df.height == 0:
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "d": schema_dtype(_enums, "d")})
     ei = set(ei_df["e"].to_list())
     rows = [(e, d) for (e, d) in forbidden
               if e in ei and d in period_invest]
     if not rows:
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "d": schema_dtype(_enums, "d")})
     return pl.DataFrame(rows, schema=["e", "d"], orient="row").sort("e", "d")
 
 
@@ -3015,7 +3042,8 @@ def ed_invest_set_from_source(source: "InputSource",
     period_invest = _solve_periods(source, active_solve, "invest_periods")
     if not period_invest:
         # Empty invest_periods → empty ed_invest (the dispatch-only solve case).
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "d": schema_dtype(_enums, "d")})
 
     ei_lf = _entityInvest_set(source)
     has_cc = _has_capacity_constraint_invest_set(source)
@@ -3038,7 +3066,8 @@ def ed_invest_set_from_source(source: "InputSource",
         keep = [(e, d) for (e, d) in out.iter_rows()
                   if (e, d) not in forbidden]
         if not keep:
-            out = pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+            out = pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                        "d": schema_dtype(_enums, "d")})
         else:
             out = pl.DataFrame(keep, schema=["e", "d"], orient="row")
     return out
@@ -3056,7 +3085,8 @@ def ed_divest_set_from_source(source: "InputSource",
     """
     period_invest = _solve_periods(source, active_solve, "invest_periods")
     if not period_invest:
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "d": schema_dtype(_enums, "d")})
     ed_lf = _entityDivest_set(source)
     has_cc = _has_capacity_constraint_invest_set(source)
     eead_pred = _eead_pairs(source, ed_lf, period_invest)
@@ -3270,7 +3300,9 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
     """
     if ed_invest is None or ed_invest.height == 0:
         return pl.DataFrame(schema={
-            "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,
+            "e": schema_dtype(_enums, "e"),
+            "d_invest": schema_dtype(_enums, "d_invest"),
+            "d": schema_dtype(_enums, "d"),
         })
     pyd_lf = _p_years_d_lf(source, active_solve, workdir)
     if pyd_lf is None:
@@ -3278,7 +3310,9 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
     periods = _period_in_use_set(source, active_solve, workdir)
     if not periods:
         return pl.DataFrame(schema={
-            "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,
+            "e": schema_dtype(_enums, "e"),
+            "d_invest": schema_dtype(_enums, "d_invest"),
+            "d": schema_dtype(_enums, "d"),
         })
     # Δ.7 — delegate to the lazy port consuming the shared walker.
     from ._derived_existing import edd_invest_lookback_set_lf
@@ -3298,7 +3332,9 @@ def edd_divest_active_from_source(source: "InputSource",
     """
     if pd_divest is None or pd_divest.height == 0:
         return pl.DataFrame(schema={
-            "p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8,
+            "p": schema_dtype(_enums, "p"),
+            "d_divest": schema_dtype(_enums, "d_divest"),
+            "d": schema_dtype(_enums, "d"),
         })
     pyd_lf = _p_years_d_lf(source, active_solve)
     if pyd_lf is None:
@@ -3306,7 +3342,9 @@ def edd_divest_active_from_source(source: "InputSource",
     periods = _period_in_use_set(source, active_solve)
     if not periods:
         return pl.DataFrame(schema={
-            "p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8,
+            "p": schema_dtype(_enums, "p"),
+            "d_divest": schema_dtype(_enums, "d_divest"),
+            "d": schema_dtype(_enums, "d"),
         })
     period_lf = pl.LazyFrame({"d": periods})
     pdd_lf = pd_divest.lazy().rename({"d": "d_divest"})
@@ -3375,7 +3413,8 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
                     pl.col("value").cast(pl.Float64).alias("ex"),
                 ))
     if not base_parts:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "us": pl.Float64})
+        return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "us": pl.Float64})
     base = pl.concat(base_parts).unique()
     if us_parts:
         vu_lf = pl.concat(us_parts).unique(subset=["e"], keep="last")
@@ -3436,7 +3475,8 @@ def _e_explicit_param(source: "InputSource", parameter_name: str
             pl.col("value").cast(pl.Float64),
         ))
     if not parts:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "value": pl.Float64})
+        return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "value": pl.Float64})
     return pl.concat(parts).unique(subset=["e"], keep="last")
 
 
@@ -3468,7 +3508,8 @@ def _ed_explicit_period_param(source: "InputSource", parameter_name: str
             pl.col("value").cast(pl.Float64),
         ))
     if not parts:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "d": pl.Utf8,
+        return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
+                                       "d": schema_dtype(_enums, "d"),
                                        "value": pl.Float64})
     return pl.concat(parts).unique(subset=["e", "d"], keep="last")
 
@@ -3822,7 +3863,9 @@ def _arc_max_capacity_coef_lf(source: "InputSource",
     df = _try_param(source, ec, "max_capacity_coefficient")
     if df is None or df.height == 0:
         return pl.LazyFrame(
-            schema={"p": pl.Utf8, node_alias: pl.Utf8, "coef": pl.Float64})
+            schema={"p": schema_dtype(_enums, "p"),
+                    node_alias: schema_dtype(_enums, node_alias),
+                    "coef": pl.Float64})
     cols = df.columns
     rename: dict[str, str] = {}
     for c in cols:
@@ -3854,7 +3897,8 @@ def _process_source_pairs_lf(source: "InputSource") -> pl.LazyFrame:
             pl.col("node_1").alias("source"),
         ))
     if not parts:
-        return pl.LazyFrame(schema={"p": pl.Utf8, "source": pl.Utf8})
+        return pl.LazyFrame(schema={"p": schema_dtype(_enums, "p"),
+                                     "source": schema_dtype(_enums, "source")})
     return pl.concat(parts).unique()
 
 
@@ -3875,7 +3919,8 @@ def _process_sink_pairs_lf(source: "InputSource") -> pl.LazyFrame:
             pl.col("node_2").alias("sink"),
         ))
     if not parts:
-        return pl.LazyFrame(schema={"p": pl.Utf8, "sink": pl.Utf8})
+        return pl.LazyFrame(schema={"p": schema_dtype(_enums, "p"),
+                                     "sink": schema_dtype(_enums, "sink")})
     return pl.concat(parts).unique()
 
 
@@ -3891,7 +3936,9 @@ def _process_source_sink_coeff_zero_lf(source: "InputSource",
     """
     if pss is None or pss.height == 0:
         return pl.LazyFrame(schema={
-            "p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+            "p": schema_dtype(_enums, "p"),
+            "source": schema_dtype(_enums, "source"),
+            "sink": schema_dtype(_enums, "sink")})
     src_zero = (_arc_max_capacity_coef_lf(source, "source")
                   .filter(pl.col("coef") == 0.0)
                   .select("p", "source"))
@@ -6009,7 +6056,7 @@ def _node_storage_binding_method_with_fallback(source: "InputSource"
         return None
     explicit = _try_param(source, "node", "storage_binding_method")
     if explicit is None:
-        explicit_rows = pl.DataFrame(schema={"n": pl.Utf8,
+        explicit_rows = pl.DataFrame(schema={"n": schema_dtype(_enums, "n"),
                                               "method": pl.Utf8})
     else:
         explicit_rows = (explicit
@@ -6020,7 +6067,8 @@ def _node_storage_binding_method_with_fallback(source: "InputSource"
     fb = pl.DataFrame({"n": fallback_n,
                          "method": ["bind_forward_only"] * len(fallback_n)}) \
             if fallback_n else pl.DataFrame(
-                schema={"n": pl.Utf8, "method": pl.Utf8})
+                schema={"n": schema_dtype(_enums, "n"),
+                        "method": pl.Utf8})
     out = pl.concat([explicit_rows, fb]).unique().sort("n", "method")
     return out
 
@@ -6365,7 +6413,8 @@ def _node_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
     ex = _try_param_explicit(source, "node", "existing")
     nodes = _try_entities(source, "node")
     if nodes is None or nodes.height == 0:
-        return pl.LazyFrame(schema={"n": pl.Utf8, "us": pl.Float64})
+        return pl.LazyFrame(schema={"n": schema_dtype(_enums, "n"),
+                                     "us": pl.Float64})
     base = nodes.lazy().select(pl.col("name").alias("n"))
     if us is not None and us.height > 0:
         us_lf = us.lazy().select(pl.col("name").alias("n"),
@@ -8201,7 +8250,8 @@ def p_process_delay_weight_from_source(
             rows.append((p, float(td), 1.0))
     if not rows:
         return None
-    out = pl.DataFrame(rows, schema={"p": pl.Utf8, "td": pl.Float64,
+    out = pl.DataFrame(rows, schema={"p": schema_dtype(_enums, "p"),
+                                       "td": pl.Float64,
                                        "value": pl.Float64},
                        orient="row")
     return Param(("p", "td"), out)
@@ -8272,8 +8322,10 @@ def dtt__delay_duration_from_source(
                 rows.append((d, t_src, t_sink, td_float))
     if not rows:
         return None
-    out = pl.DataFrame(rows, schema={"d": pl.Utf8, "t_source": pl.Utf8,
-                                       "t_sink": pl.Utf8, "td": pl.Float64},
+    out = pl.DataFrame(rows, schema={"d": schema_dtype(_enums, "d"),
+                                       "t_source": schema_dtype(_enums, "t_source"),
+                                       "t_sink": schema_dtype(_enums, "t_sink"),
+                                       "td": pl.Float64},
                        orient="row")
     return out
 

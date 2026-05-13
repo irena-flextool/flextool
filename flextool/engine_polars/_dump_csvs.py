@@ -52,6 +52,8 @@ import polars as pl
 
 from polar_high import Param
 
+from ._axis_enums import schema_dtype
+
 
 # ---------------------------------------------------------------------------
 # Heavy CSVs — gigabyte-scale on large fixtures (e.g. y2050 H2 supply
@@ -395,7 +397,9 @@ def _write_input_entity_set_csvs(data: "FlexData", inp_dir: Path) -> None:
     if nb is not None:
         node_lf = nb.rename({"n": "node"}).select("node")
     else:
-        node_lf = pl.DataFrame({"node": []}, schema={"node": pl.Utf8})
+        _enums = getattr(data, "_axis_enums", None)
+        node_lf = pl.DataFrame({"node": []},
+                                schema={"node": schema_dtype(_enums, "node")})
     node_lf.write_csv(inp_dir / "node.csv")
 
     # process_unit.csv
@@ -403,8 +407,9 @@ def _write_input_entity_set_csvs(data: "FlexData", inp_dir: Path) -> None:
     if pu is not None:
         pu_out = pu.rename({"p": "process_unit"}).select("process_unit")
     else:
+        _enums = getattr(data, "_axis_enums", None)
         pu_out = pl.DataFrame({"process_unit": []},
-                              schema={"process_unit": pl.Utf8})
+                              schema={"process_unit": schema_dtype(_enums, "process_unit")})
     pu_out.write_csv(inp_dir / "process_unit.csv")
 
     # process_connection.csv = (every process in pss) - process_unit

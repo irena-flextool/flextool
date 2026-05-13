@@ -87,6 +87,14 @@ import polars as pl
 
 from polar_high import Param
 
+from ._axis_enums import schema_dtype
+
+# NPV-cascade helpers take ``source`` (an InputSource); no FlexData in
+# scope here.  ``_enums = None`` keeps schema_dtype falling back to
+# pl.Utf8 — same dtype as before — while the flexible-lookup form is in
+# place for a future activation pass.
+_enums: dict | None = None
+
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
 
@@ -136,7 +144,8 @@ def _entity_class_lf(source: "InputSource") -> pl.LazyFrame:
             pl.lit(ec).alias("ec"),
         ))
     if not parts:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "ec": pl.Utf8})
+        return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "ec": pl.Utf8})
     return pl.concat(parts, how="vertical")
 
 
@@ -196,7 +205,8 @@ def _per_entity_param_lf(source: "InputSource",
             ))
     if not parts:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d": pl.Utf8,
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
             "value": pl.Float64, "is_scalar": pl.Boolean,
         })
     return pl.concat(parts, how="vertical")
@@ -260,7 +270,8 @@ def _entity_method_lf(source: "InputSource",
             pl.col("value").cast(pl.Utf8, strict=False).alias("method"),
         ))
     if not parts:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "method": pl.Utf8})
+        return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
+                                     "method": pl.Utf8})
     return pl.concat(parts, how="vertical")
 
 
@@ -351,7 +362,8 @@ def _years_for_period_lf(source: "InputSource",
             rows.append((d, y, w))
     if not rows:
         return pl.LazyFrame(schema={
-            "d": pl.Utf8, "y": pl.Utf8, "width": pl.Float64,
+            "d": schema_dtype(_enums, "d"),
+            "y": pl.Utf8, "width": pl.Float64,
         })
     return pl.LazyFrame(rows, schema=["d", "y", "width"], orient="row")
 
@@ -383,7 +395,8 @@ def _inflation_factors_lf(source: "InputSource",
     """
     if not period_universe:
         return pl.LazyFrame(schema={
-            "d": pl.Utf8, "inv_factor": pl.Float64, "ops_factor": pl.Float64,
+            "d": schema_dtype(_enums, "d"),
+            "inv_factor": pl.Float64, "ops_factor": pl.Float64,
         })
     rate, off_inv, off_ops = _solve_inflation_scalars(source)
     one_plus_inv = (1.0 / (1.0 + rate)) if rate != -1.0 else 1.0
@@ -671,7 +684,9 @@ def npv_invest_discounted_lf(
     """
     if not period_invest:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64,
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
+            "value": pl.Float64,
         })
     # entityInvest = projection of entity__invest_method via the
     # method-allowed gate (mirror of preprocessing/invest_method_sets).
@@ -763,7 +778,9 @@ def npv_divest_discounted_lf(
     """
     if not period_invest:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64,
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
+            "value": pl.Float64,
         })
     entity_divest_set = _entity_invest_set_lf(source, _DIVEST_NOT_ALLOWED)
     pi_lf = pl.LazyFrame({"d": period_invest})
@@ -849,7 +866,9 @@ def lifetime_fixed_cost_invest_lf(
     """
     if not period_with_history:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64,
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
+            "value": pl.Float64,
         })
 
     # Build (e, d) over all_entities × period_with_history.
@@ -929,7 +948,9 @@ def lifetime_fixed_cost_divest_lf(
     """
     if not period_invest:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64,
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
+            "value": pl.Float64,
         })
     entity_divest_set = _entity_invest_set_lf(source, _DIVEST_NOT_ALLOWED)
     pi_lf = pl.LazyFrame({"d": period_invest})

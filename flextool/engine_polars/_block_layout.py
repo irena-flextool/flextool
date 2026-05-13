@@ -48,7 +48,16 @@ from typing import TYPE_CHECKING, Iterable
 
 import polars as pl
 
+from flextool.engine_polars._axis_enums import schema_dtype
 from flextool.engine_polars._solve_state import FlexToolConfigError
+
+# BlockLayout's emit_frames runs before the broadcast cascade and has no
+# FlexData in scope — ``_enums`` is always ``None`` here, so
+# :func:`schema_dtype` returns ``pl.Utf8`` and the schemas remain
+# String-typed as today.  The flexible-lookup form keeps the audit
+# pattern uniform across files; a follow-up dispatch can thread an
+# explicit ``axis_enums`` kwarg if these frames become a join target.
+_enums: dict | None = None
 
 if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
     from flextool.engine_polars._solve_config import SolveConfig
@@ -1100,7 +1109,8 @@ class BlockLayout:
                 "entity": [r[0] for r in eb_rows],
                 "block": [r[1] for r in eb_rows],
             },
-            schema={"entity": pl.Utf8, "block": pl.Utf8},
+            schema={"entity": schema_dtype(_enums, "entity"),
+                    "block": pl.Utf8},
         )
 
         # process_side_block.csv — two rows per process (source + sink).
@@ -1115,7 +1125,8 @@ class BlockLayout:
                 "side": [r[1] for r in psb_rows],
                 "block": [r[2] for r in psb_rows],
             },
-            schema={"process": pl.Utf8, "side": pl.Utf8, "block": pl.Utf8},
+            schema={"process": schema_dtype(_enums, "process"),
+                    "side": pl.Utf8, "block": pl.Utf8},
         )
 
         # process_block.csv — process-unified block.
@@ -1125,7 +1136,8 @@ class BlockLayout:
                 "process": [r[0] for r in pb_rows],
                 "block": [r[1] for r in pb_rows],
             },
-            schema={"process": pl.Utf8, "block": pl.Utf8},
+            schema={"process": schema_dtype(_enums, "process"),
+                    "block": pl.Utf8},
         )
 
         # block_step_duration.csv — full per-block timeline.
@@ -1195,7 +1207,9 @@ class BlockLayout:
                 "period": [r[1] for r in first_rows],
                 "step": [r[2] for r in first_rows],
             },
-            schema={"block": pl.Utf8, "period": pl.Utf8, "step": pl.Utf8},
+            schema={"block": pl.Utf8,
+                    "period": schema_dtype(_enums, "period"),
+                    "step": schema_dtype(_enums, "step")},
         )
         self.block_period_time_last_frame = pl.DataFrame(
             {
@@ -1203,7 +1217,9 @@ class BlockLayout:
                 "period": [r[1] for r in last_rows],
                 "step": [r[2] for r in last_rows],
             },
-            schema={"block": pl.Utf8, "period": pl.Utf8, "step": pl.Utf8},
+            schema={"block": pl.Utf8,
+                    "period": schema_dtype(_enums, "period"),
+                    "step": schema_dtype(_enums, "step")},
         )
 
 
@@ -1359,7 +1375,8 @@ class BlockLayout:
         is small (≤ |blocks|² ≈ tens of rows).
         """
         if self.overlap_set_frame.height == 0:
-            return pl.DataFrame(schema={"b": pl.Utf8, "b_f": pl.Utf8})
+            return pl.DataFrame(schema={"b": schema_dtype(_enums, "b"),
+                                         "b_f": pl.Utf8})
         return (
             self.overlap_set_frame
             .rename({"block_coarse": "b", "block_fine": "b_f"})

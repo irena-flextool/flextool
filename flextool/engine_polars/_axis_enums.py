@@ -548,6 +548,33 @@ def empty_like(frame: "pl.DataFrame | pl.LazyFrame",
     return pl.DataFrame(schema=out_schema)
 
 
+def schema_dtype(enums: "dict[str, pl.Enum] | None",
+                   axis: str) -> "pl.DataType":
+    """Return the Enum dtype for ``axis`` if ``enums`` is populated.
+
+    Otherwise fall back to :class:`pl.Utf8` (the current default).
+
+    Designed for scratch-frame schema declarations in the broadcast
+    cascade and adjacent helpers.  Each site that previously hard-coded
+    ``schema={"e": pl.Utf8, "d": pl.Utf8}`` becomes::
+
+        _enums = getattr(flex_data, "_axis_enums", None)
+        return pl.DataFrame(schema={
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
+        })
+
+    With ``flex_data._axis_enums is None`` (the current default during
+    the cascade) the lookup returns ``pl.Utf8`` and behavior is
+    identical to the hard-coded form.  When a future dispatch sets
+    ``flex_data._axis_enums`` before the cascade runs, the scratch
+    frames pick up the canonical Enum dtype automatically.
+    """
+    if enums is None:
+        return pl.Utf8
+    return enums.get(axis, pl.Utf8)
+
+
 def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False):
     """Recursively cast a value's dim columns to the canonical Enums.
 
@@ -626,4 +653,5 @@ __all__ = [
     "cast_flexdata_axes",
     "empty_like",
     "align_join_dtypes",
+    "schema_dtype",
 ]
