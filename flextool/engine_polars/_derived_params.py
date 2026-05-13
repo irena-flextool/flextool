@@ -1078,21 +1078,42 @@ def apply_derived_a(
         return
 
     # 1. dt + p_step_duration -------------------------------------------
-    dt_step = dt_and_step_duration_from_source(source, active_solve,
-                                                   workdir, ctx=ctx)
-    if dt_step is None:
-        # Without dt we can't derive the dependent Params either; bail.
-        return
-    dt_db, step_dur_db = dt_step
+    # When ``solve.new_stepduration`` is set for the active solve, the
+    # legacy ``TimelineConfig.create_timeline_from_timestep_duration``
+    # has already rewritten the timeline (e.g. collapsing 8760 hourly
+    # rows into one 8760 h row) and the legacy per-solve preprocessing
+    # has materialised that rewrite into ``solve_data/steps_in_use.csv``.
+    # The DB-direct ``dt_and_step_duration_from_source`` reads the raw
+    # ``timeline.timestep_duration`` rows and would re-introduce the
+    # full hourly grid, undoing the aggregation.  Skip the DB override
+    # in that case and trust the CSV-loaded values.
     dt_csv = getattr(flex_data, "dt", None)
-    if dt_db is not None:
-        flex_data.dt = dt_db
-        flex_data.p_step_duration = step_dur_db
-        usable_dt = dt_db
-        sd_for_share = step_dur_db
-    else:
+    new_sd_df = _try_param(source, "solve", "new_stepduration")
+    skip_dt_override = False
+    if new_sd_df is not None and "name" in new_sd_df.columns:
+        sel = new_sd_df.filter(pl.col("name") == active_solve)
+        if sel.height > 0 and "value" in sel.columns:
+            v = sel["value"][0]
+            if v is not None:
+                skip_dt_override = True
+    if skip_dt_override:
         usable_dt = dt_csv
         sd_for_share = getattr(flex_data, "p_step_duration", None)
+    else:
+        dt_step = dt_and_step_duration_from_source(source, active_solve,
+                                                       workdir, ctx=ctx)
+        if dt_step is None:
+            # Without dt we can't derive the dependent Params either; bail.
+            return
+        dt_db, step_dur_db = dt_step
+        if dt_db is not None:
+            flex_data.dt = dt_db
+            flex_data.p_step_duration = step_dur_db
+            usable_dt = dt_db
+            sd_for_share = step_dur_db
+        else:
+            usable_dt = dt_csv
+            sd_for_share = getattr(flex_data, "p_step_duration", None)
 
     if usable_dt is None:
         return
