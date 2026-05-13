@@ -834,7 +834,25 @@ class MainWindow(tk.Tk):
     # ── Project menu button ──────────────────────────────────────────
 
     def _on_project_menu_btn(self) -> None:
-        self._open_project_dialog()
+        """Show the Project popup menu under the button."""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(
+            label="Manage projects...",
+            command=self._open_project_dialog,
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="Reset window layout",
+            command=self._on_reset_window_layout,
+        )
+        # Post the menu just under the button
+        btn = self.project_menu_btn
+        x = btn.winfo_rootx()
+        y = btn.winfo_rooty() + btn.winfo_height()
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
 
     def _open_project_dialog(self) -> None:
         """Open the ProjectDialog and handle its result."""
@@ -844,6 +862,72 @@ class MainWindow(tk.Tk):
         dlg = ProjectDialog(self)
         if dlg.result:
             self._switch_project(dlg.result)
+
+    def _on_reset_window_layout(self) -> None:
+        """Clear all saved window/sash positions and apply defaults.
+
+        Resets:
+          * ResultViewer window_geometry, left_pane_width, scenario_pane_height
+            and the recorded layout_cw.
+          * ExecutionWindow exec_jobs_sash and exec_jobs_layout_cw.
+
+        Any currently open ResultViewer / ExecutionWindow is closed; the
+        next time it opens it uses computed defaults.
+        """
+        confirm = messagebox.askyesno(
+            "Reset window layout",
+            "Discard saved window sizes and sash positions for the result "
+            "viewer and execution window?\n\nOpen result viewer and "
+            "execution window will be closed; their defaults will apply "
+            "the next time you open them.",
+            parent=self,
+        )
+        if not confirm:
+            return
+
+        # Project-scoped settings (viewer) — only if a project is loaded
+        if self.current_project:
+            vs = self.project_settings.viewer_settings
+            vs.window_geometry = ""
+            vs.left_pane_width = 0
+            vs.scenario_pane_height = 0
+            vs.layout_cw = 0
+            try:
+                projects_dir = get_projects_dir()
+                project_path = projects_dir / self.current_project
+                save_project_settings(project_path, self.project_settings)
+            except Exception:
+                logger.warning(
+                    "Failed to save project settings after layout reset",
+                    exc_info=True,
+                )
+
+        # Global settings (execution window sash)
+        self.global_settings.exec_jobs_sash = 0
+        self.global_settings.exec_jobs_layout_cw = 0
+        try:
+            save_global_settings(get_projects_dir(), self.global_settings)
+        except Exception:
+            logger.warning(
+                "Failed to save global settings after layout reset",
+                exc_info=True,
+            )
+
+        # Close any open child windows so defaults take effect next open
+        if self._result_viewer is not None and self._result_viewer.winfo_exists():
+            self._result_viewer.destroy()
+        self._result_viewer = None
+
+        if self.execution_window is not None and self.execution_window.winfo_exists():
+            self.execution_window.destroy()
+        self.execution_window = None
+
+        messagebox.showinfo(
+            "Reset window layout",
+            "Saved window layout cleared. Defaults will apply next time the "
+            "result viewer or execution window opens.",
+            parent=self,
+        )
 
     # ── Theme toggle ──────────────────────────────────────────────
 
