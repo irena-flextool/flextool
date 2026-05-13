@@ -69,8 +69,12 @@ def test_dump_csvs_roundtrip(tmp_path, work):
     original = load_flextool(fixture)
 
     # Dump to tempdir, copying the per-solve metadata from the original.
+    # ``include_heavy=True`` forces the seven gigabyte-scale CSVs that
+    # the cascade skips by default — the round-trip contract requires
+    # every populated FlexData field, including the heavy ones, to
+    # appear on disk.
     out_dir = tmp_path / "dumped"
-    original.dump_csvs(out_dir, copy_meta_from=fixture)
+    original.dump_csvs(out_dir, copy_meta_from=fixture, include_heavy=True)
 
     # Reload from the dumped workdir.
     redo = load_flextool(out_dir)

@@ -43,6 +43,7 @@ the round-trip test).
 """
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,40 @@ from typing import Any
 import polars as pl
 
 from polar_high import Param
+
+
+# ---------------------------------------------------------------------------
+# Heavy CSVs — gigabyte-scale on large fixtures (e.g. y2050 H2 supply
+# curves: ~3.8 GB total per cascade iteration).  These files are NOT
+# consumed by ``flextool/process_outputs/`` or ``flextool/plot_outputs/``
+# post-processing; they were originally written so legacy preprocessing
+# helpers could diff-roundtrip the in-memory FlexData against the
+# flextoolrunner CSV writer's output.  The cascade's downstream
+# consumers all read from ``flex_data.<field>.frame`` in-memory.
+#
+# Set ``FLEXTOOL_DUMP_CSVS=1`` to restore the debug-oracle behaviour
+# (write the full ~50 CSVs).  When the env var is unset (default),
+# these seven files are skipped — every other file in ``DIRECT_WRITES``
+# and every sliced / metadata file continues to be emitted.
+_HEAVY_CSV_FILES: frozenset[str] = frozenset({
+    "p_flow_max.csv",
+    "pdtProcess__source__sink__dt_varCost.csv",
+    "pdtProcess_slope.csv",
+    "pdtProcess.csv",
+    "pdtNode.csv",
+    "pdtNodeInflow.csv",
+    "ptNode_inflow.csv",
+})
+
+
+def _heavy_dumps_enabled() -> bool:
+    """Return True iff the heavy CSV writes are gated on (debug oracle).
+
+    The default is OFF: the seven gigabyte-scale CSVs in
+    :data:`_HEAVY_CSV_FILES` are not written by ``dump_csvs`` unless
+    ``FLEXTOOL_DUMP_CSVS=1`` is set in the environment.
+    """
+    return os.environ.get("FLEXTOOL_DUMP_CSVS") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +239,8 @@ def _write_frame(frame: pl.DataFrame, path: Path,
 
 
 def dump_csvs(data: "FlexData", workdir: Path | str,
-               *, copy_meta_from: Path | str | None = None) -> Path:
+               *, copy_meta_from: Path | str | None = None,
+               include_heavy: bool | None = None) -> Path:
     """Materialise ``data`` to ``workdir/input/`` + ``workdir/solve_data/``
     in flextool's CSV layout.
 
@@ -222,6 +258,15 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
         round-trip use case where the CSV reader needs metadata
         (timeline, solve list) that isn't on FlexData but is in the
         original workdir.
+    include_heavy : bool, optional
+        When ``True``, force-write the seven gigabyte-scale CSVs in
+        :data:`_HEAVY_CSV_FILES` regardless of the
+        ``FLEXTOOL_DUMP_CSVS`` env var.  When ``False``, force-skip
+        them.  When ``None`` (default), consult the env var — set to
+        ``"1"`` to enable.  The round-trip regression test
+        (``tests/engine_polars/test_dump_csvs_roundtrip.py``) passes
+        ``include_heavy=True`` to exercise the full debug-oracle
+        round-trip contract.
 
     Returns
     -------
@@ -235,8 +280,13 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
     sd_dir.mkdir(parents=True, exist_ok=True)
 
     # ─── Direct field → CSV writes ───────────────────────────────────
+    heavy_on = _heavy_dumps_enabled() if include_heavy is None else include_heavy
     for field, (kind, csv_name, rename) in DIRECT_WRITES.items():
         if not hasattr(data, field):
+            continue
+        if not heavy_on and csv_name in _HEAVY_CSV_FILES:
+            # Skip gigabyte-scale CSVs that no post-processing reads
+            # (see :data:`_HEAVY_CSV_FILES` for the list).
             continue
         value = getattr(data, field)
         f = _frame_of(value)
@@ -268,7 +318,7 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
     # storage_state_reference_value.  Same pattern for pdtProcess.csv,
     # pdtCommodity.csv, pdtGroup.csv (period+time keys), and
     # pdProcess.csv / pdGroup.csv (period only).
-    _write_pdt_sliced(data, sd_dir)
+    _write_pdt_sliced(data, sd_dir, heavy_on=heavy_on)
     _write_pd_sliced(data, sd_dir)
     _write_p_input_sliced(data, inp_dir)
 
@@ -473,37 +523,42 @@ _PDT_GROUP_SLICES = {
 }
 
 
-def _write_pdt_sliced(data: "FlexData", sd_dir: Path) -> None:
+def _write_pdt_sliced(data: "FlexData", sd_dir: Path,
+                       *, heavy_on: bool | None = None) -> None:
     """Write the wide-by-param ``pdt*.csv`` files (period + time keyed)."""
+    if heavy_on is None:
+        heavy_on = _heavy_dumps_enabled()
     # pdtNode.csv columns: node, param, period, time, value
-    rows: list[pl.DataFrame] = []
-    for param_value, field in _PDT_NODE_SLICES.items():
-        f = _frame_of(getattr(data, field, None))
-        if f is None:
-            continue
-        # Expected schema: (n, d, t, value) — rename to canonical and add
-        # the literal ``param=`` column.
-        ren = {"n": "node", "d": "period", "t": "time"}
-        rows.append((f.rename({k: v for k, v in ren.items() if k in f.columns})
-                       .with_columns(param=pl.lit(param_value))
-                       .select("node", "param", "period", "time", "value")))
-    if rows:
-        out = pl.concat(rows, how="vertical_relaxed")
-        out.write_csv(sd_dir / "pdtNode.csv")
+    if heavy_on or "pdtNode.csv" not in _HEAVY_CSV_FILES:
+        rows: list[pl.DataFrame] = []
+        for param_value, field in _PDT_NODE_SLICES.items():
+            f = _frame_of(getattr(data, field, None))
+            if f is None:
+                continue
+            # Expected schema: (n, d, t, value) — rename to canonical and add
+            # the literal ``param=`` column.
+            ren = {"n": "node", "d": "period", "t": "time"}
+            rows.append((f.rename({k: v for k, v in ren.items() if k in f.columns})
+                           .with_columns(param=pl.lit(param_value))
+                           .select("node", "param", "period", "time", "value")))
+        if rows:
+            out = pl.concat(rows, how="vertical_relaxed")
+            out.write_csv(sd_dir / "pdtNode.csv")
 
     # pdtProcess.csv columns: process, param, period, time, value
-    rows = []
-    for param_value, field in _PDT_PROCESS_SLICES.items():
-        f = _frame_of(getattr(data, field, None))
-        if f is None:
-            continue
-        ren = {"p": "process", "d": "period", "t": "time"}
-        rows.append((f.rename({k: v for k, v in ren.items() if k in f.columns})
-                       .with_columns(param=pl.lit(param_value))
-                       .select("process", "param", "period", "time", "value")))
-    if rows:
-        out = pl.concat(rows, how="vertical_relaxed")
-        out.write_csv(sd_dir / "pdtProcess.csv")
+    if heavy_on or "pdtProcess.csv" not in _HEAVY_CSV_FILES:
+        rows = []
+        for param_value, field in _PDT_PROCESS_SLICES.items():
+            f = _frame_of(getattr(data, field, None))
+            if f is None:
+                continue
+            ren = {"p": "process", "d": "period", "t": "time"}
+            rows.append((f.rename({k: v for k, v in ren.items() if k in f.columns})
+                           .with_columns(param=pl.lit(param_value))
+                           .select("process", "param", "period", "time", "value")))
+        if rows:
+            out = pl.concat(rows, how="vertical_relaxed")
+            out.write_csv(sd_dir / "pdtProcess.csv")
 
     # pdtCommodity.csv columns: commodity, param, period, time, value
     rows = []

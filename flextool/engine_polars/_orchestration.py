@@ -986,6 +986,16 @@ def _drive_cascade(
             # legacy preprocessing already wrote most of these but
             # dump_csvs ensures the in-memory canonical wins, keeping
             # FlexData → CSV in sync per solve.
+            #
+            # The seven largest CSVs (``p_flow_max.csv``,
+            # ``pdtProcess__source__sink__dt_varCost.csv``,
+            # ``pdtProcess_slope.csv``, ``pdtProcess.csv``,
+            # ``pdtNode.csv``, ``pdtNodeInflow.csv``, ``ptNode_inflow.csv``)
+            # are SKIPPED by default — they're not consumed by
+            # ``process_outputs/`` or ``plot_outputs/`` post-processing,
+            # only by legacy CSV-roundtrip readers.  Set
+            # ``FLEXTOOL_DUMP_CSVS=1`` to restore the full debug-oracle
+            # dump (all ~50 files) for diff-ing.
             _t_dump_start = time.perf_counter() if _phase_timing else 0.0
             try:
                 data.dump_csvs(self.state.paths.work_folder)

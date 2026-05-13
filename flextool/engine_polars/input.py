@@ -653,6 +653,7 @@ class FlexData:
                    workdir: "Path | str",
                    *,
                    copy_meta_from: "Path | str | None" = None,
+                   include_heavy: bool | None = None,
                    ) -> "Path":
         """Materialise this FlexData to flextool's CSV layout under ``workdir``.
 
@@ -666,10 +667,17 @@ class FlexData:
         runner state, not FlexData fields, but the CSV reader needs
         them.  When the round-trip caller has access to the original
         workdir, pass it here.
+
+        ``include_heavy`` (default ``None``) controls whether the seven
+        gigabyte-scale CSVs (``p_flow_max.csv`` and friends) are
+        written.  ``None`` honours the ``FLEXTOOL_DUMP_CSVS`` env var
+        (off by default); pass ``True`` to force-write them (e.g. for
+        the round-trip regression test).
         """
         # Local import — avoids a circular import at module-load.
         from flextool.engine_polars._dump_csvs import dump_csvs as _impl
-        return _impl(self, workdir, copy_meta_from=copy_meta_from)
+        return _impl(self, workdir, copy_meta_from=copy_meta_from,
+                     include_heavy=include_heavy)
 
 
 # ---------------------------------------------------------------------------
