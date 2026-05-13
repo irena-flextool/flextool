@@ -189,6 +189,8 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
         exec_jobs_layout_cw=data.get("exec_jobs_layout_cw", 0),
         max_workers=data.get("max_workers", 0),
         execution_limits=execution_limits,
+        font_size_pt=data.get("font_size_pt", 10),
+        code_font_size_pt=data.get("code_font_size_pt", 10),
     )
 
 

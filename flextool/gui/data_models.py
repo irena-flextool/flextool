@@ -136,6 +136,8 @@ class GlobalSettings:
     # window. 0 means "not set yet" → use cpu_count() - 1.
     max_workers: int = 0
     execution_limits: ExecutionLimits = field(default_factory=ExecutionLimits)
+    font_size_pt: int = 10        # body / menu / heading base size
+    code_font_size_pt: int = 10   # TkFixedFont (logs, code views)
 
 
 @dataclass

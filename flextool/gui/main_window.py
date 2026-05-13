@@ -125,9 +125,20 @@ class MainWindow(tk.Tk):
         # Rescale sv_ttk's hardcoded pixel-size fonts for high-DPI displays
         scale_theme_fonts(self, dpi_factor)
 
+        # Load global settings early so the user's saved font size drives
+        # setup_fonts on the very first call — avoids a 10pt → saved-size
+        # flash that would otherwise be visible at every startup. The
+        # YAML loader is pure file IO (no Tk dependency), so it's safe to
+        # call here before any widgets exist.
+        self.global_settings = load_global_settings(get_projects_dir())
+
         # Configure role-aware named fonts (body/heading/tooltip/code)
         from flextool.gui.ui_metrics import setup_fonts
-        setup_fonts(self, body_pt=10, code_pt=10)
+        setup_fonts(
+            self,
+            body_pt=self.global_settings.font_size_pt,
+            code_pt=self.global_settings.code_font_size_pt,
+        )
 
         self.title("FlexTool")
 
@@ -841,6 +852,25 @@ class MainWindow(tk.Tk):
             command=self._open_project_dialog,
         )
         menu.add_separator()
+
+        # UI font size cascade — radio for presets + Custom...
+        size_menu = tk.Menu(menu, tearoff=0)
+        current = self.global_settings.font_size_pt
+        self._font_size_var = getattr(self, "_font_size_var", None) or tk.IntVar(
+            value=current
+        )
+        self._font_size_var.set(current)
+        for sz in (9, 10, 11, 12, 14):
+            size_menu.add_radiobutton(
+                label=f"{sz} pt",
+                variable=self._font_size_var,
+                value=sz,
+                command=lambda s=sz: self._set_font_size(s),
+            )
+        size_menu.add_separator()
+        size_menu.add_command(label="Custom...", command=self._on_font_size_custom)
+        menu.add_cascade(label="UI font size", menu=size_menu)
+
         menu.add_command(
             label="Reset window layout",
             command=self._on_reset_window_layout,
@@ -853,6 +883,58 @@ class MainWindow(tk.Tk):
             menu.tk_popup(x, y)
         finally:
             menu.grab_release()
+
+    def _set_font_size(self, size_pt: int) -> None:
+        """Apply *size_pt* as the UI body/menu/heading font size and persist."""
+        size_pt = max(6, min(int(size_pt), 32))
+        self.global_settings.font_size_pt = size_pt
+        # Keep the radio variable in sync in case this was called via
+        # _on_font_size_custom (the variable only auto-updates for the
+        # radio-button command path).
+        if getattr(self, "_font_size_var", None) is not None:
+            try:
+                self._font_size_var.set(size_pt)
+            except tk.TclError:
+                pass
+
+        try:
+            save_global_settings(get_projects_dir(), self.global_settings)
+        except Exception:
+            logger.warning("Failed to save font size", exc_info=True)
+
+        from flextool.gui.ui_metrics import setup_fonts, get_metrics
+        setup_fonts(
+            self,
+            body_pt=size_pt,
+            code_pt=self.global_settings.code_font_size_pt,
+        )
+        # Treeview rowheight depends on line-height — recompute & re-apply.
+        _m = get_metrics(self)
+        ttk.Style().configure("Treeview", rowheight=_m.row_height)
+        self._char_width = _m.cw
+        self._line_height = _m.lh
+        # _bold_font is a *copy* of TkDefaultFont taken at construction
+        # time, so it does NOT auto-track the reconfigured TkDefaultFont.
+        # Refresh our handle so future widgets pick up the new size.
+        # NOTE: widgets that captured the OLD self._bold_font at __init__
+        # time still reference the stale copy — those won't update until
+        # they're re-created (e.g. by restarting the app). That's a known
+        # limitation; we don't try to rebuild every label here.
+        self._bold_font = _m.bold_font
+
+    def _on_font_size_custom(self) -> None:
+        """Prompt for a custom font size in points."""
+        current = self.global_settings.font_size_pt
+        new = simpledialog.askinteger(
+            "UI font size",
+            "Body font size (points, 6–32):",
+            parent=self,
+            initialvalue=current,
+            minvalue=6,
+            maxvalue=32,
+        )
+        if new is not None:
+            self._set_font_size(new)
 
     def _open_project_dialog(self) -> None:
         """Open the ProjectDialog and handle its result."""
