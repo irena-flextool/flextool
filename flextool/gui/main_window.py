@@ -140,12 +140,11 @@ class MainWindow(tk.Tk):
                 pass  # Non-fatal: skip if image can't be loaded
 
         # ── Font metrics for DPI-aware sizing ─────────────────────
-        default_font = tkfont.nametofont("TkDefaultFont")
-        self._char_width: int = default_font.measure("0")
-        self._line_height: int = default_font.metrics("linespace")
-        bold_font = default_font.copy()
-        bold_font.configure(weight="bold")
-        self._bold_font = bold_font
+        from flextool.gui.ui_metrics import get_metrics
+        _metrics = get_metrics(self)
+        self._char_width: int = _metrics.cw
+        self._line_height: int = _metrics.lh
+        self._bold_font = _metrics.bold_font
 
         # ── Treeview row height and selection visibility ──────────
         # Add ~25% vertical padding so rows don't touch the row above —
@@ -154,7 +153,7 @@ class MainWindow(tk.Tk):
         # setups where DPI auto-detection underreports or where the
         # user has chosen a small font size.
         style = ttk.Style()
-        row_height = max(24, int(self._line_height * 1.25))
+        row_height = _metrics.row_height
         style.configure("Treeview", rowheight=row_height)
 
         # Make LabelFrame titles the same font size as everything else

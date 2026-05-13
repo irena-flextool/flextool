@@ -115,9 +115,10 @@ class AddDialog(tk.Toplevel):
         self.grab_set()
 
         # ── Font metrics for DPI-aware sizing ──────────────────────
-        default_font = tkfont.nametofont("TkDefaultFont")
-        self._cw: int = default_font.measure("0")
-        lh: int = default_font.metrics("linespace")
+        from flextool.gui.ui_metrics import get_metrics
+        _metrics = get_metrics(self)
+        self._cw: int = _metrics.cw
+        lh: int = _metrics.lh
 
         # ── Dialog size ─────────────────────────────────────────────
         self.geometry(f"{self._cw * 55}x{lh * 32}")
@@ -147,7 +148,8 @@ class AddDialog(tk.Toplevel):
 
     def _build_widgets(self) -> None:
         pad = dict(padx=10, pady=5)
-        lh = tkfont.nametofont("TkDefaultFont").metrics("linespace")
+        from flextool.gui.ui_metrics import get_metrics
+        lh = get_metrics(self).lh
         section_pad = dict(padx=10, pady=(lh, 5))
 
         # Use default font for LabelFrame labels (same size as everything else)

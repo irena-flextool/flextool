@@ -127,8 +127,10 @@ class _PlotSection:
 
         row += 1
         self.frame.rowconfigure(row, weight=1)
-        self._lh = tkfont.nametofont("TkDefaultFont").metrics("linespace")
-        cw = tkfont.nametofont("TkDefaultFont").measure("0")
+        from flextool.gui.ui_metrics import get_metrics
+        _metrics = get_metrics(self)
+        self._lh = _metrics.lh
+        cw = _metrics.cw
 
         config_frame = ttk.Frame(self.frame)
         config_frame.grid(row=row, column=0, columnspan=2, sticky="nsew", pady=(0, 4))
@@ -301,9 +303,10 @@ class PlotDialog(tk.Toplevel):
         self.grab_set()
 
         # ── Font metrics for DPI-aware sizing ───────────────────
-        default_font = tkfont.nametofont("TkDefaultFont")
-        cw: int = default_font.measure("0")
-        lh: int = default_font.metrics("linespace")
+        from flextool.gui.ui_metrics import get_metrics
+        _metrics = get_metrics(self)
+        cw: int = _metrics.cw
+        lh: int = _metrics.lh
 
         # ── Dialog size ──────────────────────────────────────────
         self.geometry(f"{cw * 110}x{lh * 30}")
@@ -407,9 +410,10 @@ class DispatchConfigEditor(tk.Toplevel):
         self.grab_set()
 
         # ── Sizing ────────────────────────────────────────────────
-        default_font = tkfont.nametofont("TkDefaultFont")
-        cw = default_font.measure("0")
-        lh = default_font.metrics("linespace")
+        from flextool.gui.ui_metrics import get_metrics
+        _metrics = get_metrics(self)
+        cw = _metrics.cw
+        lh = _metrics.lh
         mono_font = tkfont.nametofont("TkFixedFont")
 
         self.geometry(f"{cw * 90}x{lh * 40}")

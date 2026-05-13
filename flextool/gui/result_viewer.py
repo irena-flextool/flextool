@@ -183,9 +183,10 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_columns: dict[str, list[str]] = {}  # accumulated column order
 
         # ── Font metrics for DPI-aware sizing ────────────────────────
-        default_font = tkfont.nametofont("TkDefaultFont")
-        cw: int = default_font.measure("0")
-        lh: int = default_font.metrics("linespace")
+        from flextool.gui.ui_metrics import get_metrics
+        _metrics = get_metrics(self)
+        cw: int = _metrics.cw
+        lh: int = _metrics.lh
 
         # ── Window sizing & positioning ──────────────────────────────
         self._line_height = lh

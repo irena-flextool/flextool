@@ -64,9 +64,10 @@ class ExecutionWindow(tk.Toplevel):
         self._refreshing_list: bool = False
 
         # ── Font metrics for DPI-aware sizing ────────────────────────
-        default_font = tkfont.nametofont("TkDefaultFont")
-        cw: int = default_font.measure("0")
-        lh: int = default_font.metrics("linespace")
+        from flextool.gui.ui_metrics import get_metrics
+        _metrics = get_metrics(self)
+        cw: int = _metrics.cw
+        lh: int = _metrics.lh
         mono_font = tkfont.nametofont("TkFixedFont")
         self._mono_font = mono_font
 
