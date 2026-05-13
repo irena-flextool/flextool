@@ -83,6 +83,8 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "t_previous_within_solve": "t",
     "t_upper": "t",
     "t_back": "t",
+    "t_source": "t",
+    "t_sink": "t",
     # Friendly long names that occasionally leak from helper code.
     "node": "n",
     "process": "p",
@@ -150,6 +152,90 @@ def _unique_from_frame(frame: pl.DataFrame | None, column: str) -> list[str]:
     return sorted(frame[column].drop_nulls().unique().to_list())
 
 
+def _read_csv_column(path: "Path", column: str) -> list[str]:
+    """Read a single column from a workdir CSV.  Tolerant of missing
+    files / missing column / parse errors — returns ``[]``.
+
+    Used during seed-time vocabulary discovery before any ``_load_*``
+    function has run.  We can't lean on
+    :func:`flextool.engine_polars._input_source._read_csv_file` because
+    we want a cheap one-column read and don't care about caching.
+    """
+    try:
+        if not path.exists():
+            return []
+        df = pl.read_csv(path, infer_schema_length=0)
+    except Exception:
+        return []
+    if column not in df.columns:
+        return []
+    try:
+        return [str(v) for v in df[column].drop_nulls().unique().to_list()]
+    except Exception:
+        return []
+
+
+def _seed_vocab_from_workdir(workdir: "Path | None") -> dict[str, set[str]]:
+    """Read a handful of canonical workdir CSVs and produce per-axis
+    vocabulary seeds.  Pads the Enum categories so casts performed
+    early in the loader (before the full FlexData is materialised)
+    cover entities those loaders will introduce.
+
+    Tolerant of every kind of missing file — empty dict on failure.
+    """
+    out: dict[str, set[str]] = {}
+    if workdir is None:
+        return out
+    inp = workdir / "input"
+    sd  = workdir / "solve_data"
+
+    # entity.csv — superset of every entity-typed axis (p, n, e, …).
+    e_vocab: set[str] = set()
+    e_vocab.update(_read_csv_column(inp / "entity.csv", "entity"))
+
+    # process.csv would be the canonical p source but it's not always
+    # present; instead get the p-vocabulary from process_source_sink.csv
+    # in solve_data (always emitted by preprocessing for non-trivial
+    # solves) plus entity-class membership.
+    p_vocab: set[str] = set()
+    p_vocab.update(_read_csv_column(sd / "process_source_sink.csv", "process"))
+    p_vocab.update(_read_csv_column(inp / "process.csv", "process"))
+
+    # node — sd/nodeBalance is read by _load_node directly; for the
+    # Enum we also pad with entities of class node (input/node.csv).
+    n_vocab: set[str] = set()
+    n_vocab.update(_read_csv_column(inp / "node.csv", "node"))
+    n_vocab.update(_read_csv_column(sd / "nodeBalance.csv", "node"))
+
+    # commodity / group / etc.
+    c_vocab: set[str] = set()
+    c_vocab.update(_read_csv_column(inp / "commodity.csv", "commodity"))
+    c_vocab.update(_read_csv_column(sd / "p_commodity.csv", "commodity"))
+
+    g_vocab: set[str] = set()
+    g_vocab.update(_read_csv_column(inp / "group.csv", "group"))
+
+    f_vocab: set[str] = set()
+    f_vocab.update(_read_csv_column(inp / "profile.csv", "profile"))
+
+    if e_vocab or n_vocab or p_vocab:
+        # Every entity also belongs to ``e``.  Seed e with the union of
+        # node + process + raw entity vocab.
+        e_vocab |= n_vocab | p_vocab
+        out["e"] = e_vocab
+    if n_vocab:
+        out["n"] = n_vocab
+    if p_vocab:
+        out["p"] = p_vocab
+    if c_vocab:
+        out["c"] = c_vocab
+    if g_vocab:
+        out["g"] = g_vocab
+    if f_vocab:
+        out["f"] = f_vocab
+    return out
+
+
 def build_axis_enums(flex_data: "FlexData",
                       workdir: Path | None = None,
                       ) -> dict[str, pl.Enum]:
@@ -197,7 +283,11 @@ def build_axis_enums(flex_data: "FlexData",
       names in the broader fleet — a union avoids
       ``SchemaMismatchError`` when Phase 3+ lands on those fixtures.
     """
-    _ = workdir  # reserved; see docstring
+    # Seed vocabularies from the canonical workdir CSVs *before* we walk
+    # the (possibly empty) FlexData.  The walking below then unions in
+    # anything FlexData has already materialised — they should be a
+    # subset, but the union is defensive against fixture quirks.
+    workdir_seeds = _seed_vocab_from_workdir(workdir)
 
     # ── canonical "time" axes ────────────────────────────────────────
     d_vocab = _unique_from_frame(flex_data.dt, "d")
@@ -209,14 +299,20 @@ def build_axis_enums(flex_data: "FlexData",
     # referenced (e.g., storage-only nodes appearing in nodeState that
     # aren't slack-eligible).  Pad with whatever else we observe.
     n_vocab_extra = _unique_values_for_column(flex_data, "n")
-    n_vocab = sorted(set(n_vocab).union(n_vocab_extra))
+    n_vocab = sorted(set(n_vocab).union(n_vocab_extra)
+                      .union(workdir_seeds.get("n", set())))
 
     # ── discovered axes (vocab unioned from every populated field) ──
-    p_vocab = _unique_values_for_column(flex_data, "p")
-    c_vocab = _unique_values_for_column(flex_data, "c")
-    g_vocab = _unique_values_for_column(flex_data, "g")
-    e_vocab = _unique_values_for_column(flex_data, "e")
-    f_vocab = _unique_values_for_column(flex_data, "f")
+    p_vocab = sorted(set(_unique_values_for_column(flex_data, "p"))
+                      .union(workdir_seeds.get("p", set())))
+    c_vocab = sorted(set(_unique_values_for_column(flex_data, "c"))
+                      .union(workdir_seeds.get("c", set())))
+    g_vocab = sorted(set(_unique_values_for_column(flex_data, "g"))
+                      .union(workdir_seeds.get("g", set())))
+    e_vocab = sorted(set(_unique_values_for_column(flex_data, "e"))
+                      .union(workdir_seeds.get("e", set())))
+    f_vocab = sorted(set(_unique_values_for_column(flex_data, "f"))
+                      .union(workdir_seeds.get("f", set())))
     i_vocab = _unique_values_for_column(flex_data, "i")
     b_vocab = _unique_values_for_column(flex_data, "b")
     b_first_vocab = _unique_values_for_column(flex_data, "b_first")
@@ -249,40 +345,67 @@ def build_axis_enums(flex_data: "FlexData",
     # least one value.  An empty-categories Enum is technically legal
     # but downstream casts of any real string would null out, which
     # is just a foot-gun.
-    if d_vocab:
-        enums["d"] = _enum(d_vocab)
-    if t_vocab:
-        enums["t"] = _enum(t_vocab)
-    if n_vocab:
-        enums["n"] = _enum(n_vocab)
-    if p_vocab:
-        enums["p"] = _enum(p_vocab)
+    # NOTE on entity-like axes: ``e``, ``p``, ``n``, ``source``, ``sink``
+    # all reference *entities* (nodes / processes / connections).  Code
+    # in the loader frequently renames between these column names
+    # (``cap_long.rename({"e": "p"})``) — but rename does NOT change
+    # the column dtype.  If ``e`` and ``p`` carry different Enum dtypes,
+    # the post-rename ``p`` column carries ``Enum(e-vocab)`` and any
+    # downstream join against an Enum(p-vocab) column raises
+    # ``SchemaMismatchError``.  To eliminate this entire failure mode
+    # we use a SINGLE entity Enum — the union of node + process +
+    # observed source/sink — for every entity-like axis.  The category
+    # set is only modestly larger than per-axis Enums and the memory
+    # cost of one entity-dictionary entry is trivial vs. the row-level
+    # savings.
+    entity_vocab = sorted(
+        set(n_vocab) | set(p_vocab) | set(e_vocab) | set(source_sink_vocab)
+    )
+    # ``b`` is period-like — ``period__branch`` in the stochastic
+    # helper renames between ``d`` and ``b`` freely.  Unify with the
+    # period vocabulary for the same rename-safety reason.
+    #
+    # ``b_first``, ``b_next`` are TIME-like — they appear in
+    # ``period_block_succ`` and ``model.py``'s storage-block algebra
+    # carries time values (renames of ``v_state.t``).  We unify
+    # ``b_first`` / ``b_next`` with the ``t`` vocabulary instead.
+    period_vocab = sorted(
+        set(d_vocab) | set(b_vocab)
+    )
+    time_vocab = sorted(
+        set(t_vocab) | set(b_first_vocab) | set(b_next_vocab)
+    )
+
+    if period_vocab:
+        per_enum = _enum(period_vocab)
+        enums["d"] = per_enum
+        enums["b"] = per_enum
+    if time_vocab:
+        t_enum = _enum(time_vocab)
+        enums["t"] = t_enum
+        enums["b_first"] = t_enum
+        enums["b_next"] = t_enum
+    if entity_vocab:
+        ent_enum = _enum(entity_vocab)
+        enums["e"] = ent_enum
+        enums["p"] = ent_enum
+        enums["n"] = ent_enum
+        enums["source"] = ent_enum
+        enums["sink"] = ent_enum
     if c_vocab:
         enums["c"] = _enum(c_vocab)
     if g_vocab:
         enums["g"] = _enum(g_vocab)
-    if e_vocab:
-        enums["e"] = _enum(e_vocab)
     if f_vocab:
         enums["f"] = _enum(f_vocab)
     if i_vocab:
         enums["i"] = _enum(i_vocab)
-    if b_vocab:
-        enums["b"] = _enum(b_vocab)
-    if b_first_vocab:
-        enums["b_first"] = _enum(b_first_vocab)
-    if b_next_vocab:
-        enums["b_next"] = _enum(b_next_vocab)
     if r_vocab:
         enums["r"] = _enum(r_vocab)
     if ud_vocab:
         enums["ud"] = _enum(ud_vocab)
     if td_vocab:
         enums["td"] = _enum(td_vocab)
-    if source_sink_vocab:
-        ss_enum = _enum(source_sink_vocab)
-        enums["source"] = ss_enum
-        enums["sink"] = ss_enum
 
     # ── attach synonym columns to their canonical axis dtype ────────
     for synonym, canonical in _AXIS_SYNONYMS.items():
@@ -341,4 +464,166 @@ def cast_frame_axes(
     return frame.with_columns(exprs)
 
 
-__all__ = ["build_axis_enums", "cast_frame_axes"]
+def align_join_dtypes(left: "pl.LazyFrame | pl.DataFrame",
+                        right: "pl.LazyFrame | pl.DataFrame",
+                        cols: list[str] | tuple[str, ...]):
+    """Make the dtypes of ``cols`` on ``left`` and ``right`` match.
+
+    Strategy: prefer the Enum dtype if either side has one (Enum joins
+    are zero-copy when both sides match exactly); fall back to
+    ``pl.Utf8`` otherwise.  Returns the (possibly modified) (left,
+    right) pair — no schema rebuild when the dtypes already agree.
+
+    Used to bridge the cascade-helper boundary where one side comes
+    from a fresh CSV read (String) and the other from an Enum-cast
+    FlexData field.
+    """
+    if isinstance(left, pl.LazyFrame):
+        lschema = left.collect_schema()
+    else:
+        lschema = left.schema
+    if isinstance(right, pl.LazyFrame):
+        rschema = right.collect_schema()
+    else:
+        rschema = right.schema
+
+    left_casts = []
+    right_casts = []
+    for c in cols:
+        ld = lschema.get(c)
+        rd = rschema.get(c)
+        if ld is None or rd is None or ld == rd:
+            continue
+        # Prefer Enum side; otherwise fall back to String coercion.
+        if isinstance(ld, pl.Enum):
+            target = ld
+            right_casts.append(pl.col(c).cast(target, strict=False))
+        elif isinstance(rd, pl.Enum):
+            target = rd
+            left_casts.append(pl.col(c).cast(target, strict=False))
+        else:
+            # Two non-Enum non-matching dtypes — cast both to String.
+            left_casts.append(pl.col(c).cast(pl.Utf8, strict=False))
+            right_casts.append(pl.col(c).cast(pl.Utf8, strict=False))
+    if left_casts:
+        left = left.with_columns(left_casts)
+    if right_casts:
+        right = right.with_columns(right_casts)
+    return left, right
+
+
+def empty_like(frame: "pl.DataFrame | pl.LazyFrame",
+                 columns: list[str] | tuple[str, ...],
+                 extra: dict[str, "pl.DataType"] | None = None,
+                 *,
+                 lazy: bool = False) -> "pl.DataFrame | pl.LazyFrame":
+    """Build an empty frame whose dim-column dtypes match ``frame``.
+
+    Designed for cascade scratch frames that were previously declared
+    as ``pl.LazyFrame(schema={"e": pl.Utf8, "d": pl.Utf8, ...})`` —
+    those break the moment ``frame`` is cast to Enum.  This helper
+    inspects ``frame``'s schema for each requested column and reuses
+    its dtype, falling back to ``pl.Utf8`` only when the column is
+    absent from ``frame``.  ``extra`` lets the caller add value-typed
+    columns (typically ``"value": pl.Float64``) that aren't in
+    ``frame``.
+
+    Usage::
+
+        bounded_walk = empty_like(anchor_lf, ["e", "d", "d_all"], lazy=True)
+
+    ``frame`` may itself be eager or lazy.
+    """
+    if isinstance(frame, pl.LazyFrame):
+        schema = frame.collect_schema()
+    else:
+        schema = frame.schema
+    out_schema: dict[str, "pl.DataType"] = {}
+    for c in columns:
+        out_schema[c] = schema.get(c, pl.Utf8)
+    if extra:
+        out_schema.update(extra)
+    if lazy:
+        return pl.LazyFrame(schema=out_schema)
+    return pl.DataFrame(schema=out_schema)
+
+
+def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False):
+    """Recursively cast a value's dim columns to the canonical Enums.
+
+    Handles:
+      * :class:`polar_high.Param` — rebuilds with cast frame.
+      * :class:`pl.DataFrame` / :class:`pl.LazyFrame` — applies
+        :func:`cast_frame_axes`.
+      * ``dict`` / ``tuple`` / ``list`` — recursively walks and rebuilds
+        the same container shape with cast children.
+      * Everything else — returned unchanged.
+
+    Used by :func:`load_flextool` to wrap the return values of each
+    ``_load_*`` function in a single shot at the call site, so the
+    interior of every loader doesn't need an individual cast injection.
+    """
+    # Late import to avoid circular dependency.
+    from polar_high import Param
+
+    if value is None:
+        return value
+    if isinstance(value, Param):
+        # Operate on the lazy form to avoid forcing a collect() — every
+        # Param keeps an internal ``lazy`` LazyFrame regardless of whether
+        # ``.frame`` has been materialised yet.
+        try:
+            cast_lazy = cast_frame_axes(value.lazy, enums, strict=strict)
+        except Exception:
+            return value
+        if cast_lazy is value.lazy:
+            return value
+        return Param(value.dims, cast_lazy,
+                      name=getattr(value, "name", None),
+                      _sources=getattr(value, "_sources", None))
+    if isinstance(value, (pl.DataFrame, pl.LazyFrame)):
+        try:
+            return cast_frame_axes(value, enums, strict=strict)
+        except Exception:
+            return value
+    if isinstance(value, dict):
+        return {k: cast_value_axes(v, enums, strict=strict)
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [cast_value_axes(v, enums, strict=strict) for v in value]
+    if isinstance(value, tuple):
+        return tuple(cast_value_axes(v, enums, strict=strict) for v in value)
+    return value
+
+
+def cast_flexdata_axes(flex_data: "FlexData",
+                        enums: dict[str, pl.Enum],
+                        *, strict: bool = False) -> "FlexData":
+    """Walk every Param / DataFrame / LazyFrame field on ``flex_data``
+    and cast dim columns to the canonical Enums in place.  Returns the
+    same FlexData (mutated) for fluent use.
+
+    Skips ``block_layout`` and other non-frame fields.  Skips fields
+    whose value is ``None``.
+    """
+    from polar_high import Param
+
+    for f in dataclasses.fields(flex_data):
+        val = getattr(flex_data, f.name, None)
+        if val is None:
+            continue
+        if isinstance(val, (Param, pl.DataFrame, pl.LazyFrame)):
+            new_val = cast_value_axes(val, enums, strict=strict)
+            if new_val is not val:
+                setattr(flex_data, f.name, new_val)
+    return flex_data
+
+
+__all__ = [
+    "build_axis_enums",
+    "cast_frame_axes",
+    "cast_value_axes",
+    "cast_flexdata_axes",
+    "empty_like",
+    "align_join_dtypes",
+]

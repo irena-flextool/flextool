@@ -33,6 +33,12 @@ from . import _dc_power_flow
 from . import _commodity_ladder
 from ._block_layout import BlockLayout
 from ._input_source import _read_csv_file
+from ._axis_enums import (
+    build_axis_enums,
+    cast_frame_axes,
+    cast_value_axes,
+    cast_flexdata_axes,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -3065,8 +3071,39 @@ def load_flextool(source: "Path | str | FlexInputSource",
         dt, step_dur, rp_cw, infl, psh = _load_time(sd)
         nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt)
 
+        # ── pl.Enum dtype refactor (Phases 3+4+5) ─────────────────────
+        # Build the canonical per-axis Enum dtypes once the foundational
+        # ``dt`` and ``nodeBalance`` sets are populated.  Vocabularies
+        # are seeded from the workdir CSVs (entity.csv, commodity.csv,
+        # …) so axes that aren't populated yet still have full coverage.
+        #
+        # IMPORTANT: we DO NOT cast ``dt`` / ``nb`` etc. to Enum here.
+        # Those frames are inputs to many downstream ``_load_*`` helpers
+        # which join them against freshly-read CSV frames (String
+        # dtype).  Mixing Enum/String on a join key raises
+        # ``SchemaError``.  Instead each helper is called with
+        # String-dtyped foundational frames and the helper's *return
+        # value* is cast to Enum at the call site (see the
+        # ``cast_value_axes`` wraps below).  The foundational frames
+        # themselves are cast once at the end of the load sequence (via
+        # ``cast_flexdata_axes``) — by that point they're no longer
+        # being passed into String-input helpers.
+        _seed_fd = FlexData(
+            dt=dt, p_step_duration=step_dur, p_rp_cost_weight=rp_cw,
+            p_inflation_op=infl, p_period_share=psh,
+            nodeBalance=nb, nodeBalance_dt=nb_dt,
+            p_inflow=inflow, p_penalty_up=pen_up, p_penalty_down=pen_dn,
+        )
+        axis_enums = build_axis_enums(_seed_fd, workdir=workdir_for_db)
+
         proc = _load_process_topology(inp, sd, dt, block_layout=block_layout,
                                        source=db_reader)
+        # Per-helper cast wraps removed in favour of the end-of-load
+        # ``cast_flexdata_axes`` sweep — see the IMPORTANT comment above
+        # ``build_axis_enums``.  All ``_load_*`` calls below run with
+        # String-dtype dim columns end-to-end; the sweep at the end of
+        # ``load_flextool`` converts the final FlexData fields to Enum
+        # in one shot.
 
         # base_cap_pd = (p, d, base) for profile RHS — recompute here; small.
         base_cap_pd = None
@@ -3363,6 +3400,17 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # benefit reaches every ``_read_csv_file`` call inside the loader
         # (``_load_*`` family + helpers' ``load_data`` + apply_derived_*).
         # ``deactivate`` happens in the outer ``finally`` block.
+        # We deliberately DEFER the FlexData → Enum sweep until AFTER
+        # ``_apply_db_overrides`` (the derived-cascade).  The cascade
+        # builds many scratch frames with hard-coded ``pl.Utf8`` dim
+        # column schemas in ``_derived_params.py`` /
+        # ``_derived_block.py`` / etc., and joining Enum-cast FlexData
+        # fields against String-dtype scratch frames raises
+        # ``SchemaError``.  Casting after the cascade keeps the entire
+        # CSV-read + cascade pipeline in String land and converts to
+        # Enum once at the end — Var construction in ``model.py`` and
+        # the model-build cross-joins then operate on Enum-typed
+        # frames.
         if db_reader is not None:
             _apply_db_overrides(flex_data, db_reader, source, ctx=ctx)
 
@@ -3385,6 +3433,25 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 from flextool.engine_polars import _derived_existing as _ex
                 _ex.apply_existing_chain(flex_data, db_reader, workdir_for_db,
                                               handoff=handoff, ctx=ctx)
+
+        # End-of-load FlexData → Enum sweep.  After every loader, the
+        # cascade, the optional handoff overlay, and the optional
+        # existing-chain rebuild have run, walk every Param /
+        # DataFrame / LazyFrame field and cast its dim columns to the
+        # canonical Enums.  Var / constraint construction in
+        # ``model.py`` operates on these Enum-typed frames; the
+        # in-memory frame size drops by ~50 % on dim-heavy Params (the
+        # primary motivation — see ``specs/enum_dtype_refactor_handoff.md``).
+        #
+        # We rebuild axis_enums first to widen the vocabularies —
+        # fields produced by the cascade can introduce entities not
+        # visible to the seed-time discovery (e.g., warm-chain handoff
+        # carriers materialise entities the seed walk didn't see).
+        # A fresh ``build_axis_enums`` over the fully-populated FlexData
+        # picks them up; the workdir-seed pass remains the primary
+        # source for axes that have no FlexData representative yet.
+        axis_enums = build_axis_enums(flex_data, workdir=workdir_for_db)
+        cast_flexdata_axes(flex_data, axis_enums)
 
         return _assign_param_names(flex_data)
     finally:

@@ -150,11 +150,13 @@ def period_walk_iterator(
     * ``factor_side=None`` → ``[e, d, d_all]`` (one row per matching
       triple).
     """
+    from flextool.engine_polars._axis_enums import empty_like
     if not period_in_use:
         if factor_side is None:
-            return pl.LazyFrame(schema={
-                "e": pl.Utf8, "d": pl.Utf8, "d_all": pl.Utf8,
-            })
+            return empty_like(ed_lf, ["e", "d"],
+                                extra={"d_all": ed_lf.collect_schema().get(
+                                    "d", pl.Utf8)},
+                                lazy=True)
         return ed_lf.select("e", "d").with_columns(
             factor=pl.lit(0.0, dtype=pl.Float64))
     # Lazy import to avoid circular dependency at module-load time.
@@ -163,9 +165,10 @@ def period_walk_iterator(
     if pyd_lf is None:
         # Without years offsets, the integral collapses to 0 / no rows.
         if factor_side is None:
-            return pl.LazyFrame(schema={
-                "e": pl.Utf8, "d": pl.Utf8, "d_all": pl.Utf8,
-            })
+            return empty_like(ed_lf, ["e", "d"],
+                                extra={"d_all": ed_lf.collect_schema().get(
+                                    "d", pl.Utf8)},
+                                lazy=True)
         return ed_lf.select("e", "d").with_columns(
             factor=pl.lit(0.0, dtype=pl.Float64))
 
@@ -185,7 +188,20 @@ def period_walk_iterator(
     pyd_anchor = pyd_lf.rename({"d": "d", "yr": "yr_d"})
     # d_all years.
     pyd_all = pyd_lf.rename({"d": "d_all", "yr": "yr_dall"})
-    piu_lf = pl.LazyFrame({"d_all": period_in_use})
+    # ``period_in_use`` is a plain ``list[str]``; the cross join with
+    # ``ed_lf`` (which may carry Enum-typed ``d``) and the subsequent
+    # joins against ``pyd_*`` (CSV-read String) need a single dtype.
+    # Cast ``d_all`` to match ``ed_lf.d``'s dtype, then push the same
+    # dtype onto ``pyd_anchor.d`` / ``pyd_all.d_all`` so every join key
+    # is consistent.
+    ed_d_dtype = ed_lf.collect_schema().get("d", pl.Utf8)
+    piu_lf = pl.LazyFrame({"d_all": period_in_use}).with_columns(
+        pl.col("d_all").cast(ed_d_dtype, strict=False))
+    if ed_d_dtype != pl.Utf8:
+        pyd_anchor = pyd_anchor.with_columns(
+            pl.col("d").cast(ed_d_dtype, strict=False))
+        pyd_all = pyd_all.with_columns(
+            pl.col("d_all").cast(ed_d_dtype, strict=False))
 
     walk = (ed_lf
               .select("e", "d")
@@ -203,6 +219,11 @@ def period_walk_iterator(
     elif window_method == WindowMethod.STRICT_LOOKBACK_UNBOUNDED:
         walk = walk.filter(pl.col("yr_dall") > pl.col("yr_d"))
     elif window_method == WindowMethod.STRICT_LOOKBACK_BOUNDED:
+        # Align life_lf's dim-column dtypes to walk's before joining.
+        walk_schema = walk.collect_schema()
+        life_lf = life_lf.with_columns(
+            pl.col("e").cast(walk_schema.get("e", pl.Utf8), strict=False),
+            pl.col("d").cast(walk_schema.get("d", pl.Utf8), strict=False))
         walk = (walk
                   .join(life_lf, on=["e", "d"], how="left")
                   .with_columns(life=pl.col("life").fill_null(0.0))
@@ -210,6 +231,10 @@ def period_walk_iterator(
                   .filter(pl.col("yr_dall") < pl.col("yr_d") + pl.col("life"))
                 )
     else:  # BOUNDED / BOUNDED_INCLUSIVE_LOOKBACK
+        walk_schema = walk.collect_schema()
+        life_lf = life_lf.with_columns(
+            pl.col("e").cast(walk_schema.get("e", pl.Utf8), strict=False),
+            pl.col("d").cast(walk_schema.get("d", pl.Utf8), strict=False))
         walk = (walk
                   .join(life_lf, on=["e", "d"], how="left")
                   .with_columns(life=pl.col("life").fill_null(0.0))
@@ -235,6 +260,9 @@ def period_walk_iterator(
         raise ValueError(
             f"factor_side must be 'inv', 'ops', or None; got {factor_side!r}")
     factor_dall = factors_lf.rename({"d": "d_all"})
+    if ed_d_dtype != pl.Utf8:
+        factor_dall = factor_dall.with_columns(
+            pl.col("d_all").cast(ed_d_dtype, strict=False))
 
     return (walk
               .join(factor_dall, on="d_all", how="left")

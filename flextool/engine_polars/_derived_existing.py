@@ -236,6 +236,17 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
 
     Mirror of :func:`._derived_npv._resolve_per_period_lf`.
     """
+    # Align ``per_param``'s ``e`` / ``d`` dtypes to ``ed_lf``'s before
+    # joining — ``per_param`` was built from a String-typed CSV read
+    # while ``ed_lf`` may now carry Enum-cast columns.
+    ed_schema = ed_lf.collect_schema()
+    e_dt = ed_schema.get("e", pl.Utf8)
+    d_dt = ed_schema.get("d", pl.Utf8)
+    if e_dt != pl.Utf8 or d_dt != pl.Utf8:
+        per_param = per_param.with_columns(
+            pl.col("e").cast(e_dt, strict=False),
+            pl.col("d").cast(d_dt, strict=False),
+        )
     explicit = (per_param
                   .filter(~pl.col("is_scalar"))
                   .select("e", "d", pl.col("value").alias("v_explicit")))
@@ -676,11 +687,29 @@ def edd_invest_lookback_set_lf(source: "InputSource",
     # the anchor period column to be named ``d``).
     anchor_lf = inv_anchor.rename({"d_invest": "d"})
 
+    # The source-driven ``_all_entities_lf`` reads raw CSV — String
+    # ``e``.  ``anchor_lf.e`` carries whatever dtype the caller passed
+    # (Enum-e when called from the post-load test path).  Align so the
+    # join below works.
+    anchor_e_dtype = anchor_lf.collect_schema().get("e", pl.Utf8)
+    if anchor_e_dtype != pl.Utf8:
+        bounded_e = bounded_e.with_columns(
+            pl.col("e").cast(anchor_e_dtype, strict=False))
+        unbounded_e = unbounded_e.with_columns(
+            pl.col("e").cast(anchor_e_dtype, strict=False))
+
     # Bounded cohort.
     bounded_anchor = anchor_lf.join(bounded_e, on="e", how="inner")
-    bounded_walk = pl.LazyFrame(schema={
-        "e": pl.Utf8, "d": pl.Utf8, "d_all": pl.Utf8,
-    })
+    # Scratch frame for the cohort with no rows: must match the dtypes
+    # of the upstream Enum-cast inputs to be ``vstack``-compatible at
+    # the bottom-of-function ``pl.concat``.  ``empty_like`` reads the
+    # input frame's schema for the requested columns and uses
+    # ``pl.Utf8`` as the fall-back when the column is absent.
+    from flextool.engine_polars._axis_enums import empty_like
+    bounded_walk = empty_like(anchor_lf,
+                                ["e", "d"],
+                                extra={"d_all": anchor_lf.collect_schema().get("d", pl.Utf8)},
+                                lazy=True)
     if bounded_anchor.collect().height > 0:
         life_per = _per_entity_param_lf(source, "lifetime")
         life_lf = (_resolve_per_period_lf(life_per, bounded_anchor, fill=0.0)
@@ -695,9 +724,10 @@ def edd_invest_lookback_set_lf(source: "InputSource",
 
     # Unbounded cohort — strict-lookback only, no lifetime cap.
     unbounded_anchor = anchor_lf.join(unbounded_e, on="e", how="inner")
-    unbounded_walk = pl.LazyFrame(schema={
-        "e": pl.Utf8, "d": pl.Utf8, "d_all": pl.Utf8,
-    })
+    unbounded_walk = empty_like(anchor_lf,
+                                  ["e", "d"],
+                                  extra={"d_all": anchor_lf.collect_schema().get("d", pl.Utf8)},
+                                  lazy=True)
     if unbounded_anchor.collect().height > 0:
         unbounded_walk = period_walk_iterator(
             source, active_solve, unbounded_anchor,
@@ -829,10 +859,15 @@ def p_entity_all_existing_from_handoff(
         # later_existing[e, d] = Σ_{d_h: (e, d_h, d) ∈ edd_history ∧
         #                              (e, d_h) ∈ realized} ppec[(e, d_h)].
         # (e, d_h) is "realized" iff ppec carries a row for it.
+        from flextool.engine_polars._axis_enums import align_join_dtypes
+        edd_lf, ppec_lf = align_join_dtypes(edd_lf, ppec_lf, ["e", "d_h"])
         later_lf = (edd_lf
                        .join(ppec_lf, on=["e", "d_h"], how="inner")
                        .group_by(["e", "d"])
                        .agg(pl.col("ppec").sum().alias("later")))
+        grid_lf, later_lf = align_join_dtypes(grid_lf, later_lf, ["e", "d"])
+        grid_lf, div_set_lf = align_join_dtypes(grid_lf, div_set_lf, ["e"])
+        grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e"])
         out = (grid_lf
                   .join(later_lf, on=["e", "d"], how="left")
                   .join(div_set_lf, on="e", how="left")
@@ -873,8 +908,25 @@ def p_entity_all_existing_from_handoff(
             "e": pl.Utf8, "d": pl.Utf8, "ppic": pl.Float64,
         })
 
+    # Align grid_lf's String dim columns with any Enum-typed inputs
+    # (ppic_lf / ped_lf come from FlexData Params that have been
+    # cast).  Two passes — the first lifts grid_lf to the widest dtype
+    # available from any input, the second pulls every other input
+    # back up to grid_lf's promoted dtype.
+    from flextool.engine_polars._axis_enums import align_join_dtypes
+    pre_renamed = pre_existing_lf.rename({"value": "pre"})
+    grid_lf, ppic_lf = align_join_dtypes(grid_lf, ppic_lf, ["e", "d"])
+    grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e"])
+    grid_lf, pre_renamed = align_join_dtypes(grid_lf, pre_renamed, ["e", "d"])
+    grid_lf, div_set_lf = align_join_dtypes(grid_lf, div_set_lf, ["e"])
+    # Second pass: now grid_lf carries the widest dtype on each axis,
+    # pull every input up.
+    grid_lf, ppic_lf = align_join_dtypes(grid_lf, ppic_lf, ["e", "d"])
+    grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e"])
+    grid_lf, pre_renamed = align_join_dtypes(grid_lf, pre_renamed, ["e", "d"])
+    grid_lf, div_set_lf = align_join_dtypes(grid_lf, div_set_lf, ["e"])
     out = (grid_lf
-              .join(pre_existing_lf.rename({"value": "pre"}),
+              .join(pre_renamed,
                       on=["e", "d"], how="left")
               .join(ppic_lf, on=["e", "d"], how="left")
               .join(div_set_lf, on="e", how="left")

@@ -468,6 +468,9 @@ def p_inflation_op_from_source(
                     break
             if yr_lf is not None:
                 d_unique_lf = dt.lazy().select("d").unique()
+                from flextool.engine_polars._axis_enums import align_join_dtypes
+                d_unique_lf, yr_lf = align_join_dtypes(
+                    d_unique_lf, yr_lf, ["d"])
                 yr_joined = (d_unique_lf.join(yr_lf, on="d", how="left")
                                          .with_columns(
                                              value=pl.col("yr_total").fill_null(1.0)
@@ -590,6 +593,12 @@ def p_rp_cost_weight_from_source(
     # Periods whose timeset has weights produce non-null ``w_raw``;
     # periods without keep null and fall back to the trivial default 1.0.
     dt_lf = dt.lazy().select("d", "t")
+    # Align the CSV-fresh helper frames to dt's dim dtypes (the loader
+    # cast dt to Enum end-of-load).
+    from flextool.engine_polars._axis_enums import align_join_dtypes
+    dt_lf, period_timeset_lf = align_join_dtypes(
+        dt_lf, period_timeset_lf, ["d"])
+    dt_lf, weights_lf = align_join_dtypes(dt_lf, weights_lf, ["t"])
     joined = (dt_lf
               .join(period_timeset_lf, on="d", how="left")
               .join(weights_lf, on=["ts", "t"], how="left"))
