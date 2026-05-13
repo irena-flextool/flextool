@@ -178,6 +178,25 @@ def setup_fonts(root: tk.Misc, *, body_pt: int = 10, code_pt: int = 10) -> None:
         pass
 
 
+def monitor_dpi(widget: tk.Misc) -> float:
+    """Return the current monitor's effective DPI as Tk sees it.
+
+    ``winfo_fpixels('1i')`` returns the pixels-per-inch Tk uses for sizing
+    fonts and ttk widgets; it reflects the current value of ``tk scaling``,
+    not the OS DPI on the monitor the window happens to be on. Wrapping it
+    keeps callers from sprinkling magic strings.
+
+    Note: for a true per-monitor DPI on Windows, the code path would be
+    Win32 ``MonitorFromWindow`` + ``GetDpiForMonitor``; that is out of
+    scope here. Users can set ``FLEXTOOL_DPI=...`` at startup as an
+    override when auto-detection picks the wrong monitor.
+    """
+    try:
+        return float(widget.tk.call("winfo", "fpixels", widget._w, "1i"))
+    except (tk.TclError, AttributeError):
+        return 96.0
+
+
 def get_metrics(root: tk.Misc | None = None) -> FontMetrics:
     """Compute current font metrics from TkDefaultFont. Safe to call any time."""
     default = tkfont.nametofont("TkDefaultFont")

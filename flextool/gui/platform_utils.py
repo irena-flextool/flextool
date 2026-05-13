@@ -140,9 +140,12 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
 
     Once-at-startup is intentional.  ``tk scaling`` doesn't re-flow
     widgets that are already laid out, so changing it mid-session
-    would only partially update the UI.  If a user moves the window to
-    a screen with very different DPI, restarting FlexTool is the
-    supported workflow.
+    would only partially update the UI.
+
+    A best-effort per-monitor handler in :class:`MainWindow` reapplies
+    ``setup_fonts`` when ``winfo_fpixels('1i')`` swings by more than 10 %,
+    so text rescales on monitor changes; widget positions still need a
+    restart to fully re-flow.
 
     Returns:
         The ratio by which tk scaling was increased (1.0 means no change).

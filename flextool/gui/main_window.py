@@ -722,6 +722,15 @@ class MainWindow(tk.Tk):
         # focused (blue) colors immediately.
         self.bind("<FocusIn>", self._on_main_focus_in)
 
+        # Track DPI changes when the window moves between monitors.
+        # Tk does not re-flow widgets on scaling changes, so we limit
+        # ourselves to refreshing font sizes — a partial fix that beats
+        # leaving the user with frozen-tiny or frozen-huge text until they
+        # restart FlexTool.
+        from flextool.gui.ui_metrics import monitor_dpi
+        self._last_dpi = monitor_dpi(self)
+        self.bind("<Configure>", self._on_main_configure, add="+")
+
         # ── Window sizing: compute from actual widget layout ─────────
         self.update_idletasks()
         nat_width = self.winfo_reqwidth()
@@ -3029,6 +3038,38 @@ class MainWindow(tk.Tk):
                 # semantically but forces ttk to invalidate the row
                 # display, which is the repaint we want.
                 tree.selection_set(sel)
+
+    def _on_main_configure(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Refresh font sizes if Tk's effective DPI changed.
+
+        Called on every <Configure> (resize, move). Only acts when the
+        measured DPI differs from the last-checked value by more than 10%,
+        which roughly corresponds to crossing into a monitor with a
+        different scaling factor.
+
+        Note: this rescales fonts only. Already-placed widgets retain
+        their pixel positions until the user resizes or re-opens them.
+        """
+        from flextool.gui.ui_metrics import monitor_dpi
+        new_dpi = monitor_dpi(self)
+        if self._last_dpi <= 0:
+            self._last_dpi = new_dpi
+            return
+        ratio = new_dpi / self._last_dpi
+        if 0.90 <= ratio <= 1.10:
+            return
+        self._last_dpi = new_dpi
+        # Re-apply font sizes so points render at the new DPI.
+        from flextool.gui.ui_metrics import setup_fonts, get_metrics
+        from tkinter import ttk
+        body_pt = self.global_settings.font_size_pt or 10
+        code_pt = self.global_settings.code_font_size_pt or 10
+        setup_fonts(self, body_pt=body_pt, code_pt=code_pt)
+        _m = get_metrics(self)
+        ttk.Style().configure("Treeview", rowheight=_m.row_height)
+        self._char_width = _m.cw
+        self._line_height = _m.lh
+        self._bold_font = _m.bold_font
 
     def _focus_tree(self, tree: ttk.Treeview) -> None:
         """Give keyboard focus to a treeview, ensuring arrow keys work."""
