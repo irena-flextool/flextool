@@ -868,10 +868,23 @@ class ExecutionWindow(tk.Toplevel):
             self._job_tree.selection_set(iid)
 
     def _restore_sash(self) -> None:
-        """Restore the saved Jobs/Progress sash position."""
+        """Restore the saved Jobs/Progress sash position, clamped to the
+        current pane width so a value saved at a different DPI cannot
+        collapse the Progress pane to zero.
+        """
+        if self._global_settings is None:
+            return
+        from flextool.gui.ui_metrics import clamp_sash
         try:
-            target = max(self._global_settings.exec_jobs_sash, self._jobs_min_width)
-            self._paned.sashpos(0, target)
+            self.update_idletasks()
+            paned_total = self._paned.winfo_width()
+            target = clamp_sash(
+                self._global_settings.exec_jobs_sash,
+                paned_total,
+                min_px=self._jobs_min_width,
+            )
+            if target > 0:
+                self._paned.sashpos(0, target)
         except (tk.TclError, IndexError):
             pass
 

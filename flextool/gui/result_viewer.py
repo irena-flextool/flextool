@@ -210,12 +210,20 @@ class ResultViewer(tk.Toplevel):
             viewer_w = max(screen_w - viewer_x, cw * 80)
             self.geometry(f"{viewer_w}x{usable_h}+{viewer_x}+0")
 
-        # Restore saved geometry if available
+        # Restore saved geometry, clamped to the current screen so a
+        # value saved at a different resolution does not run off-screen.
         if self._viewer_settings.window_geometry:
-            try:
-                self.geometry(self._viewer_settings.window_geometry)
-            except tk.TclError:
-                pass  # saved geometry may not fit current screen
+            from flextool.gui.ui_metrics import clamp_geometry
+            clamped = clamp_geometry(
+                self._viewer_settings.window_geometry,
+                screen_w, screen_h,
+                min_w=cw * 80, min_h=lh * 30,
+            )
+            if clamped is not None:
+                try:
+                    self.geometry(clamped)
+                except tk.TclError:
+                    pass
 
         # ── Build layout ─────────────────────────────────────────────
         self.columnconfigure(0, weight=1)
@@ -3605,15 +3613,34 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _restore_sash_position(self) -> None:
-        """Restore saved sash positions after the window is laid out."""
+        """Restore saved sash positions after the window is laid out.
+
+        Clamps each saved pixel value to the current pane so a position
+        captured at a different DPI / screen size cannot collapse one
+        side to zero.
+        """
+        from flextool.gui.ui_metrics import clamp_sash
         try:
-            if self._viewer_settings.left_pane_width > 0:
-                self._paned.sashpos(0, self._viewer_settings.left_pane_width)
+            self.update_idletasks()
+            paned_total = self._paned.winfo_width()
+            target = clamp_sash(
+                self._viewer_settings.left_pane_width,
+                paned_total,
+                min_px=self._char_width * 20,
+            )
+            if target > 0:
+                self._paned.sashpos(0, target)
         except (tk.TclError, IndexError):
             pass
         try:
-            if self._viewer_settings.scenario_pane_height > 0:
-                self._left_paned.sashpos(0, self._viewer_settings.scenario_pane_height)
+            left_paned_total = self._left_paned.winfo_height()
+            target = clamp_sash(
+                self._viewer_settings.scenario_pane_height,
+                left_paned_total,
+                min_px=self._line_height * 4,
+            )
+            if target > 0:
+                self._left_paned.sashpos(0, target)
         except (tk.TclError, IndexError):
             pass
 
