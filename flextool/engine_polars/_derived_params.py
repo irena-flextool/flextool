@@ -1748,6 +1748,8 @@ def p_flow_upper_existing_from_source(source: "InputSource",
                                          pss: pl.DataFrame,
                                          active_solve: str | None = None,
                                          workdir: Path | None = None,
+                                         *,
+                                         ctx: "SolveContext | None" = None,
                                          ) -> "Param | None":
     """Cross-join ``base_cap_pd = existing_capacity / unitsize`` per
     (p, d) with ``pss`` to produce per-arc structural existing bound.
@@ -1784,7 +1786,7 @@ def p_flow_upper_existing_from_source(source: "InputSource",
             pl.col(_index_col(e_unit, "period")).alias("d"),
             pl.col("value").cast(pl.Float64).alias("cap"),
         ) if _index_col(e_unit, "period") in e_unit.columns
-            else _broadcast_existing_to_pd(e_unit, source, workdir))
+            else _broadcast_existing_to_pd(e_unit, source, workdir, ctx=ctx))
     e_conn = _try_param_explicit(source, "connection", "existing")
     if e_conn is not None:
         parts.append(e_conn.lazy().select(
@@ -1792,7 +1794,7 @@ def p_flow_upper_existing_from_source(source: "InputSource",
             pl.col(_index_col(e_conn, "period")).alias("d"),
             pl.col("value").cast(pl.Float64).alias("cap"),
         ) if _index_col(e_conn, "period") in e_conn.columns
-            else _broadcast_existing_to_pd(e_conn, source, workdir))
+            else _broadcast_existing_to_pd(e_conn, source, workdir, ctx=ctx))
     if not parts:
         return None
 
@@ -1879,6 +1881,8 @@ def _index_col(df: pl.DataFrame, candidate: str) -> str:
 def _broadcast_existing_to_pd(df: pl.DataFrame,
                                  source: "InputSource",
                                  workdir: Path | None = None,
+                                 *,
+                                 ctx: "SolveContext | None" = None,
                                  ) -> pl.LazyFrame:
     """Fallback: when ``existing`` is a scalar (not 1d_map), broadcast
     over ``period_in_use``.
@@ -1889,7 +1893,19 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
     so we mirror that union here.  When ``workdir`` is provided we read
     the canonical ``period_in_use_set.csv`` (includes stochastic
     branches); otherwise fall back to the realised + invest union.
+
+    Path B Cat B: when ``ctx`` is provided, the in-memory
+    :pyattr:`SolveContext.period_in_use` frame is consulted first.
     """
+    if ctx is not None:
+        piu_ctx = ctx.period_in_use
+        if piu_ctx.height > 0:
+            pd_lf = piu_ctx.lazy().select("d").unique()
+            return (df.lazy()
+                      .select(pl.col("name").alias("p"),
+                               pl.col("value").cast(pl.Float64).alias("cap"))
+                      .join(pd_lf, how="cross")
+                      .select("p", "d", "cap"))
     if workdir is not None:
         piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if piu_path.exists():
@@ -2420,7 +2436,7 @@ def apply_derived_b(
     # for fixtures without entity-existing-capacity.
     if pss_frame is not None and pss_frame.height > 0:
         flex_data.p_flow_upper_existing = p_flow_upper_existing_from_source(
-            source, pss_frame, active_solve, workdir)
+            source, pss_frame, active_solve, workdir, ctx=ctx)
 
     # ─── §3.5.1 p_flow_constraint_coef ─────────────────────────────────
     # Δ.12b: unconditional when pss is non-empty.
@@ -5441,6 +5457,8 @@ def _expand_branch_periods(period_order: list[str],
 def _dt_period_active_steps_from_workdir(
     source: "InputSource",
     workdir: Path,
+    *,
+    ctx: "SolveContext | None" = None,
 ) -> dict | None:
     """Δ.12c-fix2 gap #5 — preprocessing-only-timeline fallback.
 
@@ -5458,40 +5476,63 @@ def _dt_period_active_steps_from_workdir(
 
     Returns ``None`` when the workdir doesn't have the required
     preprocessing artefacts (caller stays on the seed-CSV path).
+
+    Path B Cat B: when ``ctx`` is provided, the in-memory
+    :pyattr:`SolveContext.steps_in_use` and
+    :pyattr:`SolveContext.period_in_use` frames are consulted first.
     """
-    sd = workdir / "solve_data"
-    siu_path = sd / "steps_in_use.csv"
-    if not siu_path.exists():
-        return None
-    try:
-        siu = _read_csv_file(siu_path)
-    except Exception:
-        return None
+    siu: pl.DataFrame | None = None
+    if ctx is not None:
+        siu_ctx = ctx.steps_in_use
+        if siu_ctx.height > 0:
+            # Canonical schema [d, t, step_duration]; select the (d, t)
+            # subset to match the legacy local frame.
+            siu = siu_ctx.select("d", "t").unique()
+    if siu is None:
+        sd = workdir / "solve_data"
+        siu_path = sd / "steps_in_use.csv"
+        if not siu_path.exists():
+            return None
+        try:
+            siu_raw = _read_csv_file(siu_path)
+        except Exception:
+            return None
+        if siu_raw.height == 0:
+            return None
+        period_col = next((c for c in ("period", "d") if c in siu_raw.columns),
+                            None)
+        step_col = next((c for c in ("step", "t", "time")
+                           if c in siu_raw.columns), None)
+        if period_col is None or step_col is None:
+            return None
+        siu = siu_raw.select(pl.col(period_col).alias("d"),
+                                pl.col(step_col).alias("t")).unique()
     if siu.height == 0:
         return None
-    period_col = next((c for c in ("period", "d") if c in siu.columns), None)
-    step_col = next((c for c in ("step", "t", "time")
-                       if c in siu.columns), None)
-    if period_col is None or step_col is None:
-        return None
-    siu = siu.select(pl.col(period_col).alias("d"),
-                       pl.col(step_col).alias("t")).unique()
+    sd = workdir / "solve_data"
     # Period order: prefer per_solve_sets.py's ``period_in_use_set.csv``
     # (canonical insertion order); fall back to insertion order in
     # steps_in_use.csv.
     period_order: list[str] = []
     seen: set[str] = set()
-    piu_path = sd / "period_in_use_set.csv"
-    if piu_path.exists():
-        try:
-            piu_df = _read_csv_file(piu_path)
-            if piu_df.height > 0 and "period" in piu_df.columns:
-                for d in piu_df["period"].to_list():
-                    if d and d not in seen:
-                        period_order.append(d)
-                        seen.add(d)
-        except Exception:
-            pass
+    piu_ctx_df = ctx.period_in_use if ctx is not None else None
+    if piu_ctx_df is not None and piu_ctx_df.height > 0:
+        for d in piu_ctx_df["d"].to_list():
+            if d and d not in seen:
+                period_order.append(d)
+                seen.add(d)
+    else:
+        piu_path = sd / "period_in_use_set.csv"
+        if piu_path.exists():
+            try:
+                piu_df = _read_csv_file(piu_path)
+                if piu_df.height > 0 and "period" in piu_df.columns:
+                    for d in piu_df["period"].to_list():
+                        if d and d not in seen:
+                            period_order.append(d)
+                            seen.add(d)
+            except Exception:
+                pass
     for d in siu["d"].to_list():
         if d and d not in seen:
             period_order.append(d)
@@ -5571,6 +5612,8 @@ def _dt_period_active_steps_from_workdir(
 def _dt_period_active_steps(source: "InputSource",
                               active_solve: str,
                               workdir: Path | None = None,
+                              *,
+                              ctx: "SolveContext | None" = None,
                               ) -> dict | None:
     """Build the per-period active-step structure used by every storage
     block-algebra helper.
@@ -5598,7 +5641,8 @@ def _dt_period_active_steps(source: "InputSource",
     if p_ts is None:
         # Try preprocessing-only fallback before bailing.
         if workdir is not None:
-            return _dt_period_active_steps_from_workdir(source, workdir)
+            return _dt_period_active_steps_from_workdir(
+                source, workdir, ctx=ctx)
         return None
     period_col = next((c for c in ("period", "x")
                         if c in p_ts.columns), None)
@@ -5613,7 +5657,8 @@ def _dt_period_active_steps(source: "InputSource",
         # rolling-horizon / nested-invest sub-solve).  Try preprocessing-
         # only fallback.
         if workdir is not None:
-            wd_result = _dt_period_active_steps_from_workdir(source, workdir)
+            wd_result = _dt_period_active_steps_from_workdir(
+                source, workdir, ctx=ctx)
             if wd_result is not None:
                 return wd_result
         # No fallback available — caller will bail.
@@ -5628,30 +5673,42 @@ def _dt_period_active_steps(source: "InputSource",
     # period_in_use_set.csv when present to exclude realized-output-only
     # branches (e.g. period1_realized).
     in_use: set[str] = set()
+    pbf: pl.DataFrame | None = None
+    # Path B Cat B: prefer typed ctx accessors over CSV reads.
+    if ctx is not None:
+        piu_ctx = ctx.period_in_use
+        if piu_ctx.height > 0:
+            in_use = set(piu_ctx["d"].to_list())
+        pb_ctx = ctx.period_branch
+        if pb_ctx.height > 0:
+            # Match the legacy iteration shape via a local rename.
+            pbf = pb_ctx.rename({"d_anchor": "period", "b": "branch"})
     if workdir is not None:
-        piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-        if piu_path.exists():
-            try:
-                piu_df = _read_csv_file(piu_path)
-                if piu_df.height > 0:
-                    in_use = set(piu_df["period"].to_list())
-            except Exception:
-                in_use = set()
-        pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
-        if pb_path.exists():
-            try:
-                pbf = _read_csv_file(pb_path)
-            except Exception:
-                pbf = None
-            if pbf is not None and pbf.height > 0:
-                for row in pbf.iter_rows(named=True):
-                    anchor = row["period"]
-                    branch = row["branch"]
-                    if in_use and branch not in in_use:
-                        continue
-                    if (anchor in anchor_to_ts
-                            and branch not in anchor_to_ts):
-                        anchor_to_ts[branch] = anchor_to_ts[anchor]
+        if not in_use:
+            piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
+            if piu_path.exists():
+                try:
+                    piu_df = _read_csv_file(piu_path)
+                    if piu_df.height > 0:
+                        in_use = set(piu_df["period"].to_list())
+                except Exception:
+                    in_use = set()
+        if pbf is None:
+            pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
+            if pb_path.exists():
+                try:
+                    pbf = _read_csv_file(pb_path)
+                except Exception:
+                    pbf = None
+    if pbf is not None and pbf.height > 0:
+        for row in pbf.iter_rows(named=True):
+            anchor = row["period"]
+            branch = row["branch"]
+            if in_use and branch not in in_use:
+                continue
+            if (anchor in anchor_to_ts
+                    and branch not in anchor_to_ts):
+                anchor_to_ts[branch] = anchor_to_ts[anchor]
     if not anchor_to_ts:
         return None
     pt_lf = pl.LazyFrame({
@@ -5712,26 +5769,34 @@ def _dt_period_active_steps(source: "InputSource",
             seen_o.add(d)
     # Workdir-aware branch expansion + reorder by period_in_use_set
     # insertion order (canonical flextool active_time_list ordering).
-    if workdir is not None:
-        period_order = _expand_branch_periods(period_order, workdir)
-        piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-        if piu_path.exists():
-            try:
-                piu_df = _read_csv_file(piu_path)
-                if piu_df.height > 0:
-                    canonical = piu_df["period"].to_list()
-                    # Re-order period_order to match canonical, keeping
-                    # only periods present in BOTH (and any extra
-                    # period_order entries appended at the end for
-                    # robustness — doesn't matter when canonical covers).
-                    in_canonical = [p for p in canonical
-                                       if p in seen_o
-                                       or p in set(period_order)]
-                    extras = [p for p in period_order
-                                if p not in set(in_canonical)]
-                    period_order = in_canonical + extras
-            except Exception:
-                pass
+    if workdir is not None or ctx is not None:
+        period_order = _expand_branch_periods(period_order, workdir, ctx=ctx)
+        # Path B Cat B: prefer ctx.period_in_use over CSV read.
+        canonical: list[str] | None = None
+        if ctx is not None:
+            piu_ctx = ctx.period_in_use
+            if piu_ctx.height > 0:
+                canonical = piu_ctx["d"].to_list()
+        if canonical is None and workdir is not None:
+            piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
+            if piu_path.exists():
+                try:
+                    piu_df = _read_csv_file(piu_path)
+                    if piu_df.height > 0:
+                        canonical = piu_df["period"].to_list()
+                except Exception:
+                    canonical = None
+        if canonical is not None:
+            # Re-order period_order to match canonical, keeping
+            # only periods present in BOTH (and any extra
+            # period_order entries appended at the end for
+            # robustness — doesn't matter when canonical covers).
+            in_canonical = [p for p in canonical
+                               if p in seen_o
+                               or p in set(period_order)]
+            extras = [p for p in period_order
+                        if p not in set(in_canonical)]
+            period_order = in_canonical + extras
     if not period_order:
         return None
     realized_clean = pl.LazyFrame({"d": period_order})
@@ -5798,6 +5863,8 @@ def _dt_period_active_steps(source: "InputSource",
 def dtttdt_from_source(source: "InputSource",
                           active_solve: str | None,
                           workdir: Path | None = None,
+                          *,
+                          ctx: "SolveContext | None" = None,
                           ) -> pl.DataFrame | None:
     """Build the canonical ``(d, t, t_previous, t_previous_within_timeset,
     d_previous, t_previous_within_solve)`` dispatch-step lag frame.
@@ -5814,7 +5881,7 @@ def dtttdt_from_source(source: "InputSource",
       * Within-period predecessor: previous step in the same period
         cyclically (first wraps to block_last of the period).
     """
-    info = _dt_period_active_steps(source, active_solve, workdir)
+    info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx)
     if info is None:
         return None
     per_period = info["per_period"]
@@ -5826,23 +5893,31 @@ def dtttdt_from_source(source: "InputSource",
     # period__branch.csv (workdir-aware) to discover which periods are
     # branches off a non-self anchor.
     branch_anchor: dict[str, str] = {}
-    if workdir is not None:
+    pbf: pl.DataFrame | None = None
+    period_col, branch_col = "period", "branch"
+    # Path B Cat B: prefer ctx.period_branch (schema [d_anchor, b]).
+    if ctx is not None:
+        pb_ctx = ctx.period_branch
+        if pb_ctx.height > 0:
+            pbf = pb_ctx
+            period_col, branch_col = "d_anchor", "b"
+    if pbf is None and workdir is not None:
         pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
         if pb_path.exists():
             try:
                 pbf = _read_csv_file(pb_path)
             except Exception:
                 pbf = None
-            if pbf is not None and pbf.height > 0:
-                pb_rows = list(zip(pbf["period"].to_list(),
-                                      pbf["branch"].to_list()))
-                anchors_with_self: set[str] = set()
-                for a, b in pb_rows:
-                    if a == b:
-                        anchors_with_self.add(a)
-                for a, b in pb_rows:
-                    if b != a and a in anchors_with_self:
-                        branch_anchor[b] = a
+    if pbf is not None and pbf.height > 0:
+        pb_rows = list(zip(pbf[period_col].to_list(),
+                              pbf[branch_col].to_list()))
+        anchors_with_self: set[str] = set()
+        for a, b in pb_rows:
+            if a == b:
+                anchors_with_self.add(a)
+        for a, b in pb_rows:
+            if b != a and a in anchors_with_self:
+                branch_anchor[b] = a
     out_rows: list[tuple[str, str, str, str, str, str]] = []
     n_periods = len(period_order)
     # Find within-solve predecessor for first-of-period rows.
@@ -5947,6 +6022,7 @@ def period_block_family_from_source(source: "InputSource",
                                        workdir: Path | None = None,
                                        *,
                                        block_layout: "BlockLayout | None" = None,
+                                       ctx: "SolveContext | None" = None,
                                        ) -> dict | None:
     """Build the ``period_block_set`` / ``period_block_succ`` /
     ``period_block_time`` frames mirrored on
@@ -5971,7 +6047,7 @@ def period_block_family_from_source(source: "InputSource",
 
     Returns dict with the three frames or None when source insufficient.
     """
-    info = _dt_period_active_steps(source, active_solve, workdir)
+    info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx)
     if info is None:
         return None
     per_period = info["per_period"]
@@ -6882,7 +6958,7 @@ def apply_derived_e(
     # because fixtures genuinely lacking timeline data on the source AND
     # the workdir CSV (very rare; not present in the engine_polars
     # corpus) still need to fall through to the seed-loaded value.
-    dtttdt_db = dtttdt_from_source(source, active_solve, workdir)
+    dtttdt_db = dtttdt_from_source(source, active_solve, workdir, ctx=ctx)
     if dtttdt_db is not None:
         flex_data.dtttdt = dtttdt_db
 
@@ -6890,7 +6966,7 @@ def apply_derived_e(
     pb_family = None
     if has_state:
         pb_family = period_block_family_from_source(
-            source, active_solve, workdir, block_layout=fd_layout)
+            source, active_solve, workdir, block_layout=fd_layout, ctx=ctx)
     period_block_time_for_arc: pl.DataFrame | None = None
     if pb_family is not None:
         flex_data.period_block = pb_family["period_block"]

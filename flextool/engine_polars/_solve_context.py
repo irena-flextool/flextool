@@ -549,7 +549,13 @@ def _read_realized_dispatch_periods(path: Path) -> set[str]:
 
 
 def _load_period_in_use(path: Path) -> pl.DataFrame:
-    """Load ``period_in_use_set.csv`` and rename to canonical ``[d]``."""
+    """Load ``period_in_use_set.csv`` and rename to canonical ``[d]``.
+
+    Preserves CSV row order (``unique(maintain_order=True)``) so callers
+    that consume the frame as an ordered list of periods (e.g. the
+    canonical-order reorder in ``_dt_period_active_steps``) get the
+    same active_time_list ordering the workdir CSV exposes.
+    """
     if not path.exists():
         return pl.DataFrame(schema={"d": pl.Utf8})
     try:
@@ -559,7 +565,7 @@ def _load_period_in_use(path: Path) -> pl.DataFrame:
     if df.height == 0:
         return pl.DataFrame(schema={"d": pl.Utf8})
     df = df.rename({df.columns[0]: "d"})
-    return df.select("d").unique()
+    return df.select("d").unique(maintain_order=True)
 
 
 def _load_period_branch(path: Path) -> pl.DataFrame:
@@ -579,7 +585,7 @@ def _load_period_branch(path: Path) -> pl.DataFrame:
         rename["branch"] = "b"
     df = df.rename(rename)
     cols = [c for c in ("d_anchor", "b") if c in df.columns]
-    return df.select(cols).unique() if cols else pl.DataFrame(
+    return df.select(cols).unique(maintain_order=True) if cols else pl.DataFrame(
         schema={"d_anchor": pl.Utf8, "b": pl.Utf8}
     )
 
