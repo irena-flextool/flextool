@@ -68,6 +68,7 @@ class ExecutionWindow(tk.Toplevel):
         _metrics = get_metrics(self)
         cw: int = _metrics.cw
         lh: int = _metrics.lh
+        self._char_width = cw
         mono_font = tkfont.nametofont("TkFixedFont")
         self._mono_font = mono_font
 
@@ -874,12 +875,16 @@ class ExecutionWindow(tk.Toplevel):
         """
         if self._global_settings is None:
             return
-        from flextool.gui.ui_metrics import clamp_sash
+        from flextool.gui.ui_metrics import clamp_sash, rescale_pixels
         try:
             self.update_idletasks()
             paned_total = self._paned.winfo_width()
             target = clamp_sash(
-                self._global_settings.exec_jobs_sash,
+                rescale_pixels(
+                    self._global_settings.exec_jobs_sash,
+                    self._global_settings.exec_jobs_layout_cw,
+                    self._char_width,
+                ),
                 paned_total,
                 min_px=self._jobs_min_width,
             )
@@ -912,6 +917,7 @@ class ExecutionWindow(tk.Toplevel):
             self._global_settings.exec_jobs_sash = self._paned.sashpos(0)
         except (tk.TclError, IndexError):
             pass
+        self._global_settings.exec_jobs_layout_cw = self._char_width
         try:
             from flextool.gui.project_utils import get_projects_dir
             from flextool.gui.settings_io import save_global_settings

@@ -119,6 +119,7 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             window_geometry=viewer.get("window_geometry", ""),
             left_pane_width=viewer.get("left_pane_width", 0),
             scenario_pane_height=viewer.get("scenario_pane_height", 0),
+            layout_cw=viewer.get("layout_cw", 0),
             cache_gb=viewer.get("cache_gb", 0.5),
         )
 
@@ -185,6 +186,7 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
         recent_project=data.get("recent_project"),
         theme=theme,
         exec_jobs_sash=data.get("exec_jobs_sash", 0),
+        exec_jobs_layout_cw=data.get("exec_jobs_layout_cw", 0),
         max_workers=data.get("max_workers", 0),
         execution_limits=execution_limits,
     )

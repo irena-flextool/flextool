@@ -90,6 +90,40 @@ def clamp_sash(
     return max(min_px, min(saved_px, upper))
 
 
+def rescale_pixels(saved_px: int, saved_cw: int, current_cw: int) -> int:
+    """Rescale a pixel value saved under one font metric to the current one.
+
+    Returns ``saved_px`` unchanged when ``saved_cw`` is 0 (unknown), when
+    the ratio is within 10%, or when either cw is non-positive. Otherwise
+    returns ``round(saved_px * current_cw / saved_cw)``.
+
+    Used to make saved sash positions and (optionally) window dimensions
+    survive a DPI change between sessions.
+    """
+    if saved_px <= 0 or saved_cw <= 0 or current_cw <= 0:
+        return saved_px
+    ratio = current_cw / saved_cw
+    if 0.90 <= ratio <= 1.10:
+        return saved_px
+    return round(saved_px * ratio)
+
+
+def rescale_geometry(saved: str, saved_cw: int, current_cw: int) -> str:
+    """Apply rescale_pixels to W and H in a Tk geometry string."""
+    if not saved or saved_cw <= 0 or current_cw <= 0 or saved_cw == current_cw:
+        return saved
+    m = _GEOMETRY_RE.match(saved.strip())
+    if not m:
+        return saved
+    new_w = rescale_pixels(int(m["w"]), saved_cw, current_cw)
+    new_h = rescale_pixels(int(m["h"]), saved_cw, current_cw)
+    if m["x"] is None:
+        return f"{new_w}x{new_h}"
+    xs = m["xs"]
+    ys = m["ys"]
+    return f"{new_w}x{new_h}{xs}{m['x']}{ys}{m['y']}"
+
+
 @dataclass(frozen=True)
 class FontMetrics:
     """Snapshot of derived font metrics. Cheap to recompute, immutable."""

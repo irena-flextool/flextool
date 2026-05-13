@@ -213,9 +213,14 @@ class ResultViewer(tk.Toplevel):
         # Restore saved geometry, clamped to the current screen so a
         # value saved at a different resolution does not run off-screen.
         if self._viewer_settings.window_geometry:
-            from flextool.gui.ui_metrics import clamp_geometry
-            clamped = clamp_geometry(
+            from flextool.gui.ui_metrics import clamp_geometry, rescale_geometry
+            saved_geom = rescale_geometry(
                 self._viewer_settings.window_geometry,
+                self._viewer_settings.layout_cw,
+                cw,
+            )
+            clamped = clamp_geometry(
+                saved_geom,
                 screen_w, screen_h,
                 min_w=cw * 80, min_h=lh * 30,
             )
@@ -3619,12 +3624,16 @@ class ResultViewer(tk.Toplevel):
         captured at a different DPI / screen size cannot collapse one
         side to zero.
         """
-        from flextool.gui.ui_metrics import clamp_sash
+        from flextool.gui.ui_metrics import clamp_sash, rescale_pixels
         try:
             self.update_idletasks()
             paned_total = self._paned.winfo_width()
             target = clamp_sash(
-                self._viewer_settings.left_pane_width,
+                rescale_pixels(
+                    self._viewer_settings.left_pane_width,
+                    self._viewer_settings.layout_cw,
+                    self._char_width,
+                ),
                 paned_total,
                 min_px=self._char_width * 20,
             )
@@ -3635,7 +3644,11 @@ class ResultViewer(tk.Toplevel):
         try:
             left_paned_total = self._left_paned.winfo_height()
             target = clamp_sash(
-                self._viewer_settings.scenario_pane_height,
+                rescale_pixels(
+                    self._viewer_settings.scenario_pane_height,
+                    self._viewer_settings.layout_cw,
+                    self._char_width,
+                ),
                 left_paned_total,
                 min_px=self._line_height * 4,
             )
@@ -3665,6 +3678,7 @@ class ResultViewer(tk.Toplevel):
             self.unbind_all(seq)
 
         # Save window geometry and sash positions
+        self._viewer_settings.layout_cw = self._char_width
         self._viewer_settings.window_geometry = self.geometry()
         try:
             self._viewer_settings.left_pane_width = self._paned.sashpos(0)

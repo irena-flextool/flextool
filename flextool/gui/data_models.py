@@ -28,6 +28,9 @@ class ViewerSettings:
     window_geometry: str = ""  # saved Tk geometry string
     left_pane_width: int = 0  # saved horizontal sash position (0 = use default)
     scenario_pane_height: int = 0  # saved vertical sash in left column (0 = default)
+    # cw (TkDefaultFont.measure("0")) at the time window_geometry / sash
+    # positions were saved. 0 means unknown — use raw saved values.
+    layout_cw: int = 0
     cache_gb: float = 0.5     # plot cache memory limit in GB
 
 
@@ -127,6 +130,8 @@ class GlobalSettings:
     recent_project: str | None = None
     theme: str = "dark"  # Valid values: "dark", "light", "os"
     exec_jobs_sash: int = 0  # saved Jobs/Progress sash position (0 = default)
+    # cw at the time exec_jobs_sash was saved. 0 = unknown / use as-is.
+    exec_jobs_layout_cw: int = 0
     # Last chosen value for "Max. parallel executions" in the execution
     # window. 0 means "not set yet" → use cpu_count() - 1.
     max_workers: int = 0
