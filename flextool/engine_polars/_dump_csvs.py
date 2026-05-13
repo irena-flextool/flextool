@@ -637,8 +637,73 @@ _P_PROCESS_SLICES = {
 }
 
 
+def _merge_param_slice(path: Path, new_rows: pl.DataFrame,
+                         entity_col: str, param_col: str) -> pl.DataFrame:
+    """Merge a freshly-built wide-by-param slice with the existing file.
+
+    The legacy ``input_writer.write_parameter`` populates
+    ``input/p_<class>.csv`` with the full entity-level scalar surface
+    (e.g. for nodes: ``penalty_up``, ``existing``, ``lifetime``,
+    ``self_discharge_loss``, …).  The override-chain-driven dump in
+    :func:`_write_p_input_sliced` knows the canonical value for only a
+    handful of slices (``_P_NODE_SLICES`` etc.), so a plain
+    ``write_csv`` would wipe the rest of the entity-level surface.
+
+    Read existing rows, drop those whose ``param_col`` is replaced by
+    *new_rows*, and concatenate.  Both halves are normalised to Utf8
+    so ``vertical_relaxed`` does not have to promote across numeric /
+    string mismatches; ``write_csv`` produces text anyway.
+    """
+    if not path.exists():
+        return new_rows
+    existing = _read_csv_keep_columns(path)
+    if existing is None or existing.height == 0:
+        return new_rows
+    cols = new_rows.columns
+    keep = [c for c in cols if c in existing.columns]
+    if len(keep) != len(cols):
+        return new_rows
+    existing = existing.select(keep)
+    if param_col not in existing.columns:
+        return new_rows
+    replaced_params = new_rows.select(param_col).unique()
+    survivors = (existing.lazy()
+                  .join(replaced_params.lazy().with_columns(_drop=pl.lit(True)),
+                        on=param_col, how="left")
+                  .filter(pl.col("_drop").is_null())
+                  .drop("_drop")
+                  .collect())
+    if survivors.height == 0:
+        return new_rows
+    new_rows_str = new_rows.with_columns(
+        [pl.col(c).cast(pl.Utf8) for c in new_rows.columns]
+    )
+    return pl.concat([survivors, new_rows_str], how="vertical_relaxed")
+
+
+def _read_csv_keep_columns(path: Path) -> pl.DataFrame | None:
+    """Read a CSV with all columns as Utf8 to preserve original formatting.
+
+    Used by :func:`_merge_param_slice` to avoid coercing existing
+    numeric / string entity-level rows to a different dtype during the
+    merge.  Returns ``None`` if the file is empty / unreadable.
+    """
+    try:
+        return pl.read_csv(path, infer_schema_length=0)
+    except Exception:  # noqa: BLE001 — defensive
+        return None
+
+
 def _write_p_input_sliced(data: "FlexData", inp_dir: Path) -> None:
-    """Write wide-by-param ``input/p_*.csv`` files (scalar slices)."""
+    """Write wide-by-param ``input/p_*.csv`` files (scalar slices).
+
+    These files carry the full entity-level scalar surface (e.g. for
+    nodes: ``penalty_up``, ``existing``, ``lifetime``, …).  The
+    override chain only feeds FlexData for a subset (``_P_*_SLICES``),
+    so when a legacy ``input/p_<class>.csv`` already exists on disk
+    we merge our slices INTO it rather than overwriting — otherwise
+    legacy entity-level params would be silently dropped.
+    """
     # p_commodity.csv
     rows: list[pl.DataFrame] = []
     for param_value, field in _P_COMMODITY_SLICES.items():
@@ -650,7 +715,11 @@ def _write_p_input_sliced(data: "FlexData", inp_dir: Path) -> None:
                 .select("commodity", "commodityParam", "p_commodity"))
         rows.append(rec)
     if rows:
-        pl.concat(rows, how="vertical_relaxed").write_csv(inp_dir / "p_commodity.csv")
+        new_rows = pl.concat(rows, how="vertical_relaxed")
+        merged = _merge_param_slice(inp_dir / "p_commodity.csv", new_rows,
+                                       entity_col="commodity",
+                                       param_col="commodityParam")
+        merged.write_csv(inp_dir / "p_commodity.csv")
 
     rows = []
     for param_value, field in _P_NODE_SLICES.items():
@@ -662,7 +731,11 @@ def _write_p_input_sliced(data: "FlexData", inp_dir: Path) -> None:
                 .select("node", "nodeParam", "p_node"))
         rows.append(rec)
     if rows:
-        pl.concat(rows, how="vertical_relaxed").write_csv(inp_dir / "p_node.csv")
+        new_rows = pl.concat(rows, how="vertical_relaxed")
+        merged = _merge_param_slice(inp_dir / "p_node.csv", new_rows,
+                                       entity_col="node",
+                                       param_col="nodeParam")
+        merged.write_csv(inp_dir / "p_node.csv")
 
     rows = []
     for param_value, field in _P_PROCESS_SLICES.items():
@@ -674,7 +747,11 @@ def _write_p_input_sliced(data: "FlexData", inp_dir: Path) -> None:
                 .select("process", "processParam", "p_process"))
         rows.append(rec)
     if rows:
-        pl.concat(rows, how="vertical_relaxed").write_csv(inp_dir / "p_process.csv")
+        new_rows = pl.concat(rows, how="vertical_relaxed")
+        merged = _merge_param_slice(inp_dir / "p_process.csv", new_rows,
+                                       entity_col="process",
+                                       param_col="processParam")
+        merged.write_csv(inp_dir / "p_process.csv")
 
 
 # ---------------------------------------------------------------------------
