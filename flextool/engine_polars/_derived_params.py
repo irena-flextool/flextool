@@ -1144,32 +1144,22 @@ def apply_derived_a(
         source, usable_dt, pd_bw)
 
     # 6. p_inflow -------------------------------------------------------
-    # Δ.12c-fix2 gap #2 close — full scaling cascade for
-    # ``inflow_method ∈ {scale_to_*, scale_in_proportion, use_original}``
-    # ported into ``_inflow_scaling.py`` (mirrors flextool's
-    # ``preprocessing/node_inflow_scaling_params.py`` +
-    # ``entity_period_calc_params.write_pdtNodeInflow``).  The scaling
-    # helper returns None on stochastic 3d_map shapes (caller's
-    # branch 1/2 fold-in) — fall through to the simpler
-    # ``p_inflow_from_source`` (Γ.3.A use_original path) for
-    # non-scaling fixtures.  The legacy seed-loaded CSV value remains
-    # the safety net only for stochastic inflow (deferred to Δ.13+).
+    # Native derivation pathways are DISABLED.  ``apply_p_inflow_with_scaling``
+    # (and the ``p_inflow_from_source`` fallback) overrode the seed value
+    # loaded by ``_load_node`` from ``solve_data/pdtNodeInflow.csv``, but
+    # for aggregated-timestep solves (e.g. ``lt_rp`` with
+    # ``step_duration = 8760``) the fallback joined raw per-hour source
+    # values against ``dt`` and picked the per-hour rate as if it were
+    # MWh-per-timestep — collapsing annual demand by a factor of
+    # ``step_duration`` and yielding a structurally-wrong LP.
     #
-    # Δ.13: derive per-solve aggregates natively when possible so the
-    # scaling helper can avoid reading workdir CSVs for cpsoy / p_tdy /
-    # period_timeline / dt_complete.  Returns None on synthetic
-    # rolling/nested sub-solves whose names aren't in Spine — caller's
-    # workdir-CSV path takes over.
-    from ._inflow_scaling import apply_p_inflow_with_scaling
-    from ._per_solve_sets import derive_per_solve_aggregates
-    per_solve_aggs = derive_per_solve_aggregates(source, active_solve)
-    scaled = apply_p_inflow_with_scaling(flex_data, source, workdir,
-                                          usable_dt,
-                                          per_solve_aggs=per_solve_aggs)
-    if not scaled and sd_for_share is not None:
-        inflow = p_inflow_from_source(source, usable_dt, sd_for_share)
-        if inflow is not None:
-            flex_data.p_inflow = inflow
+    # The seed value produced by flextool's
+    # ``preprocessing/node_inflow_scaling_params.py`` +
+    # ``entity_period_calc_params.write_pdtNodeInflow`` is the known-good
+    # input.  Until the native cascade is proven correct across all
+    # ``inflow_method`` × ``step_duration`` combinations, the seed
+    # survives unchanged.  Re-enable per-pathway only after parity is
+    # established (see commit message for the disable for context).
 
     # 7. p_process_existing_count ---------------------------------------
     # Δ.12c-fix gap #4: the helper handles two paths:
