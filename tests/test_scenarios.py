@@ -119,6 +119,55 @@ def _is_freeform_csv(csv_name: str) -> bool:
     return csv_name in _FREEFORM_CSVS
 
 
+def _has_two_row_header(path: Path) -> bool:
+    """Detect FlexTool's two-row CSV header convention.
+
+    Several outputs (e.g. ``unit__outputNode__dt.csv``) carry an outer
+    header naming the process/connection and an inner header naming the
+    source/sink node.  The inner row begins with empty fields aligned
+    with the leading index columns (``solve,period,time,,,west,...``).
+
+    Without ``header=[0, 1]``, ``pd.read_csv`` treats the second header
+    row as the first data row, producing object-dtype columns that
+    ``round_for_comparison`` skips — so 5th-decimal solver noise leaks
+    into the comparison as exact-string mismatches.
+    """
+    with open(path) as f:
+        first = f.readline()
+        second = f.readline()
+    if not second:
+        return False
+    # The inner header always starts with at least one empty field
+    # (i.e. leading comma) and has the same column count as the first
+    # row.  A genuine data row never begins with an empty field.
+    return second.startswith(",") and second.count(",") == first.count(",")
+
+
+_DEDUP_SUFFIX = re.compile(r"\.\d+$")
+
+
+def _read_csv(path: Path) -> pd.DataFrame:
+    """Read a golden/actual CSV, auto-detecting multi-row headers.
+
+    For two-row-header CSVs we also strip pandas-style ``.N`` dedup
+    suffixes from the outer header level.  Some pre-existing goldens
+    were last regenerated under the broken single-header parse, which
+    auto-dedups duplicate outer labels (``west`` → ``west``, ``west.1``,
+    ``west.2``…) before round-tripping through ``to_csv``.  Reading
+    those goldens with ``header=[0, 1]`` therefore yields outer labels
+    like ``west.1`` that the (correctly-duplicated) actual outputs do
+    not have.  Normalising both sides keeps the comparison meaningful
+    without touching the goldens.
+    """
+    if _has_two_row_header(path):
+        df = pd.read_csv(path, header=[0, 1])
+        df.columns = pd.MultiIndex.from_tuples(
+            [(_DEDUP_SUFFIX.sub("", outer), inner) for outer, inner in df.columns]
+        )
+        return df
+    return pd.read_csv(path)
+
+
 def _strip_timestamps(text: str) -> str:
     """Remove run-specific timestamps so freeform CSVs can be compared across runs."""
     return re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}", "<TIMESTAMP>", text)
@@ -201,7 +250,7 @@ def test_scenario(
             if _is_freeform_csv(csv_name):
                 shutil.copy2(actual_path, expected_path)
             else:
-                round_for_comparison(pd.read_csv(actual_path)).to_csv(expected_path, index=False)
+                round_for_comparison(_read_csv(actual_path)).to_csv(expected_path, index=False)
         pytest.skip(f"Regenerated {len(csvs)} file(s) for scenario '{scenario}'")
     else:
         for csv_name in csvs:
@@ -224,8 +273,8 @@ def test_scenario(
                     f"{scenario}/{csv_name} content differs from expected"
                 )
             else:
-                actual = round_for_comparison(pd.read_csv(actual_path))
-                expected = round_for_comparison(pd.read_csv(expected_path))
+                actual = round_for_comparison(_read_csv(actual_path))
+                expected = round_for_comparison(_read_csv(expected_path))
                 pd.testing.assert_frame_equal(
                     actual,
                     expected,
