@@ -345,23 +345,50 @@ def read_sets(
 
     # process_method_sources_sinks — derived (method/orig_source/orig_sink/
     # always_source/always_sink). FlexData doesn't carry these explicit
-    # fields but the downstream consumer (calc_capacity_flows) only
-    # needs the (p, method, orig_source, orig_sink, always_source,
-    # always_sink) tuple structure.  Synthesize from process_source_sink
-    # with a default ``method = '1var_per_arc'``.
+    # fields, so we replicate the legacy preprocessing 3-way join (see
+    # flextool/flextoolrunner/preprocessing/process_arc_unions.py L248-263).
+    #
+    # The ``always_*`` form keeps the process as one endpoint for every
+    # arc (so each direct-method unit has one source-side row pointing
+    # to ``(source → p)`` and one sink-side row pointing to ``(p → sink)``).
+    # The downstream slope branch in calc_capacity_flows expects this
+    # split — without it, the source-side fuel-flow column is missing and
+    # commodity costs are computed against the output-side flow (the
+    # e89bf53e regression).
+    #
+    # Method label: any value in ``s.method_1var_per_way`` (defined below)
+    # triggers the slope multiplier in calc_capacity_flows.  Connections
+    # are 1var-per-way by default in flextool; indirect units have already
+    # been split into ``(p, source, p)`` / ``(p, p, sink)`` rows by
+    # ``process_source_sink_canonical`` upstream, so always=orig is correct
+    # for those rows.
     if (flex_data.process_source_sink is not None
             and flex_data.process_source_sink.height > 0):
-        pdf = flex_data.process_source_sink.select("p", "source", "sink").to_pandas()
-        pdf["method"] = "1var_per_way"
-        pdf["orig_source"] = pdf["source"]
-        pdf["orig_sink"] = pdf["sink"]
-        pdf["always_source"] = pdf["source"]
-        pdf["always_sink"] = pdf["sink"]
+        pss_pdf = flex_data.process_source_sink.select(
+            "p", "source", "sink",
+        ).to_pandas()
+
+        rows: list[tuple[str, str, str, str, str, str]] = []
+        for p, src, snk in zip(
+            pss_pdf["p"], pss_pdf["source"], pss_pdf["sink"],
+        ):
+            if src == p or snk == p:
+                # Indirect / noConversion form — already split, always=orig.
+                rows.append((p, "method_1way_1var_LP", src, snk, src, snk))
+            else:
+                # Direct-method arc — emit BOTH always-process variants so
+                # downstream consumers get a source-side and a sink-side
+                # column in r.flow_dt (with slope applied on the source
+                # side).  See process_arc_unions write_process_arc_unions
+                # at L248-263 for the legacy equivalent.
+                rows.append((p, "method_1way_1var_LP", src, snk, src, p))
+                rows.append((p, "method_1way_1var_LP", src, snk, p, snk))
+        rows = list(dict.fromkeys(rows))
+        cols = ["process", "method", "orig_source", "orig_sink",
+                "always_source", "always_sink"]
         s.process_method_sources_sinks = pd.MultiIndex.from_frame(
-            pdf[["p", "method", "orig_source", "orig_sink",
-                 "always_source", "always_sink"]],
-            names=["process", "method", "orig_source", "orig_sink",
-                   "always_source", "always_sink"],
+            pd.DataFrame(rows, columns=cols),
+            names=cols,
         )
     else:
         s.process_method_sources_sinks = empty_multi_index(
@@ -373,7 +400,7 @@ def read_sets(
     if (flex_data.process_source_sink is not None
             and flex_data.process_source_sink.height > 0):
         pdf = flex_data.process_source_sink.select("p").unique().to_pandas()
-        pdf["method"] = "1var_per_way"
+        pdf["method"] = "method_1way_1var_LP"
         s.process_method = pd.MultiIndex.from_frame(
             pdf, names=["process", "method"],
         )
