@@ -568,14 +568,20 @@ def native_run_model(state, solver) -> int:
 
         if storage_fix_values_exist:
             state.logger.info("Nested timeline matching")
-            stochastic_solver.write_timeline_matching_map(
+            matching_map = stochastic_solver.write_timeline_matching_map(
                 active_time_lists[parent_roll[solve]],
                 active_time_lists[solve],
                 complete_solve[parent_roll[solve]],
                 complete_solve[solve],
                 period__branch_lists[solve],
-                work_folder=wf,
             )
+            with open(
+                wf / "solve_data/timeline_matching_map.csv", "w", newline=""
+            ) as realfile:
+                writer = csv.writer(realfile)
+                writer.writerow(["period", "step", "upper_step"])
+                for (period, step), upper_step in matching_map.items():
+                    writer.writerow([period, step, upper_step])
         else:
             with open(wf / "solve_data/timeline_matching_map.csv", "w") as realfile:
                 realfile.write("period,step,upper_step\n")
