@@ -32,6 +32,7 @@ if str(TEST_DIR) not in sys.path:
 from db_utils import round_for_comparison  # noqa: E402
 
 from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
+from flextool.engine_polars import run_chain_from_db
 from flextool.process_outputs.write_outputs import write_outputs
 
 
@@ -144,21 +145,31 @@ def test_scenario(
 ) -> None:
     regenerate = request.config.getoption("--regenerate")
 
-    # Run the model — wrap write_input → run_model → write_outputs in a
-    # perf_counter so the optional time_budget_seconds assertion (below)
-    # measures the actual scenario work, not pytest fixture setup.
+    # Run the model via the engine_polars cascade (the legacy GMPL
+    # ``FlexToolRunner.run_model`` path was removed in Δ.22 — see
+    # ``flextool/flextoolrunner/solver_runner.py``).  ``run_chain_from_db``
+    # writes ``input/`` + ``solve_data/`` and drives the per-solve
+    # cascade end-to-end; the post-process CSVs are then written by
+    # ``write_outputs`` below (which needs the last sub-solve's
+    # ``flex_data`` + ``solution`` after Δ.31).
     t_start = time.perf_counter()
-    runner = FlexToolRunner(
+    steps = run_chain_from_db(
         input_db_url=scenario_db_url,
         scenario_name=scenario,
-        root_dir=workdir,
+        work_folder=workdir,
         bin_dir=test_bin_dir,
     )
-    runner.write_input(scenario_db_url, scenario)
-    return_code = runner.run_model()
-    assert return_code == 0, f"Model run failed for scenario '{scenario}'"
+    assert steps, f"run_chain_from_db returned no steps for scenario '{scenario}'"
+    last_step = next(reversed(steps.values()))
+    assert last_step.solution is not None and last_step.solution.optimal, (
+        f"Last sub-solve for scenario '{scenario}' did not produce an "
+        f"optimal solution"
+    )
 
-    # Write CSV outputs
+    # Write CSV outputs.  Post-Δ.31 the in-memory readers need the
+    # final sub-solve's flex_data + solution; the raw_output_dir is
+    # still consulted for the per-sub-solve parquets written by
+    # ``write_outputs_for_solve`` inside the cascade.
     write_outputs(
         scenario_name=scenario,
         output_location=str(workdir),
@@ -166,6 +177,10 @@ def test_scenario(
         output_config_path=OUTPUT_CONFIG,
         write_methods=["csv"],
         fallback_output_location=str(workdir),
+        raw_output_dir=str(workdir / "output_raw"),
+        flex_data=last_step.flex_data,
+        solution=last_step.solution,
+        solve_name=last_step.solve_name,
     )
     elapsed_seconds = time.perf_counter() - t_start
 
