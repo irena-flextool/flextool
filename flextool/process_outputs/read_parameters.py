@@ -1203,8 +1203,8 @@ def _has_solve_level(obj) -> bool:
 
 
 def read_parameters_multi(
-    steps: "list[tuple[str, FlexData]]",
-    solution: "Solution",
+    steps: "list[tuple[str, FlexData, Solution]] | list[tuple[str, FlexData]]",
+    solution: "Solution | None" = None,
 ) -> SimpleNamespace:
     """Multi-solve variant of :func:`read_parameters`.
 
@@ -1231,9 +1231,25 @@ def read_parameters_multi(
     if not steps:
         raise ValueError("read_parameters_multi: steps must be non-empty")
 
+    # Accept both (solve_name, flex_data, solution) and
+    # (solve_name, flex_data) tuples for backwards compatibility.  The
+    # 3-tuple form is REQUIRED for ``_entity_all_capacity`` to see each
+    # roll's own ``v_invest`` / ``v_divest`` — passing only the last
+    # roll's solution makes ``total`` lag by one period across the
+    # chain (see 2026-05-14 unit_capacity__d.csv diagnosis).
+    def _step_solution(s):
+        if len(s) >= 3:
+            return s[2]
+        if solution is None:
+            raise ValueError(
+                "read_parameters_multi: step is a 2-tuple but no "
+                "fallback solution was supplied"
+            )
+        return solution
+
     per_step = [
-        (sn, read_parameters(fd, solution, solve_name=sn))
-        for sn, fd in steps
+        (s[0], read_parameters(s[1], _step_solution(s), solve_name=s[0]))
+        for s in steps
     ]
     last_ns = per_step[-1][1]
     if len(per_step) == 1:

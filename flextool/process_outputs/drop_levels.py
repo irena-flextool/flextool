@@ -17,7 +17,13 @@ _V_DROP = [
     'dual_co2_max_period',
 ]
 
-# Parameters: droplevel('solve') only
+# Parameters: droplevel('solve') + deduplicate with keep='last'.
+#
+# Use this bucket for params whose per-roll values represent successive
+# states of the same (entity, period) (e.g. ``entity_all_existing``,
+# which is a chain-sum that gets updated as later rolls realise their
+# investments — the LAST roll covering a given period carries the
+# post-decision value).
 _PAR_DROP = [
     'step_duration', 'rp_cost_weight', 'flow_min', 'flow_max',
     'process_availability', 'process_source_sink_varCost',
@@ -28,12 +34,29 @@ _PAR_DROP = [
     'entity_annual_discounted', 'entity_annual_divest_discounted',
     'inflation_factor_investment_yearly',
     'group_penalty_capacity_margin', 'group_capacity_margin',
+    # entity_all_existing carries the cumulative existing-capacity
+    # chain (existing + Σ prior invest − Σ prior divest).  The last roll
+    # covering a given period writes the post-decision value; the
+    # earlier rolls' rows for the same period carry the pre-decision
+    # value.  keep='last' picks the post-decision row to match v3.32.0.
+    'entity_all_existing',
+    # entity_pre_existing is the static baseline before any invest
+    # decision.  In practice constant across rolls for a given
+    # (entity, period), so either keep choice yields the same value —
+    # moved here for symmetry with entity_all_existing per the
+    # 2026-05-14 investigation into the unit_capacity__d.csv lag.
+    'entity_pre_existing',
 ]
 
-# Parameters: droplevel('solve') + deduplicate index
+# Parameters: droplevel('solve') + deduplicate with keep='first'.
+#
+# Use this bucket ONLY for params that are invariant across rolls (so
+# either keep choice would yield the same result).  Do NOT use this
+# bucket for params whose value evolves across rolls — see _PAR_DROP
+# above and the comment there.
 _PAR_DEDUP = [
     'years_from_start_d', 'years_represented_d',
-    'entity_max_units', 'entity_all_existing', 'entity_pre_existing',
+    'entity_max_units',
     'process_startup_cost',
     'entity_fixed_cost', 'entity_lifetime_fixed_cost', 'entity_lifetime_fixed_cost_divest',
     'node_annual_flow',

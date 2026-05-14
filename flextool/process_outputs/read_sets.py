@@ -868,8 +868,8 @@ def _series_or_df_has_solve(obj) -> bool:
 
 
 def read_sets_multi(
-    steps: "list[tuple[str, FlexData]]",
-    solution: "Solution",
+    steps: "list[tuple[str, FlexData, Solution]] | list[tuple[str, FlexData]]",
+    solution: "Solution | None" = None,
 ) -> SimpleNamespace:
     """Multi-solve variant of :func:`read_sets`.
 
@@ -883,9 +883,19 @@ def read_sets_multi(
     if not steps:
         raise ValueError("read_sets_multi: steps must be non-empty")
 
+    def _step_solution(s):
+        if len(s) >= 3:
+            return s[2]
+        if solution is None:
+            raise ValueError(
+                "read_sets_multi: step is a 2-tuple but no fallback "
+                "solution was supplied"
+            )
+        return solution
+
     per_step = [
-        (sn, read_sets(fd, solution, solve_name=sn))
-        for sn, fd in steps
+        (s[0], read_sets(s[1], _step_solution(s), solve_name=s[0]))
+        for s in steps
     ]
     last_ns = per_step[-1][1]
     if len(per_step) == 1:

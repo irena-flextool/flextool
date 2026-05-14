@@ -233,7 +233,10 @@ def test_scenario(
         raw_output_dir=str(workdir / "output_raw"),
         solution=last_step.solution,
         solve_name=last_step.solve_name,
-        solve_steps=[(s.solve_name, s.flex_data) for s in steps.values()],
+        solve_steps=[
+            (s.solve_name, s.flex_data, s.solution)
+            for s in steps.values()
+        ],
     )
     elapsed_seconds = time.perf_counter() - t_start
 
