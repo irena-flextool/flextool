@@ -1,9 +1,11 @@
 """Helpers for scenario identity across source and display boundaries.
 
 Two scenarios with the same name from different input sources must not
-collide on disk. To keep the common case clean (``output_parquet/base/``,
-not ``output_parquet/base_1/``), we only apply a source suffix when
-another input source has already claimed the bare name.
+collide on disk. **New folders are always written with the source-number
+suffix** (``output_parquet/base_3/`` rather than ``output_parquet/base/``)
+so the folder name itself records the source identity — losing the
+project settings.yaml or moving the project elsewhere does not strand
+the data.
 
 Encodings
 ---------
@@ -12,19 +14,30 @@ Encodings
   Used in project settings (checked_executed_scenarios, comp_*_scenarios,
   etc.). ``|`` cannot appear in a scenario name.
 
-* **Subdirectory name** (on disk) — either the bare scenario name
-  (``base``) when this source owns it, or ``<scenario_name>_<source_number>``
-  (``base_2``) when another source owns the bare name. Ownership is
-  tracked in :attr:`ProjectSettings.bare_output_owners`.
+* **Subdirectory name** (on disk) — ``<scenario_name>_<source_number>``
+  (e.g. ``base_2``). Always. There is no bare-name shortcut for newly-
+  written folders.
 
-Legacy / ambiguity
-------------------
+Legacy bare folders
+-------------------
 
-Pre-existing directories that happen to end in ``_<digits>`` will be
-parsed as suffixed entries. If the user has scenario names ending in
-``_<small integer>`` those will false-positive — but the ownership map
-takes precedence when it records the full name, so this only matters
-for folders that have no ownership record at all (legacy data).
+Pre-existing projects may carry folders without the suffix (``base/``)
+from the previous "bare-owner" convention. Those are still recognised
+on the READ side via :attr:`ProjectSettings.bare_output_owners`:
+:func:`resolve_source_number` consults that map first so the old bare
+folder still maps to its original source. New writes never reuse a
+bare folder — if scenario "base" runs again it writes to
+``base_<source_number>/`` regardless of whether ``base/`` exists.
+Users with legacy projects should rename or delete the old bare
+folders manually; the GUI flags them as orphans (foreign source
+number) so they are visible.
+
+If the user happens to have a scenario name that itself ends in
+``_<digits>`` (e.g. literally named ``foo_3``), parsing is ambiguous
+when there is no owners record — :func:`parse_subdir` will read
+``foo_3`` as "scenario foo from source 3". The owners map disambiguates
+for legacy data; for new writes the suffix is appended, producing
+``foo_3_<source_number>`` which parses unambiguously.
 """
 
 from __future__ import annotations
@@ -119,34 +132,19 @@ def choose_output_subdir_for_write(
     source_number: int,
     scenario_name: str,
 ) -> str:
-    """Pick the subdir to write outputs into, claiming ownership when free.
+    """Pick the subdir to write outputs into.
 
-    Rules:
-      1. If an explicit suffixed folder already exists for *source_number*,
-         reuse it (avoids orphaning data from prior runs that used the
-         suffix form).
-      2. If the bare name is already owned by this source, use bare.
-      3. If the bare name is owned by another source, use the suffix form.
-      4. If nobody owns the bare name yet, claim it for this source and
-         use bare.
+    Always returns ``<scenario_name>_<source_number>``. The folder name
+    is self-describing — losing or corrupting ``bare_output_owners`` no
+    longer makes the folder ambiguous about which source it came from.
 
-    ``bare_output_owners`` is mutated in place when ownership is claimed
-    (case 4). The caller is responsible for persisting settings after.
+    The ``project_path`` and ``bare_output_owners`` parameters are kept
+    in the signature for API stability with callers but are unused; the
+    only legitimate purpose of the bare-owner map now is to recognise
+    legacy bare folders on the READ side (see :func:`resolve_source_number`).
     """
-    parquet_root = project_path / "output_parquet"
-    suffixed = parquet_root / format_subdir(source_number, scenario_name)
-    if suffixed.is_dir():
-        return suffixed.name
-
-    owner = bare_output_owners.get(scenario_name)
-    if owner == source_number:
-        return scenario_name
-    if owner is not None:
-        return format_subdir(source_number, scenario_name)
-
-    # Unclaimed — claim for this source.
-    bare_output_owners[scenario_name] = source_number
-    return scenario_name
+    del project_path, bare_output_owners  # unused — kept for API stability
+    return format_subdir(source_number, scenario_name)
 
 
 def release_bare_owner(

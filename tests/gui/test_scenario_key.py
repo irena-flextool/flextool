@@ -103,32 +103,37 @@ class TestOwnershipResolution:
         # overwrites an unclaimed bare folder by accident.
         assert resolve_subdir_for_read({}, 2, "base") == "base_2"
 
-    def test_choose_for_write_claims_bare_when_unclaimed(self, tmp_path):
+    def test_choose_for_write_always_suffixes_for_unclaimed(self, tmp_path):
+        # New writes always use the source-number suffix so folder names
+        # are self-describing; the owners map is never mutated by writes.
         owners: dict[str, int] = {}
         result = choose_output_subdir_for_write(tmp_path, owners, 1, "base")
-        assert result == "base"
-        assert owners == {"base": 1}
+        assert result == "base_1"
+        assert owners == {}
 
-    def test_choose_for_write_is_bare_for_owner(self, tmp_path):
+    def test_choose_for_write_always_suffixes_even_with_legacy_owner(self, tmp_path):
+        # Even when the legacy owners map records source 1 as bare-owner
+        # of "base", a new write still goes to the suffixed folder. The
+        # legacy bare folder remains on the read side only.
         owners = {"base": 1}
         result = choose_output_subdir_for_write(tmp_path, owners, 1, "base")
-        assert result == "base"
-        assert owners == {"base": 1}
+        assert result == "base_1"
+        assert owners == {"base": 1}  # owners map is read-only now
 
     def test_choose_for_write_suffixes_non_owner(self, tmp_path):
         owners = {"base": 1}
         result = choose_output_subdir_for_write(tmp_path, owners, 2, "base")
         assert result == "base_2"
-        assert owners == {"base": 1}  # non-owner doesn't claim anything
+        assert owners == {"base": 1}
 
-    def test_choose_for_write_reuses_existing_suffixed_folder(self, tmp_path):
-        # If a prior run produced a suffixed folder, reuse it instead of
-        # orphaning those results with a fresh bare claim.
+    def test_choose_for_write_existing_suffixed_folder(self, tmp_path):
+        # Always-suffix means we'd reuse the suffixed folder anyway —
+        # the path matches what we'd compute fresh.
         (tmp_path / "output_parquet" / "base_1").mkdir(parents=True)
         owners: dict[str, int] = {}
         result = choose_output_subdir_for_write(tmp_path, owners, 1, "base")
         assert result == "base_1"
-        assert owners == {}  # no claim — we reused the suffixed form
+        assert owners == {}
 
     def test_release_bare_owner_only_releases_when_source_matches(self):
         owners = {"base": 1}
@@ -221,20 +226,22 @@ def _make_scenario(name: str, source_number: int, source_name: str) -> ScenarioI
 
 
 class TestExecutionManagerCompoundIdentity:
-    def test_first_source_gets_bare_output_subdir(self, tmp_path):
+    def test_first_source_gets_suffixed_output_subdir(self, tmp_path):
+        # Every output folder is suffixed so the folder name records the
+        # source identity on its own.
         mgr = _make_mgr(tmp_path)
         job = mgr.add_jobs([_make_scenario("base", 1, "a.sqlite")])[0]
-        assert job.output_subdir == "base"
-        assert mgr.settings.bare_output_owners == {"base": 1}
+        assert job.output_subdir == "base_1"
+        # No bare-ownership claim is made by writes anymore.
+        assert mgr.settings.bare_output_owners == {}
 
-    def test_second_source_with_same_name_gets_suffix(self, tmp_path):
+    def test_second_source_with_same_name_also_suffixed(self, tmp_path):
         mgr = _make_mgr(tmp_path)
         first = mgr.add_jobs([_make_scenario("base", 1, "a.sqlite")])[0]
         second = mgr.add_jobs([_make_scenario("base", 2, "b.sqlite")])[0]
-        assert first.output_subdir == "base"
+        assert first.output_subdir == "base_1"
         assert second.output_subdir == "base_2"
-        # Ownership sticks with src 1.
-        assert mgr.settings.bare_output_owners == {"base": 1}
+        assert mgr.settings.bare_output_owners == {}
 
     def test_add_jobs_distinct_input_urls_for_same_name(self, tmp_path):
         mgr = _make_mgr(tmp_path)
@@ -265,8 +272,6 @@ class TestExecutionManagerCompoundIdentity:
 
     def test_build_run_command_uses_job_output_subdir(self, tmp_path):
         mgr = _make_mgr(tmp_path)
-        # Seed an ownership so src 3 must suffix.
-        mgr.settings.bare_output_owners["base"] = 1
         job = mgr.add_jobs([_make_scenario("base", 3, "src.sqlite")])[0]
         assert job.output_subdir == "base_3"
         cmd = mgr._build_run_command(job, tmp_path / "work" / "base_3")
