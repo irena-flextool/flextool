@@ -409,6 +409,15 @@ def _apply_dimension_rules(
         for i in reversed(spurious_cols):
             df = df.droplevel(i, axis=1)
 
+    # The stack/unstack pair above fabricates rows/columns for every
+    # combination of the stacked levels' unique values, including
+    # (unit, source) — or analogous entity-pair — combos that did not
+    # exist in the input parquet. Those phantom cells arrive as all-NaN
+    # rows / columns. Drop them so pagination, drawing, and the
+    # skip_data_with_only_zeroes flag see only the real combinations.
+    # This is a no-op for already-dense data.
+    df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+
     # Rebuild rules to match actual level order after stack/unstack
     level_names_after = list(df.index.names) + list(df.columns.names)
     if (len(set(level_names_before)) == len(level_names_before)

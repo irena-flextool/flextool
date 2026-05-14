@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # stale plans get recomputed instead of silently mis-applied. Old JSONs
 # without a schema_version (or with a lower one) are ignored by
 # load_plot_plan and the GUI's compute_live_plan path takes over.
-PLAN_SCHEMA_VERSION = 2
+PLAN_SCHEMA_VERSION = 3
 
 
 # ---------------------------------------------------------------------------
