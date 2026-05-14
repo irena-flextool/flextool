@@ -70,9 +70,11 @@ class TestBarChunkColumnReconstruction:
         )
         assert plan is not None
         # 6 rows * 4 expand groups = 24 visual items > max=4 → split by
-        # expand groups. max_groups = max(1, 4 // 6) = 1 → one chunk per
-        # expand group. 3 subs × 4 groups = 12 effective_plots.
-        assert len(plan.effective_plot_specs) == 12
+        # expand groups (one chunk per group, 6 rows × 1 group = 6 bars).
+        # Since 6 > max_items=4, each expand-group chunk is then further
+        # row-split into 2 sub-chunks (4 + 2 rows). 3 subs × 4 groups × 2
+        # row-chunks = 24 effective_plots.
+        assert len(plan.effective_plot_specs) == 24
 
         # Reconstruct each chunk and verify it only contains that subplot's
         # data AND only that expand group's columns.

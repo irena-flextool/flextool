@@ -1046,15 +1046,22 @@ def build_bar_figures(
 
     subs = _sort_subs(_get_unique_levels(df.columns, sub_levels))
 
-    # Compute expand-group count
-    if expand_axis_levels and isinstance(df.columns, pd.MultiIndex):
-        if len(expand_axis_level_names) == 1:
-            expand_level_name = expand_axis_level_names[0]
-            n_expand_groups = len(df.columns.get_level_values(expand_level_name).unique())
+    # Compute expand-group count. Mirrors the fix in ``_compute_bar_plan``:
+    # single-level columns also fan out into one bar per unique value at
+    # draw time, so we count those as expand groups too. Without this the
+    # pagination undercounts and a single figure ends up gigapixel-sized.
+    if expand_axis_levels:
+        if isinstance(df.columns, pd.MultiIndex):
+            if len(expand_axis_level_names) == 1:
+                expand_level_name = expand_axis_level_names[0]
+                n_expand_groups = len(df.columns.get_level_values(expand_level_name).unique())
+            else:
+                expand_level_name = expand_axis_level_names[0]
+                expand_frame = df.columns.to_frame()[expand_axis_level_names].drop_duplicates()
+                n_expand_groups = len(expand_frame)
         else:
-            expand_level_name = expand_axis_level_names[0]
-            expand_frame = df.columns.to_frame()[expand_axis_level_names].drop_duplicates()
-            n_expand_groups = len(expand_frame)
+            expand_level_name = df.columns.name
+            n_expand_groups = len(df.columns.unique())
     else:
         expand_level_name = None
         n_expand_groups = 1
@@ -1088,13 +1095,29 @@ def build_bar_figures(
         # Split by expand groups first (if present), then by rows within each group chunk
         if expand_level_name is not None and n_expand_groups > 1:
             max_groups = max(1, max_items_per_plot // max(n_rows, 1))
-            all_groups = df_sub.columns.get_level_values(expand_level_name).unique().tolist()
+            if isinstance(df_sub.columns, pd.MultiIndex):
+                all_groups = df_sub.columns.get_level_values(expand_level_name).unique().tolist()
+            else:
+                all_groups = df_sub.columns.unique().tolist()
             for gi, grp_start in enumerate(range(0, len(all_groups), max_groups)):
                 grp_chunk = all_groups[grp_start:grp_start + max_groups]
-                mask = df_sub.columns.get_level_values(expand_level_name).isin(grp_chunk)
+                if isinstance(df_sub.columns, pd.MultiIndex):
+                    mask = df_sub.columns.get_level_values(expand_level_name).isin(grp_chunk)
+                else:
+                    mask = df_sub.columns.isin(grp_chunk)
                 chunk = df_sub.loc[:, mask]
-                chunk_label = f"{title}_{gi + 1}" if title else None
-                effective_plots.append((chunk_label, chunk))
+                if n_rows > max_items_per_plot:
+                    n_row_chunks = (n_rows + max_items_per_plot - 1) // max_items_per_plot
+                    for ri in range(n_row_chunks):
+                        row_chunk = chunk.iloc[ri * max_items_per_plot:(ri + 1) * max_items_per_plot]
+                        sub_label = (
+                            f"{title}_{gi + 1}.{ri + 1}"
+                            if title else f"{gi + 1}.{ri + 1}"
+                        )
+                        effective_plots.append((sub_label, row_chunk))
+                else:
+                    chunk_label = f"{title}_{gi + 1}" if title else None
+                    effective_plots.append((chunk_label, chunk))
         elif n_rows > max_items_per_plot:
             # No expand groups — split by rows
             for i in range(0, n_rows, max_items_per_plot):
@@ -1164,8 +1187,10 @@ def build_bar_figures(
     # groups are present, each group contributes its own set of bar labels,
     # so the count is much larger than len(df_sub).
     def _count_visual_items(df_sub: pd.DataFrame) -> int:
-        if not expand_axis_level_names or not isinstance(df_sub.columns, pd.MultiIndex):
+        if not expand_axis_level_names:
             return max(len(df_sub), 1)
+        if not isinstance(df_sub.columns, pd.MultiIndex):
+            return max(len(df_sub) * len(df_sub.columns.unique()), 1)
         count = 0
         if len(expand_axis_level_names) == 1:
             groups = df_sub.columns.get_level_values(expand_axis_level_names[0]).unique()
