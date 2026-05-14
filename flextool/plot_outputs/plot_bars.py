@@ -276,17 +276,76 @@ def _build_bar_figure(
             return BAR_HEIGHT  # minimum
 
         def _sum_row_heights(df_data: pd.DataFrame) -> float:
-            """Sum per-row slot heights, using per-row n_grp."""
-            total = 0.0
-            for row_idx in df_data.index:
-                row = df_data.loc[[row_idx]]
+            """Sum per-row slot heights, using per-row n_grp.
+
+            Vectorised: avoids per-row ``df.loc[[idx]]`` slicing. Two cases:
+
+            * Simple bars (no ``grouped_bar_levels``): every kept row gets
+              ``_slot_height_for_n_grouped(1)``.
+            * Grouped bars: per-row group count = number of unique tuples
+              across ``grouped_bar_level_names`` whose column has at least
+              one non-zero value in that row (when pruning).
+            """
+            if df_data.empty:
+                return 0.0
+
+            import numpy as np
+            # Boolean mask: True where |v| > 1e-6 (column-wise).
+            nz_mask = df_data.abs() > 1e-6
+
+            # --- Case A: simple bars ---------------------------------------
+            if not grouped_bar_levels:
                 if skip_data_with_only_zeroes:
-                    row = row.loc[:, (row.abs() > 1e-6).any(axis=0)]
-                    if row.empty or (row.abs() < 1e-6).all().all():
-                        continue  # skip zero rows only when skip is enabled
-                n = _count_grouped(row) if grouped_bar_levels else 1
-                total += _slot_height_for_n_grouped(n)
-            return total
+                    # Legacy semantics: skip a row iff every column in
+                    # that row has |v| <= 1e-6.
+                    n_non_zero_rows = int(nz_mask.any(axis=1).sum())
+                else:
+                    n_non_zero_rows = len(df_data.index)
+                return n_non_zero_rows * _slot_height_for_n_grouped(1)
+
+            # --- Case B: grouped bars --------------------------------------
+            # Per-row count of unique grouped-level tuples whose column is
+            # non-zero in that row (mirrors legacy `_count_grouped(row)`
+            # called on the pre-pruned row).
+            cols = df_data.columns
+            slot_h = _slot_height_for_n_grouped  # local alias
+            if skip_data_with_only_zeroes:
+                if isinstance(cols, pd.MultiIndex) and grouped_bar_level_names:
+                    # Group columns by the grouped levels: each label
+                    # contributes one bar if ANY of its columns is non-zero
+                    # for the row.
+                    col_groups = cols.to_frame(index=False)[grouped_bar_level_names]
+                    # Encode tuple per column → integer code for fast grouping
+                    keys = pd.MultiIndex.from_frame(col_groups)
+                    codes, _uniq = keys.factorize() if hasattr(keys, 'factorize') \
+                        else pd.factorize(list(keys))
+                    # For each row & each code, OR the column non-zero flags
+                    # together, then count codes that are True.
+                    nz_arr = nz_mask.to_numpy()
+                    codes_arr = np.asarray(codes)
+                    n_codes = int(codes_arr.max()) + 1 if codes_arr.size else 0
+                    if n_codes == 0:
+                        return 0.0
+                    # Aggregate OR per (row, code) → (n_rows × n_codes).
+                    n_rows = nz_arr.shape[0]
+                    per_row = np.zeros((n_rows, n_codes), dtype=bool)
+                    for col_i, code in enumerate(codes_arr):
+                        per_row[:, int(code)] |= nz_arr[:, col_i]
+                    n_grouped_per_row = per_row.sum(axis=1)
+                else:
+                    # Single-level columns: each non-zero column in a row
+                    # is its own group.
+                    n_grouped_per_row = nz_mask.sum(axis=1).to_numpy()
+                # Vectorise the slot-height lookup. Slot heights repeat for
+                # small n, so cache per-n via np.unique.
+                uniq, inv = np.unique(n_grouped_per_row, return_inverse=True)
+                heights = np.array([slot_h(int(n)) if n > 0 else 0.0
+                                    for n in uniq], dtype=float)
+                return float(heights[inv].sum())
+
+            # No pruning: every row sees the same group count.
+            n_const = _count_grouped(df_data)
+            return len(df_data.index) * slot_h(n_const)
 
         if not expand_axis_levels:
             return max(_sum_row_heights(df_s), BAR_HEIGHT)
