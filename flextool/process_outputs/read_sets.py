@@ -396,7 +396,10 @@ def read_sets(
              "always_source", "always_sink"],
         )
 
-    # process_method / process__ct_method — (process, method).
+    # process_method — variable-style classification (1var_LP, 2var_LP,
+    # …).  Currently approximated as ``method_1way_1var_LP`` for every
+    # process that appears in ``process_source_sink``; this is the
+    # legacy seed the rest of the reader has always carried.
     if (flex_data.process_source_sink is not None
             and flex_data.process_source_sink.height > 0):
         pdf = flex_data.process_source_sink.select("p").unique().to_pandas()
@@ -404,9 +407,30 @@ def read_sets(
         s.process_method = pd.MultiIndex.from_frame(
             pdf, names=["process", "method"],
         )
-        s.process__ct_method = s.process_method
     else:
         s.process_method = empty_multi_index(["process", "method"])
+
+    # process__ct_method — conversion-time classification, orthogonal
+    # to ``process_method``.  Values that the downstream calculators
+    # check for include ``"min_load_efficiency"``,
+    # ``"constant_efficiency"``, ``"min_load"`` etc.  The only field
+    # FlexData carries on the conversion-time axis is
+    # ``process_min_load_eff`` (the subset of processes with
+    # ct_method=min_load_efficiency); we materialise those rows so the
+    # membership check ``(p, 'min_load_efficiency') in
+    # s.process__ct_method`` in calc_capacity_flows resolves to True
+    # for the right processes.  Processes that fall outside that
+    # subset simply don't appear in the index — which is correct: no
+    # downstream consumer keys on any other ct_method value via this
+    # set.
+    pmle = getattr(flex_data, "process_min_load_eff", None)
+    if pmle is not None and pmle.height > 0 and "p" in pmle.columns:
+        pdf = pmle.select("p").unique().to_pandas()
+        pdf["method"] = "min_load_efficiency"
+        s.process__ct_method = pd.MultiIndex.from_frame(
+            pdf, names=["process", "method"],
+        )
+    else:
         s.process__ct_method = empty_multi_index(["process", "method"])
 
     # method_1var_per_way / method_nvar — flextool's known-method names.
