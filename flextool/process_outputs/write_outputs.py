@@ -55,6 +55,39 @@ from spinedb_api import DatabaseMapping, from_database, Array
 import warnings
 
 
+def _backfill_group_indicator_sets(s, output_dir):
+    """Populate ``nodeGroupDispatch`` / ``*Indicators`` from input CSVs.
+
+    These three sets are derived from per-group user parameters
+    (``output_nodeGroup_dispatch`` / ``output_nodeGroup_indicators`` /
+    ``output_flowGroup_indicators``).  No FlexData field carries them
+    today; ``read_sets`` therefore hardcodes them empty.  The legacy
+    input-writer (``flextool/flextoolrunner/input_writer.py``) still
+    emits the CSVs to ``<workdir>/input/`` ahead of every solve, so we
+    backfill from there.  Without this, every ``nodeGroup_flows`` /
+    ``flowGroup_indicators`` writer short-circuits to "empty" and the
+    group_flows__dt / group_flows__d / flowGroup CSVs go missing.
+    """
+    raw_dir = output_dir or 'output_raw'
+    work_dir = os.path.dirname(raw_dir) or '.'
+    input_dir = os.path.join(work_dir, 'input')
+    for attr, fname in (
+        ('nodeGroupDispatch', 'nodeGroupDispatch.csv'),
+        ('nodeGroupIndicators', 'nodeGroupIndicators.csv'),
+        ('flowGroupIndicators', 'flowGroupIndicators.csv'),
+    ):
+        path = os.path.join(input_dir, fname)
+        if not os.path.exists(path):
+            continue
+        try:
+            df = pd.read_csv(path)
+        except pd.errors.EmptyDataError:
+            continue
+        if df.empty or df.shape[1] == 0:
+            continue
+        setattr(s, attr, pd.Index(df.iloc[:, 0].dropna(), name='group'))
+
+
 def _read_outputs(
     output_dir,
     *,
@@ -84,6 +117,7 @@ def _read_outputs(
             )
         p = read_parameters_multi(solve_steps, solution)
         s = read_sets_multi(solve_steps, solution)
+        _backfill_group_indicator_sets(s, output_dir)
         v = read_variables(output_dir)
         return p, s, v
     if flex_data is None or solution is None:
@@ -93,6 +127,7 @@ def _read_outputs(
         )
     p = read_parameters(flex_data, solution, solve_name=solve_name or "solve")
     s = read_sets(flex_data, solution, solve_name=solve_name or "solve")
+    _backfill_group_indicator_sets(s, output_dir)
     v = read_variables(output_dir)
     return p, s, v
 

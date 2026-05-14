@@ -94,6 +94,20 @@ def nodeGroup_indicators(par, s, v, r, debug):
         else:
             downward_slack = pd.Series(0, index=dt_index)
 
+        # Multi-solve handoff: v.* / r.flow_dt span the full union of
+        # sub-solve dt axes, while ``dt_realize_dispatch`` is the
+        # post-roll "realized" subset.  Reindex every component series
+        # to ``dt_index`` so the per-(period, time) DataFrame below
+        # never raises "All arrays must be of the same length".
+        upward_slack = upward_slack.reindex(dt_index, fill_value=0)
+        downward_slack = downward_slack.reindex(dt_index, fill_value=0)
+        vre_flow_sum = vre_flow_sum.reindex(dt_index, fill_value=0)
+        curtailed_vre = curtailed_vre.reindex(dt_index, fill_value=0)
+        curtailed_vre_share = curtailed_vre_share.reindex(dt_index, fill_value=0)
+        vre_share = vre_share.reindex(dt_index, fill_value=0)
+        group_inflow = group_inflow.reindex(dt_index, fill_value=0)
+        annualized_inflow = annualized_inflow.reindex(dt_index, fill_value=0)
+
         # Combine timestep results for this group
         group_result_dt = pd.DataFrame({
             'group': g,

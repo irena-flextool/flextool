@@ -320,13 +320,18 @@ def read_sets(
     # constrained to (process, node) pairs.
     if (flex_data.process_profile_upper is not None
             and flex_data.process_profile_upper.height > 0):
-        # Pick (p, source) pairs from profile_upper.  Legacy layout is
-        # (process, node) keyed on the source side.
+        # process_VRE: (process, node) pairs where the process has a
+        # profile_upper on its sink (output) arc.  The legacy GMPL set
+        # was 1-D (process only), but ``calc_storage_vre`` filters via
+        # ``process_VRE.isin(process_sink)`` and indexes flow_dt /
+        # potentialVREgen_dt columns by (process, sink) — so the node
+        # half must be the OUTPUT side (sink), matching the convention
+        # used by ``process__node__profile__profile_method`` below.
         cols = flex_data.process_profile_upper.columns
-        if "source" in cols:
-            ent_dim = "source"
-        elif "sink" in cols:
+        if "sink" in cols:
             ent_dim = "sink"
+        elif "source" in cols:
+            ent_dim = "source"
         else:
             ent_dim = cols[1] if len(cols) > 1 else cols[0]
         pdf = (flex_data.process_profile_upper.select("p", ent_dim)
