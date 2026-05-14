@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import MaxNLocator, FixedLocator, FixedFormatter
 from flextool.plot_outputs.format_helpers import _get_value_formatter
 from flextool.plot_outputs.legend_helpers import (
     estimate_legend_width, estimate_legend_height,
@@ -683,14 +683,22 @@ def _build_bar_figure(
                 else:
                     display_bar_labels.append(str(idx_val))
 
-        # Set main axis for individual bars (use cumulative y_positions)
+        # Set main axis for individual bars (use cumulative y_positions).
+        # Use FixedLocator/FixedFormatter rather than ax.set_yticks(...) so
+        # that matplotlib defers Tick object construction until render time
+        # (and then only for ticks inside the current view limits). The
+        # set_yticks/set_xticks pair otherwise instantiates one Tick per
+        # position up-front, which dominates build time when the bar count
+        # is in the thousands.
         if bar_orientation == 'horizontal':
-            ax.set_yticks(y_positions, labels=display_bar_labels)
+            ax.yaxis.set_major_locator(FixedLocator(y_positions))
+            ax.yaxis.set_major_formatter(FixedFormatter(display_bar_labels))
             ax.tick_params('y', length=0)
             ax.set_ylim(0, bars_only_h)
             ax.tick_params(labelsize=10)
         else:  # vertical
-            ax.set_xticks(y_positions, labels=display_bar_labels)
+            ax.xaxis.set_major_locator(FixedLocator(y_positions))
+            ax.xaxis.set_major_formatter(FixedFormatter(display_bar_labels))
             ax.tick_params('x', length=0)
             ax.set_xlim(0, bars_only_h)
             ax.tick_params(labelsize=10)
