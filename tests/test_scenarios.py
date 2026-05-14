@@ -166,10 +166,14 @@ def test_scenario(
         f"optimal solution"
     )
 
-    # Write CSV outputs.  Post-Δ.31 the in-memory readers need the
-    # final sub-solve's flex_data + solution; the raw_output_dir is
-    # still consulted for the per-sub-solve parquets written by
-    # ``write_outputs_for_solve`` inside the cascade.
+    # Write CSV outputs.  Post-Δ.31 the in-memory readers need each
+    # sub-solve's flex_data; ``solve_steps`` bundles every roll's
+    # ``(solve_name, flex_data)`` so ``par`` / ``s`` are unioned over
+    # the FULL dt axis — matching the union ``v`` carries from the
+    # per-sub-solve parquets read by ``write_outputs_for_solve``.
+    # ``solution`` is the last step's; downstream consumers
+    # (entity_all_capacity, etc.) only read post-solve cumulative
+    # state which is invariant across rolls of a single cascade.
     write_outputs(
         scenario_name=scenario,
         output_location=str(workdir),
@@ -178,9 +182,9 @@ def test_scenario(
         write_methods=["csv"],
         fallback_output_location=str(workdir),
         raw_output_dir=str(workdir / "output_raw"),
-        flex_data=last_step.flex_data,
         solution=last_step.solution,
         solve_name=last_step.solve_name,
+        solve_steps=[(s.solve_name, s.flex_data) for s in steps.values()],
     )
     elapsed_seconds = time.perf_counter() - t_start
 

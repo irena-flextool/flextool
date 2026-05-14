@@ -1183,3 +1183,83 @@ def _build_entity_unitsize_series(
             if e not in out.index:
                 out[e] = 1000.0
     return out
+
+
+# ---------------------------------------------------------------------------
+# Multi-solve wrapper
+# ---------------------------------------------------------------------------
+
+
+def _has_solve_level(obj) -> bool:
+    """True if ``obj`` is a pandas DataFrame/Series whose row MultiIndex
+    has a ``solve`` level — i.e. it varies per sub-solve and rows from
+    multiple sub-solves should be concatenated rather than overwritten.
+    """
+    if isinstance(obj, (pd.DataFrame, pd.Series)):
+        idx = obj.index
+        if isinstance(idx, pd.MultiIndex):
+            return "solve" in (idx.names or ())
+    return False
+
+
+def read_parameters_multi(
+    steps: "list[tuple[str, FlexData]]",
+    solution: "Solution",
+) -> SimpleNamespace:
+    """Multi-solve variant of :func:`read_parameters`.
+
+    ``steps`` is a list of ``(solve_name, flex_data)`` pairs covering
+    every sub-solve (roll) of the orchestration's cascade.  Per-(solve,
+    period, time) and per-(solve, period) outputs are built per sub-
+    solve and concatenated along the row axis so the resulting ``par``
+    namespace covers the FULL union of every sub-solve's dt axis —
+    matching the union ``v`` carries from parquet aggregation in
+    :mod:`flextool.process_outputs.read_variables`.
+
+    Per-entity static attributes (entity_unitsize, commodity_co2_content,
+    etc.) are invariant across sub-solves and are taken from the LAST
+    step (arbitrary; they're identical across rolls).
+
+    Rationale: rolling-solve orchestration carries per-sub-solve
+    ``flex_data`` already; the output path must reflect the union of
+    every sub-solve's parameter values, NOT just the last roll's.  See
+    the structural diagnosis: ``par`` was built from the last
+    ``flex_data.dt`` (one period) while ``v`` carried the union of
+    every parquet (all periods), so downstream ``mul`` / ``join`` ops
+    crashed on row-MultiIndex mismatches.
+    """
+    if not steps:
+        raise ValueError("read_parameters_multi: steps must be non-empty")
+
+    per_step = [
+        (sn, read_parameters(fd, solution, solve_name=sn))
+        for sn, fd in steps
+    ]
+    last_ns = per_step[-1][1]
+    if len(per_step) == 1:
+        return last_ns
+
+    out = SimpleNamespace()
+    attr_names = [a for a in vars(last_ns).keys()]
+    for attr in attr_names:
+        pieces = [getattr(ns, attr) for _, ns in per_step]
+        # If the attribute has a ``solve`` level on its row index, the
+        # union over sub-solves is the correct semantic; concat rows.
+        if any(_has_solve_level(p) for p in pieces):
+            non_empty = [p for p in pieces if len(p) > 0]
+            if not non_empty:
+                setattr(out, attr, pieces[-1])
+                continue
+            # ``pd.concat`` preserves dtypes and row order.  Each piece
+            # carries a distinct ``solve`` value so no de-duplication
+            # is needed.
+            merged = pd.concat(non_empty, axis=0)
+            # Preserve column dtype/name (concat keeps it; defensive).
+            if hasattr(pieces[-1], "columns") and hasattr(merged, "columns"):
+                merged.columns.name = pieces[-1].columns.name
+            setattr(out, attr, merged)
+        else:
+            # Static / per-entity / not-solve-keyed: invariant across
+            # sub-solves; pick the last step's value.
+            setattr(out, attr, getattr(last_ns, attr))
+    return out

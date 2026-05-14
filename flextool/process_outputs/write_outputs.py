@@ -20,8 +20,14 @@ def _parse_rename_entry(entry) -> tuple[str, bool]:
 
 from datetime import datetime, timezone
 from flextool.process_outputs.read_variables import read_variables
-from flextool.process_outputs.read_parameters import read_parameters
-from flextool.process_outputs.read_sets import read_sets
+from flextool.process_outputs.read_parameters import (
+    read_parameters,
+    read_parameters_multi,
+)
+from flextool.process_outputs.read_sets import (
+    read_sets,
+    read_sets_multi,
+)
 from flextool.process_outputs.process_results import post_process_results
 from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
 from flextool.process_outputs.out_flows import (
@@ -49,13 +55,37 @@ from spinedb_api import DatabaseMapping, from_database, Array
 import warnings
 
 
-def _read_outputs(output_dir, *, flex_data=None, solution=None, solve_name=None):
+def _read_outputs(
+    output_dir,
+    *,
+    flex_data=None,
+    solution=None,
+    solve_name=None,
+    solve_steps=None,
+):
     """Read solver output files and return (par, s, v).
 
     Δ.31: ``flex_data`` + ``solution`` are required for the in-memory
     parameter / set reading.  Variables (parquets) are still read from
     ``output_raw/`` since the polars-LP write path emits them there.
+
+    ``solve_steps`` (post-Δ.31 multi-solve fix): an ordered list of
+    ``(solve_name, FlexData)`` pairs covering every sub-solve (roll)
+    of the orchestration cascade.  When supplied, ``par`` / ``s`` are
+    built as the union over every sub-solve's dt axis — matching the
+    ``solve``-axis union ``v`` carries from per-sub-solve parquet
+    aggregation.  Falls back to the single-``flex_data`` path when
+    not supplied (single-solve scenarios).
     """
+    if solve_steps is not None:
+        if solution is None:
+            raise ValueError(
+                "_read_outputs requires solution alongside solve_steps."
+            )
+        p = read_parameters_multi(solve_steps, solution)
+        s = read_sets_multi(solve_steps, solution)
+        v = read_variables(output_dir)
+        return p, s, v
     if flex_data is None or solution is None:
         raise ValueError(
             "_read_outputs requires flex_data and solution after Δ.31; "
@@ -395,7 +425,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -424,6 +454,14 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         solve_name: complete solve identifier (e.g. ``"y2020_2day_dispatch"``)
             used as the leading ``solve`` index level on the wide-format
             params / sets.  Defaults to ``scenario_name``.
+        solve_steps: optional ordered list of ``(solve_name, FlexData)``
+            pairs covering every sub-solve (roll) of the orchestration
+            cascade.  Multi-solve / rolling scenarios MUST supply this
+            so ``par`` and ``s`` are unioned across every sub-solve's
+            dt axis — otherwise they would only carry the last roll's
+            (d, t) rows while ``v`` carries the union from per-sub-
+            solve parquet aggregation, and pandas joins/muls would
+            mismatch.  Single-solve scenarios can ignore.
     """
     write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format = _resolve_settings(
         write_methods, output_config_path, active_configs, plot_rows,
@@ -507,6 +545,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             flex_data=flex_data,
             solution=solution,
             solve_name=solve_name or scenario_name,
+            solve_steps=solve_steps,
         )
         start = log_time("Read flextool outputs", start, timing_recorder)
 

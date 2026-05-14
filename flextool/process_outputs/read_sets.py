@@ -846,3 +846,88 @@ def read_sets(
         s.connection_susceptance = pd.Series(dtype=float)
 
     return s
+
+
+# ---------------------------------------------------------------------------
+# Multi-solve wrapper
+# ---------------------------------------------------------------------------
+
+
+def _multi_index_has_solve(obj) -> bool:
+    if isinstance(obj, pd.MultiIndex):
+        return "solve" in (obj.names or ())
+    return False
+
+
+def _series_or_df_has_solve(obj) -> bool:
+    if isinstance(obj, (pd.DataFrame, pd.Series)):
+        idx = obj.index
+        if isinstance(idx, pd.MultiIndex):
+            return "solve" in (idx.names or ())
+    return False
+
+
+def read_sets_multi(
+    steps: "list[tuple[str, FlexData]]",
+    solution: "Solution",
+) -> SimpleNamespace:
+    """Multi-solve variant of :func:`read_sets`.
+
+    See :func:`flextool.process_outputs.read_parameters.read_parameters_multi`
+    for the rationale.  Per-sub-solve ``(solve, period, …)``-keyed sets
+    (``period``, ``dt``, ``d_realized_period``, ``dt_realize_dispatch``,
+    ``d_realize_invest``, ``ed_invest``, ``dtttdt``, etc.) are unioned
+    across sub-solves; static set attributes (``node``, ``process``,
+    ``upDown``, …) are taken from the last step (invariant).
+    """
+    if not steps:
+        raise ValueError("read_sets_multi: steps must be non-empty")
+
+    per_step = [
+        (sn, read_sets(fd, solution, solve_name=sn))
+        for sn, fd in steps
+    ]
+    last_ns = per_step[-1][1]
+    if len(per_step) == 1:
+        return last_ns
+
+    out = SimpleNamespace()
+    attr_names = list(vars(last_ns).keys())
+    for attr in attr_names:
+        pieces = [getattr(ns, attr) for _, ns in per_step]
+        first = pieces[0]
+        if isinstance(first, pd.MultiIndex):
+            if _multi_index_has_solve(first):
+                # Concat MultiIndex rows from each sub-solve.  Non-empty
+                # pieces only — empty MultiIndex with mismatching dtypes
+                # can perturb the result's dtype.
+                non_empty = [p for p in pieces if len(p) > 0]
+                if not non_empty:
+                    setattr(out, attr, first)
+                    continue
+                # Build per-level Python lists and reassemble (works
+                # regardless of dtype quirks at the empty-frame
+                # boundary).
+                names = non_empty[0].names
+                # All pieces share the same names by construction.
+                level_lists = [[] for _ in names]
+                for p in non_empty:
+                    for i in range(len(names)):
+                        level_lists[i].extend(list(p.get_level_values(i)))
+                setattr(out, attr, pd.MultiIndex.from_arrays(
+                    level_lists, names=names,
+                ))
+            else:
+                setattr(out, attr, getattr(last_ns, attr))
+        elif _series_or_df_has_solve(first):
+            non_empty = [p for p in pieces if len(p) > 0]
+            if not non_empty:
+                setattr(out, attr, pieces[-1])
+                continue
+            merged = pd.concat(non_empty, axis=0)
+            if hasattr(pieces[-1], "columns") and hasattr(merged, "columns"):
+                merged.columns.name = pieces[-1].columns.name
+            setattr(out, attr, merged)
+        else:
+            setattr(out, attr, getattr(last_ns, attr))
+    return out
