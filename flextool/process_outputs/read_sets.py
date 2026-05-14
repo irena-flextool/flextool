@@ -518,13 +518,23 @@ def read_sets(
         ["solve", "period", "time"],
     )
 
-    # d_realize_invest — periods where invest decisions are realized.
-    invest_periods = []
-    if (flex_data.ed_invest_set is not None
-            and flex_data.ed_invest_set.height > 0
-            and "d" in flex_data.ed_invest_set.columns):
-        invest_periods = (flex_data.ed_invest_set.select("d")
-                          .unique().to_pandas()["d"].tolist())
+    # d_realize_invest — periods where invest *or divest* decisions are
+    # realized.  Use the union of ed_invest_set and ed_divest_set "d"
+    # columns: scenarios that only divest (e.g. ``coal_retire``) have
+    # empty ed_invest_set but non-empty ed_divest_set, and we still need
+    # those periods in d_realize_invest so the drop_levels inner-join
+    # against ed_divest doesn't collapse to empty (which was leaving
+    # ``divested`` as NaN in ``unit_capacity__d.csv``).
+    invest_periods_list: list = []
+    seen: set = set()
+    for src in (flex_data.ed_invest_set, flex_data.ed_divest_set):
+        if (src is not None and src.height > 0
+                and "d" in src.columns):
+            for d in src.select("d").unique().to_pandas()["d"].tolist():
+                if d not in seen:
+                    seen.add(d)
+                    invest_periods_list.append(d)
+    invest_periods = invest_periods_list
     s.d_realize_invest = pd.MultiIndex.from_arrays(
         [[solve_name] * len(invest_periods), invest_periods],
         names=["solve", "period"],
