@@ -56,3 +56,51 @@ When to revisit:
 - If glpsol is ever reintroduced as a supported solver, the
   fixture pins could be reverted and the original v3.32.0 golden
   restored — at which point this log entry becomes historical.
+
+## 2026-05-14 — `multi_year_wind_no_investment/unit_capacity__d.csv`
+
+**Context.** v3.32.0's golden shipped `invested=0.0` on the
+`wind_plant` rows for periods `p2030` and `p2035`, both of which
+have `existing=0` (the wind plant had no presence in those periods —
+no realized invest decision either).  Per FlexTool's "unrealized
+cell semantics" convention (see project memory
+`project_unrealized_cell_semantics.md`), an invest-eligible-but-not-
+realized `(entity, period)` cell should be empty/NaN, NOT `0`.  The
+distinction matters: `0` says "model decided zero investment",
+empty/NaN says "no realized decision for this cell".  The engine_polars
+cascade output already follows the empty convention (via the
+intersection filter at `out_capacity.py` from commit `cd52d383`);
+v3.32.0's `0.0` was the inconsistency.
+
+**Diff** (- v3.32.0 golden, + regenerated, commit `d534116b`):
+
+```
+ wind_plant,y2020_2035_5week,p2020,1000,72.6275,,1072.6275
+-wind_plant,y2020_2035_5week,p2025,1000,1277.4294,,2350.0568
+-wind_plant,y2020_2035_5week,p2030,0,0.0,,1277.4294
+-wind_plant,y2020_2035_5week,p2035,0,0.0,,0.0
++wind_plant,y2020_2035_5week,p2025,1000,1277.4293,,2350.0568
++wind_plant,y2020_2035_5week,p2030,0,,,1277.4293
++wind_plant,y2020_2035_5week,p2035,0,,,0.0
+```
+
+Two conceptual changes:
+1. `p2030` and `p2035` `wind_plant.invested`: `0.0` → empty.
+   Convention alignment, the load-bearing change.
+2. `p2025` and `p2030` `wind_plant.invested` / `total`:
+   `1277.4294` → `1277.4293` and `2350.0568` (unchanged) /
+   `1277.4294` → `1277.4293`.  Fifth-decimal solver noise between
+   glpsol (v3.32.0) and HiGHS (HEAD); well within
+   `round_for_comparison + rtol=1e-4` tolerance.
+
+**Decision** (user, 2026-05-14): accept.  The empty-cell convention
+is semantically correct; the v3.32.0 ship of `0.0` was a writer-side
+inconsistency (other v3.32.0 scenarios such as `y2020_2029_2x5y`
+correctly ship empty for the same kind of cell).
+
+**Not affected by this regen.** Other v3.32.0 goldens with
+`invested=0.0` rows are NOT regenerated — most of those are realized
+cells where the model genuinely chose zero investment.  Only the
+`wind_plant.p2030` and `wind_plant.p2035` cells here matched the
+unrealized-cell pattern (existing also 0 → no presence → no realized
+decision).
