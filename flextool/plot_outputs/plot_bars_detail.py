@@ -17,6 +17,53 @@ REFERENCE_BAR_THICKNESS = 0.0558    # matches plot_bars.REFERENCE_BAR_THICKNESS
 SOLO_BAR_THICKNESS = 0.1116         # = 2 × REFERENCE_BAR_THICKNESS
 
 
+def _min_visible_data_width(ax, axis: str) -> float:
+    """Smallest data-axis width that still renders at >= 1 display pixel.
+
+    Returns the data extent that maps to one pixel along *axis* in the
+    current axes layout: ``(xlim[1] - xlim[0]) / ax.bbox.width`` for the
+    x-axis, ``(ylim[1] - ylim[0]) / ax.bbox.height`` for y.
+
+    Bars whose width (or height, for vertical bars) is strictly less than
+    this value cannot light up a pixel and can be skipped from drawing
+    without changing the visible output. If a zoom changes xlim/ylim
+    later, callers can re-evaluate the threshold and re-render.
+    """
+    if axis == 'x':
+        lo, hi = ax.get_xlim()
+        px = ax.bbox.width
+    elif axis == 'y':
+        lo, hi = ax.get_ylim()
+        px = ax.bbox.height
+    else:
+        raise ValueError(f"axis must be 'x' or 'y', got {axis!r}")
+    if px <= 0:
+        return 0.0
+    return abs(hi - lo) / float(px)
+
+
+def _autoscale_value_range(values: np.ndarray) -> tuple[float, float]:
+    """Reproduce matplotlib's auto-xlim for a bar() / barh() value array.
+
+    Matplotlib expands the axis to include 0 (bars baseline) plus the data
+    extent, then adds a small margin. We mirror that here so callers can
+    set xlim before drawing and read a threshold from ax.bbox. The exact
+    margin matches rcParams['axes.xmargin'] (default 0.05).
+    """
+    if values.size == 0:
+        return 0.0, 1.0
+    vmin = np.nanmin(values)
+    vmax = np.nanmax(values)
+    if not (np.isfinite(vmin) and np.isfinite(vmax)):
+        return 0.0, 1.0
+    lo = float(min(0.0, vmin))
+    hi = float(max(0.0, vmax))
+    if lo == hi:
+        return lo - 0.5, hi + 0.5
+    margin = 0.05 * (hi - lo)
+    return lo - margin, hi + margin
+
+
 def _stack_label(stack_idx: int, stacks: list, labeled_stacks: set) -> str:
     """Return the legend label for a stack segment (empty string if already labeled)."""
     if stack_idx not in labeled_stacks:
@@ -44,6 +91,7 @@ def _plot_grouped_bars(
     y_positions: list[float] | None = None,
     slot_heights: list[float] | None = None,
     labeled_groups: set[str] | None = None,
+    value_axis_lim: tuple[float, float] | None = None,
 ) -> None:
     """Render grouped side-by-side bars onto ax for one subplot.
 
@@ -168,6 +216,27 @@ def _plot_grouped_bars(
 
     horizontal = bar_orientation == 'horizontal'
 
+    # Sub-pixel filtering. Fix xlim/ylim to the final value-axis range so
+    # the threshold matches what will be on screen, then ask ax.bbox for
+    # the pixel size of one data unit. If the caller supplied explicit
+    # bounds (axis_bounds), use them — they override autoscale anyway.
+    # Bars strictly under threshold cannot light up a pixel and are
+    # excluded from the draw call. Sub-pixel bars do not contribute to
+    # the layout (grouped bars are independent — there is no cumulative-
+    # sum coupling like stacks).
+    if value_axis_lim is not None:
+        lo, hi = float(value_axis_lim[0]), float(value_axis_lim[1])
+    elif values_mat.size:
+        lo, hi = _autoscale_value_range(values_mat[has_value])
+    else:
+        lo, hi = 0.0, 1.0
+    if horizontal:
+        ax.set_xlim(lo, hi)
+        threshold = _min_visible_data_width(ax, 'x')
+    else:
+        ax.set_ylim(lo, hi)
+        threshold = _min_visible_data_width(ax, 'y')
+
     # Track which categories we've emitted a legend entry for (mirrors original
     # behaviour: each category gets one entry, attached to its first-drawn
     # non-empty draw call across the whole subplot).
@@ -186,7 +255,11 @@ def _plot_grouped_bars(
             offset = -total_w / 2 + bar_w / 2 + grouped_idx * step  # left to right
         sub_y = y_pos_vec + offset
 
-        mask = has_value[:, grouped_idx]
+        # Drop sub-pixel bars in addition to the existing zero-mask. Each
+        # category contributes its own colour, so a single category's
+        # legend handle is still emitted via the invisible fallback below
+        # when every bar in that category is sub-pixel.
+        mask = has_value[:, grouped_idx] & (np.abs(values_mat[:, grouped_idx]) >= threshold)
         if not mask.any():
             continue
         ys = sub_y[mask]
@@ -236,6 +309,7 @@ def _plot_stacked_bars(
     shared_color_map: dict[str, tuple] | None = None,
     y_positions: list[float] | None = None,
     slot_heights: list[float] | None = None,
+    value_axis_lim: tuple[float, float] | None = None,
 ) -> None:
     """Render stacked bars onto ax for one subplot.
 
@@ -371,9 +445,36 @@ def _plot_stacked_bars(
 
     horizontal = bar_orientation == 'horizontal'
 
+    # Sub-pixel filter. Use the caller-supplied value-axis range if given
+    # (it matches what axis_bounds / always_include_zero produce later);
+    # otherwise reproduce matplotlib's autoscale on the per-row stack
+    # totals (sum of positives = rightmost edge, sum of negatives =
+    # leftmost edge).
+    if value_axis_lim is not None:
+        lo, hi = float(value_axis_lim[0]), float(value_axis_lim[1])
+    elif n_stack > 0 and n_bars > 0:
+        row_max = pos_widths.sum(axis=1)
+        row_min = neg_widths.sum(axis=1)  # already <= 0
+        full_max = float(np.nanmax(row_max)) if row_max.size else 0.0
+        full_min = float(np.nanmin(row_min)) if row_min.size else 0.0
+        lo, hi = _autoscale_value_range(np.array([full_min, full_max]))
+    else:
+        lo, hi = 0.0, 1.0
+    if horizontal:
+        ax.set_xlim(lo, hi)
+        threshold = _min_visible_data_width(ax, 'x')
+    else:
+        ax.set_ylim(lo, hi)
+        threshold = _min_visible_data_width(ax, 'y')
+
+    # Dropping sub-pixel layers is safe: pos_lefts/neg_lefts are the
+    # cumulative sums computed from the FULL widths matrix (including
+    # sub-pixel layers), so the next visible layer's `left`/`bottom` still
+    # sits in the geometrically correct place — no gap appears, no shift.
+
     # Draw positives, forward order (0..N-1)
     for si in range(n_stack):
-        mask = pos_widths[:, si] > 0
+        mask = pos_widths[:, si] >= threshold
         if not mask.any():
             continue
         ys = y_pos_vec[mask]
@@ -387,7 +488,7 @@ def _plot_stacked_bars(
 
     # Draw negatives, reversed order (N-1..0)
     for si in range(n_stack - 1, -1, -1):
-        mask = neg_widths[:, si] < 0
+        mask = -neg_widths[:, si] >= threshold
         if not mask.any():
             continue
         ys = y_pos_vec[mask]
@@ -434,6 +535,7 @@ def _plot_simple_bars(
     value_fmt: str | None,
     y_positions: list[float] | None = None,
     slot_heights: list[float] | None = None,
+    value_axis_lim: tuple[float, float] | None = None,
 ) -> None:
     """Render simple single-color bars onto ax for one subplot (no stacking, no grouping)."""
     if not all_bars:
@@ -470,16 +572,43 @@ def _plot_simple_bars(
 
     # y-positions: vector matching all_bars length
     if y_positions is None:
-        y_pos_vec = list(range(len(all_bars)))
+        y_pos_vec = np.arange(len(all_bars), dtype=float)
     else:
-        y_pos_vec = y_positions
+        y_pos_vec = np.asarray(y_positions, dtype=float)
+
+    values_arr = np.asarray(values, dtype=float)
+
+    # Sub-pixel filtering. Set xlim/ylim to the final value-axis range
+    # (caller-supplied when known, e.g. from axis_bounds) so the threshold
+    # matches what will be on screen, then ask ax.bbox how wide one data
+    # unit is in pixels. Bars below 1 px cannot light up a pixel so we
+    # omit them from the draw.
+    horizontal = bar_orientation == 'horizontal'
+    if value_axis_lim is not None:
+        lo, hi = float(value_axis_lim[0]), float(value_axis_lim[1])
+    else:
+        lo, hi = _autoscale_value_range(values_arr)
+    if horizontal:
+        ax.set_xlim(lo, hi)
+        threshold = _min_visible_data_width(ax, 'x')
+    else:
+        ax.set_ylim(lo, hi)
+        threshold = _min_visible_data_width(ax, 'y')
+
+    visible_mask = np.abs(values_arr) >= threshold
+    if visible_mask.all():
+        draw_y = y_pos_vec
+        draw_v = values_arr
+    else:
+        draw_y = y_pos_vec[visible_mask]
+        draw_v = values_arr[visible_mask]
 
     # Single vectorised draw call replacing the per-bar loop.
     bar_h = SOLO_BAR_THICKNESS
-    if bar_orientation == 'horizontal':
-        container = ax.barh(y_pos_vec, values, height=bar_h, color='steelblue')
+    if horizontal:
+        container = ax.barh(draw_y, draw_v, height=bar_h, color='steelblue')
     else:  # vertical
-        container = ax.bar(y_pos_vec, values, width=bar_h, color='steelblue')
+        container = ax.bar(draw_y, draw_v, width=bar_h, color='steelblue')
     if value_fmt:
         if value_fmt == 'dynamic':
             _dfmt = DynamicFormatter()

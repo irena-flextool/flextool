@@ -669,6 +669,23 @@ def _build_bar_figure(
         else:
             ax = axes[idx]
 
+        # When axis_bounds explicitly fixes the value axis, the post-draw
+        # finalisation below will override matplotlib's autoscale with
+        # those bounds. Passing them in lets the bar-plot helpers compute
+        # the sub-pixel threshold against the FINAL on-screen range
+        # rather than the data range — important when axis_bounds is
+        # tighter than the data (otherwise the helper would compute too
+        # large a threshold and drop bars that the final view would show).
+        # When no axis_bounds is set, the helper auto-computes from data;
+        # downstream zero-inclusion and value-label margin only enlarge
+        # that range, so the helper's threshold is a conservative under-
+        # estimate (we keep some bars that turn out invisible — safe).
+        explicit_bounds = _subplot_axis_bounds(axis_bounds, idx)
+        if explicit_bounds and explicit_bounds[0] != explicit_bounds[1]:
+            value_axis_lim = (float(explicit_bounds[0]), float(explicit_bounds[1]))
+        else:
+            value_axis_lim = None
+
         # Determine plotting mode and execute appropriate logic
         if grouped_bar_levels:
             # Single batched call per subplot: _plot_grouped_bars vectorises
@@ -681,16 +698,19 @@ def _build_bar_figure(
                                shared_color_map=shared_color_map,
                                y_positions=y_positions,
                                slot_heights=per_bar_heights,
-                               labeled_groups=labeled_groups)
+                               labeled_groups=labeled_groups,
+                               value_axis_lim=value_axis_lim)
         elif stack_levels:
             _plot_stacked_bars(ax, df_sub, all_bars, expand_axis_level_names,
                                stack_level_names, bar_orientation,
                                shared_color_map=shared_color_map,
-                               y_positions=y_positions, slot_heights=per_bar_heights)
+                               y_positions=y_positions, slot_heights=per_bar_heights,
+                               value_axis_lim=value_axis_lim)
         else:
             _plot_simple_bars(ax, df_sub, all_bars, expand_axis_level_names,
                               bar_orientation, value_fmt,
-                              y_positions=y_positions, slot_heights=per_bar_heights)
+                              y_positions=y_positions, slot_heights=per_bar_heights,
+                              value_axis_lim=value_axis_lim)
 
         # Set up axis with groups and bars
         # Build bar labels for display (matching all_bars structure)
