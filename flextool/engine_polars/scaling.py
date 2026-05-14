@@ -57,6 +57,53 @@ UNITSIZE_SPREAD_THRESHOLD = 3.0
 RHS_SPREAD_THRESHOLD = 6.0
 COST_SPREAD_THRESHOLD = 5.0
 
+
+# ---------------------------------------------------------------------------
+# Determinism pin
+# ---------------------------------------------------------------------------
+#
+# HiGHS' default-of-``choose`` for ``parallel``/``presolve``/``solver`` plus a
+# time-varying ``random_seed`` lets HiGHS pick different code paths between
+# runs.  For LPs with multiple optimal vertices that flips which optimum is
+# returned, which in turn flips golden-file comparisons (e.g. the
+# ``coal_wind_ev`` / ``network_coal_wind_reserve_co2_capacity_margin``
+# scenarios in test_scenarios.py).
+#
+# Pinned:
+#   * ``random_seed=0``  — fully deterministic seed.
+#   * ``parallel="off"`` — no multi-threading parallelism inside HiGHS.
+#     This alone forces the serial dual simplex (HiGHS' default solver),
+#     so we deliberately do NOT also set ``threads=1``.  HiGHS
+#     initialises a single, process-global thread scheduler on the FIRST
+#     ``Highs::run()`` of the process; subsequent ``Highs`` instances
+#     that try to set ``threads`` to a different value are rejected with
+#     ``"global scheduler has already been initialized"``, which polar
+#     -high surfaces as a non-OK option-set and the legacy
+#     ``_native_run_model`` reports as ``Error: 1`` — failing every
+#     scenario in the gate.  ``parallel=off`` is sufficient for
+#     determinism (no concurrent simplex trajectories) without touching
+#     the scheduler.
+#   * ``solver="simplex"`` — pick simplex unconditionally (avoids HiGHS'
+#     internal ``choose`` heuristic flipping between simplex/IPM).
+#   * ``presolve="on"``  — force presolve on (vs the non-deterministic
+#     ``choose``).  We do NOT disable presolve — turning it off makes the
+#     gate ~3x slower and changes a great many LP solutions; ``on`` is
+#     deterministic and matches HiGHS' usual recommendation.
+#
+# These propagate through ``recommended_highs_options`` -> the
+# ``set_solver_options(highs_options)`` call sites in
+# ``flextool/engine_polars/_orchestration.py`` (both the warm path and the
+# cold path).  This is the actual control point — ``tests/highs.opt`` is
+# copied into the bin-dir fixture for CLI-style runs but is NOT read by
+# ``polar_high.Problem`` (which is what test_scenarios.py drives via
+# ``run_chain_from_db``).
+DETERMINISM_OPTIONS: dict[str, object] = {
+    "random_seed": 0,
+    "parallel": "off",
+    "solver": "simplex",
+    "presolve": "on",
+}
+
 RHS_FAMILIES: tuple[str, ...] = ("node_inflow", "node_annual_flow")
 COST_FAMILIES: tuple[str, ...] = (
     "vom_and_op_costs",
@@ -645,7 +692,7 @@ def recommended_highs_options(
     apply_user_bound_scale: bool = True,
     user_bound_scale_override: Optional[int] = None,
     lp_ranges: dict | None = None,
-) -> dict[str, int]:
+) -> dict[str, object]:
     """Build the HiGHS solver-options dict from a :class:`ScaleTable`.
 
     Currently sets:
@@ -689,8 +736,10 @@ def recommended_highs_options(
         actually sees, so the recommendation matches HiGHS' own
         "Consider setting the user_bound_scale option to <N>" advice.
     """
-    options: dict[str, int] = {
+    # Determinism pin — see DETERMINISM_OPTIONS below.
+    options: dict[str, object] = {
         "simplex_scale_strategy": SIMPLEX_SCALE_STRATEGY_ADVANCED,
+        **DETERMINISM_OPTIONS,
     }
     if user_bound_scale_override is not None and user_bound_scale_override != 0:
         # Clamp to the same range the heuristic uses.  HiGHS itself
