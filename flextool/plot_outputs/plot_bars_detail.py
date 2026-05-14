@@ -358,8 +358,17 @@ def _plot_simple_bars(
     slot_heights: list[float] | None = None,
 ) -> None:
     """Render simple single-color bars onto ax for one subplot (no stacking, no grouping)."""
-    for bar_idx, (group, period) in enumerate(all_bars):
-        # Get data for this expand_axis group
+    if not all_bars:
+        return
+
+    # ── Precompute values for every (group, period) in one shot ──
+    # Build a dict keyed by group → per-period sum Series (so each unique
+    # group is only sliced + .sum()'d once), then read scalars per bar.
+    group_sums: dict = {}
+    for group, _period in all_bars:
+        key = _hashable(group)
+        if key in group_sums:
+            continue
         if group is None:
             df_bar = df_sub
         elif len(expand_axis_level_names) == 1 and isinstance(df_sub.columns, pd.MultiIndex):
@@ -368,23 +377,41 @@ def _plot_simple_bars(
             df_bar = df_sub[group]
         else:
             df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
-
-        # Sum all values for this period
+        # Pre-collapse to a per-period scalar (Series indexed by period) so
+        # the per-bar lookup below is O(1) instead of a per-bar .sum().
         if isinstance(df_bar, pd.Series):
-            value = df_bar.loc[period] if period in df_bar.index else 0
+            sums = df_bar
         else:
-            value = df_bar.loc[period].sum() if period in df_bar.index else 0
+            sums = df_bar.sum(axis=1)
+        group_sums[key] = sums
 
-        # Plot single-color bar — fixed solo thickness.
-        y_pos = y_positions[bar_idx] if y_positions else bar_idx
-        bar_h = SOLO_BAR_THICKNESS
-        if bar_orientation == 'horizontal':
-            container = ax.barh(y_pos, value, height=bar_h, color='steelblue')
-        else:  # vertical
-            container = ax.bar(y_pos, value, width=bar_h, color='steelblue')
-        if value_fmt:
-            if value_fmt == 'dynamic':
-                _dfmt = DynamicFormatter()
-                ax.bar_label(container, fmt=lambda x, _f=_dfmt: _f(x, None), padding=3)
-            else:
-                ax.bar_label(container, fmt=lambda x, _s=value_fmt: format(x, _s), padding=3)
+    values: list[float] = []
+    for group, period in all_bars:
+        sums = group_sums[_hashable(group)]
+        values.append(sums.loc[period] if period in sums.index else 0)
+
+    # y-positions: vector matching all_bars length
+    if y_positions is None:
+        y_pos_vec = list(range(len(all_bars)))
+    else:
+        y_pos_vec = y_positions
+
+    # Single vectorised draw call replacing the per-bar loop.
+    bar_h = SOLO_BAR_THICKNESS
+    if bar_orientation == 'horizontal':
+        container = ax.barh(y_pos_vec, values, height=bar_h, color='steelblue')
+    else:  # vertical
+        container = ax.bar(y_pos_vec, values, width=bar_h, color='steelblue')
+    if value_fmt:
+        if value_fmt == 'dynamic':
+            _dfmt = DynamicFormatter()
+            ax.bar_label(container, fmt=lambda x, _f=_dfmt: _f(x, None), padding=3)
+        else:
+            ax.bar_label(container, fmt=lambda x, _s=value_fmt: format(x, _s), padding=3)
+
+
+def _hashable(value):
+    """Return a hashable key for grouping by expand_axis value (which may be a list)."""
+    if isinstance(value, list):
+        return tuple(value)
+    return value
