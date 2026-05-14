@@ -443,12 +443,48 @@ def read_sets(
 
     # d_realized_period / d_realize_invest / dt_realize_dispatch /
     # d_realize_dispatch_or_invest — these are subsets of period / dt.
-    # Without explicit FlexData fields we use ``period`` / ``dt`` as
-    # the fallback (matches single-solve fixtures where every period
-    # is realized).  ``period_in_use_set`` and ``ed_invest_set`` give
-    # us hints if available.
-    s.d_realized_period = s.period
-    s.dt_realize_dispatch = s.dt
+    # Prefer the explicit ``flex_data.realized_dispatch`` (period, step)
+    # frame when supplied — this restricts dispatch-time CSVs to the
+    # realized window and excludes foresight rows from rolling solves.
+    # Falls back to ``period`` / ``dt`` when no realized_dispatch is
+    # available (single-period fixtures where every period is realized).
+    if (flex_data.realized_dispatch is not None
+            and flex_data.realized_dispatch.height > 0):
+        rd_pl = flex_data.realized_dispatch
+        s.dt_realize_dispatch = pd.MultiIndex.from_frame(
+            rd_pl.with_columns(pl.lit(solve_name).alias("solve"))
+                .select("solve", "period", "step").to_pandas(),
+            names=["solve", "period", "time"],
+        )
+        # Preserve the canonical period order from ``flex_data.dt`` —
+        # ``realized_dispatch`` uniqueness can reorder periods, which
+        # breaks period-indexed CSV row order (e.g. ``unit_capacity__d``).
+        rd_periods_unordered = set(
+            rd_pl.select("period").unique().to_pandas()["period"].tolist()
+        )
+        if flex_data.dt is not None and flex_data.dt.height > 0:
+            dt_period_order = (flex_data.dt.select("d")
+                               .unique(maintain_order=True)
+                               .to_pandas()["d"].tolist())
+            rd_periods = [p for p in dt_period_order if p in rd_periods_unordered]
+        else:
+            rd_periods = list(rd_periods_unordered)
+        s.d_realized_period = pd.MultiIndex.from_arrays(
+            [[solve_name] * len(rd_periods), rd_periods],
+            names=["solve", "period"],
+        )
+    else:
+        # Without explicit ``realized_dispatch`` we cannot tell which
+        # rows of ``dt`` are realized vs foresight.  Emit empty sets so
+        # this solve contributes no realized rows to ``read_sets_multi``
+        # unions.  Single-solve modern fixtures always populate
+        # ``flex_data.realized_dispatch``; legacy/empty cases will
+        # surface as empty output which is still cleaner than leaking
+        # the full per-solve ``dt`` (including foresight horizons).
+        s.d_realized_period = empty_multi_index(["solve", "period"])
+        s.dt_realize_dispatch = empty_multi_index(
+            ["solve", "period", "time"],
+        )
     s.dt_fix_storage_timesteps = empty_multi_index(
         ["solve", "period", "time"],
     )
@@ -464,11 +500,14 @@ def read_sets(
         [[solve_name] * len(invest_periods), invest_periods],
         names=["solve", "period"],
     )
-    # d_realize_dispatch_or_invest = union of dispatch and invest periods.
-    all_periods = []
-    if (flex_data.dt is not None and flex_data.dt.height > 0):
-        all_periods = list(flex_data.dt.select("d").unique().to_pandas()["d"])
-    union_periods = list(dict.fromkeys(all_periods + invest_periods))
+    # d_realize_dispatch_or_invest = d_realized_period ∪ d_realize_invest.
+    # Use realized-dispatch periods (not all dt periods) so foresight
+    # periods don't leak into invest/period-aggregate outputs.  Reuse
+    # the canonically ordered ``d_realized_period`` we just built.
+    realized_periods: list = list(
+        s.d_realized_period.get_level_values("period")
+    ) if len(s.d_realized_period) > 0 else []
+    union_periods = list(dict.fromkeys(realized_periods + invest_periods))
     s.d_realize_dispatch_or_invest = pd.MultiIndex.from_arrays(
         [[solve_name] * len(union_periods), union_periods],
         names=["solve", "period"],
