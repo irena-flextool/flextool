@@ -563,6 +563,22 @@
   #   objective (M CUR) = 3,004,895.90 * 365/2 / 1e6 = 548.39350
   # Slightly larger tolerance — connection routing across parallel
   # links has multiple equally-optimal solutions in dispatch.
+  #
+  # Golden regen note (commit e03e3047, 2026-05-14): when the solver
+  # was switched from glpsol to highs (cluster F fix — glpsol binary
+  # removed at Δ.22; the d2018b3c per-entity ``solver=glpsol`` pin
+  # was a documented temporary workaround), HiGHS picks a different
+  # LP vertex on this degenerate-optimum scenario.  Total objective
+  # is unchanged (548.39350 still holds), but per-column cost
+  # allocation in costs__dt.csv shifts: HiGHS routes zero flow
+  # through the parallel west-east-aux connection (VOM=0.1 cost
+  # would be > baseline), so ``other_operational`` is zero and
+  # ``commodity_cost`` absorbs the ~75 CUR/day delta.  The
+  # ``connection__dt.csv`` golden was unaffected (byte-identical
+  # under HiGHS).  Decision: accept the regen as the authoritative
+  # post-glpsol-retirement golden.  Both LP vertices are equally
+  # optimal; v3.32.0's glpsol-flavoured allocation has no physical
+  # preference over HiGHS's choice once glpsol is gone.
   expected_objective: 548.39350
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 4.0
