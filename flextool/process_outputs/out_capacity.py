@@ -21,15 +21,24 @@ def unit_capacity(par, s, v, r, debug):
     results['invested'] = pd.Series(dtype=float)
     if not v.invest.empty and len(v.invest.columns) > 0:
         ed_unit_invest = s.ed_invest[s.ed_invest.get_level_values('entity').isin(s.process_unit)]
+        # Filter to (entity, period) pairs that actually have a v_invest value
+        # in this solve.  Without the per-solve solve__ed_invest filter that
+        # v3.32.0 used, s.ed_invest is the full possible-pairs union; restrict
+        # here to avoid KeyErrors on never-realized pairs (e.g. (e, p2025)
+        # when only p2020 is realized in the current solve).
+        unstacked_invest = v.invest.unstack()
+        ed_unit_invest = ed_unit_invest.intersection(unstacked_invest.index)
         unit_invest = ed_unit_invest.get_level_values('entity').unique()
-        results['invested'] = v.invest.unstack()[ed_unit_invest] * par.entity_unitsize[unit_invest]
+        results['invested'] = unstacked_invest[ed_unit_invest] * par.entity_unitsize[unit_invest]
 
     # Divested capacity - default to None, overwrite if data exists
     results['divested'] = pd.Series(dtype=float)
     if not v.divest.empty and len(v.divest.columns) > 0:
         ed_unit_divest = s.ed_divest[s.ed_divest.get_level_values('entity').isin(s.process_unit)]
+        unstacked_divest = v.divest.unstack()
+        ed_unit_divest = ed_unit_divest.intersection(unstacked_divest.index)
         unit_divest = ed_unit_divest.get_level_values('entity').unique()
-        results['divested'] = v.divest.unstack()[ed_unit_divest] * par.entity_unitsize[unit_divest]
+        results['divested'] = unstacked_divest[ed_unit_divest] * par.entity_unitsize[unit_divest]
 
     # Total capacity - filter to process_unit only
     total = r.entity_all_capacity[processes].unstack()
@@ -58,15 +67,20 @@ def connection_capacity(par, s, v, r, debug):
     results['invested'] = pd.Series(dtype=float)
     if not v.invest.empty and len(v.invest.columns) > 0:
         ed_conn_invest = s.ed_invest[s.ed_invest.get_level_values('entity').isin(s.process_connection)]
+        # See unit_capacity above for why we intersect with v.invest's columns.
+        unstacked_invest = v.invest.unstack()
+        ed_conn_invest = ed_conn_invest.intersection(unstacked_invest.index)
         conn_invest = ed_conn_invest.get_level_values('entity').unique()
-        results['invested'] = v.invest.unstack()[ed_conn_invest] * par.entity_unitsize[conn_invest]
+        results['invested'] = unstacked_invest[ed_conn_invest] * par.entity_unitsize[conn_invest]
 
     # Divested capacity - default to empty, overwrite if data exists
     results['divested'] = pd.Series(dtype=float)
     if not v.divest.empty and len(v.divest.columns) > 0:
         ed_conn_divest = s.ed_divest[s.ed_divest.get_level_values('entity').isin(s.process_connection)]
+        unstacked_divest = v.divest.unstack()
+        ed_conn_divest = ed_conn_divest.intersection(unstacked_divest.index)
         conn_divest = ed_conn_divest.get_level_values('entity').unique()
-        results['divested'] = v.divest.unstack()[ed_conn_divest] * par.entity_unitsize[conn_divest]  # was: results['invested']
+        results['divested'] = unstacked_divest[ed_conn_divest] * par.entity_unitsize[conn_divest]  # was: results['invested']
 
     # Total capacity - filter to process_connection only
     results['total'] = r.entity_all_capacity[connections].unstack()
@@ -100,15 +114,20 @@ def node_capacity(par, s, v, r, debug):
     results['invested'] = pd.Series(dtype=float)
     if not v.invest.empty and len(v.invest.columns) > 0:
         ed_node_invest = s.ed_invest[s.ed_invest.get_level_values('entity').isin(s.node)]
+        # See unit_capacity above for why we intersect with v.invest's columns.
+        unstacked_invest = v.invest.unstack()
+        ed_node_invest = ed_node_invest.intersection(unstacked_invest.index)
         node_invest = ed_node_invest.get_level_values('entity').unique()
-        results['invested'] = v.invest.unstack()[ed_node_invest] * par.entity_unitsize[node_invest]
+        results['invested'] = unstacked_invest[ed_node_invest] * par.entity_unitsize[node_invest]
 
     # Divested capacity - default to empty, overwrite if data exists
     results['divested'] = pd.Series(dtype=float)
     if not v.divest.empty and len(v.divest.columns) > 0:
         ed_node_divest = s.ed_divest[s.ed_divest.get_level_values('entity').isin(s.node)]
+        unstacked_divest = v.divest.unstack()
+        ed_node_divest = ed_node_divest.intersection(unstacked_divest.index)
         node_divest = ed_node_divest.get_level_values('entity').unique()
-        results['divested'] = v.divest.unstack()[ed_node_divest] * par.entity_unitsize[node_divest]  # was: v.invest, results['invested']
+        results['divested'] = unstacked_divest[ed_node_divest] * par.entity_unitsize[node_divest]  # was: v.invest, results['invested']
 
     # Total capacity - filter to node_state only
     if nodes:
