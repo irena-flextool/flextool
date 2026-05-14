@@ -25,6 +25,13 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+# Bump when the on-disk PlotPlan schema or pagination semantics change so
+# stale plans get recomputed instead of silently mis-applied. Old JSONs
+# without a schema_version (or with a lower one) are ignored by
+# load_plot_plan and the GUI's compute_live_plan path takes over.
+PLAN_SCHEMA_VERSION = 2
+
+
 # ---------------------------------------------------------------------------
 #  JSON helper: make numpy / tuple types serializable
 # ---------------------------------------------------------------------------
@@ -179,6 +186,7 @@ def save_plot_plan(
 
     # Build JSON-serializable metadata
     meta: dict[str, Any] = {
+        'schema_version': PLAN_SCHEMA_VERSION,
         'chart_type': plan.chart_type,
         'plot_name': plan.plot_name,
         'total_file_count': plan.total_file_count,
@@ -241,6 +249,12 @@ def load_plot_plan(
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             meta = json.load(f)
+
+        # Reject stale schemas so a code change that affects pagination
+        # or plan content does not silently re-use plans saved before
+        # the change. compute_live_plan will rebuild from current code.
+        if meta.get('schema_version', 0) != PLAN_SCHEMA_VERSION:
+            return None
 
         df = read_lean_parquet(parquet_path)
 
