@@ -72,9 +72,27 @@ def json_to_db(json_path: Path, db_path: Path) -> str:
 def round_for_comparison(df: pd.DataFrame) -> pd.DataFrame:
     """Round numeric columns for stable comparison across solver versions.
 
-    The test highs.opt sets feasibility tolerance to 1e-8.
-    Rounding to 4 decimal places (1e-4) is one order of magnitude coarser,
-    suppressing numerical noise while preserving meaningful differences.
+    Rounding to 4 decimals (absolute ±5e-5) is layered with the caller's
+    ``pd.testing.assert_frame_equal(..., rtol=1e-4)``.  The combined
+    tolerance is comfortably looser than HiGHS / glpsol solver noise on
+    the v3.32 frozen goldens (e.g. the regen agent observed one cell at
+    0.0002% relative drift, well within ±5e-5 absolute + rtol=1e-4).
+
+    TODO: tighten once the v3.32.0 gate is at 65/65.  The current setting
+    can hide a real engine bug that perturbs a small-value column by
+    ~0.001 (round(4) absorbs anything below 5e-5), and at large costs
+    the rtol=1e-4 gate is ±100 EUR on a 1M EUR figure.  Once cascade ≡
+    v3.32.0 is established, drop the round(4) and tighten rtol to 1e-7
+    or 1e-8 (HiGHS feasibility tolerance is 1e-8).  This requires
+    regenerating goldens against current HiGHS via
+    ``pytest tests/test_scenarios.py --regenerate <scenario>`` so the
+    new tighter baseline absorbs solver-version-noise without masking
+    real engine bugs.  See project memory
+    ``feedback_tighten_test_tolerance_after_parity.md``.
+
+    The previous docstring claimed "one order of magnitude coarser than
+    1e-8" — that's mathematically wrong (1e-8 vs 1e-4 is four orders
+    coarser).  Corrected here.
     """
     numeric_cols = df.select_dtypes(include="number").columns
     df = df.copy()
