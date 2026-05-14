@@ -137,10 +137,18 @@ def _has_two_row_header(path: Path) -> bool:
         second = f.readline()
     if not second:
         return False
-    # The inner header always starts with at least one empty field
-    # (i.e. leading comma) and has the same column count as the first
-    # row.  A genuine data row never begins with an empty field.
-    return second.startswith(",") and second.count(",") == first.count(",")
+    # The inner header may take one of two forms produced by different
+    # writer/round-trip paths:
+    # 1. Clean empty fields (``solve,period,time,,,west,...``) — the
+    #    direct write path.
+    # 2. Pandas-style placeholder (``Unnamed: N_level_1,...,west,...``)
+    #    — a round-trip artifact when pandas wrote a MultiIndex columns
+    #    frame via ``to_csv``, then re-reading and re-writing inserted
+    #    the ``Unnamed:`` placeholder for the empty cells.
+    # A genuine data row never begins with either signal.
+    if second.count(",") != first.count(","):
+        return False
+    return second.startswith(",") or second.startswith("Unnamed:")
 
 
 _DEDUP_SUFFIX = re.compile(r"\.\d+$")
