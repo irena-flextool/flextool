@@ -1,6 +1,48 @@
 import pandas as pd
 
 
+def _indirect_units(s) -> set:
+    """Return set of units classified as indirect (2-arc conversion form).
+
+    An indirect unit has BOTH a row where ``source == p`` and a row where
+    ``sink == p`` in ``process_source_sink`` — i.e. the topology was split
+    into separate input-side and output-side arcs.  Direct-method and
+    profile/noConversion units have at most one of those, never both.
+
+    This mirrors v3.32.0's ordering convention for the wide-pivot output
+    CSVs (``unit__outputNode__dt.csv`` etc.): direct-method units listed
+    first (in alphabetical order), then indirect units.  v3.32.0 inherited
+    the partition from the legacy ``write_process_arc_unions`` union order
+    (process_arc_unions.py L248-263) which placed ``*_direct.csv`` sets
+    ahead of the indirect/noConversion ones.
+    """
+    if s.process_source_sink is None or len(s.process_source_sink) == 0:
+        return set()
+    procs = s.process_source_sink.get_level_values('process')
+    srcs = s.process_source_sink.get_level_values('source')
+    snks = s.process_source_sink.get_level_values('sink')
+    as_source = {p for p, src in zip(procs, srcs) if src == p}
+    as_sink = {p for p, snk in zip(procs, snks) if snk == p}
+    return as_source & as_sink
+
+
+def _sort_unit_node_columns(df: pd.DataFrame, indirect: set) -> pd.DataFrame:
+    """Reorder a (unit, node) MultiIndex column frame to match v3.32.0.
+
+    Partition: direct units first, indirect units last.  Alphabetical by
+    (unit, node) within each partition.
+    """
+    if df.empty or df.columns.empty:
+        return df
+    sorted_cols = sorted(
+        df.columns,
+        key=lambda c: (c[0] in indirect, c[0], c[1]),
+    )
+    return df.reindex(columns=pd.MultiIndex.from_tuples(
+        sorted_cols, names=df.columns.names,
+    ))
+
+
 def unit_outputNode(par, s, v, r, debug):
     """Unit output node flow for periods and time"""
 
@@ -21,6 +63,12 @@ def unit_outputNode(par, s, v, r, debug):
     for col in unit_sink_cols:
         u, source, sink = col
         result_multi_dt[(u, sink)] = r.flow_dt[col]
+
+    # Reorder columns to match v3.32.0's direct-then-indirect / alphabetical
+    # ordering — replaces the upstream ``flow_dt.columns`` order which is
+    # non-deterministic at HEAD (polars ``unique()`` after sort).
+    indirect = _indirect_units(s)
+    result_multi_dt = _sort_unit_node_columns(result_multi_dt, indirect)
 
     # Return timestep results
     results.append((result_multi_dt, 'unit_outputNode_dt_ee'))
@@ -61,6 +109,11 @@ def unit_inputNode(par, s, v, r, debug):
     for col in unit_source_cols:
         u, source, sink = col
         result_multi_dt[(u, source)] = -r.flow_dt[col]
+
+    # Reorder columns to match v3.32.0's direct-then-indirect / alphabetical
+    # ordering (see ``unit_outputNode`` for rationale).
+    indirect = _indirect_units(s)
+    result_multi_dt = _sort_unit_node_columns(result_multi_dt, indirect)
 
     # Return timestep results
     results.append((result_multi_dt, 'unit_inputNode_dt_ee'))
