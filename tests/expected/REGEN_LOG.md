@@ -104,3 +104,73 @@ cells where the model genuinely chose zero investment.  Only the
 `wind_plant.p2030` and `wind_plant.p2035` cells here matched the
 unrealized-cell pattern (existing also 0 → no presence → no realized
 decision).
+
+## 2026-05-15 — `coal_co2_limit/unit__outputNode__dt.csv` + `coal_co2_limit/costs__dt.csv`
+
+**Context.** Post-HiGHS-pin (`9205bf44`) the v3.32.0 glpsol golden for
+`coal_co2_limit` no longer matches at HEAD because HiGHS picks a
+different equally-optimal LP vertex on this CO2-capped dispatch
+scenario.  The model has a binding CO2 cap of 3 t (`model_wide`
+column in `co2.csv` agrees exactly between produced and golden), but
+the per-timestep coal dispatch profile can be redistributed across
+hours without changing the total energy delivered, total cost, or
+total emissions.
+
+**Verification (per Phase-2 regen protocol)**:
+- LP objective (full horizon): 1780.16775 M CUR, identical between
+  produced and v3.32.0 reference (computed from `costs__dt.csv` column
+  sums × annualization).
+- Column sums match exactly across all 3 CSVs:
+  - `unit__outputNode__dt.csv` coal_plant|west: 19339.24255 MWh (same).
+  - `costs__dt.csv` commodity_cost: 966962.127 CUR (same);
+    upward slack penalty: 8787381.71 CUR (rel 1.9e-10).
+  - `co2.csv` model_wide: 3.00 t (same — cap binds).
+- Two independent pytest runs with separate basetemps produced
+  byte-identical output, so the HiGHS pin in `9205bf44` is
+  deterministic for this scenario.
+
+**Diff summary** (`tests/expected/coal_co2_limit/`):
+- `unit__outputNode__dt.csv`: 96 of 48 data rows changed (per-cell
+  coal dispatch redistributed; column sum preserved).
+- `costs__dt.csv`: 38 rows changed (per-cell commodity/slack cost
+  shuffle that mirrors the dispatch profile).
+- `co2.csv`: byte-identical, NOT regenerated.
+
+**Decision**: accept the regen.  Both LP vertices are equally
+optimal; v3.32.0's glpsol-flavoured allocation has no physical
+preference over HiGHS's choice once glpsol is gone.
+
+When to revisit:
+- If a future change tightens HiGHS to pick the v3.32.0 vertex
+  (e.g. an ε-perturbation in the cost coefficients), the golden may
+  need a second regen.
+- If glpsol is ever reintroduced as a supported solver, this golden
+  could be reverted to the v3.32.0 reference.
+
+## 2026-05-15 — Phase-2 candidates flagged (NOT regenerated)
+
+Six candidates from the prior diagnosis cluster were investigated
+under the same protocol but failed the vertex-swap criterion.  These
+are flagged for follow-up rather than regenerated; see
+`/tmp/real_bugs_flagged.md` (overnight run) for full evidence.
+
+| Scenario | Symptom | Why not regen |
+|---|---|---|
+| `dr_shift_demand` | `dr_storage` 4.2% cells, column sum preserved | Run-to-run nondeterminism: regen and verify runs pick different equally-optimal vertices despite the HiGHS pin |
+| `network_all_tech` | `dr_storage` 8.3% cells | Same as `dr_shift_demand` — contains the same dr_storage entity, same nondeterminism family |
+| `multi_fullYear_battery` | `wind_plant` 2.5% cells | Run-to-run nondeterminism in per-cell wind dispatch |
+| `test_a_lot` | `coal_plant` 1.25% cells | Run-to-run nondeterminism (wind↔CHP balance flips between runs) |
+| `multi_year_one_solve_co2_limit` | `coal_plant` 11.25% cells | **NOT vertex swap** — objective itself differs by 0.9% (1532.30 vs 1546.07), CO2 emissions 85% below cap, coal output 26% lower.  Likely real engine bug. |
+| `coal_wind_ev` | (passed at investigation time) | Already cleared by HiGHS pin; no regen needed |
+
+The first four point to incomplete HiGHS determinism coverage for
+scenarios containing `dr_storage` or `wind_plant`-heavy dispatch with
+multiple optima.  The fifth points to a real constraint/annualization
+bug that needs investigation rather than golden regen.
+
+When to revisit (all five flagged):
+- After the HiGHS determinism pin is extended (or after a more
+  aggressive ε-perturbation lands), re-run all five and re-classify.
+- The `multi_year_one_solve_co2_limit` divergence should be triaged
+  separately — check that the model_wide CO2 cap reaches the solver
+  for multi-year-one-solve scenarios.
