@@ -45,7 +45,18 @@ def _plot_grouped_bars(
     slot_heights: list[float] | None = None,
     labeled_groups: set[str] | None = None,
 ) -> None:
-    """Render grouped side-by-side bars onto ax for one subplot."""
+    """Render grouped side-by-side bars onto ax for one subplot.
+
+    Vectorised across all_bars: one ax.barh / ax.bar call per grouped
+    category. Each call takes a vector of sub-y-positions (one per bar) and
+    a vector of widths; bars with zero value in this category are masked
+    out before the draw call, mirroring the original per-bar skip behaviour
+    when ``skip_data_with_only_zeroes`` had already pruned them at the
+    call site.
+    """
+    if not all_bars:
+        return
+
     # Get grouped bar combinations
     if len(grouped_bar_level_names) == 1:
         grouped_bars = df_sub.columns.get_level_values(grouped_bar_level_names[0]).unique().tolist()
@@ -71,124 +82,148 @@ def _plot_grouped_bars(
         if n_grouped > 10:
             colors = list(plt.colormaps['tab20'].colors[:n_grouped])
 
-    # Bar width/offset are now computed per-position using slot_heights.
-    # The fraction 0.8 of the slot is used for bars.
-    TOTAL_BAR_FRACTION = 0.8
+    # Build (n_bars, n_grouped) value matrix via cached per-group slices.
+    n_bars = len(all_bars)
+    values_mat = np.zeros((n_bars, n_grouped), dtype=float)
+    has_value = np.zeros((n_bars, n_grouped), dtype=bool)
 
-    # Track which grouped bars have been labeled
-    labeled_grouped_bars: set = set()
+    def _hashable_key(g):
+        if isinstance(g, list):
+            return tuple(g)
+        return g
 
-    # Plot grouped bars
-    for bar_idx, (group, period) in enumerate(all_bars):
-        # Get data for this expand_axis group
-        if group is None:
-            df_bar = df_sub
-        elif len(expand_axis_level_names) == 1 and isinstance(df_sub.columns, pd.MultiIndex):
-            df_bar = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
-        elif len(expand_axis_level_names) == 1:
-            df_bar = df_sub[group]
-        else:
-            df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+    group_df_cache: dict = {}
+    group_cat_series: dict = {}
+
+    def _get_cat_series(df_bar, grouped_bar):
         if isinstance(df_bar, pd.Series):
-            df_bar = df_bar.to_frame()
-
-        # Plot each grouped bar at this position
-        for grouped_idx, grouped_bar in enumerate(grouped_bars):
-            # Extract value for this grouped bar
-            if isinstance(df_bar, pd.Series):
-                value = df_bar.loc[period] if period in df_bar.index else 0
-            else:
-                if isinstance(df_bar.columns, pd.MultiIndex):
-                    if len(grouped_bar_level_names) == 1:
-                        try:
-                            df_grouped = df_bar.xs(grouped_bar, level=grouped_bar_level_names[0], axis=1)
-                        except KeyError:
-                            value = 0
-                            df_grouped = None
-                    else:
-                        try:
-                            df_grouped = df_bar.xs(grouped_bar, level=grouped_bar_level_names, axis=1)
-                        except KeyError:
-                            value = 0
-                            df_grouped = None
+            return df_bar
+        if isinstance(df_bar.columns, pd.MultiIndex):
+            try:
+                if len(grouped_bar_level_names) == 1:
+                    df_grouped = df_bar.xs(grouped_bar, level=grouped_bar_level_names[0], axis=1)
                 else:
-                    if grouped_bar in df_bar.columns:
-                        df_grouped = df_bar[grouped_bar]
-                    else:
-                        value = 0
-                        df_grouped = None
-
-                if df_grouped is not None:
-                    if isinstance(df_grouped, pd.DataFrame):
-                        df_grouped = df_grouped.sum(axis=1)
-                    value = df_grouped.loc[period] if period in df_grouped.index else 0
-
-            # Create label (only once per grouped bar across all calls)
-            if isinstance(grouped_bar, (tuple, list)):
-                label_str = ' | '.join(str(v) for v in grouped_bar)
-            else:
-                label_str = str(grouped_bar)
-            if labeled_groups is not None:
-                if label_str in labeled_groups:
-                    label = ''
-                else:
-                    label = label_str
-                    labeled_groups.add(label_str)
-            elif grouped_idx not in labeled_grouped_bars:
-                label = label_str
-                labeled_grouped_bars.add(grouped_idx)
-            else:
-                label = ''
-
-            # Plot bar with FIXED thickness (does not depend on slot_h or
-            # n_grouped). Bars are centred within the slot — extra slot
-            # space appears as whitespace top/bottom (or left/right).
-            bar_w = SOLO_BAR_THICKNESS if n_grouped == 1 else REFERENCE_BAR_THICKNESS
-            step = bar_w * (1 + BAR_GAP_FRACTION)
-            total_w = bar_w * n_grouped + bar_w * BAR_GAP_FRACTION * max(0, n_grouped - 1)
-            if bar_orientation == 'horizontal':
-                offset = total_w / 2 - bar_w / 2 - grouped_idx * step  # top to bottom
-            else:
-                offset = -total_w / 2 + bar_w / 2 + grouped_idx * step  # left to right
-            y_pos = y_positions[bar_idx] if y_positions else bar_idx
-            bar_position = y_pos + offset
-            if bar_orientation == 'horizontal':
-                container = ax.barh(bar_position, value, height=bar_w,
-                                    label=label,
-                                    color=colors[grouped_idx % len(colors)])
-            else:  # vertical
-                container = ax.bar(bar_position, value, width=bar_w,
-                                   label=label,
-                                   color=colors[grouped_idx % len(colors)])
-            if value_fmt:
-                if value_fmt == 'dynamic':
-                    _dfmt = DynamicFormatter()
-                    ax.bar_label(container, fmt=lambda x, _f=_dfmt: _f(x, None), padding=3)
-                else:
-                    ax.bar_label(container, fmt=lambda x, _s=value_fmt: format(x, _s), padding=3)
-
-    # Add invisible bars for zero-value grouped bars (for legend completeness)
-    for grouped_idx in range(len(grouped_bars)):
-        grouped_bar = grouped_bars[grouped_idx]
-        if isinstance(grouped_bar, (tuple, list)):
-            label_str = ' | '.join(str(v) for v in grouped_bar)
+                    df_grouped = df_bar.xs(grouped_bar, level=grouped_bar_level_names, axis=1)
+            except KeyError:
+                return None
         else:
-            label_str = str(grouped_bar)
-        # Skip if already labeled (either locally or across calls)
-        if labeled_groups is not None and label_str in labeled_groups:
+            if grouped_bar in df_bar.columns:
+                df_grouped = df_bar[grouped_bar]
+            else:
+                return None
+        if isinstance(df_grouped, pd.DataFrame):
+            df_grouped = df_grouped.sum(axis=1)
+        return df_grouped
+
+    for bar_idx, (group, period) in enumerate(all_bars):
+        gkey = _hashable_key(group)
+        if gkey not in group_df_cache:
+            if group is None:
+                df_bar = df_sub
+            elif len(expand_axis_level_names) == 1 and isinstance(df_sub.columns, pd.MultiIndex):
+                df_bar = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
+            elif len(expand_axis_level_names) == 1:
+                df_bar = df_sub[group]
+            else:
+                df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+            if isinstance(df_bar, pd.Series):
+                df_bar = df_bar.to_frame()
+            group_df_cache[gkey] = df_bar
+        df_bar = group_df_cache[gkey]
+
+        for grouped_idx, grouped_bar in enumerate(grouped_bars):
+            cache_key = (gkey, grouped_idx)
+            if cache_key not in group_cat_series:
+                group_cat_series[cache_key] = _get_cat_series(df_bar, grouped_bar)
+            sums = group_cat_series[cache_key]
+            if sums is None:
+                continue
+            if period in sums.index:
+                values_mat[bar_idx, grouped_idx] = float(sums.loc[period])
+                # Preserve previous "skip zero columns at row level" semantics
+                # by treating only non-zero values as drawn bars. The call
+                # site already prunes whole zero columns via
+                # skip_data_with_only_zeroes (the column is then absent from
+                # grouped_bars for that row's batch — but with batched
+                # subplot calls there is no per-row pruning, so we mask
+                # value-by-value here).
+                has_value[bar_idx, grouped_idx] = sums.loc[period] != 0
+
+    # Per-category labels
+    def _label_for(gb):
+        return ' | '.join(str(v) for v in gb) if isinstance(gb, (tuple, list)) else str(gb)
+
+    cat_labels = [_label_for(gb) for gb in grouped_bars]
+
+    # Bar geometry: identical to the original formula.
+    bar_w = SOLO_BAR_THICKNESS if n_grouped == 1 else REFERENCE_BAR_THICKNESS
+    step = bar_w * (1 + BAR_GAP_FRACTION)
+    total_w = bar_w * n_grouped + bar_w * BAR_GAP_FRACTION * max(0, n_grouped - 1)
+
+    # y-positions (one per bar)
+    if y_positions is None:
+        y_pos_vec = np.arange(n_bars, dtype=float)
+    else:
+        y_pos_vec = np.asarray(y_positions, dtype=float)
+
+    horizontal = bar_orientation == 'horizontal'
+
+    # Track which categories we've emitted a legend entry for (mirrors original
+    # behaviour: each category gets one entry, attached to its first-drawn
+    # non-empty draw call across the whole subplot).
+    if labeled_groups is None:
+        labeled_groups_local: set = set()
+    else:
+        labeled_groups_local = labeled_groups
+
+    # Track which categories were drawn (for the invisible-legend fallback)
+    drawn_categories: set = set()
+
+    for grouped_idx in range(n_grouped):
+        if horizontal:
+            offset = total_w / 2 - bar_w / 2 - grouped_idx * step  # top to bottom
+        else:
+            offset = -total_w / 2 + bar_w / 2 + grouped_idx * step  # left to right
+        sub_y = y_pos_vec + offset
+
+        mask = has_value[:, grouped_idx]
+        if not mask.any():
             continue
-        if grouped_idx in labeled_grouped_bars:
+        ys = sub_y[mask]
+        widths = values_mat[mask, grouped_idx]
+        color = colors[grouped_idx % len(colors)]
+        label_str = cat_labels[grouped_idx]
+        if label_str in labeled_groups_local:
+            label = ''
+        else:
+            label = label_str
+            labeled_groups_local.add(label_str)
+        if horizontal:
+            container = ax.barh(ys, widths, height=bar_w, label=label, color=color)
+        else:
+            container = ax.bar(ys, widths, width=bar_w, label=label, color=color)
+        drawn_categories.add(grouped_idx)
+        if value_fmt:
+            if value_fmt == 'dynamic':
+                _dfmt = DynamicFormatter()
+                ax.bar_label(container, fmt=lambda x, _f=_dfmt: _f(x, None), padding=3)
+            else:
+                ax.bar_label(container, fmt=lambda x, _s=value_fmt: format(x, _s), padding=3)
+
+    # Add invisible bars for any category that had no drawn entries, so the
+    # legend still lists every category in the configured order.
+    for grouped_idx in range(n_grouped):
+        if grouped_idx in drawn_categories:
             continue
-        if labeled_groups is not None:
-            labeled_groups.add(label_str)
-        if bar_orientation == 'horizontal':
-            ax.barh(0, 0, height=0.01, left=0,
-                    label=label_str,
-                    color=colors[grouped_idx % len(colors)])
-        else:  # vertical
-            ax.bar(0, 0, width=0.01, bottom=0,
-                   label=label_str,
-                   color=colors[grouped_idx % len(colors)])
+        label_str = cat_labels[grouped_idx]
+        if label_str in labeled_groups_local:
+            continue
+        labeled_groups_local.add(label_str)
+        color = colors[grouped_idx % len(colors)]
+        if horizontal:
+            ax.barh(0, 0, height=0.01, left=0, label=label_str, color=color)
+        else:
+            ax.bar(0, 0, width=0.01, bottom=0, label=label_str, color=color)
 
 
 def _plot_stacked_bars(
@@ -204,8 +239,12 @@ def _plot_stacked_bars(
 ) -> None:
     """Render stacked bars onto ax for one subplot.
 
-    Three sequential loops (positives → zeros → negatives) are intentional:
-    matplotlib draws bars in call order, so mixing signs would break visual stacking.
+    Vectorised: one ax.barh / ax.bar call per stack layer (per sign), using
+    numpy cumulative sums to compute the `left`/`bottom` offsets for every
+    bar simultaneously. Bars with zero value in the current layer are
+    filtered out before the draw call so we don't create invisible
+    Rectangles. Positive and negative signs are drawn in separate calls so
+    matplotlib's draw order keeps the stacking visually correct.
     """
     # Get stack combinations (for colors and legend)
     if len(stack_level_names) == 1:
@@ -232,94 +271,133 @@ def _plot_stacked_bars(
         if n_stack > 10:
             colors = list(plt.colormaps['tab20'].colors[:n_stack])
 
-    # Track which stacks have positive/negative values (for legend ordering)
-    pos_stacks: set[int] = set()
-    neg_stacks: set[int] = set()
+    if not all_bars:
+        return
 
-    # Plot bars (no labels — legend is built explicitly afterwards)
-    for bar_idx, (group, period) in enumerate(all_bars):
-        # Get data for this group
-        if group is None:
-            df_bar = df_sub
-        elif len(expand_axis_level_names) == 1 and isinstance(df_sub.columns, pd.MultiIndex):
-            df_bar = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
-        elif len(expand_axis_level_names) == 1:
-            df_bar = df_sub[group]
-        else:
-            df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+    n_bars = len(all_bars)
+    n_stack = len(stacks)
+    # Build a (n_bars, n_stack) value matrix by reusing per-group slices.
+    values_mat = np.zeros((n_bars, n_stack), dtype=float)
+
+    # Cache per-(group, stack) -> Series so each unique slice is computed once.
+    group_stack_series: dict = {}
+
+    def _get_stack_series(df_bar, stack):
+        """Return per-period Series for given stack within df_bar (or None)."""
         if isinstance(df_bar, pd.Series):
-            df_bar = df_bar.to_frame()
-
-        # Collect all values for this bar
-        values = []
-        for stack_idx, stack in enumerate(stacks):
-            if isinstance(df_bar, pd.Series):
-                value = df_bar.loc[period] if period in df_bar.index else 0
+            return df_bar
+        if isinstance(df_bar.columns, pd.MultiIndex):
+            try:
+                if len(stack_level_names) == 1:
+                    df_stack = df_bar.xs(stack, level=stack_level_names[0], axis=1)
+                else:
+                    df_stack = df_bar.xs(stack, level=stack_level_names, axis=1)
+            except KeyError:
+                return None
+        else:
+            if stack in df_bar.columns:
+                df_stack = df_bar[stack]
             else:
-                if isinstance(df_bar.columns, pd.MultiIndex):
-                    if len(stack_level_names) == 1:
-                        try:
-                            df_stack = df_bar.xs(stack, level=stack_level_names[0], axis=1)
-                        except KeyError:
-                            value = 0
-                            df_stack = None
-                    else:
-                        try:
-                            df_stack = df_bar.xs(stack, level=stack_level_names, axis=1)
-                        except KeyError:
-                            value = 0
-                            df_stack = None
-                else:
-                    if stack in df_bar.columns:
-                        df_stack = df_bar[stack]
-                    else:
-                        value = 0
-                        df_stack = None
+                return None
+        if isinstance(df_stack, pd.DataFrame):
+            df_stack = df_stack.sum(axis=1)
+        return df_stack
 
-                if df_stack is not None:
-                    if isinstance(df_stack, pd.DataFrame):
-                        df_stack = df_stack.sum(axis=1)
-                    value = df_stack.loc[period] if period in df_stack.index else 0
-                else:
-                    value = 0
+    # Cache per-group df slices.
+    group_df_cache: dict = {}
 
-            values.append(value)
+    def _hashable_key(g):
+        if isinstance(g, list):
+            return tuple(g)
+        return g
 
-        # Track positive/negative stacks
-        for stack_idx, value in enumerate(values):
-            if value > 0:
-                pos_stacks.add(stack_idx)
-            elif value < 0:
-                neg_stacks.add(stack_idx)
+    for bar_idx, (group, period) in enumerate(all_bars):
+        gkey = _hashable_key(group)
+        if gkey not in group_df_cache:
+            if group is None:
+                df_bar = df_sub
+            elif len(expand_axis_level_names) == 1 and isinstance(df_sub.columns, pd.MultiIndex):
+                df_bar = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
+            elif len(expand_axis_level_names) == 1:
+                df_bar = df_sub[group]
+            else:
+                df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+            if isinstance(df_bar, pd.Series):
+                df_bar = df_bar.to_frame()
+            group_df_cache[gkey] = df_bar
+        df_bar = group_df_cache[gkey]
 
-        y_pos = y_positions[bar_idx] if y_positions else bar_idx
-        # Stacked bars have one bar per row → fixed solo thickness.
-        bar_h = SOLO_BAR_THICKNESS
+        for stack_idx, stack in enumerate(stacks):
+            cache_key = (gkey, stack_idx)
+            if cache_key not in group_stack_series:
+                group_stack_series[cache_key] = _get_stack_series(df_bar, stack)
+            sums = group_stack_series[cache_key]
+            if sums is None:
+                continue
+            if period in sums.index:
+                values_mat[bar_idx, stack_idx] = float(sums.loc[period])
 
-        # Stack positive values (forward order: 0,1,...,N)
-        left_pos = 0
-        for stack_idx, value in enumerate(values):
-            if value > 0:
-                if bar_orientation == 'horizontal':
-                    ax.barh(y_pos, value, left=left_pos, height=bar_h,
-                            color=colors[stack_idx % len(colors)])
-                else:
-                    ax.bar(y_pos, value, bottom=left_pos, width=bar_h,
-                           color=colors[stack_idx % len(colors)])
-                left_pos += value
+    # Vectorised y-positions
+    if y_positions is None:
+        y_pos_vec = np.arange(n_bars, dtype=float)
+    else:
+        y_pos_vec = np.asarray(y_positions, dtype=float)
+    bar_h = SOLO_BAR_THICKNESS
 
-        # Stack negative values (reversed order: N,...,1,0)
-        left_neg = 0
-        for stack_idx in range(len(values) - 1, -1, -1):
-            value = values[stack_idx]
-            if value < 0:
-                if bar_orientation == 'horizontal':
-                    ax.barh(y_pos, value, left=left_neg, height=bar_h,
-                            color=colors[stack_idx % len(colors)])
-                else:
-                    ax.bar(y_pos, value, bottom=left_neg, width=bar_h,
-                           color=colors[stack_idx % len(colors)])
-                left_neg += value
+    # Per-layer presence of positive / negative values (for legend ordering)
+    pos_stacks = {si for si in range(n_stack) if (values_mat[:, si] > 0).any()}
+    neg_stacks = {si for si in range(n_stack) if (values_mat[:, si] < 0).any()}
+
+    # Positive widths and their running 'left' offsets.
+    pos_widths = np.where(values_mat > 0, values_mat, 0.0)
+    # left for layer i = sum of widths for layers 0..i-1
+    pos_lefts = np.concatenate(
+        [np.zeros((n_bars, 1)), np.cumsum(pos_widths, axis=1)[:, :-1]], axis=1,
+    ) if n_stack > 0 else np.zeros((n_bars, 0))
+
+    # Negative widths drawn in reversed stack order so layer N-1 sits closest
+    # to zero. For stack_idx s in reversed order, left = sum of widths for
+    # layers s+1..N-1 (i.e. layers drawn earlier in the reversed traversal).
+    neg_widths = np.where(values_mat < 0, values_mat, 0.0)
+    if n_stack > 0:
+        # cumulative sum from right -> left, excluding self.
+        rev_cum = np.cumsum(neg_widths[:, ::-1], axis=1)[:, ::-1]
+        # left for stack s = rev_cum[s+1], with 0 for s = N-1.
+        neg_lefts = np.concatenate(
+            [rev_cum[:, 1:], np.zeros((n_bars, 1))], axis=1,
+        )
+    else:
+        neg_lefts = np.zeros((n_bars, 0))
+
+    horizontal = bar_orientation == 'horizontal'
+
+    # Draw positives, forward order (0..N-1)
+    for si in range(n_stack):
+        mask = pos_widths[:, si] > 0
+        if not mask.any():
+            continue
+        ys = y_pos_vec[mask]
+        ws = pos_widths[mask, si]
+        ls = pos_lefts[mask, si]
+        color = colors[si % len(colors)]
+        if horizontal:
+            ax.barh(ys, ws, left=ls, height=bar_h, color=color)
+        else:
+            ax.bar(ys, ws, bottom=ls, width=bar_h, color=color)
+
+    # Draw negatives, reversed order (N-1..0)
+    for si in range(n_stack - 1, -1, -1):
+        mask = neg_widths[:, si] < 0
+        if not mask.any():
+            continue
+        ys = y_pos_vec[mask]
+        ws = neg_widths[mask, si]
+        ls = neg_lefts[mask, si]
+        color = colors[si % len(colors)]
+        if horizontal:
+            ax.barh(ys, ws, left=ls, height=bar_h, color=color)
+        else:
+            ax.bar(ys, ws, bottom=ls, width=bar_h, color=color)
 
     # Build legend handles so visual order matches legend top-to-bottom:
     # - Horizontal: left-to-right = top-to-bottom.

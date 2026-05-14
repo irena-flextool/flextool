@@ -671,54 +671,17 @@ def _build_bar_figure(
 
         # Determine plotting mode and execute appropriate logic
         if grouped_bar_levels:
-            # Render per-row: each row gets its own pruned data so only
-            # non-zero grouped bars are drawn (no empty slots).
-            # Track labeled groups to avoid duplicate legend entries.
+            # Single batched call per subplot: _plot_grouped_bars vectorises
+            # across all bars per category internally (one ax.barh per
+            # grouped category, with masked-out zero entries reproducing the
+            # original per-row pruning behaviour).
             labeled_groups: set[str] = set()
-            bar_offset = 0
-            if expand_axis_levels and groups_with_bars:
-                for group, row_items in groups_with_bars:
-                    try:
-                        if not isinstance(df_sub.columns, pd.MultiIndex):
-                            df_group_slice = df_sub[[group]] if group in df_sub.columns else df_sub
-                        elif len(expand_axis_level_names) == 1:
-                            df_group_slice = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
-                        else:
-                            df_group_slice = df_sub.xs(group, level=expand_axis_level_names, axis=1)
-                    except KeyError:
-                        bar_offset += len(row_items)
-                        continue
-                    if isinstance(df_group_slice, pd.Series):
-                        df_group_slice = df_group_slice.to_frame()
-                    for i, ri in enumerate(row_items):
-                        row_data = df_group_slice.loc[[ri]]
-                        if skip_data_with_only_zeroes:
-                            row_data = row_data.loc[:, (row_data.abs() > 1e-6).any(axis=0)]
-                        if row_data.empty:
-                            bar_offset += 1
-                            continue
-                        _plot_grouped_bars(ax, row_data, [[None, ri]], [],
-                                           grouped_bar_level_names, bar_orientation, value_fmt,
-                                           shared_color_map=shared_color_map,
-                                           y_positions=[y_positions[bar_offset]],
-                                           slot_heights=[per_bar_heights[bar_offset]],
-                                           labeled_groups=labeled_groups)
-                        bar_offset += 1
-            else:
-                for i, (_, ri) in enumerate(all_bars):
-                    row_data = df_sub.loc[[ri]]
-                    if skip_data_with_only_zeroes:
-                        row_data = row_data.loc[:, (row_data.abs() > 1e-6).any(axis=0)]
-                    if row_data.empty:
-                        bar_offset += 1
-                        continue
-                    _plot_grouped_bars(ax, row_data, [[None, ri]], expand_axis_level_names,
-                                       grouped_bar_level_names, bar_orientation, value_fmt,
-                                       shared_color_map=shared_color_map,
-                                       y_positions=[y_positions[bar_offset]],
-                                       slot_heights=[per_bar_heights[bar_offset]],
-                                       labeled_groups=labeled_groups)
-                    bar_offset += 1
+            _plot_grouped_bars(ax, df_sub, all_bars, expand_axis_level_names,
+                               grouped_bar_level_names, bar_orientation, value_fmt,
+                               shared_color_map=shared_color_map,
+                               y_positions=y_positions,
+                               slot_heights=per_bar_heights,
+                               labeled_groups=labeled_groups)
         elif stack_levels:
             _plot_stacked_bars(ax, df_sub, all_bars, expand_axis_level_names,
                                stack_level_names, bar_orientation,
