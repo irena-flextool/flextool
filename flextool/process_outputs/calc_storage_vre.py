@@ -65,13 +65,26 @@ def compute_storage_and_vre(par, s, v, r) -> None:
     # multiplying — otherwise pandas raises ``KeyError: None of [...] are
     # in the [columns]`` on real scenarios with non-storage authored
     # values.
+    #
+    # In rolling / multi-solve scenarios ``par.node_self_discharge_loss``
+    # is built from the last sub-solve's ``flex_data.dt`` only, whereas
+    # ``v.state`` is concatenated across every sub-solve's parquet.
+    # Their (period, time) row indices then differ, and pandas raises
+    # ``TypeError: Join on level between two MultiIndex objects is
+    # ambiguous`` on the broadcast-multiply.  The underlying
+    # ``p_state_self_discharge`` is dimensioned ``(n,)`` (one constant
+    # value per node — see ``read_parameters.py``), so collapse the
+    # per-(d, t) repeats to a per-node Series before broadcasting; the
+    # mul then aligns the Series's ``node`` axis against
+    # ``v.state.columns`` regardless of row index.
     loss_cols = par.node_self_discharge_loss.columns.intersection(
         v.state.columns
     )
     if len(loss_cols) > 0:
+        per_node_loss = par.node_self_discharge_loss[loss_cols].iloc[0]
         r.self_discharge_loss_dt = (
             v.state[loss_cols]
-            .mul(par.node_self_discharge_loss[loss_cols], axis=1, level=0)
+            .mul(per_node_loss, axis='columns')
             .mul(unitsize[loss_cols], axis='columns', level=0)
         )
     else:
