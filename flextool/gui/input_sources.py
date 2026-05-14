@@ -258,25 +258,57 @@ class InputSourceManager:
             logger.warning("Failed to read spine db: %s", filepath, exc_info=True)
             return None
 
+    def _reserved_from_disk(self) -> set[int]:
+        """Source numbers used by executed-scenario folders on disk.
+
+        Combined with current input-source numbers, this defines the set
+        of "in-use" numbers. A number outside this combined set is free
+        to reassign to a new source — including numbers freed by deleting
+        both the input source AND its executed scenarios.
+        """
+        from flextool.gui.scenario_key import resolve_source_number, LEGACY_SOURCE_NUMBER
+
+        parquet_dir = self.project_path / "output_parquet"
+        if not parquet_dir.is_dir():
+            return set()
+        owners = self.settings.bare_output_owners
+        used: set[int] = set()
+        for entry in parquet_dir.iterdir():
+            if not entry.is_dir() or entry.name.startswith("_"):
+                continue
+            n, _ = resolve_source_number(entry.name, owners)
+            if n != LEGACY_SOURCE_NUMBER:
+                used.add(n)
+        return used
+
     def refresh(self) -> list[InputSourceInfo]:
         """Re-scan directory, re-read all scenarios, and assign persistent numbers.
 
-        Numbers are auto-incremented and persisted in ``settings.yaml``.
+        Numbers are persisted in ``settings.yaml``. A new source is given
+        the **lowest positive integer that is not currently in use** —
+        used by either a current input source or any executed-scenario
+        folder still on disk. A number is freed only when both go away.
         Returns the updated list of :class:`InputSourceInfo`.
         """
         sources = self.scan_input_sources()
 
         # Assign persistent numbers
         numbers = dict(self.settings.input_source_numbers)
-        next_number = max(numbers.values(), default=0) + 1
+        reserved = set(numbers.values()) | self._reserved_from_disk()
+
+        def _next_free() -> int:
+            n = 1
+            while n in reserved:
+                n += 1
+            return n
 
         for source in sources:
             if source.name in numbers:
                 source.number = numbers[source.name]
             else:
-                source.number = next_number
-                numbers[source.name] = next_number
-                next_number += 1
+                source.number = _next_free()
+                reserved.add(source.number)
+                numbers[source.name] = source.number
 
         # Read scenarios for each source and determine status
         for source in sources:

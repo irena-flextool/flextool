@@ -642,6 +642,10 @@ class MainWindow(tk.Tk):
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
 
         # No row-level tag for View — Treeview tags color the entire row.
+        # "orphan" tag: executed scenarios whose source number does not match
+        # any current input source (parent source was deleted). Greyed so
+        # the user can see them and decide whether to delete the outputs.
+        self.executed_tree.tag_configure("orphan", foreground="#888888")
 
         exec_scroll = ttk.Scrollbar(exec_frame, orient="vertical", command=self.executed_tree.yview)
         exec_scroll.grid(row=0, column=1, sticky="ns")
@@ -3148,14 +3152,19 @@ class MainWindow(tk.Tk):
             for k in self.project_settings.checked_executed_scenarios:
                 previously_checked.add(parse_key(k))
 
+        current_source_numbers = set(
+            self.project_settings.input_source_numbers.values()
+        )
         for info in executed:
             key = (info.source_number, info.name)
             check_char = CHECK_ON if key in previously_checked else CHECK_OFF
             view_text = "\u25b6"
+            tags = ("orphan",) if info.source_number not in current_source_numbers else ()
             self.executed_tree.insert(
                 "",
                 "end",
                 values=(check_char, info.source_number, info.name, view_text, info.timestamp),
+                tags=tags,
             )
 
         # Apply current sort mode
