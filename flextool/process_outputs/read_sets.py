@@ -91,6 +91,96 @@ def _multi_index_with_solve(
     return pd.MultiIndex.from_frame(pdf, names=["solve"] + list(names))
 
 
+def _commodity_node_from_flex(
+    flex_data: "FlexData",
+    *,
+    attrs: Sequence[tuple[str, str]],
+) -> pd.MultiIndex:
+    """Derive a ``(commodity, node)`` MultiIndex from FlexData flow_* frames.
+
+    Each entry of ``attrs`` is a ``(field_name, node_column)`` tuple where
+    ``field_name`` is a ``flex_data`` attribute that — when present — is a
+    polars frame with at least columns ``c`` and ``node_column``.  The
+    union of ``(c, node_column)`` across all listed frames is returned
+    as a deterministic, deduplicated ``pd.MultiIndex`` with names
+    ``("commodity", "node")``.  Returns an empty MultiIndex when no
+    listed field is populated.
+
+    All Enum columns are cast to Utf8 before crossing the pandas
+    boundary to avoid Enum-vs-Utf8 join-key mismatches downstream
+    (cf. ``specs/enum_dtype_refactor_handoff.md``).
+    """
+    pieces: list[pl.DataFrame] = []
+    for field_name, node_col in attrs:
+        fr = getattr(flex_data, field_name, None)
+        if fr is None or fr.height == 0 or node_col not in fr.columns:
+            continue
+        c_col = "c" if "c" in fr.columns else "commodity"
+        if c_col not in fr.columns:
+            continue
+        pieces.append(
+            fr.select(
+                pl.col(c_col).cast(pl.Utf8).alias("commodity"),
+                pl.col(node_col).cast(pl.Utf8).alias("node"),
+            )
+        )
+    if not pieces:
+        return empty_multi_index(["commodity", "node"])
+    df = (
+        pl.concat(pieces, how="vertical_relaxed")
+          .unique()
+          .sort("commodity", "node")
+          .to_pandas()
+    )
+    if df.empty:
+        return empty_multi_index(["commodity", "node"])
+    return pd.MultiIndex.from_frame(df, names=["commodity", "node"])
+
+
+def _process_commodity_node_from_flex(
+    flex_data: "FlexData",
+    *,
+    attrs: Sequence[tuple[str, str]],
+) -> pd.MultiIndex:
+    """Derive a ``(process, commodity, node)`` MultiIndex from FlexData
+    flow_* frames.
+
+    Each entry of ``attrs`` is a ``(field_name, node_column)`` tuple.  The
+    union of ``(p, c, node_column)`` rows across all listed frames is
+    returned as a deterministic, deduplicated ``pd.MultiIndex`` with
+    names ``("process", "commodity", "node")``.
+    """
+    pieces: list[pl.DataFrame] = []
+    for field_name, node_col in attrs:
+        fr = getattr(flex_data, field_name, None)
+        if fr is None or fr.height == 0 or node_col not in fr.columns:
+            continue
+        c_col = "c" if "c" in fr.columns else "commodity"
+        p_col = "p" if "p" in fr.columns else "process"
+        if c_col not in fr.columns or p_col not in fr.columns:
+            continue
+        pieces.append(
+            fr.select(
+                pl.col(p_col).cast(pl.Utf8).alias("process"),
+                pl.col(c_col).cast(pl.Utf8).alias("commodity"),
+                pl.col(node_col).cast(pl.Utf8).alias("node"),
+            )
+        )
+    if not pieces:
+        return empty_multi_index(["process", "commodity", "node"])
+    df = (
+        pl.concat(pieces, how="vertical_relaxed")
+          .unique()
+          .sort("process", "commodity", "node")
+          .to_pandas()
+    )
+    if df.empty:
+        return empty_multi_index(["process", "commodity", "node"])
+    return pd.MultiIndex.from_frame(
+        df, names=["process", "commodity", "node"],
+    )
+
+
 def _node_types(flex_data: "FlexData") -> dict[str, str]:
     r"""Return ``{node: p_node_type}`` for every node, defaulting to
     ``balance``.
@@ -579,13 +669,49 @@ def read_sets(
     )
 
     # ─── Commodity-related sets ───────────────────────────────────────────
-    s.commodity_node = empty_multi_index(["commodity", "node"])
-    s.commodity_node_co2 = empty_multi_index(["commodity", "node"])
-    s.process__commodity__node = empty_multi_index(
-        ["process", "commodity", "node"]
+    # Recover the four sets that the legacy CSV path obtained from
+    # ``solve_data/commodity_node.csv`` / ``commodity_node_co2.csv`` /
+    # ``process__commodity__node.csv`` / ``process__commodity__node_co2.csv``
+    # by deriving from the FlexData flow_* frames the model already builds.
+    # Each flow_* frame is a join of (p, source, sink) arcs onto either
+    # ``commodity__node.csv`` (commodity-priced) or a CO2-priced/capped
+    # (g, c, n) projection, so the union of source/sink-side commodity
+    # nodes across the frames covers exactly the (c, n) pairs the LP
+    # objective and downstream cost calculation reference.
+    # Regression introduced by e89bf53e (Δ.31 piece 2, in-memory readers).
+    s.commodity_node = _commodity_node_from_flex(
+        flex_data,
+        attrs=(
+            ("flow_from_commodity_eff", "source"),
+            ("flow_from_commodity_noEff", "source"),
+            ("flow_to_commodity", "sink"),
+        ),
     )
-    s.process__commodity__node_co2 = empty_multi_index(
-        ["process", "commodity", "node"]
+    s.commodity_node_co2 = _commodity_node_from_flex(
+        flex_data,
+        attrs=(
+            ("flow_from_co2_priced", "source"),
+            ("flow_from_co2_priced_noEff", "source"),
+            ("flow_from_co2_capped", "source"),
+            ("flow_from_co2_capped_noEff", "source"),
+        ),
+    )
+    s.process__commodity__node = _process_commodity_node_from_flex(
+        flex_data,
+        attrs=(
+            ("flow_from_commodity_eff", "source"),
+            ("flow_from_commodity_noEff", "source"),
+            ("flow_to_commodity", "sink"),
+        ),
+    )
+    s.process__commodity__node_co2 = _process_commodity_node_from_flex(
+        flex_data,
+        attrs=(
+            ("flow_from_co2_priced", "source"),
+            ("flow_from_co2_priced_noEff", "source"),
+            ("flow_from_co2_capped", "source"),
+            ("flow_from_co2_capped_noEff", "source"),
+        ),
     )
     s.group_co2_price = pd.Index([], name="group", dtype="object")
     s.group_co2_limit = pd.Index([], name="group", dtype="object")

@@ -19,15 +19,26 @@ def compute_costs(par, s, v, r) -> None:
     *_d below.
     """
     # --- Commodity costs ---
-    flow_from_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=1).isin(s.commodity_node.get_level_values(level=1))]]
-    flow_to_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=2).isin(s.commodity_node.get_level_values(level=1))]]
+    # In-memory ``commodity_node`` is derived from the FlexData flow_*
+    # frames (covers every (c, n) referenced by an arc, regardless of
+    # whether a price was authored).  ``par.commodity_price`` only
+    # carries columns for commodities with a populated ``p_commodity_price``
+    # entry — so intersect here to avoid KeyError when an arc references
+    # a price-less commodity (e.g. coal_chp where coal has only a
+    # co2_content row).  Legacy behaviour: cost contribution is 0.
+    available_commodities = pd.Index(par.commodity_price.columns).unique()
+    commodity_node = s.commodity_node[
+        s.commodity_node.get_level_values('commodity').isin(available_commodities)
+    ]
+    flow_from_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=1).isin(commodity_node.get_level_values(level=1))]]
+    flow_to_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=2).isin(commodity_node.get_level_values(level=1))]]
 
     # Per-step scaling factor: step_duration × rp_cost_weight.  Used by all
     # per-(d, t) cost terms below to match the objective in flextool.mod.
     step_x_rp = par.step_duration.mul(par.rp_cost_weight, axis=0)
 
-    commodity_price = par.commodity_price[s.commodity_node.get_level_values('commodity').unique()]
-    commodity_price.columns = commodity_price.columns.join(s.commodity_node)
+    commodity_price = par.commodity_price[commodity_node.get_level_values('commodity').unique()]
+    commodity_price.columns = commodity_price.columns.join(commodity_node)
     flow_from_commodity_node.columns.names = ['process', 'node', 'sink']
     flow_from_commodity_node.columns = flow_from_commodity_node.columns.join(commodity_price.columns)
     flow_from_commodity = flow_from_commodity_node.T.groupby('commodity').sum().T
