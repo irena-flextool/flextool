@@ -1,6 +1,33 @@
 import pandas as pd
 
 
+# Threshold below which LP residuals on flow variables are treated as exact
+# zero.  HiGHS's primal feasibility tolerance is 1e-8 (see HiGHS options),
+# so any output below 1e-9 is conclusively below solver precision and
+# represents zero.  Without this clip the wide-format flow CSVs round-trip
+# through ``pd.read_csv`` as ``float64`` while v3.32.0's glpsol goldens
+# (with exact zeros) load as ``int64``, causing
+# ``pd.testing.assert_frame_equal`` to fail on dtype even when values match
+# under ``round_for_comparison``'s 4-decimal threshold.
+#
+# Apply ONLY to the wide output frames destined for CSV write — never to
+# ``r.flow_dt`` itself, because curtailment derives ``potentialVRE - flow``
+# and small physically-meaningful curtailment values could otherwise be
+# masked.
+_FLOW_RESIDUAL_TOLERANCE: float = 1e-9
+
+
+def _clip_flow_residuals(df: pd.DataFrame) -> pd.DataFrame:
+    """Snap sub-femto LP residuals to exactly zero.
+
+    Returns a frame where every cell with ``|x| < 1e-9`` is replaced with
+    ``0.0``.  Empty / all-NaN frames are returned unchanged.
+    """
+    if df.empty:
+        return df
+    return df.mask(df.abs() < _FLOW_RESIDUAL_TOLERANCE, 0.0)
+
+
 def _indirect_units(s) -> set:
     """Return set of units classified as indirect (2-arc conversion form).
 
@@ -70,6 +97,10 @@ def unit_outputNode(par, s, v, r, debug):
     indirect = _indirect_units(s)
     result_multi_dt = _sort_unit_node_columns(result_multi_dt, indirect)
 
+    # Snap sub-femto HiGHS LP residuals to exact zero before emitting so the
+    # CSV round-trip preserves the int dtype of zero-valued columns.
+    result_multi_dt = _clip_flow_residuals(result_multi_dt)
+
     # Return timestep results
     results.append((result_multi_dt, 'unit_outputNode_dt_ee'))
 
@@ -82,6 +113,7 @@ def unit_outputNode(par, s, v, r, debug):
 
     # Divide by period shares to annualize
     result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+    result_multi_d = _clip_flow_residuals(result_multi_d)
 
     # Return period results
     results.append((result_multi_d, 'unit_outputNode_d_ee'))
@@ -115,6 +147,9 @@ def unit_inputNode(par, s, v, r, debug):
     indirect = _indirect_units(s)
     result_multi_dt = _sort_unit_node_columns(result_multi_dt, indirect)
 
+    # Snap sub-femto HiGHS LP residuals to exact zero (see ``unit_outputNode``).
+    result_multi_dt = _clip_flow_residuals(result_multi_dt)
+
     # Return timestep results
     results.append((result_multi_dt, 'unit_inputNode_dt_ee'))
 
@@ -127,6 +162,7 @@ def unit_inputNode(par, s, v, r, debug):
 
     # Divide by period shares to annualize
     result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+    result_multi_d = _clip_flow_residuals(result_multi_d)
 
     # Return period results
     results.append((result_multi_d, 'unit_inputNode_d_ee'))
