@@ -250,38 +250,45 @@ def test_step_duration_3_keeps_seed_intact(tmp_path: Path):
     )
 
 
-def test_step_duration_3_lp_objective_scales(tmp_path: Path):
-    """End-to-end LP solve with ``step_duration = 3`` and ×3 demand
-    produces an objective ~3× the unmodified baseline.
+def test_step_duration_1_handcomputed():
+    """Trivial single-step LP: one demand node (-100 MWh), one
+    cost-linear process (coal @ 20 EUR/MWh, efficiency=1).
 
-    Catches step_duration-unaware bugs anywhere in the LP build
-    pipeline (not just ``p_inflow``).  If a cost coefficient,
-    penalty, or flow upper bound silently ignores ``step_duration``,
-    the modified LP's objective drifts from the 3× target.
+    LP objective = commodity_cost = price x flow x step_duration
+                 = 20 x 100 x 1 = 2000.0 EUR.
+
+    Hand-derived value with period_share=1, inflation=1,
+    rp_cost_weight=1, so op_factor reduces to step_duration.
     """
-    src = _DATA / "work_base"
-    if not src.exists():
-        pytest.skip(f"fixture missing: {src}")
+    workdir = _DATA / "work_step_duration_1"
+    if not workdir.exists():
+        pytest.skip(f"fixture missing: {workdir}")
+    obj = _solve(workdir, gated=False)
+    assert obj == pytest.approx(2000.0, rel=1e-9), (
+        f"baseline single-step LP did not match hand-computed "
+        f"objective: got {obj}, expected 2000.0"
+    )
 
-    baseline = _solve(src, gated=False)
 
-    workdir = tmp_path / "work_base_step3"
-    _build_step_duration_fixture(src, workdir, scale=3.0)
-    modified = _solve(workdir, gated=False)
+def test_step_duration_3_handcomputed():
+    """Same physical scenario as the step=1 test, expressed as
+    step_duration=3 with pdtNodeInflow tripled.
 
-    ratio = modified / baseline
-    # Tolerance is wide because the LP has free dispatch decisions —
-    # aggregating into longer blocks can reshape the optimal flow
-    # pattern enough to change the objective by O(10 %).  What we're
-    # protecting against is order-of-magnitude divergence — the
-    # p_inflow bug would push the ratio toward 1 (or below).
-    assert 2.5 < ratio < 3.5, (
-        f"step_duration=3 LP objective doesn't track the demand "
-        f"scaling: baseline={baseline:.4e}, modified={modified:.4e}, "
-        f"ratio={ratio:.3f}.  Expected ~3.0× (since demand scaled "
-        f"3× and step_duration scaled 3×).  A ratio near 1 indicates "
-        f"the LP is silently dropping the ×3 demand scaling — most "
-        f"likely the p_inflow override is back."
+    LP objective = 20 x 100 x 3 = 6000.0 EUR.
+
+    A regression that re-enables the cascade p_inflow override AND
+    that override is still step_duration-unaware (the lt_rp bug
+    class) would silently divide demand by step_duration and
+    produce 2000.0 EUR instead.
+    """
+    workdir = _DATA / "work_step_duration_3"
+    if not workdir.exists():
+        pytest.skip(f"fixture missing: {workdir}")
+    obj = _solve(workdir, gated=False)
+    assert obj == pytest.approx(6000.0, rel=1e-9), (
+        f"step_duration=3 LP did not match hand-computed objective: "
+        f"got {obj}, expected 6000.0.  This is the p_inflow lt_rp "
+        f"bug class - see specs/native_inflow_pathway_disabled.md."
     )
 
 
