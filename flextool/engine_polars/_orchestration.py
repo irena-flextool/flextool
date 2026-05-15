@@ -1095,8 +1095,24 @@ def _drive_cascade(
             unscaled_obj = (
                 sol.obj / effective_obj_scale if sol.obj is not None else None
             )
-            self._all_steps[complete_solve_name] = OrchestrationStep(
-                solve_name=complete_solve_name,
+            # In rolling solves, every iteration's ``complete_solve_name``
+            # is the parent solve name (see ``recursive_solves.py:259``:
+            # ``complete_solves[roll_name] = complete_solve_name``).  Use
+            # the actual per-roll name from ``solve_data/solve_current.csv``
+            # — the file flextool rewrites between rolls — so
+            # ``_all_steps`` has one entry per roll instead of every roll
+            # overwriting the parent key.  ``write_outputs`` keys its
+            # union over sub-solves on this dict, and the parquet
+            # writers use the same per-roll name (see
+            # ``read_highs_solution._actual_solve_name``).
+            from flextool.process_outputs.read_highs_solution import (
+                _actual_solve_name,
+            )
+            step_key = _actual_solve_name(
+                self.state.paths.work_folder, complete_solve_name,
+            )
+            self._all_steps[step_key] = OrchestrationStep(
+                solve_name=step_key,
                 solution=sol,
                 handoff=handoff,
                 obj=unscaled_obj,
