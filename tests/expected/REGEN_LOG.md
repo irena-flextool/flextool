@@ -364,3 +364,28 @@ Per the alt-optima regen protocol, regenerated:
 
 Also bumped `tests/scenarios.yaml` `test_a_lot` time_budget 4.0 → 5.0s
 to absorb determinism overhead (same pattern as commit 6f5f166f).
+
+## 2_day_stochastic_dispatch — 2026-05-15
+
+The stochastics fixture sets `model.output_horizon = "yes"` — explicitly
+requesting horizon-extended outputs, which for a stochastic scenario
+means all forecast-branch (period, step) rows in addition to the anchor.
+HEAD's downstream readers were sourcing the canonical (period, step)
+order from `realized_dispatch.csv` (anchor-only, 48 rows), so
+`costs__dt.csv` and other dt-indexed outputs silently dropped the 144
+forecast-branch rows.
+
+Fix:
+- `flextool/engine_polars/input.py:3409-3429` — prefer
+  `solve_data/dt_realize_dispatch_set.csv` over `realized_dispatch.csv`
+  when populating `flex_data.realized_dispatch` (used downstream as the
+  canonical emission set). The polars cascade writes
+  `dt_realize_dispatch_set.csv` honouring the `output_horizon` toggle
+  via `_writer_per_solve.write_period_set_csvs:336-341`; for
+  non-stochastic / non-output_horizon solves the two files carry the
+  same rows (verified on fullYear_roll, still passes after this change).
+- `flextool/process_outputs/read_highs_solution.py` — extended
+  `_load_canonical_dt_order` with the matching dual-source fallback.
+
+Regenerated `costs__dt.csv` (49 → 193 rows) and `summary_solve.csv`.
+Gate at 64/65 (was 63/65).

@@ -451,22 +451,36 @@ def _load_canonical_dt_order(
 ) -> list[tuple[str, str]] | None:
     """Return ``[(period, time), …]`` in the canonical glpsol iteration order.
 
-    Source: ``solve_data/p_step_duration.csv`` — written by the phase-1
-    printf ``for {s in solve_current, (d, t) in dt_realize_dispatch}``.
+    Source priority:
+      1. ``solve_data/p_step_duration.csv`` — written by the phase-1
+         printf ``for {s in solve_current, (d, t) in dt_realize_dispatch}``.
+      2. ``solve_data/dt_realize_dispatch_set.csv`` — the polars
+         cascade's authoritative emission set (mirrors the .mod's
+         ``dt_realize_dispatch`` after the ``output_horizon`` toggle).
+         Carries forecast-branch rows for stochastic scenarios where
+         ``realized_dispatch.csv`` is anchor-only by design.
+
     Every dt-indexed phase-1 printf in ``flextool.mod`` uses the same
     set iteration, so this sequence is the row order ALL parameter
     CSVs of dt arity have.
 
-    Filtered to ``solve_name``.  Returns ``None`` if the file is absent.
+    Filtered to ``solve_name`` when the CSV carries a ``solve`` column;
+    ``dt_realize_dispatch_set.csv`` is per-solve already (no solve col).
+    Returns ``None`` when neither file is present.
     """
     if work_folder is None:
         return None
-    path = Path(work_folder) / "solve_data" / "p_step_duration.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path, usecols=["solve", "period", "time"], dtype=str)
-    df = df[df["solve"] == str(solve_name)]
-    return list(zip(df["period"].to_list(), df["time"].to_list()))
+    sd = Path(work_folder) / "solve_data"
+    psd = sd / "p_step_duration.csv"
+    if psd.exists():
+        df = pd.read_csv(psd, usecols=["solve", "period", "time"], dtype=str)
+        df = df[df["solve"] == str(solve_name)]
+        return list(zip(df["period"].to_list(), df["time"].to_list()))
+    drd = sd / "dt_realize_dispatch_set.csv"
+    if drd.exists():
+        df = pd.read_csv(drd, usecols=["period", "time"], dtype=str)
+        return list(zip(df["period"].to_list(), df["time"].to_list()))
+    return None
 
 
 def _load_canonical_d_order(

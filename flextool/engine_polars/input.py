@@ -3409,8 +3409,26 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # that ``build_handoff_from_flexpy`` would otherwise re-read.
         # Each is lenient: file missing or empty → field stays ``None``
         # and the handoff extractor's disk fallback kicks in.
+        #
+        # Stochastic / output_horizon: prefer ``dt_realize_dispatch_set.csv``
+        # when present.  That's the canonical "rows to emit" set built by
+        # ``_writer_per_solve.write_period_set_csvs`` — it includes all
+        # forecast-branch (period, step) pairs for stochastic scenarios
+        # (where ``realized_dispatch.csv`` is anchor-only by design).  For
+        # non-stochastic / non-output_horizon solves it collapses to the
+        # same rows as ``realized_dispatch.csv`` (verified on fullYear_roll).
+        # Without this preference dispatch-time CSVs (costs__dt, node__dt,
+        # …) drop branch rows silently because the parquet extractor's
+        # canonical row order comes from this frame's downstream
+        # ``dt_realize_dispatch`` MultiIndex.
         flex_data.realized_dispatch = _load_handoff_aux_pair(
-            sd / "realized_dispatch.csv", ("period", "step"))
+            sd / "dt_realize_dispatch_set.csv", ("period", "time"))
+        if flex_data.realized_dispatch is not None:
+            flex_data.realized_dispatch = flex_data.realized_dispatch.rename(
+                {"time": "step"})
+        if flex_data.realized_dispatch is None:
+            flex_data.realized_dispatch = _load_handoff_aux_pair(
+                sd / "realized_dispatch.csv", ("period", "step"))
         flex_data.period__time_last = _load_handoff_aux_pair(
             sd / "period__time_last.csv", ("period", "step"))
         # ``node__storage_nested_fix_method`` lives in solve_data/ for
