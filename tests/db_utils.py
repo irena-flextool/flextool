@@ -96,7 +96,13 @@ def round_for_comparison(df: pd.DataFrame) -> pd.DataFrame:
     """
     numeric_cols = df.select_dtypes(include="number").columns
     df = df.copy()
-    df[numeric_cols] = df[numeric_cols].round(4)
+    # Cast numeric columns to float64.  ``write_outputs`` uses
+    # ``float_format='%.8g'`` so integer-valued floats are emitted as
+    # ``5`` (no trailing ``.0``); pd.read_csv then infers int64.  The
+    # v3.32.0 goldens were emitted through a path that left ``5.0`` in
+    # place (float64).  Without this cast a column whose all values are
+    # whole numbers fails dtype-equality even when the values match.
+    df[numeric_cols] = df[numeric_cols].astype(float).round(4)
     return df
 
 
