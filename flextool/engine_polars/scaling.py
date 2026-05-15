@@ -650,13 +650,28 @@ def recommend_user_bound_scale_from_lp(
     of 10 — using ``log10`` here was a longstanding bug that left the
     recommended scaling ~3.3× too gentle per "decade".
 
+    Two-sided safety guard: we also look at the *smallest* finite,
+    non-zero LP bound (``abs_min``).  Scaling shrinks bounds uniformly,
+    so picking ``N`` purely from the max can drag the small bounds
+    below HiGHS' primal-feasibility tolerance (≈ 1e-7) — at which point
+    a binding constraint (e.g. a CO2 cap on a small commodity flow)
+    becomes numerically slack and the LP picks a strictly cheaper but
+    *infeasible-w.r.t.-the-unscaled-model* solution.  We therefore
+    clamp ``N`` so the post-scale smallest bound stays ≥
+    ``MIN_SCALED_BOUND`` (≈ 1e-6, comfortably above the default 1e-7
+    feasibility tolerance).  When the LP bound spread is too wide for
+    a single ``N`` to satisfy both ends, we err on the side of
+    correctness (keep small bounds enforceable) rather than tight
+    HiGHS conditioning.
+
     Returns an integer in
     ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]``.  ``0`` means
     "leave HiGHS' own scaling alone".
     """
     if not lp_ranges:
         return 0
-    bounds: list[float] = []
+    max_bounds: list[float] = []
+    min_bounds: list[float] = []
     for key in ("row_bound", "col_bound"):
         rng = lp_ranges.get(key)
         if rng is None:
@@ -666,10 +681,12 @@ def recommend_user_bound_scale_from_lp(
         except (TypeError, ValueError):
             continue
         if math.isfinite(hi) and hi > 0.0:
-            bounds.append(float(hi))
-    if not bounds:
+            max_bounds.append(float(hi))
+        if math.isfinite(lo) and lo > 0.0:
+            min_bounds.append(float(lo))
+    if not max_bounds:
         return 0
-    max_bound = max(bounds)
+    max_bound = max(max_bounds)
     # Trigger: ~2^10 = 1024 — matches the "max_bound > 1e3" heuristic
     # used pre-fix, kept as 2^10 to make the threshold consistent with
     # the new log2 scaling.
@@ -679,6 +696,22 @@ def recommend_user_bound_scale_from_lp(
         n = -int(round(math.log2(max_bound)))
     except ValueError:
         return 0
+    # Two-sided guard: don't shrink small bounds below ~1e-6 (HiGHS'
+    # default primal_feasibility_tolerance is 1e-7).  If the smallest
+    # finite LP bound × 2**n would fall below this threshold, raise N
+    # (make it less negative) so the small bound survives.  Note that
+    # ``n`` is negative; ``n + k`` for positive k is less negative.
+    MIN_SCALED_BOUND = 1e-6
+    if min_bounds:
+        min_bound = min(min_bounds)
+        # We want min_bound * 2**n >= MIN_SCALED_BOUND, i.e.
+        #   n >= log2(MIN_SCALED_BOUND / min_bound).
+        try:
+            n_floor = int(math.ceil(math.log2(MIN_SCALED_BOUND / min_bound)))
+        except ValueError:
+            n_floor = USER_BOUND_SCALE_MIN
+        if n < n_floor:
+            n = n_floor
     if n > USER_BOUND_SCALE_MAX:
         n = USER_BOUND_SCALE_MAX
     if n < USER_BOUND_SCALE_MIN:
