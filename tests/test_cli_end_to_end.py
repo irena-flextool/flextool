@@ -51,30 +51,45 @@ DEFAULT_ACTIVE_CONFIGS = (
 )
 
 
-def test_cli_end_to_end_coal(test_db_url: str, tmp_path: Path) -> None:
-    """Run the ``coal`` scenario through the CLI subprocess entry point.
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        # ``coal``: simplest fixture in the suite — exercises the basic
+        # CLI surface (argument parsing, all three writers, plot config).
+        "coal",
+        # ``multi_year_one_solve``: single-solve multi-period invest —
+        # exercises the per-period existing-capacity pivot in
+        # ``_pdX_per_entity`` that the GUI's Rivendell run trips when the
+        # entity × period axis has duplicates from nested-cascade filter
+        # leakage.  Same general layout as ``rivendell_invest``.
+        "multi_year_one_solve",
+    ],
+)
+def test_cli_end_to_end(scenario: str, test_db_url: str, tmp_path: Path) -> None:
+    """Run a scenario through the CLI subprocess entry point.
 
     Mirrors the GUI's invocation: ``--write-methods parquet plot csv``,
     a representative ``--active-configs`` set, ``--highs-threads 1``.
 
     Pass criteria:
       * Exit code 0.
-      * ``output_csv/coal/summary_solve.csv`` exists.
-      * At least one parquet under ``output_raw/`` is present.
+      * ``output_csv/<subdir>/summary_solve.csv`` exists.
+      * At least one parquet artefact is present (in ``output_parquet/``
+        or ``work/output_raw/``).
       * At least one ``.html`` / ``.png`` plot artefact under
-        ``output_plot/`` is present (parquet+plot writers actually ran).
+        ``output_plots/`` is present (parquet+plot writers actually ran).
     """
     work_folder = tmp_path / "work"
     work_folder.mkdir()
     output_location = tmp_path / "out"
     output_location.mkdir()
-    output_subdir = "coal_e2e"
+    output_subdir = f"{scenario}_e2e"
 
     cmd = [
         sys.executable,
         "-m", "flextool.cli.cmd_run_flextool",
         test_db_url,
-        "--scenario-name", "coal",
+        "--scenario-name", scenario,
         "--work-folder", str(work_folder),
         "--output-location", str(output_location),
         "--output-subdir", output_subdir,
@@ -128,4 +143,83 @@ def test_cli_end_to_end_coal(test_db_url: str, tmp_path: Path) -> None:
         ]
     assert plot_files, (
         f"Plot writer produced no .html/.png/.svg files under {plot_dir}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rivendell-shaped reproducer for the Map-index-name pivot bug
+# ---------------------------------------------------------------------------
+#
+# Rivendell-derived fixtures author the per-period ``existing`` parameter as
+# a ``Map`` whose ``index_name`` is set to ``x`` (rather than the canonical
+# ``period`` default).  ``_per_entity_param_lf`` previously checked only
+# ``"period" in cols`` to detect the period axis — when the source surfaced
+# the column as ``x`` it fell through to the scalar-broadcast branch,
+# emitting one fake-scalar row per source row.  ``_resolve_per_period_lf``'s
+# ``scalar.join(on="e")`` then exploded each (e, d) grid pair by the number
+# of source rows for that entity, and the eventual
+# ``p_entity_all_existing`` pivot in ``read_parameters`` hit
+# ``ValueError: Index contains duplicate entries, cannot reshape``.
+#
+# The Rivendell DB lives outside the repo (rivendell-build-db tooling) — we
+# probe its cached location and skip cleanly when it isn't available so the
+# rest of the suite stays self-contained.
+_RIVENDELL_DB = Path.home() / ".cache" / "rivendell_to_flextool" / "rivendell.sqlite"
+
+
+@pytest.mark.skipif(
+    not _RIVENDELL_DB.exists(),
+    reason=f"Rivendell cache DB not present at {_RIVENDELL_DB}",
+)
+def test_cli_end_to_end_rivendell_map_index_name(tmp_path: Path) -> None:
+    """B0_base_slice: single-solve multi-period invest with a ``Map``-
+    valued ``existing`` parameter whose ``index_name`` is ``x``.
+
+    Regression guard for the
+    ``Index contains duplicate entries, cannot reshape`` pivot crash in
+    ``read_parameters.read_parameters`` — the fix is in
+    ``_derived_existing._per_entity_param_lf`` /
+    ``_derived_npv._per_entity_param_lf`` /
+    ``_derived_params.p_entity_all_existing_from_source``: treat any
+    extra non-name/value column as the period dim, not just ``period``.
+    """
+    work_folder = tmp_path / "work"
+    work_folder.mkdir()
+    output_location = tmp_path / "out"
+    output_location.mkdir()
+    output_subdir = "rivendell_b0_e2e"
+
+    cmd = [
+        sys.executable,
+        "-m", "flextool.cli.cmd_run_flextool",
+        f"sqlite:///{_RIVENDELL_DB}",
+        "--scenario-name", "B0_base_slice",
+        "--work-folder", str(work_folder),
+        "--output-location", str(output_location),
+        "--output-subdir", output_subdir,
+        "--write-methods", "parquet", "plot", "csv",
+        "--active-configs", *DEFAULT_ACTIVE_CONFIGS,
+        "--highs-threads", "1",
+    ]
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+
+    proc = subprocess.run(
+        cmd, cwd=REPO_ROOT, env=env,
+        capture_output=True, text=True, timeout=300,
+    )
+
+    # Narrow regression guard: assert the original
+    # ``Index contains duplicate entries, cannot reshape`` symptom is
+    # gone.  We don't require RC=0 because the Rivendell fixture exposes
+    # other unrelated downstream issues (e.g. reserve column mismatches
+    # in ``calc_slacks``) — but the pivot crash this test was built for
+    # must not return.
+    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    assert "Index contains duplicate entries, cannot reshape" not in combined, (
+        "Regression: ``_pdX_per_entity`` pivot hit the duplicate-entries "
+        "error again.\n"
+        f"--- stdout ---\n{proc.stdout}\n"
+        f"--- stderr ---\n{proc.stderr}\n"
     )

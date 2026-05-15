@@ -189,10 +189,19 @@ def _per_entity_param_lf(source: "InputSource",
         if df.height == 0:
             continue
         cols = df.columns
-        if "period" in cols:
+        # Period-dim detection — see the matching helper in
+        # ``_derived_existing._per_entity_param_lf``.  When the source
+        # exposes the period axis under a user-renamed ``Map.index_name``
+        # (e.g. ``x``), checking only ``"period" in cols`` misses it and
+        # the scalar-broadcast branch explodes per-period rows through
+        # ``_resolve_per_period_lf``'s ``scalar.join(on="e")``.
+        extra = [c for c in cols if c not in ("name", "value")]
+        period_col = "period" if "period" in extra else (extra[0] if extra else None)
+        if period_col is not None:
             parts.append(df.lazy().select(
                 cast_dim(pl.col("name"), _enums, "e").alias("e"),
-                cast_dim(pl.col("period"), _enums, "d").alias("d"),
+                cast_dim(pl.col(period_col).cast(pl.Utf8, strict=False),
+                          _enums, "d").alias("d"),
                 pl.col("value").cast(pl.Float64, strict=False),
                 pl.lit(False).alias("is_scalar"),
             ))

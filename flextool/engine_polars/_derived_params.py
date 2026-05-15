@@ -5071,17 +5071,23 @@ def p_entity_all_existing_from_source(source: "InputSource",
     grid = (pl.LazyFrame({"e": ent_names})
               .join(pl.LazyFrame({"d": piu}), how="cross")
               .with_columns(value=pl.lit(0.0)))
-    # Read explicit existing rows.
+    # Read explicit existing rows.  Period-dim detection mirrors
+    # ``_derived_existing._per_entity_param_lf``: the period column may
+    # be named ``period`` (canonical) or carry a user-renamed
+    # ``Map.index_name`` (e.g. ``x``).  Treat any extra non-name/value
+    # column as the period dim.
     parts: list[pl.LazyFrame] = []
     for ec in ("unit", "node", "connection"):
         df = _try_param(source, ec, "existing")
         if df is None or df.height == 0:
             continue
         cols = df.columns
-        if "period" in cols:
+        extra = [c for c in cols if c not in ("name", "value")]
+        period_col = "period" if "period" in extra else (extra[0] if extra else None)
+        if period_col is not None:
             parts.append(df.lazy().select(
                 pl.col("name").alias("e"),
-                pl.col("period").alias("d"),
+                pl.col(period_col).cast(pl.Utf8, strict=False).alias("d"),
                 pl.col("value").cast(pl.Float64).alias("ex"),
             ))
         else:

@@ -196,6 +196,15 @@ def _per_entity_param_lf(source: "InputSource",
     """Lazy ``[e, d, value, is_scalar]``.
 
     Mirror of :func:`._derived_npv._per_entity_param_lf`.
+
+    Period-dim detection: a per-period parameter exposes exactly one
+    index column alongside ``name`` / ``value``.  The canonical name is
+    ``period``, but the source may surface the column under the user's
+    ``Map.index_name`` (e.g. ``x``) when the spinedb default is
+    overridden.  Treat any single non-``name``/``value`` column as the
+    period dim — checking only ``"period" in cols`` mis-classifies
+    user-renamed indices as scalars, which then explode through
+    :func:`_resolve_per_period_lf`'s ``scalar.join(on="e")``.
     """
     parts: list[pl.LazyFrame] = []
     for ec in ("unit", "node", "connection"):
@@ -206,10 +215,17 @@ def _per_entity_param_lf(source: "InputSource",
         if df.height == 0:
             continue
         cols = df.columns
-        if "period" in cols:
+        # Any extra column beyond name / value is the per-period index.
+        # ``existing`` / ``lifetime`` / ``virtual_unitsize`` have at
+        # most one such extra column; fall back to ``period`` when
+        # present (typical), otherwise pick the first non-name/value
+        # column (covers ``x`` / other user-renamed Map indices).
+        extra = [c for c in cols if c not in ("name", "value")]
+        period_col = "period" if "period" in extra else (extra[0] if extra else None)
+        if period_col is not None:
             parts.append(df.lazy().select(
                 pl.col("name").alias("e"),
-                pl.col("period").alias("d"),
+                pl.col(period_col).cast(pl.Utf8, strict=False).alias("d"),
                 pl.col("value").cast(pl.Float64, strict=False),
                 pl.lit(False).alias("is_scalar"),
             ))
