@@ -15,12 +15,17 @@ with (or replace) the phase-3 CSVs.  Dispatch is by file presence: if
 any ``v_flow__*.parquet`` exists, the parquet pathway is used;
 otherwise the CSV pathway.
 """
+import ast
+import json
+import os
+import tempfile
 from types import SimpleNamespace
 from pathlib import Path
 from typing import Sequence
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-from flextool.lean_parquet import read_lean_parquet
 from flextool.process_outputs.read_highs_solution import empty_variable_frame
 from flextool.process_outputs.solve_order import load_solve_order
 
@@ -43,6 +48,226 @@ def read_variables(output_dir):
     if any(output_path.glob("v_flow__*.parquet")):
         return _read_from_parquet(output_path, input_path)
     return _read_from_csv(output_path, input_path)
+
+
+def _stream_concat_parts(parts: list[Path]) -> pd.DataFrame:
+    """Concatenate per-solve parquet *parts* without materialising them
+    all at once.
+
+    The previous implementation built ``frames = [read_lean_parquet(p)
+    for p in parts]`` then ``pd.concat(frames).fillna(0.0)``.  On 72-roll
+    SouthAfrica that peaked at ~50 GB for ``v_flow`` alone — the Python
+    list held every per-solve frame simultaneously, then ``pd.concat``
+    produced a second dense copy of the union.
+
+    Phase E2 strategy:
+
+    1. Footer-only pass over each part to gather the union of physical
+       column names, the per-column canonical type (preferring concrete
+       types over ``null`` from empty parts), and the row-index level
+       info from the first non-empty part's ``flextool`` metadata.
+    2. Open a single ``ParquetWriter`` on a temp file with the union
+       schema.  For each part read its table, promote (add nulls / drop)
+       columns to align with the union schema, and write it as one
+       row-group.  Drop the table reference before reading the next
+       part so we never hold more than ONE part's arrow data in memory
+       during the write phase.
+    3. Read the consolidated temp parquet back as a single pandas
+       DataFrame via ``pq.read_table(...).to_pandas(self_destruct=True)``.
+       arrow buffers are released column-by-column during the
+       conversion.
+    4. Apply the historical fixups (1-level MultiIndex collapse +
+       ``.fillna(0.0)``).  The zero-fill matters for downstream
+       consumers (e.g. ``calc_storage_vre`` uses
+       ``v.state[n].reindex(...)``; a NaN there would break the
+       arithmetic).
+
+    Memory profile (per variable), where ``F = N × per_part`` is the
+    union frame size:
+
+        old : peak ≈ N × per_part + 2 × F   (Python list of N frames
+                                             + ``pd.concat`` temp + final)
+        new : peak ≈ max(2 × per_part,      (write phase: one part
+                         2 × F)              + writer buffer)
+                                            (read phase: arrow table
+                                             + pandas frame during
+                                             column-by-column convert)
+
+    Concretely: the spec-cited 50 GB SouthAfrica peak (dominated by
+    the N-frame list term) drops to roughly ``2 × F`` — the read-back
+    floor.  When ``F ≈ N × per_part`` (parts share most columns) the
+    win is ~halving peak; when parts share *no* columns (each part
+    contributes disjoint entities) ``F`` shrinks proportionally and
+    the win grows.
+
+    The temp file lives in the same directory as the parts so it stays
+    on the workspace filesystem (predictable disk locality, no
+    cross-filesystem rename surprises).
+    """
+    # Filter out parts that wrote zero rows AND zero columns.  The old
+    # path kept these only if they were the *only* parts; we mirror
+    # that fallback here so an all-empty variable still returns the
+    # same shape it did before.
+    non_empty_parts: list[Path] = []
+    for p in parts:
+        pf = pq.ParquetFile(str(p))
+        if pf.metadata.num_rows == 0 and pf.metadata.num_columns == 0:
+            continue
+        non_empty_parts.append(p)
+    use_parts = non_empty_parts or parts
+
+    if not use_parts:
+        # Defensive — caller guarantees ``parts`` is non-empty.
+        return pd.DataFrame()
+
+    # Pass 1: union of columns + per-column canonical type + row-index
+    # level info from the first non-empty part's metadata.  Reading
+    # just the schema costs one footer read per file (cheap; KB not GB).
+    union_cols: list[str] = []
+    seen: set[str] = set()
+    flextool_info: bytes | None = None
+    null_type = pa.null()
+    name_to_type: dict[str, pa.DataType] = {}
+    for p in use_parts:
+        pf = pq.ParquetFile(str(p))
+        sch = pf.schema_arrow
+        meta = sch.metadata or {}
+        if flextool_info is None and b"flextool" in meta:
+            flextool_info = meta[b"flextool"]
+        for field in sch:
+            if field.name not in seen:
+                seen.add(field.name)
+                union_cols.append(field.name)
+                name_to_type[field.name] = field.type
+            else:
+                # Prefer any concrete type over ``null`` — a part with
+                # zero rows may emit a column of ``null`` type, and
+                # arrow can't cast a later concrete column *into* that.
+                if (
+                    name_to_type[field.name] == null_type
+                    and field.type != null_type
+                ):
+                    name_to_type[field.name] = field.type
+
+    union_fields = [pa.field(c, name_to_type[c]) for c in union_cols]
+    # Preserve flextool metadata so the temp file is readable via
+    # ``read_lean_parquet`` (round-trips the index / columns names).
+    schema_meta = {b"flextool": flextool_info} if flextool_info else None
+    union_schema = pa.schema(union_fields, metadata=schema_meta)
+
+    # Pass 2: stream-write each part as a single row-group.
+    parent = use_parts[0].parent
+    # ``mkstemp`` creates the file with O_EXCL — no collision with
+    # concurrent runs writing into the same folder.
+    fd, tmp_path_str = tempfile.mkstemp(
+        prefix=f".{use_parts[0].stem.split('__')[0]}__concat_", suffix=".parquet",
+        dir=str(parent),
+    )
+    os.close(fd)  # ParquetWriter will reopen by path.
+    tmp_path = Path(tmp_path_str)
+    try:
+        with pq.ParquetWriter(str(tmp_path), union_schema) as writer:
+            for p in use_parts:
+                table = pq.read_table(str(p))
+                # Strip per-part metadata so the writer doesn't reject
+                # the row-group on schema mismatch — only the file-level
+                # ``union_schema`` carries the canonical ``flextool``
+                # blob.
+                table = table.replace_schema_metadata(None)
+                # Align the part's columns to ``union_cols`` order,
+                # filling absent columns with a null array (cheap —
+                # arrow stores a single null reference, not a dense
+                # ndarray).
+                n_rows = table.num_rows
+                arrays: list[pa.ChunkedArray | pa.Array] = []
+                part_cols = {f.name: i for i, f in enumerate(table.schema)}
+                for col_name in union_cols:
+                    if col_name in part_cols:
+                        arr = table.column(part_cols[col_name])
+                        target_type = name_to_type[col_name]
+                        if arr.type != target_type:
+                            if arr.type == null_type:
+                                # All-null part column → emit a properly
+                                # typed null array of the same length.
+                                arr = pa.nulls(arr.length(), type=target_type)
+                            else:
+                                # Concrete → target (e.g. int32 → int64).
+                                arr = arr.cast(target_type)
+                        arrays.append(arr)
+                    else:
+                        arrays.append(
+                            pa.nulls(n_rows, type=name_to_type[col_name])
+                        )
+                aligned = pa.Table.from_arrays(
+                    arrays, schema=union_schema,
+                )
+                writer.write_table(aligned)
+                # Free part-level references before reading the next.
+                del table, aligned, arrays
+
+        # Pass 3: single read-back as pandas.  ``self_destruct=True``
+        # discards arrow buffers as columns are materialised, so peak
+        # during this conversion is one buffer + the growing pandas
+        # frame, not two complete copies.  The temp file's row-group
+        # layout is preserved (one per part) — multi-row-group reads
+        # are still single-frame from the consumer's perspective.
+        result_table = pq.read_table(str(tmp_path))
+        df = result_table.to_pandas(self_destruct=True)
+        del result_table
+    finally:
+        # Best-effort cleanup — never let a stray temp file accumulate.
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+    # --- Rebuild row index from the flextool metadata ---
+    # ``read_lean_parquet`` does this for a single file; we replicate
+    # the logic against the union schema's metadata so the streaming
+    # writer is interchangeable with the old eager path.
+    if flextool_info is not None:
+        info = json.loads(flextool_info)
+        idx_names = info.get("idx")
+        if idx_names:
+            col_lookup: list[str] = []
+            for i, lname in enumerate(idx_names):
+                col_lookup.append(
+                    f"__index_level_{i}__" if lname is None else lname
+                )
+            present = [c for c in col_lookup if c in df.columns]
+            if present:
+                df = df.set_index(present)
+                if isinstance(df.index, pd.MultiIndex):
+                    df.index.names = idx_names
+                else:
+                    df.index.name = idx_names[0]
+
+        col_level_names = info.get("col")
+        if col_level_names:
+            tuples = [ast.literal_eval(c) for c in df.columns]
+            df.columns = pd.MultiIndex.from_tuples(
+                tuples, names=col_level_names,
+            )
+        else:
+            single_col_name = info.get("col_name")
+            if single_col_name is not None:
+                df.columns.name = single_col_name
+
+    # ``astype(float)`` matched the old behaviour — values are already
+    # float64 from the writer side, but this preserves the historical
+    # promotion for any oddly-typed (e.g. int-zero) all-null columns.
+    df = df.astype(float)
+
+    # Collapse 1-level MultiIndex columns to plain Index — same fixup
+    # the old eager path applied (the CSV pathway produces a plain
+    # Index here; downstream ``DataFrame.mul(..., level=0)`` treats
+    # MultiIndex-with-one-level differently).
+    if isinstance(df.columns, pd.MultiIndex) and df.columns.nlevels == 1:
+        df.columns = pd.Index(
+            [c[0] for c in df.columns], name=df.columns.names[0],
+        )
+
+    return df.fillna(0.0)
 
 
 def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
@@ -88,20 +313,13 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
         # sort needed.  Solves missing from ``solve_order`` sort first
         # (shouldn't happen normally; defensive).
         parts.sort(key=lambda p: solve_order.get(_solve_from_filename(name, p), -1))
-        frames = [read_lean_parquet(p) for p in parts]
-        # Drop frames that came back entirely empty (0 rows AND 0 columns);
-        # concatenating them in would widen the index dtype to object.
-        frames = [f for f in frames if not (f.empty and f.shape[1] == 0)] or frames
-        out = pd.concat(frames, axis=0).astype(float)
-        # Collapse 1-level MultiIndex columns to plain Index.  The CSV
-        # pathway produces a plain Index here; downstream code (e.g.
-        # ``DataFrame.mul(..., level=0)``) treats MultiIndex-with-one-level
-        # differently.
-        if isinstance(out.columns, pd.MultiIndex) and out.columns.nlevels == 1:
-            out.columns = pd.Index(
-                [c[0] for c in out.columns], name=out.columns.names[0],
-            )
-        return out.fillna(0.0)
+        # Phase E2 — stream per-solve parts through pyarrow as one
+        # row-group each, so we never hold all frames in a Python list
+        # nor pay for ``pd.concat``'s second-copy.  Reader contract is
+        # unchanged: the public return is still a ``pd.DataFrame`` with
+        # the same row order, column union, MultiIndex/columns-name
+        # semantics, and zero-filled missing cells.
+        return _stream_concat_parts(parts)
 
     v.obj = _read("v_obj", ("objective",), has_period=False, has_time=False)
     v.flow = _read("v_flow", ("process", "source", "sink"))
