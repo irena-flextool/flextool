@@ -192,11 +192,25 @@ def _reset_flextool_module_caches() -> None:
 
     Cheap: the cache is a plain dict, and scenarios that don't share
     solve names were never caching-sensitive anyway.
+
+    Δ.41 (test-order flake): ``flextool.engine_polars.scaling`` has its
+    own ``_scale_cache`` (the polars/in-memory port that the engine
+    actually consults post-cascade-refactor).  The legacy
+    ``flextoolrunner.scaling._scale_cache`` is still cleared above to
+    cover any code paths that still touch it, but the engine-side cache
+    is what fed ``capacity_margin``'s ``user_bound_scale=-19`` into the
+    subsequent ``coal_co2_limit`` solve (both share the
+    ``dispatch_y2020_5week`` solve name → same cache key → same
+    recommended scalar applied to a problem with a different LP range,
+    yielding alt-optima column residuals against the golden).
     """
     from flextool.flextoolrunner import scaling as _scaling
+    from flextool.engine_polars import scaling as _engine_scaling
     _scaling.clear_cache()
+    _engine_scaling.clear_cache()
     yield
     _scaling.clear_cache()
+    _engine_scaling.clear_cache()
 
 
 @pytest.fixture
