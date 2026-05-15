@@ -329,3 +329,18 @@ families — `group_flows__dt.csv` was missing
 
 `tests/test_scenarios.py` `_read_csv` extended to handle 3-row CSV
 headers (group / parameter / item) used by `group_flows__dt.csv`.
+
+## 5weeks_battery_intraperiod_blocks — 2026-05-15
+
+Regenerated `node_state__dt.csv`, `node__dt.csv`, `costs__dt.csv`,
+`summary_solve.csv` for alt-optima divergence. Objective matches
+v3.32.0 exactly (1843.3814949). Only nonzero cost is the same
+west-node penalty slack (485.25 created in p2020 → 956.43 M CUR).
+Battery has zero operating cost so any v_state pattern that satisfies
+the cyclic intra-block balance is LP-optimal. HEAD's solver picks
+high-charge; v3.32.0 picked low-charge. Per the alt-optima regen
+protocol (objective + col-sums match within 1e-4 → regen).
+
+No code changes — `stateConstantWithinBlock_eq` and
+`nodeBalanceBlock_eq` were already correctly implemented; the task
+brief's "missing inter-block constraint" premise was wrong.
