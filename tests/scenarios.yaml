@@ -360,7 +360,10 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
-  time_budget_seconds: 4.0
+  # Bumped from 4.0 → 7.0 (~1.5× observed 4.7s) after adding the per-step
+  # lifetime-fixed-cost pre-filter in ``read_parameters_multi`` (which
+  # iterates per-step ``realized_dispatch`` for each rolling cascade roll).
+  time_budget_seconds: 7.0
 
 - scenario: multi_year_one_solve
   smoke: true

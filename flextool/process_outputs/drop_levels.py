@@ -33,6 +33,16 @@ _PAR_DROP = [
     'reserve_upDown_group_reservation', 'profile',
     'entity_annual_discounted', 'entity_annual_divest_discounted',
     'inflation_factor_investment_yearly',
+    # inflation_factor_operations_yearly evolves across rolls: each step
+    # carries period-d's "active" factor (4.54 ≈ Σ(1+r)^y × p_years[d,y])
+    # in its FIRST row and a forward-looking discount (3.73) in its
+    # SECOND row.  ``keep='last'`` therefore picks the value from the
+    # step that COMMITS period d (where d is the realized invest/dispatch
+    # period), matching what the LP objective uses.  ``keep='first'``
+    # would lock in the earlier step's forward-looking discount for every
+    # period after the first, leaving costs_discounted off by the
+    # active/forward ratio (~1.18 for the multi_year fixture).
+    'inflation_factor_operations_yearly',
     'group_penalty_capacity_margin', 'group_capacity_margin',
     # entity_all_existing carries the cumulative existing-capacity
     # chain (existing + Σ prior invest − Σ prior divest).  The last roll
@@ -62,7 +72,6 @@ _PAR_DEDUP = [
     'node_annual_flow',
     'group_penalty_inertia', 'group_penalty_non_synchronous',
     'group_inertia_limit',
-    'inflation_factor_operations_yearly',
     'node_capacity_for_scaling', 'group_capacity_for_scaling',
     'complete_period_share_of_year',
 ]

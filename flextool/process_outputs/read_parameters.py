@@ -1271,6 +1271,46 @@ def read_parameters_multi(
     if len(per_step) == 1:
         return last_ns
 
+    # Pre-filter per-step ``entity_lifetime_fixed_cost`` /
+    # ``entity_lifetime_fixed_cost_divest`` to only the step's REALIZED
+    # periods (``flex_data.realized_dispatch`` — same source as
+    # ``read_sets.d_realized_period``).  In a rolling/nested cascade
+    # each step holds a period-d "active" lifetime value in the row
+    # where d is the step's realized period, plus forward-discounted
+    # lookahead values for lookahead periods (e.g. y2020 step has
+    # p2020=827152 active + p2025=373153 lookahead).  ``v_invest[(solve,
+    # d)]`` is non-zero only for the committing step's realized period,
+    # so the cost in ``calc_costs.compute_costs`` (line 165, ``v.invest
+    # × unitsize × entity_lifetime_fixed_cost``) must use the value
+    # from that same committing step.  Filtering each piece pre-concat
+    # means ``drop_levels`` sees one row per period (no dedup
+    # ambiguity).  Without this, ``_PAR_DEDUP keep='first'`` picks the
+    # earliest step's lookahead value for every period after the first
+    # (e.g. p2025 → y2020 lookahead 373153 instead of y2025 active
+    # 827152), giving ``costs_discounted.csv:fixed cost invested``
+    # 120.6 instead of the LP-true 267.4.  ``ed_invest_set`` /
+    # ``ed_divest_set`` cover both realized + lookahead invest
+    # candidates, so we use ``realized_dispatch`` instead.
+    _lifetime_attrs = ("entity_lifetime_fixed_cost",
+                       "entity_lifetime_fixed_cost_divest")
+    for (sn, ns), step in zip(per_step, steps):
+        flex_data = step[1]
+        rd = getattr(flex_data, "realized_dispatch", None)
+        if rd is None or getattr(rd, "height", 0) == 0:
+            continue
+        realized_periods = set(
+            rd.select("period").unique().to_pandas()["period"].tolist()
+        )
+        if not realized_periods:
+            continue
+        for attr in _lifetime_attrs:
+            obj = getattr(ns, attr, None)
+            if obj is None or not _has_solve_level(obj):
+                continue
+            periods = obj.index.get_level_values("period")
+            mask = periods.isin(realized_periods)
+            setattr(ns, attr, obj[mask])
+
     out = SimpleNamespace()
     attr_names = [a for a in vars(last_ns).keys()]
     for attr in attr_names:
