@@ -525,15 +525,28 @@ def read_sets(
     # those periods in d_realize_invest so the drop_levels inner-join
     # against ed_divest doesn't collapse to empty (which was leaving
     # ``divested`` as NaN in ``unit_capacity__d.csv``).
+    #
+    # Intersect with ``realized_dispatch`` periods: ed_invest_set covers
+    # CANDIDATE (e, d) pairs which include lookahead periods (e.g.
+    # test_a_lot_but_not_multi_year has p2020 realized + p2025 lookahead;
+    # ed_invest_set spans both, but only p2020 is a REALIZED invest
+    # period).  Without this filter, ``unit_capacity__d`` emitted both
+    # p2020 and p2025 rows instead of just p2020.
     invest_periods_list: list = []
     seen: set = set()
+    realized_period_set: set = set(
+        s.d_realized_period.get_level_values("period").tolist()
+    ) if len(s.d_realized_period) > 0 else set()
     for src in (flex_data.ed_invest_set, flex_data.ed_divest_set):
         if (src is not None and src.height > 0
                 and "d" in src.columns):
             for d in src.select("d").unique().to_pandas()["d"].tolist():
-                if d not in seen:
-                    seen.add(d)
-                    invest_periods_list.append(d)
+                if d in seen:
+                    continue
+                if realized_period_set and d not in realized_period_set:
+                    continue
+                seen.add(d)
+                invest_periods_list.append(d)
     invest_periods = invest_periods_list
     s.d_realize_invest = pd.MultiIndex.from_arrays(
         [[solve_name] * len(invest_periods), invest_periods],
