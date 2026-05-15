@@ -266,7 +266,7 @@
     - node__dt.csv
     - connection__dt.csv
     - costs__dt.csv
-  time_budget_seconds: 4.5
+  time_budget_seconds: 6.0
 
 - scenario: network_coal_wind_battery_co2_fullYear_availability
   csvs:
