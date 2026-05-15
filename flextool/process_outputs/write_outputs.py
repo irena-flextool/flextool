@@ -289,9 +289,18 @@ def write_summary_csv(par, s, v, r, csv_dir):
             f.write(f',{p_inflation_factor_operations_yearly[d]:.12g}')
         f.write('\n')
 
-        # Investment discount factor
+        # Investment discount factor — iterate ``period_in_use`` (the
+        # same axis as the "Operational discount factor" / "Time in use
+        # in years" rows above) so the per-period values align under
+        # the period header.  Earlier HEAD iterated ``s.d_realize_invest``
+        # which (a) emits no values for scenarios without realized
+        # invest decisions (e.g. ``capacity_margin``, where v3.32.0
+        # still wrote ``,1`` against the single p2020 period) and
+        # (b) carries a different period order on multi-period invest
+        # scenarios than the surrounding rows.  v3.32.0 wrote one
+        # value per period in ``period_in_use``.
         f.write('"Investment discount factor"')
-        for d in s.d_realize_invest:
+        for d in period_in_use:
             f.write(f',{p_inflation_factor_investment_yearly[d]:.12g}')
         f.write('\n\n')
 
@@ -328,9 +337,14 @@ def write_summary_csv(par, s, v, r, csv_dir):
                 if period in r.q_non_synchronous_d_not_annualized.index and r.q_non_synchronous_d_not_annualized.loc[period, group] > 0:
                     f.write(f'NonSync, {group}, {period}, {r.q_non_synchronous_d_not_annualized.loc[period, group]:.5g}\n')
 
-        # Capacity margin slack
+        # Capacity margin slack — iterate realized periods rather than
+        # d_realize_invest.  The capacity-margin constraint is defined
+        # per realized period and is independent of invest/divest
+        # entities; scenarios such as ``capacity_margin`` have no
+        # invest entities, so d_realize_invest is empty and this loop
+        # would silently drop legitimate slack rows.
         for group in r.q_capacity_margin_d_not_annualized.columns:
-            for period in d_realize_invest:
+            for period in d_realized_period:
                 if period in r.q_capacity_margin_d_not_annualized.index and r.q_capacity_margin_d_not_annualized.loc[period, group] > 0:
                     f.write(f'CapMargin, {group}, {period}, {r.q_capacity_margin_d_not_annualized.loc[period, group]:.5g}\n')
 
