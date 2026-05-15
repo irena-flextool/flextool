@@ -210,16 +210,15 @@ def test_cli_end_to_end_rivendell_map_index_name(tmp_path: Path) -> None:
         capture_output=True, text=True, timeout=300,
     )
 
-    # Narrow regression guard: assert the original
-    # ``Index contains duplicate entries, cannot reshape`` symptom is
-    # gone.  We don't require RC=0 because the Rivendell fixture exposes
-    # other unrelated downstream issues (e.g. reserve column mismatches
-    # in ``calc_slacks``) — but the pivot crash this test was built for
-    # must not return.
     combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
     assert "Index contains duplicate entries, cannot reshape" not in combined, (
         "Regression: ``_pdX_per_entity`` pivot hit the duplicate-entries "
         "error again.\n"
+        f"--- stdout ---\n{proc.stdout}\n"
+        f"--- stderr ---\n{proc.stderr}\n"
+    )
+    assert proc.returncode == 0, (
+        f"CLI exited with code {proc.returncode}\n"
         f"--- stdout ---\n{proc.stdout}\n"
         f"--- stderr ---\n{proc.stderr}\n"
     )

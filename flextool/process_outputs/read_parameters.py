@@ -272,19 +272,45 @@ def _pdtX_multi_col(
     solve_name: str,
     col_dims: tuple[str, str, str],
     col_names: tuple[str, str, str],
+    densify_col_tuples: "pl.DataFrame | None" = None,
 ) -> pd.DataFrame:
     """Param ``(*col_dims, d, t)`` → wide pandas with row
-    ``(solve, period, time)`` × column MultiIndex over col_dims."""
+    ``(solve, period, time)`` × column MultiIndex over col_dims.
+
+    ``densify_col_tuples`` (optional) — a polars frame whose first three
+    columns enumerate every ``(col_dims)`` tuple that must appear in the
+    result.  Missing tuples are added as zero-valued columns; downstream
+    consumers (e.g. ``calc_slacks.q_reserves_dt``) broadcast-multiply
+    against ``v.q_reserve.columns`` which carries the full LP domain even
+    when the source ``reservation`` parameter is sparse.
+    """
     if param is None or param.frame.height == 0:
-        return _empty_pdtX_multi_col(col_names=col_names)
-    pl_df = with_solve_column(param.frame, solve_name)
-    return wide_multi_col(
-        pl_df,
-        row_dims=("solve", "d", "t"),
-        col_dims=col_dims,
-        row_names=("solve", "period", "time"),
-        col_names=col_names,
-    )
+        out = _empty_pdtX_multi_col(col_names=col_names)
+    else:
+        pl_df = with_solve_column(param.frame, solve_name)
+        out = wide_multi_col(
+            pl_df,
+            row_dims=("solve", "d", "t"),
+            col_dims=col_dims,
+            row_names=("solve", "period", "time"),
+            col_names=col_names,
+        )
+
+    if densify_col_tuples is None:
+        return out
+
+    gate_cols = densify_col_tuples.columns[: len(col_dims)]
+    gate_tuples = [
+        tuple(row)
+        for row in densify_col_tuples.select(gate_cols)
+            .sort(gate_cols)
+            .iter_rows()
+    ]
+    existing = list(out.columns) if isinstance(out.columns, pd.MultiIndex) else []
+    ordered = list(gate_tuples) + [c for c in existing if c not in gate_tuples]
+    full_cols = pd.MultiIndex.from_tuples(ordered, names=list(col_names))
+    out = out.reindex(columns=full_cols, fill_value=0.0)
+    return out
 
 
 def _entity_all_capacity(
@@ -929,6 +955,7 @@ def read_parameters(
         flex_data.pdtReserve_upDown_group_reservation, solve_name=solve_name,
         col_dims=("r", "ud", "g"),
         col_names=("reserve", "upDown", "node_group"),
+        densify_col_tuples=getattr(flex_data, "reserve_upDown_group", None),
     )
 
     # profile — (solve, period, time) × profile.
