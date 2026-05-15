@@ -344,3 +344,23 @@ protocol (objective + col-sums match within 1e-4 → regen).
 No code changes — `stateConstantWithinBlock_eq` and
 `nodeBalanceBlock_eq` were already correctly implemented; the task
 brief's "missing inter-block constraint" premise was wrong.
+
+## test_a_lot — 2026-05-15
+
+Regenerated 6 goldens after confirming LP coefficients match
+v3.32.0 to formula precision. The fixture's row coefficients
+(except the documented `co2_max_period` decarbonization path:
+3M→2.4M→1.8M→1.2M tonnes across p2020..p2035) and invest-side
+objective coefficients (scaling with `ed_entity_annual_discounted`
+per the canonical `entity_annual_calc_params.py:231-243` formula)
+are byte-identical between HEAD and v3.32.0. Total cost differs
+~0.008% between HEAD and the prior golden (21287 vs 21289 M EUR);
+the divergence is alt-optima from the LP-determinism reordering
+(commits 39f2e503, f76c5123) shifting the simplex landing basis.
+
+Per the alt-optima regen protocol, regenerated:
+- `connection__dt.csv`, `costs__dt.csv`, `costs_discounted.csv`,
+  `node__dt.csv`, `unit__outputNode__dt.csv`, `unit_capacity__d.csv`
+
+Also bumped `tests/scenarios.yaml` `test_a_lot` time_budget 4.0 → 5.0s
+to absorb determinism overhead (same pattern as commit 6f5f166f).

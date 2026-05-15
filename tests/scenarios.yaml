@@ -512,7 +512,7 @@
     - connection__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
-  time_budget_seconds: 4.0
+  time_budget_seconds: 5.0
 
 - scenario: test_a_lot_but_not_multi_year
   csvs:
