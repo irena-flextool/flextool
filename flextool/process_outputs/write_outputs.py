@@ -68,6 +68,15 @@ def _backfill_group_indicator_sets(s, output_dir):
     backfill from there.  Without this, every ``nodeGroup_flows`` /
     ``flowGroup_indicators`` writer short-circuits to "empty" and the
     group_flows__dt / group_flows__d / flowGroup CSVs go missing.
+
+    Also backfills the 12 ``nodeGroupDispatch__*`` arc-union MultiIndex
+    sets from the polars-LP writer's ``solve_data/*.csv`` artefacts
+    (see ``flextool/engine_polars/_writer_arc_unions.py``).  Without
+    these, ``calc_group_flows`` finds zero rows for the unit / connection
+    aggregator joins, and ``out_group.nodeGroup_flows`` emits only the
+    slack/inflow/loss column families — group_flows__dt loses its
+    ``from_unitGroup`` / ``from_unit`` / ``from_connectionGroup`` /
+    ``to_connectionGroup`` / per-connection ``internal_losses`` columns.
     """
     raw_dir = output_dir or 'output_raw'
     work_dir = os.path.dirname(raw_dir) or '.'
@@ -87,6 +96,89 @@ def _backfill_group_indicator_sets(s, output_dir):
         if df.empty or df.shape[1] == 0:
             continue
         setattr(s, attr, pd.Index(df.iloc[:, 0].dropna(), name='group'))
+
+    # --- 12 nodeGroupDispatch__* arc-union sets (from solve_data/) -----------
+    # Each entry: (attr-on-s, filename, csv→multi-index column map).
+    # The column map is ``[(csv_col, level_name), ...]`` — same CSV column may
+    # appear under multiple level names (e.g. ``unit`` populates both
+    # ``process`` and ``unit`` in the unit-aggregator sets where process==unit).
+    solve_data_dir = os.path.join(work_dir, 'solve_data')
+    dispatch_specs = (
+        # 4-col / 2-col Not-in-aggregate sets — CSV columns map 1:1 to levels.
+        ('nodeGroupDispatch__process_fully_inside',
+         'nodeGroupDispatch__process_fully_inside.csv',
+         (('group', 'group'), ('process', 'process'))),
+        ('nodeGroupDispatch__process__unit__to_node_Not_in_aggregate',
+         'nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv',
+         (('group', 'group'), ('process', 'process'),
+          ('unit', 'unit'), ('node', 'node'))),
+        ('nodeGroupDispatch__process__node__to_unit_Not_in_aggregate',
+         'nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv',
+         (('group', 'group'), ('process', 'process'),
+          ('node', 'node'), ('unit', 'unit'))),
+        ('nodeGroupDispatch__process__connection__to_node_Not_in_aggregate',
+         'nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv',
+         (('group', 'group'), ('process', 'process'),
+          ('connection', 'connection'), ('node', 'node'))),
+        ('nodeGroupDispatch__process__node__to_connection_Not_in_aggregate',
+         'nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv',
+         (('group', 'group'), ('process', 'process'),
+          ('node', 'node'), ('connection', 'connection'))),
+        ('nodeGroupDispatch__connection_Not_in_aggregate',
+         'nodeGroupDispatch__connection_Not_in_aggregate.csv',
+         (('group', 'group'), ('connection', 'connection'))),
+        # Unit aggregator sets: CSV stores (group, group_aggregate, unit,
+        # source, sink); a unit's process name equals its unit name, and the
+        # node is the sink for to-node side / source for to-unit side.
+        ('nodeGroupDispatch__processGroup__process__unit__to_node',
+         'nodeGroupDispatch__group_aggregate__process__unit__to_node.csv',
+         (('group', 'group'), ('group_aggregate', 'group_aggregate'),
+          ('unit', 'process'), ('unit', 'unit'), ('sink', 'node'))),
+        ('nodeGroupDispatch__processGroup__process__node__to_unit',
+         'nodeGroupDispatch__group_aggregate__process__node__to_unit.csv',
+         (('group', 'group'), ('group_aggregate', 'group_aggregate'),
+          ('unit', 'process'), ('source', 'node'), ('unit', 'unit'))),
+        # Connection aggregator sets: CSV stores (group, group_aggregate,
+        # connection, source, sink); process==connection, node side depends.
+        ('nodeGroupDispatch__processGroup__process__connection__to_node',
+         'nodeGroupDispatch__group_aggregate__process__connection__to_node.csv',
+         (('group', 'group'), ('group_aggregate', 'group_aggregate'),
+          ('connection', 'process'), ('connection', 'connection'),
+          ('sink', 'node'))),
+        ('nodeGroupDispatch__processGroup__process__node__to_connection',
+         'nodeGroupDispatch__group_aggregate__process__node__to_connection.csv',
+         (('group', 'group'), ('group_aggregate', 'group_aggregate'),
+          ('connection', 'process'), ('source', 'node'),
+          ('connection', 'connection'))),
+        # 2-col projection sets — (group, group_aggregate).
+        ('nodeGroupDispatch__processGroup_Unit_to_group',
+         'nodeGroupDispatch__group_aggregate_Unit_to_group.csv',
+         (('group', 'group'), ('group_aggregate', 'group_aggregate'))),
+        ('nodeGroupDispatch__processGroup_Group_to_unit',
+         'nodeGroupDispatch__group_aggregate_Group_to_unit.csv',
+         (('group', 'group'), ('group_aggregate', 'group_aggregate'))),
+        ('nodeGroupDispatch__processGroup_Connection',
+         'nodeGroupDispatch__group_aggregate_Connection.csv',
+         (('group', 'group'), ('group_aggregate', 'group_aggregate'))),
+    )
+    for attr, fname, col_map in dispatch_specs:
+        path = os.path.join(solve_data_dir, fname)
+        if not os.path.exists(path):
+            continue
+        try:
+            df = pd.read_csv(path)
+        except pd.errors.EmptyDataError:
+            continue
+        if df.empty:
+            continue
+        # Skip if CSV is missing any required source column.
+        csv_cols = [c for c, _ in col_map]
+        if not all(c in df.columns for c in csv_cols):
+            continue
+        level_names = [lvl for _, lvl in col_map]
+        arrays = [df[c].tolist() for c, _ in col_map]
+        mi = pd.MultiIndex.from_arrays(arrays, names=level_names)
+        setattr(s, attr, mi)
 
 
 def _read_outputs(

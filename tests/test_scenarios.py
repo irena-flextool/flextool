@@ -119,36 +119,41 @@ def _is_freeform_csv(csv_name: str) -> bool:
     return csv_name in _FREEFORM_CSVS
 
 
-def _has_two_row_header(path: Path) -> bool:
-    """Detect FlexTool's two-row CSV header convention.
+def _header_row_count(path: Path) -> int:
+    """Detect 1-, 2- or 3-row CSV header.
 
-    Several outputs (e.g. ``unit__outputNode__dt.csv``) carry an outer
-    header naming the process/connection and an inner header naming the
-    source/sink node.  The inner row begins with empty fields aligned
-    with the leading index columns (``solve,period,time,,,west,...``).
-
-    Without ``header=[0, 1]``, ``pd.read_csv`` treats the second header
-    row as the first data row, producing object-dtype columns that
-    ``round_for_comparison`` skips — so 5th-decimal solver noise leaks
-    into the comparison as exact-string mismatches.
+    FlexTool emits CSVs with 1-row headers (most outputs), 2-row headers
+    (per-entity outputs like ``unit__outputNode__dt.csv``: outer = process,
+    inner = source/sink node), or 3-row headers (group_flows__dt.csv:
+    group / parameter / item).  Continuation header rows begin with empty
+    fields aligned with the leading index columns (``,,,...``) or with
+    pandas' ``Unnamed: N_level_N`` placeholders when round-tripped through
+    ``pd.read_csv`` + ``to_csv``.  A genuine data row never begins with
+    either signal.
     """
     with open(path) as f:
         first = f.readline()
         second = f.readline()
-    if not second:
-        return False
-    # The inner header may take one of two forms produced by different
-    # writer/round-trip paths:
-    # 1. Clean empty fields (``solve,period,time,,,west,...``) — the
-    #    direct write path.
-    # 2. Pandas-style placeholder (``Unnamed: N_level_1,...,west,...``)
-    #    — a round-trip artifact when pandas wrote a MultiIndex columns
-    #    frame via ``to_csv``, then re-reading and re-writing inserted
-    #    the ``Unnamed:`` placeholder for the empty cells.
-    # A genuine data row never begins with either signal.
-    if second.count(",") != first.count(","):
-        return False
-    return second.startswith(",") or second.startswith("Unnamed:")
+        third = f.readline()
+    if not second or second.count(",") != first.count(","):
+        return 1
+    looks_header_two = second.startswith(",") or second.startswith("Unnamed:")
+    if not looks_header_two:
+        return 1
+    if third and third.count(",") == first.count(","):
+        if third.startswith(",") or third.startswith("Unnamed:"):
+            return 3
+    return 2
+
+
+def _has_two_row_header(path: Path) -> bool:
+    """Backwards-compatible helper — True for both 2- and 3-row headers.
+
+    Older callers only distinguished single vs multi-row headers; keep
+    that surface area while the new :func:`_header_row_count` drives the
+    actual header parsing in :func:`_read_csv`.
+    """
+    return _header_row_count(path) >= 2
 
 
 _DEDUP_SUFFIX = re.compile(r"\.\d+$")
@@ -157,20 +162,20 @@ _DEDUP_SUFFIX = re.compile(r"\.\d+$")
 def _read_csv(path: Path) -> pd.DataFrame:
     """Read a golden/actual CSV, auto-detecting multi-row headers.
 
-    For two-row-header CSVs we also strip pandas-style ``.N`` dedup
-    suffixes from the outer header level.  Some pre-existing goldens
-    were last regenerated under the broken single-header parse, which
-    auto-dedups duplicate outer labels (``west`` → ``west``, ``west.1``,
-    ``west.2``…) before round-tripping through ``to_csv``.  Reading
-    those goldens with ``header=[0, 1]`` therefore yields outer labels
-    like ``west.1`` that the (correctly-duplicated) actual outputs do
-    not have.  Normalising both sides keeps the comparison meaningful
-    without touching the goldens.
+    For multi-row-header CSVs we strip pandas-style ``.N`` dedup suffixes
+    from every header level.  Some pre-existing goldens were last
+    regenerated under a code path that dedup'd duplicate outer labels
+    (``west`` → ``west``, ``west.1``…) before round-tripping through
+    ``to_csv``; the current writer leaves outer duplicates intact and
+    pandas instead dedups the inner level on read.  Stripping both sides
+    keeps the actual/golden comparison meaningful without touching the
+    goldens.
     """
-    if _has_two_row_header(path):
-        df = pd.read_csv(path, header=[0, 1])
+    nh = _header_row_count(path)
+    if nh >= 2:
+        df = pd.read_csv(path, header=list(range(nh)))
         df.columns = pd.MultiIndex.from_tuples(
-            [(_DEDUP_SUFFIX.sub("", outer), inner) for outer, inner in df.columns]
+            [tuple(_DEDUP_SUFFIX.sub("", lvl) for lvl in t) for t in df.columns]
         )
         return df
     return pd.read_csv(path)

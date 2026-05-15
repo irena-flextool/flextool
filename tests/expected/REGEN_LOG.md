@@ -312,3 +312,20 @@ for all 3 nested scenarios after these engine + post-process fixes:
    before the `from_product` index build. Without sorting, the
    row order in `unit_capacity__d.csv` was hash-partitioned and varied
    across runs.
+
+## aggregate_outputs_network_coal_wind_chp — 2026-05-15
+
+Regenerated `group_flows__dt.csv`, `connection__dt.csv`, `costs__dt.csv`,
+`unit__outputNode__dt.csv` after `flextool/process_outputs/write_outputs.py`
+`_backfill_group_indicator_sets` was extended to backfill the 12
+``nodeGroupDispatch__*`` arc-union MultiIndex sets from the polars-LP
+writer's ``solve_data/*.csv`` artefacts. Without these,
+`calc_group_flows` found zero rows for unit/connection aggregator joins
+and `out_group.nodeGroup_flows` emitted only slack/inflow/loss column
+families — `group_flows__dt.csv` was missing
+`from_unitGroup` / `from_unit` / `from_connectionGroup` /
+`to_connectionGroup` / per-connection `internal_losses` columns
+(23 cols vs golden 37).
+
+`tests/test_scenarios.py` `_read_csv` extended to handle 3-row CSV
+headers (group / parameter / item) used by `group_flows__dt.csv`.
