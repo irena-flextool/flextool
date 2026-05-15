@@ -8374,42 +8374,66 @@ def prundt_from_source(
     Returns the (p, r, ud, n, d, t) frame.  When dt or active relationships
     are absent, returns None.
     """
+    # Build an empty typed prundt frame for the "feature active but no
+    # scheduled reservation" fall-through — keeping the contract from
+    # ``_reserve._check`` (which expects a DataFrame, not None, when the
+    # reserve feature is active).  Dtypes are best-effort (Utf8 for axis
+    # cols) — downstream guards on ``height == 0`` before touching values.
+    def _empty_prundt() -> pl.DataFrame:
+        return pl.DataFrame(schema={
+            "p": pl.Utf8,
+            "r": pl.Utf8,
+            "ud": pl.Utf8,
+            "n": pl.Utf8,
+            "d": pl.Utf8,
+            "t": pl.Utf8,
+        })
+
     if dt is None or dt.height == 0:
-        return None
+        return _empty_prundt()
     pruna = process_reserve_upDown_node_active_from_source(source)
     if pruna is None or pruna.height == 0:
-        return None
+        return _empty_prundt()
     # Filter to active reserves: groups whose reservation > 0 anywhere.
+    # Mirrors flextool.mod L1321-1322 / write_process_reserve_upDown_node_active:
+    # ``(p, r, ud, n)`` is active iff ``Σ_{g,d,t} reservation[r,ud,g,d,t] ≠ 0``.
+    # When no scenario authors a ``reservation`` for (r, ud), there is no
+    # scheduled reserve obligation — every (p, r, ud, n) in the bilateral
+    # relationship is INACTIVE (mod behaviour: empty
+    # ``process_reserve_upDown_node_active``).  Returning an empty frame
+    # here ensures we do NOT emit v_reserve columns / constraints for
+    # those reserves (e.g. the ``n_1`` contingency reserve, which sources
+    # its RHS from a different LHS pathway and has no scheduled
+    # ``reservation``).  Previously this branch fell through with the
+    # full active-relationship set, inflating the v_reserve domain to
+    # all (p, r, ud, n) tuples and adding all-zero columns to
+    # ``process__reserve__upDown__node__dt.csv``.
     res = _try_param(source, "reserve__upDown__group", "reservation")
-    if res is not None and res.height > 0:
-        # Take (r, ud) pairs that have any non-zero reservation entry.
-        rename: dict[str, str] = {}
-        for c in res.columns:
-            if c == "reserve":
-                rename[c] = "r"
-            elif c == "upDown":
-                rename[c] = "ud"
-        res_lf = (res.lazy().rename(rename)
-                     .with_columns(pl.col("value")
-                                     .cast(pl.Float64, strict=False)))
-        # Sum over the value column per (r, ud) — non-zero ⇒ active.
-        active_ru = (res_lf
-                       .filter(pl.col("value").fill_null(0.0) != 0.0)
-                       .select("r", "ud").unique())
-        # Restrict pruna to active (r, ud) pairs.
-        pruna_lf = pruna.lazy().join(active_ru, on=["r", "ud"], how="inner")
-    else:
-        # No reservation parameter at all — fall through with the full
-        # active-relationship set; dispatch will be a no-op when no
-        # reservation is set, but the index is structurally correct.
-        pruna_lf = pruna.lazy()
+    if res is None or res.height == 0:
+        return _empty_prundt()
+    # Take (r, ud) pairs that have any non-zero reservation entry.
+    rename: dict[str, str] = {}
+    for c in res.columns:
+        if c == "reserve":
+            rename[c] = "r"
+        elif c == "upDown":
+            rename[c] = "ud"
+    res_lf = (res.lazy().rename(rename)
+                 .with_columns(pl.col("value")
+                                 .cast(pl.Float64, strict=False)))
+    # Sum over the value column per (r, ud) — non-zero ⇒ active.
+    active_ru = (res_lf
+                   .filter(pl.col("value").fill_null(0.0) != 0.0)
+                   .select("r", "ud").unique())
+    # Restrict pruna to active (r, ud) pairs.
+    pruna_lf = pruna.lazy().join(active_ru, on=["r", "ud"], how="inner")
     out = (pruna_lf
               .join(dt.lazy().select("d", "t"), how="cross")
               .select("p", "r", "ud", "n", "d", "t")
               .sort("p", "r", "ud", "n", "d", "t")
               .collect())
     if out.height == 0:
-        return None
+        return _empty_prundt()
     return out
 
 
