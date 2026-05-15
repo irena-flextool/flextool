@@ -113,6 +113,11 @@ class RunnerState:
     # behaviour; opt-in by setting ``state.handoffs = {}``.  See
     # ``audit/handoff_csv_retirement.md`` for the migration plan.
     handoffs: dict | None = None
+    # Phase C — per-sub-solve FlexData accumulator (writer-derived
+    # frames from this sub-solve's preprocessing).  Replaced each
+    # iteration; never accumulates across sub-solves.  Phase D will
+    # consume; Phase C plumbs it forward only.
+    current_accumulator: object | None = None
 
 
 __all__ = [

@@ -69,6 +69,15 @@ from flextool.flextoolrunner.scaling import (
 from flextool.flextoolrunner.scaling_report import write_scaling_report
 from flextool.flextoolrunner import solve_writers
 
+# Phase C — per-sub-solve FlexData accumulator.  Built fresh inside the
+# per-solve loop and released when the next sub-solve runs; CSV emission
+# is unchanged (parallel-write mode).  Phase D will consume the
+# accumulator as a ``seed`` to ``load_flextool``; today it is inert.
+from flextool.engine_polars._flex_data_accumulator import (
+    FlexDataAccumulator,
+    capture_frames,
+)
+
 # Native solve-tree expansion + stochastic branching + timeline helpers.
 from flextool.engine_polars._recursive_solve import (
     ParentSolveInfo,
@@ -764,9 +773,22 @@ def native_run_model(state, solver) -> int:
             and timing_recorder is not None
         )
         _t_preproc_start = time.perf_counter() if _phase_timing else 0.0
-        preprocessing_solve_time.run(
-            state, complete_solve[solve], prior_handoff=prior_handoff,
+        # Phase C — build a fresh FlexData accumulator for THIS sub-solve.
+        # Released when the next iteration replaces ``state.current_accumulator``;
+        # memory footprint is O(1) per sub-solve.  Today the accumulator is
+        # plumbed forward but NOT consumed — load_flextool still reads from
+        # disk.  Phase D wires consumption.
+        sub_solve_accumulator = FlexDataAccumulator(
+            solve_name=complete_solve[solve],
         )
+        with capture_frames(sub_solve_accumulator):
+            preprocessing_solve_time.run(
+                state, complete_solve[solve], prior_handoff=prior_handoff,
+            )
+        # Stash on state — read by ``_FlexpyCascadeSolver.run`` to attach
+        # to the per-sub-solve ``OrchestrationStep``.  Replaces any prior
+        # sub-solve's accumulator (per-sub-solve memory discipline).
+        state.current_accumulator = sub_solve_accumulator
         if _phase_timing:
             timing_recorder.record(
                 "per_iter",

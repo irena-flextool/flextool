@@ -311,6 +311,12 @@ class OrchestrationStep:
         memory instead of re-parsing the workdir CSVs.  ``None`` only
         on the failed-load path (the build-LP step would also have
         failed, so callers usually short-circuit before reading it).
+    flex_data_accumulator : FlexDataAccumulator | None
+        Phase C — the per-sub-solve writer-frame accumulator captured
+        during this iteration's preprocessing.  ``None`` until Phase C
+        wires the per-sub-solve loop; populated thereafter as a
+        parallel-write side channel.  NOT yet consumed by
+        ``load_flextool`` — Phase D wires the seed path.
     """
 
     solve_name: str
@@ -319,6 +325,7 @@ class OrchestrationStep:
     obj: float | None = None
     warm_used: bool = False
     flex_data: "FlexData | None" = None
+    flex_data_accumulator: "object | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -1111,6 +1118,16 @@ def _drive_cascade(
             step_key = _actual_solve_name(
                 self.state.paths.work_folder, complete_solve_name,
             )
+            # Phase C — pluck the per-sub-solve writer-frame accumulator
+            # off state.  ``_native_run_model`` populates this just before
+            # ``solver.run`` returns control; it is the latest sub-solve's
+            # frames only (per-sub-solve memory discipline).  After the
+            # step is built we clear the state-level slot so the next
+            # iteration's reference is the only handle (an iteration
+            # without an accumulator — e.g. error path — leaves the slot
+            # set so the previous sub-solve's data is observable, but
+            # never accumulates further).
+            _accum = getattr(self.state, "current_accumulator", None)
             self._all_steps[step_key] = OrchestrationStep(
                 solve_name=step_key,
                 solution=sol,
@@ -1118,6 +1135,7 @@ def _drive_cascade(
                 obj=unscaled_obj,
                 warm_used=warm_used,
                 flex_data=data,
+                flex_data_accumulator=_accum,
             )
             if _phase_timing:
                 _tr.record(

@@ -125,6 +125,15 @@ class RunnerState:
     # ``None`` outside an active solve loop and on the first solve of
     # any loop.
     last_captured_solve: str | None = None
+    # Phase C — per-sub-solve FlexData accumulator.  ``_native_run_model``
+    # populates this with the latest sub-solve's writer-derived frames at
+    # the end of each per-sub-solve preprocessing pass; the cascade
+    # solver reads it before constructing the OrchestrationStep.  Always
+    # holds at most ONE sub-solve's frames (per-sub-solve memory
+    # discipline — handoff doc decision #11).  ``None`` outside an
+    # active solve loop.  Phase D will consume the accumulator as a
+    # ``seed`` to ``load_flextool``; Phase C is parallel-write only.
+    current_accumulator: "object | None" = None
     # Per-CLI-invocation phase timing recorder.  The CLI constructs one
     # very early in ``cmd_run_flextool.main`` and assigns it onto
     # ``state.timing_recorder``; tests calling :class:`FlexToolRunner`
