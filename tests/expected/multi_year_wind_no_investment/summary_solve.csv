@@ -1,25 +1,25 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-05-01 11:13:34.050188+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-05-15 00:28:30.201521+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
-y2020_2035_5week,5107.69783487
-"Total cost (calculated) full horizon (M CUR)",5800.67123121,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",5800.67123121
-"Operational costs for realized periods (M CUR)",1780.85937559
-"Investment costs for realized periods (M CUR)",1300.98716048
+y2020_2035_5week,5107.69783289
+"Total cost (calculated) full horizon (M CUR)",5800.67122518,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",5800.67122518
+"Operational costs for realized periods (M CUR)",1780.85937921
+"Investment costs for realized periods (M CUR)",1300.98715339
 "Retirement costs / salvage revenue for realized periods (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",692.973392291
-"Fixed costs for invested entities (M CUR)",503.102251
+"Fixed costs for invested entities (M CUR)",503.102248773
 "Fixed cost removal due to divested entities (M CUR)",0
-"Penalty (slack) costs for realized periods (M CUR)",1522.74905185
+"Penalty (slack) costs for realized periods (M CUR)",1522.74905152
 
 Period,p2020,p2025,p2030,p2035
 "Time in use in years",0.00228310502283,0.00228310502283,0.00228310502283,0.00228310502283
 "Operational discount factor",4.53998578738,3.73153738295,3.06705172493,2.52089295055
-"Investment discount factor",4.62989522426,3.80543638627,3.12779131893,2.57081646931
+"Investment discount factor",4.53998578738,3.73153738295,3.06705172493,2.52089295055
 
 Emissions
-"CO2 [Mt]",10.776,"System-wide annualized CO2 emissions for realized periods"
+"CO2 [Mt]",0,"System-wide annualized CO2 emissions for realized periods"
 
 "Slack variables multiplied by timestep duration (creating or removing energy/matter, creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"
 Created, west, p2035, 1532.3
