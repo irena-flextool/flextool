@@ -5307,9 +5307,18 @@ def process_reserve_upDown_node_active_from_source(source: "InputSource",
     fall back to the relationship membership (default reliability=1.0
     per the Spine schema).
     """
+    # Build a typed empty frame for the "reserve feature active but no
+    # active (p, r, ud, n) tuples" fall-through.  ``_reserve._check``
+    # requires a DataFrame (not None) when ``reserve_upDown_group`` is
+    # populated; downstream uses guard on ``height > 0`` before joining.
+    def _empty_pruna() -> pl.DataFrame:
+        return pl.DataFrame(schema={
+            "p": pl.Utf8, "r": pl.Utf8, "ud": pl.Utf8, "n": pl.Utf8,
+        })
+
     rel = _reserve_active_relationships(source)
     if rel is None or rel.height == 0:
-        return None
+        return _empty_pruna()
     # If reliability is parametrised, keep rows with reliability > 0.
     rel_dfs: list[pl.LazyFrame] = []
     for ec in ("reserve__upDown__unit__node",
@@ -5338,7 +5347,7 @@ def process_reserve_upDown_node_active_from_source(source: "InputSource",
                   .filter(pl.col("rel") > 0)
                   .select("p", "r", "ud", "n"))
     out = rel_lf.unique().sort("p", "r", "ud", "n").collect()
-    return out if out.height > 0 else None
+    return out if out.height > 0 else _empty_pruna()
 
 
 # ---------------------------------------------------------------------------
