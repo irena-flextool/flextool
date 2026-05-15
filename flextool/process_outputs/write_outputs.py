@@ -1,4 +1,5 @@
 import os
+import re
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
@@ -218,10 +219,23 @@ def write_summary_csv(par, s, v, r, csv_dir):
         timestamp = datetime.now(timezone.utc)
         f.write(f'"Diagnostic results from all solves. Output at (UTC): {timestamp}"\n\n')
 
-        # Total cost from solver (M CUR)
+        # Total cost from solver (M CUR).  Iterate solve names in
+        # natural-sort order (so ``roll_0, roll_1, ..., roll_10, ...``
+        # not ``roll_1, roll_10, ...``).  ``v.obj.index`` carries the
+        # parquet-concat order, which depends on
+        # ``solve_data/solve__p_entity_pre_existing.csv`` — written as a
+        # header-only stub by the engine cascade for some rolling-solve
+        # paths, leaving the sort key unstable.  Natural-sort here is
+        # the writer-side guard that matches v3.32.0's numeric solve
+        # ordering.
         f.write('\n')
         f.write('"Solve","Objective","Total cost from solver, includes all penalty costs"\n')
-        for row_idx in v.obj.index:
+        sorted_solves = sorted(
+            v.obj.index,
+            key=lambda s: [int(t) if t.isdigit() else t
+                           for t in re.split(r"(\d+)", str(s))],
+        )
+        for row_idx in sorted_solves:
             f.write(f'{row_idx},{v.obj.loc[row_idx, "objective"] / 1000000:.12g}\n')
 
         # Total cost (calculated) full horizon (M CUR).  Mirrors the LP
