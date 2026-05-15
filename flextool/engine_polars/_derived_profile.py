@@ -197,30 +197,58 @@ def _tier_for_value(v: object) -> str:
 def _profile_time_lf(source: "InputSource",
                           dt_lf: pl.LazyFrame,
                           time_profiles: list[str],
+                          workdir: Path | None = None,
                           ) -> pl.LazyFrame:
     """Lazy ``[f, d, t, value]`` for time-axis profiles.
 
     Tier 3 of the cascade: profile values keyed by ``t`` only,
     broadcast over the dispatch periods of dt.
 
-    Reads ``profile.profile`` filtered to ``time_profiles``; the source
-    column may be ``t`` (when index_name='time') or ``i`` (default
-    index name).  Either way the column maps 1:1 to t.
+    Prefers ``workdir/solve_data/pt_profile.csv`` (per-solve averaged
+    values written by ``TimelineConfig.create_averaged_timeseries``)
+    when present — those values are aggregated to the solve's
+    ``new_stepduration``, matching the dispatch timeline.  Falls back
+    to the raw Spine ``profile.profile`` parameter when the CSV is
+    absent (e.g. tests that bypass the runner).
+
+    The Spine fallback path: the source column may be ``t`` (when
+    ``index_name='time'``) or ``i`` (default index name).  Either way
+    the column maps 1:1 to t.  Mirrors how ``pdtNodeInflow`` already
+    sources averaged values from ``solve_data/pt_node_inflow.csv``.
     """
+    empty_schema = {
+        "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+    }
     if not time_profiles:
-        return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
-        })
+        return pl.LazyFrame(schema=empty_schema)
+
+    # Prefer per-solve averaged CSV when the runner has produced it.
+    if workdir is not None:
+        csv_path = Path(workdir) / "solve_data" / "pt_profile.csv"
+        if csv_path.exists():
+            try:
+                csv_lf = (pl.scan_csv(csv_path)
+                          .filter(pl.col("profile").is_in(time_profiles))
+                          .select(
+                              pl.col("profile").cast(pl.Utf8).alias("f"),
+                              pl.col("time").cast(pl.Utf8).alias("t"),
+                              pl.col("pt_profile")
+                                  .cast(pl.Float64, strict=False)
+                                  .alias("value"),
+                          ))
+                return (csv_lf
+                        .join(dt_lf, on="t", how="inner")
+                        .select("f", "d", "t", "value"))
+            except Exception:
+                # Malformed CSV — fall through to Spine source.
+                pass
+
     try:
         raw = source.parameter("profile", "profile")
     except KeyError:
-        return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
-        })
+        return pl.LazyFrame(schema=empty_schema)
     if raw.height == 0:
-        return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
-        })
+        return pl.LazyFrame(schema=empty_schema)
     cols = raw.columns
     # Find the time-axis column.  Prefer 't' (canonical) over 'i'
     # (generic Map fallback) when both are present.
@@ -231,9 +259,7 @@ def _profile_time_lf(source: "InputSource",
     elif "time" in cols:
         t_col = "time"
     else:
-        return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
-        })
+        return pl.LazyFrame(schema=empty_schema)
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(time_profiles))
                   .select(pl.col("name").alias("f"),
@@ -680,7 +706,7 @@ def p_profile_value_lf(source: "InputSource",
         parts.append(pt.with_columns(prio=pl.lit(2, dtype=pl.Int8)))
 
     if time_profiles:
-        tt = _profile_time_lf(source, dt_lf, time_profiles)
+        tt = _profile_time_lf(source, dt_lf, time_profiles, workdir=workdir)
         parts.append(tt.with_columns(prio=pl.lit(3, dtype=pl.Int8)))
 
     if period_profiles:

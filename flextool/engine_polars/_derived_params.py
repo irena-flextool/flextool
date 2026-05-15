@@ -5701,6 +5701,29 @@ def _dt_period_active_steps(source: "InputSource",
     ``steps_in_use.csv`` directly.  The fallback uses the Spine
     ``timeline.timestep_duration`` for rank/timeline assignment.
     """
+    # Prefer the workdir fallback when ``steps_in_use.csv`` (or
+    # ``ctx.steps_in_use``) is available: that frame reflects the
+    # post-``new_stepduration`` reality (e.g. invest_24h's 3 timesteps/
+    # period after 24h aggregation), whereas the source path expands the
+    # timeset over the raw hourly timeline.  When ``new_stepduration`` is
+    # set, the source path would otherwise return the wrong (hourly)
+    # active-step list, breaking storage state-coupling rows in the LP.
+    steps_in_use_available = False
+    if ctx is not None:
+        try:
+            steps_in_use_available = ctx.steps_in_use.height > 0
+        except Exception:
+            steps_in_use_available = False
+    if not steps_in_use_available and workdir is not None:
+        steps_in_use_available = (
+            (Path(workdir) / "solve_data" / "steps_in_use.csv").exists()
+        )
+    if steps_in_use_available and workdir is not None:
+        wd_result = _dt_period_active_steps_from_workdir(
+            source, workdir, ctx=ctx)
+        if wd_result is not None:
+            return wd_result
+
     p_ts = _try_param(source, "solve", "period_timeset")
     if p_ts is None:
         # Try preprocessing-only fallback before bailing.

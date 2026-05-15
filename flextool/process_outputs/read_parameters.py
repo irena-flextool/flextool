@@ -1311,6 +1311,102 @@ def read_parameters_multi(
             mask = periods.isin(realized_periods)
             setattr(ns, attr, obj[mask])
 
+    # Per-step ``entity_all_existing`` carries the period-d existing-
+    # capacity chain (pre_existing on solve_first, later_existing
+    # otherwise).  In a NESTED cascade the parent invest step and
+    # every child dispatch step both densify the (period, entity)
+    # grid: invest_24h@(wind_plant, p2020) = 1000 (pre_existing,
+    # solve_first=True) but dispatch_..._roll_17@(wind_plant, p2020)
+    # = 1288.83 (later_existing folding the parent's v_invest back
+    # in).  drop_levels' ``keep='last'`` dedup picks the dispatch
+    # row, blowing up the ``existing`` column in unit_capacity__d.csv
+    # to the cumulative-with-current-invest value (HEAD shows 1288.83
+    # for the same cell v3.32.0 emits as 1000).  v3.32.0's mod-side
+    # writer only emits rows from the FIRST solve that owns each
+    # period via ``period_capacity`` deduplication (flextool.mod
+    # L5993-6002): in nested that's the parent invest step.
+    #
+    # Fix: filter each step's ``entity_all_existing`` to ONLY the
+    # periods that step realizes (``flex_data.realized_dispatch`` ∪
+    # ``ed_invest_set/ed_divest_set`` "d"s).  Dispatch-only children
+    # in a nested cascade drop their lookahead rows; the parent
+    # invest step's per-period values are the sole contributor and
+    # win regardless of dedup direction.  In 4-solve / multi_year
+    # invest cascades each step realizes a disjoint period so no
+    # collision arises either way — the filter is a no-op there.
+    for (sn, ns), step in zip(per_step, steps):
+        flex_data = step[1]
+        step_periods: set[str] = set()
+        rd = getattr(flex_data, "realized_dispatch", None)
+        if rd is not None and getattr(rd, "height", 0) > 0:
+            step_periods.update(
+                rd.select("period").unique().to_pandas()["period"].tolist()
+            )
+        for src_attr in ("ed_invest_set", "ed_divest_set"):
+            src = getattr(flex_data, src_attr, None)
+            if src is not None and getattr(src, "height", 0) > 0 and "d" in src.columns:
+                step_periods.update(
+                    src.select("d").unique().to_pandas()["d"].tolist()
+                )
+        if not step_periods:
+            # Step realizes nothing — leave as-is.  This is the legacy
+            # behaviour for fixtures that don't populate realized_*.
+            continue
+        for attr in ("entity_all_existing",):
+            obj = getattr(ns, attr, None)
+            if obj is None or not _has_solve_level(obj):
+                continue
+            periods = obj.index.get_level_values("period")
+            mask = periods.isin(step_periods)
+            setattr(ns, attr, obj[mask])
+
+    # Per-step ``entity_annual_discounted`` /
+    # ``entity_annual_divest_discounted`` carry the invest-side NPV
+    # coefficients used by ``calc_costs.compute_costs`` to derive
+    # ``cost_entity_invest_d = v_invest × unitsize × annual_discounted``.
+    # The polars derivation builds these from ``period_invest``: a
+    # nested-dispatch child solve has empty ``period_invest`` and the
+    # frame is therefore empty, but ``_pdX_per_entity(densify_entities=
+    # _entity_universe)`` zero-fills it to the full entity × period
+    # grid.  In a nested cascade, the parent ``invest`` step holds the
+    # real coefficients (e.g. 4.18 for ``wind_plant @ p2020``) while
+    # every child dispatch step densifies the same (period, entity)
+    # cell to 0.  Without intervention, ``drop_levels`` dedup with
+    # ``keep='last'`` picks the last child step's zero, zeroing out
+    # ``r.cost_entity_invest_d`` and dropping ``unit investment &
+    # retirement`` from ``costs_discounted.csv`` (HEAD shows 0,
+    # v3.32.0 shows 471.28).  Fix: detect a "dispatch-only" step
+    # (``flex_data.ed_entity_annual_discounted`` empty/None) and clear
+    # the densified-zero per-step frame so it doesn't compete with the
+    # parent invest step's real values.
+    _annual_attrs = ("entity_annual_discounted",
+                     "entity_annual_divest_discounted",
+                     "entity_annuity")
+    _src_field = {
+        "entity_annual_discounted": "ed_entity_annual_discounted",
+        "entity_annuity": "ed_entity_annual_discounted",
+        "entity_annual_divest_discounted":
+            "ed_entity_annual_divest_discounted",
+    }
+    for (sn, ns), step in zip(per_step, steps):
+        flex_data = step[1]
+        for attr in _annual_attrs:
+            src_attr = _src_field[attr]
+            src_param = getattr(flex_data, src_attr, None)
+            src_empty = (
+                src_param is None
+                or getattr(src_param, "frame", None) is None
+                or getattr(src_param.frame, "height", 0) == 0
+            )
+            if not src_empty:
+                continue
+            obj = getattr(ns, attr, None)
+            if obj is None or not _has_solve_level(obj):
+                continue
+            # Empty out this step's rows (preserve the index/columns
+            # frame for the concat path; head(0) keeps the schema).
+            setattr(ns, attr, obj.iloc[0:0])
+
     out = SimpleNamespace()
     attr_names = [a for a in vars(last_ns).keys()]
     for attr in attr_names:

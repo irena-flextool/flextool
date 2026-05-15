@@ -4,16 +4,35 @@ import pandas as pd
 def unit_capacity(par, s, v, r, debug):
     """Unit capacity by period"""
 
-    # Get all periods and filter to process_unit entities
-    periods = list(s.d_realize_dispatch_or_invest)
+    # Get all periods and filter to process_unit entities.  Sort
+    # periods deterministically: the nested cascade unions
+    # ``d_realize_dispatch_or_invest`` across rolls and the invest
+    # parent step's invest_periods come from a Polars ``.unique()``
+    # call whose row order is hash-partitioned and unstable across
+    # processes (see read_sets.py invest_periods_list build).  An
+    # explicit sort here is the row-ordering guarantee the period-
+    # indexed CSV writers depend on.
+    if hasattr(s.d_realize_dispatch_or_invest, 'get_level_values') \
+            and 'period' in (s.d_realize_dispatch_or_invest.names or []):
+        periods = sorted(set(
+            s.d_realize_dispatch_or_invest.get_level_values('period')
+        ))
+    else:
+        periods = sorted(set(s.d_realize_dispatch_or_invest))
     processes = list(s.process_unit)
 
-    # Create base dataframe with all combinations (period, unit order)
+    # Create base dataframe with all combinations (unit, period order)
     index = pd.MultiIndex.from_product([processes, periods], names=['unit', 'period'])
     results = pd.DataFrame(index=index)
     results.columns.name = 'parameter'
 
-    # Existing capacity - filter to process_unit only
+    # Existing capacity - filter to process_unit only.  Uses
+    # ``par.entity_all_existing`` which read_parameters_multi has
+    # filtered per-step to each solve's own realized periods (so the
+    # nested-cascade parent invest step's pre_existing baseline wins
+    # over the children's later_existing on shared (entity, period)
+    # cells — see the comment block in
+    # ``read_parameters.py:read_parameters_multi``).
     existing = par.entity_all_existing[processes].unstack()
     results['existing'] = existing
 
@@ -50,16 +69,25 @@ def unit_capacity(par, s, v, r, debug):
 def connection_capacity(par, s, v, r, debug):
     """Connection capacity by period"""
 
-    # Get all periods and filter to process_connection entities
-    periods = list(s.d_realize_dispatch_or_invest)
+    # Get all periods and filter to process_connection entities.
+    # See unit_capacity above for the deterministic-period-order rationale.
+    if hasattr(s.d_realize_dispatch_or_invest, 'get_level_values') \
+            and 'period' in (s.d_realize_dispatch_or_invest.names or []):
+        periods = sorted(set(
+            s.d_realize_dispatch_or_invest.get_level_values('period')
+        ))
+    else:
+        periods = sorted(set(s.d_realize_dispatch_or_invest))
     connections = list(s.process_connection)
 
-    # Create base dataframe with all combinations (period, connection order)
+    # Create base dataframe with all combinations (connection, period order)
     index = pd.MultiIndex.from_product([connections, periods], names=['connection', 'period'])
     results = pd.DataFrame(index=index)
     results.columns.name = 'parameter'
 
-    # Existing capacity - filter to process_connection only
+    # Existing capacity - filter to process_connection only.  See
+    # unit_capacity above for the read_parameters_multi per-step
+    # filter that ensures correct dedup semantics on nested cascades.
     existing = par.entity_all_existing[connections].unstack()
     results['existing'] = existing
 
@@ -94,16 +122,24 @@ def connection_capacity(par, s, v, r, debug):
 def node_capacity(par, s, v, r, debug):
     """Node capacity by period"""
 
-    # Get all periods and filter to node_state entities
-    periods = list(s.d_realize_dispatch_or_invest)
+    # Get all periods and filter to node_state entities.
+    # See unit_capacity above for the deterministic-period-order rationale.
+    if hasattr(s.d_realize_dispatch_or_invest, 'get_level_values') \
+            and 'period' in (s.d_realize_dispatch_or_invest.names or []):
+        periods = sorted(set(
+            s.d_realize_dispatch_or_invest.get_level_values('period')
+        ))
+    else:
+        periods = sorted(set(s.d_realize_dispatch_or_invest))
     nodes = list(s.node_state)
 
-    # Create base dataframe with all combinations (period, node order)
+    # Create base dataframe with all combinations (node, period order)
     index = pd.MultiIndex.from_product([nodes, periods], names=['node', 'period'])
     results = pd.DataFrame(index=index)
     results.columns.name = 'parameter'
 
-    # Existing capacity - filter to node_state only
+    # Existing capacity - filter to node_state only.  See unit_capacity
+    # above for the read_parameters_multi per-step filter.
     if nodes:
         existing = par.entity_all_existing[nodes].unstack()
         results['existing'] = existing

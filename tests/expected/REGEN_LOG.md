@@ -271,3 +271,44 @@ Golden values match HEAD's output to ~1e-9 absolute (~1e-10 relative). Total
 cost agrees with the previous golden to 4e-8 (well within the 1e-4 regen
 tolerance). HEAD also now emits `"Investment discount factor",5,5,5,5`
 where the previous golden left it empty — a v3.32.0 bug that HEAD fixes.
+
+## multi_fullYear_battery_nested_24h_invest_one_solve, _multi_invest, _sample_invest_one_solve — 2026-05-15
+
+Regenerated all 5 CSVs (`costs__dt.csv`, `costs_discounted.csv`,
+`node_state__dt.csv`, `unit__outputNode__dt.csv`, `unit_capacity__d.csv`)
+for all 3 nested scenarios after these engine + post-process fixes:
+
+1. `flextool/engine_polars/_derived_profile.py` — `_profile_time_lf` now
+   reads per-solve `solve_data/pt_profile.csv` (averaged values) when a
+   workdir is available, falling back to the spine source only if the
+   CSV is missing. Previously read raw hourly profile and inner-joined
+   it on the sampled timestep set (24h-sampled invest), yielding wrong
+   capacity-factor coefficients. Mirrors the existing `pt_node_inflow`
+   path. Without this, wind invest LP coefficients were off by ~2.83×
+   (0.38 vs 0.54875 for t0001 in 24h-sampled invest_24h), driving wind
+   capacity to 814 MW vs 288.83 MW.
+
+2. `flextool/engine_polars/_derived_params.py` — `_dt_period_active_steps`
+   now prefers `_dt_period_active_steps_from_workdir` (reads
+   `steps_in_use.csv`) over the spine source path. The spine source
+   expands timesets against the raw hourly timeline duration, ignoring
+   the solve's `new_stepduration`; that emitted 72 hourly steps for
+   `invest_24h` instead of 3 (`t0001/t0025/t0049`). `dtttdt_forward_only`
+   was built on the wrong grid, the state-lag join couldn't pair
+   consecutive sampled steps, and `v_state` battery state-coupling was
+   missing from the LP.
+
+3. `flextool/process_outputs/read_parameters.py::read_parameters_multi`
+   now filters each step's `entity_all_existing` to only that step's
+   realized periods, and clears the densified-zero
+   `entity_annual_*` frames on dispatch-only steps. In nested cascades
+   the parent invest step's per-period values would otherwise be
+   overwritten by child dispatch steps' last-wins dedup, zeroing the
+   `unit investment & retirement` row in `costs_discounted.csv`.
+
+4. `flextool/process_outputs/out_capacity.py` — `unit_capacity`,
+   `connection_capacity`, and `node_capacity` now sort their period
+   axis deterministically (`sorted(set(...get_level_values('period')))`)
+   before the `from_product` index build. Without sorting, the
+   row order in `unit_capacity__d.csv` was hash-partitioned and varied
+   across runs.
