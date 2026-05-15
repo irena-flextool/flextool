@@ -103,6 +103,29 @@ class FlexDataAccumulator:
     def keys(self) -> list[str]:
         return list(self.frames.keys())
 
+    # ------------------------------------------------------------------
+    # Phase D — seed lookup
+    # ------------------------------------------------------------------
+    def lookup(self, target: "Path | str") -> "pl.DataFrame | None":
+        """Return the captured frame whose target CSV basename matches
+        *target*, or ``None`` when this accumulator does not cover the
+        file.
+
+        ``target`` may be a full ``Path`` (``<work>/solve_data/foo.csv``)
+        or a bare basename (``"foo.csv"`` or ``"foo"`` — the ``.csv``
+        suffix is added when missing, to mirror
+        :meth:`CsvSource.get`'s call style).
+
+        Phase D's :func:`load_flextool` consumes this method through a
+        process-level seed hook installed in
+        :mod:`flextool.engine_polars._input_source`.  See
+        :func:`_install_seed` / :func:`_seed_lookup` there.
+        """
+        name = Path(target).name
+        if not name.endswith(".csv"):
+            name = f"{name}.csv"
+        return self.frames.get(name)
+
 
 # ---------------------------------------------------------------------------
 # Context manager — monkey-patches the four writer modules' ``_write``

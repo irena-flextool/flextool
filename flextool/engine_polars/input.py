@@ -3095,7 +3095,8 @@ def _find_scenario(workdir: Path) -> str | None:
 def load_flextool(source: "Path | str | FlexInputSource",
                    *,
                    db_reader: "object | None" = None,
-                   handoff: "object | None" = None) -> FlexData:
+                   handoff: "object | None" = None,
+                   seed: "object | None" = None) -> FlexData:
     """Load a :class:`FlexData` from either a workdir on disk or a
     :class:`flextool._input_source.FlexInputSource`.
 
@@ -3222,6 +3223,29 @@ def load_flextool(source: "Path | str | FlexInputSource",
             ctx = None
     if ctx is not None:
         ctx.activate()
+
+    # Phase D — when a FlexData seed (e.g. a
+    # :class:`FlexDataAccumulator` captured by ``_native_run_model``) is
+    # supplied, install it as the process-level read-hook for the
+    # duration of this ``load_flextool`` call.  Every
+    # :func:`_read_csv_file` (and :meth:`CsvSource.get`) call inside the
+    # loader will return the seeded frame in place of the disk read when
+    # the requested path's basename is among the seed's captured frames.
+    # Non-covered basenames fall through to the existing disk-read path
+    # (the 103 special-handling writers from the Phase B audit; their
+    # FlexData fields are still populated by the disk-read helpers).
+    #
+    # The override chain (apply_direct_params, apply_derived_a..g, the
+    # handoff overlay, the synthetic-solve fallback) runs UNCHANGED on
+    # top of the seed-or-disk-built FlexData — the seed is purely the
+    # starting state, not a replacement for the Spine overlay
+    # (handoff doc gotcha #7).
+    from flextool.engine_polars._input_source import (
+        _install_seed as _install_seed_hook,
+    )
+    seed_installed = seed is not None
+    if seed_installed:
+        _install_seed_hook(seed)
 
     try:
         # Δ.2: build the per-solve BlockLayout once from flextool's
@@ -3620,6 +3644,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
     finally:
         if ctx is not None:
             ctx.deactivate()
+        if seed_installed:
+            _install_seed_hook(None)
 
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",

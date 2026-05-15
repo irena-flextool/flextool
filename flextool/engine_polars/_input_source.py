@@ -53,6 +53,52 @@ Kind = Literal["input", "solve_data"]
 _active_cache: dict[Path, pl.DataFrame] | None = None
 
 
+# ---------------------------------------------------------------------------
+# Phase D — in-memory seed hook
+# ---------------------------------------------------------------------------
+#
+# When ``load_flextool`` is called with ``seed=<FlexDataAccumulator>``, the
+# loader registers the accumulator here for the duration of the build.
+# :func:`_read_csv_file` consults the seed before issuing any disk read: if
+# the requested path's basename is among the seed's captured frames, the
+# in-memory frame replaces the disk read.  Otherwise the existing cache +
+# disk-read path runs unchanged.
+#
+# Memory discipline (handoff decision #11): the seed is per-sub-solve.  The
+# install / clear pair is bound to the lifetime of one ``load_flextool``
+# call.  Nested seeds are not supported — the API enforces this via the
+# explicit clear in :func:`load_flextool`'s ``finally``.
+#
+# Type kept ``object | None`` to avoid an import cycle with
+# ``_flex_data_accumulator`` (which itself doesn't import this module).
+_active_seed: "object | None" = None
+
+
+def _install_seed(seed: "object | None") -> None:
+    """Phase D — install / clear the process-level FlexData seed.
+
+    Pass the accumulator instance to activate seed-mode lookups in
+    :func:`_read_csv_file`; pass ``None`` to clear.  See module docstring.
+    """
+    global _active_seed
+    _active_seed = seed
+
+
+def _seed_lookup(path: "Path | str") -> "pl.DataFrame | None":
+    """Return the seeded frame for *path*, or ``None``.
+
+    The seed exposes a ``lookup(path) -> pl.DataFrame | None`` method
+    keyed by CSV basename.  When no seed is active, returns ``None``.
+    """
+    seed = _active_seed
+    if seed is None:
+        return None
+    lookup = getattr(seed, "lookup", None)
+    if lookup is None:
+        return None
+    return lookup(path)
+
+
 def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     """Single residual ``polars.read_csv`` site for the engine_polars
     package.
@@ -74,7 +120,19 @@ def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     ``edd_history.csv`` reads that happen across the apply_derived_*
     helpers.  Behaviour is otherwise identical to
     ``polars.read_csv(path)``.
+
+    Phase D — when an in-memory FlexData seed is active and the
+    requested path's basename matches one of the seed's captured frames,
+    the seeded frame is returned in place of the disk read.  The seed
+    holds frames that were produced by the writer-port thin-wrapper
+    writers earlier in the same sub-solve; Phase C asserted those
+    frames are byte-equivalent to the on-disk CSV.  The cache (when
+    active) is bypassed for seeded reads — the seed itself is the
+    in-memory cache for those basenames.
     """
+    seeded = _seed_lookup(path)
+    if seeded is not None:
+        return seeded
     if _active_cache is not None:
         # Use the str form as cache key — avoids the per-call ``Path.resolve``
         # syscall (which adds ~50µs each and dominates the cache miss path
@@ -256,6 +314,12 @@ class CsvSource:
         d = self.input_dir if kind == "input" else self.solve_data_dir
         fname = name if name.endswith(".csv") else f"{name}.csv"
         path = d / fname
+        # Phase D — consult the in-memory FlexData seed before probing
+        # disk.  Seed mode (Phase E onwards) may run without the CSV
+        # actually present on disk for the seeded basenames.
+        seeded = _seed_lookup(path)
+        if seeded is not None:
+            return seeded
         if not path.exists():
             return None
         return _read_csv_file(path)
