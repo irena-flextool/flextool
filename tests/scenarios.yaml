@@ -243,7 +243,12 @@
     - unit__outputNode__dt.csv
     - unit_capacity__d.csv
     - costs__dt.csv
-  time_budget_seconds: 4.0
+  # Bumped 4.0 -> 6.0 (2026-05-15).  Observed 4.80s post-HiGHS-pin
+  # (commit 9205bf44); the pin's parallel=off / solver=simplex
+  # constraints add 15-25% wall time on this 4-sub-solve cascade vs
+  # the prior choose-parallel default, which was the basis for the
+  # original 4.0s budget.  6.0s gives ~25% headroom.
+  time_budget_seconds: 6.0
 
 # --- Network scenarios ---
 
