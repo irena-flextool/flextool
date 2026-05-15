@@ -243,12 +243,21 @@ class ResultViewer(tk.Toplevel):
         # ── Configure tree tags and selection highlight ──────────────
         self._plot_tree.tag_configure("disabled", foreground="grey")
 
-        # Make the selected item stand out in both light and dark themes
+        # Make the plot-tree selection stand out in both light and dark
+        # themes. Scoped to PlotTree.Treeview so the main window's
+        # "selected !focus" -> blue mapping on the global Treeview style
+        # is not overwritten when this viewer opens.
         style = ttk.Style()
         style.map(
-            "Treeview",
-            background=[("selected", "#2074d5")],
-            foreground=[("selected", "#ffffff")],
+            "PlotTree.Treeview",
+            background=[
+                ("selected !focus", "#2074d5"),
+                ("selected", "#2074d5"),
+            ],
+            foreground=[
+                ("selected !focus", "#ffffff"),
+                ("selected", "#ffffff"),
+            ],
         )
 
         # Theme-aware colors for variant grid
@@ -429,10 +438,16 @@ class ResultViewer(tk.Toplevel):
         # column 2 = scrollbar (fixed width)
         tree_frame.rowconfigure(0, weight=1)
 
+        # Use a per-widget style so the variant-canvas focus dance below
+        # (which hides this tree's selection while the canvas has focus)
+        # doesn't bleed into the global "Treeview" style and disturb the
+        # main window's input_sources / available / executed / jobs
+        # selection rendering.
         self._plot_tree = ttk.Treeview(
             tree_frame,
             show="tree",
             selectmode="browse",
+            style="PlotTree.Treeview",
         )
         self._plot_tree.grid(row=0, column=0, sticky="nsew")
 
@@ -1592,24 +1607,39 @@ class ResultViewer(tk.Toplevel):
     def _on_canvas_focus_in(self, event: tk.Event) -> None:
         """Handle variant canvas receiving focus."""
         self._focus_col = max(0, self._focus_col)  # ensure valid
-        # Hide tree selection highlight
+        # Hide the plot-tree selection while focus is in the variant
+        # canvas. Scoped to PlotTree.Treeview so other trees keep their
+        # blue selection.
         style = ttk.Style()
         style.map(
-            "Treeview",
-            background=[("selected", self._bg_color)],
-            foreground=[("selected", self._fg_color)],
+            "PlotTree.Treeview",
+            background=[
+                ("selected !focus", self._bg_color),
+                ("selected", self._bg_color),
+            ],
+            foreground=[
+                ("selected !focus", self._fg_color),
+                ("selected", self._fg_color),
+            ],
         )
         self._redraw_variant_grid()
 
     def _on_tree_focus_in(self, event: tk.Event) -> None:
         """Handle plot tree receiving focus."""
         self._focus_col = -1  # focus is in tree, not canvas
-        # Restore tree selection highlight
+        # Restore the plot-tree selection highlight (still scoped to
+        # PlotTree.Treeview).
         style = ttk.Style()
         style.map(
-            "Treeview",
-            background=[("selected", "#2074d5")],
-            foreground=[("selected", "#ffffff")],
+            "PlotTree.Treeview",
+            background=[
+                ("selected !focus", "#2074d5"),
+                ("selected", "#2074d5"),
+            ],
+            foreground=[
+                ("selected !focus", "#ffffff"),
+                ("selected", "#ffffff"),
+            ],
         )
         self._redraw_variant_grid()
 
