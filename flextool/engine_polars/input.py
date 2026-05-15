@@ -857,7 +857,10 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             df = _read_csv_file(p)
             if df.height == 0 or "process" not in df.columns:
                 return empty_pss
-            return df.rename({"process": "p"}).select("p", "source", "sink").unique()
+            return (df.rename({"process": "p"})
+                      .select("p", "source", "sink")
+                      .unique()
+                      .sort("p", "source", "sink"))
         pss = _read_pss(pss_path)
         if pss.height == 0:
             return empty_return
@@ -875,7 +878,10 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             df = _read_csv_file(p)
             if df.height == 0 or "process" not in df.columns or side not in df.columns:
                 return None
-            return df.rename({"process": "p"}).select("p", side).unique()
+            return (df.rename({"process": "p"})
+                      .select("p", side)
+                      .unique()
+                      .sort("p", side))
         pss_source_canonical = _read_canonical_set(sd / "process_source.csv", "source")
         pss_sink_canonical   = _read_canonical_set(sd / "process_sink.csv",   "sink")
     else:
@@ -883,13 +889,17 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         canonical = process_source_sink_canonical(source)
         if canonical.height == 0:
             return empty_return
-        pss = canonical.select("p", "source", "sink").unique()
+        pss = (canonical.select("p", "source", "sink")
+                          .unique()
+                          .sort("p", "source", "sink"))
         pss_eff = (canonical
             .filter(pl.col("method") == "eff")
-            .select("p", "source", "sink").unique())
+            .select("p", "source", "sink").unique()
+            .sort("p", "source", "sink"))
         pss_noEff = (canonical
             .filter(pl.col("method") == "noEff")
-            .select("p", "source", "sink").unique())
+            .select("p", "source", "sink").unique()
+            .sort("p", "source", "sink"))
 
         # Canonical source/sink per process from the original entity tables:
         # unit__inputNode → (p, source), unit__outputNode → (p, sink),

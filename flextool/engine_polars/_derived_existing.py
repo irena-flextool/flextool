@@ -514,7 +514,8 @@ def pd_invest_set_lf(source: "InputSource",
               .filter(pl.col("kind") == "process")
               .rename({"e": "p"})
               .select("p", "d")
-              .unique())
+              .unique()
+              .sort("p", "d"))
 
 
 def nd_invest_set_lf(source: "InputSource",
@@ -527,7 +528,8 @@ def nd_invest_set_lf(source: "InputSource",
               .filter(pl.col("kind") == "node")
               .rename({"e": "n"})
               .select("n", "d")
-              .unique())
+              .unique()
+              .sort("n", "d"))
 
 
 def pd_divest_set_lf(source: "InputSource",
@@ -540,7 +542,8 @@ def pd_divest_set_lf(source: "InputSource",
               .filter(pl.col("kind") == "process")
               .rename({"e": "p"})
               .select("p", "d")
-              .unique())
+              .unique()
+              .sort("p", "d"))
 
 
 def nd_divest_set_lf(source: "InputSource",
@@ -553,7 +556,8 @@ def nd_divest_set_lf(source: "InputSource",
               .filter(pl.col("kind") == "node")
               .rename({"e": "n"})
               .select("n", "d")
-              .unique())
+              .unique()
+              .sort("n", "d"))
 
 
 def ed_invest_period_set_lf(source: "InputSource",
@@ -576,7 +580,8 @@ def ed_invest_period_set_lf(source: "InputSource",
     return (ed_invest_lf
               .join(period_e, on="e", how="inner")
               .select("e", "d")
-              .unique())
+              .unique()
+              .sort("e", "d"))
 
 
 def ed_divest_period_set_lf(source: "InputSource",
@@ -594,7 +599,8 @@ def ed_divest_period_set_lf(source: "InputSource",
     return (ed_divest_lf
               .join(period_e, on="e", how="inner")
               .select("e", "d")
-              .unique())
+              .unique()
+              .sort("e", "d"))
 
 
 # ---------------------------------------------------------------------------
