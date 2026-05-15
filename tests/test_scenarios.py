@@ -286,11 +286,19 @@ def test_scenario(
             else:
                 actual = round_for_comparison(_read_csv(actual_path))
                 expected = round_for_comparison(_read_csv(expected_path))
+                # rtol=1e-4 + atol=1e-4: rtol handles large values
+                # (millions of EUR ± 100), atol absorbs the ±5e-5
+                # rounding step introduced by round_for_comparison(4)
+                # for small values close to 1 where a tight rtol-only
+                # bound is mathematically tighter than the round step
+                # (see TODO in tests/db_utils.py::round_for_comparison
+                # for the longer-term tighten-and-regen plan).
                 pd.testing.assert_frame_equal(
                     actual,
                     expected,
                     check_exact=False,
                     rtol=1e-4,
+                    atol=1e-4,
                     obj=f"{scenario}/{csv_name}",
                 )
 
