@@ -287,11 +287,11 @@ class ExecutionWindow(tk.Toplevel):
         self._job_tree.heading("peak", text="Peak GB")
         self._job_tree.heading("timestamp", text="Timestamp")
 
-        self._job_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self._job_tree.column("status", width=cw * 4, minwidth=cw * 4, stretch=False)
         self._job_tree.column("source", width=cw * 4, minwidth=cw * 3, stretch=False)
         self._job_tree.column("scenario", width=cw * 20, minwidth=cw * 10, stretch=True)
-        self._job_tree.column("peak", width=cw * 8, minwidth=cw * 8, stretch=False)
-        self._job_tree.column("timestamp", width=cw * 18, minwidth=cw * 18, stretch=False)
+        self._job_tree.column("peak", width=int(cw * 8.8), minwidth=int(cw * 8.8), stretch=False)
+        self._job_tree.column("timestamp", width=int(cw * 23.4), minwidth=int(cw * 23.4), stretch=False)
 
         self._job_tree.grid(row=0, column=0, sticky="nsew")
 
