@@ -336,6 +336,18 @@ class FlexData:
     p_co2_max_period: Param | None = None        # (g, d)
     group_d_co2_capped: pl.DataFrame | None = None
 
+    # ─── CO2 cap (multi-period total) — port of v3.32.0 co2_max_total ────
+    # Mirrors co2_max_period but the cap is a single tonnes value per group
+    # spanning the whole horizon.  Active only for groups whose
+    # ``group__co2_method`` is ``total`` / ``price_total`` / ``period_total``
+    # (set materialised in ``solve_data/group_co2_max_total.csv``).  LHS sums
+    # across (d, t); RHS is the per-group ``p_group[g, 'co2_max_total']``
+    # scalar (in tonnes).  See .mod:4019-4055 for the legacy formulation.
+    group_co2_max_total: pl.DataFrame | None = None              # (g,)
+    flow_from_co2_capped_total: pl.DataFrame | None = None       # eff partition
+    flow_from_co2_capped_total_noEff: pl.DataFrame | None = None # noEff partition
+    p_co2_max_total: Param | None = None         # (g,)
+
     # ─── Indirect-conversion (CHP) ────────────────────────────────────────
     process_indirect: pl.DataFrame | None = None
     process_input_flows: pl.DataFrame | None = None
@@ -1168,6 +1180,97 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     period = dt.select("d").unique()
     return (g_max, flow_from_co2_capped_eff, flow_from_co2_capped_noEff,
             co2_max_period, g_max.join(period, how="cross"))
+
+
+def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
+                          pss_noEff: pl.DataFrame | None = None):
+    """Sibling of :func:`_load_co2_cap` for the multi-period total cap.
+
+    Mirrors the period-cap topology (``group_co2_max_period.csv`` → eff /
+    noEff (p, source, sink, c, g) frames) but the gate set comes from
+    ``solve_data/group_co2_max_total.csv`` (groups whose ``group__co2_method``
+    is ``total`` / ``price_total`` / ``period_total`` — already projected
+    by :func:`_writer_leaf_sets.write_co2_method_sets`).  The cap value
+    is read from the canonical ``solve_data/pdGroup.csv`` slice
+    (``param == 'co2_max_total'``); flextool preprocessing broadcasts the
+    Spine scalar across periods, so we collapse to one row per group by
+    taking the maximum (all rows carry the same value when authored as
+    a scalar).
+
+    Returns a 4-tuple (g_max_total, flow_eff, flow_noEff, p_co2_max_total).
+    """
+    if pss_eff is None and pss_noEff is None:
+        return (None, None, None, None)
+    p = sd / "group_co2_max_total.csv"
+    if not p.exists():
+        return (None, None, None, None)
+    g_max = _read_csv_file(p).rename({"group": "g"})
+    if g_max.height == 0:
+        return (None, None, None, None)
+    cn_co2 = _read_csv_file(sd / "commodity_node_co2.csv").rename(
+        {"commodity": "c", "node": "n"})
+    g_node = _read_csv_file(inp / "group__node.csv").rename(
+        {"group": "g", "node": "n"})
+    gcn = (g_max.join(g_node, on="g", how="inner")
+                .join(cn_co2, on="n", how="inner")
+                .select("g", "c", "n"))
+    if gcn.height == 0:
+        return (None, None, None, None)
+    flow_eff = None
+    flow_noEff = None
+    if pss_eff is not None and pss_eff.height > 0:
+        eff = (pss_eff.select("p", "source", "sink")
+            .join(gcn, left_on="source", right_on="n", how="inner")
+            .select("p", "source", "sink", "c", "g"))
+        if eff.height > 0:
+            flow_eff = eff
+    if pss_noEff is not None and pss_noEff.height > 0:
+        noeff = (pss_noEff.select("p", "source", "sink")
+            .join(gcn, left_on="source", right_on="n", how="inner")
+            .select("p", "source", "sink", "c", "g"))
+        if noeff.height > 0:
+            flow_noEff = noeff
+    if flow_eff is None and flow_noEff is None:
+        return (None, None, None, None)
+    # Read the cap value from pdGroup.csv (param='co2_max_total').  Legacy
+    # preprocessing writes one row per (group, period) by broadcasting the
+    # Spine scalar; we collapse via max() per group (all per-period rows
+    # share the same value when authored as a scalar).  Filter zero rows
+    # so the constraint set is naturally pruned to the active caps.
+    p_cap = None
+    pdg = sd / "pdGroup.csv"
+    if pdg.exists():
+        df = _read_csv_file(pdg)
+        if df.height > 0 and {"group", "param", "value"}.issubset(df.columns):
+            sliced = (df.filter(pl.col("param") == "co2_max_total")
+                        .rename({"group": "g"})
+                        .with_columns(pl.col("value").cast(pl.Float64,
+                                                            strict=False))
+                        .filter(pl.col("value").is_not_null())
+                        .filter(pl.col("value") != 0.0)
+                        .group_by("g", maintain_order=True)
+                        .agg(pl.col("value").max())
+                        .join(g_max, on="g", how="inner"))
+            if sliced.height > 0:
+                p_cap = Param(("g",), sliced.select("g", "value"))
+    if p_cap is None:
+        # Without a non-zero cap there's nothing to bind — bail out so
+        # the consumer leaves ``has_co2_cap_total`` false.
+        return (None, None, None, None)
+    # Restrict the gate set to groups that actually carry a cap value.
+    cap_groups = p_cap.frame.select("g")
+    g_max = g_max.join(cap_groups, on="g", how="inner")
+    if flow_eff is not None:
+        flow_eff = flow_eff.join(cap_groups, on="g", how="inner")
+        if flow_eff.height == 0:
+            flow_eff = None
+    if flow_noEff is not None:
+        flow_noEff = flow_noEff.join(cap_groups, on="g", how="inner")
+        if flow_noEff.height == 0:
+            flow_noEff = None
+    if flow_eff is None and flow_noEff is None:
+        return (None, None, None, None)
+    return (g_max, flow_eff, flow_noEff, p_cap)
 
 
 def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
@@ -3197,7 +3300,10 @@ def load_flextool(source: "Path | str | FlexInputSource",
             inp, sd, proc["pss_eff"], proc.get("pss_noEff"))
         g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped = _load_co2_cap(
             inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"))
-        if co2_max_p is not None and co2c is None:
+        (g_co2_max_total, flow_co2_cap_total, flow_co2_cap_total_noEff,
+         co2_max_total_p) = _load_co2_cap_total(
+            inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"))
+        if (co2_max_p is not None or co2_max_total_p is not None) and co2c is None:
             p_comm = _read_csv_file(inp / "p_commodity.csv")
             co2c = Param(("c",),
                 p_comm.filter(pl.col("commodityParam")=="co2_content")
@@ -3347,6 +3453,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
             flow_from_co2_capped_noEff = flow_co2_cap_noEff,
             p_co2_max_period = co2_max_p,
             group_d_co2_capped = g_d_capped,
+
+            group_co2_max_total = g_co2_max_total,
+            flow_from_co2_capped_total = flow_co2_cap_total,
+            flow_from_co2_capped_total_noEff = flow_co2_cap_total_noEff,
+            p_co2_max_total = co2_max_total_p,
 
             process_indirect = indir_set,
             process_input_flows = indir_in,

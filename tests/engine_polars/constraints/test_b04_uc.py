@@ -14,18 +14,15 @@ Two focused tests on UC behavior in the polars engine:
   distinct LP rows (one per process), and that solving still yields
   optimal.
 
-* ``test_uptime_downtime_invest_interaction_xfail`` — covers **B4.12**.
-  Documented coverage gap at ``model.py:2920-2923``: the
-  ``minimum_downtime`` constraint emits RHS ``existing_count`` without
-  the invest-LHS-tightening that the .mod's downtime constraint
-  applies via ``edd_invest``.  With ``existing_count=0`` and the unit
-  invest-eligible, the (un-tightened) downtime row forces
-  ``v_online + Σ v_shutdown ≤ 0`` — making any non-zero v_online
-  infeasible regardless of how much capacity v_invest_p adds.  At the
-  cost-min optimum the LP picks ``v_invest_p=0`` and pays slack on
-  every step.  With the bug fixed the LP would invest 0.5 (the
-  minimum that satisfies demand AND uptime/downtime) and serve all
-  load.  Marked ``xfail(strict=True)``.
+* ``test_uptime_downtime_invest_interaction`` — covers **B4.12**.
+  Regression guard for the formerly-documented gap at
+  ``model.py:2920-2923``: the ``minimum_downtime`` constraint now
+  applies the same invest/divest LHS-tightening as ``maxOnline`` so the
+  .mod's RHS ``existing_count + Σ v_invest_alive − Σ v_divest_alive``
+  is faithfully reproduced.  With ``existing_count=0`` and the unit
+  invest-eligible, the cost-min optimum invests 0.5 unit (the minimum
+  that satisfies demand AND uptime/downtime) and serves all load,
+  rather than falling back to all-slack.
 """
 from __future__ import annotations
 
@@ -184,11 +181,6 @@ def test_linear_and_integer_uc_constraint_suffix_isolation():
 # ---------------------------------------------------------------------------
 # B4.12 — uptime/downtime + invest interaction (KNOWN GAP).
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="model.py:2920-2923 — minimum_downtime RHS lacks invest "
-           "LHS tightening; with existing=0 the un-tightened row forces "
-           "v_online ≤ 0 regardless of v_invest, so the LP picks all-slack.")
 def test_uptime_downtime_invest_interaction(toy_uc_3t):
     """Covers B4.12 — uptime/downtime × invest interaction.
 
@@ -202,11 +194,12 @@ def test_uptime_downtime_invest_interaction(toy_uc_3t):
     v_flow = 0.5 each step (= 50 MW), v_startup = v_shutdown = 0.
     Cost: invest 0.5 × 10 = 5 + fuel 3 × 0.5 × 100 × 1 = 150 ⇒ obj 155.
 
-    The .mod's ``minimum_downtime`` includes ``v_invest`` on the RHS
-    (existing_count + Σ v_invest_alive); flexpy currently emits only
-    ``existing_count`` (= 0), so the LP cannot reach v_online > 0
-    even with arbitrary invest, and falls back to all-slack
-    (v_invest_p = 0, vq_state_up = 50 each step).
+    Regression guard: the .mod's ``minimum_downtime`` includes
+    ``v_invest`` on the RHS (existing_count + Σ v_invest_alive); the
+    polars engine now applies the same invest/divest LHS-tightening as
+    ``maxOnline`` so the LP can reach v_online > 0 via investment.
+    Prior to the fix this row was un-tightened and the LP fell back to
+    all-slack (v_invest_p = 0, vq_state_up = 50 each step).
     """
     d = toy_uc_3t
     # Existing capacity = 0 — we MUST invest to serve any load.
@@ -219,8 +212,11 @@ def test_uptime_downtime_invest_interaction(toy_uc_3t):
     p_max_units = Param(("e", "d"),
         pl.DataFrame({"e": ["u"], "d": ["d1"], "value": [2.0]}))
     ed_invest_period = pl.DataFrame({"e": ["u"], "d": ["d1"]})
+    # ed_invest_max_period is in absolute capacity units (MW); the engine
+    # pre-divides by unitsize=100 so the LP-side cap becomes
+    # 200 / 100 = 2 units, matching p_entity_max_units.
     ed_max_period = Param(("e", "d"),
-        pl.DataFrame({"e": ["u"], "d": ["d1"], "value": [2.0]}))
+        pl.DataFrame({"e": ["u"], "d": ["d1"], "value": [200.0]}))
     ed_annual = Param(("e", "d"),
         pl.DataFrame({"e": ["u"], "d": ["d1"], "value": [10.0]}))
     ed_lifetime = Param(("e", "d"),

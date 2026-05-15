@@ -11,11 +11,13 @@
   ``co2_max_period`` emits exactly one row (the (g, d) cross-product is
   filtered through ``group_d_co2_capped``, NOT inflated to 2×2=4).
 
-* ``test_b10_co2_max_total_absent`` — structural finding (xfail-strict):
-  pin that no ``co2_max_total*`` constraint name exists in the polars
-  engine.  Will flip to PASS — and the xfail must be removed — when
-  the v3.32.0 ``co2_max_total`` is ported (see
-  ``../flextool-e/flextool.mod:4019-4055``).
+* ``test_b10_co2_max_total_constraint_emitted_and_binds`` — covers the
+  multi-period ``co2_max_total`` port (sibling of ``co2_max_period``;
+  v3.32.0 .mod:4019-4055).  Extends ``toy_2node_chp`` over two periods
+  with a CO2 content + a horizon-wide cap that is forced to bind, and
+  verifies (a) the constraint name is emitted, (b) row count equals the
+  number of capped groups (NOT one per period), and (c) the cap actually
+  limits emissions — slack absorbs the over-cap demand.
 
 * ``test_b11_user_cstr_state_and_prebuilt_coefs`` — covers **B11-3**,
   **B11-4**, **B11-5** in one fixture: storage node with
@@ -283,23 +285,127 @@ def test_b10_co2_max_period_g_d_cardinality(toy_2node_chp):
 
 
 # ---------------------------------------------------------------------------
-# B.10 — structural finding: co2_max_total does NOT exist in polars engine.
-# Pin with xfail-strict so the test flips to FAIL (= remove this xfail)
-# when the v3.32.0 port lands.
+# B.10 — co2_max_total port: emitted, single row per capped group, binds.
 
-@pytest.mark.xfail(strict=True,
-    reason="co2_max_total port pending — see ../flextool-e/flextool.mod:4019-4055")
-def test_b10_co2_max_total_absent_xfail(toy_2node_chp):
-    """Structural finding — once the lifetime-cap variant is ported, the
-    polars engine will emit a ``co2_max_total`` constraint name; this
-    xfail will then trip (strict) and the test must be deleted.
+def _toy_2node_chp_with_co2_total(d: FlexData, *,
+                                    cap: float,
+                                    extra_periods: tuple[str, ...] = (),
+                                    ) -> FlexData:
+    """Add ``co2_max_total`` wiring on top of toy_2node_chp.  ``cap`` is
+    the horizon-wide tonnes-equivalent cap on group ``g1``.  When
+    ``extra_periods`` is non-empty, the (d, t) timeline is extended with
+    one period per name (each carrying a single timestep ``t01``); this
+    exercises the "sum-over-d" semantics of the multi-period cap.
     """
-    d = _toy_2node_chp_with_co2(toy_2node_chp)
-    pb, _ = _solve(d)
+    p_co2_content = Param(("c",),
+        pl.DataFrame({"c": ["FUEL"], "value": [2.0]}))
+    flow_from_co2_capped_total = pl.DataFrame({
+        "p": ["chp"], "source": ["fuel"], "sink": ["chp"],
+        "c": ["FUEL"], "g": ["g1"]})
+    g_set = pl.DataFrame({"g": ["g1"]})
+    p_cap = Param(("g",),
+        pl.DataFrame({"g": ["g1"], "value": [cap]}))
+    new = dataclasses.replace(d,
+        p_co2_content=p_co2_content,
+        flow_from_co2_capped_total=flow_from_co2_capped_total,
+        group_co2_max_total=g_set,
+        p_co2_max_total=p_cap,
+    )
+    if not extra_periods:
+        return new
+    # Extend the (d, t) timeline.  Toy_2node_chp uses dt = [(d1, t01), (d1, t02)];
+    # for the multi-period port we want to see the cap aggregate across d's,
+    # so add e.g. d2 with the same demand pattern.
+    base_periods = sorted(set(d.dt["d"].to_list()))
+    all_periods = list(base_periods) + list(extra_periods)
+    base_times = sorted(set(d.dt.filter(pl.col("d") == base_periods[0])
+                              ["t"].to_list()))
+    dt2_rows = [(dd, tt) for dd in all_periods for tt in base_times]
+    dt2 = pl.DataFrame({"d": [r[0] for r in dt2_rows],
+                        "t": [r[1] for r in dt2_rows]})
+    p_step = Param(("d", "t"), dt2.with_columns(value=pl.lit(1.0)))
+    p_rp   = Param(("d", "t"), dt2.with_columns(value=pl.lit(1.0)))
+    p_infl = Param(("d",),
+        pl.DataFrame({"d": all_periods, "value": [1.0]*len(all_periods)}))
+    p_psh  = Param(("d",),
+        pl.DataFrame({"d": all_periods, "value": [1.0]*len(all_periods)}))
+    nb_dt2 = d.nodeBalance.join(dt2, how="cross")
+    p_inflow = Param(("n", "d", "t"),
+        nb_dt2.with_columns(value=pl.when(pl.col("n") == "heat")
+                                     .then(-5.0).otherwise(-10.0))
+              .select("n", "d", "t", "value"))
+    p_pen_up = Param(("n", "d", "t"),
+        nb_dt2.with_columns(value=pl.lit(1e6)).select("n", "d", "t", "value"))
+    p_pen_dn = Param(("n", "d", "t"),
+        nb_dt2.with_columns(value=pl.lit(1e6)).select("n", "d", "t", "value"))
+    pss_dt2 = d.process_source_sink.join(dt2, how="cross")
+    p_flow_upper = Param(("p", "source", "sink", "d", "t"),
+        pss_dt2.with_columns(value=pl.lit(1.0))
+               .select("p", "source", "sink", "d", "t", "value"))
+    p_slope = Param(("p", "d", "t"),
+        dt2.with_columns(p=pl.lit("chp"), value=pl.lit(1.0))
+           .select("p", "d", "t", "value"))
+    process_indirect_dt = d.process_indirect.join(dt2, how="cross")
+    return dataclasses.replace(new,
+        dt=dt2, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        p_inflation_op=p_infl, p_period_share=p_psh,
+        nodeBalance_dt=nb_dt2, p_inflow=p_inflow,
+        p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
+        pss_dt=pss_dt2, p_flow_upper=p_flow_upper, p_slope=p_slope,
+        process_indirect_dt=process_indirect_dt,
+    )
+
+
+def test_b10_co2_max_total_constraint_emitted_and_binds(toy_2node_chp):
+    """Covers the v3.32.0 ``co2_max_total`` port — multi-period CO2 cap
+    aggregating emissions across the whole horizon.  See .mod:4019-4055.
+
+    Setup: extend toy_2node_chp from 1 period (d1, 2t) to 2 periods (d1,
+    d2; 2t each).  Demand per timestep is heat=5, elec=10; sink coefs
+    are heat=0.5, elec=1.0; ``p_unitsize=100``.  conversion_indirect
+    forces the input flow ``v_flow[chp,fuel,chp]`` to satisfy
+    ``v_in * 100 = 0.5 * v_h * 100 + 1.0 * v_e * 100`` ⇒
+    ``v_in = 0.5 * v_h + v_e``; satisfying demand requires
+    ``v_h * 100 * 0.5 ≥ 5`` and ``v_e * 100 * 1.0 ≥ 10``, so v_h ≥ 0.1
+    and v_e ≥ 0.1, giving v_in ≥ 0.15.  Per-(d, t) emissions =
+    ``v_in * 100 * co2_content(2.0) * step_duration(1) * rp_weight(1) /
+    period_share(1)``.  Across 4 (d, t) cells the unconstrained total
+    is at least ``4 * 0.15 * 100 * 2.0 = 120`` tonnes.
+
+    Pin a horizon cap of 60 tonnes — comfortably below 120.  The cap
+    must bind; the engine's slack (vq_state_up / vq_state_down on
+    nodeBalance, penalty 1e6) absorbs the unmet demand so the LP stays
+    feasible.  Asserts:
+      (a) ``co2_max_total`` constraint name registered;
+      (b) row count = 1 (one capped group, NOT one row per period);
+      (c) the LP solves to optimality and the cap actually binds —
+          slack is non-zero, confirming the constraint is the binding
+          one and not just a slack-free decorator.
+    """
+    d = _toy_2node_chp_with_co2_total(toy_2node_chp,
+                                        cap=60.0,
+                                        extra_periods=("d2",))
+    pb, sol = _solve(d)
+    assert sol.optimal, "LP infeasible — slack on nodeBalance should keep it solvable"
     names = set(pb.cstr_names())
-    # When implemented, expect at least one constraint whose name matches.
-    assert any(n.startswith("co2_max_total") for n in names), (
-        f"co2_max_total* missing from {sorted(names)}")
+    assert "co2_max_total" in names, (
+        f"co2_max_total constraint missing from {sorted(names)}")
+    # (b) one row per capped group.
+    assert pb.cstr_row_count("co2_max_total") == 1, (
+        f"co2_max_total row count {pb.cstr_row_count('co2_max_total')} != 1 "
+        f"— expected one row per capped group (NOT per period)")
+    # (c) cap binds — slack absorbs the over-cap demand.  Sum slack
+    # across both directions and all (n, d, t) cells; non-zero means
+    # the engine had to deviate from the unconstrained dispatch to
+    # honour the cap.
+    slack_up = sol.value("vq_state_up")
+    slack_dn = sol.value("vq_state_down")
+    total_slack = (slack_up["value"].sum() if slack_up is not None else 0.0) \
+                  + (slack_dn["value"].sum() if slack_dn is not None else 0.0)
+    assert total_slack > 1e-6, (
+        f"total nodeBalance slack {total_slack} ≈ 0 — co2_max_total cap "
+        f"didn't bind, which contradicts the hand-calc (cap=60 < min "
+        f"unconstrained emissions ≈ 120)")
 
 
 # ---------------------------------------------------------------------------

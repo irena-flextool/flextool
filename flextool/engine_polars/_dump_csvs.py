@@ -142,6 +142,8 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
     # ─── CO2 cap / price ─────────────────────────────────────────────
     "group_co2_max_period": ("solve_data", "group_co2_max_period.csv",
                               {"g": "group"}),
+    "group_co2_max_total":  ("solve_data", "group_co2_max_total.csv",
+                              {"g": "group"}),
     # ─── User-defined flow constraints ───────────────────────────────
     # ─── Profiles ────────────────────────────────────────────────────
     # ─── Invest / divest sets ────────────────────────────────────────

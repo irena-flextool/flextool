@@ -10,6 +10,7 @@ What's wired so far:
   * conversion_indirect                              (if multi-flow process)
   * CO2-price objective term                         (if co2_price feature)
   * co2_max_period constraint                        (if co2_max group)
+  * co2_max_total  constraint                        (if total-cap group)
   * user-defined process_constraint_eq / le / ge     (if constraint__sense)
   * profile_flow_upper / lower / fixed               (if profile)
 
@@ -50,6 +51,8 @@ INDIRECT: tuple[str, ...] = (
 CO2_PRICE: tuple[str, ...]   = ("flow_from_co2_priced", "p_co2_content", "p_co2_price")
 CO2_CAP:   tuple[str, ...]   = ("p_co2_content", "p_co2_max_period",
                                 "group_d_co2_capped")
+CO2_CAP_TOTAL: tuple[str, ...] = ("p_co2_content", "p_co2_max_total",
+                                   "group_co2_max_total")
 USER_CSTR: tuple[str, ...]   = ("p_constraint_constant",)
 PROFILES:  tuple[str, ...]   = ("p_profile_value", "p_process_existing_count")
 STORAGE:   tuple[str, ...]   = ("nodeState", "nodeState_dt", "dtttdt",
@@ -398,6 +401,11 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     has_co2_cap_noEff = (getattr(d, "flow_from_co2_capped_noEff", None) is not None
                          and d.flow_from_co2_capped_noEff.height > 0)
     has_co2_cap   = has_co2_cap_eff or has_co2_cap_noEff
+    has_co2_cap_total_eff = (getattr(d, "flow_from_co2_capped_total", None) is not None
+                              and d.flow_from_co2_capped_total.height > 0)
+    has_co2_cap_total_noEff = (getattr(d, "flow_from_co2_capped_total_noEff", None) is not None
+                                and d.flow_from_co2_capped_total_noEff.height > 0)
+    has_co2_cap_total = has_co2_cap_total_eff or has_co2_cap_total_noEff
     has_user_cstr = any(x is not None and x.height > 0
                         for x in (d.cdt_eq, d.cdt_le, d.cdt_ge))
     has_profile   = (
@@ -422,6 +430,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     if has_indirect:  _check(d, INDIRECT,  "conversion_indirect")
     if has_co2_price: _check(d, CO2_PRICE, "co2_price")
     if has_co2_cap:   _check(d, CO2_CAP,   "co2_max_period")
+    if has_co2_cap_total: _check(d, CO2_CAP_TOTAL, "co2_max_total")
     if has_user_cstr: _check(d, USER_CSTR, "user_constraints")
     if has_profile:   _check(d, PROFILES,  "profile_flow")
     if has_storage:   _check(d, STORAGE,   "storage")
@@ -1813,6 +1822,41 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             rhs_terms = {"cap": d.p_co2_max_period},
         )
 
+    # ─── CO2 cap (multi-period total) ─────────────────────────────────────
+    # Port of v3.32.0 ``co2_max_total`` (.mod:4019-4055).  Identical
+    # per-(d,t) annualised-tonnes LHS shape as ``co2_max_period``, but
+    # the ``d`` dim is also summed out so each capped group carries one
+    # row whose RHS is the (g,)-only ``p_co2_max_total`` scalar (in
+    # tonnes, projected per-year × 1-year-per-period for fixtures whose
+    # ``p_period_share`` ≡ 1; legacy semantics for multi-year periods
+    # would weight by ``p_years_represented_d`` — out of scope for this
+    # port; existing co2_max_period also doesn't apply that weighting).
+    if has_co2_cap_total:
+        lhs_terms_co2_total: dict = {}
+        if has_co2_cap_total_eff:
+            lhs_terms_co2_total["emissions_eff"] = Sum(
+                Where(v_flow * d.p_unitsize * d.p_slope,
+                      d.flow_from_co2_capped_total)
+                * d.p_co2_content
+                * d.p_step_duration * d.p_rp_cost_weight / d.p_period_share,
+                over=("p", "source", "sink", "c", "d", "t"),
+            )
+        if has_co2_cap_total_noEff:
+            lhs_terms_co2_total["emissions_noEff"] = Sum(
+                Where(v_flow * d.p_unitsize,
+                      d.flow_from_co2_capped_total_noEff)
+                * d.p_co2_content
+                * d.p_step_duration * d.p_rp_cost_weight / d.p_period_share,
+                over=("p", "source", "sink", "c", "d", "t"),
+            )
+        m.add_cstr(
+            "co2_max_total",
+            over      = d.group_co2_max_total,
+            sense     = "<=",
+            lhs_terms = lhs_terms_co2_total,
+            rhs_terms = {"cap": d.p_co2_max_total},
+        )
+
     # ─── User-defined flow constraints ────────────────────────────────────
     has_any_cdt = any(x is not None and x.height > 0
                       for x in (d.cdt_eq, d.cdt_le, d.cdt_ge))
@@ -2917,10 +2961,15 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
 
     # minimum_downtime: existing_count - v_online >= Σ v_shutdown[lookback]
     # Rewritten LP-friendly: v_online + Σ v_shutdown ≤ existing_count.
-    # (No invest/divest term yet — the test fixture for this feature has
-    # no investments on the online unit; investments interact via
-    # edd_invest/pd_divest exactly like the .mod's downtime constraint.
-    # Add when a divest+downtime fixture appears.)
+    # The .mod's RHS includes invest/divest tightening
+    # (existing_count + Σ v_invest_alive − Σ v_divest_alive); we move
+    # those terms to the LHS as +divest / −invest so the row stays
+    #   v_online + Σ v_shutdown + Σ v_divest_alive − Σ v_invest_alive
+    #   ≤ existing_count
+    # which matches the maxOnline pattern above.  Without this, an
+    # invest-eligible online process with existing_count=0 would have
+    # v_online + Σ v_shutdown ≤ 0 forced regardless of v_invest, making
+    # the UC infeasible (LP falls back to all-slack).  See B4.12.
     if (d.pdt_downtime_set is not None and d.pdt_downtime_set.height > 0
             and d.downtime_lookback is not None and d.downtime_lookback.height > 0):
         dn_idx = d.pdt_downtime_set.join(online_set, on="p", how="inner")
@@ -2938,10 +2987,15 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                 )
                 shutdown_sum = Sum(Where(v_shutdown_at, lkb),
                                    over=("d_back", "t_back"))
+                lhs_dn: dict = {"online":       v_online,
+                                "shutdown_sum": shutdown_sum}
+                if invest_term is not None:
+                    lhs_dn["invest_neg"] = invest_term
+                if divest_term is not None:
+                    lhs_dn["divest"] = divest_term
                 m.add_cstr(f"minimum_downtime{sfx}",
                            over=dn_idx, sense="<=",
-                           lhs_terms={"online":       v_online,
-                                      "shutdown_sum": shutdown_sum},
+                           lhs_terms=lhs_dn,
                            rhs_terms={"existing":     d.p_process_existing_count})
 
 

@@ -72,6 +72,8 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "flow_from_co2_priced", "flow_from_co2_priced_noEff",
     "group_co2_max_period", "flow_from_co2_capped",
     "flow_from_co2_capped_noEff", "group_d_co2_capped",
+    "group_co2_max_total", "flow_from_co2_capped_total",
+    "flow_from_co2_capped_total_noEff",
     # Indirect (CHP).
     "process_indirect", "process_input_flows",
     "process_output_flows", "process_indirect_dt",
@@ -248,7 +250,7 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     "ed_invest_max_period", "ed_divest_max_period",
     # Commodity / CO2 — composite obj.
     "p_commodity_price", "p_co2_price", "p_co2_max_period",
-    "p_co2_content",
+    "p_co2_max_total", "p_co2_content",
     # Process topology Params used in many cstrs / objs.
     "p_unitsize", "p_flow_upper", "p_flow_upper_existing",
     "p_slope", "p_process_existing_count", "p_process_availability",
@@ -348,7 +350,7 @@ _WARM_PARAMS_NO_OP: tuple[str, ...] = (
     "p_pssdt_varCost", "p_pdt_varCost_source",
     "p_pdt_varCost_sink", "p_pdt_varCost_process",
     # CO2 (not active on this fixture).
-    "p_co2_price", "p_co2_max_period", "p_co2_content",
+    "p_co2_price", "p_co2_max_period", "p_co2_max_total", "p_co2_content",
     # Online / UC.
     "p_startup_cost", "p_section", "p_min_load",
     # Ramp speeds.
@@ -404,8 +406,11 @@ _WARM_PARAM_GATES: dict[str, tuple[str, ...]] = {
     # CO2.
     "p_co2_price":      ("flow_from_co2_priced",),
     "p_co2_max_period": ("group_co2_max_period",),
+    "p_co2_max_total":  ("group_co2_max_total",),
     "p_co2_content":    ("flow_from_co2_priced", "flow_from_co2_capped",
-                          "group_co2_max_period"),
+                          "group_co2_max_period",
+                          "flow_from_co2_capped_total",
+                          "group_co2_max_total"),
     # Online / UC — only emitted when online sets are populated.
     "p_startup_cost": ("process_online",),
     "p_section":      ("process_min_load_eff",),
