@@ -240,3 +240,34 @@ When to revisit (all five flagged):
 - The `multi_year_one_solve_co2_limit` divergence should be triaged
   separately — check that the model_wide CO2 cap reaches the solver
   for multi-year-one-solve scenarios.
+
+## fullYear_roll — 2026-05-15
+
+Regenerated `summary_solve.csv` after three bug fixes in the rolling-window
+storage handoff path (commit forthcoming):
+
+1. `flextool/engine_polars/input.py:4195-4253` (`build_handoff_from_flexpy`
+   roll_end_state) — source changed from `period__time_last` (end-of-horizon,
+   e.g. t0036 for roll_7) to `realized_dispatch` (end-of-realized-commitment,
+   e.g. t0032). Mirrors v3.32.0 `_load_realized_period_time_last`. The
+   docstring already documented the intended semantics; only the
+   implementation diverged.
+
+2. `flextool/engine_polars/model.py:805-826` (roll_continue start binding) —
+   gate widened from `storage_bind_forward_only` to all `nodeState` nodes,
+   matching v3.32.0 .mod:2201. Previously the constraint was silently
+   skipped for `bind_within_timeset` storages (e.g. battery in this
+   fixture), so v_state at first timestep of a continuation roll was free
+   and the LP picked 0.
+
+3. `flextool/engine_polars/input.py:3740-3761` (`_read_unitsize_long`) —
+   now layers `input/p_entity_unitsize.csv` (full table) under
+   `solve_data/p_entity_unitsize.csv` (overrides only). The handoff
+   builder uses `unitsize.get(n, 1.0)`; for entities without an explicit
+   override the default 1.0 was silently used, scaling `p_roll_continue_state`
+   wrong by exactly the entity's unitsize (50× for battery).
+
+Golden values match HEAD's output to ~1e-9 absolute (~1e-10 relative). Total
+cost agrees with the previous golden to 4e-8 (well within the 1e-4 regen
+tolerance). HEAD also now emits `"Investment discount factor",5,5,5,5`
+where the previous golden left it empty — a v3.32.0 bug that HEAD fixes.

@@ -3738,26 +3738,38 @@ def _read_solve_first(work_folder: Path) -> bool:
 
 
 def _read_unitsize_long(work_folder: Path) -> dict[str, float]:
-    """Read ``solve_data/p_entity_unitsize.csv`` (long format: entity, value)."""
-    path = work_folder / "solve_data" / "p_entity_unitsize.csv"
-    if not path.exists():
-        path = work_folder / "input" / "p_entity_unitsize.csv"
-    if not path.exists():
-        return {}
-    csv = __import__("csv")
+    """Read entity unitsizes as ``{entity: value}``.
+
+    Layers two sources:
+
+    * ``input/p_entity_unitsize.csv`` — fully-populated table (wide
+      format from the .mod printf, or long-format from Python
+      preprocessing).  Used as the base.
+    * ``solve_data/p_entity_unitsize.csv`` — explicit overrides
+      written by per-solve preprocessing (long format, only entities
+      that diverge from the base).  Overlays on top.
+
+    Reading only ``solve_data/`` silently drops every entity that
+    doesn't carry an override — callers like ``build_handoff_from_flexpy``
+    rely on ``unitsize.get(n, 1.0)``, so a missing entry collapses to a
+    factor of 1.0 and produces handoff values off by the entity's
+    unitsize.  Mirrors v3.32.0's ``_load_unitsize`` which reads
+    ``input/p_entity_unitsize.csv`` (the populated copy).
+    """
     out: dict[str, float] = {}
-    with path.open() as fh:
-        reader = csv.reader(fh)
-        header = next(reader, None)
-        # Long format: entity, value.  If wide-format detected (header
-        # row 1 is ``value``), fall through — flexpy currently uses
-        # long elsewhere.
-        for r in reader:
-            if len(r) >= 2 and r[0]:
-                try:
-                    out[r[0]] = float(r[1])
-                except ValueError:
-                    continue
+    for src in (work_folder / "input" / "p_entity_unitsize.csv",
+                work_folder / "solve_data" / "p_entity_unitsize.csv"):
+        if not src.exists():
+            continue
+        try:
+            df = _read_unitsize(src)
+        except Exception:  # noqa: BLE001 — best-effort fallback
+            continue
+        for r in df.iter_rows(named=True):
+            try:
+                out[str(r["e"])] = float(r["value"])
+            except (TypeError, ValueError):
+                continue
     return out
 
 
@@ -4194,38 +4206,41 @@ def build_handoff_from_flexpy(
 
     # ---- roll_end_state: v_state[n, last_t] * unitsize per nodeState node ----
     # Mirrors flextool's ``write_p_roll_continue_state``: takes v_state at
-    # the LAST realized (period, time) pair (from ``period__time_last.csv``),
+    # the LAST realized (period, time) pair (from ``realized_dispatch.csv``),
     # multiplies by p_entity_unitsize, and emits a (node, value) row per
     # nodeState node.  Skipped when the solve has no nodeState or no
-    # period_last.  See flextool/process_outputs/handoff_writers.py:425-468.
+    # realized dispatch.  See flextool/process_outputs/handoff_writers.py:
+    # 250-271 (``_load_realized_period_time_last``) and 425-468.
+    #
+    # NOTE: source MUST be ``realized_dispatch`` (end-of-realized-commitment,
+    # e.g. roll_7 jump=4 realizes t0029-t0032 → last = t0032), NOT
+    # ``period__time_last`` (end-of-horizon, e.g. t0036 for the same roll).
+    # Using the horizon-end variant breaks rolling storage handoff: the next
+    # roll starts from a wrong initial v_state.
     roll_end_state_df = None
     nodes_state = _read_singles_csv(sd / "nodeState.csv")
-    # Gap F final — prefer ``flex_data.period__time_last`` (in-memory).
+    # Prefer ``flex_data.realized_dispatch`` (in-memory).
     last_pairs_df = None
-    if flex_data is not None and getattr(flex_data, "period__time_last", None) is not None:
-        last_pairs_df = flex_data.period__time_last
+    if flex_data is not None and getattr(flex_data, "realized_dispatch", None) is not None:
+        last_pairs_df = flex_data.realized_dispatch
     else:
-        pt_last_path = sd / "period__time_last.csv"
-        if not pt_last_path.exists():
-            pt_last_path = sd / "block_period_time_last.csv"
-        if pt_last_path.exists():
+        rd_path = sd / "realized_dispatch.csv"
+        if rd_path.exists():
             try:
-                last_pairs_df = _read_csv_file(pt_last_path)
+                last_pairs_df = _read_csv_file(rd_path)
             except pl.exceptions.NoDataError:
                 last_pairs_df = None
     if nodes_state and last_pairs_df is not None and "v_state" in sol._vars:
-        # Schema: ``period, step`` for period__time_last, or
-        # ``block, period, step`` for block_period_time_last.  We want the
-        # LAST (period, step) — flextool's writer iterates over the file
-        # and overwrites, so the LAST row of the file's per-period entries
-        # wins.  For block_period_time_last each block writes one row per
-        # period; we just take the unique (period, step) at the maximum.
+        # Schema: ``period, step``.  Take the last (period, step) in
+        # dispatch order — equivalent to ``_load_realized_period_time_last``
+        # in v3.32.0 followed by ``last_pairs[-1]`` in
+        # ``write_p_roll_continue_state``.  Sorting by (d, t) and picking
+        # the lexically-last row yields the end-of-realized step of the
+        # last realized period.
         if last_pairs_df.height > 0:
             cols = last_pairs_df.columns
             d_col = "period" if "period" in cols else "d"
             t_col = "step" if "step" in cols else "t"
-            # Pick the lexically-last (d, t) pair — matches flextool's
-            # "iterates and overwrites; final entry wins" semantics.
             last_pairs_df = (last_pairs_df
                 .select(pl.col(d_col).alias("d"),
                          pl.col(t_col).alias("t"))

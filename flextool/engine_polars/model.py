@@ -791,7 +791,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                             over=("d_divest",))
 
     # Rolling-horizon ``roll_continue`` start binding —
-    # flextool.mod:2196.  When this sub-solve is NOT the first of the
+    # flextool.mod:2201.  When this sub-solve is NOT the first of the
     # chain (``p_nested_solve_first is False``), the .mod adds, at
     # (n, period_first_of_solve, t_first):
     #   + (v_state[n,d,t] * unitsize - p_roll_continue_state[n]) * inv_node_cap
@@ -802,15 +802,22 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # state value handed off from the previous sub-solve.  Mutually
     # exclusive with the ``fwd_fix_*`` block above (gated on
     # ``not solveFirst`` vs ``solveFirst``).
+    #
+    # Gate: ``n in nodeState`` (matches .mod:2201's `n in nodeState`),
+    # NOT ``n in storage_bind_forward_only``.  The handoff applies to
+    # every storage node on continuation rolls regardless of binding
+    # method — bind_within_timeset / bind_within_period nodes get this
+    # term in addition to their cyclic state-change term, which
+    # together fix v_state at t_first to the handed-off value (v3.32.0
+    # adds both terms at t_first; cyclic state_change uses
+    # ``t_previous_within_timeset`` which wraps back to the period's
+    # last step, so both terms coexist).
     if (not is_solve_first
             and has_storage
-            and d.storage_bind_forward_only is not None
-            and d.storage_bind_forward_only.height > 0
             and d.p_state_unitsize is not None
             and d.nodeState_first_dt is not None
             and d.p_roll_continue_state is not None):
-        rc_n = d.storage_bind_forward_only
-        rc_first_dt = d.nodeState_first_dt.join(rc_n, on="n", how="inner")
+        rc_first_dt = d.nodeState_first_dt
         if rc_first_dt.height > 0:
             v_state_rc = Where(v_state, rc_first_dt)
             nb_terms["roll_continue_state"] = -(v_state_rc * d.p_state_unitsize)
