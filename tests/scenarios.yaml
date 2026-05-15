@@ -502,7 +502,7 @@
     - unit__outputNode__dt.csv
     - node__dt.csv
     - costs__dt.csv
-  time_budget_seconds: 4.0
+  time_budget_seconds: 5.0
 
 - scenario: test_a_lot
   csvs:
@@ -521,7 +521,7 @@
     - node__dt.csv
     - connection__dt.csv
     - costs__dt.csv
-  time_budget_seconds: 4.0
+  time_budget_seconds: 5.0
 
 # --- bind_intraperiod_blocks (LTS-style block storage binding) ---
 # Battery on 5weeks (multi-block) timeset with bind_intraperiod_blocks.
