@@ -1,13 +1,13 @@
 solve,period,time,coal_plant,dr_shift_demand,wind_plant
-,,,west,dr_storage,west
+Unnamed: 0_level_1,Unnamed: 1_level_1,Unnamed: 2_level_1,west,dr_storage,west
 y2020_2day_dispatch,p2020,t0001,259,50,380
 y2020_2day_dispatch,p2020,t0002,187,50,400
 y2020_2day_dispatch,p2020,t0003,126,50,430
 y2020_2day_dispatch,p2020,t0004,72,50,460
 y2020_2day_dispatch,p2020,t0005,72,50,450
 y2020_2day_dispatch,p2020,t0006,14,50,490
-y2020_2day_dispatch,p2020,t0007,0,50,473
-y2020_2day_dispatch,p2020,t0008,0,50,488
+y2020_2day_dispatch,p2020,t0007,0,67,490
+y2020_2day_dispatch,p2020,t0008,0,33,471
 y2020_2day_dispatch,p2020,t0009,0,50,524
 y2020_2day_dispatch,p2020,t0010,0,50,568
 y2020_2day_dispatch,p2020,t0011,0,50,588

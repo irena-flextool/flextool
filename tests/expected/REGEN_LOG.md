@@ -147,6 +147,72 @@ When to revisit:
 - If glpsol is ever reintroduced as a supported solver, this golden
   could be reverted to the v3.32.0 reference.
 
+## 2026-05-15 — Five alt-optima scenarios under canonical LP column ordering
+
+**Context.** Before this regen the engine-side `Problem.add_var` and
+`Problem.add_cstr` calls in `polar_high` were fed `index`/`over`
+frames whose row order was driven by polars `unique()` /
+hash-join bucket placement — and therefore by `PYTHONHASHSEED`.
+Across processes the LP column / row order shifted run-to-run; HiGHS,
+fed the same LP with different column orderings, picked different
+vertices among alt-optima, which made several scenario goldens flip
+pass/fail across runs.
+
+A determinism wrapper installed in
+`flextool/engine_polars/__init__.py::_install_polar_high_determinism`
+now sorts every `add_var` index frame by its `dims` columns and every
+`add_cstr` `over` frame by its axis columns before col/row ids get
+assigned.  Cross-process verification (5 independent Python processes
+per scenario) produced byte-identical LP `a_matrix_`, `col_cost_`,
+`row_lower_`, `row_upper_`, plus identical objective and column/row
+names.
+
+Under this canonical ordering HiGHS now selects a single
+deterministic vertex per scenario, which is in five cases NOT the
+v3.32.0 glpsol vertex.  Total objective + per-column sums (per the
+Phase-2 regen protocol) match v3.32.0 within `1e-4` for all five —
+confirming pure alt-optima, not a numerical regression.
+
+**Verification (per Phase-2 regen protocol):**
+For each scenario below, all listed CSVs' numeric column sums match
+v3.32.0 within absolute and relative tolerance `1e-4`:
+
+- `dr_shift_demand`: unit__outputNode__dt.csv (6 cols), node__dt.csv
+  (11 cols), costs__dt.csv (14 cols).  Cell-level diffs in dr_storage
+  load shift between adjacent timesteps; column totals preserved.
+- `multi_fullYear_battery`: unit__outputNode__dt.csv (5 cols),
+  node_state__dt.csv (4 cols), costs__dt.csv (14 cols),
+  costs_discounted.csv (2 cols).
+- `network_all_tech`: unit__outputNode__dt.csv (10 cols), node__dt.csv
+  (43 cols), connection__dt.csv (7 cols), costs__dt.csv (14 cols).
+  Also bumped `time_budget_seconds` 4.5 → 6.0 — the per-add-var
+  sort adds ~0.3 s on this 4.5 s scenario; legitimate cost of
+  cross-process determinism.
+- `coal_wind_min_uptime`: unit__outputNode__dt.csv (5 cols),
+  unit_online__dt.csv (4 cols), costs__dt.csv (14 cols).  Per-cell
+  coal_plant dispatch redistribution across hours that still respects
+  the min-uptime constraint.
+- `test_a_lot_but_not_multi_year`: unit__outputNode__dt.csv (9 cols),
+  unit_capacity__d.csv (7 cols), node__dt.csv (43 cols),
+  connection__dt.csv (7 cols), costs__dt.csv (14 cols).
+
+`test_a_lot` (the multi-year sibling) was NOT regen'd — its column
+sums diverge from v3.32.0 by 4.5 % in `('coal_plant', 'west')` (an
+unflagged engine drift, not alt-optima), so it stays on the v3.32.0
+golden until the underlying issue is investigated.
+
+**Decision**: accept the five regens.  All confirmed equally optimal
+(objective + column sums match v3.32.0 within `1e-4`); the new vertex
+is what HiGHS selects under canonical LP column ordering and is now
+deterministic across processes.
+
+When to revisit:
+- If `_install_polar_high_determinism` is ever removed or reordered,
+  the LP column order will revert to hash-bucket order and these
+  goldens will start flaking again.  Re-run determinism probes from
+  the next session's handoff before regenerating against any new
+  ordering.
+
 ## 2026-05-15 — Phase-2 candidates flagged (NOT regenerated)
 
 Six candidates from the prior diagnosis cluster were investigated
