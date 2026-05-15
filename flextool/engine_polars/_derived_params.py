@@ -396,6 +396,49 @@ def p_period_share_from_source(
 
 
 # ---------------------------------------------------------------------------
+# p_years_represented_d — per-period R width sum
+# ---------------------------------------------------------------------------
+
+
+def p_years_represented_d_from_source(
+    source: "InputSource",
+    active_solve: str | None,
+    period_set: list[str],
+) -> Param | None:
+    """Per-period ``years_represented_d``: sum of per-year widths
+    bound to each period (the ``R`` value flextool's
+    ``solve.years_represented`` Map carries — e.g. 5.0 for a 5-year
+    investment period).
+
+    Mirrors ``_writer_period_calc.write_period_calculated_params``
+    (the ``p_years_represented_d_calc`` block) but builds the value
+    directly from the source rather than from the CSV round-trip.
+
+    Returns ``None`` when no period set is available; otherwise emits
+    one row per period (width-1 default when the source omits the
+    period, matching the CSV legacy behaviour).
+    """
+    if not period_set:
+        return None
+    yfp = _years_for_period_from_source(source, active_solve, period_set)
+    rows = []
+    for d in period_set:
+        widths = yfp.get(d, [])
+        # Empty period — emit 0.0 (matches legacy ``sum(())``); upstream
+        # consumers (out_costs) multiply by emissions so a 0 period
+        # contributes nothing.  Periods absent from the source dict
+        # default to a single (label, 1.0) row via
+        # ``_years_for_period_from_source``'s fallback, so this branch
+        # only hits periods explicitly set to R=0.
+        s = sum(w for _y, w in widths)
+        rows.append({"d": str(d), "value": float(s)})
+    out = pl.DataFrame(rows, schema={"d": pl.Utf8, "value": pl.Float64})
+    if out.height == 0:
+        return None
+    return Param(("d",), out)
+
+
+# ---------------------------------------------------------------------------
 # §3.1.3 — p_inflation_op
 # ---------------------------------------------------------------------------
 
@@ -1122,6 +1165,16 @@ def apply_derived_a(
     if sd_for_share is not None:
         flex_data.p_period_share = p_period_share_from_source(
             source, usable_dt, sd_for_share)
+
+    # 2b. p_years_represented_d — per-period R width sum (e.g. 5.0 for a
+    # 5-year invest period).  Mirrors
+    # ``_writer_period_calc.write_period_calculated_params``'s
+    # ``p_years_represented_d_calc.csv`` writer; consumed by
+    # ``process_outputs.read_parameters`` to scale annualised
+    # per-period costs / CO2 to absolute totals.
+    pad = _periodAll_from_source(source, active_solve, workdir)
+    flex_data.p_years_represented_d = p_years_represented_d_from_source(
+        source, active_solve, pad)
 
     # 3. p_inflation_op — Δ.12b: unconditional.  None == no inflation
     #    declared; the multi-year cascade in apply_derived_c overlays

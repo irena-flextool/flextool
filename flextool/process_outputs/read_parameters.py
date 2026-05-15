@@ -939,9 +939,11 @@ def read_parameters(
 
     # ─── Per-(solve, period) scalar params ──────────────────────────────────
     # years_from_start_d / years_represented_d — Series.  FlexData
-    # doesn't carry these; we fall back to a zero / one default
-    # consistent with single-solve fixtures.  Authoring this in
-    # FlexData is left for a follow-up dispatch.
+    # carries ``p_years_represented_d`` (Param, (d,) → R width sum;
+    # populated by ``_derived_params.apply_derived_a`` from
+    # ``solve.years_represented``).  ``years_from_start_d`` is still
+    # defaulted to 0.0 (used only for divest carry-forward; the active
+    # divest cascade uses ``edd_divest_active`` directly).
     if (flex_data.p_period_share is not None
             and flex_data.p_period_share.frame.height > 0):
         # p_period_share is (d,) → use d set as the period axis.
@@ -953,7 +955,21 @@ def read_parameters(
             [[solve_name] * len(periods), periods], names=["solve", "period"],
         )
         p.years_from_start_d = pd.Series([0.0] * len(periods), index=idx, name="value")
-        p.years_represented_d = pd.Series([1.0] * len(periods), index=idx, name="value")
+        # Per-period R width sum from FlexData when populated; fall back
+        # to 1.0 per period when the source carries no
+        # ``solve.years_represented`` rows (single-year fixtures).
+        yr_widths = [1.0] * len(periods)
+        yr_param = flex_data.p_years_represented_d
+        if yr_param is not None and yr_param.frame.height > 0:
+            yr_map = {
+                str(d): float(v)
+                for d, v in zip(
+                    yr_param.frame["d"].to_list(),
+                    yr_param.frame["value"].to_list(),
+                )
+            }
+            yr_widths = [yr_map.get(str(d), 1.0) for d in periods]
+        p.years_represented_d = pd.Series(yr_widths, index=idx, name="value")
     else:
         empty_idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
         p.years_from_start_d = pd.Series(dtype=float, index=empty_idx, name="value")
