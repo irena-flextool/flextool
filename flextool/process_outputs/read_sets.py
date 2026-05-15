@@ -645,10 +645,19 @@ def read_sets(
         )
 
     # dtt — typically (d, t, t_previous). Derive from dtttdt if available.
+    # Sort by (solve, period, time, t_previous) so the resulting
+    # MultiIndex follows the canonical glpsol iteration order — without
+    # this, downstream droplevel('t_previous') retains polars'
+    # ``unique()`` hash-order and writers like ``unit_ramps`` emit time
+    # columns out of order (e.g. coal_ramp_limit).
     if (flex_data.dtttdt is not None and flex_data.dtttdt.height > 0):
-        pdf = flex_data.dtttdt.with_columns(
-            pl.lit(solve_name).alias("solve")
-        ).select("solve", "d", "t", "t_previous").unique().to_pandas()
+        pdf = (flex_data.dtttdt.with_columns(
+                  pl.lit(solve_name).alias("solve"),
+              )
+              .select("solve", "d", "t", "t_previous")
+              .unique()
+              .sort(["solve", "d", "t", "t_previous"])
+              .to_pandas())
         s.dtt = pd.MultiIndex.from_frame(
             pdf, names=["solve", "period", "time", "t_previous"],
         )
