@@ -148,7 +148,7 @@ def compute_group_flows(par, s, v, r) -> None:
         for n in s.node:
             if (g, n) in s.group_node and (n, 'no_inflow') not in s.node__inflow_method:
                 if n in par.node_inflow.columns:
-                    inflow = par.node_inflow[n].squeeze().add(inflow, axis=0)
+                    inflow = inflow + par.node_inflow[n]
         r_group_inflow[g] = inflow
     r.group_node_inflow_dt = r_group_inflow
 
