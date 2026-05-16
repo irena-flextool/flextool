@@ -1121,6 +1121,9 @@ def _drive_cascade(
                         flex_data=data,
                         is_first_solve=_is_first,
                         scale_the_objective=effective_obj_scale,
+                        provider=getattr(
+                            self.state, "current_provider", None,
+                        ),
                     )
                 finally:
                     if _accum_wofs is not None:

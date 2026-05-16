@@ -73,6 +73,75 @@ import polars as pl
 # CSV I/O — same conventions as the sibling _writer_*.py modules.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Step 1-d — Provider-aware open helper.
+#
+# Mirrors :func:`_provider_open` in ``input.py`` (Step 1-c): the migrated
+# inline ``_seed_open(path)`` sites switch to a Provider-first +
+# disk-fallback equivalent.  When ``provider`` is non-None AND carries
+# the named artefact, we serialise it to a ``StringIO`` so the caller's
+# ``csv.reader`` chain is unchanged.  Otherwise we open the disk file
+# directly (matching ``_seed_open``'s caller convention: ``None`` means
+# "neither in memory nor on disk — return the missing-file sentinel").
+#
+# Provider keys mirror the parent-qualified convention used by other
+# migrations: ``"<parent>/<basename>"`` without the ``.csv`` suffix
+# (e.g. ``"solve_data/p_entity_unitsize"``, ``"input/p_process.csv"`` →
+# ``"input/p_process"``).  Step 2 retires the disk-fallback for files
+# now living exclusively in the Provider.
+
+def _provider_open(provider: "object | None", name: str,
+                    path: "Path | str"):
+    """Open a file-like handle for *name* sourced from the Provider, the
+    legacy in-memory seed, or from disk; return ``None`` when none of
+    the three has the file.
+
+    Mirrors ``input._provider_open`` with one transitional addition: a
+    middle tier consulting :func:`_seed_lookup` so callers that haven't
+    yet been plumbed with ``provider`` still benefit from the seed
+    funnel during Step 1-d / 1-e (the dual-write window).  Step 2
+    drops the seed-lookup branch once every caller threads the
+    Provider; the on-disk fallback is retained until Step 1-g removes
+    the unused ``Path`` arguments.
+    """
+    if provider is not None and provider.has(name):
+        import io
+        df = provider.get(name)
+        buf = io.StringIO()
+        df.write_csv(buf)
+        buf.seek(0)
+        return buf
+    # Transitional — fall back to the legacy seed lookup so unplumbed
+    # callsites continue to find in-memory frames during the migration.
+    from flextool.engine_polars._input_source import _seed_lookup
+    seeded = _seed_lookup(path)
+    if seeded is not None:
+        import io
+        buf = io.StringIO()
+        seeded.write_csv(buf)
+        buf.seek(0)
+        return buf
+    p = Path(path)
+    if p.exists():
+        return p.open()
+    return None
+
+
+def _provider_key(path: "Path | str") -> str:
+    """Build the canonical Provider key for *path* — ``"<parent>/<stem>"``
+    when *path* has a parent dir, else the bare stem.  Mirrors the
+    parent-qualified dual-key semantics in
+    :meth:`FlexDataAccumulator.capture` (which the writers populate via
+    ``capture_frames``).
+    """
+    p = Path(path)
+    parent = p.parent.name
+    stem = p.stem
+    if parent:
+        return f"{parent}/{stem}"
+    return stem
+
+
 def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
     """Read a tiny flextool CSV with positional column rename.
 
@@ -1473,13 +1542,12 @@ def write_node_group_dispatch_process_fully_inside(
 # transitive import from preprocessing.
 
 
-def _read_singles_csv(path: Path) -> list[str]:
-    from flextool.engine_polars._input_source import _seed_open
-    fh = _seed_open(path)
+def _read_singles_csv(path: Path,
+                       *,
+                       provider: "object | None" = None) -> list[str]:
+    fh = _provider_open(provider, _provider_key(path), path)
     if fh is None:
-        if not path.exists():
-            return []
-        fh = path.open()
+        return []
     import csv
     with fh:
         reader = csv.reader(fh)
@@ -1487,13 +1555,12 @@ def _read_singles_csv(path: Path) -> list[str]:
         return [r[0] for r in reader if r and r[0]]
 
 
-def _read_pairs_csv(path: Path) -> list[tuple[str, str]]:
-    from flextool.engine_polars._input_source import _seed_open
-    fh = _seed_open(path)
+def _read_pairs_csv(path: Path,
+                     *,
+                     provider: "object | None" = None) -> list[tuple[str, str]]:
+    fh = _provider_open(provider, _provider_key(path), path)
     if fh is None:
-        if not path.exists():
-            return []
-        fh = path.open()
+        return []
     import csv
     out: list[tuple[str, str]] = []
     with fh:
@@ -1505,13 +1572,12 @@ def _read_pairs_csv(path: Path) -> list[tuple[str, str]]:
     return out
 
 
-def _read_n_col_csv(path: Path, n: int) -> list[tuple[str, ...]]:
-    from flextool.engine_polars._input_source import _seed_open
-    fh = _seed_open(path)
+def _read_n_col_csv(path: Path, n: int,
+                     *,
+                     provider: "object | None" = None) -> list[tuple[str, ...]]:
+    fh = _provider_open(provider, _provider_key(path), path)
     if fh is None:
-        if not path.exists():
-            return []
-        fh = path.open()
+        return []
     import csv
     out: list[tuple[str, ...]] = []
     with fh:
@@ -1721,22 +1787,23 @@ _SOURCE_SINK_TIME_PARAM_WITH_TIME: frozenset[str] = frozenset((
 
 def derive_process_source_sink_param_with_time(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``process__source__sink__param_t`` 4-col frame.
 
     See :func:`write_process_source_sink_param_with_time` for semantics.
     """
     import csv
-    triples = _read_n_col_csv(solve_data_dir / "process_source_sink.csv", 3)
+    triples = _read_n_col_csv(
+        solve_data_dir / "process_source_sink.csv", 3, provider=provider,
+    )
 
-    from flextool.engine_polars._input_source import _seed_open
     def _read_3(path: Path) -> set[tuple[str, str, str]]:
         out: set[tuple[str, str, str]] = set()
-        fh = _seed_open(path)
+        fh = _provider_open(provider, _provider_key(path), path)
         if fh is None:
-            if not path.exists():
-                return out
-            fh = path.open()
+            return out
         with fh:
             reader = csv.reader(fh)
             next(reader, None)
@@ -1747,11 +1814,9 @@ def derive_process_source_sink_param_with_time(
 
     def _read_2(path: Path) -> set[tuple[str, str]]:
         out: set[tuple[str, str]] = set()
-        fh = _seed_open(path)
+        fh = _provider_open(provider, _provider_key(path), path)
         if fh is None:
-            if not path.exists():
-                return out
-            fh = path.open()
+            return out
         with fh:
             reader = csv.reader(fh)
             next(reader, None)
@@ -1763,7 +1828,9 @@ def derive_process_source_sink_param_with_time(
     src_param = _read_3(input_dir / "p_process_source.csv")
     sink_param = _read_3(input_dir / "p_process_sink.csv")
     proc_param = _read_2(input_dir / "p_process.csv")
-    proc_conn = frozenset(_read_singles_csv(input_dir / "process_connection.csv"))
+    proc_conn = frozenset(_read_singles_csv(
+        input_dir / "process_connection.csv", provider=provider,
+    ))
     src_param_t = _read_3(solve_data_dir / "pt_process_source.csv")
     sink_param_t = _read_3(solve_data_dir / "pt_process_sink.csv")
     proc_param_t = _read_2(solve_data_dir / "pt_process.csv")
@@ -1783,6 +1850,8 @@ def derive_process_source_sink_param_with_time(
 
 def write_process_source_sink_param_with_time(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """flextool.mod L1187-1195 — process_source_sink × SOURCE_SINK_TIME_PARAM
     gated by static or time-variant param membership on either side, or via
@@ -1793,7 +1862,9 @@ def write_process_source_sink_param_with_time(
     ``process__source__sink__param_t``.
     """
     _write(
-        derive_process_source_sink_param_with_time(input_dir, solve_data_dir),
+        derive_process_source_sink_param_with_time(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "process__source__sink__param_t.csv",
     )
 
@@ -2164,30 +2235,37 @@ def write_p_flow_min(input_dir: Path, solve_data_dir: Path) -> None:
 
 def derive_p_flow_max(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``p_flow_max`` 6-col frame; see :func:`write_p_flow_max`."""
     import csv
     coeff_zero = frozenset(_read_n_col_csv(
-        solve_data_dir / "process_source_sink_coeff_zero.csv", 3
+        solve_data_dir / "process_source_sink_coeff_zero.csv", 3,
+        provider=provider,
     ))
     has_indirect = frozenset(
         p for p, _m in _read_pairs_csv(
-            solve_data_dir / "process__method_indirect.csv"
+            solve_data_dir / "process__method_indirect.csv",
+            provider=provider,
         )
     )
-    process_source = frozenset(_read_pairs_csv(input_dir / "process__source.csv"))
-    process_sink = frozenset(_read_pairs_csv(input_dir / "process__sink.csv"))
+    process_source = frozenset(_read_pairs_csv(
+        input_dir / "process__source.csv", provider=provider,
+    ))
+    process_sink = frozenset(_read_pairs_csv(
+        input_dir / "process__sink.csv", provider=provider,
+    ))
     has_min_load = frozenset(
-        p for p, m in _read_pairs_csv(solve_data_dir / "process__ct_method.csv")
+        p for p, m in _read_pairs_csv(
+            solve_data_dir / "process__ct_method.csv", provider=provider,
+        )
         if m == "min_load_efficiency"
     )
 
-    from flextool.engine_polars._input_source import _seed_open
     dcm: dict[tuple[str, str], float] = {}
     pdcm_path = solve_data_dir / "p_entity_dispatch_capacity_max.csv"
-    _fh = _seed_open(pdcm_path)
-    if _fh is None and pdcm_path.exists():
-        _fh = pdcm_path.open()
+    _fh = _provider_open(provider, _provider_key(pdcm_path), pdcm_path)
     if _fh is not None:
         with _fh as fh:
             reader = csv.reader(fh)
@@ -2200,9 +2278,7 @@ def derive_p_flow_max(
                         continue
     unitsize: dict[str, float] = {}
     pus_path = solve_data_dir / "p_entity_unitsize.csv"
-    _fh = _seed_open(pus_path)
-    if _fh is None and pus_path.exists():
-        _fh = pus_path.open()
+    _fh = _provider_open(provider, _provider_key(pus_path), pus_path)
     if _fh is not None:
         with _fh as fh:
             reader = csv.reader(fh)
@@ -2221,9 +2297,7 @@ def derive_p_flow_max(
         ("pdtProcess_section.csv", section),
     ):
         path = solve_data_dir / fname
-        _fh = _seed_open(path)
-        if _fh is None and path.exists():
-            _fh = path.open()
+        _fh = _provider_open(provider, _provider_key(path), path)
         if _fh is not None:
             with _fh as fh:
                 reader = csv.reader(fh)
@@ -2237,9 +2311,7 @@ def derive_p_flow_max(
 
     src_max_coef: dict[tuple[str, str], float] = {}
     pms_path = input_dir / "p_process_source_max_capacity_coefficient.csv"
-    _fh = _seed_open(pms_path)
-    if _fh is None and pms_path.exists():
-        _fh = pms_path.open()
+    _fh = _provider_open(provider, _provider_key(pms_path), pms_path)
     if _fh is not None:
         with _fh as fh:
             reader = csv.reader(fh)
@@ -2252,9 +2324,7 @@ def derive_p_flow_max(
                         continue
     sink_max_coef: dict[tuple[str, str], float] = {}
     pmk_path = input_dir / "p_process_sink_max_capacity_coefficient.csv"
-    _fh = _seed_open(pmk_path)
-    if _fh is None and pmk_path.exists():
-        _fh = pmk_path.open()
+    _fh = _provider_open(provider, _provider_key(pmk_path), pmk_path)
     if _fh is not None:
         with _fh as fh:
             reader = csv.reader(fh)
@@ -2270,9 +2340,7 @@ def derive_p_flow_max(
     # p_max_flow_for_unconstrained_variables[m]; default 1e6 if absent.
     p_uflow = 1_000_000.0
     pmfu_path = input_dir / "p_max_flow_for_unconstrained_variables.csv"
-    _fh = _seed_open(pmfu_path)
-    if _fh is None and pmfu_path.exists():
-        _fh = pmfu_path.open()
+    _fh = _provider_open(provider, _provider_key(pmfu_path), pmfu_path)
     if _fh is not None:
         max_v: float | None = None
         with _fh as fh:
@@ -2289,7 +2357,9 @@ def derive_p_flow_max(
         if max_v is not None:
             p_uflow = max_v
 
-    peedt = _read_n_col_csv(solve_data_dir / "peedt.csv", 5)
+    peedt = _read_n_col_csv(
+        solve_data_dir / "peedt.csv", 5, provider=provider,
+    )
     rows: list[tuple[str, ...]] = []
     for p, src, sink, d, t in peedt:
         if (p, src, sink) in coeff_zero:
@@ -2316,7 +2386,9 @@ def derive_p_flow_max(
     )
 
 
-def write_p_flow_max(input_dir: Path, solve_data_dir: Path) -> None:
+def write_p_flow_max(input_dir: Path, solve_data_dir: Path,
+                      *,
+                      provider: "object | None" = None) -> None:
     """flextool.mod L1661-1677 — ``p_flow_max{(p,source,sink,d,t) in peedt}``.
 
     Two-branch value formula, see legacy docstring at
@@ -2324,7 +2396,7 @@ def write_p_flow_max(input_dir: Path, solve_data_dir: Path) -> None:
     value (mod's bare-decl has no default).
     """
     _write(
-        derive_p_flow_max(input_dir, solve_data_dir),
+        derive_p_flow_max(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "p_flow_max.csv",
     )
 
@@ -2674,6 +2746,8 @@ _SS_TIME_PARAM_ENUM: frozenset[str] = frozenset((
 
 def _read_pt_pp_t_seen(
     pt_path: Path, proc_conn: frozenset[str],
+    *,
+    provider: "object | None" = None,
 ) -> tuple[dict[tuple[str, str], None],
            list[tuple[str, str, str]],
            dict[tuple[str, str], None]]:
@@ -2690,12 +2764,9 @@ def _read_pt_pp_t_seen(
     pp_t_seen: dict[tuple[str, str], None] = {}
     conn_pt_rows: list[tuple[str, str, str]] = []
     conn_pt_seen: dict[tuple[str, str], None] = {}
-    from flextool.engine_polars._input_source import _seed_open
-    fh = _seed_open(pt_path)
+    fh = _provider_open(provider, _provider_key(pt_path), pt_path)
     if fh is None:
-        if not pt_path.exists():
-            return pp_t_seen, conn_pt_rows, conn_pt_seen
-        fh = pt_path.open()
+        return pp_t_seen, conn_pt_rows, conn_pt_seen
     import csv
     with fh:
         reader = csv.reader(fh)
@@ -2711,16 +2782,15 @@ def _read_pt_pp_t_seen(
 
 def _read_pps_t_seen(
     path: Path,
+    *,
+    provider: "object | None" = None,
 ) -> dict[tuple[str, str, str], None]:
     """Read pt_process_source.csv or pt_process_sink.csv and return the
     ordered (e0, e1, param) projection (legacy ``setdefault`` order)."""
     seen: dict[tuple[str, str, str], None] = {}
-    from flextool.engine_polars._input_source import _seed_open
-    fh = _seed_open(path)
+    fh = _provider_open(provider, _provider_key(path), path)
     if fh is None:
-        if not path.exists():
-            return seen
-        fh = path.open()
+        return seen
     import csv
     with fh:
         reader = csv.reader(fh)
@@ -2731,17 +2801,17 @@ def _read_pps_t_seen(
     return seen
 
 
-def _read_param_static_3(path: Path) -> set[tuple[str, str, str]]:
+def _read_param_static_3(path: Path,
+                          *,
+                          provider: "object | None" = None,
+                          ) -> set[tuple[str, str, str]]:
     """Read input/p_process_source.csv or p_process_sink.csv as a set
     of (process, side, param) triples (membership test only — order
     not load-bearing)."""
     out: set[tuple[str, str, str]] = set()
-    from flextool.engine_polars._input_source import _seed_open
-    fh = _seed_open(path)
+    fh = _provider_open(provider, _provider_key(path), path)
     if fh is None:
-        if not path.exists():
-            return out
-        fh = path.open()
+        return out
     import csv
     with fh:
         reader = csv.reader(fh)
@@ -2752,15 +2822,15 @@ def _read_param_static_3(path: Path) -> set[tuple[str, str, str]]:
     return out
 
 
-def _read_param_static_2(path: Path) -> set[tuple[str, str]]:
+def _read_param_static_2(path: Path,
+                          *,
+                          provider: "object | None" = None,
+                          ) -> set[tuple[str, str]]:
     """Read input/p_process.csv as a set of (process, param) pairs."""
     out: set[tuple[str, str]] = set()
-    from flextool.engine_polars._input_source import _seed_open
-    fh = _seed_open(path)
+    fh = _provider_open(provider, _provider_key(path), path)
     if fh is None:
-        if not path.exists():
-            return out
-        fh = path.open()
+        return out
     import csv
     with fh:
         reader = csv.reader(fh)

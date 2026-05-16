@@ -161,6 +161,7 @@ def write_outputs_for_solve(
     flex_data: "FlexData | None" = None,
     is_first_solve: bool | None = None,
     scale_the_objective: float | None = None,
+    provider: "object | None" = None,
 ) -> None:
     """Adapter — emit TIER A artefacts for one cascade sub-solve.
 
@@ -246,19 +247,31 @@ def write_outputs_for_solve(
     realized_dispatch_csv = sd / "realized_dispatch.csv"
     realized_periods_csv = sd / "realized_invest_periods_of_current_solve.csv"
 
-    # Phase E-f — seed-aware existence: under csv_emission_disabled() the
-    # file isn't on disk but the per-sub-solve seed has the frame.
-    from flextool.engine_polars._input_source import _seed_or_exists
+    # Step 1-d — Provider-aware existence: under csv_emission_disabled() the
+    # file isn't on disk but the per-sub-solve Provider has the frame.  Falls
+    # back to a plain disk check when no Provider is supplied (e.g. tests
+    # that synthesize a Solution without a cascade Provider).
+    def _provider_has_or_disk(name: str, path: Path) -> bool:
+        if provider is not None and provider.has(name):
+            return True
+        return path.exists()
     try:
         write_all_variables(
             h,
             solve_name=roll_name,
             output_dir=output_dir,
             realized_dispatch_csv=(
-                realized_dispatch_csv if _seed_or_exists(realized_dispatch_csv) else None
+                realized_dispatch_csv
+                if _provider_has_or_disk(
+                    "solve_data/realized_dispatch", realized_dispatch_csv,
+                ) else None
             ),
             realized_periods_csv=(
-                realized_periods_csv if _seed_or_exists(realized_periods_csv) else None
+                realized_periods_csv
+                if _provider_has_or_disk(
+                    "solve_data/realized_invest_periods_of_current_solve",
+                    realized_periods_csv,
+                ) else None
             ),
             # Phase G — route in-memory carriers through to the
             # extractor + custom writers so per-iter file reads
