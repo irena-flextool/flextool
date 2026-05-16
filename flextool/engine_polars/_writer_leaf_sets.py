@@ -85,7 +85,18 @@ def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
 
 
 def _write(df: pl.DataFrame, path: Path) -> None:
-    """Write a tiny set CSV.  Empty frame still writes the header line."""
+    """Write a tiny set CSV.  Empty frame still writes the header line.
+
+    Phase E-c — disk emission is gated behind the module-level
+    :func:`flextool.engine_polars._flex_data_accumulator.emit_csvs_enabled`
+    flag.  When disabled, the helper returns without touching disk; the
+    accumulator hook (installed by ``capture_frames``) still captures
+    the frame in-memory because capture happens BEFORE the wrapped
+    real ``_write`` is invoked.
+    """
+    from flextool.engine_polars._flex_data_accumulator import emit_csvs_enabled
+    if not emit_csvs_enabled():
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_csv(path)
 

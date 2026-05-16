@@ -131,7 +131,15 @@ def _write(df: pl.DataFrame, path: Path) -> None:
     created, ``df.write_csv`` does the byte emission.  Every CSV emitted
     by this module flows through this single name so the accumulator
     monkey-patch can intercept ``(path.name -> df)``.
+
+    Phase E-c — disk emission is gated behind ``emit_csvs_enabled()``.
+    When disabled, the helper returns without touching disk; the
+    accumulator hook still captures the frame because capture happens
+    in the wrapping monkey-patch BEFORE this real ``_write`` is invoked.
     """
+    from flextool.engine_polars._flex_data_accumulator import emit_csvs_enabled
+    if not emit_csvs_enabled():
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_csv(path)
 

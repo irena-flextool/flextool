@@ -1023,8 +1023,20 @@ def _drive_cascade(
             # ``FLEXTOOL_DUMP_CSVS=1`` to restore the full debug-oracle
             # dump (all ~50 files) for diff-ing.
             _t_dump_start = time.perf_counter() if _phase_timing else 0.0
+            # Phase E-c — gate post-solve ``dump_csvs`` behind the same
+            # emit_csvs_enabled() flag the writer ``_write`` helpers
+            # consult.  When the cascade runs in default (in-memory) mode
+            # this short-circuits: FlexData is the canonical handoff
+            # carrier in-memory, so re-materialising it to disk would
+            # only re-create the very CSVs we suppressed in the
+            # preprocessing pass.  ``--csv-dump`` flips the flag on and
+            # restores the legacy debug-oracle dump.
+            from flextool.engine_polars._flex_data_accumulator import (
+                emit_csvs_enabled as _emit_csvs_enabled,
+            )
             try:
-                data.dump_csvs(self.state.paths.work_folder)
+                if _emit_csvs_enabled():
+                    data.dump_csvs(self.state.paths.work_folder)
             except Exception as exc:  # noqa: BLE001
                 self.state.logger.warning(
                     f"dump_csvs failed for {complete_solve_name}: {exc}"
@@ -1569,7 +1581,19 @@ def run_single_solve_from_db(
         # (read_parameters.py: solve_data/p_node.csv, p_process_sink.csv,
         # p_commodity.csv, …) find their inputs.  Without this only
         # output_raw is produced; output_csv / output_parquet / etc. fail.
-        flex_data.dump_csvs(work_folder)
+        #
+        # Phase E-c — gate behind the same ``emit_csvs_enabled`` flag the
+        # writer ``_write`` helpers respect.  ``run_single_solve_from_db``
+        # is invoked only by the ``--fast-single-solve`` CLI path, which
+        # never combines with ``--csv-dump=off`` in production (output
+        # writers downstream of this still read from disk).  The check is
+        # defensive so a future caller that suppresses emission and
+        # consumes only ``output_raw/*.parquet`` doesn't trip a write.
+        from flextool.engine_polars._flex_data_accumulator import (
+            emit_csvs_enabled as _emit_csvs_enabled,
+        )
+        if _emit_csvs_enabled():
+            flex_data.dump_csvs(work_folder)
         write_output_support_csvs(
             flex_data, work_folder, solve_name=scenario_name,
         )

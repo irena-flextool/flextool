@@ -129,45 +129,57 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
     if scenario_name:
         timing_recorder.set_scenario(scenario_name)
 
-    # Δ.25 fast single-solve dispatch.
-    if getattr(args, 'fast_single_solve', False):
-        from flextool.engine_polars import run_single_solve_from_db
-        if not scenario_name:
-            logging.error(
-                "--fast-single-solve requires --scenario-name "
-                "(the fast path doesn't auto-pick scenarios)."
+    # Phase E-c — by default, run the cascade with CSV emission disabled.
+    # The ``--csv-dump`` CLI flag flips it back on for debug visibility.
+    # The context manager is a no-op (yields immediately) when emission
+    # stays on, so this wrap is unconditional.
+    import contextlib as _ctxlib
+    from flextool.engine_polars._flex_data_accumulator import (
+        csv_emission_disabled,
+    )
+    csv_dump_on = bool(getattr(args, 'csv_dump', False))
+    _emit_ctx = _ctxlib.nullcontext() if csv_dump_on else csv_emission_disabled()
+    with _emit_ctx:
+
+        # Δ.25 fast single-solve dispatch.
+        if getattr(args, 'fast_single_solve', False):
+            from flextool.engine_polars import run_single_solve_from_db
+            if not scenario_name:
+                logging.error(
+                    "--fast-single-solve requires --scenario-name "
+                    "(the fast path doesn't auto-pick scenarios)."
+                )
+                return 1, None
+            t_solve_start = time.perf_counter()
+            step = run_single_solve_from_db(
+                args.input_db_url,
+                scenario_name,
+                work_folder=work_folder,
             )
-            return 1, None
+            all_solves_seconds = time.perf_counter() - t_solve_start
+            print("--- Fast single-solve time %.4s seconds ---" % all_solves_seconds)
+            timing_recorder.record('all_solves', seconds=all_solves_seconds,
+                                   t_start=t_solve_start)
+            if step.solution is None or not step.solution.optimal:
+                logging.error(
+                    "Fast single-solve: non-optimal (status=%r).",
+                    getattr(step.solution, "status", None)
+                    if step.solution else None,
+                )
+                return 1, step
+            return 0, step
+
+        from flextool.engine_polars import run_chain_from_db
+
+        # Drive the native cascade end-to-end.  ``run_chain_from_db``
+        # handles flextool's preprocessing (write_input) AND the per-solve
+        # LP build+solve+handoff loop in-process.
         t_solve_start = time.perf_counter()
-        step = run_single_solve_from_db(
+        steps = run_chain_from_db(
             args.input_db_url,
             scenario_name,
             work_folder=work_folder,
         )
-        all_solves_seconds = time.perf_counter() - t_solve_start
-        print("--- Fast single-solve time %.4s seconds ---" % all_solves_seconds)
-        timing_recorder.record('all_solves', seconds=all_solves_seconds,
-                               t_start=t_solve_start)
-        if step.solution is None or not step.solution.optimal:
-            logging.error(
-                "Fast single-solve: non-optimal (status=%r).",
-                getattr(step.solution, "status", None)
-                if step.solution else None,
-            )
-            return 1, step
-        return 0, step
-
-    from flextool.engine_polars import run_chain_from_db
-
-    # Drive the native cascade end-to-end.  ``run_chain_from_db``
-    # handles flextool's preprocessing (write_input) AND the per-solve
-    # LP build+solve+handoff loop in-process.
-    t_solve_start = time.perf_counter()
-    steps = run_chain_from_db(
-        args.input_db_url,
-        scenario_name,
-        work_folder=work_folder,
-    )
     all_solves_seconds = time.perf_counter() - t_solve_start
     print("--- All Flextool solves time %.4s seconds ---" % all_solves_seconds)
     timing_recorder.record('all_solves', seconds=all_solves_seconds,
@@ -287,6 +299,20 @@ def main():
                              'currently a no-op on the native path until '
                              'thread-count plumbing reaches '
                              '``polar_high.Problem.solve``.  Default 1.')
+    parser.add_argument('--csv-dump', action='store_true',
+                        default=False,
+                        help='Phase E-c — opt-in debug visibility for '
+                             'cascade-internal CSV emission.  When set, '
+                             'the cascade emits CSVs for input/, '
+                             'solve_data/, and cross_solve/ as in the '
+                             'legacy (pre-Phase-E-c) behaviour.  Default '
+                             'is off: cascade runs purely in-memory, '
+                             'with output_raw/*.parquet and '
+                             'output_processed/* (per --write-methods) '
+                             'as the only on-disk artefacts.  Use for '
+                             'debugging the engine_polars writer port; '
+                             'do not rely on these files from '
+                             'downstream tooling.')
     parser.add_argument('--fast-single-solve', action='store_true',
                         default=False,
                         help='Δ.25 (EXPERIMENTAL) — bypass '

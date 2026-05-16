@@ -43,6 +43,86 @@ import polars as pl
 
 
 # ---------------------------------------------------------------------------
+# Phase E-c — CSV-emission gate
+# ---------------------------------------------------------------------------
+#
+# Module-level boolean flag that the 17 writer-port ``_write`` helpers (and
+# their sibling ``path.write_text`` / direct-disk sites) consult before
+# touching disk.  When ``False``, the helpers return early without
+# materialising the CSV; the accumulator hook (the monkey-patch on
+# ``_write`` installed by :func:`capture_frames`) still captures the frame
+# in-memory, because capture happens BEFORE the wrapped real ``_write`` is
+# invoked.
+#
+# Default is ``True`` so legacy / test paths that import a writer
+# directly (the 388-test ``test_writer_port_phase1.py`` byte-parity gate)
+# behave exactly as before.  The cascade flips the flag to ``False`` for
+# the duration of its run (via :func:`csv_emission_disabled`) unless the
+# user passes ``--csv-dump`` on the CLI.
+#
+# Mechanism choice: a plain module-level boolean (not threadlocal, not
+# contextvar).  The cascade is single-threaded and runs synchronously; the
+# context manager save/restore pattern is sufficient.  Tests that
+# need to flip the flag for one assertion use the context manager.
+
+_EMIT_CSVS: bool = True
+
+
+def emit_csvs_enabled() -> bool:
+    """Return ``True`` iff writer ``_write`` helpers should emit CSVs to
+    disk.  Consulted by every writer module's ``_write`` (and any direct
+    ``path.write_text`` site that the cascade routes through).
+    """
+    return _EMIT_CSVS
+
+
+def set_csv_emission(enabled: bool) -> bool:
+    """Set the module-level CSV-emission flag.  Returns the previous value.
+
+    Test fixtures that want to force emission on/off without using the
+    context manager can call this directly (e.g. a pytest fixture's
+    setup/teardown).
+    """
+    global _EMIT_CSVS
+    previous = _EMIT_CSVS
+    _EMIT_CSVS = bool(enabled)
+    return previous
+
+
+@contextlib.contextmanager
+def csv_emission_disabled() -> "Iterator[None]":
+    """Context manager that disables CSV emission for the scope of the
+    block.  Restores the previous value on exit (even on exception).
+
+    The cascade default-mode wraps its preprocessing + post-solve
+    ``dump_csvs`` calls in this context.  When the CLI passes
+    ``--csv-dump``, the cascade skips the wrap and emission stays on.
+    """
+    global _EMIT_CSVS
+    previous = _EMIT_CSVS
+    _EMIT_CSVS = False
+    try:
+        yield
+    finally:
+        _EMIT_CSVS = previous
+
+
+@contextlib.contextmanager
+def csv_emission_enabled() -> "Iterator[None]":
+    """Context manager that forces CSV emission on for the scope of the
+    block.  Used by test fixtures that need byte-parity emission even
+    when the surrounding code disabled it.
+    """
+    global _EMIT_CSVS
+    previous = _EMIT_CSVS
+    _EMIT_CSVS = True
+    try:
+        yield
+    finally:
+        _EMIT_CSVS = previous
+
+
+# ---------------------------------------------------------------------------
 # Writer modules whose ``_write`` helper feeds the 37 thin-wrapper writers.
 # Patching these four modules' ``_write`` covers every OK_thin_wrapper entry
 # from the Phase B audit (writers in _writer_leaf_sets, _writer_mid_sets,
@@ -182,7 +262,15 @@ def capture_frames(
             setattr(mod, "_write", original)
 
 
-__all__ = ["FlexDataAccumulator", "capture_frames", "expected_basenames"]
+__all__ = [
+    "FlexDataAccumulator",
+    "capture_frames",
+    "csv_emission_disabled",
+    "csv_emission_enabled",
+    "emit_csvs_enabled",
+    "expected_basenames",
+    "set_csv_emission",
+]
 
 
 # ---------------------------------------------------------------------------

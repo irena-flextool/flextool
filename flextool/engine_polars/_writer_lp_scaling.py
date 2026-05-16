@@ -118,7 +118,12 @@ def _write(df: pl.DataFrame, path: Path) -> None:
     the patched variant in
     :func:`._flex_data_accumulator.capture_frames` rebinds this name
     to also stash ``(path.name -> df)`` into the accumulator.
+
+    Phase E-c — disk emission gated behind ``emit_csvs_enabled()``.
     """
+    from flextool.engine_polars._flex_data_accumulator import emit_csvs_enabled
+    if not emit_csvs_enabled():
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_csv(path)
 

@@ -69,6 +69,10 @@ def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
 
 
 def _write(df: pl.DataFrame, path: Path) -> None:
+    # Phase E-c — gate disk emission behind ``emit_csvs_enabled``.
+    from flextool.engine_polars._flex_data_accumulator import emit_csvs_enabled
+    if not emit_csvs_enabled():
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_csv(path)
 
