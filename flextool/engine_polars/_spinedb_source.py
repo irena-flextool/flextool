@@ -342,6 +342,7 @@ class SpineDbSource:
                     complete_solve_name, prior_handoff=prior,
                     flex_data=data,
                     parent_handoff=parent_handoff,
+                    provider=getattr(self.state, "current_provider", None),
                 )
                 self.state.handoffs[complete_solve_name] = handoff
                 return 0

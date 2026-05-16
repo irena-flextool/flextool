@@ -1180,6 +1180,7 @@ def _drive_cascade(
                     prior_handoff=prior,
                     flex_data=data,
                     parent_handoff=parent_handoff,
+                    provider=getattr(self.state, "current_provider", None),
                 )
             finally:
                 if _accum_bhf is not None:

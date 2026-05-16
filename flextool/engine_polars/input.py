@@ -68,6 +68,98 @@ from . import _dc_power_flow
 from . import _commodity_ladder
 from ._block_layout import BlockLayout
 from ._input_source import _read_csv_file, _seed_or_exists, _seed_or_pick
+
+
+# ---------------------------------------------------------------------------
+# Step 1-c — Provider-aware existence / read / open helpers.
+#
+# These wrap :class:`FlexDataProvider` so the per-site migration is a
+# mechanical one-line swap from ``_seed_or_exists(path)`` /
+# ``_read_csv_file(path)`` / ``_seed_open(path)`` to a Provider-first +
+# disk-fallback equivalent.  Behavioural intent matches the seed funnel
+# exactly: when the Provider already carries the named artefact (every
+# writer-captured CSV is dual-written into the Provider during the
+# Step 1 migration window), we use the in-memory frame; otherwise we
+# fall back to the on-disk path the seed funnel previously consulted
+# via its own existence/read path.
+#
+# Step 2 will retire the disk-fallback for files now living exclusively
+# in the Provider; Step 1-g will drop the unused ``Path`` arguments
+# threaded alongside the new ``provider`` kwarg.  Both deletions
+# happen *after* this commit lands.
+
+def _provider_has(provider: "object | None", name: str,
+                   path: "Path | str") -> bool:
+    """True iff *provider* has *name* OR *path* exists on disk.
+
+    Mirrors :func:`_seed_or_exists` semantics: the seed funnel
+    returned True when its lookup-by-basename hit OR the disk file was
+    materialised.  The Provider's ``has`` uses the same lookup
+    convention (parent-qualified / bare).  When *provider* is ``None``
+    we fall back to a plain disk check — this matches the legacy
+    behaviour for test paths that don't construct a Provider.
+    """
+    if provider is not None and provider.has(name):
+        return True
+    return Path(path).exists()
+
+
+def _provider_read(provider: "object | None", name: str,
+                    path: "Path | str") -> pl.DataFrame:
+    """Return the frame for *name* from *provider*, or fall back to a
+    disk read at *path*.
+
+    Pair with :func:`_provider_has` for the existence guard.  When
+    *provider* is supplied AND carries the frame, the in-memory copy
+    is returned; otherwise we re-read from disk via
+    :func:`_read_csv_file` (which itself is cache-aware).
+    """
+    if provider is not None and provider.has(name):
+        return provider.get(name)
+    return _read_csv_file(path)
+
+
+def _provider_pick(provider: "object | None",
+                    *candidates: "tuple[str, Path]") -> "Path | None":
+    """Return the first ``Path`` for which the Provider has the matching
+    *name* OR the disk file exists; ``None`` if none.
+
+    Mirrors :func:`_seed_or_pick`'s precedence: first hit wins, so
+    callers can prefer ``solve_data/`` over ``input/`` (or vice versa)
+    simply by ordering the candidate tuples.  Each candidate is a
+    ``(name, path)`` pair — the *name* is the Provider key
+    (parent-qualified, suffix-stripped); the *path* is the disk
+    fallback consulted when the Provider is absent or doesn't carry
+    the frame.
+    """
+    for name, path in candidates:
+        if (provider is not None and provider.has(name)) or Path(path).exists():
+            return Path(path)
+    return None
+
+
+def _provider_open(provider: "object | None", name: str,
+                    path: "Path | str"):
+    """Open a file-like handle for *name* sourced from the Provider or
+    from disk; return ``None`` when neither has the file.
+
+    Mirrors :func:`_seed_open`'s contract: when the Provider carries
+    the frame we serialise it to a ``StringIO`` (so the caller's
+    ``csv.reader`` chain is unchanged); otherwise we open the disk
+    file directly.  ``None`` means the artefact is genuinely absent
+    and the caller should return its missing-file sentinel.
+    """
+    if provider is not None and provider.has(name):
+        import io
+        df = provider.get(name)
+        buf = io.StringIO()
+        df.write_csv(buf)
+        buf.seek(0)
+        return buf
+    p = Path(path)
+    if p.exists():
+        return p.open()
+    return None
 from ._axis_enums import (  # substrate retained for Path B — see handoff
     build_axis_enums,
     cast_frame_axes,
@@ -143,13 +235,17 @@ def _read_unitsize(path: Path) -> pl.DataFrame:
 
 def _read_capacity(path: Path,
                     previously_invested_path: Path | None = None,
-                    all_existing_path: Path | None = None) -> pl.DataFrame:
+                    all_existing_path: Path | None = None,
+                    *,
+                    provider: "object | None" = None) -> pl.DataFrame:
     # Prefer ``p_entity_all_existing.csv`` if available — it's the
     # cumulative existing capacity per period (reflecting lifetime,
     # carried over across periods within a solve), which is what the
     # .mod's ``p_entity_dispatch_capacity_max`` formula uses.
-    if all_existing_path is not None and _seed_or_exists(all_existing_path):
-        df = _read_csv_file(all_existing_path)
+    if all_existing_path is not None and _provider_has(
+            provider, "solve_data/p_entity_all_existing", all_existing_path):
+        df = _provider_read(
+            provider, "solve_data/p_entity_all_existing", all_existing_path)
         if "solve" in df.columns: df = df.drop("solve")
         # Long-format variant: columns are (entity, period, value).
         if {"entity", "period", "value"}.issubset(df.columns):
@@ -180,7 +276,9 @@ def _read_capacity(path: Path,
     #   effective_existing = existing − invested + previously_invested
     #                      = (base + prior + current) − (prior + current) + prior
     #                      = base + prior
-    df = _read_csv_file(path).with_columns(
+    df = _provider_read(
+        provider, "solve_data/p_entity_period_existing_capacity", path,
+    ).with_columns(
         pl.col("p_entity_period_existing_capacity").cast(pl.Float64, strict=False),
         pl.col("p_entity_period_invested_capacity").cast(pl.Float64, strict=False),
     )
@@ -189,8 +287,12 @@ def _read_capacity(path: Path,
         - pl.col("p_entity_period_invested_capacity").fill_null(0.0)
     )
     df = df.with_columns(value=base_plus_prior)
-    if previously_invested_path is not None and _seed_or_exists(previously_invested_path):
-        prior_df = _read_csv_file(previously_invested_path)
+    if previously_invested_path is not None and _provider_has(
+            provider, "solve_data/p_entity_previously_invested_capacity",
+            previously_invested_path):
+        prior_df = _provider_read(
+            provider, "solve_data/p_entity_previously_invested_capacity",
+            previously_invested_path)
         rename = ({"value": "prior"} if "value" in prior_df.columns
                   else {"p_entity_previously_invested_capacity": "prior"})
         prior = prior_df.rename(rename)
@@ -223,26 +325,21 @@ def _read_p_flow_max(
     When *provider* is ``None`` the legacy seed funnel path runs
     unchanged.
     """
-    if provider is not None:
-        name = "solve_data/p_flow_max"
-        if not provider.has(name):
-            return None
-        df = provider.get(name)
-        if df is None or df.height == 0:
-            return None
-    else:
-        if not _seed_or_exists(path):
-            return None
-        df = _read_csv_file(path)
-        if df.height == 0:
-            return None
+    name = "solve_data/p_flow_max"
+    if not _provider_has(provider, name, path):
+        return None
+    df = _provider_read(provider, name, path)
+    if df is None or df.height == 0:
+        return None
     return df.rename({"process": "p", "period": "d", "time": "t"}) \
              .select("p", "source", "sink", "d", "t", "value")
 
 
 def _slice_param(path: Path, entity_col: str, param_value: str,
                  has_time: bool = True,
-                 rename_entity_to: str | None = None) -> pl.DataFrame | None:
+                 rename_entity_to: str | None = None,
+                 *,
+                 provider: "object | None" = None) -> pl.DataFrame | None:
     """Slice a generic param-bearing canonical input
     (``pdtNode.csv``/``pdtCommodity.csv``/``pdtProcess.csv``/``pdProcess.csv``/``pdtGroup.csv``)
     by a literal ``param`` string — the same operation .mod does inline
@@ -252,9 +349,11 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     ``has_time=False``) or ``None`` if the file is missing or the slice
     is empty.  ``rename_entity_to`` renames the entity column for
     downstream consumers (e.g. ``"node" -> "n"``)."""
-    if not _seed_or_exists(path):
+    _p = Path(path)
+    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
+    if not _provider_has(provider, name, path):
         return None
-    df = _read_csv_file(path)
+    df = _provider_read(provider, name, path)
     if df.height == 0:
         return None
     sliced = df.filter(pl.col("param") == param_value).drop("param")
@@ -270,15 +369,18 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     return out.select(cols)
 
 
-def _read_step_previous(path: Path) -> pl.DataFrame | None:
+def _read_step_previous(path: Path,
+                         *,
+                         provider: "object | None" = None) -> pl.DataFrame | None:
     """Read flextool's canonical ``solve_data/step_previous.csv`` (the
     same file .mod reads as the ``dtttdt`` set, see flextool.mod:786).
     Renames columns to the names flexpy's downstream ``Lag`` call sites
     expect (``t_previous``, ``t_previous_within_timeset``, ``d_previous``,
     ``t_previous_within_solve``)."""
-    if not _seed_or_exists(path):
+    name = "solve_data/step_previous"
+    if not _provider_has(provider, name, path):
         return None
-    df = _read_csv_file(path)
+    df = _provider_read(provider, name, path)
     rename = {
         "period": "d", "time": "t",
         "previous": "t_previous",
@@ -783,7 +885,9 @@ class FlexData:
 # ---------------------------------------------------------------------------
 # Time + node helpers (always loaded)
 
-def _load_time(sd: Path):
+def _load_time(sd: Path,
+                *,
+                provider: "object | None" = None):
     # ``steps_in_use.csv`` is the canonical source for both the dt set
     # and step_duration (.mod reads them together at flextool.mod:781).
     # ``dt.csv`` and ``p_step_duration.csv`` are .mod printf debug-exports
@@ -805,8 +909,8 @@ def _load_time(sd: Path):
     # (matches .mod's ``param p_rp_cost_weight ... default 1`` clause).
     rp_default = dt.with_columns(value=pl.lit(1.0))
     rp_cw_path = sd / "rp_cost_weight.csv"
-    if _seed_or_exists(rp_cw_path):
-        rp_df = _read_csv_file(rp_cw_path)
+    if _provider_has(provider, "solve_data/rp_cost_weight", rp_cw_path):
+        rp_df = _provider_read(provider, "solve_data/rp_cost_weight", rp_cw_path)
         if rp_df.height > 0:
             # canonical column is named ``weight`` per .mod's ``table data IN``.
             value_col = "weight" if "weight" in rp_df.columns else "value"
@@ -832,7 +936,9 @@ def _load_time(sd: Path):
     return dt, step_dur, rp_cw, infl, psh
 
 
-def _load_node(sd: Path, dt: pl.DataFrame):
+def _load_node(sd: Path, dt: pl.DataFrame,
+                *,
+                provider: "object | None" = None):
     nb = _read_csv_file(sd / "nodeBalance.csv").rename({"node": "n"})
     # pdtNodeInflow.csv is canonical (.mod reads it via `table data IN`).
     # TODO(Δ.18+): retire pdtNodeInflow.csv read when ``apply_derived_a``
@@ -850,8 +956,8 @@ def _load_node(sd: Path, dt: pl.DataFrame):
     pen_up_df = empty_n_d_t
     pen_dn_df = empty_n_d_t
     pdtnode_path = sd / "pdtNode.csv"
-    if _seed_or_exists(pdtnode_path):
-        df_pn = _read_csv_file(pdtnode_path)
+    if _provider_has(provider, "solve_data/pdtNode", pdtnode_path):
+        df_pn = _provider_read(provider, "solve_data/pdtNode", pdtnode_path)
         if df_pn.height > 0 and {"node", "param", "period", "time", "value"}.issubset(df_pn.columns):
             df_pn = (df_pn.rename({"node": "n", "period": "d", "time": "t"})
                           .with_columns(value=pl.col("value")
@@ -897,13 +1003,13 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         pss_path     = sd / "process_source_sink.csv"
         pss_eff_path = sd / "process_source_sink_eff.csv"
         pss_noe_path = sd / "process_source_sink_noEff.csv"
-        if not _seed_or_exists(pss_path):
+        if not _provider_has(provider, "solve_data/process_source_sink", pss_path):
             return empty_return
         empty_pss = pl.DataFrame(
             schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
 
         def _read_pss(p: Path) -> pl.DataFrame:
-            df = _read_csv_file(p)
+            df = _provider_read(provider, f"solve_data/{p.stem}", p)
             if df.height == 0 or "process" not in df.columns:
                 return empty_pss
             return (df.rename({"process": "p"})
@@ -913,8 +1019,16 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         pss = _read_pss(pss_path)
         if pss.height == 0:
             return empty_return
-        pss_eff = _read_pss(pss_eff_path) if _seed_or_exists(pss_eff_path) else empty_pss
-        pss_noEff = _read_pss(pss_noe_path) if _seed_or_exists(pss_noe_path) else empty_pss
+        pss_eff = (_read_pss(pss_eff_path)
+                   if _provider_has(provider,
+                                    "solve_data/process_source_sink_eff",
+                                    pss_eff_path)
+                   else empty_pss)
+        pss_noEff = (_read_pss(pss_noe_path)
+                     if _provider_has(provider,
+                                      "solve_data/process_source_sink_noEff",
+                                      pss_noe_path)
+                     else empty_pss)
 
         # Canonical source/sink per process from the preprocessed CSV sets.
         # process_source.csv and process_sink.csv (written by flextool's
@@ -922,9 +1036,10 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         # unit__inputNode for source, unit__outputNode for sink, and the
         # original connection__node__node direction for connections.
         def _read_canonical_set(p: Path, side: str) -> pl.DataFrame | None:
-            if not _seed_or_exists(p):
+            name = f"solve_data/{p.stem}"
+            if not _provider_has(provider, name, p):
                 return None
-            df = _read_csv_file(p)
+            df = _provider_read(provider, name, p)
             if df.height == 0 or "process" not in df.columns or side not in df.columns:
                 return None
             return (df.rename({"process": "p"})
@@ -1057,7 +1172,11 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     # (used in cap_pd / state_unitsize cascades).  Keep the seed.
     # TODO(Δ.12c+): when ``_load_profiles`` / ``_load_storage`` consume the
     # source-driven p_unitsize via flex_data, drop this seed read.
-    unitsize_long = _read_unitsize(_seed_or_pick(sd / "p_entity_unitsize.csv", inp / "p_entity_unitsize.csv") or (inp / "p_entity_unitsize.csv"))
+    unitsize_long = _read_unitsize(_provider_pick(
+        provider,
+        ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
+        ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
+    ) or (inp / "p_entity_unitsize.csv"))
     unitsize_p = (unitsize_long.rename({"e": "p"})
                        .filter(pl.col("p").is_in(pss["p"].unique())))
 
@@ -1170,11 +1289,14 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
 
 def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                    dt: pl.DataFrame,
-                   pss_noEff: pl.DataFrame | None = None):
+                   pss_noEff: pl.DataFrame | None = None,
+                   *,
+                   provider: "object | None" = None):
     if pss_eff is None and pss_noEff is None:
         return (None, None, None, None, None)
     p = sd / "group_co2_max_period.csv"
-    if not _seed_or_exists(p): return (None, None, None, None, None)
+    if not _provider_has(provider, "solve_data/group_co2_max_period", p):
+        return (None, None, None, None, None)
     g_max = _read_csv_file(p).rename({"group":"g"})
     if g_max.height == 0: return (None, None, None, None, None)
     cn_co2 = _read_csv_file(sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
@@ -1220,7 +1342,9 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
 
 
 def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
-                          pss_noEff: pl.DataFrame | None = None):
+                          pss_noEff: pl.DataFrame | None = None,
+                          *,
+                          provider: "object | None" = None):
     """Sibling of :func:`_load_co2_cap` for the multi-period total cap.
 
     Mirrors the period-cap topology (``group_co2_max_period.csv`` → eff /
@@ -1239,9 +1363,9 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     if pss_eff is None and pss_noEff is None:
         return (None, None, None, None)
     p = sd / "group_co2_max_total.csv"
-    if not _seed_or_exists(p):
+    if not _provider_has(provider, "solve_data/group_co2_max_total", p):
         return (None, None, None, None)
-    g_max = _read_csv_file(p).rename({"group": "g"})
+    g_max = _provider_read(provider, "solve_data/group_co2_max_total", p).rename({"group": "g"})
     if g_max.height == 0:
         return (None, None, None, None)
     cn_co2 = _read_csv_file(sd / "commodity_node_co2.csv").rename(
@@ -1276,8 +1400,8 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     # so the constraint set is naturally pruned to the active caps.
     p_cap = None
     pdg = sd / "pdGroup.csv"
-    if _seed_or_exists(pdg):
-        df = _read_csv_file(pdg)
+    if _provider_has(provider, "solve_data/pdGroup", pdg):
+        df = _provider_read(provider, "solve_data/pdGroup", pdg)
         if df.height > 0 and {"group", "param", "value"}.issubset(df.columns):
             sliced = (df.filter(pl.col("param") == "co2_max_total")
                         .rename({"group": "g"})
@@ -1311,11 +1435,14 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
 
 
 def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
-                    inp: Path | None = None):
+                    inp: Path | None = None,
+                    *,
+                    provider: "object | None" = None):
     if pss is None: return (None, None, None, None, None, None)
     p = sd / "process__method_indirect.csv"
-    if not _seed_or_exists(p): return (None, None, None, None, None, None)
-    raw = _read_csv_file(p).rename({"process":"p"})
+    if not _provider_has(provider, "solve_data/process__method_indirect", p):
+        return (None, None, None, None, None, None)
+    raw = _provider_read(provider, "solve_data/process__method_indirect", p).rename({"process":"p"})
     if raw.height == 0: return (None, None, None, None, None, None)
     indirect = raw.select("p").unique()
     inputs  = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("sink")==pl.col("p")))
@@ -1337,8 +1464,12 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
     p_sink_flow_coef = None
     if inp is not None:
         src_path = inp / "p_process_source_flow_coefficient.csv"
-        if _seed_or_exists(src_path):
-            srcdf = _read_csv_file(src_path)
+        if _provider_has(provider,
+                          "input/p_process_source_flow_coefficient",
+                          src_path):
+            srcdf = _provider_read(provider,
+                                     "input/p_process_source_flow_coefficient",
+                                     src_path)
             if srcdf.height > 0 and "p_process_source_flow_coefficient" in srcdf.columns:
                 src_long = (srcdf
                     .rename({"process": "p",
@@ -1363,8 +1494,12 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
                                           .rename({"coef": "value"}))
                         p_source_flow_coef = Param(("p", "source"), merged)
         sink_path = inp / "p_process_sink_flow_coefficient.csv"
-        if _seed_or_exists(sink_path):
-            sinkdf = _read_csv_file(sink_path)
+        if _provider_has(provider,
+                          "input/p_process_sink_flow_coefficient",
+                          sink_path):
+            sinkdf = _provider_read(provider,
+                                      "input/p_process_sink_flow_coefficient",
+                                      sink_path)
             if sinkdf.height > 0 and "p_process_sink_flow_coefficient" in sinkdf.columns:
                 sink_long = (sinkdf
                     .rename({"process": "p",
@@ -1388,7 +1523,9 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
             p_source_flow_coef, p_sink_flow_coef)
 
 
-def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame):
+def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
+                            *,
+                            provider: "object | None" = None):
     """Returns 12 items:
     flow_cstr_idx, flow_cstr_coef, constraint_constant, cdt_eq, cdt_le, cdt_ge,
     n_inv_cstr_coef, p_inv_cstr_coef, n_state_cstr_coef,
@@ -1402,8 +1539,9 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     (existing + prior-period invest)."""
     if pss is None: return [None]*12
     cs_path = inp / "constraint__sense.csv"
-    if not _seed_or_exists(cs_path): return [None]*12
-    cs = _read_csv_file(cs_path).rename({"constraint":"c"})
+    if not _provider_has(provider, "input/constraint__sense", cs_path):
+        return [None]*12
+    cs = _provider_read(provider, "input/constraint__sense", cs_path).rename({"constraint":"c"})
     if cs.height == 0: return [None]*12
     coef_path = inp / "p_process_node_constraint_flow_coefficient.csv"
     flow_cstr_idx = None
@@ -1413,8 +1551,13 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     # (the index frame, not a Param) is still needed by downstream
     # constraint emission and isn't produced by an override-chain helper.
     flow_cstr_coef = None
-    if _seed_or_exists(coef_path):
-        coef_long = (_read_csv_file(coef_path)
+    if _provider_has(provider,
+                      "input/p_process_node_constraint_flow_coefficient",
+                      coef_path):
+        coef_long = (_provider_read(
+                provider,
+                "input/p_process_node_constraint_flow_coefficient",
+                coef_path)
             .rename({"process":"p","node":"n","constraint":"c",
                      "p_process_node_constraint_flow_coefficient":"coef"})
             .select("p","n","c","coef"))
@@ -1454,13 +1597,17 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
             True)
 
 
-def _read_wide_e_d(path: Path) -> pl.DataFrame:
+def _read_wide_e_d(path: Path,
+                    *,
+                    provider: "object | None" = None) -> pl.DataFrame:
     """Read a CSV in either long-format (``entity, period, value``) or
     wide-format (``solve, period, e1, e2, …``) and return long form
     ``(e, d, value)``."""
-    if not _seed_or_exists(path):
+    _p = Path(path)
+    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
+    if not _provider_has(provider, name, path):
         return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
-    df = _read_csv_file(path)
+    df = _provider_read(provider, name, path)
     if "solve" in df.columns:
         df = df.drop("solve")
     if df.height == 0 or "period" not in df.columns:
@@ -1484,7 +1631,8 @@ def _read_wide_e_d(path: Path) -> pl.DataFrame:
 def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
                   pss: pl.DataFrame | None,
                   *,
-                  db_reader: "object | None" = None) -> dict:
+                  db_reader: "object | None" = None,
+                  provider: "object | None" = None) -> dict:
     """Load invest/divest sets and per-(e, d) cost params.  Empty when
     neither ed_invest nor ed_divest has any row.
 
@@ -1522,7 +1670,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     if db_reader is not None:
         try:
             scc = sd / "solve_current.csv"
-            if _seed_or_exists(scc):
+            if _provider_has(provider, "solve_data/solve_current", scc):
                 from ._derived_params import (_read_active_solve,
                                                 _resolve_synthetic_solve,
                                                 _solve_in_spine)
@@ -1598,9 +1746,11 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     # TODO(Δ.12c+): retire when all callers either pass an explicit
     # db_reader= or a workdir whose tests.sqlite + scenario auto-resolve.
     p_max_units = Param(("e", "d"),
-        _read_wide_e_d(sd / "p_entity_max_units.csv")
+        _read_wide_e_d(sd / "p_entity_max_units.csv", provider=provider)
             .filter(pl.col("value") > 0)
-            .select("e", "d", "value")) if _seed_or_exists(sd / "p_entity_max_units.csv") else None
+            .select("e", "d", "value")) if _provider_has(
+                provider, "solve_data/p_entity_max_units",
+                sd / "p_entity_max_units.csv") else None
 
     # Δ.18 — CSV-fallback seeds for the lifetime / NPV / total / max-period
     # cost cascade.  These were dropped in Δ.12-drop / Δ.17 because the
@@ -1615,18 +1765,18 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     # values when it has data; when it returns None, the seed persists.
     def _read_e_d(name: str) -> "Param | None":
         f = sd / f"{name}.csv"
-        if not _seed_or_exists(f):
+        if not _provider_has(provider, f"solve_data/{name}", f):
             return None
-        df = _read_wide_e_d(f)
+        df = _read_wide_e_d(f, provider=provider)
         if df.height == 0:
             return None
         return Param(("e", "d"), df.select("e", "d", "value"))
 
     def _read_e(name: str) -> "Param | None":
         f = sd / f"{name}.csv"
-        if not _seed_or_exists(f):
+        if not _provider_has(provider, f"solve_data/{name}", f):
             return None
-        df = _read_csv_file(f)
+        df = _provider_read(provider, f"solve_data/{name}", f)
         if df.height == 0:
             return None
         if "entity" not in df.columns or "value" not in df.columns:
@@ -1718,7 +1868,9 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     )
 
 
-def _read_p_process_side(path: Path, side_col: str) -> dict[str, pl.DataFrame]:
+def _read_p_process_side(path: Path, side_col: str,
+                          *,
+                          provider: "object | None" = None) -> dict[str, pl.DataFrame]:
     """Parse ``input/p_process_sink.csv`` or ``input/p_process_source.csv``.
 
     Canonical (Python-preprocessing-input) format: long, columns
@@ -1728,9 +1880,11 @@ def _read_p_process_side(path: Path, side_col: str) -> dict[str, pl.DataFrame]:
     param/value rows) — supported as a fallback.  Returns
     ``{param_name: DataFrame(p, side, value)}``."""
     out: dict[str, pl.DataFrame] = {}
-    if not _seed_or_exists(path):
+    _p = Path(path)
+    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
+    if not _provider_has(provider, name, path):
         return out
-    df = _read_csv_file(path)
+    df = _provider_read(provider, name, path)
     # canonical long: ``process, <side>, sourceSinkParam, p_process_<side>``
     if {"process", "sourceSinkParam"}.issubset(df.columns):
         if df.height == 0:
@@ -1777,7 +1931,9 @@ def _read_p_process_side(path: Path, side_col: str) -> dict[str, pl.DataFrame]:
     return out
 
 
-def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None) -> dict:
+def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
+                *,
+                provider: "object | None" = None) -> dict:
     """Load ramp-limit sets and ramp_speed params.  Empty when no
     process_source_sink_ramp_limit_* row is populated."""
     blank = dict(
@@ -1795,8 +1951,10 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None) -> dict:
 
     def _read_set(name: str) -> pl.DataFrame | None:
         p = sd / f"process_source_sink_ramp_limit_{name}.csv"
-        if not _seed_or_exists(p): return None
-        df = _read_csv_file(p)
+        key = f"solve_data/process_source_sink_ramp_limit_{name}"
+        if not _provider_has(provider, key, p):
+            return None
+        df = _provider_read(provider, key, p)
         if df.height == 0: return None
         return df.rename({"process": "p"}).select("p", "source", "sink")
 
@@ -1823,7 +1981,8 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None) -> dict:
 
 def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
                   pss: pl.DataFrame | None,
-                  *, source: "InputSource | None" = None) -> dict:
+                  *, source: "InputSource | None" = None,
+                  provider: "object | None" = None) -> dict:
     """Load online / min_load / startup data.  Empty dict-of-Nones when
     no process is online."""
     blank = dict(
@@ -1838,20 +1997,28 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     if pss is None:
         return blank
     online_path = sd / "process_online.csv"
-    if not _seed_or_exists(online_path):
+    if not _provider_has(provider, "solve_data/process_online", online_path):
         return blank
-    p_online = _read_csv_file(online_path).rename({"process": "p"})
+    p_online = _provider_read(provider, "solve_data/process_online", online_path).rename({"process": "p"})
     if p_online.height == 0:
         return blank
 
-    p_online_lin = _read_csv_file(sd / "process_online_linear.csv").rename({"process": "p"})
+    p_online_lin = _provider_read(
+        provider, "solve_data/process_online_linear",
+        sd / "process_online_linear.csv").rename({"process": "p"})
     p_online_int_path = sd / "process_online_integer.csv"
-    p_online_int = (_read_csv_file(p_online_int_path).rename({"process": "p"})
-                    if _seed_or_exists(p_online_int_path) else
+    p_online_int = (_provider_read(
+                        provider, "solve_data/process_online_integer",
+                        p_online_int_path).rename({"process": "p"})
+                    if _provider_has(provider,
+                                       "solve_data/process_online_integer",
+                                       p_online_int_path) else
                     pl.DataFrame(schema={"p": pl.Utf8}))
     p_minload_path = sd / "process_minload.csv"
-    p_minload = (_read_csv_file(p_minload_path).rename({"process": "p"})
-                 if _seed_or_exists(p_minload_path) else
+    p_minload = (_provider_read(provider, "solve_data/process_minload",
+                                  p_minload_path).rename({"process": "p"})
+                 if _provider_has(provider, "solve_data/process_minload",
+                                   p_minload_path) else
                  pl.DataFrame(schema={"p": pl.Utf8}))
 
     # ct_method: min_load_efficiency rows.  Canonical input file is
@@ -1859,11 +2026,13 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     # the .mod also printf's a debug-export to ``solve_data/`` with
     # column ``method`` — tolerate either schema/location.
     ctm_path = inp / "process__ct_method.csv"
-    if not _seed_or_exists(ctm_path):
+    ctm_key = "input/process__ct_method"
+    if not _provider_has(provider, ctm_key, ctm_path):
         ctm_path = sd / "process__ct_method.csv"
+        ctm_key = "solve_data/process__ct_method"
     p_min_load_eff = pl.DataFrame(schema={"p": pl.Utf8})
-    if _seed_or_exists(ctm_path):
-        ctm = _read_csv_file(ctm_path).rename({"process": "p"})
+    if _provider_has(provider, ctm_key, ctm_path):
+        ctm = _provider_read(provider, ctm_key, ctm_path).rename({"process": "p"})
         method_col = "ct_method" if "ct_method" in ctm.columns else "method"
         p_min_load_eff = (ctm.filter(pl.col(method_col) == "min_load_efficiency")
                           .select("p").unique())
@@ -1936,7 +2105,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                    pss_noEff: pl.DataFrame | None,
                    cap_pd: pl.DataFrame | None,
                    unitsize: Param | None,
-                   block_layout: "BlockLayout | None" = None) -> dict:
+                   block_layout: "BlockLayout | None" = None,
+                   *,
+                   provider: "object | None" = None) -> dict:
     """Load storage feature: nodeState set, capacity bounds, binding
     methods, dtttdt, and source-side nodeBalance topology.
 
@@ -1997,7 +2168,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             flow_from_nb_noEff = _filter_by_compat(flow_from_nb_noEff)
 
     # dtttdt — needed for ramps and online dynamics regardless of storage.
-    dtttdt = _read_step_previous(sd / "step_previous.csv")
+    dtttdt = _read_step_previous(sd / "step_previous.csv", provider=provider)
 
     blank = dict(
         nodeState = None, nodeState_dt = None, nodeState_first_dt = None,
@@ -2033,9 +2204,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         p_node_availability = None,
     )
     ns_path = sd / "nodeState.csv"
-    if not _seed_or_exists(ns_path):
+    if not _provider_has(provider, "solve_data/nodeState", ns_path):
         return blank
-    nodeState = _read_csv_file(ns_path).rename({"node": "n"})
+    nodeState = _provider_read(provider, "solve_data/nodeState", ns_path).rename({"node": "n"})
     if nodeState.height == 0:
         return blank
 
@@ -2056,12 +2227,12 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     fpos_path = sd / "period_first_of_solve.csv"
     fp_path = sd / "period_first.csv"
     first_period = None
-    if _seed_or_exists(fpos_path):
-        df = _read_csv_file(fpos_path)
+    if _provider_has(provider, "solve_data/period_first_of_solve", fpos_path):
+        df = _provider_read(provider, "solve_data/period_first_of_solve", fpos_path)
         if df.height > 0:
             first_period = df.rename({"period": "d"}).select("d").unique()
-    if first_period is None and fp_path.exists():
-        df = _read_csv_file(fp_path)
+    if first_period is None and _provider_has(provider, "solve_data/period_first", fp_path):
+        df = _provider_read(provider, "solve_data/period_first", fp_path)
         if df.height > 0:
             first_period = df.rename({"period": "d"}).select("d").unique()
     if first_period is None:
@@ -2085,8 +2256,13 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     if unitsize is not None and cap_pd is not None and nodeState is not None:
         cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
                                    sd / "p_entity_previously_invested_capacity.csv",
-                                   sd / "p_entity_all_existing.csv")
-        unitsize_long = _read_unitsize(_seed_or_pick(sd / "p_entity_unitsize.csv", inp / "p_entity_unitsize.csv") or (inp / "p_entity_unitsize.csv"))
+                                   sd / "p_entity_all_existing.csv",
+                                   provider=provider)
+        unitsize_long = _read_unitsize(_provider_pick(
+            provider,
+            ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
+            ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
+        ) or (inp / "p_entity_unitsize.csv"))
         state_existing = (cap_long.rename({"e": "n", "value": "cap"})
             .filter(pl.col("n").is_in(nodeState["n"]))
             .select("n", "d", "cap"))
@@ -2139,8 +2315,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     binding_within_timeset = None
     binding_forward_only = None
     binding_within_solve = None
-    if _seed_or_exists(sbm_path):
-        sbm = _read_csv_file(sbm_path)
+    if _provider_has(provider, "solve_data/node__storage_binding_method", sbm_path):
+        sbm = _provider_read(provider, "solve_data/node__storage_binding_method", sbm_path)
         # Column names in this file have varied — handle both schemas
         if "storage_binding_method" in sbm.columns:
             sbm = sbm.rename({"node":"n","storage_binding_method":"method"})
@@ -2176,13 +2352,15 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # solve_data/ may have a .mod-printf debug-export with renamed
     # column "method"; tolerate either schema.
     sse_path = inp / "node__storage_start_end_method.csv"
-    if not _seed_or_exists(sse_path):
+    sse_key = "input/node__storage_start_end_method"
+    if not _provider_has(provider, sse_key, sse_path):
         sse_path = sd / "node__storage_start_end_method.csv"
+        sse_key = "solve_data/node__storage_start_end_method"
     fix_start = None
     fix_end = None
     fix_start_end = None
-    if _seed_or_exists(sse_path):
-        sse = _read_csv_file(sse_path)
+    if _provider_has(provider, sse_key, sse_path):
+        sse = _provider_read(provider, sse_key, sse_path)
         if "storage_start_end_method" in sse.columns:
             sse = sse.rename({"node":"n","storage_start_end_method":"method"})
         elif "method" in sse.columns:
@@ -2195,11 +2373,13 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # ``use_reference_value`` get a v_state pin at the last timestep of
     # the last period, equal to ``reference_value × existing/unitsize``.
     sshm_path = inp / "node__storage_solve_horizon_method.csv"
-    if not _seed_or_exists(sshm_path):
+    sshm_key = "input/node__storage_solve_horizon_method"
+    if not _provider_has(provider, sshm_key, sshm_path):
         sshm_path = sd / "node__storage_solve_horizon_method.csv"
+        sshm_key = "solve_data/node__storage_solve_horizon_method"
     use_reference_value = None
-    if _seed_or_exists(sshm_path):
-        sshm = _read_csv_file(sshm_path)
+    if _provider_has(provider, sshm_key, sshm_path):
+        sshm = _provider_read(provider, sshm_key, sshm_path)
         col = ("storage_solve_horizon_method"
                if "storage_solve_horizon_method" in sshm.columns
                else "method")
@@ -2215,8 +2395,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         # ordering simple).  bind_within_period not exercised yet.
         nsb_for_excl = None
         nsb_path_local = sd / "nodeStateBlock.csv"
-        if _seed_or_exists(nsb_path_local):
-            nsb_df_local = _read_csv_file(nsb_path_local)
+        if _provider_has(provider, "solve_data/nodeStateBlock", nsb_path_local):
+            nsb_df_local = _provider_read(provider, "solve_data/nodeStateBlock", nsb_path_local)
             if nsb_df_local.height > 0:
                 nsb_for_excl = nsb_df_local.rename({"node": "n"}).select("n")
         for excl in (fix_end, fix_start_end,
@@ -2246,8 +2426,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # canonical CSV is the only source.
     nodeStateBlock = None
     nsb_path_seed = sd / "nodeStateBlock.csv"
-    if _seed_or_exists(nsb_path_seed):
-        nsb_df_seed = _read_csv_file(nsb_path_seed)
+    if _provider_has(provider, "solve_data/nodeStateBlock", nsb_path_seed):
+        nsb_df_seed = _provider_read(provider, "solve_data/nodeStateBlock", nsb_path_seed)
         if nsb_df_seed.height > 0 and "node" in nsb_df_seed.columns:
             nodeStateBlock = nsb_df_seed.rename({"node": "n"}).select("n").unique()
     period_block = None
@@ -2267,8 +2447,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # 0 → False; non-zero → True.
     p_nested_solve_first: bool | None = None
     nm_path = sd / "p_nested_model.csv"
-    if _seed_or_exists(nm_path):
-        nm = _read_csv_file(nm_path)
+    if _provider_has(provider, "solve_data/p_nested_model", nm_path):
+        nm = _provider_read(provider, "solve_data/p_nested_model", nm_path)
         if nm.height > 0:
             # Column may be ``p_nested_model`` (canonical) or ``value``.
             value_col = "p_nested_model" if "p_nested_model" in nm.columns else "value"
@@ -2282,8 +2462,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # the snapshot CSV is the only source.
     p_roll_continue_state = None
     rcs_path = sd / "p_roll_continue_state.csv"
-    if _seed_or_exists(rcs_path):
-        df_rcs = _read_csv_file(rcs_path)
+    if _provider_has(provider, "solve_data/p_roll_continue_state", rcs_path):
+        df_rcs = _provider_read(provider, "solve_data/p_roll_continue_state", rcs_path)
         if df_rcs.height > 0 and "node" in df_rcs.columns:
             value_col = ("p_roll_continue_state"
                          if "p_roll_continue_state" in df_rcs.columns
@@ -2305,8 +2485,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
     p_fix_storage_quantity = None
     fsq_path = sd / "fix_storage_quantity.csv"
-    if _seed_or_exists(fsq_path):
-        df_fsq = _read_csv_file(fsq_path)
+    if _provider_has(provider, "solve_data/fix_storage_quantity", fsq_path):
+        df_fsq = _provider_read(provider, "solve_data/fix_storage_quantity", fsq_path)
         if df_fsq.height > 0:
             ren = {}
             if "period" in df_fsq.columns: ren["period"] = "d"
@@ -2353,8 +2533,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # not the simple ``period_last`` set frame.
     period_last_df = None
     pl_path = sd / "period_last.csv"
-    if _seed_or_exists(pl_path):
-        df = _read_csv_file(pl_path)
+    if _provider_has(provider, "solve_data/period_last", pl_path):
+        df = _provider_read(provider, "solve_data/period_last", pl_path)
         if df.height > 0:
             period_last_df = df.rename({"period": "d"}).select("d").unique()
 
@@ -2435,16 +2615,22 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
 def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
                     unitsize: Param | None,
-                    cap_pd: pl.DataFrame | None):
+                    cap_pd: pl.DataFrame | None,
+                    *,
+                    provider: "object | None" = None):
     """Load profile_flow_upper/lower/fixed mappings.  ``cap_pd`` is the
     (p, d, base_cap) frame; combined with unitsize we get the
     ``existing_count`` term used on the RHS."""
     if pss is None or unitsize is None or cap_pd is None:
         return [None]*6
     pp_path = sd / "process__source__sink__profile__profile_method.csv"
-    if not _seed_or_exists(pp_path):
+    if not _provider_has(provider,
+                          "solve_data/process__source__sink__profile__profile_method",
+                          pp_path):
         return [None]*6
-    pp = _read_csv_file(pp_path).rename({"process":"p"})
+    pp = _provider_read(provider,
+                          "solve_data/process__source__sink__profile__profile_method",
+                          pp_path).rename({"process":"p"})
     if pp.height == 0:
         return [None]*6
     method_col = "method" if "method" in pp.columns else "profile_method"
@@ -2460,7 +2646,7 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
     # ``profile.profile_data`` parameter).
     pdt_profile = sd / "pdtProfile.csv"
     profile_value = None
-    if _seed_or_exists(pdt_profile):
+    if _provider_has(provider, "solve_data/pdtProfile", pdt_profile):
         prof_long = _read_wide_per_entity(pdt_profile, rename={"entity":"f"})
         if "profile" in upper.columns:
             upper = upper.rename({"profile": "f"})
@@ -2485,7 +2671,9 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
 # ---------------------------------------------------------------------------
 # The single loader
 
-def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
+def _load_varcost(sd: Path, pss: pl.DataFrame | None,
+                   *,
+                   provider: "object | None" = None) -> dict:
     """Load process variable-cost (other_operational_cost) sets and Params.
 
     The .mod has 4 disjoint sets:
@@ -2509,9 +2697,9 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
 
     def _read_pssdt_set(name: str) -> pl.DataFrame | None:
         f = sd / f"{name}.csv"
-        if not _seed_or_exists(f):
+        if not _provider_has(provider, f"solve_data/{name}", f):
             return None
-        df = _read_csv_file(f)
+        df = _provider_read(provider, f"solve_data/{name}", f)
         if df.height == 0:
             return None
         return df.rename({"process": "p", "period": "d", "time": "t"}) \
@@ -2530,8 +2718,8 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
     # zero-value rows mirrors the override's "drop zero coefficients" pass.
     p_pssdt_var = None
     pssdt_path = sd / "pdtProcess__source__sink__dt_varCost.csv"
-    if _seed_or_exists(pssdt_path):
-        df = _read_csv_file(pssdt_path)
+    if _provider_has(provider, "solve_data/pdtProcess__source__sink__dt_varCost", pssdt_path):
+        df = _provider_read(provider, "solve_data/pdtProcess__source__sink__dt_varCost", pssdt_path)
         if df.height > 0:
             sliced = (df.rename({"process": "p", "period": "d", "time": "t"})
                         .with_columns(value=pl.col("value")
@@ -2546,9 +2734,9 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
     # pdtProcess_source[p,source,'other_operational_cost',d,t] — wide param file
     def _slice_pds(name: str, side_col: str) -> Param | None:
         f = sd / f"{name}.csv"
-        if not _seed_or_exists(f):
+        if not _provider_has(provider, f"solve_data/{name}", f):
             return None
-        df = _read_csv_file(f)
+        df = _provider_read(provider, f"solve_data/{name}", f)
         if df.height == 0:
             return None
         sliced = df.filter(pl.col("param") == "other_operational_cost") \
@@ -2570,8 +2758,8 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
     # pdtProcess[p,'other_operational_cost',d,t] — process-level (no source/sink dim)
     p_var_proc = None
     pp_path = sd / "pdtProcess.csv"
-    if _seed_or_exists(pp_path):
-        df = _read_csv_file(pp_path)
+    if _provider_has(provider, "solve_data/pdtProcess", pp_path):
+        df = _provider_read(provider, "solve_data/pdtProcess", pp_path)
         if df.height > 0:
             sliced = df.filter(pl.col("param") == "other_operational_cost") \
                        .drop("param")
@@ -2596,7 +2784,9 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None) -> dict:
     )
 
 
-def _load_fixed_cost(sd: Path) -> dict:
+def _load_fixed_cost(sd: Path,
+                      *,
+                      provider: "object | None" = None) -> dict:
     """Load (e, d) ed_fixed_cost and (e, d) p_entity_all_existing.
 
     Δ.18 — CSV-fallback seeds.  Override chain (``apply_derived_f`` /
@@ -2610,9 +2800,9 @@ def _load_fixed_cost(sd: Path) -> dict:
     """
     def _read_e_d_seed(name: str, drop_zero: bool = False) -> "Param | None":
         f = sd / f"{name}.csv"
-        if not _seed_or_exists(f):
+        if not _provider_has(provider, f"solve_data/{name}", f):
             return None
-        df = _read_wide_e_d(f)
+        df = _read_wide_e_d(f, provider=provider)
         if df.height == 0:
             return None
         if drop_zero:
@@ -2630,13 +2820,15 @@ def _load_fixed_cost(sd: Path) -> dict:
 
 
 def _load_node_capacity_for_scaling(sd: Path,
-                                     nb: pl.DataFrame) -> dict:
+                                     nb: pl.DataFrame,
+                                     *,
+                                     provider: "object | None" = None) -> dict:
     """Load node_capacity_for_scaling[n, d] for slack-penalty scaling."""
     blank = dict(p_node_capacity_for_scaling=None)
     f = sd / "node_capacity_for_scaling.csv"
-    if not _seed_or_exists(f):
+    if not _provider_has(provider, "solve_data/node_capacity_for_scaling", f):
         return blank
-    df = _read_csv_file(f)
+    df = _provider_read(provider, "solve_data/node_capacity_for_scaling", f)
     if df.height == 0:
         return blank
     df = df.rename({"node": "n", "period": "d"}) \
@@ -2649,7 +2841,9 @@ def _load_node_capacity_for_scaling(sd: Path,
     return dict(p_node_capacity_for_scaling=Param(("n", "d"), df.select("n", "d", "value")))
 
 
-def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
+def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
+                              *,
+                              provider: "object | None" = None) -> dict:
     """Load the new ``FlexData`` fields consumed by ``_cumulative_invest``.
 
     All fields are independently optional — missing CSV / empty file ⇒ None.
@@ -2661,8 +2855,9 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
 
     def _read_set(name: str, src_to_dst: dict[str, str]) -> pl.DataFrame | None:
         f = sd / f"{name}.csv"
-        if not _seed_or_exists(f): return None
-        df = _read_csv_file(f)
+        if not _provider_has(provider, f"solve_data/{name}", f):
+            return None
+        df = _provider_read(provider, f"solve_data/{name}", f)
         if df.height == 0: return None
         rename = {s: d for s, d in src_to_dst.items() if s in df.columns}
         out_df = df.rename(rename).select(*src_to_dst.values()).unique()
@@ -2680,8 +2875,9 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     def _slice_pdtgroup(param_name: str) -> pl.DataFrame | None:
         """solve_data/pdtGroup.csv slice → (g, d, t, value), zero dropped."""
         f = sd / "pdtGroup.csv"
-        if not _seed_or_exists(f): return None
-        df = _read_csv_file(f)
+        if not _provider_has(provider, "solve_data/pdtGroup", f):
+            return None
+        df = _provider_read(provider, "solve_data/pdtGroup", f)
         if df.height == 0: return None
         sliced = (df.filter(pl.col("param") == param_name)
                     .rename({"group": "g", "period": "d", "time": "t"})
@@ -2699,12 +2895,12 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
 
     # group_entity: prefer solve_data, fallback input/group__entity.csv
     ge = None
-    for cand, mapping in [
-        (sd / "group_entity.csv",   {"group": "g", "entity": "e"}),
-        (inp / "group__entity.csv", {"group": "g", "entity": "e"}),
+    for cand, mapping, key in [
+        (sd / "group_entity.csv",   {"group": "g", "entity": "e"}, "solve_data/group_entity"),
+        (inp / "group__entity.csv", {"group": "g", "entity": "e"}, "input/group__entity"),
     ]:
-        if _seed_or_exists(cand):
-            df = _read_csv_file(cand)
+        if _provider_has(provider, key, cand):
+            df = _provider_read(provider, key, cand)
             if df.height > 0:
                 ge = df.rename(mapping).select("g", "e").unique()
                 break
@@ -2713,12 +2909,12 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     # group_process_node: solve_data/group_process_node.csv (preprocessed long)
     # or input/group__process__node.csv (raw long)
     gpn = None
-    for cand, mapping in [
-        (sd / "group_process_node.csv",  {"group": "g", "process": "p", "node": "n"}),
-        (inp / "group__process__node.csv", {"group": "g", "process": "p", "node": "n"}),
+    for cand, mapping, key in [
+        (sd / "group_process_node.csv",  {"group": "g", "process": "p", "node": "n"}, "solve_data/group_process_node"),
+        (inp / "group__process__node.csv", {"group": "g", "process": "p", "node": "n"}, "input/group__process__node"),
     ]:
-        if _seed_or_exists(cand):
-            df = _read_csv_file(cand)
+        if _provider_has(provider, key, cand):
+            df = _provider_read(provider, key, cand)
             if df.height > 0:
                 gpn = df.rename(mapping).select("g", "p", "n").unique()
                 break
@@ -2754,9 +2950,9 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     # source).
     def _read_e_seed(name: str) -> "Param | None":
         f = sd / f"{name}.csv"
-        if not _seed_or_exists(f):
+        if not _provider_has(provider, f"solve_data/{name}", f):
             return None
-        df = _read_csv_file(f)
+        df = _provider_read(provider, f"solve_data/{name}", f)
         if df.height == 0 or "entity" not in df.columns or "value" not in df.columns:
             return None
         return Param(("e",),
@@ -2846,14 +3042,18 @@ def _coerce_bool(v: str) -> bool:
     raise ValueError(f"cannot coerce {v!r} to bool")
 
 
-def _load_solver_options(sd: Path) -> dict | None:
+def _load_solver_options(sd: Path,
+                          *,
+                          provider: "object | None" = None) -> dict | None:
     p = sd.parent / "input" / "solve_mode.csv"
-    if not _seed_or_exists(p):
+    key = "input/solve_mode"
+    if not _provider_has(provider, key, p):
         # Fixtures sometimes drop the CSV under solve_data/ instead of input/.
         p = sd / "solve_mode.csv"
-        if not _seed_or_exists(p):
+        key = "solve_data/solve_mode"
+        if not _provider_has(provider, key, p):
             return None
-    df = _read_csv_file(p)
+    df = _provider_read(provider, key, p)
     if df.height == 0 or "param" not in df.columns or "value" not in df.columns:
         return None
 
@@ -2864,8 +3064,8 @@ def _load_solver_options(sd: Path) -> dict | None:
     # there.
     cur_path = sd / "solve_current.csv"
     cur_solve: str | None = None
-    if _seed_or_exists(cur_path):
-        cur_df = _read_csv_file(cur_path)
+    if _provider_has(provider, "solve_data/solve_current", cur_path):
+        cur_df = _provider_read(provider, "solve_data/solve_current", cur_path)
         if cur_df.height > 0 and "solve" in cur_df.columns:
             cur_solve = str(cur_df["solve"][0])
 
@@ -2899,7 +3099,9 @@ def _load_solver_options(sd: Path) -> dict | None:
     return out or None
 
 
-def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
+def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
+                       *,
+                       provider: "object | None" = None) -> dict:
     """Load multi-branch stochastic operational data.
 
     Mirrors flextool.mod's stochastic feature (mod:38-41, :562-588,
@@ -2938,8 +3140,8 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     # ``param pdt_branch_weight {(d,t) in dt}`` declaration).
     pdt_branch_weight = None
     pdt_bw_path = sd / "pdt_branch_weight.csv"
-    if _seed_or_exists(pdt_bw_path):
-        df = _read_csv_file(pdt_bw_path)
+    if _provider_has(provider, "solve_data/pdt_branch_weight", pdt_bw_path):
+        df = _provider_read(provider, "solve_data/pdt_branch_weight", pdt_bw_path)
         if df.height > 0:
             df = (df.rename({"period": "d", "time": "t"})
                     .with_columns(value=pl.col("value")
@@ -2956,8 +3158,8 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
 
     pd_branch_weight = None
     pd_bw_path = sd / "pd_branch_weight.csv"
-    if _seed_or_exists(pd_bw_path):
-        df = _read_csv_file(pd_bw_path)
+    if _provider_has(provider, "solve_data/pd_branch_weight", pd_bw_path):
+        df = _provider_read(provider, "solve_data/pd_branch_weight", pd_bw_path)
         if df.height > 0:
             df = (df.rename({"period": "d"})
                     .with_columns(value=pl.col("value")
@@ -2975,16 +3177,16 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame) -> dict:
     # Δ.18 — CSV-fallback seed for ``period_in_use_set``.
     period_in_use_set = None
     piu_path = sd / "period_in_use_set.csv"
-    if _seed_or_exists(piu_path):
-        df = _read_csv_file(piu_path)
+    if _provider_has(provider, "solve_data/period_in_use_set", piu_path):
+        df = _provider_read(provider, "solve_data/period_in_use_set", piu_path)
         if df.height > 0 and "period" in df.columns:
             period_in_use_set = df.rename({"period": "d"}).select("d").unique()
 
     # groupIncludeStochastics: (g,)
     gis_path = inp / "groupIncludeStochastics.csv"
     groupStochastic = None
-    if _seed_or_exists(gis_path):
-        df = _read_csv_file(gis_path)
+    if _provider_has(provider, "input/groupIncludeStochastics", gis_path):
+        df = _provider_read(provider, "input/groupIncludeStochastics", gis_path)
         if df.height > 0:
             # CSV column is named ``group``; rename to canonical ``g``.
             df = df.rename({df.columns[0]: "g"})
@@ -3302,8 +3504,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # becomes a no-op or is replaced by passing the live layout in.
         block_layout = BlockLayout.load_from_solve_data(sd)
 
-        dt, step_dur, rp_cw, infl, psh = _load_time(sd)
-        nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt)
+        dt, step_dur, rp_cw, infl, psh = _load_time(sd, provider=provider)
+        nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt, provider=provider)
 
         # ── pl.Enum dtype refactor (Phases 3+4+5) ─────────────────────
         # Build the canonical per-axis Enum dtypes once the foundational
@@ -3327,8 +3529,13 @@ def load_flextool(source: "Path | str | FlexInputSource",
         if proc["pss"] is not None:
             cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
                                        sd / "p_entity_previously_invested_capacity.csv",
-                                       sd / "p_entity_all_existing.csv")
-            unitsize_long = _read_unitsize(_seed_or_pick(sd / "p_entity_unitsize.csv", inp / "p_entity_unitsize.csv") or (inp / "p_entity_unitsize.csv"))
+                                       sd / "p_entity_all_existing.csv",
+                                       provider=provider)
+            unitsize_long = _read_unitsize(_provider_pick(
+                provider,
+                ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
+                ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
+            ) or (inp / "p_entity_unitsize.csv"))
             # p_all_entity_unitsize: unfiltered — covers processes, connections AND nodes.
             # Used by the scaling analyzer to compute the full entity-unitsize spread.
             if unitsize_long.height > 0:
@@ -3369,10 +3576,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
         flow_co2_p, flow_co2_p_noEff, co2c, co2pr = _load_co2_price(
             inp, sd, proc["pss_eff"], proc.get("pss_noEff"))
         g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped = _load_co2_cap(
-            inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"))
+            inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"),
+            provider=provider)
         (g_co2_max_total, flow_co2_cap_total, flow_co2_cap_total_noEff,
          co2_max_total_p) = _load_co2_cap_total(
-            inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"))
+            inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"),
+            provider=provider)
         if (co2_max_p is not None or co2_max_total_p is not None) and co2c is None:
             p_comm = _read_csv_file(inp / "p_commodity.csv")
             co2c = Param(("c",),
@@ -3381,14 +3590,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
                       .select("c","value"))
 
         (indir_set, indir_in, indir_out, indir_dt,
-         p_source_flow_coef, p_sink_flow_coef) = _load_indirect(sd, proc["pss"], dt, inp)
+         p_source_flow_coef, p_sink_flow_coef) = _load_indirect(
+             sd, proc["pss"], dt, inp, provider=provider)
         (fc_idx, fc_coef, c_const, cdt_eq, cdt_le, cdt_ge,
          n_inv_coef, p_inv_coef,
          n_state_coef, n_prebuilt_coef, p_prebuilt_coef,
-         _) = _load_user_constraints(inp, proc["pss"], dt)
+         _) = _load_user_constraints(inp, proc["pss"], dt, provider=provider)
 
         p_up, p_lo, p_fx, prof_v, exist_cnt, avail = _load_profiles(
-            inp, sd, proc["pss"], proc["unitsize"], base_cap_pd)
+            inp, sd, proc["pss"], proc["unitsize"], base_cap_pd,
+            provider=provider)
         # existing_count is also needed by the online/UC feature even when
         # no profile features are active; fall back to base_cap_pd directly.
         if exist_cnt is None and base_cap_pd is not None:
@@ -3398,7 +3609,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # to read pdtProcess_availability.csv standalone.
         if avail is None and proc["pss"] is not None:
             avail_long = _slice_param(sd / "pdtProcess.csv", "process", "availability",
-                                       rename_entity_to="p")
+                                       rename_entity_to="p",
+                                       provider=provider)
             if avail_long is not None:
                 avail = Param(("p","d","t"), avail_long)
 
@@ -3407,20 +3619,24 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # solves).  p_process_existing_count (= existing/unitsize per (p, d))
         # is needed by online + profile features — always load when processes
         # exist.
-        dtttdt = _read_step_previous(sd / "step_previous.csv")
+        dtttdt = _read_step_previous(sd / "step_previous.csv", provider=provider)
 
-        online = _load_online(inp, sd, dt, proc["pss"], source=db_reader)
-        ramp = _load_ramp(inp, sd, proc["pss"])
-        invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader)
-        varcost = _load_varcost(sd, proc["pss"])
-        fixed_cost = _load_fixed_cost(sd)
-        capacity_for_scaling = _load_node_capacity_for_scaling(sd, nb)
+        online = _load_online(inp, sd, dt, proc["pss"], source=db_reader,
+                              provider=provider)
+        ramp = _load_ramp(inp, sd, proc["pss"], provider=provider)
+        invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader,
+                              provider=provider)
+        varcost = _load_varcost(sd, proc["pss"], provider=provider)
+        fixed_cost = _load_fixed_cost(sd, provider=provider)
+        capacity_for_scaling = _load_node_capacity_for_scaling(sd, nb,
+                                                                provider=provider)
 
         # ─── Storage (nodeState + binding methods + dtttdt + node-balance source-side flows)
         storage = _load_storage(inp, sd, dt, nb,
                                  proc["pss_eff"], proc["pss_noEff"],
                                  base_cap_pd, proc["unitsize"],
-                                 block_layout=block_layout)
+                                 block_layout=block_layout,
+                                 provider=provider)
         # _load_storage emits its own dtttdt; if storage is inactive it'll be
         # None there but we want the top-level read.
         if storage["dtttdt"] is None:
@@ -3467,7 +3683,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # the canonical loader.  Call it for symmetry, then populate the new
         # ``FlexData`` fields from the canonical helper below.
         _cumulative_invest.load_data(inp=inp, sd=sd, dt=dt)
-        ci_data = _load_cumulative_invest(inp=inp, sd=sd, dt=dt)
+        ci_data = _load_cumulative_invest(inp=inp, sd=sd, dt=dt, provider=provider)
 
         # ─── Delayed processes / DR data ─────────────────────────────────────
         delay_data = _delay.load_data(inp_dir=inp, sd_dir=sd)
@@ -3479,7 +3695,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         ladder_data = _commodity_ladder.load_data(inp_dir=inp, sd_dir=sd)
 
         # ─── Multi-branch stochastic data (A6) ───────────────────────────────
-        stoch_data = _load_stochastics(inp=inp, sd=sd, dt=dt)
+        stoch_data = _load_stochastics(inp=inp, sd=sd, dt=dt, provider=provider)
 
         flex_data = FlexData(
             dt = dt,
@@ -3575,7 +3791,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             arc_source_block_dt = arc_source_block_dt,
             p_arc_sink_weight = p_arc_sink_weight,
             p_arc_source_weight = p_arc_source_weight,
-            solver_options = _load_solver_options(sd),
+            solver_options = _load_solver_options(sd, provider=provider),
             # Phase 2 multi-block fast-path: stash the per-solve BlockLayout
             # built above on the FlexData so the override chain helpers
             # (period_block_family_from_source, nodeStateBlock_from_source,
@@ -3665,7 +3881,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # below — db_reader is required for that path).
         if handoff is not None:
             sd_dir = workdir_for_db / "solve_data" if workdir_for_db is not None else None
-            flex_data = _overlay_handoff(flex_data, handoff, sd_dir, ctx=ctx)
+            flex_data = _overlay_handoff(flex_data, handoff, sd_dir, ctx=ctx,
+                                            provider=provider)
             # Re-apply the cluster B chained-existing helper so
             # ``p_entity_all_existing`` reflects the in-memory handoff
             # carriers (rather than the workdir's pre-handoff CSV value).
@@ -3828,17 +4045,21 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     _timed("10 existing_chain", _ex.apply_existing_chain, flex_data, db_reader, workdir_path, ctx=ctx)
 
 
-def _load_handoff_aux_pair(path: Path, expected: tuple[str, str]) -> "pl.DataFrame | None":
+def _load_handoff_aux_pair(path: Path, expected: tuple[str, str],
+                            *,
+                            provider: "object | None" = None) -> "pl.DataFrame | None":
     """Gap F final — load a 2-col handoff-auxiliary CSV into a polars
     frame, tolerating empty / missing files.  ``expected`` lists the two
     canonical column names the caller wants; we select them and drop
     anything else.  Returns ``None`` when the file is missing, empty,
     or doesn't carry the expected columns.
     """
-    if not _seed_or_exists(path):
+    _p = Path(path)
+    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
+    if not _provider_has(provider, name, path):
         return None
     try:
-        df = _read_csv_file(path)
+        df = _provider_read(provider, name, path)
     except pl.exceptions.NoDataError:
         return None
     if df.height == 0:
@@ -3849,14 +4070,15 @@ def _load_handoff_aux_pair(path: Path, expected: tuple[str, str]) -> "pl.DataFra
     return df.select(a, b)
 
 
-def _read_period_set(path: Path) -> set[str]:
+def _read_period_set(path: Path,
+                       *,
+                       provider: "object | None" = None) -> set[str]:
     """Read a single-column period CSV (header row, then one period per row)."""
-    from ._input_source import _seed_open
-    fh = _seed_open(path)
+    _p = Path(path)
+    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
+    fh = _provider_open(provider, name, path)
     if fh is None:
-        if not path.exists():
-            return set()
-        fh = path.open()
+        return set()
     out: set[str] = set()
     with fh:
         reader = __import__("csv").reader(fh)
@@ -3867,23 +4089,26 @@ def _read_period_set(path: Path) -> set[str]:
     return out
 
 
-def _read_realize_invest_periods(path: Path) -> set[str]:
+def _read_realize_invest_periods(path: Path,
+                                   *,
+                                   provider: "object | None" = None) -> set[str]:
     """Read ``realized_invest_periods_of_current_solve.csv`` (single
     ``period`` column written by ``solve_writers.write_periods``).
 
     Empty file or missing → empty set (treat as: nothing realized this solve).
     """
-    return _read_period_set(path)
+    return _read_period_set(path, provider=provider)
 
 
-def _read_realized_dispatch_periods(path: Path) -> set[str]:
+def _read_realized_dispatch_periods(path: Path,
+                                       *,
+                                       provider: "object | None" = None) -> set[str]:
     """Read distinct periods from ``realized_dispatch.csv`` (cols include ``period``)."""
-    from ._input_source import _seed_open
-    fh = _seed_open(path)
+    _p = Path(path)
+    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
+    fh = _provider_open(provider, name, path)
     if fh is None:
-        if not path.exists():
-            return set()
-        fh = path.open()
+        return set()
     out: set[str] = set()
     csv = __import__("csv")
     with fh:
@@ -3899,7 +4124,9 @@ def _read_realized_dispatch_periods(path: Path) -> set[str]:
     return out
 
 
-def _read_solve_first(work_folder: Path) -> bool:
+def _read_solve_first(work_folder: Path,
+                        *,
+                        provider: "object | None" = None) -> bool:
     """Read ``p_model.csv``'s ``solveFirst`` flag.
 
     flextool's per-solve preprocessing writes ``solve_data/p_model.csv``
@@ -3922,15 +4149,15 @@ def _read_solve_first(work_folder: Path) -> bool:
     by ``Σ pre_existing`` per extra sub-solve and zeroing out demand on
     sub-solves 3+ of fixtures like ``wind_battery_invest_lifetime_renew_4solve``.
     """
-    from ._input_source import _seed_open
     csv = __import__("csv")
     for cand in ("solve_data/p_model.csv", "input/p_model.csv"):
         path = work_folder / cand
-        fh = _seed_open(path)
+        # cand already has the parent prefix and the suffix; pass as-is
+        # (suffix stripped by Provider).
+        name = cand
+        fh = _provider_open(provider, name, path)
         if fh is None:
-            if not path.exists():
-                continue
-            fh = path.open()
+            continue
         with fh:
             reader = csv.reader(fh)
             header = next(reader, None) or []
@@ -3950,7 +4177,9 @@ def _read_solve_first(work_folder: Path) -> bool:
     return True
 
 
-def _read_unitsize_long(work_folder: Path) -> dict[str, float]:
+def _read_unitsize_long(work_folder: Path,
+                         *,
+                         provider: "object | None" = None) -> dict[str, float]:
     """Read entity unitsizes as ``{entity: value}``.
 
     Layers two sources:
@@ -3970,9 +4199,11 @@ def _read_unitsize_long(work_folder: Path) -> dict[str, float]:
     ``input/p_entity_unitsize.csv`` (the populated copy).
     """
     out: dict[str, float] = {}
-    for src in (work_folder / "input" / "p_entity_unitsize.csv",
-                work_folder / "solve_data" / "p_entity_unitsize.csv"):
-        if not _seed_or_exists(src):
+    for src, key in (
+        (work_folder / "input" / "p_entity_unitsize.csv", "input/p_entity_unitsize"),
+        (work_folder / "solve_data" / "p_entity_unitsize.csv", "solve_data/p_entity_unitsize"),
+    ):
+        if not _provider_has(provider, key, src):
             continue
         try:
             df = _read_unitsize(src)
@@ -3986,19 +4217,18 @@ def _read_unitsize_long(work_folder: Path) -> dict[str, float]:
     return out
 
 
-def _read_pre_existing_long(work_folder: Path) -> dict[tuple[str, str], float]:
+def _read_pre_existing_long(work_folder: Path,
+                              *,
+                              provider: "object | None" = None) -> dict[tuple[str, str], float]:
     """Read ``solve_data/p_entity_pre_existing.csv`` (long: entity, period, value).
 
     Returns ``{(period, entity): value}`` to match
     flextool's ``_load_pre_existing`` key order (``[d, e]`` lookup).
     """
     path = work_folder / "solve_data" / "p_entity_pre_existing.csv"
-    from ._input_source import _seed_open
-    fh = _seed_open(path)
+    fh = _provider_open(provider, "solve_data/p_entity_pre_existing", path)
     if fh is None:
-        if not path.exists():
-            return {}
-        fh = path.open()
+        return {}
     csv = __import__("csv")
     out: dict[tuple[str, str], float] = {}
     with fh:
@@ -4013,14 +4243,15 @@ def _read_pre_existing_long(work_folder: Path) -> dict[tuple[str, str], float]:
     return out
 
 
-def _read_singles_csv(path: Path) -> list[str]:
+def _read_singles_csv(path: Path,
+                       *,
+                       provider: "object | None" = None) -> list[str]:
     """Read a single-column CSV (header row, then one value per row)."""
-    from ._input_source import _seed_open
-    fh = _seed_open(path)
+    _p = Path(path)
+    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
+    fh = _provider_open(provider, name, path)
     if fh is None:
-        if not path.exists():
-            return []
-        fh = path.open()
+        return []
     csv = __import__("csv")
     with fh:
         reader = csv.reader(fh)
@@ -4030,6 +4261,8 @@ def _read_singles_csv(path: Path) -> list[str]:
 
 def _step_duration_frame(
     sd: Path, flex_data: "FlexData | None",
+    *,
+    provider: "object | None" = None,
 ) -> "pl.DataFrame | None":
     """Return the (period/d, time/t, value) frame for p_step_duration.
 
@@ -4041,16 +4274,18 @@ def _step_duration_frame(
     if flex_data is not None and getattr(flex_data, "p_step_duration", None) is not None:
         return flex_data.p_step_duration.frame
     p = sd / "p_step_duration.csv"
-    if not _seed_or_exists(p):
+    if not _provider_has(provider, "solve_data/p_step_duration", p):
         return None
     try:
-        return _read_csv_file(p)
+        return _provider_read(provider, "solve_data/p_step_duration", p)
     except pl.exceptions.NoDataError:
         return None
 
 
 def _realized_dispatch_frame(
     sd: Path, flex_data: "FlexData | None",
+    *,
+    provider: "object | None" = None,
 ) -> "pl.DataFrame | None":
     """Gap F final — prefer ``flex_data.realized_dispatch`` (in-memory)
     over the workdir's ``realized_dispatch.csv``.
@@ -4058,16 +4293,17 @@ def _realized_dispatch_frame(
     if flex_data is not None and getattr(flex_data, "realized_dispatch", None) is not None:
         return flex_data.realized_dispatch
     p = sd / "realized_dispatch.csv"
-    if not _seed_or_exists(p):
+    if not _provider_has(provider, "solve_data/realized_dispatch", p):
         return None
     try:
-        return _read_csv_file(p)
+        return _provider_read(provider, "solve_data/realized_dispatch", p)
     except pl.exceptions.NoDataError:
         return None
 
 
 def _extract_cum_sim_hours(
     sd: Path, *, prior_handoff=None, flex_data: "FlexData | None" = None,
+    provider: "object | None" = None,
 ) -> "pl.DataFrame | None":
     """Δ.11 — derive ``cum_sim_hours[period]`` from
     ``flex_data.p_step_duration`` (in-memory, when supplied) + the
@@ -4087,14 +4323,14 @@ def _extract_cum_sim_hours(
     Returns the wide ``[period, value]`` carrier frame, or ``None`` when
     neither prior nor the workdir's realized set contributes any rows.
     """
-    rd_df = _realized_dispatch_frame(sd, flex_data)
+    rd_df = _realized_dispatch_frame(sd, flex_data, provider=provider)
     realized: set[tuple[str, str]] = set()
     if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
         for r in rd_df.iter_rows(named=True):
             realized.add((str(r["period"]), str(r["step"])))
     this_roll_hrs: dict[str, float] = {}
     if realized:
-        sd_df = _step_duration_frame(sd, flex_data)
+        sd_df = _step_duration_frame(sd, flex_data, provider=provider)
         if sd_df is not None and sd_df.height > 0:
             d_col = "period" if "period" in sd_df.columns else (
                 "d" if "d" in sd_df.columns else None)
@@ -4125,6 +4361,7 @@ def _extract_cum_sim_hours(
 
 def _extract_cumulative_commodity(
     sol, sd: Path, *, prior_handoff=None, flex_data: "FlexData | None" = None,
+    provider: "object | None" = None,
 ) -> "pl.DataFrame | None":
     """Δ.11 — derive ``cumulative_commodity[c, i, d]`` from ``v_trade``
     on the LP solution + workdir-side accumulator metadata.
@@ -4158,9 +4395,9 @@ def _extract_cumulative_commodity(
         cilc_df = flex_data.ci_ladder_cumulative
     else:
         cilc_path = sd / "ci_ladder_cumulative.csv"
-        if _seed_or_exists(cilc_path):
+        if _provider_has(provider, "solve_data/ci_ladder_cumulative", cilc_path):
             try:
-                cilc_df = _read_csv_file(cilc_path)
+                cilc_df = _provider_read(provider, "solve_data/ci_ladder_cumulative", cilc_path)
             except pl.exceptions.NoDataError:
                 cilc_df = None
     if cilc_df is not None and cilc_df.height > 0:
@@ -4182,7 +4419,7 @@ def _extract_cumulative_commodity(
     # ``flex_data.realized_dispatch`` via ``_realized_dispatch_frame``.
     horizon_hrs: dict[str, float] = {}
     realized_hrs: dict[str, float] = {}
-    sd_df = _step_duration_frame(sd, flex_data)
+    sd_df = _step_duration_frame(sd, flex_data, provider=provider)
     if sd_df is not None and sd_df.height > 0:
         d_col = "period" if "period" in sd_df.columns else (
             "d" if "d" in sd_df.columns else None)
@@ -4193,7 +4430,7 @@ def _extract_cumulative_commodity(
             "p_step_duration" if "p_step_duration" in sd_df.columns else None
         )
         realized_set: set[tuple[str, str]] = set()
-        rd_df = _realized_dispatch_frame(sd, flex_data)
+        rd_df = _realized_dispatch_frame(sd, flex_data, provider=provider)
         if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
             for r in rd_df.iter_rows(named=True):
                 realized_set.add((str(r["period"]), str(r["step"])))
@@ -4216,9 +4453,9 @@ def _extract_cumulative_commodity(
         cu_df = flex_data.p_commodity_unitsize.frame
     else:
         cu_path = sd / "p_commodity_unitsize.csv"
-        if _seed_or_exists(cu_path):
+        if _provider_has(provider, "solve_data/p_commodity_unitsize", cu_path):
             try:
-                cu_df = _read_csv_file(cu_path)
+                cu_df = _provider_read(provider, "solve_data/p_commodity_unitsize", cu_path)
             except pl.exceptions.NoDataError:
                 cu_df = None
     if cu_df is not None and cu_df.height > 0:
@@ -4281,6 +4518,7 @@ def build_handoff_from_flexpy(
     *,
     flex_data: "FlexData | None" = None,
     parent_handoff=None,
+    provider: "object | None" = None,
 ):
     """Build a ``SolveHandoff`` from a flexpy ``Solution`` + the work
     folder's per-solve metadata, mirroring flextool's post-solve
@@ -4326,9 +4564,9 @@ def build_handoff_from_flexpy(
     from flextool.engine_polars._solve_handoff import SolveHandoff
 
     sd = work_folder / "solve_data"
-    first_solve = _read_solve_first(work_folder)
-    unitsize = _read_unitsize_long(work_folder)
-    pre_existing = _read_pre_existing_long(work_folder) if first_solve else {}
+    first_solve = _read_solve_first(work_folder, provider=provider)
+    unitsize = _read_unitsize_long(work_folder, provider=provider)
+    pre_existing = _read_pre_existing_long(work_folder, provider=provider) if first_solve else {}
 
     # Prior solve's accumulators — sourced from the in-memory handoff
     # carriers when supplied, else empty (multi-solve cascade always
@@ -4370,20 +4608,24 @@ def build_handoff_from_flexpy(
 
     # ---- iteration set: prior keys ∪ entity × iteration_periods ----
     realize_invest = _read_realize_invest_periods(
-        sd / "realized_invest_periods_of_current_solve.csv"
+        sd / "realized_invest_periods_of_current_solve.csv",
+        provider=provider,
     )
-    period_first = _read_period_set(sd / "period_first.csv")
+    period_first = _read_period_set(sd / "period_first.csv", provider=provider)
     if first_solve:
-        realized_periods = _read_realized_dispatch_periods(sd / "realized_dispatch.csv")
-        fix_storage_periods = _read_realized_dispatch_periods(sd / "fix_storage_timesteps.csv")
+        realized_periods = _read_realized_dispatch_periods(
+            sd / "realized_dispatch.csv", provider=provider)
+        fix_storage_periods = _read_realized_dispatch_periods(
+            sd / "fix_storage_timesteps.csv", provider=provider)
         iter_periods = realize_invest | realized_periods | fix_storage_periods
     else:
         iter_periods = set(realize_invest)
 
     iter_keys: set[tuple[str, str]] = set(prior_existing.keys())
-    entities = _read_singles_csv(sd / "entity.csv")
+    entities = _read_singles_csv(sd / "entity.csv", provider=provider)
     if not entities:
-        entities = _read_singles_csv(work_folder / "input" / "entity.csv")
+        entities = _read_singles_csv(work_folder / "input" / "entity.csv",
+                                       provider=provider)
     for e in entities:
         for d in iter_periods:
             iter_keys.add((e, d))
@@ -4419,7 +4661,8 @@ def build_handoff_from_flexpy(
         exist_rows.append((e, d, existing))
 
     # ---- divest_cumulative: prior + sum_d v_divest * unitsize ----
-    entity_divest = set(_read_singles_csv(sd / "entityDivest.csv"))
+    entity_divest = set(_read_singles_csv(sd / "entityDivest.csv",
+                                            provider=provider))
     div_rows: list[tuple[str, float]] = []
     for e in sorted(entity_divest):
         cum = prior_divested.get(e, 0.0) + divest_by_e.get(e, 0.0) * unitsize.get(e, 1.0)
@@ -4439,16 +4682,16 @@ def build_handoff_from_flexpy(
     # Using the horizon-end variant breaks rolling storage handoff: the next
     # roll starts from a wrong initial v_state.
     roll_end_state_df = None
-    nodes_state = _read_singles_csv(sd / "nodeState.csv")
+    nodes_state = _read_singles_csv(sd / "nodeState.csv", provider=provider)
     # Prefer ``flex_data.realized_dispatch`` (in-memory).
     last_pairs_df = None
     if flex_data is not None and getattr(flex_data, "realized_dispatch", None) is not None:
         last_pairs_df = flex_data.realized_dispatch
     else:
         rd_path = sd / "realized_dispatch.csv"
-        if _seed_or_exists(rd_path):
+        if _provider_has(provider, "solve_data/realized_dispatch", rd_path):
             try:
-                last_pairs_df = _read_csv_file(rd_path)
+                last_pairs_df = _provider_read(provider, "solve_data/realized_dispatch", rd_path)
             except pl.exceptions.NoDataError:
                 last_pairs_df = None
     if nodes_state and last_pairs_df is not None and "v_state" in sol._vars:
@@ -4503,9 +4746,9 @@ def build_handoff_from_flexpy(
         nsfm_df = flex_data.node__storage_nested_fix_method
     else:
         nsfm_path = sd / "node__storage_nested_fix_method.csv"
-        if _seed_or_exists(nsfm_path):
+        if _provider_has(provider, "solve_data/node__storage_nested_fix_method", nsfm_path):
             try:
-                nsfm_df = _read_csv_file(nsfm_path)
+                nsfm_df = _provider_read(provider, "solve_data/node__storage_nested_fix_method", nsfm_path)
             except pl.exceptions.NoDataError:
                 nsfm_df = None
     if nsfm_df is not None and nsfm_df.height > 0 and "method" in nsfm_df.columns:
@@ -4524,9 +4767,9 @@ def build_handoff_from_flexpy(
         fs_steps_df = parent_handoff.fix_storage_timesteps
     else:
         fix_steps_path = sd / "fix_storage_timesteps.csv"
-        if _seed_or_exists(fix_steps_path):
+        if _provider_has(provider, "solve_data/fix_storage_timesteps", fix_steps_path):
             try:
-                fs_steps_df = _read_csv_file(fix_steps_path)
+                fs_steps_df = _provider_read(provider, "solve_data/fix_storage_timesteps", fix_steps_path)
             except pl.exceptions.NoDataError:
                 fs_steps_df = None
     if (fq_nodes
@@ -4593,9 +4836,9 @@ def build_handoff_from_flexpy(
             used_native_co2 = True
     if not used_native_co2:
         co2_path = sd / "co2_cum_realized_tonnes.csv"
-        if _seed_or_exists(co2_path):
+        if _provider_has(provider, "solve_data/co2_cum_realized_tonnes", co2_path):
             try:
-                co2_df = _read_csv_file(co2_path)
+                co2_df = _provider_read(provider, "solve_data/co2_cum_realized_tonnes", co2_path)
             except pl.exceptions.NoDataError:
                 co2_df = None
             if co2_df is not None and co2_df.height > 0 and \
@@ -4623,7 +4866,8 @@ def build_handoff_from_flexpy(
     # (the LP didn't expose the variable for this fixture) — preserves
     # the legacy propagation path.
     cumulative_commodity_df = _extract_cumulative_commodity(
-        sol, sd, prior_handoff=prior_handoff, flex_data=flex_data)
+        sol, sd, prior_handoff=prior_handoff, flex_data=flex_data,
+        provider=provider)
     if cumulative_commodity_df is None:
         # Phase 4 (Gap F) — disk fallback retired.  When
         # ``_extract_cumulative_commodity`` returns None this solve had no
@@ -4650,7 +4894,8 @@ def build_handoff_from_flexpy(
     # the carrier exists for every chained fixture even when the ladder
     # itself is inactive (CO2-cap normalisation also consumes it).
     cum_sim_hours_df = _extract_cum_sim_hours(
-        sd, prior_handoff=prior_handoff, flex_data=flex_data)
+        sd, prior_handoff=prior_handoff, flex_data=flex_data,
+        provider=provider)
     if cum_sim_hours_df is None:
         # Phase 4 (Gap F) — disk fallback retired.  ``_extract_cum_sim_hours``
         # returns None only when this solve has zero realized timesteps
@@ -4693,10 +4938,11 @@ def build_handoff_from_flexpy(
             return None
         # Disk fallback for callers without parent_handoff.
         p = sd / name
-        if not _seed_or_exists(p):
+        key = f"solve_data/{Path(name).stem}"
+        if not _provider_has(provider, key, p):
             return None
         try:
-            df = _read_csv_file(p)
+            df = _provider_read(provider, key, p)
         except pl.exceptions.NoDataError:
             return None
         if df.height == 0 or value_col not in df.columns:
@@ -4757,7 +5003,8 @@ def build_handoff_from_flexpy(
 def _overlay_handoff(flex_data: "FlexData", handoff,
                        solve_data_dir: Path | None = None,
                        *,
-                       ctx: "object | None" = None) -> "FlexData":
+                       ctx: "object | None" = None,
+                       provider: "object | None" = None) -> "FlexData":
     """Δ.11 — internal helper used by :func:`load_flextool` to overlay an
     in-memory :class:`SolveHandoff` onto the FlexData built from disk.
 
@@ -4815,7 +5062,8 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
     # when the disk file is suppressed).
     if (handoff.realized_invest is not None
             and solve_data_dir is not None
-            and _seed_or_exists(solve_data_dir / "edd_history.csv")):
+            and _provider_has(provider, "solve_data/edd_history",
+                                solve_data_dir / "edd_history.csv")):
         # Build the (e, d_h) → realized_invest dict.
         ppic: dict[tuple[str, str], float] = {}
         for r in handoff.realized_invest.iter_rows(named=True):
@@ -4823,8 +5071,8 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
         # ed_history_realized = keys(ppic) ∪ ed_history_realized_first.csv.
         ed_realized: set[tuple[str, str]] = set(ppic.keys())
         ehrf_path = solve_data_dir / "ed_history_realized_first.csv"
-        if _seed_or_exists(ehrf_path):
-            ehrf = _read_csv_file(ehrf_path)
+        if _provider_has(provider, "solve_data/ed_history_realized_first", ehrf_path):
+            ehrf = _provider_read(provider, "solve_data/ed_history_realized_first", ehrf_path)
             if ehrf.height > 0:
                 for r in ehrf.iter_rows(named=True):
                     ed_realized.add((str(r["entity"]), str(r["period"])))
