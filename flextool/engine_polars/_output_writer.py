@@ -246,16 +246,19 @@ def write_outputs_for_solve(
     realized_dispatch_csv = sd / "realized_dispatch.csv"
     realized_periods_csv = sd / "realized_invest_periods_of_current_solve.csv"
 
+    # Phase E-f — seed-aware existence: under csv_emission_disabled() the
+    # file isn't on disk but the per-sub-solve seed has the frame.
+    from flextool.engine_polars._input_source import _seed_or_exists
     try:
         write_all_variables(
             h,
             solve_name=roll_name,
             output_dir=output_dir,
             realized_dispatch_csv=(
-                realized_dispatch_csv if realized_dispatch_csv.exists() else None
+                realized_dispatch_csv if _seed_or_exists(realized_dispatch_csv) else None
             ),
             realized_periods_csv=(
-                realized_periods_csv if realized_periods_csv.exists() else None
+                realized_periods_csv if _seed_or_exists(realized_periods_csv) else None
             ),
             # Phase G — route in-memory carriers through to the
             # extractor + custom writers so per-iter file reads

@@ -159,6 +159,52 @@ def _seed_lookup_positional(
     return out
 
 
+def _seed_or_pick(*paths: "Path | str") -> "Path | None":
+    """Phase E-f — return the first ``Path`` in *paths* for which the
+    seed has a frame OR the file exists on disk; ``None`` if none.
+
+    Use as the seed-aware replacement for inline patterns like::
+
+        (sd / "x.csv") if (sd / "x.csv").exists() else (inp / "x.csv")
+
+    where the caller would then read whichever exists.  Under
+    :func:`csv_emission_disabled`, the disk file may be absent for the
+    basenames the seed covers — but the seed has the frame under the
+    parent-qualified key (``"solve_data/x.csv"`` vs ``"input/x.csv"``),
+    so we MUST pick the seeded variant to feed the seed-aware reader
+    chain.
+    """
+    for p in paths:
+        if _seed_lookup(p) is not None or Path(p).exists():
+            return Path(p)
+    return None
+
+
+def _seed_or_exists(path: "Path | str") -> bool:
+    """Phase E-f — return True iff the seed has a frame for *path* or the
+    file exists on disk.
+
+    Use as the seed-aware replacement for the bare ``path.exists()``
+    guard at the head of loader-side ``_read_*`` / ``_load_*`` /
+    ``_slice_*`` helpers.  When True, the caller should then read via
+    :func:`_read_csv_file` (which itself is seed-aware) or the helper's
+    existing disk path.  When False, the file is genuinely missing and
+    the caller should return its missing-file sentinel (``None`` /
+    empty frame / sentinel tuple).
+
+    This makes the loader-side reads runnable under
+    :func:`csv_emission_disabled` for the basenames covered by the
+    active per-sub-solve seed — the same gate Phase E-e wired for the
+    writer-side ``csv.reader`` sites.
+
+    When no seed is active the behaviour collapses to ``path.exists()``,
+    so the csv-emission-on path is byte-identical to pre-Phase-E-f.
+    """
+    if _seed_lookup(path) is not None:
+        return True
+    return Path(path).exists()
+
+
 def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     """Single residual ``polars.read_csv`` site for the engine_polars
     package.

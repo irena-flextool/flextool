@@ -107,7 +107,15 @@ def _load_pre_existing(work_folder: Path) -> dict[tuple[str, str], float]:
     level is collapsed — the same value applies for any solve.
     """
     path = work_folder / "solve_data" / "solve__p_entity_pre_existing.csv"
-    df = pd.read_csv(path, index_col=[0, 1])
+    # Phase E-f — seed-aware: read from in-memory seed if available
+    # under csv_emission_disabled().
+    from flextool.engine_polars._input_source import _seed_open
+    fh = _seed_open(path)
+    if fh is None:
+        df = pd.read_csv(path, index_col=[0, 1])
+    else:
+        df = pd.read_csv(fh, index_col=[0, 1])
+        fh.close()
     if df.empty:
         return {}
     df = df.droplevel(0)  # drop solve level → period only
@@ -767,15 +775,29 @@ def write_p_entity_period_existing_capacity(
         work_folder / "solve_data" / "realized_invest_periods_of_current_solve.csv"
     ) or set()
     if first_solve:
+        from flextool.engine_polars._input_source import (
+            _seed_lookup as _seed_lookup_E_f,
+        )
         realized_periods: set[str] = set()
         rd_path = work_folder / "solve_data" / "realized_dispatch.csv"
-        if rd_path.exists():
+        _seeded_rd = _seed_lookup_E_f(rd_path)
+        if _seeded_rd is not None:
+            realized_periods.update(
+                _seeded_rd["period"].cast(str).unique().to_list()
+            )
+        elif rd_path.exists():
             realized_periods.update(
                 pd.read_csv(rd_path)["period"].astype(str).unique()
             )
         fix_storage_periods: set[str] = set()
         fs_path = work_folder / "solve_data" / "fix_storage_timesteps.csv"
-        if fs_path.exists():
+        _seeded_fs = _seed_lookup_E_f(fs_path)
+        if _seeded_fs is not None:
+            if _seeded_fs.height > 0:
+                fix_storage_periods.update(
+                    _seeded_fs["period"].cast(str).unique().to_list()
+                )
+        elif fs_path.exists():
             fs_df = pd.read_csv(fs_path)
             if not fs_df.empty:
                 fix_storage_periods.update(fs_df["period"].astype(str).unique())

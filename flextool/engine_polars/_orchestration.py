@@ -1088,16 +1088,35 @@ def _drive_cascade(
                     self.state.last_captured_solve is None
                     or len(self.state.handoffs or {}) == 0
                 )
-                write_outputs_for_solve(
-                    sol,
-                    work_folder=self.state.paths.work_folder,
-                    solve_name=complete_solve_name,
-                    prior_handoff=prior,
-                    writer_state=writer_state,
-                    flex_data=data,
-                    is_first_solve=_is_first,
-                    scale_the_objective=effective_obj_scale,
+                # Phase E-f — install per-sub-solve seed so the
+                # ``write_outputs_for_solve`` chain (which contains
+                # multiple ``solve_data/*.csv`` reads, including
+                # ``_actual_solve_name`` / ``_load_realized_set``) hits
+                # the in-memory frames under ``csv_emission_disabled()``.
+                from flextool.engine_polars._input_source import (
+                    _install_seed as _install_seed_wofs,
                 )
+                import flextool.engine_polars._input_source as _is_mod_wofs
+                _prior_seed_wofs = _is_mod_wofs._active_seed
+                _accum_wofs = getattr(
+                    self.state, "current_accumulator", None,
+                )
+                if _accum_wofs is not None:
+                    _install_seed_wofs(_accum_wofs)
+                try:
+                    write_outputs_for_solve(
+                        sol,
+                        work_folder=self.state.paths.work_folder,
+                        solve_name=complete_solve_name,
+                        prior_handoff=prior,
+                        writer_state=writer_state,
+                        flex_data=data,
+                        is_first_solve=_is_first,
+                        scale_the_objective=effective_obj_scale,
+                    )
+                finally:
+                    if _accum_wofs is not None:
+                        _install_seed_wofs(_prior_seed_wofs)
             except Exception as exc:  # noqa: BLE001
                 self.state.logger.warning(
                     f"write_outputs_for_solve failed for "
@@ -1180,9 +1199,26 @@ def _drive_cascade(
             from flextool.process_outputs.read_highs_solution import (
                 _actual_solve_name,
             )
-            step_key = _actual_solve_name(
-                self.state.paths.work_folder, complete_solve_name,
+            # Phase E-f — under csv_emission_disabled() the
+            # ``solve_data/solve_current.csv`` file is not on disk; consult
+            # the per-sub-solve seed first.  Restore the live seed value
+            # around the call so :func:`_seed_lookup` inside
+            # ``_actual_solve_name`` sees the latest accumulator.
+            from flextool.engine_polars._input_source import (
+                _install_seed as _install_seed_E_f,
             )
+            import flextool.engine_polars._input_source as _is_mod_E_f
+            _prior_seed_E_f = _is_mod_E_f._active_seed
+            _accum_for_name = getattr(self.state, "current_accumulator", None)
+            if _accum_for_name is not None:
+                _install_seed_E_f(_accum_for_name)
+            try:
+                step_key = _actual_solve_name(
+                    self.state.paths.work_folder, complete_solve_name,
+                )
+            finally:
+                if _accum_for_name is not None:
+                    _install_seed_E_f(_prior_seed_E_f)
             # Phase C — pluck the per-sub-solve writer-frame accumulator
             # off state.  ``_native_run_model`` populates this just before
             # ``solver.run`` returns control; it is the latest sub-solve's

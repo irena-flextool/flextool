@@ -382,6 +382,17 @@ def _load_realized_set(
     if realized_dispatch_csv is None:
         return None
     path = Path(realized_dispatch_csv)
+    # Phase E-f — seed-aware: under csv_emission_disabled() the file isn't
+    # on disk but the per-sub-solve seed has the frame.
+    from flextool.engine_polars._input_source import _seed_lookup
+    seeded = _seed_lookup(path)
+    if seeded is not None:
+        period_col = "period"
+        time_col = "step" if "step" in seeded.columns else "time"
+        return set(zip(
+            seeded[period_col].cast(str).to_list(),
+            seeded[time_col].cast(str).to_list(),
+        ))
     if not path.exists():
         _logger.warning("realized_dispatch file missing, writing all timesteps: %s", path)
         return None
@@ -409,6 +420,15 @@ def _load_realized_list(
     if realized_dispatch_csv is None:
         return None
     path = Path(realized_dispatch_csv)
+    from flextool.engine_polars._input_source import _seed_lookup
+    seeded = _seed_lookup(path)
+    if seeded is not None:
+        period_col = "period"
+        time_col = "step" if "step" in seeded.columns else "time"
+        return list(zip(
+            seeded[period_col].cast(str).to_list(),
+            seeded[time_col].cast(str).to_list(),
+        ))
     if not path.exists():
         return None
     realized = pd.read_csv(path)
@@ -429,6 +449,10 @@ def _load_realized_periods(
     if realized_periods_csv is None:
         return None
     path = Path(realized_periods_csv)
+    from flextool.engine_polars._input_source import _seed_lookup
+    seeded = _seed_lookup(path)
+    if seeded is not None:
+        return set(seeded["period"].cast(str).to_list())
     if not path.exists():
         _logger.warning("realized periods file missing, writing all periods: %s", path)
         return None
@@ -1639,6 +1663,14 @@ def _actual_solve_name(work_folder: Path, fallback: str) -> str:
     with phase 3's.
     """
     path = work_folder / "solve_data" / "solve_current.csv"
+    # Phase E-f — seed-aware: under csv_emission_disabled() the file isn't
+    # on disk, but the per-sub-solve seed has the frame.
+    from flextool.engine_polars._input_source import _seed_lookup
+    seeded = _seed_lookup(path)
+    if seeded is not None:
+        if seeded.height == 0 or len(seeded.columns) == 0:
+            return fallback
+        return str(seeded[0, 0])
     if not path.exists():
         return fallback
     df = pd.read_csv(path)
