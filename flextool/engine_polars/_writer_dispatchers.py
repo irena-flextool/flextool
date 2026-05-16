@@ -136,99 +136,196 @@ from flextool.flextoolrunner.preprocessing._method_constants import (  # noqa: E
 # write_process_arc_unions — top-level dispatcher own-compute.
 # Mirrors flextool.flextoolrunner.preprocessing.process_arc_unions
 # .write_process_arc_unions lines 80-293 of the legacy module.
+#
+# Phase E-b lift: each of the 14 emitted CSVs flows through ``_write``
+# (via a private ``_compute_*`` helper) so the accumulator monkey-patch
+# captures every frame.  Public ``derive_*`` functions are exposed for
+# standalone seed lookups; the wrapper builds the shared input bundle
+# once and threads intermediate frames so dependent CSVs don't re-scan.
 # ---------------------------------------------------------------------------
 
 
-def write_process_arc_unions(input_dir: Path, solve_data_dir: Path) -> None:
-    """Migrate the 14-set L1 arc-union batch in dependency order.
+def _to_frame(rows, header: tuple[str, ...]) -> pl.DataFrame:
+    """Dedup rows + materialise as an all-Utf8 polars frame.
 
-    Byte-for-byte mirror of the legacy emitter.
+    ``polars.write_csv`` on an all-Utf8 frame produces byte-identical
+    output to the legacy ``_write_csv`` helper for plain ASCII data
+    (the same shape the dispatcher operates on).
     """
+    deduped = list(dict.fromkeys(tuple(r) for r in rows))
+    cols = {h: [r[i] for r in deduped] for i, h in enumerate(header)}
+    return pl.DataFrame(cols, schema={h: pl.Utf8 for h in header})
+
+
+def _arc_unions_inputs(input_dir: Path, solve_data_dir: Path) -> dict:
+    """Shared input bundle for the 14 derive_* in this monolith."""
     METHOD_INDIRECT = _METHOD_INDIRECT
     METHOD_DIRECT = _METHOD_DIRECT
-
-    # ---- 1) process__profileProcess__toSink (project from 5-tuple set)
-    five_tuple_to_sink = _read_n_col(
-        solve_data_dir
-        / "process__profileProcess__toSink__profile__profile_method.csv",
-        5,
-    )
-    profile_to_sink_3 = list(dict.fromkeys(
-        (p_outer, p, sink) for p_outer, p, sink, _f, _fm in five_tuple_to_sink
-    ))
-    _write_csv(
-        solve_data_dir / "process__profileProcess__toSink.csv",
-        ("process_outer", "process", "sink"),
-        profile_to_sink_3,
-    )
-
-    # ---- 2) process__source__toProfileProcess (project from 5-tuple set)
-    five_tuple_to_source = _read_n_col(
-        solve_data_dir
-        / "process__source__toProfileProcess__profile__profile_method.csv",
-        5,
-    )
-    source_to_profile_3 = list(dict.fromkeys(
-        (p, source, p_aux) for p, source, p_aux, _f, _fm in five_tuple_to_source
-    ))
-    _write_csv(
-        solve_data_dir / "process__source__toProfileProcess.csv",
-        ("process", "source", "process_aux"),
-        source_to_profile_3,
-    )
-
-    # ---- 3) process_profile = setof p from (1) ∪ setof p from (2)
-    seen_profile: dict[str, None] = {}
-    for p, _, _ in source_to_profile_3:
-        seen_profile.setdefault(p, None)
-    for p, _, _ in profile_to_sink_3:
-        seen_profile.setdefault(p, None)
-    _write_csv(
-        solve_data_dir / "process_profile.csv",
-        ("process",),
-        [(p,) for p in seen_profile.keys()],
-    )
-
-    # ---- 4) process_source_toProcess
     process_method = _read_pairs(input_dir / "process_method.csv")
     sources = _read_pairs(input_dir / "process__source.csv")
     sinks = _read_pairs(input_dir / "process__sink.csv")
-    p_with_indirect = frozenset(p for p, m in process_method if m in METHOD_INDIRECT)
-    p_with_direct = frozenset(p for p, m in process_method if m in METHOD_DIRECT)
-    has_sink = frozenset(p for p, _ in sinks)
-    has_source = frozenset(p for p, _ in sources)
-    excluded_to_profile = frozenset(source_to_profile_3)
-    rows_source_toProcess: list[tuple[str, str, str]] = []
-    for p, source in sources:
-        if p in p_with_indirect:
-            rows_source_toProcess.append((p, source, p))
-        elif (p in p_with_direct
-              and p not in has_sink
+    return {
+        "process_method": process_method,
+        "sources": sources,
+        "sinks": sinks,
+        "p_with_indirect": frozenset(
+            p for p, m in process_method if m in METHOD_INDIRECT),
+        "p_with_direct": frozenset(
+            p for p, m in process_method if m in METHOD_DIRECT),
+        "has_sink": frozenset(p for p, _ in sinks),
+        "has_source": frozenset(p for p, _ in sources),
+        "processes": _read_singles(input_dir / "process.csv"),
+        "five_tuple_to_sink": _read_n_col(
+            solve_data_dir
+            / "process__profileProcess__toSink__profile__profile_method.csv",
+            5,
+        ),
+        "five_tuple_to_source": _read_n_col(
+            solve_data_dir
+            / "process__source__toProfileProcess__profile__profile_method.csv",
+            5,
+        ),
+        "input_dir": input_dir,
+        "solve_data_dir": solve_data_dir,
+    }
+
+
+# ---- (1) process__profileProcess__toSink ------------------------------------
+
+def _profile_to_sink_3(inp: dict) -> list[tuple[str, str, str]]:
+    return list(dict.fromkeys(
+        (p_outer, p, sink)
+        for p_outer, p, sink, _f, _fm in inp["five_tuple_to_sink"]
+    ))
+
+
+def _compute_process__profileProcess__toSink(inp: dict) -> pl.DataFrame:
+    return _to_frame(
+        _profile_to_sink_3(inp), ("process_outer", "process", "sink"),
+    )
+
+
+def derive_process__profileProcess__toSink(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process__profileProcess__toSink.csv`` — 3-col projection from
+    the 5-tuple ``process__profileProcess__toSink__profile__profile_method``."""
+    return _compute_process__profileProcess__toSink(
+        _arc_unions_inputs(input_dir, solve_data_dir),
+    )
+
+
+# ---- (2) process__source__toProfileProcess ----------------------------------
+
+def _source_to_profile_3(inp: dict) -> list[tuple[str, str, str]]:
+    return list(dict.fromkeys(
+        (p, source, p_aux)
+        for p, source, p_aux, _f, _fm in inp["five_tuple_to_source"]
+    ))
+
+
+def _compute_process__source__toProfileProcess(inp: dict) -> pl.DataFrame:
+    return _to_frame(
+        _source_to_profile_3(inp), ("process", "source", "process_aux"),
+    )
+
+
+def derive_process__source__toProfileProcess(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process__source__toProfileProcess.csv`` — 3-col projection from
+    the 5-tuple ``process__source__toProfileProcess__profile__profile_method``."""
+    return _compute_process__source__toProfileProcess(
+        _arc_unions_inputs(input_dir, solve_data_dir),
+    )
+
+
+# ---- (3) process_profile ----------------------------------------------------
+
+def _compute_process_profile(inp: dict) -> pl.DataFrame:
+    seen: dict[str, None] = {}
+    for p, _, _ in _source_to_profile_3(inp):
+        seen.setdefault(p, None)
+    for p, _, _ in _profile_to_sink_3(inp):
+        seen.setdefault(p, None)
+    return _to_frame([(p,) for p in seen.keys()], ("process",))
+
+
+def derive_process_profile(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_profile.csv`` — set of ``process`` appearing in either
+    profile-source or profile-sink projections."""
+    return _compute_process_profile(
+        _arc_unions_inputs(input_dir, solve_data_dir),
+    )
+
+
+# ---- (4) process_source_toProcess + (5) process_process_toSink --------------
+
+def _rows_source_toProcess(inp: dict) -> list[tuple[str, str, str]]:
+    excluded_to_profile = frozenset(_source_to_profile_3(inp))
+    rows: list[tuple[str, str, str]] = []
+    for p, source in inp["sources"]:
+        if p in inp["p_with_indirect"]:
+            rows.append((p, source, p))
+        elif (p in inp["p_with_direct"]
+              and p not in inp["has_sink"]
               and (p, source, p) not in excluded_to_profile):
-            rows_source_toProcess.append((p, source, p))
-    _write_csv(
-        solve_data_dir / "process_source_toProcess.csv",
-        ("process", "source", "process_aux"),
-        list(dict.fromkeys(rows_source_toProcess)),
-    )
+            rows.append((p, source, p))
+    return list(dict.fromkeys(rows))
 
-    # ---- 5) process_process_toSink (symmetric)
-    excluded_profile_to_sink = frozenset(profile_to_sink_3)
-    rows_process_toSink: list[tuple[str, str, str]] = []
-    for p, sink in sinks:
-        if p in p_with_indirect:
-            rows_process_toSink.append((p, p, sink))
-        elif (p in p_with_direct
-              and p not in has_source
+
+def _rows_process_toSink(inp: dict) -> list[tuple[str, str, str]]:
+    excluded_profile_to_sink = frozenset(_profile_to_sink_3(inp))
+    rows: list[tuple[str, str, str]] = []
+    for p, sink in inp["sinks"]:
+        if p in inp["p_with_indirect"]:
+            rows.append((p, p, sink))
+        elif (p in inp["p_with_direct"]
+              and p not in inp["has_source"]
               and (p, p, sink) not in excluded_profile_to_sink):
-            rows_process_toSink.append((p, p, sink))
-    _write_csv(
-        solve_data_dir / "process_process_toSink.csv",
-        ("process_outer", "process", "sink"),
-        list(dict.fromkeys(rows_process_toSink)),
+            rows.append((p, p, sink))
+    return list(dict.fromkeys(rows))
+
+
+def _compute_process_source_toProcess(inp: dict) -> pl.DataFrame:
+    return _to_frame(
+        _rows_source_toProcess(inp), ("process", "source", "process_aux"),
     )
 
-    # ---- 6) process_source_sink_eff = source_toSink ∪ sink_toSource
+
+def _compute_process_process_toSink(inp: dict) -> pl.DataFrame:
+    return _to_frame(
+        _rows_process_toSink(inp), ("process_outer", "process", "sink"),
+    )
+
+
+def derive_process_source_toProcess(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_source_toProcess.csv`` — METHOD_INDIRECT or METHOD_DIRECT
+    sources gated by exclusion from the profile projection."""
+    return _compute_process_source_toProcess(
+        _arc_unions_inputs(input_dir, solve_data_dir),
+    )
+
+
+def derive_process_process_toSink(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_process_toSink.csv`` — symmetric counterpart of
+    process_source_toProcess for sinks."""
+    return _compute_process_process_toSink(
+        _arc_unions_inputs(input_dir, solve_data_dir),
+    )
+
+
+# ---- (6) process_source_sink_eff -------------------------------------------
+
+def _compute_process_source_sink_eff(
+    solve_data_dir: Path,
+) -> pl.DataFrame:
     sst = _read_n_col(solve_data_dir / "process_source_toSink.csv", 3)
     sts = _read_n_col(solve_data_dir / "process_sink_toSource.csv", 3)
     union: dict[tuple[str, ...], None] = {}
@@ -236,136 +333,243 @@ def write_process_arc_unions(input_dir: Path, solve_data_dir: Path) -> None:
         union.setdefault(r, None)
     for r in sts:
         union.setdefault(r, None)
-    _write_csv(
-        solve_data_dir / "process_source_sink_eff.csv",
-        ("process", "source", "sink"),
-        list(union.keys()),
-    )
+    return _to_frame(list(union.keys()), ("process", "source", "sink"))
 
-    # ---- 7) process_source_sink_noEff = 8-way union
-    src_to_proc = rows_source_toProcess
-    proc_to_snk = rows_process_toSink
-    snk_to_proc = _read_n_col(solve_data_dir / "process_sink_toProcess.csv", 3)
-    proc_to_src = _read_n_col(solve_data_dir / "process_process_toSource.csv", 3)
-    proc_to_snk_noConv = _read_n_col(
-        solve_data_dir / "process_process_toSink_noConversion.csv", 3
-    )
-    src_to_proc_noConv = _read_n_col(
-        solve_data_dir / "process_source_toProcess_noConversion.csv", 3
-    )
+
+def derive_process_source_sink_eff(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_source_sink_eff.csv`` — union of ``process_source_toSink``
+    and ``process_sink_toSource``."""
+    return _compute_process_source_sink_eff(solve_data_dir)
+
+
+# ---- Helper: shared 6-list bundle for 7/12/13 -------------------------------
+
+def _disk_arc_lists(solve_data_dir: Path) -> dict:
+    return {
+        "sst": _read_n_col(solve_data_dir / "process_source_toSink.csv", 3),
+        "sts": _read_n_col(solve_data_dir / "process_sink_toSource.csv", 3),
+        "snk_to_proc": _read_n_col(
+            solve_data_dir / "process_sink_toProcess.csv", 3),
+        "proc_to_src": _read_n_col(
+            solve_data_dir / "process_process_toSource.csv", 3),
+        "proc_to_snk_noConv": _read_n_col(
+            solve_data_dir / "process_process_toSink_noConversion.csv", 3),
+        "src_to_proc_noConv": _read_n_col(
+            solve_data_dir / "process_source_toProcess_noConversion.csv", 3),
+    }
+
+
+# ---- (7) process_source_sink_noEff -----------------------------------------
+
+def _compute_process_source_sink_noEff(
+    inp: dict, disk: dict,
+) -> pl.DataFrame:
+    src_to_proc = _rows_source_toProcess(inp)
+    proc_to_snk = _rows_process_toSink(inp)
+    profile_to_sink_3 = _profile_to_sink_3(inp)
+    source_to_profile_3 = _source_to_profile_3(inp)
     union2: dict[tuple[str, ...], None] = {}
-    for src in (src_to_proc, proc_to_snk, snk_to_proc, proc_to_src,
-                profile_to_sink_3, source_to_profile_3,
-                proc_to_snk_noConv, src_to_proc_noConv):
+    for src in (src_to_proc, proc_to_snk, disk["snk_to_proc"],
+                disk["proc_to_src"], profile_to_sink_3, source_to_profile_3,
+                disk["proc_to_snk_noConv"], disk["src_to_proc_noConv"]):
         for r in src:
             union2.setdefault(tuple(r), None)
-    _write_csv(
-        solve_data_dir / "process_source_sink_noEff.csv",
-        ("process", "source", "sink"),
-        list(union2.keys()),
+    return _to_frame(list(union2.keys()), ("process", "source", "sink"))
+
+
+def derive_process_source_sink_noEff(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_source_sink_noEff.csv`` — 8-way union over arc relations."""
+    return _compute_process_source_sink_noEff(
+        _arc_unions_inputs(input_dir, solve_data_dir),
+        _disk_arc_lists(solve_data_dir),
     )
 
-    # ---- 8) process_online = online_linear ∪ online_integer
+
+# ---- (8) process_online ----------------------------------------------------
+
+def _compute_process_online(solve_data_dir: Path) -> pl.DataFrame:
     a = _read_singles(solve_data_dir / "process_online_linear.csv")
     b = _read_singles(solve_data_dir / "process_online_integer.csv")
-    seen_o: dict[str, None] = {}
+    seen: dict[str, None] = {}
     for p in a + b:
-        seen_o.setdefault(p, None)
-    _write_csv(
-        solve_data_dir / "process_online.csv",
-        ("process",),
-        [(p,) for p in seen_o.keys()],
-    )
+        seen.setdefault(p, None)
+    return _to_frame([(p,) for p in seen.keys()], ("process",))
 
-    # ---- 9) process_minload — filter on process__ct_method
+
+def derive_process_online(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_online.csv`` — union of online_linear and online_integer."""
+    return _compute_process_online(solve_data_dir)
+
+
+# ---- (9) process_minload ---------------------------------------------------
+
+def _compute_process_minload(inp: dict, solve_data_dir: Path) -> pl.DataFrame:
     ctm = _read_pairs(solve_data_dir / "process__ct_method.csv")
-    p_with_min_load = frozenset(p for p, m in ctm if m == "min_load_efficiency")
-    processes = _read_singles(input_dir / "process.csv")
-    minload = [p for p in processes if p in p_with_min_load]
-    _write_csv(
-        solve_data_dir / "process_minload.csv",
-        ("process",),
-        [(p,) for p in minload],
+    p_with_min_load = frozenset(
+        p for p, m in ctm if m == "min_load_efficiency"
+    )
+    minload = [p for p in inp["processes"] if p in p_with_min_load]
+    return _to_frame([(p,) for p in minload], ("process",))
+
+
+def derive_process_minload(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_minload.csv`` — processes whose ct_method is
+    ``min_load_efficiency``, ordered by ``process.csv`` ordering."""
+    return _compute_process_minload(
+        _arc_unions_inputs(input_dir, solve_data_dir), solve_data_dir,
     )
 
-    # ---- 10) process__commodity__node_co2
+
+# ---- (10) process__commodity__node_co2 + (11) process_co2 ------------------
+
+def _rows_pcn_co2(inp: dict, solve_data_dir: Path) -> list[tuple[str, str, str]]:
     cn_co2 = _read_pairs(solve_data_dir / "commodity_node_co2.csv")
     arc_endpoints_acc: dict[str, dict[str, None]] = {}
-    for p, n in sources + sinks:
+    for p, n in inp["sources"] + inp["sinks"]:
         arc_endpoints_acc.setdefault(p, {})[n] = None
     arc_endpoints: dict[str, frozenset[str]] = {
         p: frozenset(d.keys()) for p, d in arc_endpoints_acc.items()
     }
-    rows_pcn_co2: list[tuple[str, str, str]] = []
-    for p in processes:
+    rows: list[tuple[str, str, str]] = []
+    for p in inp["processes"]:
         nodes_for_p = arc_endpoints.get(p, frozenset())
         for c, n in cn_co2:
             if n in nodes_for_p:
-                rows_pcn_co2.append((p, c, n))
-    _write_csv(
-        solve_data_dir / "process__commodity__node_co2.csv",
+                rows.append((p, c, n))
+    return list(dict.fromkeys(rows))
+
+
+def _compute_process__commodity__node_co2(
+    inp: dict, solve_data_dir: Path,
+) -> pl.DataFrame:
+    return _to_frame(
+        _rows_pcn_co2(inp, solve_data_dir),
         ("process", "commodity", "node"),
-        list(dict.fromkeys(rows_pcn_co2)),
     )
 
-    # ---- 11) process_co2 = setof p from process__commodity__node_co2
-    seen_pco2: dict[str, None] = {}
-    for p, _, _ in rows_pcn_co2:
-        seen_pco2.setdefault(p, None)
-    _write_csv(
-        solve_data_dir / "process_co2.csv",
-        ("process",),
-        [(p,) for p in seen_pco2.keys()],
+
+def _compute_process_co2(inp: dict, solve_data_dir: Path) -> pl.DataFrame:
+    seen: dict[str, None] = {}
+    for p, _, _ in _rows_pcn_co2(inp, solve_data_dir):
+        seen.setdefault(p, None)
+    return _to_frame([(p,) for p in seen.keys()], ("process",))
+
+
+def derive_process__commodity__node_co2(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process__commodity__node_co2.csv`` — process-commodity-node
+    triples where the node is a CO2 commodity node and the process touches
+    that node via either a source or sink."""
+    return _compute_process__commodity__node_co2(
+        _arc_unions_inputs(input_dir, solve_data_dir), solve_data_dir,
     )
 
-    # ---- 12) process_source_sink (10-way union)
+
+def derive_process_co2(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_co2.csv`` — set of ``process`` from process__commodity__node_co2."""
+    return _compute_process_co2(
+        _arc_unions_inputs(input_dir, solve_data_dir), solve_data_dir,
+    )
+
+
+# ---- (12) process_source_sink ----------------------------------------------
+
+def _compute_process_source_sink(
+    inp: dict, disk: dict,
+) -> pl.DataFrame:
+    src_to_proc = _rows_source_toProcess(inp)
+    proc_to_snk = _rows_process_toSink(inp)
+    profile_to_sink_3 = _profile_to_sink_3(inp)
+    source_to_profile_3 = _source_to_profile_3(inp)
     pss_union: dict[tuple[str, ...], None] = {}
-    for r in (sst + sts + src_to_proc + proc_to_snk
-              + snk_to_proc + proc_to_src
+    for r in (disk["sst"] + disk["sts"] + src_to_proc + proc_to_snk
+              + disk["snk_to_proc"] + disk["proc_to_src"]
               + profile_to_sink_3 + source_to_profile_3
-              + proc_to_snk_noConv + src_to_proc_noConv):
+              + disk["proc_to_snk_noConv"] + disk["src_to_proc_noConv"]):
         pss_union.setdefault(tuple(r), None)
-    _write_csv(
-        solve_data_dir / "process_source_sink.csv",
-        ("process", "source", "sink"),
-        list(pss_union.keys()),
+    return _to_frame(list(pss_union.keys()), ("process", "source", "sink"))
+
+
+def derive_process_source_sink(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_source_sink.csv`` — 10-way union of every (process,
+    source, sink) triple appearing across the eff/noEff/profile families."""
+    return _compute_process_source_sink(
+        _arc_unions_inputs(input_dir, solve_data_dir),
+        _disk_arc_lists(solve_data_dir),
     )
 
-    # ---- 13) process_source_sink_alwaysProcess
+
+# ---- (13) process_source_sink_alwaysProcess --------------------------------
+
+def _compute_process_source_sink_alwaysProcess(
+    inp: dict, disk: dict, solve_data_dir: Path,
+) -> pl.DataFrame:
+    src_to_proc = _rows_source_toProcess(inp)
+    proc_to_snk = _rows_process_toSink(inp)
+    profile_to_sink_3 = _profile_to_sink_3(inp)
+    source_to_profile_3 = _source_to_profile_3(inp)
     src_to_proc_d = _read_n_col(
-        solve_data_dir / "process_source_toProcess_direct.csv", 3
+        solve_data_dir / "process_source_toProcess_direct.csv", 3,
     )
     proc_to_snk_d = _read_n_col(
-        solve_data_dir / "process_process_toSink_direct.csv", 3
+        solve_data_dir / "process_process_toSink_direct.csv", 3,
     )
     snk_to_proc_d = _read_n_col(
-        solve_data_dir / "process_sink_toProcess_direct.csv", 3
+        solve_data_dir / "process_sink_toProcess_direct.csv", 3,
     )
     proc_to_src_d = _read_n_col(
-        solve_data_dir / "process_process_toSource_direct.csv", 3
+        solve_data_dir / "process_process_toSource_direct.csv", 3,
     )
     pssa: dict[tuple[str, ...], None] = {}
     for r in (src_to_proc_d + proc_to_snk_d + snk_to_proc_d + proc_to_src_d
-              + src_to_proc + proc_to_snk + snk_to_proc + proc_to_src
+              + src_to_proc + proc_to_snk
+              + disk["snk_to_proc"] + disk["proc_to_src"]
               + profile_to_sink_3 + source_to_profile_3
-              + proc_to_snk_noConv + src_to_proc_noConv):
+              + disk["proc_to_snk_noConv"] + disk["src_to_proc_noConv"]):
         pssa.setdefault(tuple(r), None)
-    _write_csv(
-        solve_data_dir / "process_source_sink_alwaysProcess.csv",
-        ("process", "source", "sink"),
-        list(pssa.keys()),
+    return _to_frame(list(pssa.keys()), ("process", "source", "sink"))
+
+
+def derive_process_source_sink_alwaysProcess(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process_source_sink_alwaysProcess.csv`` — 12-way union including
+    the ``_direct`` arc lists."""
+    return _compute_process_source_sink_alwaysProcess(
+        _arc_unions_inputs(input_dir, solve_data_dir),
+        _disk_arc_lists(solve_data_dir),
+        solve_data_dir,
     )
 
-    # ---- 14) process__source__sink__profile__profile_method_direct
+
+# ---- (14) process__source__sink__profile__profile_method_direct ------------
+
+def _compute_process__source__sink__profile__profile_method_direct(
+    inp: dict, solve_data_dir: Path,
+) -> pl.DataFrame:
+    sst = _read_n_col(solve_data_dir / "process_source_toSink.csv", 3)
     profiles = _read_n_col(
-        input_dir / "process__node__profile__profile_method.csv", 4
+        inp["input_dir"] / "process__node__profile__profile_method.csv", 4,
     )
     p_n_to_fm: dict[tuple[str, str], list[tuple[str, str]]] = {}
     for p, n, f, fm in profiles:
         p_n_to_fm.setdefault((p, n), []).append((f, fm))
-    rows_direct: list[tuple[str, ...]] = []
-    for p, source, sink in sst:  # process_source_toSink
-        if p not in p_with_direct:
+    rows: list[tuple[str, ...]] = []
+    for p, source, sink in sst:
+        if p not in inp["p_with_direct"]:
             continue
         seen_fm: dict[tuple[str, str], None] = {}
         for f, fm in p_n_to_fm.get((p, source), ()):
@@ -373,12 +577,82 @@ def write_process_arc_unions(input_dir: Path, solve_data_dir: Path) -> None:
         for f, fm in p_n_to_fm.get((p, sink), ()):
             seen_fm.setdefault((f, fm), None)
         for f, fm in seen_fm:
-            rows_direct.append((p, source, sink, f, fm))
-    _write_csv(
+            rows.append((p, source, sink, f, fm))
+    return _to_frame(
+        list(dict.fromkeys(rows)),
+        ("process", "source", "sink", "profile", "profile_method"),
+    )
+
+
+def derive_process__source__sink__profile__profile_method_direct(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``process__source__sink__profile__profile_method_direct.csv`` —
+    cross-product of process_source_toSink × profile/profile_method gated
+    by METHOD_DIRECT."""
+    return _compute_process__source__sink__profile__profile_method_direct(
+        _arc_unions_inputs(input_dir, solve_data_dir), solve_data_dir,
+    )
+
+
+# ---- Wrapper ---------------------------------------------------------------
+
+
+def write_process_arc_unions(input_dir: Path, solve_data_dir: Path) -> None:
+    """Migrate the 14-set L1 arc-union batch in dependency order.
+
+    Byte-for-byte mirror of the legacy emitter.  Each output flows through
+    ``_write(_compute_X(inp, ...), path)`` so the Phase E-b accumulator
+    captures every emitted frame.
+    """
+    inp = _arc_unions_inputs(input_dir, solve_data_dir)
+
+    # 1
+    _write(_compute_process__profileProcess__toSink(inp),
+           solve_data_dir / "process__profileProcess__toSink.csv")
+    # 2
+    _write(_compute_process__source__toProfileProcess(inp),
+           solve_data_dir / "process__source__toProfileProcess.csv")
+    # 3
+    _write(_compute_process_profile(inp),
+           solve_data_dir / "process_profile.csv")
+    # 4
+    _write(_compute_process_source_toProcess(inp),
+           solve_data_dir / "process_source_toProcess.csv")
+    # 5
+    _write(_compute_process_process_toSink(inp),
+           solve_data_dir / "process_process_toSink.csv")
+    # 6
+    _write(_compute_process_source_sink_eff(solve_data_dir),
+           solve_data_dir / "process_source_sink_eff.csv")
+    # 7
+    disk = _disk_arc_lists(solve_data_dir)
+    _write(_compute_process_source_sink_noEff(inp, disk),
+           solve_data_dir / "process_source_sink_noEff.csv")
+    # 8
+    _write(_compute_process_online(solve_data_dir),
+           solve_data_dir / "process_online.csv")
+    # 9
+    _write(_compute_process_minload(inp, solve_data_dir),
+           solve_data_dir / "process_minload.csv")
+    # 10
+    _write(_compute_process__commodity__node_co2(inp, solve_data_dir),
+           solve_data_dir / "process__commodity__node_co2.csv")
+    # 11
+    _write(_compute_process_co2(inp, solve_data_dir),
+           solve_data_dir / "process_co2.csv")
+    # 12
+    _write(_compute_process_source_sink(inp, disk),
+           solve_data_dir / "process_source_sink.csv")
+    # 13
+    _write(_compute_process_source_sink_alwaysProcess(inp, disk, solve_data_dir),
+           solve_data_dir / "process_source_sink_alwaysProcess.csv")
+    # 14
+    _write(
+        _compute_process__source__sink__profile__profile_method_direct(
+            inp, solve_data_dir),
         solve_data_dir
         / "process__source__sink__profile__profile_method_direct.csv",
-        ("process", "source", "sink", "profile", "profile_method"),
-        list(dict.fromkeys(rows_direct)),
     )
 
 

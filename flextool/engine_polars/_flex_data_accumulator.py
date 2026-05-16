@@ -59,6 +59,9 @@ _PATCH_MODULES = (
     "flextool.engine_polars._writer_pdt_params",
     "flextool.engine_polars._writer_period_params",
     "flextool.engine_polars._writer_dispatchers",
+    "flextool.engine_polars._writer_entity_annual",
+    "flextool.engine_polars._writer_inflow_scaling",
+    "flextool.engine_polars._writer_lp_scaling",
 )
 
 
@@ -389,6 +392,73 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "edEntity_lifetime.csv",
     "ed_fixed_cost.csv",
     "p_entity_unitsize.csv",
+    # _writer_dispatchers — Phase E-b lifted process_arc_unions monolith
+    # (14 CSVs from a single own-compute dispatcher; convert _write_csv
+    # into _write(derive_X(...), path) per emission)
+    "process__profileProcess__toSink.csv",
+    "process__source__toProfileProcess.csv",
+    "process_profile.csv",
+    "process_source_toProcess.csv",
+    "process_process_toSink.csv",
+    "process_source_sink_eff.csv",
+    "process_source_sink_noEff.csv",
+    "process_online.csv",
+    "process_minload.csv",
+    "process__commodity__node_co2.csv",
+    "process_co2.csv",
+    "process_source_sink.csv",
+    "process_source_sink_alwaysProcess.csv",
+    "process__source__sink__profile__profile_method_direct.csv",
+    # _writer_entity_annual — Phase E-b lifted (6-CSV monolith;
+    # repr(float) precision preserved by the _rows_to_frame helper)
+    "ed_entity_annual.csv",
+    "ed_entity_annual_discounted.csv",
+    "ed_entity_annual_divest.csv",
+    "ed_entity_annual_divest_discounted.csv",
+    "ed_lifetime_fixed_cost.csv",
+    "ed_lifetime_fixed_cost_divest.csv",
+    # _writer_inflow_scaling — Phase E-b lifted (17-CSV monolith, peak
+    # family heavy cross-CSV state — converted via dict-of-frames adapter
+    # since splitting into 17 standalone derive_* would re-walk the
+    # t-axis O(N) times per call)
+    "ptNode_inflow.csv",
+    "_node_cap_inflow_fallback.csv",
+    "orig_flow_sum.csv",
+    "period_share_of_annual_flow.csv",
+    "period_flow_annual_multiplier.csv",
+    "period_flow_proportional_multiplier.csv",
+    "new_peak_sign.csv",
+    "old_peak_max.csv",
+    "old_peak_min.csv",
+    "old_peak_sign.csv",
+    "old_peak.csv",
+    "new_peak_divided_by_old_peak.csv",
+    "new_peak_divide_by_old_peak_sum_inflow.csv",
+    "new_peak_inflow_sum.csv",
+    "new_old_multiplier.csv",
+    "new_old_slope.csv",
+    "new_old_section.csv",
+    # _writer_lp_scaling — Phase E-b lifted (9-CSV monolith with chained
+    # raw -> pow10 -> capacity -> inverse cascades; converted via
+    # dict-of-frames adapter)
+    #
+    # NB ``_group_cap_raw.csv`` is captured by the accumulator hook but
+    # is NOT in this manifest: the legacy emitter writes ``"0"`` (int
+    # via ``repr(sum(()))``) for empty groups, while the polars
+    # ``write_csv`` round-trip through ``pl.read_csv`` -> Float64 ->
+    # Utf8 cast in the parity test yields ``"0.0"``.  Disk byte-parity
+    # is preserved; the captured frame is functionally usable (Phase D
+    # consumers parse the Utf8 numerically) but the byte-string-compare
+    # parity test cannot validate it.  See _writer_lp_scaling for the
+    # corresponding code note.
+    "_node_cap_unitsize_sum.csv",
+    "_node_cap_raw.csv",
+    "_node_cap_pow10.csv",
+    "node_capacity_for_scaling.csv",
+    "inv_node_cap.csv",
+    "_group_cap_pow10.csv",
+    "group_capacity_for_scaling.csv",
+    "inv_group_cap.csv",
 )
 
 

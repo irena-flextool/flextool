@@ -111,11 +111,45 @@ def _read_pdv(path: Path) -> dict[tuple[str, str], float]:
 
 def _write_keyed_2(path: Path, header: tuple[str, str, str],
                    rows: list[tuple[str, str, float]]) -> None:
-    """Emit (entity, period, value) CSV with ``repr(float)`` precision."""
+    """Emit (entity, period, value) CSV with ``repr(float)`` precision.
+
+    Retained for compatibility with the legacy direct-text path; new code
+    in this module routes through :func:`_write` (which feeds the
+    accumulator hook).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         ",".join(header) + "\n"
         + "".join(f"{a},{b},{repr(float(v))}\n" for a, b, v in rows)
+    )
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    """Polars-frame emission funnel — patched by Phase E-b accumulator.
+
+    Identical I/O contract to :mod:`._writer_dispatchers._write`: parents
+    created, ``df.write_csv`` does the byte emission.  Every CSV emitted
+    by this module flows through this single name so the accumulator
+    monkey-patch can intercept ``(path.name -> df)``.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
+
+
+def _rows_to_frame(rows: list[tuple[str, str, float]]) -> pl.DataFrame:
+    """Materialise (entity, period, repr(value)) rows as an all-Utf8 frame.
+
+    Pre-stringifies values via ``repr(float(v))`` so the polars
+    ``write_csv`` output is byte-identical to the legacy
+    ``f"{a},{b},{repr(float(v))}\\n"`` text emitter.
+    """
+    return pl.DataFrame(
+        {
+            "entity": [r[0] for r in rows],
+            "period": [r[1] for r in rows],
+            "value":  [repr(float(r[2])) for r in rows],
+        },
+        schema={"entity": pl.Utf8, "period": pl.Utf8, "value": pl.Utf8},
     )
 
 
@@ -170,17 +204,19 @@ def _inflation_window_sum(
 # ---------------------------------------------------------------------------
 
 
-def write_entity_annual_calc_params(
-    input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """Native port of ``entity_annual_calc_params.write_entity_annual_calc_params``.
+# ---------------------------------------------------------------------------
+# Phase E-b — derive_X family for each emitted CSV.
+#
+# The 6 CSVs share substantial input scans (PdLookup over pd_*, p_*, plus
+# entity-class sets and period lists), so the wrapper builds the bundle
+# once via :func:`_entity_annual_inputs` and threads it through private
+# ``_compute_*`` helpers.  Public ``derive_*`` functions are thin
+# rebuilders for standalone seed lookups.
+# ---------------------------------------------------------------------------
 
-    Reads ``input/`` immutables (``pd_process``, ``p_process``,
-    ``pd_node``, ``p_node``, ``entity__invest_method``, ``entity``,
-    ``process``, ``node``) and per-solve ``solve_data/`` files
-    (period sets, discount factors, lifetime / fixed-cost overrides).
-    Emits the six CSVs documented at module level.
-    """
+
+def _entity_annual_inputs(input_dir: Path, solve_data_dir: Path) -> dict:
+    """Shared input bundle for the 6 entity-annual derives."""
     pp = PdLookup(
         pd_csv=input_dir / "pd_process.csv",
         p_csv=input_dir / "p_process.csv",
@@ -191,212 +227,285 @@ def write_entity_annual_calc_params(
         p_csv=input_dir / "p_node.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
     )
-    process_set = frozenset(_read_singles(input_dir / "process.csv"))
-    node_set = frozenset(_read_singles(input_dir / "node.csv"))
-
-    entityInvest = _read_singles(solve_data_dir / "entityInvest.csv")
-    entityDivest = _read_singles(solve_data_dir / "entityDivest.csv")
-    period_invest = _read_singles(
-        solve_data_dir / "invest_periods_of_current_solve.csv"
-    )
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
-
-    # entity__invest_method lives in input/ (NOT solve_data/, which is
-    # blank — see mod's load directive).
     methods_for_entity: dict[str, list[str]] = {}
     for e, m in _read_pairs(input_dir / "entity__invest_method.csv"):
         methods_for_entity.setdefault(e, []).append(m)
-
     lifetime_methods_for_entity: dict[str, list[str]] = {}
     for e, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv"):
         lifetime_methods_for_entity.setdefault(e, []).append(m)
+    return {
+        "pp": pp,
+        "pn": pn,
+        "process_set": frozenset(_read_singles(input_dir / "process.csv")),
+        "node_set": frozenset(_read_singles(input_dir / "node.csv")),
+        "entityInvest": _read_singles(solve_data_dir / "entityInvest.csv"),
+        "entityDivest": _read_singles(solve_data_dir / "entityDivest.csv"),
+        "period_invest": _read_singles(
+            solve_data_dir / "invest_periods_of_current_solve.csv"),
+        "period_in_use": _read_singles(
+            solve_data_dir / "period_in_use_set.csv"),
+        "methods_for_entity": methods_for_entity,
+        "lifetime_methods_for_entity": lifetime_methods_for_entity,
+        "p_discount_years": _read_keyed_value(
+            solve_data_dir / "p_discount_years.csv"),
+        "p_inflation_invest": _read_keyed_value(
+            solve_data_dir / "p_inflation_factor_investment_yearly.csv"),
+        "p_inflation_ops": _read_keyed_value(
+            solve_data_dir / "p_inflation_factor_operations_yearly.csv"),
+        "edEntity_lifetime": _read_pdv(
+            solve_data_dir / "edEntity_lifetime.csv"),
+        "ed_fixed_cost": _read_pdv(solve_data_dir / "ed_fixed_cost.csv"),
+        "period_with_history": _read_singles(
+            solve_data_dir / "period_with_history.csv"),
+        "entities": _read_singles(input_dir / "entity.csv"),
+    }
 
-    p_discount_years = _read_keyed_value(
-        solve_data_dir / "p_discount_years.csv"
-    )
-    p_inflation_invest = _read_keyed_value(
-        solve_data_dir / "p_inflation_factor_investment_yearly.csv"
-    )
-    p_inflation_ops = _read_keyed_value(
-        solve_data_dir / "p_inflation_factor_operations_yearly.csv"
-    )
-    edEntity_lifetime = _read_pdv(solve_data_dir / "edEntity_lifetime.csv")
-    ed_fixed_cost = _read_pdv(solve_data_dir / "ed_fixed_cost.csv")
 
-    # ── Annuity sums (per-method, gated by entity class) ─────────────────
-    # Mirrors mod L1542-1601: for each allowed method (entity__invest_method
-    # ∩ ¬not_allowed), add one per-method annuity built from class-specific
-    # cost / discount / lifetime lookups.  The sum collapses to
-    # ``(#allowed_methods) × per_method_annuity`` — preserved exactly.
+def _per_method_annuity_invest(inp: dict, e: str, d: str) -> float:
+    v = 0.0
+    for m in inp["methods_for_entity"].get(e, ()):
+        if m in _INVEST_NOT_ALLOWED:
+            continue
+        if e in inp["node_set"]:
+            v += _annuity(
+                inp["pn"].get(e, "invest_cost", d),
+                inp["pn"].get(e, "discount_rate", d),
+                inp["pn"].get(e, "lifetime", d),
+            )
+        elif e in inp["process_set"]:
+            v += _annuity(
+                inp["pp"].get(e, "invest_cost", d),
+                inp["pp"].get(e, "discount_rate", d),
+                inp["pp"].get(e, "lifetime", d),
+            )
+    return v
 
-    def _per_method_annuity_invest(e: str, d: str) -> float:
-        v = 0.0
-        for m in methods_for_entity.get(e, ()):
-            if m in _INVEST_NOT_ALLOWED:
-                continue
-            if e in node_set:
-                v += _annuity(
-                    pn.get(e, "invest_cost", d),
-                    pn.get(e, "discount_rate", d),
-                    pn.get(e, "lifetime", d),
-                )
-            elif e in process_set:
-                v += _annuity(
-                    pp.get(e, "invest_cost", d),
-                    pp.get(e, "discount_rate", d),
-                    pp.get(e, "lifetime", d),
-                )
-        return v
 
-    def _per_method_annuity_divest(e: str, d: str) -> float:
-        v = 0.0
-        for m in methods_for_entity.get(e, ()):
-            if m in _DIVEST_NOT_ALLOWED:
-                continue
-            if e in node_set:
-                v += _annuity(
-                    pn.get(e, "salvage_value", d),
-                    pn.get(e, "discount_rate", d),
-                    pn.get(e, "lifetime", d),
-                )
-            elif e in process_set:
-                v += _annuity(
-                    pp.get(e, "salvage_value", d),
-                    pp.get(e, "discount_rate", d),
-                    pp.get(e, "lifetime", d),
-                )
-        return v
+def _per_method_annuity_divest(inp: dict, e: str, d: str) -> float:
+    v = 0.0
+    for m in inp["methods_for_entity"].get(e, ()):
+        if m in _DIVEST_NOT_ALLOWED:
+            continue
+        if e in inp["node_set"]:
+            v += _annuity(
+                inp["pn"].get(e, "salvage_value", d),
+                inp["pn"].get(e, "discount_rate", d),
+                inp["pn"].get(e, "lifetime", d),
+            )
+        elif e in inp["process_set"]:
+            v += _annuity(
+                inp["pp"].get(e, "salvage_value", d),
+                inp["pp"].get(e, "discount_rate", d),
+                inp["pp"].get(e, "lifetime", d),
+            )
+    return v
 
-    # ── ed_entity_annual + ed_entity_annual_discounted ───────────────────
+
+def _ann_pair(inp: dict) -> tuple[
+    list[tuple[str, str, float]], list[tuple[str, str, float]]
+]:
+    """Compute both ed_entity_annual and ed_entity_annual_discounted in one
+    pass (they share the per-method annuity scan)."""
     rows_ann: list[tuple[str, str, float]] = []
     rows_ann_disc: list[tuple[str, str, float]] = []
-    for e in entityInvest:
-        elm_set = frozenset(lifetime_methods_for_entity.get(e, ()))
+    for e in inp["entityInvest"]:
+        elm_set = frozenset(inp["lifetime_methods_for_entity"].get(e, ()))
         is_choice_or_no_invest = (
             "reinvest_choice" in elm_set or "no_investment" in elm_set
         )
         is_automatic = "reinvest_automatic" in elm_set
-        for d in period_invest:
-            ann = _per_method_annuity_invest(e, d)
+        for d in inp["period_invest"]:
+            ann = _per_method_annuity_invest(inp, e, d)
             rows_ann.append((e, d, ann))
 
             disc = 0.0
-            pdy_d = p_discount_years.get(d, 0.0)
-            life = edEntity_lifetime.get((e, d), 0.0)
+            pdy_d = inp["p_discount_years"].get(d, 0.0)
+            life = inp["edEntity_lifetime"].get((e, d), 0.0)
             if is_choice_or_no_invest:
                 disc += ann * _inflation_window_sum(
-                    pdy_d, life, period_in_use,
-                    p_discount_years, p_inflation_invest,
+                    pdy_d, life, inp["period_in_use"],
+                    inp["p_discount_years"], inp["p_inflation_invest"],
                     open_window=False,
                 )
             if is_automatic:
                 disc += ann * _inflation_window_sum(
-                    pdy_d, life, period_in_use,
-                    p_discount_years, p_inflation_invest,
+                    pdy_d, life, inp["period_in_use"],
+                    inp["p_discount_years"], inp["p_inflation_invest"],
                     open_window=True,
                 )
             rows_ann_disc.append((e, d, disc))
-    _write_keyed_2(
-        solve_data_dir / "ed_entity_annual.csv",
-        ("entity", "period", "value"), rows_ann,
-    )
-    _write_keyed_2(
-        solve_data_dir / "ed_entity_annual_discounted.csv",
-        ("entity", "period", "value"), rows_ann_disc,
-    )
+    return rows_ann, rows_ann_disc
 
-    # ── ed_entity_annual_divest + _discounted ────────────────────────────
-    # Divest uses pdNode_lifetime / pdProcess_lifetime directly (not the
-    # edEntity_lifetime override).
+
+def _div_pair(inp: dict) -> tuple[
+    list[tuple[str, str, float]], list[tuple[str, str, float]]
+]:
+    """Compute both ed_entity_annual_divest and its _discounted variant."""
     rows_div: list[tuple[str, str, float]] = []
     rows_div_disc: list[tuple[str, str, float]] = []
-    for e in entityDivest:
-        for d in period_invest:
-            ann = _per_method_annuity_divest(e, d)
+    for e in inp["entityDivest"]:
+        for d in inp["period_invest"]:
+            ann = _per_method_annuity_divest(inp, e, d)
             rows_div.append((e, d, ann))
 
-            pdy_d = p_discount_years.get(d, 0.0)
+            pdy_d = inp["p_discount_years"].get(d, 0.0)
             disc = 0.0
-            if e in node_set:
-                life = pn.get(e, "lifetime", d)
+            if e in inp["node_set"]:
+                life = inp["pn"].get(e, "lifetime", d)
                 disc = ann * _inflation_window_sum(
-                    pdy_d, life, period_in_use,
-                    p_discount_years, p_inflation_invest,
+                    pdy_d, life, inp["period_in_use"],
+                    inp["p_discount_years"], inp["p_inflation_invest"],
                     open_window=False,
                 )
-            elif e in process_set:
-                life = pp.get(e, "lifetime", d)
+            elif e in inp["process_set"]:
+                life = inp["pp"].get(e, "lifetime", d)
                 disc = ann * _inflation_window_sum(
-                    pdy_d, life, period_in_use,
-                    p_discount_years, p_inflation_invest,
+                    pdy_d, life, inp["period_in_use"],
+                    inp["p_discount_years"], inp["p_inflation_invest"],
                     open_window=False,
                 )
             rows_div_disc.append((e, d, disc))
-    _write_keyed_2(
-        solve_data_dir / "ed_entity_annual_divest.csv",
-        ("entity", "period", "value"), rows_div,
-    )
-    _write_keyed_2(
-        solve_data_dir / "ed_entity_annual_divest_discounted.csv",
-        ("entity", "period", "value"), rows_div_disc,
-    )
+    return rows_div, rows_div_disc
 
-    # ── ed_lifetime_fixed_cost (e ∈ entity, d ∈ period_with_history) ─────
-    period_with_history = _read_singles(
-        solve_data_dir / "period_with_history.csv"
-    )
-    entities = _read_singles(input_dir / "entity.csv")
-    rows_lfc: list[tuple[str, str, float]] = []
-    for e in entities:
-        elm_set = frozenset(lifetime_methods_for_entity.get(e, ()))
+
+def _rows_lifetime_fixed_cost(inp: dict) -> list[tuple[str, str, float]]:
+    rows: list[tuple[str, str, float]] = []
+    for e in inp["entities"]:
+        elm_set = frozenset(inp["lifetime_methods_for_entity"].get(e, ()))
         is_choice_or_no_invest = (
             "reinvest_choice" in elm_set or "no_investment" in elm_set
         )
         is_automatic = "reinvest_automatic" in elm_set
-        for d in period_with_history:
-            fc = ed_fixed_cost.get((e, d), 0.0)
+        for d in inp["period_with_history"]:
+            fc = inp["ed_fixed_cost"].get((e, d), 0.0)
             v = 0.0
-            pdy_d = p_discount_years.get(d, 0.0)
-            life = edEntity_lifetime.get((e, d), 0.0)
+            pdy_d = inp["p_discount_years"].get(d, 0.0)
+            life = inp["edEntity_lifetime"].get((e, d), 0.0)
             if is_choice_or_no_invest:
                 v += fc * _inflation_window_sum(
-                    pdy_d, life, period_in_use,
-                    p_discount_years, p_inflation_ops,
+                    pdy_d, life, inp["period_in_use"],
+                    inp["p_discount_years"], inp["p_inflation_ops"],
                     open_window=False,
                 )
             if is_automatic:
                 v += fc * _inflation_window_sum(
-                    pdy_d, life, period_in_use,
-                    p_discount_years, p_inflation_ops,
+                    pdy_d, life, inp["period_in_use"],
+                    inp["p_discount_years"], inp["p_inflation_ops"],
                     open_window=True,
                 )
-            rows_lfc.append((e, d, v))
-    _write_keyed_2(
-        solve_data_dir / "ed_lifetime_fixed_cost.csv",
-        ("entity", "period", "value"), rows_lfc,
-    )
+            rows.append((e, d, v))
+    return rows
 
-    # ── ed_lifetime_fixed_cost_divest ────────────────────────────────────
+
+def _rows_lifetime_fixed_cost_divest(inp: dict) -> list[tuple[str, str, float]]:
     # NB: mod L1651 deliberately uses p_inflation_factor_INVESTMENT_yearly
     # here (not operations-yearly) — asymmetric vs the non-divest variant.
-    rows_lfcd: list[tuple[str, str, float]] = []
-    for e in entityDivest:
-        for d in period_invest:
-            fc = ed_fixed_cost.get((e, d), 0.0)
-            pdy_d = p_discount_years.get(d, 0.0)
-            if e in node_set:
-                life = pn.get(e, "lifetime", d)
-            elif e in process_set:
-                life = pp.get(e, "lifetime", d)
+    rows: list[tuple[str, str, float]] = []
+    for e in inp["entityDivest"]:
+        for d in inp["period_invest"]:
+            fc = inp["ed_fixed_cost"].get((e, d), 0.0)
+            pdy_d = inp["p_discount_years"].get(d, 0.0)
+            if e in inp["node_set"]:
+                life = inp["pn"].get(e, "lifetime", d)
+            elif e in inp["process_set"]:
+                life = inp["pp"].get(e, "lifetime", d)
             else:
                 life = 0.0
             v = fc * _inflation_window_sum(
-                pdy_d, life, period_in_use,
-                p_discount_years, p_inflation_invest,
+                pdy_d, life, inp["period_in_use"],
+                inp["p_discount_years"], inp["p_inflation_invest"],
                 open_window=False,
             )
-            rows_lfcd.append((e, d, v))
-    _write_keyed_2(
-        solve_data_dir / "ed_lifetime_fixed_cost_divest.csv",
-        ("entity", "period", "value"), rows_lfcd,
-    )
+            rows.append((e, d, v))
+    return rows
+
+
+# ---- Public derive_* (each rebuilds its own input bundle) ----
+
+def derive_ed_entity_annual(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``ed_entity_annual.csv`` — per-(entity, period) annuity sum across
+    allowed invest methods, gated by entity class (node vs process)."""
+    rows, _ = _ann_pair(_entity_annual_inputs(input_dir, solve_data_dir))
+    return _rows_to_frame(rows)
+
+
+def derive_ed_entity_annual_discounted(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``ed_entity_annual_discounted.csv`` — annuity scaled by the
+    inflation-window sum keyed by reinvest_choice / no_investment / reinvest_automatic."""
+    _, rows_disc = _ann_pair(_entity_annual_inputs(input_dir, solve_data_dir))
+    return _rows_to_frame(rows_disc)
+
+
+def derive_ed_entity_annual_divest(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``ed_entity_annual_divest.csv`` — divest-side annuity sum."""
+    rows, _ = _div_pair(_entity_annual_inputs(input_dir, solve_data_dir))
+    return _rows_to_frame(rows)
+
+
+def derive_ed_entity_annual_divest_discounted(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``ed_entity_annual_divest_discounted.csv`` — divest annuity scaled
+    by the inflation-window sum (always closed window)."""
+    _, rows_disc = _div_pair(_entity_annual_inputs(input_dir, solve_data_dir))
+    return _rows_to_frame(rows_disc)
+
+
+def derive_ed_lifetime_fixed_cost(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``ed_lifetime_fixed_cost.csv`` — per-(entity, period) lifetime
+    fixed-cost using p_inflation_factor_OPERATIONS_yearly."""
+    return _rows_to_frame(_rows_lifetime_fixed_cost(
+        _entity_annual_inputs(input_dir, solve_data_dir)))
+
+
+def derive_ed_lifetime_fixed_cost_divest(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``ed_lifetime_fixed_cost_divest.csv`` — divest variant; uses
+    p_inflation_factor_INVESTMENT_yearly per mod L1651 (asymmetric)."""
+    return _rows_to_frame(_rows_lifetime_fixed_cost_divest(
+        _entity_annual_inputs(input_dir, solve_data_dir)))
+
+
+def write_entity_annual_calc_params(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Native port of ``entity_annual_calc_params.write_entity_annual_calc_params``.
+
+    Reads ``input/`` immutables (``pd_process``, ``p_process``,
+    ``pd_node``, ``p_node``, ``entity__invest_method``, ``entity``,
+    ``process``, ``node``) and per-solve ``solve_data/`` files
+    (period sets, discount factors, lifetime / fixed-cost overrides).
+    Emits the six CSVs documented at module level.
+
+    Each output flows through ``_write(_rows_to_frame(...), path)`` so the
+    Phase E-b accumulator captures every emitted frame.  Shared scans
+    (``_ann_pair`` / ``_div_pair``) avoid recomputing per-method annuities
+    across the matched annual / annual_discounted CSV pairs.
+    """
+    inp = _entity_annual_inputs(input_dir, solve_data_dir)
+
+    rows_ann, rows_ann_disc = _ann_pair(inp)
+    _write(_rows_to_frame(rows_ann),
+           solve_data_dir / "ed_entity_annual.csv")
+    _write(_rows_to_frame(rows_ann_disc),
+           solve_data_dir / "ed_entity_annual_discounted.csv")
+
+    rows_div, rows_div_disc = _div_pair(inp)
+    _write(_rows_to_frame(rows_div),
+           solve_data_dir / "ed_entity_annual_divest.csv")
+    _write(_rows_to_frame(rows_div_disc),
+           solve_data_dir / "ed_entity_annual_divest_discounted.csv")
+
+    _write(_rows_to_frame(_rows_lifetime_fixed_cost(inp)),
+           solve_data_dir / "ed_lifetime_fixed_cost.csv")
+    _write(_rows_to_frame(_rows_lifetime_fixed_cost_divest(inp)),
+           solve_data_dir / "ed_lifetime_fixed_cost_divest.csv")

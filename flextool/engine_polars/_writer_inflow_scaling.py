@@ -47,6 +47,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import polars as pl
+
 
 # ---------------------------------------------------------------------------
 # Tiny CSV I/O — mirrors the legacy helpers' behaviour exactly so the
@@ -142,11 +144,48 @@ def _read_keyed_float(path: Path) -> dict[str, float]:
 
 def _write_keyed_2(path: Path, header: tuple[str, str, str],
                    rows: list[tuple[str, str, float]]) -> None:
-    """Emit a 3-col CSV with ``repr(v)`` (legacy-faithful)."""
+    """Emit a 3-col CSV with ``repr(v)`` (legacy-faithful).
+
+    Retained for backward compatibility; new emissions in this module
+    flow through :func:`_write` (which feeds the Phase E-b accumulator).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         ",".join(header) + "\n"
         + "".join(f"{a},{b},{repr(v)}\n" for a, b, v in rows)
+    )
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    """Polars-frame emission funnel — patched by Phase E-b accumulator.
+
+    Identical I/O contract to the dispatcher / entity_annual ``_write``:
+    the patched variant in
+    :func:`._flex_data_accumulator.capture_frames` rebinds this name
+    to also stash ``(path.name -> df)`` into the accumulator.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
+
+
+def _rows_to_frame(
+    header: tuple[str, str, str],
+    rows: list[tuple[str, str, float]],
+) -> pl.DataFrame:
+    """Materialise (k1, k2, repr(value)) rows as an all-Utf8 frame.
+
+    Pre-stringifies values via ``repr(v)`` so the polars ``write_csv``
+    output is byte-identical to the legacy ``f"{a},{b},{repr(v)}\\n"``
+    text emitter.  Note this uses ``repr(v)`` NOT ``repr(float(v))`` —
+    the legacy emitter assumes the caller already produced floats.
+    """
+    return pl.DataFrame(
+        {
+            header[0]: [r[0] for r in rows],
+            header[1]: [r[1] for r in rows],
+            header[2]: [repr(r[2]) for r in rows],
+        },
+        schema={h: pl.Utf8 for h in header},
     )
 
 
@@ -155,15 +194,21 @@ def _write_keyed_2(path: Path, header: tuple[str, str, str],
 # ---------------------------------------------------------------------------
 
 
-def write_node_inflow_scaling_params(
+def _compute_inflow_scaling_frames(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """Native port of
-    ``node_inflow_scaling_params.write_node_inflow_scaling_params``.
+) -> dict[str, pl.DataFrame]:
+    """Compute every inflow-scaling CSV in one pass, returning a dict
+    keyed by output basename.
 
-    Emits 17 CSVs covering ``ptNode_inflow`` and the 16 per-(n, d)
-    inflow-scaling parameters (annual / proportional / peak families).
+    Used by both the wrapper (each frame is fed to ``_write``) and the
+    standalone ``derive_*`` functions (which index this dict).  The
+    cross-CSV state (peak family, npop / nom / etc) is heavy enough that
+    splitting into independent derive_* calls would re-walk the time
+    axis O(N) times — the dict-of-frames pattern from the audit doc is
+    the appropriate adapter here.
     """
+    out: dict[str, pl.DataFrame] = {}
+
     # ── Sources ────────────────────────────────────────────────────────
     nodes = _read_singles(input_dir / "node.csv")
     period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
@@ -227,8 +272,7 @@ def write_node_inflow_scaling_params(
                 pti[(n, t)] = default
 
     rows_pt = [(n, t, pti[(n, t)]) for n in nodes for t in time_set]
-    _write_keyed_2(
-        solve_data_dir / "ptNode_inflow.csv",
+    out["ptNode_inflow.csv"] = _rows_to_frame(
         ("node", "time", "value"), rows_pt,
     )
 
@@ -244,8 +288,7 @@ def write_node_inflow_scaling_params(
             max_abs = max(abs(pti[(n, t)]) for t in time_set)
             for d in period_in_use:
                 fallback_rows.append((n, d, max_abs))
-    _write_keyed_2(
-        solve_data_dir / "_node_cap_inflow_fallback.csv",
+    out["_node_cap_inflow_fallback.csv"] = _rows_to_frame(
         ("node", "period", "value"), fallback_rows,
     )
 
@@ -279,8 +322,7 @@ def write_node_inflow_scaling_params(
             if pdNode.get((n, "annual_flow", d), 0.0) == 0.0:
                 continue
             rows_orig.append((n, d, s))
-    _write_keyed_2(
-        solve_data_dir / "orig_flow_sum.csv",
+    out["orig_flow_sum.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_orig,
     )
     orig_flow_sum = {(n, d): v for n, d, v in rows_orig}
@@ -298,8 +340,7 @@ def write_node_inflow_scaling_params(
                 continue
             s = sum(pti[(n, t)] for t in dt_complete_for_d.get(d, ()))
             rows_psaf.append((n, d, abs(s) / af))
-    _write_keyed_2(
-        solve_data_dir / "period_share_of_annual_flow.csv",
+    out["period_share_of_annual_flow.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_psaf,
     )
     psaf = {(n, d): v for n, d, v in rows_psaf}
@@ -318,8 +359,7 @@ def write_node_inflow_scaling_params(
             if denom == 0.0:
                 continue
             rows_pfam.append((n, d, cpsoy.get(d, 0.0) / denom))
-    _write_keyed_2(
-        solve_data_dir / "period_flow_annual_multiplier.csv",
+    out["period_flow_annual_multiplier.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_pfam,
     )
 
@@ -347,8 +387,7 @@ def write_node_inflow_scaling_params(
             if tdy_sum == 0.0 or time_sum == 0.0:
                 continue
             rows_pfpm.append((n, d, af / (abs(time_sum) / tdy_sum)))
-    _write_keyed_2(
-        solve_data_dir / "period_flow_proportional_multiplier.csv",
+    out["period_flow_proportional_multiplier.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_pfpm,
     )
 
@@ -421,32 +460,25 @@ def write_node_inflow_scaling_params(
             npopis = (npop * ofs / cps) if cps != 0.0 else 0.0
             rows_npopinflow.append((n, d, npopis))
 
-    _write_keyed_2(
-        solve_data_dir / "new_peak_sign.csv",
+    out["new_peak_sign.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_nps,
     )
-    _write_keyed_2(
-        solve_data_dir / "old_peak_max.csv",
+    out["old_peak_max.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_opmax,
     )
-    _write_keyed_2(
-        solve_data_dir / "old_peak_min.csv",
+    out["old_peak_min.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_opmin,
     )
-    _write_keyed_2(
-        solve_data_dir / "old_peak_sign.csv",
+    out["old_peak_sign.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_ops,
     )
-    _write_keyed_2(
-        solve_data_dir / "old_peak.csv",
+    out["old_peak.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_op,
     )
-    _write_keyed_2(
-        solve_data_dir / "new_peak_divided_by_old_peak.csv",
+    out["new_peak_divided_by_old_peak.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_npop,
     )
-    _write_keyed_2(
-        solve_data_dir / "new_peak_divide_by_old_peak_sum_inflow.csv",
+    out["new_peak_divide_by_old_peak_sum_inflow.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_npopinflow,
     )
 
@@ -457,8 +489,7 @@ def write_node_inflow_scaling_params(
         for n, d, _ in rows_nps
     }
     rows_npis = [(n, d, npis_dict.get((n, d), 0.0)) for n, d, _ in rows_nps]
-    _write_keyed_2(
-        solve_data_dir / "new_peak_inflow_sum.csv",
+    out["new_peak_inflow_sum.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_npis,
     )
 
@@ -476,8 +507,7 @@ def write_node_inflow_scaling_params(
         else:
             v = os_sign * (os_sign * npopis - af) / denom
         rows_nom.append((n, d, v))
-    _write_keyed_2(
-        solve_data_dir / "new_old_multiplier.csv",
+    out["new_old_multiplier.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_nom,
     )
 
@@ -488,8 +518,7 @@ def write_node_inflow_scaling_params(
                 * (1.0 + nom_dict.get((n, d), 0.0)))
         for n, d, _ in rows_nps
     ]
-    _write_keyed_2(
-        solve_data_dir / "new_old_slope.csv",
+    out["new_old_slope.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_nos,
     )
 
@@ -498,7 +527,160 @@ def write_node_inflow_scaling_params(
                 * nom_dict.get((n, d), 0.0))
         for n, d, _ in rows_nps
     ]
-    _write_keyed_2(
-        solve_data_dir / "new_old_section.csv",
+    out["new_old_section.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_nosec,
     )
+
+    return out
+
+
+# ---- Phase E-b — derive_X family for each emitted CSV --------------------
+#
+# Each derive_* delegates to the shared :func:`_compute_inflow_scaling_frames`
+# pass and indexes the resulting dict.  The shared compute is the path of
+# least re-walking — splitting into 17 standalone derive_* would re-scan
+# the t-axis O(N) times per call.  Public derive_* are thin lookups for
+# Phase D / E-a seed consumers.
+
+
+def _derive(input_dir: Path, solve_data_dir: Path,
+            basename: str) -> pl.DataFrame:
+    return _compute_inflow_scaling_frames(input_dir, solve_data_dir)[basename]
+
+
+def derive_ptNode_inflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """``ptNode_inflow.csv`` — (n, t) merged inflow with scalar fallback."""
+    return _derive(input_dir, solve_data_dir, "ptNode_inflow.csv")
+
+
+def derive_node_cap_inflow_fallback(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``_node_cap_inflow_fallback.csv`` — per-(n, d) max abs inflow."""
+    return _derive(input_dir, solve_data_dir, "_node_cap_inflow_fallback.csv")
+
+
+def derive_orig_flow_sum(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``orig_flow_sum.csv`` — Σ ptNode_inflow over complete_time_in_use."""
+    return _derive(input_dir, solve_data_dir, "orig_flow_sum.csv")
+
+
+def derive_period_share_of_annual_flow(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``period_share_of_annual_flow.csv`` — abs(Σ_t inflow) / annual_flow."""
+    return _derive(input_dir, solve_data_dir, "period_share_of_annual_flow.csv")
+
+
+def derive_period_flow_annual_multiplier(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``period_flow_annual_multiplier.csv`` — cpsoy / psaf."""
+    return _derive(input_dir, solve_data_dir, "period_flow_annual_multiplier.csv")
+
+
+def derive_period_flow_proportional_multiplier(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``period_flow_proportional_multiplier.csv`` — annual_flow / (abs(Σ_t)/tdy)."""
+    return _derive(
+        input_dir, solve_data_dir, "period_flow_proportional_multiplier.csv",
+    )
+
+
+def derive_new_peak_sign(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``new_peak_sign.csv`` — sign(peak_inflow)."""
+    return _derive(input_dir, solve_data_dir, "new_peak_sign.csv")
+
+
+def derive_old_peak_max(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``old_peak_max.csv`` — max_t inflow per (n, d)."""
+    return _derive(input_dir, solve_data_dir, "old_peak_max.csv")
+
+
+def derive_old_peak_min(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``old_peak_min.csv`` — min_t inflow per (n, d)."""
+    return _derive(input_dir, solve_data_dir, "old_peak_min.csv")
+
+
+def derive_old_peak_sign(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``old_peak_sign.csv`` — +1 if max-abs is positive, else -1."""
+    return _derive(input_dir, solve_data_dir, "old_peak_sign.csv")
+
+
+def derive_old_peak(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``old_peak.csv`` — signed dominant peak."""
+    return _derive(input_dir, solve_data_dir, "old_peak.csv")
+
+
+def derive_new_peak_divided_by_old_peak(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``new_peak_divided_by_old_peak.csv`` — peak / old_peak."""
+    return _derive(input_dir, solve_data_dir, "new_peak_divided_by_old_peak.csv")
+
+
+def derive_new_peak_divide_by_old_peak_sum_inflow(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``new_peak_divide_by_old_peak_sum_inflow.csv`` — npop * ofs / cpsoy."""
+    return _derive(
+        input_dir, solve_data_dir,
+        "new_peak_divide_by_old_peak_sum_inflow.csv",
+    )
+
+
+def derive_new_peak_inflow_sum(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``new_peak_inflow_sum.csv`` — peak_inflow * 8760."""
+    return _derive(input_dir, solve_data_dir, "new_peak_inflow_sum.csv")
+
+
+def derive_new_old_multiplier(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``new_old_multiplier.csv`` — affine coefficient (npis - npopis basis)."""
+    return _derive(input_dir, solve_data_dir, "new_old_multiplier.csv")
+
+
+def derive_new_old_slope(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``new_old_slope.csv`` — npop * (1 + nom)."""
+    return _derive(input_dir, solve_data_dir, "new_old_slope.csv")
+
+
+def derive_new_old_section(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``new_old_section.csv`` — peak * nom."""
+    return _derive(input_dir, solve_data_dir, "new_old_section.csv")
+
+
+def write_node_inflow_scaling_params(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Native port of
+    ``node_inflow_scaling_params.write_node_inflow_scaling_params``.
+
+    Emits 17 CSVs covering ``ptNode_inflow`` and the 16 per-(n, d)
+    inflow-scaling parameters (annual / proportional / peak families).
+    Each output flows through ``_write(frame, path)`` so the Phase E-b
+    accumulator captures every emitted frame.
+    """
+    frames = _compute_inflow_scaling_frames(input_dir, solve_data_dir)
+    for basename, df in frames.items():
+        _write(df, solve_data_dir / basename)
