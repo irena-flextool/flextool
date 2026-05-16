@@ -57,6 +57,7 @@ _PATCH_MODULES = (
     "flextool.engine_polars._writer_chain_params",
     "flextool.engine_polars._writer_co2_accumulators",
     "flextool.engine_polars._writer_pdt_params",
+    "flextool.engine_polars._writer_period_params",
 )
 
 
@@ -335,6 +336,35 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "pdtNode.csv",
     "pdtProcess_source.csv",
     "pdtProcess_sink.csv",
+    # _writer_period_params — Phase E-b lifted streamed writers
+    "pdtNodeInflow.csv",
+    "pdtProfile.csv",
+    "pdtConversion_rate.csv",
+    "pdtProcess_section.csv",
+    "pdtProcess_slope.csv",
+    "pdtProcess_source_sink.csv",
+    "pdGroup.csv",
+    "pdtGroup.csv",
+    "pdCommodity.csv",
+    "pdtCommodity.csv",
+    "p_positive_inflow.csv",
+    "p_negative_inflow.csv",
+    "pdtProcess__source__sink__dt_varCost.csv",
+    "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv",
+    "pssdt_varCost_noEff.csv",
+    "pssdt_varCost_eff_unit_source.csv",
+    "pssdt_varCost_eff_unit_sink.csv",
+    "pssdt_varCost_eff_connection.csv",
+    "p_startup_cap_reduction_sink.csv",
+    "p_shutdown_cap_reduction_sink.csv",
+    "p_startup_cap_reduction_source.csv",
+    "p_shutdown_cap_reduction_source.csv",
+    "ed_invest_max_period.csv",
+    "ed_invest_min_period.csv",
+    "ed_divest_max_period.csv",
+    "ed_divest_min_period.csv",
+    "ed_cumulative_max_capacity.csv",
+    "ed_cumulative_min_capacity.csv",
 )
 
 

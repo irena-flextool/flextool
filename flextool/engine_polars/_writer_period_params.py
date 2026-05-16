@@ -31,6 +31,34 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+import polars as pl
+
+
+# ---------------------------------------------------------------------------
+# Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
+# in :mod:`._writer_arc_unions` and the other patched modules.  All
+# writers in this module funnel their derived frames through this helper
+# so :mod:`._flex_data_accumulator` can capture them via its monkey-patch.
+# ---------------------------------------------------------------------------
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
+
+
+def _utf8_frame(columns: dict[str, list[str]]) -> pl.DataFrame:
+    """Build an all-Utf8 ``pl.DataFrame`` from column-name → string-list.
+
+    All columns (including ``value``) are stored as ``Utf8`` so the
+    legacy ``f"...,{repr(v)}\\n"`` byte-emission round-trips identically
+    through ``pl.DataFrame.write_csv``.  See
+    :mod:`._writer_chain_params._ed_value_frame` for the rationale on
+    using ``repr(v)`` directly rather than coercing to ``float`` first.
+    """
+    schema = {name: pl.Utf8 for name in columns}
+    return pl.DataFrame(columns, schema=schema)
+
 
 # ---------------------------------------------------------------------------
 # Shared CSV readers (mirror legacy helpers byte-for-byte).
@@ -95,8 +123,12 @@ def _read_stochastic_entities(group_entity_csv: Path,
 # ---------------------------------------------------------------------------
 
 
-def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
-    """Emit ``solve_data/pdtNodeInflow.csv``.
+def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """Materialise the ``pdtNodeInflow`` frame.
+
+    Columns: ``node, period, time, value`` — all ``Utf8`` (value cells
+    are ``repr(v)`` so int/float distinction round-trips byte-identically
+    to the legacy ``fh.write(f"{n},{d},{t},{repr(v)}\\n")`` emission).
 
     Branches:
       1. Stochastic fold-in (``pbt_node_inflow`` over stochastic node).
@@ -213,31 +245,33 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
         n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
     ]
 
-    out_path = solve_data_dir / "pdtNodeInflow.csv"
-    with out_path.open("w") as fh:
-        fh.write("node,period,time,value\n")
-        for n in eligible_nodes:
-            is_stoch = n in stoch_node
-            in_balance = n in balance_union
-            has_scale_annual = (n, "scale_to_annual_flow") in inflow_method_pairs
-            has_scale_proportion = (n, "scale_in_proportion") in inflow_method_pairs
-            has_scale_peak = (n, "scale_to_annual_and_peak_flow") in inflow_method_pairs
-            has_use_original = (n, "use_original") in inflow_method_pairs
-            for (d, t) in dt:
-                # Branch 1: stochastic fold-in.
-                if is_stoch:
-                    total = 0.0
-                    hit = False
-                    for tb in tb_for_d.get(d, ()):
-                        for ts in ts_for_d.get(d, ()):
-                            v = pbt_inflow.get((n, tb, ts, t))
-                            if v is not None:
-                                total += v
-                                hit = True
-                    if hit:
-                        fh.write(f"{n},{d},{t},{repr(total)}\n")
-                        continue
-                # Branch 2: parent-period fold-in.
+    nodes_col: list[str] = []
+    periods_col: list[str] = []
+    times_col: list[str] = []
+    values_col: list[str] = []
+    for n in eligible_nodes:
+        is_stoch = n in stoch_node
+        in_balance = n in balance_union
+        has_scale_annual = (n, "scale_to_annual_flow") in inflow_method_pairs
+        has_scale_proportion = (n, "scale_in_proportion") in inflow_method_pairs
+        has_scale_peak = (n, "scale_to_annual_and_peak_flow") in inflow_method_pairs
+        has_use_original = (n, "use_original") in inflow_method_pairs
+        for (d, t) in dt:
+            emit_v: float | None = None
+            # Branch 1: stochastic fold-in.
+            if is_stoch:
+                total = 0.0
+                hit = False
+                for tb in tb_for_d.get(d, ()):
+                    for ts in ts_for_d.get(d, ()):
+                        v = pbt_inflow.get((n, tb, ts, t))
+                        if v is not None:
+                            total += v
+                            hit = True
+                if hit:
+                    emit_v = total
+            # Branch 2: parent-period fold-in.
+            if emit_v is None:
                 pe_list = pe_for_d.get(d, ())
                 ts_list = ts_for_d.get(d, ())
                 if pe_list and ts_list:
@@ -251,9 +285,9 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
                                     total += v
                                     hit = True
                     if hit:
-                        fh.write(f"{n},{d},{t},{repr(total)}\n")
-                        continue
-                # Branch 3: deterministic additive sum.
+                        emit_v = total
+            # Branch 3: deterministic additive sum.
+            if emit_v is None:
                 value = 0.0
                 if in_balance:
                     pti = pt_inflow.get((n, t), 0.0)
@@ -268,7 +302,25 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
                                  - nos_section.get((n, d), 0.0)
                     if has_use_original:
                         value += pti
-                fh.write(f"{n},{d},{t},{repr(value)}\n")
+                emit_v = value
+            nodes_col.append(n)
+            periods_col.append(d)
+            times_col.append(t)
+            values_col.append(repr(emit_v))
+    return _utf8_frame({
+        "node": nodes_col,
+        "period": periods_col,
+        "time": times_col,
+        "value": values_col,
+    })
+
+
+def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtNodeInflow.csv`` (see derive docstring)."""
+    _write(
+        derive_pdtNodeInflow(input_dir, solve_data_dir),
+        solve_data_dir / "pdtNodeInflow.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -276,8 +328,8 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
-    """Emit ``solve_data/pdtProfile.csv``.
+def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """Materialise the ``pdtProfile`` frame.
 
     Branches:
       1. Stochastic fold-in (any of process / node / process_node refs
@@ -377,26 +429,28 @@ def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
                 if len(row) >= 3 and row[0] in stoch_processes and row[2]:
                     stoch_profile.add(row[2])
 
-    out_path = solve_data_dir / "pdtProfile.csv"
-    with out_path.open("w") as fh:
-        fh.write("profile,period,time,value\n")
-        for p in profiles:
-            is_stoch = p in stoch_profile
-            for (d, t) in dt:
-                # Branch 1: stochastic fold-in.
-                if is_stoch:
-                    total = 0.0
-                    hit = False
-                    for tb in tb_for_d.get(d, ()):
-                        for ts in ts_for_d.get(d, ()):
-                            v = pbt_profile.get((p, tb, ts, t))
-                            if v is not None:
-                                total += v
-                                hit = True
-                    if hit:
-                        fh.write(f"{p},{d},{t},{repr(total)}\n")
-                        continue
-                # Branch 2: parent-period fold-in.
+    profiles_col: list[str] = []
+    periods_col: list[str] = []
+    times_col: list[str] = []
+    values_col: list[str] = []
+    for p in profiles:
+        is_stoch = p in stoch_profile
+        for (d, t) in dt:
+            cell: str | None = None
+            # Branch 1: stochastic fold-in.
+            if is_stoch:
+                total = 0.0
+                hit = False
+                for tb in tb_for_d.get(d, ()):
+                    for ts in ts_for_d.get(d, ()):
+                        v = pbt_profile.get((p, tb, ts, t))
+                        if v is not None:
+                            total += v
+                            hit = True
+                if hit:
+                    cell = repr(total)
+            # Branch 2: parent-period fold-in.
+            if cell is None:
                 pe_list = pe_for_d.get(d, ())
                 ts_list = ts_for_d.get(d, ())
                 if pe_list and ts_list:
@@ -410,20 +464,38 @@ def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
                                     total += v
                                     hit = True
                     if hit:
-                        fh.write(f"{p},{d},{t},{repr(total)}\n")
-                        continue
-                # Branch 3: time axis.
+                        cell = repr(total)
+            # Branch 3: time axis.
+            if cell is None:
                 v = pt_profile.get((p, t))
                 if v is not None:
-                    fh.write(f"{p},{d},{t},{repr(v)}\n")
-                    continue
-                # Branch 4: scalar.
+                    cell = repr(v)
+            # Branch 4: scalar.
+            if cell is None:
                 v = p_profile.get(p)
                 if v is not None:
-                    fh.write(f"{p},{d},{t},{repr(v)}\n")
-                    continue
-                # Branch 5: 0.
-                fh.write(f"{p},{d},{t},0.0\n")
+                    cell = repr(v)
+            # Branch 5: 0.
+            if cell is None:
+                cell = "0.0"
+            profiles_col.append(p)
+            periods_col.append(d)
+            times_col.append(t)
+            values_col.append(cell)
+    return _utf8_frame({
+        "profile": profiles_col,
+        "period": periods_col,
+        "time": times_col,
+        "value": values_col,
+    })
+
+
+def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtProfile.csv`` (see derive docstring)."""
+    _write(
+        derive_pdtProfile(input_dir, solve_data_dir),
+        solve_data_dir / "pdtProfile.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -431,17 +503,16 @@ def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def write_pdtConversion_rate_section_slope(
+def _derive_conversion_trio(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """Emit ``pdtConversion_rate.csv``, ``pdtProcess_section.csv``,
-    ``pdtProcess_slope.csv``.
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Build the three ``pdtConversion_rate`` / ``pdtProcess_section`` /
+    ``pdtProcess_slope`` frames in a single pass.
 
-    Each is per-(process, period, time) and derived from ``pdtProcess``
-    (efficiency / min_load / efficiency_at_min_load).  See the legacy
-    docstring at
-    :func:`flextool.flextoolrunner.preprocessing.entity_period_calc_params.write_pdtConversion_rate_section_slope`
-    for the exact formulas (mirrored here as-is).
+    The slope formula reuses the ``conv_rate`` and ``section`` values
+    computed for the first two frames; we share the intermediate dicts
+    here so the work isn't duplicated across three independent
+    ``derive_*`` calls.
     """
     processes = _read_singles(input_dir / "process.csv")
     process_minload = frozenset(
@@ -472,48 +543,114 @@ def write_pdtConversion_rate_section_slope(
                 elif row[1] == "efficiency_at_min_load":
                     eff_min[key] = v
 
-    # pdtConversion_rate.
-    conv_path = solve_data_dir / "pdtConversion_rate.csv"
+    # pdtConversion_rate columns + intermediate conv_rate dict.
     conv_rate: dict[tuple[str, str, str], float] = {}
-    with conv_path.open("w") as fh:
-        fh.write("process,period,time,value\n")
-        for p in processes:
-            for (d, t) in dt:
-                e = eff.get((p, d, t), 0.0)
-                v = round(1.0 / e, 6) if e else 0.0
-                conv_rate[(p, d, t)] = v
-                fh.write(f"{p},{d},{t},{repr(v)}\n")
+    cr_p: list[str] = []
+    cr_d: list[str] = []
+    cr_t: list[str] = []
+    cr_v: list[str] = []
+    for p in processes:
+        for (d, t) in dt:
+            e = eff.get((p, d, t), 0.0)
+            v = round(1.0 / e, 6) if e else 0.0
+            conv_rate[(p, d, t)] = v
+            cr_p.append(p)
+            cr_d.append(d)
+            cr_t.append(t)
+            cr_v.append(repr(v))
+    conv_frame = _utf8_frame({
+        "process": cr_p, "period": cr_d, "time": cr_t, "value": cr_v,
+    })
 
-    # pdtProcess_section (process_minload only).
-    sec_path = solve_data_dir / "pdtProcess_section.csv"
+    # pdtProcess_section + intermediate section dict.
     section: dict[tuple[str, str, str], float] = {}
-    with sec_path.open("w") as fh:
-        fh.write("process,period,time,value\n")
-        for p in processes:
-            if p not in process_minload:
-                continue
-            for (d, t) in dt:
-                cr = conv_rate.get((p, d, t), 0.0)
-                ml = min_load.get((p, d, t), 0.0)
-                em = eff_min.get((p, d, t), 0.0)
-                inv_em = (1.0 / em) if em else 0.0
-                denom = 1.0 - ml
-                rounded = round((cr - ml * inv_em) / denom, 6) if denom else 0.0
-                v = cr - rounded
-                section[(p, d, t)] = v
-                fh.write(f"{p},{d},{t},{repr(v)}\n")
+    sec_p: list[str] = []
+    sec_d: list[str] = []
+    sec_t: list[str] = []
+    sec_v: list[str] = []
+    for p in processes:
+        if p not in process_minload:
+            continue
+        for (d, t) in dt:
+            cr = conv_rate.get((p, d, t), 0.0)
+            ml = min_load.get((p, d, t), 0.0)
+            em = eff_min.get((p, d, t), 0.0)
+            inv_em = (1.0 / em) if em else 0.0
+            denom = 1.0 - ml
+            rounded = round((cr - ml * inv_em) / denom, 6) if denom else 0.0
+            v = cr - rounded
+            section[(p, d, t)] = v
+            sec_p.append(p)
+            sec_d.append(d)
+            sec_t.append(t)
+            sec_v.append(repr(v))
+    section_frame = _utf8_frame({
+        "process": sec_p, "period": sec_d, "time": sec_t, "value": sec_v,
+    })
 
     # pdtProcess_slope.
-    slope_path = solve_data_dir / "pdtProcess_slope.csv"
-    with slope_path.open("w") as fh:
-        fh.write("process,period,time,value\n")
-        for p in processes:
-            in_min = p in process_minload
-            for (d, t) in dt:
-                cr = conv_rate.get((p, d, t), 0.0)
-                sec = section.get((p, d, t), 0.0) if in_min else 0.0
-                v = cr - sec
-                fh.write(f"{p},{d},{t},{repr(v)}\n")
+    sl_p: list[str] = []
+    sl_d: list[str] = []
+    sl_t: list[str] = []
+    sl_v: list[str] = []
+    for p in processes:
+        in_min = p in process_minload
+        for (d, t) in dt:
+            cr = conv_rate.get((p, d, t), 0.0)
+            sec = section.get((p, d, t), 0.0) if in_min else 0.0
+            v = cr - sec
+            sl_p.append(p)
+            sl_d.append(d)
+            sl_t.append(t)
+            sl_v.append(repr(v))
+    slope_frame = _utf8_frame({
+        "process": sl_p, "period": sl_d, "time": sl_t, "value": sl_v,
+    })
+
+    return conv_frame, section_frame, slope_frame
+
+
+def derive_pdtConversion_rate(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise just the ``pdtConversion_rate`` frame (callers needing
+    all three should use :func:`_derive_conversion_trio` instead)."""
+    conv, _sec, _slope = _derive_conversion_trio(input_dir, solve_data_dir)
+    return conv
+
+
+def derive_pdtProcess_section(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise just the ``pdtProcess_section`` frame."""
+    _conv, sec, _slope = _derive_conversion_trio(input_dir, solve_data_dir)
+    return sec
+
+
+def derive_pdtProcess_slope(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise just the ``pdtProcess_slope`` frame."""
+    _conv, _sec, slope = _derive_conversion_trio(input_dir, solve_data_dir)
+    return slope
+
+
+def write_pdtConversion_rate_section_slope(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Emit ``pdtConversion_rate.csv``, ``pdtProcess_section.csv``,
+    ``pdtProcess_slope.csv``.
+
+    Each is per-(process, period, time) and derived from ``pdtProcess``
+    (efficiency / min_load / efficiency_at_min_load).  See the legacy
+    docstring at
+    :func:`flextool.flextoolrunner.preprocessing.entity_period_calc_params.write_pdtConversion_rate_section_slope`
+    for the exact formulas (mirrored here as-is).
+    """
+    conv, sec, slope = _derive_conversion_trio(input_dir, solve_data_dir)
+    _write(conv, solve_data_dir / "pdtConversion_rate.csv")
+    _write(sec, solve_data_dir / "pdtProcess_section.csv")
+    _write(slope, solve_data_dir / "pdtProcess_slope.csv")
 
 
 # ---------------------------------------------------------------------------
@@ -582,8 +719,10 @@ def _load_p_per_side(path: Path) -> dict[tuple[str, str, str], float]:
     return out
 
 
-def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
-    """Emit ``solve_data/pdtProcess_source_sink.csv`` (11-branch fallback).
+def derive_pdtProcess_source_sink(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise the ``pdtProcess_source_sink`` frame (11-branch fallback).
 
     Outer index: ``(p, source, sink, param) ∈ process__source__sink__param_t,
     (d, t) ∈ dt``.
@@ -658,26 +797,31 @@ def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
         input_dir / "groupIncludeStochastics.csv",
     )
 
-    out_path = solve_data_dir / "pdtProcess_source_sink.csv"
-    with out_path.open("w") as fh:
-        fh.write("process,source,sink,param,period,time,value\n")
-        for (p, src, snk, param) in domain:
-            is_stoch = p in stoch_processes
-            is_conn = p in process_connection
-            for (d, t) in dt:
-                # Branch 1: sink stochastic.
-                if is_stoch:
-                    total = 0.0
-                    hit = False
-                    for tb in tb_for_d.get(d, ()):
-                        for ts in ts_for_d.get(d, ()):
-                            v = pbt_sink.get((p, snk, param, tb, ts, t))
-                            if v is not None:
-                                total += v
-                                hit = True
-                    if hit:
-                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(total)}\n")
-                        continue
+    proc: list[str] = []
+    sources: list[str] = []
+    sinks: list[str] = []
+    params: list[str] = []
+    periods: list[str] = []
+    times: list[str] = []
+    values: list[str] = []
+    for (p, src, snk, param) in domain:
+        is_stoch = p in stoch_processes
+        is_conn = p in process_connection
+        for (d, t) in dt:
+            cell: str | None = None
+            # Branch 1: sink stochastic.
+            if is_stoch:
+                total = 0.0
+                hit = False
+                for tb in tb_for_d.get(d, ()):
+                    for ts in ts_for_d.get(d, ()):
+                        v = pbt_sink.get((p, snk, param, tb, ts, t))
+                        if v is not None:
+                            total += v
+                            hit = True
+                if hit:
+                    cell = repr(total)
+                else:
                     # Branch 2: source stochastic.
                     total = 0.0
                     hit = False
@@ -688,8 +832,8 @@ def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
                                 total += v
                                 hit = True
                     if hit:
-                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(total)}\n")
-                        continue
+                        cell = repr(total)
+            if cell is None:
                 # Branch 3: sink parent-period.
                 pe_list = pe_for_d.get(d, ())
                 ts_list = ts_for_d.get(d, ())
@@ -704,55 +848,77 @@ def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
                                     total += v
                                     hit = True
                     if hit:
-                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(total)}\n")
-                        continue
-                    # Branch 4: source parent-period.
-                    total = 0.0
-                    hit = False
-                    for pe in pe_list:
-                        for tb in tb_for_d.get(pe, ()):
-                            for ts in ts_list:
-                                v = pbt_source.get((p, src, param, tb, ts, t))
-                                if v is not None:
-                                    total += v
-                                    hit = True
-                    if hit:
-                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(total)}\n")
-                        continue
+                        cell = repr(total)
+                    else:
+                        # Branch 4: source parent-period.
+                        total = 0.0
+                        hit = False
+                        for pe in pe_list:
+                            for tb in tb_for_d.get(pe, ()):
+                                for ts in ts_list:
+                                    v = pbt_source.get((p, src, param, tb, ts, t))
+                                    if v is not None:
+                                        total += v
+                                        hit = True
+                        if hit:
+                            cell = repr(total)
+            if cell is None:
                 # Branch 5: pt_process_sink.
                 v = pt_sink.get((p, snk, param, t))
                 if v is not None:
-                    fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
-                    continue
+                    cell = repr(v)
+            if cell is None:
                 # Branch 6: pt_process_source.
                 v = pt_source.get((p, src, param, t))
                 if v is not None:
-                    fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
-                    continue
+                    cell = repr(v)
+            if cell is None and is_conn:
                 # Branch 7: pt_process (connection only).
-                if is_conn:
-                    v = pt_process.get((p, param, t))
-                    if v is not None:
-                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
-                        continue
+                v = pt_process.get((p, param, t))
+                if v is not None:
+                    cell = repr(v)
+            if cell is None:
                 # Branch 8: p_process_source.
                 v = p_source.get((p, src, param))
                 if v is not None:
-                    fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
-                    continue
+                    cell = repr(v)
+            if cell is None:
                 # Branch 9: p_process_sink.
                 v = p_sink.get((p, snk, param))
                 if v is not None:
-                    fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
-                    continue
+                    cell = repr(v)
+            if cell is None and is_conn:
                 # Branch 10: p_process (connection only).
-                if is_conn:
-                    v = p_process.get((p, param))
-                    if v is not None:
-                        fh.write(f"{p},{src},{snk},{param},{d},{t},{repr(v)}\n")
-                        continue
+                v = p_process.get((p, param))
+                if v is not None:
+                    cell = repr(v)
+            if cell is None:
                 # Branch 11: 0.
-                fh.write(f"{p},{src},{snk},{param},{d},{t},0.0\n")
+                cell = "0.0"
+            proc.append(p)
+            sources.append(src)
+            sinks.append(snk)
+            params.append(param)
+            periods.append(d)
+            times.append(t)
+            values.append(cell)
+    return _utf8_frame({
+        "process": proc,
+        "source": sources,
+        "sink": sinks,
+        "param": params,
+        "period": periods,
+        "time": times,
+        "value": values,
+    })
+
+
+def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtProcess_source_sink.csv`` (see derive docstring)."""
+    _write(
+        derive_pdtProcess_source_sink(input_dir, solve_data_dir),
+        solve_data_dir / "pdtProcess_source_sink.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -842,10 +1008,10 @@ def _read_branches_for_d(period_branch_csv: Path) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def write_pdGroup(input_dir: Path, solve_data_dir: Path) -> None:
-    """Emit ``solve_data/pdGroup.csv``.
+def derive_pdGroup(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """Materialise the ``pdGroup`` frame (5-branch fallback per (g, param, d)).
 
-    Branches per (g, param, d):
+    Branches:
       1. ``pd_group[g, param, d]``                        — direct.
       2. ``sum_{db ∈ branches_for_d[d]} pd_group[g, param, db]`` — fold.
       3. ``p_group[g, param]``                            — scalar fallback.
@@ -858,29 +1024,44 @@ def write_pdGroup(input_dir: Path, solve_data_dir: Path) -> None:
     groups = _read_singles(input_dir / "group.csv")
     period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
 
-    out_path = solve_data_dir / "pdGroup.csv"
-    with out_path.open("w") as fh:
-        fh.write("group,param,period,value\n")
-        for g in groups:
-            for param in _GROUP_PERIOD_PARAM:
-                for d in period_in_use:
-                    if (g, param, d) in pd_g:
-                        v = pd_g[(g, param, d)]
+    g_col: list[str] = []
+    p_col: list[str] = []
+    d_col: list[str] = []
+    v_col: list[str] = []
+    for g in groups:
+        for param in _GROUP_PERIOD_PARAM:
+            for d in period_in_use:
+                if (g, param, d) in pd_g:
+                    v = pd_g[(g, param, d)]
+                else:
+                    branched = [
+                        pd_g[(g, param, db)]
+                        for db in branches_for_d.get(d, ())
+                        if (g, param, db) in pd_g
+                    ]
+                    if branched:
+                        v = sum(branched)
+                    elif (g, param) in p_g:
+                        v = p_g[(g, param)]
+                    elif param in _GROUP_PARAM_DEFAULT_5000:
+                        v = 5000.0
                     else:
-                        branched = [
-                            pd_g[(g, param, db)]
-                            for db in branches_for_d.get(d, ())
-                            if (g, param, db) in pd_g
-                        ]
-                        if branched:
-                            v = sum(branched)
-                        elif (g, param) in p_g:
-                            v = p_g[(g, param)]
-                        elif param in _GROUP_PARAM_DEFAULT_5000:
-                            v = 5000.0
-                        else:
-                            v = 0.0
-                    fh.write(f"{g},{param},{d},{repr(v)}\n")
+                        v = 0.0
+                g_col.append(g)
+                p_col.append(param)
+                d_col.append(d)
+                v_col.append(repr(v))
+    return _utf8_frame({
+        "group": g_col, "param": p_col, "period": d_col, "value": v_col,
+    })
+
+
+def write_pdGroup(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdGroup.csv`` (see derive docstring)."""
+    _write(
+        derive_pdGroup(input_dir, solve_data_dir),
+        solve_data_dir / "pdGroup.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -888,8 +1069,8 @@ def write_pdGroup(input_dir: Path, solve_data_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def write_pdtGroup(input_dir: Path, solve_data_dir: Path) -> None:
-    """Emit ``solve_data/pdtGroup.csv``.
+def derive_pdtGroup(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """Materialise the ``pdtGroup`` frame.
 
     Branches: ``pt_group[g, param, t]`` → ``pd_group[g, param, d]`` →
     ``p_group[g, param]`` → 0.
@@ -900,21 +1081,39 @@ def write_pdtGroup(input_dir: Path, solve_data_dir: Path) -> None:
     groups = _read_singles(input_dir / "group.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
 
-    out_path = solve_data_dir / "pdtGroup.csv"
-    with out_path.open("w") as fh:
-        fh.write("group,param,period,time,value\n")
-        for g in groups:
-            for param in _GROUP_TIME_PARAM:
-                for (d, t) in dt:
-                    if (g, param, t) in pt_g:
-                        v = pt_g[(g, param, t)]
-                    elif (g, param, d) in pd_g:
-                        v = pd_g[(g, param, d)]
-                    elif (g, param) in p_g:
-                        v = p_g[(g, param)]
-                    else:
-                        v = 0.0
-                    fh.write(f"{g},{param},{d},{t},{repr(v)}\n")
+    g_col: list[str] = []
+    p_col: list[str] = []
+    d_col: list[str] = []
+    t_col: list[str] = []
+    v_col: list[str] = []
+    for g in groups:
+        for param in _GROUP_TIME_PARAM:
+            for (d, t) in dt:
+                if (g, param, t) in pt_g:
+                    v = pt_g[(g, param, t)]
+                elif (g, param, d) in pd_g:
+                    v = pd_g[(g, param, d)]
+                elif (g, param) in p_g:
+                    v = p_g[(g, param)]
+                else:
+                    v = 0.0
+                g_col.append(g)
+                p_col.append(param)
+                d_col.append(d)
+                t_col.append(t)
+                v_col.append(repr(v))
+    return _utf8_frame({
+        "group": g_col, "param": p_col, "period": d_col, "time": t_col,
+        "value": v_col,
+    })
+
+
+def write_pdtGroup(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtGroup.csv`` (see derive docstring)."""
+    _write(
+        derive_pdtGroup(input_dir, solve_data_dir),
+        solve_data_dir / "pdtGroup.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -925,8 +1124,8 @@ def write_pdtGroup(input_dir: Path, solve_data_dir: Path) -> None:
 _COMMODITY_PERIOD_PARAM: tuple[str, ...] = ("price",)
 
 
-def write_pdCommodity(input_dir: Path, solve_data_dir: Path) -> None:
-    """Emit ``solve_data/pdCommodity.csv``.
+def derive_pdCommodity(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """Materialise the ``pdCommodity`` frame.
 
     Branches per (c, 'price', d):
       1. ``pd_commodity[c, 'price', d]``                 — direct.
@@ -939,25 +1138,40 @@ def write_pdCommodity(input_dir: Path, solve_data_dir: Path) -> None:
     commodities = _read_singles(input_dir / "commodity.csv")
     period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
 
-    out_path = solve_data_dir / "pdCommodity.csv"
-    with out_path.open("w") as fh:
-        fh.write("commodity,param,period,value\n")
-        for c in commodities:
-            for param in _COMMODITY_PERIOD_PARAM:
-                for d in period_in_use:
-                    if (c, param, d) in pd_c:
-                        v = pd_c[(c, param, d)]
+    c_col: list[str] = []
+    p_col: list[str] = []
+    d_col: list[str] = []
+    v_col: list[str] = []
+    for c in commodities:
+        for param in _COMMODITY_PERIOD_PARAM:
+            for d in period_in_use:
+                if (c, param, d) in pd_c:
+                    v = pd_c[(c, param, d)]
+                else:
+                    branched = [
+                        pd_c[(c, param, db)]
+                        for db in branches_for_d.get(d, ())
+                        if (c, param, db) in pd_c
+                    ]
+                    if branched:
+                        v = sum(branched)
                     else:
-                        branched = [
-                            pd_c[(c, param, db)]
-                            for db in branches_for_d.get(d, ())
-                            if (c, param, db) in pd_c
-                        ]
-                        if branched:
-                            v = sum(branched)
-                        else:
-                            v = p_c.get((c, param), 0.0)
-                    fh.write(f"{c},{param},{d},{repr(v)}\n")
+                        v = p_c.get((c, param), 0.0)
+                c_col.append(c)
+                p_col.append(param)
+                d_col.append(d)
+                v_col.append(repr(v))
+    return _utf8_frame({
+        "commodity": c_col, "param": p_col, "period": d_col, "value": v_col,
+    })
+
+
+def write_pdCommodity(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdCommodity.csv`` (see derive docstring)."""
+    _write(
+        derive_pdCommodity(input_dir, solve_data_dir),
+        solve_data_dir / "pdCommodity.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -968,8 +1182,8 @@ def write_pdCommodity(input_dir: Path, solve_data_dir: Path) -> None:
 _COMMODITY_TIME_PARAM: tuple[str, ...] = ("price",)
 
 
-def write_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> None:
-    """Emit ``solve_data/pdtCommodity.csv``.
+def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """Materialise the ``pdtCommodity`` frame.
 
     Domain: commodity × commodityTimeParam × dt.
     Branches: ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → 0.
@@ -980,18 +1194,36 @@ def write_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> None:
     commodities = _read_singles(input_dir / "commodity.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
 
-    out_path = solve_data_dir / "pdtCommodity.csv"
-    with out_path.open("w") as fh:
-        fh.write("commodity,param,period,time,value\n")
-        for c in commodities:
-            for param in _COMMODITY_TIME_PARAM:
-                for (d, t) in dt:
-                    v = pt.get((c, param, t))
-                    if v is None:
-                        v = pd_.get((c, param, d))
-                    if v is None:
-                        v = p.get((c, param), 0.0)
-                    fh.write(f"{c},{param},{d},{t},{repr(v)}\n")
+    c_col: list[str] = []
+    p_col: list[str] = []
+    d_col: list[str] = []
+    t_col: list[str] = []
+    v_col: list[str] = []
+    for c in commodities:
+        for param in _COMMODITY_TIME_PARAM:
+            for (d, t) in dt:
+                v = pt.get((c, param, t))
+                if v is None:
+                    v = pd_.get((c, param, d))
+                if v is None:
+                    v = p.get((c, param), 0.0)
+                c_col.append(c)
+                p_col.append(param)
+                d_col.append(d)
+                t_col.append(t)
+                v_col.append(repr(v))
+    return _utf8_frame({
+        "commodity": c_col, "param": p_col, "period": d_col, "time": t_col,
+        "value": v_col,
+    })
+
+
+def write_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtCommodity.csv`` (see derive docstring)."""
+    _write(
+        derive_pdtCommodity(input_dir, solve_data_dir),
+        solve_data_dir / "pdtCommodity.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -999,17 +1231,11 @@ def write_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def write_p_positive_negative_inflow(
+def _derive_positive_negative_inflow(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """Emit ``p_positive_inflow.csv`` and ``p_negative_inflow.csv``
-    from ``solve_data/pdtNodeInflow.csv`` (native, written upstream).
-
-    * ``p_positive_inflow`` is restricted to non-``no_inflow`` nodes;
-      ``value = max(pdtNodeInflow, 0)``.
-    * ``p_negative_inflow`` covers all nodes — ``no_inflow`` nodes emit
-      explicit ``0.0`` (matches the mod's all-nodes domain).
-    """
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Build both ``p_positive_inflow`` and ``p_negative_inflow`` frames
+    from a single read of ``pdtNodeInflow.csv``."""
     nodes = _read_singles(input_dir / "node.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
     inflow_method_pairs = frozenset(
@@ -1032,26 +1258,75 @@ def write_p_positive_negative_inflow(
                     except ValueError:
                         continue
 
-    pos_path = solve_data_dir / "p_positive_inflow.csv"
-    with pos_path.open("w") as fh:
-        fh.write("node,period,time,value\n")
-        for n in nodes:
-            if n in no_inflow_nodes:
-                continue
-            for (d, t) in dt:
-                v = pdt_inflow.get((n, d, t), 0.0)
-                fh.write(f"{n},{d},{t},{repr(v if v >= 0 else 0.0)}\n")
+    pos_n: list[str] = []
+    pos_d: list[str] = []
+    pos_t: list[str] = []
+    pos_v: list[str] = []
+    for n in nodes:
+        if n in no_inflow_nodes:
+            continue
+        for (d, t) in dt:
+            v = pdt_inflow.get((n, d, t), 0.0)
+            pos_n.append(n)
+            pos_d.append(d)
+            pos_t.append(t)
+            pos_v.append(repr(v if v >= 0 else 0.0))
+    pos_frame = _utf8_frame({
+        "node": pos_n, "period": pos_d, "time": pos_t, "value": pos_v,
+    })
 
-    neg_path = solve_data_dir / "p_negative_inflow.csv"
-    with neg_path.open("w") as fh:
-        fh.write("node,period,time,value\n")
-        for n in nodes:
-            for (d, t) in dt:
-                if n in no_inflow_nodes:
-                    fh.write(f"{n},{d},{t},0.0\n")
-                else:
-                    v = pdt_inflow.get((n, d, t), 0.0)
-                    fh.write(f"{n},{d},{t},{repr(v if v < 0 else 0.0)}\n")
+    neg_n: list[str] = []
+    neg_d: list[str] = []
+    neg_t: list[str] = []
+    neg_v: list[str] = []
+    for n in nodes:
+        for (d, t) in dt:
+            if n in no_inflow_nodes:
+                cell = "0.0"
+            else:
+                v = pdt_inflow.get((n, d, t), 0.0)
+                cell = repr(v if v < 0 else 0.0)
+            neg_n.append(n)
+            neg_d.append(d)
+            neg_t.append(t)
+            neg_v.append(cell)
+    neg_frame = _utf8_frame({
+        "node": neg_n, "period": neg_d, "time": neg_t, "value": neg_v,
+    })
+
+    return pos_frame, neg_frame
+
+
+def derive_p_positive_inflow(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise just the ``p_positive_inflow`` frame."""
+    pos, _neg = _derive_positive_negative_inflow(input_dir, solve_data_dir)
+    return pos
+
+
+def derive_p_negative_inflow(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise just the ``p_negative_inflow`` frame."""
+    _pos, neg = _derive_positive_negative_inflow(input_dir, solve_data_dir)
+    return neg
+
+
+def write_p_positive_negative_inflow(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Emit ``p_positive_inflow.csv`` and ``p_negative_inflow.csv``
+    from ``solve_data/pdtNodeInflow.csv`` (native, written upstream).
+
+    * ``p_positive_inflow`` is restricted to non-``no_inflow`` nodes;
+      ``value = max(pdtNodeInflow, 0)``.
+    * ``p_negative_inflow`` covers all nodes — ``no_inflow`` nodes emit
+      explicit ``0.0`` (matches the mod's all-nodes domain).
+    """
+    pos, neg = _derive_positive_negative_inflow(input_dir, solve_data_dir)
+    _write(pos, solve_data_dir / "p_positive_inflow.csv")
+    _write(neg, solve_data_dir / "p_negative_inflow.csv")
 
 
 # ---------------------------------------------------------------------------
@@ -1103,16 +1378,12 @@ def _write_5col(path: Path, header: tuple[str, ...], rows: list[tuple]) -> None:
 
 # ---- write_pdtProcess__source__sink__dt_varCost_pair (mod L1493, L1502) ----
 
-def write_pdtProcess__source__sink__dt_varCost_pair(
+def _derive_varCost_pair(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """flextool.mod L1493, L1502 — two ``varCost`` calc params keyed on
-    ``process_source_sink`` and ``process_source_sink_alwaysProcess``.
-
-    Both sum per-side ``other_operational_cost`` (gated by process_source
-    / process_sink membership) plus ``pdtProcess['OOC']``.  The
-    ``_alwaysProcess`` variant additionally gates the third term on
-    ``(p, sink) ∈ process_sink ∪ process_source``.
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Build both ``pdtProcess__source__sink__dt_varCost`` frames in one
+    pass — the basic and ``_alwaysProcess`` variants share the same
+    OOC dictionaries / proc_src / proc_snk lookups.
     """
     pdt = _read_pdt_at_param(
         solve_data_dir / "pdtProcess.csv",
@@ -1137,47 +1408,93 @@ def write_pdtProcess__source__sink__dt_varCost_pair(
     )
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
 
-    out_basic = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
-    out_basic.parent.mkdir(parents=True, exist_ok=True)
-    with out_basic.open("w") as fh:
-        fh.write("process,source,sink,period,time,value\n")
-        for (p, src, snk) in pss:
+    def _build(rows_iter: list[tuple[str, str, str]],
+               always: bool) -> pl.DataFrame:
+        p_col: list[str] = []
+        s_col: list[str] = []
+        k_col: list[str] = []
+        d_col: list[str] = []
+        t_col: list[str] = []
+        v_col: list[str] = []
+        for (p, src, snk) in rows_iter:
             for (d, t) in dt:
                 v = 0.0
                 if (p, src) in proc_src:
                     v += pdt_src.get((p, src, d, t), 0.0)
                 if (p, snk) in proc_snk:
                     v += pdt_snk.get((p, snk, d, t), 0.0)
-                v += pdt.get((p, d, t), 0.0)
-                fh.write(f"{p},{src},{snk},{d},{t},{repr(v)}\n")
-
-    out_always = (
-        solve_data_dir / "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv"
-    )
-    with out_always.open("w") as fh:
-        fh.write("process,source,sink,period,time,value\n")
-        for (p, src, snk) in pss_always:
-            for (d, t) in dt:
-                v = 0.0
-                if (p, src) in proc_src:
-                    v += pdt_src.get((p, src, d, t), 0.0)
-                if (p, snk) in proc_snk:
-                    v += pdt_snk.get((p, snk, d, t), 0.0)
-                if (p, snk) in proc_snk or (p, snk) in proc_src:
+                if always:
+                    if (p, snk) in proc_snk or (p, snk) in proc_src:
+                        v += pdt.get((p, d, t), 0.0)
+                else:
                     v += pdt.get((p, d, t), 0.0)
-                fh.write(f"{p},{src},{snk},{d},{t},{repr(v)}\n")
+                p_col.append(p)
+                s_col.append(src)
+                k_col.append(snk)
+                d_col.append(d)
+                t_col.append(t)
+                v_col.append(repr(v))
+        return _utf8_frame({
+            "process": p_col, "source": s_col, "sink": k_col,
+            "period": d_col, "time": t_col, "value": v_col,
+        })
+
+    return _build(pss, always=False), _build(pss_always, always=True)
+
+
+def derive_pdtProcess__source__sink__dt_varCost(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise the ``pdtProcess__source__sink__dt_varCost`` frame."""
+    basic, _always = _derive_varCost_pair(input_dir, solve_data_dir)
+    return basic
+
+
+def derive_pdtProcess__source__sink__dt_varCost_alwaysProcess(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise the ``pdtProcess__source__sink__dt_varCost_alwaysProcess``
+    frame."""
+    _basic, always = _derive_varCost_pair(input_dir, solve_data_dir)
+    return always
+
+
+def write_pdtProcess__source__sink__dt_varCost_pair(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1493, L1502 — two ``varCost`` calc params keyed on
+    ``process_source_sink`` and ``process_source_sink_alwaysProcess``.
+
+    Both sum per-side ``other_operational_cost`` (gated by process_source
+    / process_sink membership) plus ``pdtProcess['OOC']``.  The
+    ``_alwaysProcess`` variant additionally gates the third term on
+    ``(p, sink) ∈ process_sink ∪ process_source``.
+    """
+    basic, always = _derive_varCost_pair(input_dir, solve_data_dir)
+    _write(basic, solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv")
+    _write(always, solve_data_dir
+                   / "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv")
 
 
 # ---- write_pssdt_varCost_filters (mod L1498-1501) -------------------------
 
-def write_pssdt_varCost_filters(
-    input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """flextool.mod L1498-1501 — four filter sets keyed on pdt-* OOC values.
+def _filter_rows_to_frame(
+    rows: list[tuple[str, str, str, str, str]],
+) -> pl.DataFrame:
+    """5-column key-only Utf8 frame matching legacy ``_write_5col`` output."""
+    return _utf8_frame({
+        "process": [r[0] for r in rows],
+        "source":  [r[1] for r in rows],
+        "sink":    [r[2] for r in rows],
+        "period":  [r[3] for r in rows],
+        "time":    [r[4] for r in rows],
+    })
 
-    Depends on ``pdtProcess__source__sink__dt_varCost.csv`` produced by
-    :func:`write_pdtProcess__source__sink__dt_varCost_pair`.
-    """
+
+def _derive_pssdt_varCost_filters(
+    input_dir: Path, solve_data_dir: Path,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Build all four ``pssdt_varCost_*`` filter frames in one pass."""
     pdt = _read_pdt_at_param(
         solve_data_dir / "pdtProcess.csv",
         param_col=1, param_value="other_operational_cost",
@@ -1212,51 +1529,110 @@ def write_pssdt_varCost_filters(
     pss_eff = _read_triples(solve_data_dir / "process_source_sink_eff.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
 
-    # pssdt_varCost_noEff
-    rows: list[tuple[str, str, str, str, str]] = []
+    no_eff: list[tuple[str, str, str, str, str]] = []
     for (p, src, snk) in pss_noEff:
         for (d, t) in dt:
             if varcost.get((p, src, snk, d, t), 0.0):
-                rows.append((p, src, snk, d, t))
-    _write_5col(solve_data_dir / "pssdt_varCost_noEff.csv",
-                ("process", "source", "sink", "period", "time"), rows)
+                no_eff.append((p, src, snk, d, t))
 
-    # pssdt_varCost_eff_unit_source
-    rows = []
+    eff_src: list[tuple[str, str, str, str, str]] = []
     for (p, src, snk) in pss_eff:
         for (d, t) in dt:
             if (p, src) in proc_src and pdt_src.get((p, src, d, t), 0.0):
-                rows.append((p, src, snk, d, t))
-    _write_5col(solve_data_dir / "pssdt_varCost_eff_unit_source.csv",
-                ("process", "source", "sink", "period", "time"), rows)
+                eff_src.append((p, src, snk, d, t))
 
-    # pssdt_varCost_eff_unit_sink
-    rows = []
+    eff_snk: list[tuple[str, str, str, str, str]] = []
     for (p, src, snk) in pss_eff:
         for (d, t) in dt:
             if (p, snk) in proc_snk and pdt_snk.get((p, snk, d, t), 0.0):
-                rows.append((p, src, snk, d, t))
-    _write_5col(solve_data_dir / "pssdt_varCost_eff_unit_sink.csv",
-                ("process", "source", "sink", "period", "time"), rows)
+                eff_snk.append((p, src, snk, d, t))
 
-    # pssdt_varCost_eff_connection
-    rows = []
+    eff_conn: list[tuple[str, str, str, str, str]] = []
     for (p, src, snk) in pss_eff:
         for (d, t) in dt:
             if pdt.get((p, d, t), 0.0):
-                rows.append((p, src, snk, d, t))
-    _write_5col(solve_data_dir / "pssdt_varCost_eff_connection.csv",
-                ("process", "source", "sink", "period", "time"), rows)
+                eff_conn.append((p, src, snk, d, t))
+
+    return (
+        _filter_rows_to_frame(no_eff),
+        _filter_rows_to_frame(eff_src),
+        _filter_rows_to_frame(eff_snk),
+        _filter_rows_to_frame(eff_conn),
+    )
+
+
+def derive_pssdt_varCost_noEff(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    return _derive_pssdt_varCost_filters(input_dir, solve_data_dir)[0]
+
+
+def derive_pssdt_varCost_eff_unit_source(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    return _derive_pssdt_varCost_filters(input_dir, solve_data_dir)[1]
+
+
+def derive_pssdt_varCost_eff_unit_sink(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    return _derive_pssdt_varCost_filters(input_dir, solve_data_dir)[2]
+
+
+def derive_pssdt_varCost_eff_connection(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    return _derive_pssdt_varCost_filters(input_dir, solve_data_dir)[3]
+
+
+def write_pssdt_varCost_filters(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1498-1501 — four filter sets keyed on pdt-* OOC values.
+
+    Depends on ``pdtProcess__source__sink__dt_varCost.csv`` produced by
+    :func:`write_pdtProcess__source__sink__dt_varCost_pair`.
+    """
+    no_eff, eff_src, eff_snk, eff_conn = _derive_pssdt_varCost_filters(
+        input_dir, solve_data_dir,
+    )
+    _write(no_eff, solve_data_dir / "pssdt_varCost_noEff.csv")
+    _write(eff_src, solve_data_dir / "pssdt_varCost_eff_unit_source.csv")
+    _write(eff_snk, solve_data_dir / "pssdt_varCost_eff_unit_sink.csv")
+    _write(eff_conn, solve_data_dir / "pssdt_varCost_eff_connection.csv")
 
 
 # ---- write_cap_reduction_params (mod L1637-1663) --------------------------
 
-def write_cap_reduction_params(
+def _read_p_side_3(path: Path) -> dict[tuple[str, str, str], float]:
+    """Per-side 4-col CSV ``(k1, k2, k3, value)`` → ``(k1, k2, k3) → v``."""
+    out: dict[tuple[str, str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 4 and all(row[i] for i in range(3)):
+                try:
+                    out[(row[0], row[1], row[2])] = float(row[3])
+                except ValueError:
+                    continue
+    return out
+
+
+def _cap_reduction_inputs(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """flextool.mod L1637-1663 — Morales-Espana startup/shutdown capacity
-    reduction params (4 calc params, 1 per side × startup/shutdown).
-    """
+) -> tuple[
+    dict[tuple[str, str], float],
+    dict[tuple[str, str, str], float],
+    dict[tuple[str, str, str], float],
+    frozenset[str],
+    list[tuple[str, str]],
+    list[tuple[str, str]],
+    list[tuple[str, str, float]],
+]:
+    """Shared input loading for the 4 cap-reduction derives."""
     p_process: dict[tuple[str, str], float] = {}
     pp_path = input_dir / "p_process.csv"
     if pp_path.exists():
@@ -1270,31 +1646,14 @@ def write_cap_reduction_params(
                     except ValueError:
                         continue
 
-    def _read_p_side(path: Path) -> dict[tuple[str, str, str], float]:
-        out: dict[tuple[str, str, str], float] = {}
-        if not path.exists():
-            return out
-        with path.open() as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 4 and all(row[i] for i in range(3)):
-                    try:
-                        out[(row[0], row[1], row[2])] = float(row[3])
-                    except ValueError:
-                        continue
-        return out
-
-    p_process_source = _read_p_side(input_dir / "p_process_source.csv")
-    p_process_sink = _read_p_side(input_dir / "p_process_sink.csv")
-
+    p_process_source = _read_p_side_3(input_dir / "p_process_source.csv")
+    p_process_sink = _read_p_side_3(input_dir / "p_process_sink.csv")
     process_online = frozenset(
         _read_singles(solve_data_dir / "process_online.csv")
     )
     proc_src = _read_pairs(input_dir / "process__source.csv")
     proc_snk = _read_pairs(input_dir / "process__sink.csv")
 
-    # dt with step_duration column from steps_in_use.csv.
     dt_with_dur: list[tuple[str, str, float]] = []
     su_path = solve_data_dir / "steps_in_use.csv"
     if su_path.exists():
@@ -1307,40 +1666,119 @@ def write_cap_reduction_params(
                         dt_with_dur.append((row[0], row[1], float(row[2])))
                     except ValueError:
                         continue
+    return (p_process, p_process_source, p_process_sink, process_online,
+            proc_src, proc_snk, dt_with_dur)
 
-    def _compute(p_side: dict, pairs: list[tuple[str, str]],
-                 ramp_param: str) -> list[tuple[str, str, str, str, float]]:
-        rows: list[tuple[str, str, str, str, float]] = []
-        for (p, side_n) in pairs:
-            if p not in process_online:
-                continue
-            ramp = p_side.get((p, side_n, ramp_param), 0.0)
-            if ramp <= 0:
-                for (d, t, _dur) in dt_with_dur:
-                    rows.append((p, side_n, d, t, 0.0))
-                continue
-            min_load = p_process.get((p, "min_load"), 0.0)
-            for (d, t, dur) in dt_with_dur:
-                v = max(0.0, 1.0 - min_load - ramp * 60.0 * dur)
-                rows.append((p, side_n, d, t, v))
-        return rows
 
-    def _write(path: Path, side_label: str,
-               rows: list[tuple[str, str, str, str, float]]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w") as fh:
-            fh.write(f"process,{side_label},period,time,value\n")
-            for (p, sn, d, t, v) in rows:
-                fh.write(f"{p},{sn},{d},{t},{repr(v)}\n")
+def _cap_reduction_frame(
+    p_side: dict, pairs: list[tuple[str, str]],
+    ramp_param: str, side_label: str,
+    p_process: dict[tuple[str, str], float],
+    process_online: frozenset[str],
+    dt_with_dur: list[tuple[str, str, float]],
+) -> pl.DataFrame:
+    """Build a single cap-reduction frame for one (p_side, pairs, ramp,
+    side_label) combination — mirrors legacy ``_compute`` + ``_write``."""
+    p_col: list[str] = []
+    s_col: list[str] = []
+    d_col: list[str] = []
+    t_col: list[str] = []
+    v_col: list[str] = []
+    for (p, side_n) in pairs:
+        if p not in process_online:
+            continue
+        ramp = p_side.get((p, side_n, ramp_param), 0.0)
+        if ramp <= 0:
+            for (d, t, _dur) in dt_with_dur:
+                p_col.append(p)
+                s_col.append(side_n)
+                d_col.append(d)
+                t_col.append(t)
+                v_col.append(repr(0.0))
+            continue
+        min_load = p_process.get((p, "min_load"), 0.0)
+        for (d, t, dur) in dt_with_dur:
+            v = max(0.0, 1.0 - min_load - ramp * 60.0 * dur)
+            p_col.append(p)
+            s_col.append(side_n)
+            d_col.append(d)
+            t_col.append(t)
+            v_col.append(repr(v))
+    return _utf8_frame({
+        "process": p_col, side_label: s_col,
+        "period": d_col, "time": t_col, "value": v_col,
+    })
 
-    _write(solve_data_dir / "p_startup_cap_reduction_sink.csv", "sink",
-           _compute(p_process_sink, proc_snk, "ramp_speed_up"))
-    _write(solve_data_dir / "p_shutdown_cap_reduction_sink.csv", "sink",
-           _compute(p_process_sink, proc_snk, "ramp_speed_down"))
-    _write(solve_data_dir / "p_startup_cap_reduction_source.csv", "source",
-           _compute(p_process_source, proc_src, "ramp_speed_up"))
-    _write(solve_data_dir / "p_shutdown_cap_reduction_source.csv", "source",
-           _compute(p_process_source, proc_src, "ramp_speed_down"))
+
+def derive_p_startup_cap_reduction_sink(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    (pp, _ps, psnk, online, _proc_src, proc_snk, dtd) = _cap_reduction_inputs(
+        input_dir, solve_data_dir,
+    )
+    return _cap_reduction_frame(psnk, proc_snk, "ramp_speed_up", "sink",
+                                pp, online, dtd)
+
+
+def derive_p_shutdown_cap_reduction_sink(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    (pp, _ps, psnk, online, _proc_src, proc_snk, dtd) = _cap_reduction_inputs(
+        input_dir, solve_data_dir,
+    )
+    return _cap_reduction_frame(psnk, proc_snk, "ramp_speed_down", "sink",
+                                pp, online, dtd)
+
+
+def derive_p_startup_cap_reduction_source(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    (pp, psrc, _psnk, online, proc_src, _proc_snk, dtd) = _cap_reduction_inputs(
+        input_dir, solve_data_dir,
+    )
+    return _cap_reduction_frame(psrc, proc_src, "ramp_speed_up", "source",
+                                pp, online, dtd)
+
+
+def derive_p_shutdown_cap_reduction_source(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    (pp, psrc, _psnk, online, proc_src, _proc_snk, dtd) = _cap_reduction_inputs(
+        input_dir, solve_data_dir,
+    )
+    return _cap_reduction_frame(psrc, proc_src, "ramp_speed_down", "source",
+                                pp, online, dtd)
+
+
+def write_cap_reduction_params(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1637-1663 — Morales-Espana startup/shutdown capacity
+    reduction params (4 calc params, 1 per side × startup/shutdown).
+    """
+    (pp, psrc, psnk, online, proc_src, proc_snk, dtd) = _cap_reduction_inputs(
+        input_dir, solve_data_dir,
+    )
+    _write(
+        _cap_reduction_frame(psnk, proc_snk, "ramp_speed_up", "sink",
+                             pp, online, dtd),
+        solve_data_dir / "p_startup_cap_reduction_sink.csv",
+    )
+    _write(
+        _cap_reduction_frame(psnk, proc_snk, "ramp_speed_down", "sink",
+                             pp, online, dtd),
+        solve_data_dir / "p_shutdown_cap_reduction_sink.csv",
+    )
+    _write(
+        _cap_reduction_frame(psrc, proc_src, "ramp_speed_up", "source",
+                             pp, online, dtd),
+        solve_data_dir / "p_startup_cap_reduction_source.csv",
+    )
+    _write(
+        _cap_reduction_frame(psrc, proc_src, "ramp_speed_down", "source",
+                             pp, online, dtd),
+        solve_data_dir / "p_shutdown_cap_reduction_source.csv",
+    )
 
 
 # ---- write_ed_period_params (mod L1252-1255 family, ed_*_period) ----------
@@ -1365,17 +1803,43 @@ def _write_keyed_2(path: Path, header: tuple[str, str, str],
                     + "".join(f"{a},{b},{repr(v)}\n" for a, b, v in rows))
 
 
-def write_ed_period_params(
-    input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """``ed_*_period`` / ``ed_cumulative_*`` family — six calc params
-    keyed on ``ed_invest`` / ``ed_divest``.
+def _ed_period_compute(
+    src_pairs: list[tuple[str, str]],
+    mod_param: str,
+    pp,  # PdLookup
+    pn,  # PdLookup
+    process_set: frozenset[str],
+    node_set: frozenset[str],
+) -> pl.DataFrame:
+    """One ed_period_param frame — 3-col Utf8 ``(entity, period, value)``."""
+    e_col: list[str] = []
+    d_col: list[str] = []
+    v_col: list[str] = []
+    for e, d in src_pairs:
+        if e in process_set:
+            v = pp.get(e, mod_param, d)
+        elif e in node_set:
+            v = pn.get(e, mod_param, d)
+        else:
+            v = 0.0
+        e_col.append(e)
+        d_col.append(d)
+        v_col.append(repr(v))
+    return _utf8_frame({"entity": e_col, "period": d_col, "value": v_col})
 
-    Must run AFTER ``invest_divest_sets`` has produced
-    ``solve_data/ed_invest.csv`` and ``ed_divest.csv``.  Processes and
-    nodes are disjoint by construction, so exactly one of the
-    ``PdLookup`` branches fires per entity row.
-    """
+
+_ED_PERIOD_PARAM_SPECS: tuple[tuple[str, str, str], ...] = (
+    # (basename, src-pair-tag ['invest'|'divest'], mod_param)
+    ("ed_invest_max_period.csv",       "invest", "invest_max_period"),
+    ("ed_invest_min_period.csv",       "invest", "invest_min_period"),
+    ("ed_divest_max_period.csv",       "divest", "retire_max_period"),
+    ("ed_divest_min_period.csv",       "divest", "retire_min_period"),
+    ("ed_cumulative_max_capacity.csv", "invest", "cumulative_max_capacity"),
+    ("ed_cumulative_min_capacity.csv", "invest", "cumulative_min_capacity"),
+)
+
+
+def _ed_period_inputs(input_dir: Path, solve_data_dir: Path):
     from flextool.engine_polars._pdt_lookup import PdLookup
     pp = PdLookup(
         pd_csv=input_dir / "pd_process.csv",
@@ -1389,26 +1853,66 @@ def write_ed_period_params(
     )
     process_set = frozenset(_read_singles(input_dir / "process.csv"))
     node_set = frozenset(_read_singles(input_dir / "node.csv"))
-
     ed_invest_pairs = _read_ed_pairs(solve_data_dir / "ed_invest.csv")
     ed_divest_pairs = _read_ed_pairs(solve_data_dir / "ed_divest.csv")
+    return pp, pn, process_set, node_set, ed_invest_pairs, ed_divest_pairs
 
-    for fname, src_pairs, mod_param in (
-        ("ed_invest_max_period.csv",       ed_invest_pairs, "invest_max_period"),
-        ("ed_invest_min_period.csv",       ed_invest_pairs, "invest_min_period"),
-        ("ed_divest_max_period.csv",       ed_divest_pairs, "retire_max_period"),
-        ("ed_divest_min_period.csv",       ed_divest_pairs, "retire_min_period"),
-        ("ed_cumulative_max_capacity.csv", ed_invest_pairs, "cumulative_max_capacity"),
-        ("ed_cumulative_min_capacity.csv", ed_invest_pairs, "cumulative_min_capacity"),
-    ):
-        rows: list[tuple[str, str, float]] = []
-        for e, d in src_pairs:
-            if e in process_set:
-                v = pp.get(e, mod_param, d)
-            elif e in node_set:
-                v = pn.get(e, mod_param, d)
-            else:
-                v = 0.0
-            rows.append((e, d, v))
-        _write_keyed_2(solve_data_dir / fname,
-                       ("entity", "period", "value"), rows)
+
+def derive_ed_invest_max_period(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    pp, pn, ps, ns, inv, _div = _ed_period_inputs(input_dir, solve_data_dir)
+    return _ed_period_compute(inv, "invest_max_period", pp, pn, ps, ns)
+
+
+def derive_ed_invest_min_period(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    pp, pn, ps, ns, inv, _div = _ed_period_inputs(input_dir, solve_data_dir)
+    return _ed_period_compute(inv, "invest_min_period", pp, pn, ps, ns)
+
+
+def derive_ed_divest_max_period(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    pp, pn, ps, ns, _inv, div = _ed_period_inputs(input_dir, solve_data_dir)
+    return _ed_period_compute(div, "retire_max_period", pp, pn, ps, ns)
+
+
+def derive_ed_divest_min_period(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    pp, pn, ps, ns, _inv, div = _ed_period_inputs(input_dir, solve_data_dir)
+    return _ed_period_compute(div, "retire_min_period", pp, pn, ps, ns)
+
+
+def derive_ed_cumulative_max_capacity(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    pp, pn, ps, ns, inv, _div = _ed_period_inputs(input_dir, solve_data_dir)
+    return _ed_period_compute(inv, "cumulative_max_capacity", pp, pn, ps, ns)
+
+
+def derive_ed_cumulative_min_capacity(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    pp, pn, ps, ns, inv, _div = _ed_period_inputs(input_dir, solve_data_dir)
+    return _ed_period_compute(inv, "cumulative_min_capacity", pp, pn, ps, ns)
+
+
+def write_ed_period_params(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """``ed_*_period`` / ``ed_cumulative_*`` family — six calc params
+    keyed on ``ed_invest`` / ``ed_divest``.
+
+    Must run AFTER ``invest_divest_sets`` has produced
+    ``solve_data/ed_invest.csv`` and ``ed_divest.csv``.  Processes and
+    nodes are disjoint by construction, so exactly one of the
+    ``PdLookup`` branches fires per entity row.
+    """
+    pp, pn, ps, ns, inv, div = _ed_period_inputs(input_dir, solve_data_dir)
+    pair_for = {"invest": inv, "divest": div}
+    for fname, tag, mod_param in _ED_PERIOD_PARAM_SPECS:
+        frame = _ed_period_compute(pair_for[tag], mod_param, pp, pn, ps, ns)
+        _write(frame, solve_data_dir / fname)
