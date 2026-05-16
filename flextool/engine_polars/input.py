@@ -79,10 +79,14 @@ from ._axis_enums import (  # substrate retained for Path B — see handoff
 # ---------------------------------------------------------------------------
 # CSV-shape helpers (same three shapes as before)
 
-def _read_long(path: Path, *, drop=("solve",), rename=None) -> pl.DataFrame:
+def _read_long(path: Path, *, drop=("solve",), rename=None,
+               cast_value: bool = True) -> pl.DataFrame:
     df = _read_csv_file(path)
     df = df.drop([c for c in drop if c in df.columns])
     if rename: df = df.rename(rename)
+    if cast_value and "value" in df.columns:
+        df = df.with_columns(value=pl.col("value").cast(pl.Float64,
+                                                        strict=False))
     return df
 
 

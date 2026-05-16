@@ -531,26 +531,15 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "rp_block_start_last.csv",
     "rp_cost_weight.csv",
     # _writer_period_calc — Phase E-b8 (write_period_calculated_params
-    # emits 12 CSVs, write_branch_weights emits 2.  Each emit funnels
-    # through ``_write_keyed`` / ``_write_keyed_2`` which delegate to
-    # the module-level ``_write(df, path)`` helper so the accumulator
-    # captures the Utf8 frame.
-    #
-    # NB two basenames are intentionally NOT captured:
-    # ``p_inflation_factor_operations_yearly.csv`` (FlexData
-    # ``p_inflation_op``) and ``complete_period_share_of_year_calc.csv``
-    # (FlexData ``p_period_share``).  The loader path
-    # (:func:`flextool.engine_polars.input._load_per_solve_misc`)
-    # reads both via :func:`_read_long` without an explicit Float64
-    # cast on the value column.  The disk path lands a ``Float64``
-    # ``value`` (via ``pl.read_csv`` inference) into the
-    # :class:`Param.frame`, while a seeded Utf8 ``value`` would land
-    # Utf8 — breaking the Phase D seed-vs-disk field-parity test.
-    # The writer routes these two basenames through
-    # ``_write_no_capture`` so disk emit still happens but the
-    # accumulator hook is bypassed; consumers fall through to the
-    # disk read.  Lift this exception once the loader casts value
-    # columns uniformly.
+    # emits 12 CSVs, write_branch_weights emits 2).  All 14 captured;
+    # the previous E-b8 _NO_CAPTURE workaround for
+    # p_inflation_factor_operations_yearly.csv and
+    # complete_period_share_of_year_calc.csv was retired once
+    # input._read_long gained a uniform Float64 cast on the value
+    # column so seed-mode Utf8 frames coerce to Float64 in Param.frame
+    # exactly as the disk-read path does.
+    "p_inflation_factor_operations_yearly.csv",
+    "complete_period_share_of_year_calc.csv",
     "p_timeline_duration_in_years.csv",
     "hours_in_period.csv",
     "period_share_of_year.csv",
