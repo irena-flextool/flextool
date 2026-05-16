@@ -448,3 +448,24 @@ def test_phase_e_d_universal_csv_free_run(tmp_path: Path) -> None:
             f"on-disk basenames in {solve_data_dir}: "
             f"{sorted(unexpected)}"
         )
+
+    # Phase E-e parity gate — the wiring of every direct ``csv.reader``
+    # site in the writer modules (and their ``_pdt_lookup`` helper) plus
+    # the ``_solve_context._read_active_solve`` / ``_read_solve_first``
+    # / ``_read_period_set`` / ``_read_realized_dispatch_periods``
+    # seed-awareness, AND lifting the seed install above the
+    # ``SolveContext.from_workdir`` call in ``load_flextool``, makes the
+    # csv-free cascade produce the same objective as the
+    # csv-emission-on baseline.  Pre-Phase-E-e the csv-free objective
+    # collapsed to 0.0 because cost-bearing per-iter frames (pdtProcess,
+    # pdtCommodity, pdtNode, pdtReserve_upDown_group, the
+    # cap-reduction / inflow-scaling families, ...) were 0-row when the
+    # direct ``csv.reader`` reads in their producer modules hit empty
+    # disk paths under ``csv_emission_disabled()``.
+    csvfree_obj = next(reversed(csvfree_sols.values())).solution.obj
+    baseline_obj = next(reversed(baseline_sols.values())).solution.obj
+    import math
+    assert math.isclose(csvfree_obj, baseline_obj, rel_tol=1e-6), (
+        f"csv-free objective {csvfree_obj} differs from baseline "
+        f"{baseline_obj} (Phase E-e parity gate)"
+    )

@@ -49,6 +49,7 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine_polars._input_source import _seed_open
 from flextool.engine_polars._pdt_lookup import (
     NODE_PARAM_DEF1,
     PROCESS_PARAM_DEF1,
@@ -76,10 +77,11 @@ def _write(df: pl.DataFrame, path: Path) -> None:
 
 
 def _read_pairs(path: Path) -> list[tuple[str, str]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -89,10 +91,11 @@ def _read_pairs(path: Path) -> list[tuple[str, str]]:
 
 
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:

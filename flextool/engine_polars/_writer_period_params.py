@@ -33,6 +33,8 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine_polars._input_source import _seed_open
+
 
 # ---------------------------------------------------------------------------
 # Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
@@ -70,19 +72,21 @@ def _utf8_frame(columns: dict[str, list[str]]) -> pl.DataFrame:
 
 
 def _read_singles(path: Path) -> list[str]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         return [r[0] for r in reader if r and r[0]]
 
 
 def _read_pairs(path: Path) -> list[tuple[str, str]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -94,10 +98,11 @@ def _read_pairs(path: Path) -> list[tuple[str, str]]:
 def _read_pairs_to_dict(path: Path, key_col: int) -> dict[str, list[str]]:
     """Generic two-col CSV → ``key_col → list[other_col]``."""
     out: dict[str, list[str]] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
     other_col = 1 - key_col
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -111,9 +116,10 @@ def _read_stochastic_entities(group_entity_csv: Path,
     """``stoch_entity = { e : exists g ∈ groupIncludeStochastics with (g, e) ∈ group__<entity> }``."""
     stoch_groups = frozenset(_read_singles(group_stochastic_csv))
     out: set[str] = set()
-    if not group_entity_csv.exists():
+    seeded = _seed_open(group_entity_csv)
+    if seeded is None and not group_entity_csv.exists():
         return out
-    with group_entity_csv.open() as fh:
+    with (seeded if seeded is not None else group_entity_csv.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -177,8 +183,9 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     # pbt_node_inflow{(n, branch, ts, t) → value}
     pbt_inflow: dict[tuple[str, str, str, str], float] = {}
     pbt_path = input_dir / "pbt_node_inflow.csv"
-    if pbt_path.exists():
-        with pbt_path.open() as fh:
+    pbt_seeded = _seed_open(pbt_path)
+    if pbt_seeded is not None or pbt_path.exists():
+        with (pbt_seeded if pbt_seeded is not None else pbt_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -191,8 +198,9 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     # ptNode_inflow{(n, t) → value}
     pt_inflow: dict[tuple[str, str], float] = {}
     pti_path = solve_data_dir / "ptNode_inflow.csv"
-    if pti_path.exists():
-        with pti_path.open() as fh:
+    pti_seeded = _seed_open(pti_path)
+    if pti_seeded is not None or pti_path.exists():
+        with (pti_seeded if pti_seeded is not None else pti_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -206,8 +214,9 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     pdNode_af: dict[tuple[str, str], float] = {}
     pdNode_pk: dict[tuple[str, str], float] = {}
     pdn_path = solve_data_dir / "pdNode.csv"
-    if pdn_path.exists():
-        with pdn_path.open() as fh:
+    pdn_seeded = _seed_open(pdn_path)
+    if pdn_seeded is not None or pdn_path.exists():
+        with (pdn_seeded if pdn_seeded is not None else pdn_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -223,9 +232,10 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
 
     def _read_2_keyed_value(path: Path) -> dict[tuple[str, str], float]:
         out: dict[tuple[str, str], float] = {}
-        if not path.exists():
+        seeded = _seed_open(path)
+        if seeded is None and not path.exists():
             return out
-        with path.open() as fh:
+        with (seeded if seeded is not None else path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -351,8 +361,9 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     # pbt / pt / p loaders.
     pbt_profile: dict[tuple[str, str, str, str], float] = {}
     pbt_path = input_dir / "pbt_profile.csv"
-    if pbt_path.exists():
-        with pbt_path.open() as fh:
+    pbt_seeded = _seed_open(pbt_path)
+    if pbt_seeded is not None or pbt_path.exists():
+        with (pbt_seeded if pbt_seeded is not None else pbt_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -363,8 +374,9 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
                         continue
     pt_profile: dict[tuple[str, str], float] = {}
     pt_path = solve_data_dir / "pt_profile.csv"
-    if pt_path.exists():
-        with pt_path.open() as fh:
+    pt_seeded = _seed_open(pt_path)
+    if pt_seeded is not None or pt_path.exists():
+        with (pt_seeded if pt_seeded is not None else pt_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -375,8 +387,9 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
                         continue
     p_profile: dict[str, float] = {}
     p_path = input_dir / "p_profile.csv"
-    if p_path.exists():
-        with p_path.open() as fh:
+    p_seeded = _seed_open(p_path)
+    if p_seeded is not None or p_path.exists():
+        with (p_seeded if p_seeded is not None else p_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -409,24 +422,27 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     )
     stoch_profile: set[str] = set()
     pp_path = input_dir / "process__profile__profile_method.csv"
-    if pp_path.exists():
-        with pp_path.open() as fh:
+    pp_seeded = _seed_open(pp_path)
+    if pp_seeded is not None or pp_path.exists():
+        with (pp_seeded if pp_seeded is not None else pp_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
                 if len(row) >= 2 and row[0] in stoch_processes and row[1]:
                     stoch_profile.add(row[1])
     np_path = input_dir / "node__profile__profile_method.csv"
-    if np_path.exists():
-        with np_path.open() as fh:
+    np_seeded = _seed_open(np_path)
+    if np_seeded is not None or np_path.exists():
+        with (np_seeded if np_seeded is not None else np_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
                 if len(row) >= 2 and row[0] in stoch_nodes and row[1]:
                     stoch_profile.add(row[1])
     pnp_path = input_dir / "process__node__profile__profile_method.csv"
-    if pnp_path.exists():
-        with pnp_path.open() as fh:
+    pnp_seeded = _seed_open(pnp_path)
+    if pnp_seeded is not None or pnp_path.exists():
+        with (pnp_seeded if pnp_seeded is not None else pnp_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -528,8 +544,9 @@ def _derive_conversion_trio(
     min_load: dict[tuple[str, str, str], float] = {}
     eff_min: dict[tuple[str, str, str], float] = {}
     pdt_path = solve_data_dir / "pdtProcess.csv"
-    if pdt_path.exists():
-        with pdt_path.open() as fh:
+    pdt_seeded = _seed_open(pdt_path)
+    if pdt_seeded is not None or pdt_path.exists():
+        with (pdt_seeded if pdt_seeded is not None else pdt_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -663,10 +680,11 @@ def write_pdtConversion_rate_section_slope(
 
 
 def _read_quads(path: Path) -> list[tuple[str, str, str, str]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str, str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -677,9 +695,10 @@ def _read_quads(path: Path) -> list[tuple[str, str, str, str]]:
 
 def _load_pbt_per_side(path: Path) -> dict[tuple[str, str, str, str, str, str], float]:
     out: dict[tuple[str, str, str, str, str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -693,9 +712,10 @@ def _load_pbt_per_side(path: Path) -> dict[tuple[str, str, str, str, str, str], 
 
 def _load_pt_per_side(path: Path) -> dict[tuple[str, str, str, str], float]:
     out: dict[tuple[str, str, str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -709,9 +729,10 @@ def _load_pt_per_side(path: Path) -> dict[tuple[str, str, str, str], float]:
 
 def _load_p_per_side(path: Path) -> dict[tuple[str, str, str], float]:
     out: dict[tuple[str, str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -755,8 +776,9 @@ def derive_pdtProcess_source_sink(
 
     pt_process: dict[tuple[str, str, str], float] = {}
     ptp_path = input_dir / "pt_process.csv"
-    if ptp_path.exists():
-        with ptp_path.open() as fh:
+    ptp_seeded = _seed_open(ptp_path)
+    if ptp_seeded is not None or ptp_path.exists():
+        with (ptp_seeded if ptp_seeded is not None else ptp_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -771,8 +793,9 @@ def derive_pdtProcess_source_sink(
 
     p_process: dict[tuple[str, str], float] = {}
     pp_path = input_dir / "p_process.csv"
-    if pp_path.exists():
-        with pp_path.open() as fh:
+    pp_seeded = _seed_open(pp_path)
+    if pp_seeded is not None or pp_path.exists():
+        with (pp_seeded if pp_seeded is not None else pp_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -961,9 +984,10 @@ def _read_p_2(path: Path) -> dict[tuple[str, str], float]:
     Mirrors legacy ``_read_p_2`` (entity_period_calc_params.py L1965).
     """
     out: dict[tuple[str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -978,9 +1002,10 @@ def _read_p_2(path: Path) -> dict[tuple[str, str], float]:
 def _read_pd_2(path: Path) -> dict[tuple[str, str, str], float]:
     """Read a 4-col CSV ``(k1, k2, k3, value)`` into a dict."""
     out: dict[tuple[str, str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -996,9 +1021,10 @@ def _read_branches_for_d(period_branch_csv: Path) -> dict[str, list[str]]:
     """``period__branch.csv`` is ``(branch_period, period)`` — index by
     the child period (column 1) and gather branch list."""
     out: dict[str, list[str]] = {}
-    if not period_branch_csv.exists():
+    seeded = _seed_open(period_branch_csv)
+    if seeded is None and not period_branch_csv.exists():
         return out
-    with period_branch_csv.open() as fh:
+    with (seeded if seeded is not None else period_branch_csv.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1251,8 +1277,9 @@ def _derive_positive_negative_inflow(
 
     pdt_inflow: dict[tuple[str, str, str], float] = {}
     pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
-    if pdtni_path.exists():
-        with pdtni_path.open() as fh:
+    pdtni_seeded = _seed_open(pdtni_path)
+    if pdtni_seeded is not None or pdtni_path.exists():
+        with (pdtni_seeded if pdtni_seeded is not None else pdtni_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -1340,10 +1367,11 @@ def write_p_positive_negative_inflow(
 
 
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1359,9 +1387,10 @@ def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
     param_value, return dict[tuple(row[c] for c in key_cols)] = float(row[val_col]).
     """
     out: dict[tuple, float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1516,8 +1545,9 @@ def _derive_pssdt_varCost_filters(
     )
     varcost: dict[tuple[str, str, str, str, str], float] = {}
     vp = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
-    if vp.exists():
-        with vp.open() as fh:
+    vp_seeded = _seed_open(vp)
+    if vp_seeded is not None or vp.exists():
+        with (vp_seeded if vp_seeded is not None else vp.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -1611,9 +1641,10 @@ def write_pssdt_varCost_filters(
 def _read_p_side_3(path: Path) -> dict[tuple[str, str, str], float]:
     """Per-side 4-col CSV ``(k1, k2, k3, value)`` → ``(k1, k2, k3) → v``."""
     out: dict[tuple[str, str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1639,8 +1670,9 @@ def _cap_reduction_inputs(
     """Shared input loading for the 4 cap-reduction derives."""
     p_process: dict[tuple[str, str], float] = {}
     pp_path = input_dir / "p_process.csv"
-    if pp_path.exists():
-        with pp_path.open() as fh:
+    pp_seeded = _seed_open(pp_path)
+    if pp_seeded is not None or pp_path.exists():
+        with (pp_seeded if pp_seeded is not None else pp_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -1660,8 +1692,9 @@ def _cap_reduction_inputs(
 
     dt_with_dur: list[tuple[str, str, float]] = []
     su_path = solve_data_dir / "steps_in_use.csv"
-    if su_path.exists():
-        with su_path.open() as fh:
+    su_seeded = _seed_open(su_path)
+    if su_seeded is not None or su_path.exists():
+        with (su_seeded if su_seeded is not None else su_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -1788,10 +1821,11 @@ def write_cap_reduction_params(
 # ---- write_ed_period_params (mod L1252-1255 family, ed_*_period) ----------
 
 def _read_ed_pairs(path: Path) -> list[tuple[str, str]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:

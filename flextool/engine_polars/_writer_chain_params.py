@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from flextool.engine_polars._input_source import _seed_open
+
 if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
 
@@ -87,19 +89,21 @@ def _ed_value_frame(
 
 
 def _read_singles(path: Path) -> list[str]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         return [r[0] for r in reader if r and r[0]]
 
 
 def _read_pairs(path: Path) -> list[tuple[str, str]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -109,10 +113,11 @@ def _read_pairs(path: Path) -> list[tuple[str, str]]:
 
 
 def _read_triples(path: Path) -> list[tuple[str, str, str]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -124,9 +129,10 @@ def _read_triples(path: Path) -> list[tuple[str, str, str]]:
 def _load_ed_value_csv(path: Path) -> dict[tuple[str, str], float]:
     """``[entity, period, value]`` (header + rows) → ``{(e, d): v}``."""
     out: dict[tuple[str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for r in reader:
@@ -141,9 +147,10 @@ def _load_ed_value_csv(path: Path) -> dict[tuple[str, str], float]:
 def _load_e_value_csv(path: Path) -> dict[str, float]:
     """``[entity, value]`` (header + rows) → ``{e: v}``."""
     out: dict[str, float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for r in reader:
@@ -162,9 +169,10 @@ def _load_param_value_at(
     """``[..., param, ..., value]`` filtered to rows where column ``param_col``
     equals ``param_value`` → ``{tuple(row[c] for c in key_cols): value}``."""
     out: dict[tuple[str, ...], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for r in reader:
@@ -188,9 +196,10 @@ def _read_solve_first_flag(solve_data_dir: Path) -> bool:
     Mirrors :func:`flextool.flextoolrunner.preprocessing.entity_period_calc_params._read_solve_first_flag`.
     """
     pm_path = solve_data_dir / "p_model.csv"
-    if not pm_path.exists():
+    seeded = _seed_open(pm_path)
+    if seeded is None and not pm_path.exists():
         return False
-    with pm_path.open() as fh:
+    with (seeded if seeded is not None else pm_path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for r in reader:
@@ -454,8 +463,9 @@ def _load_handoff_or_csv_realized(
     # CSV path: p_entity_period_existing_capacity.csv carries both
     # ``existing`` (col 2) and ``invested`` (col 3) for every (e, d).
     ppe_path = solve_data_dir / "p_entity_period_existing_capacity.csv"
-    if ppe_path.exists():
-        with ppe_path.open() as fh:
+    ppe_seeded = _seed_open(ppe_path)
+    if ppe_seeded is not None or ppe_path.exists():
+        with (ppe_seeded if ppe_seeded is not None else ppe_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -715,9 +725,10 @@ def _compute_p_entity_capacity_max_chain(
 
     p_unc = 1000000.0
     pmaxf_path = input_dir / "p_max_flow_for_unconstrained_variables.csv"
-    if pmaxf_path.exists():
+    pmaxf_seeded = _seed_open(pmaxf_path)
+    if pmaxf_seeded is not None or pmaxf_path.exists():
         max_v: float | None = None
-        with pmaxf_path.open() as fh:
+        with (pmaxf_seeded if pmaxf_seeded is not None else pmaxf_path.open()) as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:

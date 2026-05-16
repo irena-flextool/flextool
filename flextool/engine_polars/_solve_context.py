@@ -466,11 +466,13 @@ def _maybe_read(path: Path) -> pl.DataFrame:
 
 def _read_active_solve(workdir: Path) -> str | None:
     """Mirror of ``_derived_params._read_active_solve``."""
+    from flextool.engine_polars._input_source import _seed_lookup
     p = workdir / "solve_data" / "solve_current.csv"
-    if not p.exists():
+    seeded = _seed_lookup(p)
+    if seeded is None and not p.exists():
         return None
     try:
-        df = _read_csv_file(p)
+        df = seeded if seeded is not None else _read_csv_file(p)
     except pl.exceptions.NoDataError:
         return None
     if df.height == 0:
@@ -486,12 +488,14 @@ def _read_solve_first(work_folder: Path) -> bool:
     in order: ``solve_data/p_model.csv`` → ``input/p_model.csv`` → True.
     """
     import csv as _csv
+    from flextool.engine_polars._input_source import _seed_open
 
     for cand in ("solve_data/p_model.csv", "input/p_model.csv"):
         path = work_folder / cand
-        if not path.exists():
+        seeded = _seed_open(path)
+        if seeded is None and not path.exists():
             continue
-        with path.open() as fh:
+        with (seeded if seeded is not None else path.open()) as fh:
             reader = _csv.reader(fh)
             header = next(reader, None) or []
             try:
@@ -515,11 +519,13 @@ def _read_solve_first(work_folder: Path) -> bool:
 def _read_period_set(path: Path) -> set[str]:
     """Read a single-column period CSV (header row, then one period per row)."""
     import csv as _csv
+    from flextool.engine_polars._input_source import _seed_open
 
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return set()
     out: set[str] = set()
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = _csv.reader(fh)
         next(reader, None)
         for r in reader:
@@ -531,11 +537,13 @@ def _read_period_set(path: Path) -> set[str]:
 def _read_realized_dispatch_periods(path: Path) -> set[str]:
     """Read distinct periods from ``realized_dispatch.csv``."""
     import csv as _csv
+    from flextool.engine_polars._input_source import _seed_open
 
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return set()
     out: set[str] = set()
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = _csv.reader(fh)
         header = next(reader, None) or []
         try:

@@ -3225,15 +3225,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
             ctx_workdir = Path(source.input_dir).parent
         except Exception:  # pragma: no cover — defensive
             ctx_workdir = None
-    if ctx_workdir is not None:
-        from flextool.engine_polars._solve_context import SolveContext
-        try:
-            ctx = SolveContext.from_workdir(ctx_workdir)
-        except Exception:  # pragma: no cover — defensive
-            ctx = None
-    if ctx is not None:
-        ctx.activate()
-
     # Phase D — when a FlexData seed (e.g. a
     # :class:`FlexDataAccumulator` captured by ``_native_run_model``) is
     # supplied, install it as the process-level read-hook for the
@@ -3250,12 +3241,30 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # top of the seed-or-disk-built FlexData — the seed is purely the
     # starting state, not a replacement for the Spine overlay
     # (handoff doc gotcha #7).
+    #
+    # Phase E-e — install the seed BEFORE constructing the SolveContext.
+    # ``SolveContext.from_workdir`` reads ``solve_data/solve_current.csv``
+    # via ``_read_active_solve`` to populate ``ctx.solve_name``; under
+    # CSV-emission-disabled the file is only available via the in-memory
+    # seed, so the seed must be active for the read to find it.
+    # Otherwise the derived_a..g cascade short-circuits on
+    # ``active_solve is None``, leaving cost-bearing Params empty and
+    # collapsing the objective to 0.
     from flextool.engine_polars._input_source import (
         _install_seed as _install_seed_hook,
     )
     seed_installed = seed is not None
     if seed_installed:
         _install_seed_hook(seed)
+
+    if ctx_workdir is not None:
+        from flextool.engine_polars._solve_context import SolveContext
+        try:
+            ctx = SolveContext.from_workdir(ctx_workdir)
+        except Exception:  # pragma: no cover — defensive
+            ctx = None
+    if ctx is not None:
+        ctx.activate()
 
     try:
         # Δ.2: build the per-solve BlockLayout once from flextool's

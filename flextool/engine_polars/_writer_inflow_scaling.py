@@ -49,6 +49,8 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine_polars._input_source import _seed_open
+
 
 # ---------------------------------------------------------------------------
 # Tiny CSV I/O — mirrors the legacy helpers' behaviour exactly so the
@@ -61,10 +63,11 @@ import polars as pl
 
 def _read_singles(path: Path) -> list[str]:
     """First-column header-less reader (skip header row)."""
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[str] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -75,10 +78,11 @@ def _read_singles(path: Path) -> list[str]:
 
 def _read_pairs(path: Path) -> list[tuple[str, str]]:
     """First-two-column header-less reader (skip header row)."""
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -94,9 +98,10 @@ def _read_keyed2_float(path: Path) -> dict[tuple[str, str], float]:
     or non-numeric rows silently skipped.
     """
     out: dict[tuple[str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -111,9 +116,10 @@ def _read_keyed2_float(path: Path) -> dict[tuple[str, str], float]:
 def _read_keyed3_float(path: Path) -> dict[tuple[str, str, str], float]:
     """Four-col CSV (k1, k2, k3, value) → {(k1, k2, k3): float}."""
     out: dict[tuple[str, str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -128,9 +134,10 @@ def _read_keyed3_float(path: Path) -> dict[tuple[str, str, str], float]:
 def _read_keyed_float(path: Path) -> dict[str, float]:
     """Two-col CSV (key, value) → {key: float}."""
     out: dict[str, float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")

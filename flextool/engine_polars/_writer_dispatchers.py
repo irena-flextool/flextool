@@ -58,6 +58,8 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine_polars._input_source import _seed_open
+
 
 # ---------------------------------------------------------------------------
 # Polars-frame _write helper — patched by Phase E-b accumulator.
@@ -84,10 +86,11 @@ def _write(df: pl.DataFrame, path: Path) -> None:
 
 
 def _read_pairs(path: Path) -> list[tuple[str, str]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, str]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -97,10 +100,11 @@ def _read_pairs(path: Path) -> list[tuple[str, str]]:
 
 
 def _read_n_col(path: Path, n: int) -> list[tuple[str, ...]]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
     out: list[tuple[str, ...]] = []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -110,9 +114,10 @@ def _read_n_col(path: Path, n: int) -> list[tuple[str, ...]]:
 
 
 def _read_singles(path: Path) -> list[str]:
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return []
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         return [r[0] for r in reader if r and r[0]]
@@ -712,9 +717,10 @@ def _read_p_table(path: Path) -> dict[tuple[str, str], float]:
     rows whose value isn't a float.  Mirrors the legacy local-loop in
     :func:`write_entity_period_calc_params`."""
     out: dict[tuple[str, str], float] = {}
-    if not path.exists():
+    seeded = _seed_open(path)
+    if seeded is None and not path.exists():
         return out
-    with path.open() as fh:
+    with (seeded if seeded is not None else path.open()) as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
