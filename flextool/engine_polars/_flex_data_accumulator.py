@@ -63,6 +63,9 @@ _PATCH_MODULES = (
     "flextool.engine_polars._writer_inflow_scaling",
     "flextool.engine_polars._writer_lp_scaling",
     "flextool.engine_polars._writer_solve_writers",
+    "flextool.engine_polars._writer_period_calc",
+    "flextool.engine_polars._writer_per_solve",
+    "flextool.engine_polars._writer_reserve",
 )
 
 
@@ -527,6 +530,105 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "rp_block_last.csv",
     "rp_block_start_last.csv",
     "rp_cost_weight.csv",
+    # _writer_period_calc — Phase E-b8 (write_period_calculated_params
+    # emits 12 CSVs, write_branch_weights emits 2.  Each emit funnels
+    # through ``_write_keyed`` / ``_write_keyed_2`` which delegate to
+    # the module-level ``_write(df, path)`` helper so the accumulator
+    # captures the Utf8 frame.
+    #
+    # NB two basenames are intentionally NOT captured:
+    # ``p_inflation_factor_operations_yearly.csv`` (FlexData
+    # ``p_inflation_op``) and ``complete_period_share_of_year_calc.csv``
+    # (FlexData ``p_period_share``).  The loader path
+    # (:func:`flextool.engine_polars.input._load_per_solve_misc`)
+    # reads both via :func:`_read_long` without an explicit Float64
+    # cast on the value column.  The disk path lands a ``Float64``
+    # ``value`` (via ``pl.read_csv`` inference) into the
+    # :class:`Param.frame`, while a seeded Utf8 ``value`` would land
+    # Utf8 — breaking the Phase D seed-vs-disk field-parity test.
+    # The writer routes these two basenames through
+    # ``_write_no_capture`` so disk emit still happens but the
+    # accumulator hook is bypassed; consumers fall through to the
+    # disk read.  Lift this exception once the loader casts value
+    # columns uniformly.
+    "p_timeline_duration_in_years.csv",
+    "hours_in_period.csv",
+    "period_share_of_year.csv",
+    "p_years_d.csv",
+    "p_years_represented_d_calc.csv",
+    "complete_hours_in_period.csv",
+    "p_years_until_invest.csv",
+    "p_years_until_dispatch.csv",
+    "p_inflation_factor_investment_yearly.csv",
+    "f_d_k.csv",
+    "pd_branch_weight.csv",
+    "pdt_branch_weight.csv",
+    # _writer_per_solve — Phase E-b8 (write_per_solve_sets emits 30
+    # CSVs, write_invest_divest_sets emits 19, plus the singleton
+    # ed_invest_forbidden_no_investment.csv).  All emits route
+    # through ``_write_singles`` / ``_write_tuples`` which now
+    # delegate to ``_write(df, path)``.
+    "branch_set.csv",
+    "year_set.csv",
+    "period_from_period_time_set.csv",
+    "period_in_use_set.csv",
+    "time_in_use_set.csv",
+    "complete_time_in_use_set.csv",
+    "rp_base_period_set.csv",
+    "rp_rep_period_set.csv",
+    "period_block_set.csv",
+    "dtt_set.csv",
+    "d_fix_storage_period_set.csv",
+    "period_set.csv",
+    "periodAll_set.csv",
+    "block_set.csv",
+    "period__timeline_set.csv",
+    "dt_realize_dispatch_set.csv",
+    "d_realized_period_set.csv",
+    "d_realize_dispatch_or_invest_set.csv",
+    "dt_non_anticipativity_set.csv",
+    "pdt_uptime_set.csv",
+    "pdt_downtime_set.csv",
+    "cnd_ladder_set.csv",
+    "cndi_ladder_cum_set.csv",
+    "cndi_ladder_ann_set.csv",
+    "cndi_ladder_set.csv",
+    "dtdt_next_set.csv",
+    "n_fix_storage_quantity_set.csv",
+    "n_fix_storage_price_set.csv",
+    "n_fix_storage_usage_set.csv",
+    "p_online_dt_set.csv",
+    "ed_invest.csv",
+    "ed_divest.csv",
+    "ed_invest_period.csv",
+    "ed_divest_period.csv",
+    "ed_invest_cumulative.csv",
+    "pd_invest.csv",
+    "nd_invest.csv",
+    "pd_divest.csv",
+    "nd_divest.csv",
+    "edd_history_choice.csv",
+    "edd_history_automatic.csv",
+    "edd_history_no_investment.csv",
+    "edd_history.csv",
+    "edd_history_invest.csv",
+    "edd_invest.csv",
+    "gd_invest.csv",
+    "gd_divest.csv",
+    "gd_invest_period.csv",
+    "gd_divest_period.csv",
+    "ed_invest_forbidden_no_investment.csv",
+    # _writer_reserve — Phase E-b8 (write_pdtReserve_upDown_group +
+    # write_process_reserve_upDown_node_active_and_prundt (2 CSVs) +
+    # write_process_reserve_filters_and_reliability (4 CSVs); all
+    # converted to derive_X -> _write(derive_X(...), path).)
+    "pdtReserve_upDown_group.csv",
+    "process_reserve_upDown_node_active.csv",
+    "prundt.csv",
+    "p_process_reserve_upDown_node_reliability.csv",
+    "process_reserve_upDown_node_increase_reserve_ratio.csv",
+    "process_reserve_upDown_node_large_failure_ratio.csv",
+    "process_large_failure.csv",
 )
 
 

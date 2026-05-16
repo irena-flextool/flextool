@@ -88,24 +88,101 @@ def _read_singles(path: Path) -> list[str]:
     return [v for v in df["v"].to_list() if v]
 
 
+def _to_utf8_frame(
+    headers: tuple[str, ...],
+    rows: list[tuple],
+) -> pl.DataFrame:
+    """Build an all-``Utf8`` polars frame from a header tuple + row list.
+
+    Each cell is taken verbatim when already a string, otherwise via
+    ``str(v)``.  Float cells are pre-rendered with ``repr(float(v))``
+    by the ``derive_*`` builders so polars' ``write_csv`` does not
+    re-format numbers (preserves byte parity with the legacy emitter).
+    """
+    cols: dict[str, list[str]] = {h: [] for h in headers}
+    for row in rows:
+        for h, v in zip(headers, row):
+            cols[h].append(v if isinstance(v, str) else str(v))
+    return pl.DataFrame(cols, schema={h: pl.Utf8 for h in headers})
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    """Canonical emitter — funnels every CSV through a single helper so
+    :mod:`._flex_data_accumulator` can capture frames via monkey-patch."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
+
+
+def _write_no_capture(df: pl.DataFrame, path: Path) -> None:
+    """Sibling of :func:`_write` that **skips** the accumulator hook.
+
+    Used by emissions whose downstream FlexData loader reads the CSV
+    via :func:`_read_csv_file` without an explicit ``cast(Float64)`` on
+    the value column.  The seed path returns the captured frame
+    verbatim, so a Utf8 value column would land in the
+    :class:`Param.frame` with a different dtype than the disk
+    (``pl.read_csv``-inferred ``Float64``) path — breaking the
+    :func:`load_flextool(seed=...)` field-by-field parity test.
+
+    For these basenames the CSV is still emitted to disk identically;
+    only the in-memory capture is bypassed.  Downstream Phase D
+    consumers will see the disk read (typed correctly) for these
+    fields.  When the loader gains a uniform ``cast`` for value
+    columns, this helper can be retired in favour of plain ``_write``.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
+
+
+# Basenames whose Param-frame dtype must stay typed via ``pl.read_csv``
+# inference rather than the seeded Utf8 frame.  See the module docstring
+# in :func:`_write_no_capture`.
+_NO_CAPTURE_BASENAMES: frozenset[str] = frozenset({
+    "p_inflation_factor_operations_yearly.csv",
+    "complete_period_share_of_year_calc.csv",
+})
+
+
+def _keyed_frame(header: tuple[str, str],
+                 rows: list[tuple[str, float]]) -> pl.DataFrame:
+    """Build a 2-col Utf8 frame with ``repr(v)`` on the value cell."""
+    return _to_utf8_frame(
+        header, [(k, repr(v)) for k, v in rows],
+    )
+
+
+def _keyed_frame_2(header: tuple[str, str, str],
+                   rows: list[tuple[str, str, float]]) -> pl.DataFrame:
+    """Build a 3-col Utf8 frame with ``repr(v)`` on the value cell."""
+    return _to_utf8_frame(
+        header, [(a, b, repr(v)) for a, b, v in rows],
+    )
+
+
+# Thin compatibility wrappers — funnel every emit through ``_write`` so
+# :mod:`._flex_data_accumulator` captures the polars frame via its
+# monkey-patched ``_write`` hook.  Kept as named helpers so the call
+# sites read as ``_write_keyed(path, header, rows)`` (matches the
+# legacy emitter's intent) while still routing through the canonical
+# ``_write(df, path)`` shape.
+
+
 def _write_keyed(path: Path, header: tuple[str, str],
                  rows: list[tuple[str, float]]) -> None:
-    """Emit a 2-col CSV with ``repr(v)`` (legacy-faithful)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        ",".join(header) + "\n"
-        + "".join(f"{k},{repr(v)}\n" for k, v in rows)
-    )
+    df = _keyed_frame(header, rows)
+    if path.name in _NO_CAPTURE_BASENAMES:
+        _write_no_capture(df, path)
+    else:
+        _write(df, path)
 
 
 def _write_keyed_2(path: Path, header: tuple[str, str, str],
                    rows: list[tuple[str, str, float]]) -> None:
-    """Emit a 3-col CSV with ``repr(v)`` (legacy-faithful)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        ",".join(header) + "\n"
-        + "".join(f"{a},{b},{repr(v)}\n" for a, b, v in rows)
-    )
+    df = _keyed_frame_2(header, rows)
+    if path.name in _NO_CAPTURE_BASENAMES:
+        _write_no_capture(df, path)
+    else:
+        _write(df, path)
 
 
 def _read_step_duration(

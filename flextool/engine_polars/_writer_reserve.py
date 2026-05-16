@@ -48,6 +48,46 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import polars as pl
+
+
+# ---------------------------------------------------------------------------
+# Canonical emitter — mirrors the ``_write(df, path)`` idiom in the other
+# patched writer modules.  All public ``write_*`` entry points in this
+# module funnel their derived frames through this helper so
+# :mod:`._flex_data_accumulator` can capture them via its monkey-patch.
+#
+# I/O contract: legacy emitters here use ``path.open("w") + fh.write(...)``
+# with plain ``\n`` line terminators (no CRLF), so the default polars
+# ``write_csv`` line ending matches byte-for-byte.  Float cells are
+# pre-rendered with ``repr(float(v))`` by the ``derive_*`` builders, so
+# the underlying frame is all-``Utf8`` and polars does no extra numeric
+# formatting at write time.
+# ---------------------------------------------------------------------------
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
+
+
+def _to_utf8_frame(
+    headers: tuple[str, ...],
+    rows: list[tuple],
+) -> pl.DataFrame:
+    """Build an all-``Utf8`` polars frame from a header tuple + row list.
+
+    Each cell is taken verbatim when already a string, otherwise via
+    ``str(v)``.  All ``derive_*`` builders in this module pre-render
+    float cells through ``repr(float(v))`` so byte parity with the
+    legacy emit holds.
+    """
+    cols: dict[str, list[str]] = {h: [] for h in headers}
+    for row in rows:
+        for h, v in zip(headers, row):
+            cols[h].append(v if isinstance(v, str) else str(v))
+    return pl.DataFrame(cols, schema={h: pl.Utf8 for h in headers})
+
 
 # ---------------------------------------------------------------------------
 # Tiny CSV I/O — same shape as _writer_inflow_scaling helpers.  The legacy
@@ -246,16 +286,14 @@ def _resolve_pdtReserve(
     return _RESERVATION_DEFAULT
 
 
-def write_pdtReserve_upDown_group(
+def derive_pdtReserve_upDown_group(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """Native port of
-    ``reserve_calc_params.write_pdtReserve_upDown_group``.
+) -> pl.DataFrame:
+    """Build the canonical ``pdtReserve_upDown_group`` frame
+    ``(reserve, upDown, group, param, period, time, value)``.
 
-    Emits ``pdtReserve_upDown_group.csv`` keyed on
-    ``(reserve, upDown, group, param, period, time)``.  Param domain
-    is fixed to ``reservation`` per ``flextool_base.dat`` L183;
-    stochastic gate is direct (``g in groupIncludeStochastics``).
+    Value column is pre-rendered with ``repr(float(v))`` for byte
+    parity with the legacy emitter.
     """
     pbt = _read_pbt_reserve(input_dir / "pbt_reserve__upDown__group.csv")
     pt = _read_pt_reserve(input_dir / "pt_reserve__upDown__group.csv")
@@ -273,30 +311,121 @@ def write_pdtReserve_upDown_group(
     rug = _read_n_col(solve_data_dir / "reserve__upDown__group.csv", 3)
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
 
-    out_path = solve_data_dir / "pdtReserve_upDown_group.csv"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w") as fh:
-        fh.write("reserve,upDown,group,param,period,time,value\n")
-        for (r, ud, g) in rug:
-            g_stoch = g in groups_stoch
-            for param in _RESERVE_TIME_PARAMS:
-                for (d, t) in dt:
-                    val = _resolve_pdtReserve(
-                        r, ud, g, param, d, t,
-                        pbt=pbt, pt=pt, p=p,
-                        ts_for_d=ts_for_d,
-                        tb_for_d=tb_for_d,
-                        pe_for_d=pe_for_d,
-                        g_stoch=g_stoch,
-                    )
-                    fh.write(
-                        f"{r},{ud},{g},{param},{d},{t},{repr(float(val))}\n"
-                    )
+    rows: list[tuple] = []
+    for (r, ud, g) in rug:
+        g_stoch = g in groups_stoch
+        for param in _RESERVE_TIME_PARAMS:
+            for (d, t) in dt:
+                val = _resolve_pdtReserve(
+                    r, ud, g, param, d, t,
+                    pbt=pbt, pt=pt, p=p,
+                    ts_for_d=ts_for_d,
+                    tb_for_d=tb_for_d,
+                    pe_for_d=pe_for_d,
+                    g_stoch=g_stoch,
+                )
+                rows.append((r, ud, g, param, d, t, repr(float(val))))
+    return _to_utf8_frame(
+        ("reserve", "upDown", "group", "param", "period", "time", "value"),
+        rows,
+    )
+
+
+def write_pdtReserve_upDown_group(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Native port of
+    ``reserve_calc_params.write_pdtReserve_upDown_group``.
+
+    Emits ``pdtReserve_upDown_group.csv`` keyed on
+    ``(reserve, upDown, group, param, period, time)``.  Param domain
+    is fixed to ``reservation`` per ``flextool_base.dat`` L183;
+    stochastic gate is direct (``g in groupIncludeStochastics``).
+    """
+    _write(
+        derive_pdtReserve_upDown_group(input_dir, solve_data_dir),
+        solve_data_dir / "pdtReserve_upDown_group.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
 # write_process_reserve_upDown_node_active_and_prundt  (mod L1321-1322)
 # ---------------------------------------------------------------------------
+
+
+def _compute_process_reserve_active(
+    input_dir: Path, solve_data_dir: Path,
+) -> tuple[list[tuple[str, str, str, str]], list[tuple[str, str]]]:
+    """Shared computation for the active/prundt pair — returns the
+    active ``(p, r, ud, n)`` list and the ``dt`` pair list."""
+    pdt_reserve: dict[tuple[str, str, str, str, str, str], float] = {}
+    pdt_path = solve_data_dir / "pdtReserve_upDown_group.csv"
+    if pdt_path.exists():
+        with pdt_path.open() as fh:
+            next(fh, None)
+            for line in fh:
+                parts = line.rstrip("\n").split(",")
+                if len(parts) >= 7 and all(parts[i] for i in range(6)):
+                    try:
+                        pdt_reserve[(
+                            parts[0], parts[1], parts[2],
+                            parts[3], parts[4], parts[5],
+                        )] = float(parts[6])
+                    except ValueError:
+                        continue
+
+    rug_by_ru: dict[tuple[str, str], list[str]] = {}
+    for r, ud, g in _read_n_col(
+        solve_data_dir / "reserve__upDown__group.csv", 3,
+    ):
+        rug_by_ru.setdefault((r, ud), []).append(g)
+
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    prun = _read_n_col(input_dir / "process__reserve__upDown__node.csv", 4)
+
+    active_rows: list[tuple[str, str, str, str]] = []
+    for (p, r, ud, n) in prun:
+        groups = rug_by_ru.get((r, ud), ())
+        total = 0.0
+        for g in groups:
+            for (d, t) in dt:
+                total += pdt_reserve.get(
+                    (r, ud, g, "reservation", d, t), 0.0,
+                )
+        if total != 0.0:
+            active_rows.append((p, r, ud, n))
+    return active_rows, dt
+
+
+def derive_process_reserve_upDown_node_active(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Build the ``process_reserve_upDown_node_active`` frame
+    ``(process, reserve, upDown, node)`` — entries from
+    ``process_reserve_upDown_node`` whose summed reservation across
+    the matching ``reserve__upDown__group × dt`` cross product is
+    nonzero.
+    """
+    active_rows, _dt = _compute_process_reserve_active(input_dir, solve_data_dir)
+    return _to_utf8_frame(
+        ("process", "reserve", "upDown", "node"), active_rows,
+    )
+
+
+def derive_prundt(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Build the ``prundt`` frame —
+    ``process_reserve_upDown_node_active × dt``.
+    """
+    active_rows, dt = _compute_process_reserve_active(input_dir, solve_data_dir)
+    rows: list[tuple[str, str, str, str, str, str]] = []
+    for (p, r, ud, n) in active_rows:
+        for (d, t) in dt:
+            rows.append((p, r, ud, n, d, t))
+    return _to_utf8_frame(
+        ("process", "reserve", "upDown", "node", "period", "time"), rows,
+    )
 
 
 def write_process_reserve_upDown_node_active_and_prundt(
@@ -318,59 +447,25 @@ def write_process_reserve_upDown_node_active_and_prundt(
     ``(r, ud)`` are pre-bound and filter ``reserve__upDown__group`` to
     rows whose first two columns equal them; ``g`` is fresh.
     """
-    # Load pdtReserve_upDown_group (just-written by batch 43) as a flat
-    # dict keyed on (r, ud, g, param, d, t).
-    pdt_reserve: dict[tuple[str, str, str, str, str, str], float] = {}
-    pdt_path = solve_data_dir / "pdtReserve_upDown_group.csv"
-    if pdt_path.exists():
-        with pdt_path.open() as fh:
-            next(fh, None)
-            for line in fh:
-                parts = line.rstrip("\n").split(",")
-                if len(parts) >= 7 and all(parts[i] for i in range(6)):
-                    try:
-                        pdt_reserve[(
-                            parts[0], parts[1], parts[2],
-                            parts[3], parts[4], parts[5],
-                        )] = float(parts[6])
-                    except ValueError:
-                        continue
-
-    # (r, ud) → list[g] from reserve__upDown__group.
-    rug_by_ru: dict[tuple[str, str], list[str]] = {}
-    for r, ud, g in _read_n_col(
-        solve_data_dir / "reserve__upDown__group.csv", 3,
-    ):
-        rug_by_ru.setdefault((r, ud), []).append(g)
-
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
-    prun = _read_n_col(input_dir / "process__reserve__upDown__node.csv", 4)
-
-    active_rows: list[tuple[str, str, str, str]] = []
-    for (p, r, ud, n) in prun:
-        groups = rug_by_ru.get((r, ud), ())
-        total = 0.0
-        for g in groups:
-            for (d, t) in dt:
-                total += pdt_reserve.get(
-                    (r, ud, g, "reservation", d, t), 0.0,
-                )
-        if total != 0.0:
-            active_rows.append((p, r, ud, n))
-
-    out_active = solve_data_dir / "process_reserve_upDown_node_active.csv"
-    out_active.parent.mkdir(parents=True, exist_ok=True)
-    with out_active.open("w") as fh:
-        fh.write("process,reserve,upDown,node\n")
-        for row in active_rows:
-            fh.write(",".join(row) + "\n")
-
-    out_prundt = solve_data_dir / "prundt.csv"
-    with out_prundt.open("w") as fh:
-        fh.write("process,reserve,upDown,node,period,time\n")
-        for (p, r, ud, n) in active_rows:
-            for (d, t) in dt:
-                fh.write(f"{p},{r},{ud},{n},{d},{t}\n")
+    # Compute once and split into two derive frames to avoid re-scanning.
+    active_rows, dt = _compute_process_reserve_active(input_dir, solve_data_dir)
+    _write(
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node"), active_rows,
+        ),
+        solve_data_dir / "process_reserve_upDown_node_active.csv",
+    )
+    prundt_rows: list[tuple[str, str, str, str, str, str]] = []
+    for (p, r, ud, n) in active_rows:
+        for (d, t) in dt:
+            prundt_rows.append((p, r, ud, n, d, t))
+    _write(
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node", "period", "time"),
+            prundt_rows,
+        ),
+        solve_data_dir / "prundt.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +494,82 @@ def _read_p_process_reserve(
     return out
 
 
+def _compute_reserve_filters(
+    input_dir: Path, solve_data_dir: Path,
+) -> tuple[
+    list[tuple[str, str, str, str, str]],  # reliability rows (with value)
+    list[tuple[str, str, str, str]],       # increase_reserve_ratio rows
+    list[tuple[str, str, str, str]],       # large_failure_ratio rows
+    list[tuple[str]],                       # process_large_failure rows
+]:
+    """Shared scan of the four reserve-filter frames.  All value cells
+    pre-stringified via ``repr(float(v))``.
+    """
+    p_prn = _read_p_process_reserve(
+        input_dir / "p_process__reserve__upDown__node.csv"
+    )
+    active = _read_n_col(
+        solve_data_dir / "process_reserve_upDown_node_active.csv", 4,
+    )
+
+    rel_rows: list[tuple[str, str, str, str, str]] = []
+    incr_rows: list[tuple[str, str, str, str]] = []
+    lf_rows: list[tuple[str, str, str, str]] = []
+    for (p, r, ud, n) in active:
+        v = p_prn.get((p, r, ud, n, "reliability"), 1.0)
+        if v == 0.0:
+            v = 1.0
+        rel_rows.append((p, r, ud, n, repr(float(v))))
+        if p_prn.get((p, r, ud, n, "increase_reserve_ratio"), 0.0) > 0:
+            incr_rows.append((p, r, ud, n))
+        if p_prn.get((p, r, ud, n, "large_failure_ratio"), 0.0) > 0:
+            lf_rows.append((p, r, ud, n))
+
+    process_lf = [
+        (p,) for p in dict.fromkeys(p for (p, _, _, _) in lf_rows)
+    ]
+    return rel_rows, incr_rows, lf_rows, process_lf
+
+
+def derive_p_process_reserve_upDown_node_reliability(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Reliability fallback frame (process, reserve, upDown, node, value).
+    Default 1 with the legacy zero→1 collapse already applied."""
+    rel_rows, _i, _l, _p = _compute_reserve_filters(input_dir, solve_data_dir)
+    return _to_utf8_frame(
+        ("process", "reserve", "upDown", "node", "value"), rel_rows,
+    )
+
+
+def derive_process_reserve_upDown_node_increase_reserve_ratio(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Frame of ``(p, r, ud, n)`` where ``increase_reserve_ratio > 0``."""
+    _r, incr_rows, _l, _p = _compute_reserve_filters(input_dir, solve_data_dir)
+    return _to_utf8_frame(
+        ("process", "reserve", "upDown", "node"), incr_rows,
+    )
+
+
+def derive_process_reserve_upDown_node_large_failure_ratio(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Frame of ``(p, r, ud, n)`` where ``large_failure_ratio > 0``."""
+    _r, _i, lf_rows, _p = _compute_reserve_filters(input_dir, solve_data_dir)
+    return _to_utf8_frame(
+        ("process", "reserve", "upDown", "node"), lf_rows,
+    )
+
+
+def derive_process_large_failure(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """First-column setof projection of the large_failure_ratio frame."""
+    _r, _i, _l, process_lf = _compute_reserve_filters(input_dir, solve_data_dir)
+    return _to_utf8_frame(("process",), process_lf)
+
+
 def write_process_reserve_filters_and_reliability(
     input_dir: Path, solve_data_dir: Path,
 ) -> None:
@@ -420,55 +591,29 @@ def write_process_reserve_filters_and_reliability(
     * ``process_large_failure.csv`` — mod L1668: ``setof
       {large_failure_ratio} p``.
     """
-    p_prn = _read_p_process_reserve(
-        input_dir / "p_process__reserve__upDown__node.csv"
+    # Single shared scan, four canonical emits.
+    rel_rows, incr_rows, lf_rows, process_lf = _compute_reserve_filters(
+        input_dir, solve_data_dir,
     )
-    active = _read_n_col(
-        solve_data_dir / "process_reserve_upDown_node_active.csv", 4,
+    _write(
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node", "value"), rel_rows,
+        ),
+        solve_data_dir / "p_process_reserve_upDown_node_reliability.csv",
     )
-
-    # ── p_process_reserve_upDown_node_reliability ────────────────────
-    # Default 1 (per reserveParam_defaults[reliability]).  The mod's
-    # else-1 branch additionally collapses an explicit 0 to 1.
-    out_rel = solve_data_dir / "p_process_reserve_upDown_node_reliability.csv"
-    out_rel.parent.mkdir(parents=True, exist_ok=True)
-    with out_rel.open("w") as fh:
-        fh.write("process,reserve,upDown,node,value\n")
-        for (p, r, ud, n) in active:
-            v = p_prn.get((p, r, ud, n, "reliability"), 1.0)
-            if v == 0.0:
-                v = 1.0
-            fh.write(f"{p},{r},{ud},{n},{repr(float(v))}\n")
-
-    # ── process_reserve_upDown_node_increase_reserve_ratio ───────────
-    incr_rows: list[tuple[str, str, str, str]] = []
-    for (p, r, ud, n) in active:
-        if p_prn.get((p, r, ud, n, "increase_reserve_ratio"), 0.0) > 0:
-            incr_rows.append((p, r, ud, n))
-    out_incr = (solve_data_dir
-                / "process_reserve_upDown_node_increase_reserve_ratio.csv")
-    with out_incr.open("w") as fh:
-        fh.write("process,reserve,upDown,node\n")
-        for row in incr_rows:
-            fh.write(",".join(row) + "\n")
-
-    # ── process_reserve_upDown_node_large_failure_ratio + projection ─
-    lf_rows: list[tuple[str, str, str, str]] = []
-    for (p, r, ud, n) in active:
-        if p_prn.get((p, r, ud, n, "large_failure_ratio"), 0.0) > 0:
-            lf_rows.append((p, r, ud, n))
-    out_lf = (solve_data_dir
-              / "process_reserve_upDown_node_large_failure_ratio.csv")
-    with out_lf.open("w") as fh:
-        fh.write("process,reserve,upDown,node\n")
-        for row in lf_rows:
-            fh.write(",".join(row) + "\n")
-
-    # process_large_failure: ``setof`` projection over the first column,
-    # de-duplicated while preserving first-occurrence order.
-    process_lf = list(dict.fromkeys(p for (p, _, _, _) in lf_rows))
-    out_plf = solve_data_dir / "process_large_failure.csv"
-    with out_plf.open("w") as fh:
-        fh.write("process\n")
-        for p in process_lf:
-            fh.write(f"{p}\n")
+    _write(
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node"), incr_rows,
+        ),
+        solve_data_dir / "process_reserve_upDown_node_increase_reserve_ratio.csv",
+    )
+    _write(
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node"), lf_rows,
+        ),
+        solve_data_dir / "process_reserve_upDown_node_large_failure_ratio.csv",
+    )
+    _write(
+        _to_utf8_frame(("process",), process_lf),
+        solve_data_dir / "process_large_failure.csv",
+    )

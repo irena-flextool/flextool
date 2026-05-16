@@ -74,18 +74,41 @@ def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
     return df
 
 
-def _write_singles(path: Path, header: str, values: list[str]) -> None:
-    """Emit a one-column header + rows file.  Matches legacy line endings."""
+def _to_utf8_frame(
+    headers: tuple[str, ...],
+    rows: list[tuple],
+) -> pl.DataFrame:
+    """Build an all-``Utf8`` polars frame from a header tuple + row list."""
+    cols: dict[str, list[str]] = {h: [] for h in headers}
+    for row in rows:
+        for h, v in zip(headers, row):
+            cols[h].append(v if isinstance(v, str) else str(v))
+    return pl.DataFrame(cols, schema={h: pl.Utf8 for h in headers})
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    """Canonical emitter — funnels every CSV through a single helper so
+    :mod:`._flex_data_accumulator` can capture frames via monkey-patch.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(header + "\n" + "".join(v + "\n" for v in values))
+    df.write_csv(path)
+
+
+def _write_singles(path: Path, header: str, values: list[str]) -> None:
+    """Emit a one-column header + rows file.
+
+    Routes through ``_write`` so the accumulator captures the frame.
+    """
+    _write(_to_utf8_frame((header,), [(v,) for v in values]), path)
 
 
 def _write_tuples(path: Path, header: tuple[str, ...],
                   rows: list[tuple[str, ...]]) -> None:
-    """Emit a multi-column header + tuple rows file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(",".join(header) + "\n"
-                    + "".join(",".join(r) + "\n" for r in rows))
+    """Emit a multi-column header + tuple rows file.
+
+    Routes through ``_write`` so the accumulator captures the frame.
+    """
+    _write(_to_utf8_frame(header, rows), path)
 
 
 def _read_singles(path: Path) -> list[str]:
