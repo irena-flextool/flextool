@@ -86,13 +86,22 @@ def test_multi_roll_csv_free_cascade_completes(tmp_path: Path) -> None:
 def test_multi_roll_csv_free_objective_finite(tmp_path: Path) -> None:
     """Multi-roll csv-disabled cascade produces a finite final objective.
 
-    Note: a strict parity gate against the csv-enabled path is NOT
-    meaningful in the current codebase — Phase E/H removed CSV
-    generation for parts of the cascade, so the two paths no longer
-    consume the same set of intermediate disk artefacts.  The user
-    confirmed (Phase E-f handoff) that a full csv-on vs csv-off
-    comparison would have to be performed against the v3.32.0 baseline
-    in a worktree, not against the current main.
+    Scope note — a strict csv-on vs csv-off objective parity gate is
+    not meaningful at this point in the migration: parts of the
+    csv-emitting pathway have been retired during the engine_polars
+    refactor and are no longer functionally equivalent to the
+    seed/in-memory pathway end-to-end.  True end-to-end verification
+    of the seed pathway requires comparison against the v3.32.0 (old
+    FlexTool) baseline in a worktree, not against the current
+    csv-emitting path on main.
+
+    The migration's real safety net is the rest of the test suite:
+    test_writer_port_phase1.py (byte-parity of writer outputs),
+    test_existing_chain_cluster_parity.py (1065 cascade scenarios),
+    plus the hand-calculated focused tests in
+    tests/engine_polars/{loaders,constraints,objective}/.  Those
+    collectively pin the migrated engine against the v3.32.0
+    semantics.
 
     What this test DOES gate:
         * Cascade completes under ``csv_emission_disabled()`` with

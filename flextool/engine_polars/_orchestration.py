@@ -1148,12 +1148,34 @@ def _drive_cascade(
                 and self.state.handoffs is not None else None
             )
             _t_bhf_start = time.perf_counter() if _phase_timing else 0.0
-            handoff = build_handoff_from_flexpy(
-                sol, self.state.paths.work_folder, complete_solve_name,
-                prior_handoff=prior,
-                flex_data=data,
-                parent_handoff=parent_handoff,
+            # Phase E-g — install per-sub-solve seed so the
+            # ``build_handoff_from_flexpy`` reads (``nodeState.csv``,
+            # ``realized_dispatch.csv``, ``entity.csv``, ``period_first.csv``,
+            # ``entityDivest.csv``, etc.) hit the in-memory accumulator
+            # under ``csv_emission_disabled()``.  Without this the
+            # chain-cumulative carriers (``realized_invest`` /
+            # ``realized_existing`` / ``roll_end_state``) stay None,
+            # collapsing every subsequent roll's storage handoff.
+            from flextool.engine_polars._input_source import (
+                _install_seed as _install_seed_bhf,
             )
+            import flextool.engine_polars._input_source as _is_mod_bhf
+            _prior_seed_bhf = _is_mod_bhf._active_seed
+            _accum_bhf = getattr(
+                self.state, "current_accumulator", None,
+            )
+            if _accum_bhf is not None:
+                _install_seed_bhf(_accum_bhf)
+            try:
+                handoff = build_handoff_from_flexpy(
+                    sol, self.state.paths.work_folder, complete_solve_name,
+                    prior_handoff=prior,
+                    flex_data=data,
+                    parent_handoff=parent_handoff,
+                )
+            finally:
+                if _accum_bhf is not None:
+                    _install_seed_bhf(_prior_seed_bhf)
             if _phase_timing:
                 _tr.record(
                     "handoff_part",
