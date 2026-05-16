@@ -44,7 +44,7 @@ import polars as pl
 from polar_high import Param
 
 from ._axis_enums import schema_dtype
-from ._input_source import _read_csv_file
+from ._input_source import _read_csv_file, _seed_or_exists
 
 # Derived-param helpers operate on a ``source`` (InputSource); FlexData
 # is not yet built when the broadcast cascade runs.  ``_enums = None``
@@ -197,7 +197,12 @@ def _ctx_read(
         path = Path(workdir) / "input" / name
     else:
         path = Path(workdir) / name
-    if not path.exists():
+    # Phase E-h — seed-aware existence check.  Bare ``path.exists()``
+    # short-circuits to None when the cascade runs with CSV emission
+    # disabled (Phase E-c default), even though the active in-memory
+    # accumulator holds the frame.  ``_seed_or_exists`` consults the
+    # seed first, so the subsequent ``_read_csv_file`` finds the data.
+    if not _seed_or_exists(path):
         return None
     try:
         return _read_csv_file(path)
@@ -832,11 +837,22 @@ def _read_p_entity_all_existing_csv(workdir: Path | None
     Returns ``[e, d, value]`` or None when the CSV is absent.  Used by
     helpers that need the chained existing capacity (incl. multi-solve
     handoff) without recomputing it from raw ``entity.existing``.
+
+    Phase E-h — seed-aware existence check.  When the cascade runs with
+    CSV emission disabled (default since Phase E-c), the writer-port
+    ``write_p_entity_existing_chain`` captures the frame into the active
+    in-memory accumulator but skips disk emission, so a bare
+    ``p.exists()`` returns False and this function would mistakenly fall
+    back to the raw-existing source path — producing the wrong
+    ``p_flow_upper_existing`` / ``p_process_existing_count`` (no
+    lifetime-cumulative chain, no handoff state).  Using
+    ``_seed_or_exists`` keeps the chained-CSV path live when the seed
+    has the frame, and ``_read_csv_file`` then reads from the seed.
     """
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "p_entity_all_existing.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):
         return None
     try:
         df = _read_csv_file(p)
@@ -5503,7 +5519,7 @@ def _expand_branch_periods(period_order: list[str],
         if workdir is None:
             return list(period_order)
         p = Path(workdir) / "solve_data" / "period__branch.csv"
-        if not p.exists():
+        if not _seed_or_exists(p):  # Phase E-h — seed-aware
             return list(period_order)
         try:
             df = _read_csv_file(p)
@@ -6631,7 +6647,7 @@ def _branch_anchor(branch: str, workdir: Path | None,
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "period__branch.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return None
     try:
         df = _read_csv_file(p)
@@ -6807,7 +6823,7 @@ def p_roll_continue_state_from_workdir(workdir: Path | None
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "p_roll_continue_state.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     df.columns = [c.strip() for c in df.columns]
@@ -6827,7 +6843,7 @@ def p_fix_storage_quantity_from_workdir(workdir: Path | None
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "fix_storage_quantity.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     if df.height == 0:
@@ -6853,7 +6869,7 @@ def dtt_timeline_matching_from_workdir(workdir: Path | None
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "timeline_matching_map.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     if df.height == 0:
@@ -6894,7 +6910,7 @@ def period_branch_from_source(source: "InputSource",
                     .unique())
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period__branch.csv"
-        if p.exists():
+        if _seed_or_exists(p):  # Phase E-h — seed-aware
             df = _read_csv_file(p)
             if df.height > 0:
                 return (df
@@ -7522,7 +7538,7 @@ def _read_handoff_e_d_from_workdir(workdir: Path,
     absent / empty / all-zero.
     """
     p = Path(workdir) / "solve_data" / f"{name}.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     if df.height == 0:
@@ -7543,7 +7559,7 @@ def _read_handoff_e_from_workdir(workdir: Path, name: str,
                                     ) -> "Param | None":
     """Wide-format (entity, p_entity_invested) → Param ((e,), value)."""
     p = Path(workdir) / "solve_data" / f"{name}.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     if df.height == 0:
@@ -7897,7 +7913,7 @@ def _read_period_with_history(workdir: Path | None) -> list[str]:
     if workdir is None:
         return []
     p = Path(workdir) / "solve_data" / "period_with_history.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return []
     df = _read_csv_file(p)
     if df.height == 0 or "period" not in df.columns:
@@ -8669,7 +8685,7 @@ def _read_period_branch_pairs(workdir: Path | None
     if workdir is None:
         return []
     p = Path(workdir) / "solve_data" / "period__branch.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return []
     df = _read_csv_file(p)
     if df.height == 0:
@@ -8691,7 +8707,7 @@ def _read_solve_branch_weights(workdir: Path | None
     if workdir is None:
         return out
     p = Path(workdir) / "solve_data" / "solve_branch_weight.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return out
     df = _read_csv_file(p)
     if df.height == 0:
@@ -8718,7 +8734,7 @@ def _read_first_timesteps(workdir: Path | None
     if workdir is None:
         return out
     p = Path(workdir) / "solve_data" / "first_timesteps.csv"
-    if not p.exists():
+    if not _seed_or_exists(p):  # Phase E-h — seed-aware
         return out
     df = _read_csv_file(p)
     if df.height == 0:
