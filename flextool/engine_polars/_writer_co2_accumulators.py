@@ -29,6 +29,19 @@ _logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
+# in :mod:`._writer_arc_unions` and the four other patched modules.  Every
+# CSV emission in this module is funnelled through here so the per-sub-solve
+# :mod:`._flex_data_accumulator` monkey-patch can stash the frame.
+# ---------------------------------------------------------------------------
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
+
+
+# ---------------------------------------------------------------------------
 # Structural inputs not yet on FlexData (read once per call).
 # ---------------------------------------------------------------------------
 
@@ -329,6 +342,51 @@ def _passthrough_prior(prior_cumulative_co2, co2_groups) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 
+def _format_co2_cum_frame(frame: pl.DataFrame) -> pl.DataFrame:
+    """Apply legacy ``%.8g`` formatting + return a 3-col Utf8 frame whose
+    write_csv output matches the legacy emitter byte-for-byte.
+
+    Schema after: ``[group: Utf8, period: Utf8,
+    p_co2_cum_realized_tonnes: Utf8]``.  An empty frame still carries the
+    schema, so :func:`_write` emits the header-only CSV the legacy code
+    produced via ``write_text("group,period,p_co2_cum_realized_tonnes\\n")``.
+    """
+    if frame.height == 0:
+        return pl.DataFrame(
+            schema={"group": pl.Utf8, "period": pl.Utf8,
+                    "p_co2_cum_realized_tonnes": pl.Utf8},
+        )
+    return frame.with_columns(
+        pl.col("p_co2_cum_realized_tonnes")
+          .map_elements(lambda v: format(float(v), ".8g"),
+                        return_dtype=pl.Utf8)
+    )
+
+
+def derive_co2_cum_realized_tonnes(
+    flex_data,
+    sol,
+    *,
+    work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
+) -> pl.DataFrame:
+    """Return the canonical formatted ``co2_cum_realized_tonnes`` CSV frame.
+
+    Thin wrapper around :func:`compute_co2_rolling_accumulator` +
+    :func:`_format_co2_cum_frame`.  Used by both
+    :func:`write_co2_rolling_accumulator` (which funnels through
+    :func:`_write` so the accumulator captures the frame) and tests.
+    """
+    prior_df = (prior_handoff.cumulative_co2
+                if prior_handoff is not None else None)
+    frame = compute_co2_rolling_accumulator(
+        flex_data, sol,
+        work_folder=work_folder,
+        prior_cumulative_co2=prior_df,
+    )
+    return _format_co2_cum_frame(frame)
+
+
 def write_co2_rolling_accumulator(
     flex_data,
     sol,
@@ -339,12 +397,13 @@ def write_co2_rolling_accumulator(
 ) -> pl.DataFrame:
     """Compute + write ``solve_data/co2_cum_realized_tonnes.csv`` natively.
 
-    Returns the wide ``[group, period, p_co2_cum_realized_tonnes]`` frame
-    (also used to populate ``SolveHandoff.cumulative_co2``).
+    Returns the wide ``[group, period, p_co2_cum_realized_tonnes]`` (raw
+    float-valued) frame — used by callers to populate
+    ``SolveHandoff.cumulative_co2``.  The CSV emission funnels its formatted
+    version through :func:`_write` so the per-sub-solve
+    :mod:`._flex_data_accumulator` captures the byte-canonical frame.
     """
     out_path = work_folder / "solve_data" / "co2_cum_realized_tonnes.csv"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
     prior_df = (prior_handoff.cumulative_co2
                 if prior_handoff is not None else None)
     frame = compute_co2_rolling_accumulator(
@@ -352,16 +411,7 @@ def write_co2_rolling_accumulator(
         work_folder=work_folder,
         prior_cumulative_co2=prior_df,
     )
-    if frame.height == 0:
-        out_path.write_text("group,period,p_co2_cum_realized_tonnes\n")
-    else:
-        # Match legacy ``%.8g`` precision.
-        formatted = frame.with_columns(
-            pl.col("p_co2_cum_realized_tonnes")
-              .map_elements(lambda v: format(float(v), ".8g"),
-                            return_dtype=pl.Utf8)
-        )
-        formatted.write_csv(out_path)
+    _write(_format_co2_cum_frame(frame), out_path)
     _logger.info("wrote %s (%d rows)", out_path, frame.height)
     return frame
 
@@ -394,6 +444,7 @@ def write_co2_rolling_accumulators_native(
 
 __all__ = [
     "compute_co2_rolling_accumulator",
+    "derive_co2_cum_realized_tonnes",
     "write_co2_rolling_accumulator",
     "write_co2_rolling_accumulators_native",
 ]

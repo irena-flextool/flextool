@@ -29,8 +29,52 @@ import csv
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import polars as pl
+
 if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
+
+
+# ---------------------------------------------------------------------------
+# Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
+# in :mod:`._writer_arc_unions` and the four other patched modules.  All
+# writers in this module funnel their derived ``(entity, period, value)``
+# frames through this helper so :mod:`._flex_data_accumulator` can capture
+# them in-memory via its monkey-patch.
+# ---------------------------------------------------------------------------
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
+
+
+def _ed_value_frame(
+    rows: list[tuple[str, str, object]],
+) -> pl.DataFrame:
+    """Build a 3-col ``(entity, period, value)`` Utf8 frame whose ``value``
+    cells are ``repr(v)`` strings — preserving the *Python type-as-emitted*
+    semantics of the legacy ``f"{e},{d},{repr(v)}\\n"`` line builders.
+
+    Importantly we call ``repr`` directly (NOT ``repr(float(v))``):
+    ``write_p_entity_divest_cumulative_max`` accumulates a ``period_sum =
+    sum(empty) → int(0)``, and the legacy CSV column for those rows is
+    ``"0"``, not ``"0.0"``.  Similarly
+    ``write_p_entity_existing_integer_count`` emits ``repr(round(cnt))``
+    which is an int repr.  Coercing to float here would silently break
+    byte-parity on either path — see commit notes for the symptom.
+    Storing ``value`` as Utf8 preserves the bit-exact precision parity the
+    legacy CSV writers achieved through ``repr`` (see
+    :mod:`._writer_arc_unions` docstring).
+    """
+    return pl.DataFrame(
+        {
+            "entity": [r[0] for r in rows],
+            "period": [r[1] for r in rows],
+            "value":  [repr(r[2]) for r in rows],
+        },
+        schema={"entity": pl.Utf8, "period": pl.Utf8, "value": pl.Utf8},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -71,18 +115,6 @@ def _read_triples(path: Path) -> list[tuple[str, str, str]]:
             if len(row) >= 3 and row[0] and row[1] and row[2]:
                 out.append((row[0], row[1], row[2]))
     return out
-
-
-def _write_keyed_2(
-    path: Path,
-    header: tuple[str, str, str],
-    rows: list[tuple[str, str, float]],
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        ",".join(header) + "\n"
-        + "".join(f"{a},{b},{repr(v)}\n" for a, b, v in rows)
-    )
 
 
 def _load_ed_value_csv(path: Path) -> dict[tuple[str, str], float]:
@@ -172,9 +204,9 @@ def _read_solve_first_flag(solve_data_dir: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def write_p_entity_pre_existing(
+def derive_p_entity_pre_existing(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
+) -> pl.DataFrame:
     """Pre-existing capacity per (entity, period) — 12-branch sum where
     exactly one branch fires per (e, d) given the method/kind/unitsize
     trichotomy.
@@ -285,10 +317,16 @@ def write_p_entity_pre_existing(
                     v = pd_e * v_unit if v_unit else pd_e
             rows.append((e, d, v))
 
-    _write_keyed_2(
+    return _ed_value_frame(rows)
+
+
+def write_p_entity_pre_existing(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Emit ``solve_data/p_entity_pre_existing.csv`` (see derive docstring)."""
+    _write(
+        derive_p_entity_pre_existing(input_dir, solve_data_dir),
         solve_data_dir / "p_entity_pre_existing.csv",
-        ("entity", "period", "value"),
-        rows,
     )
 
 
@@ -298,9 +336,9 @@ def write_p_entity_pre_existing(
 # ---------------------------------------------------------------------------
 
 
-def write_p_entity_divest_cumulative_max(
+def derive_p_entity_divest_cumulative_max(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
+) -> pl.DataFrame:
     """Cumulative ceiling on ``v_divest`` summed by dispatch period ``d``.
 
     Three-branch split per legacy comment (only one fires per (e, d)
@@ -357,10 +395,16 @@ def write_p_entity_divest_cumulative_max(
                 v = max(period_sum, e_total_max)
             rows.append((e, d, v))
 
-    _write_keyed_2(
+    return _ed_value_frame(rows)
+
+
+def write_p_entity_divest_cumulative_max(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Emit ``solve_data/p_entity_divest_cumulative_max.csv`` (see derive)."""
+    _write(
+        derive_p_entity_divest_cumulative_max(input_dir, solve_data_dir),
         solve_data_dir / "p_entity_divest_cumulative_max.csv",
-        ("entity", "period", "value"),
-        rows,
     )
 
 
@@ -420,6 +464,146 @@ def _load_handoff_or_csv_realized(
     return ppec, ppic, False
 
 
+def _compute_p_entity_existing_chain(
+    input_dir: Path, solve_data_dir: Path,
+    prior_handoff: "SolveHandoff | None",
+) -> tuple[
+    list[tuple[str, str, float]],  # later_solves rows
+    list[tuple[str, str, float]],  # all_existing rows
+    list[tuple[str, str, float]],  # count rows
+    list[tuple[str, str, int]],    # integer_count rows (legacy emits int repr)
+    list[tuple[str, str, float]],  # previously_invested rows
+]:
+    """Compute the five row-streams emitted by ``write_p_entity_existing_chain``
+    in their canonical (entity-major, period-in-use-minor) order.
+
+    Pulled out so each per-CSV ``derive_*`` can call this once via a module-
+    level cache key keyed on the inputs; the orchestrator
+    :func:`write_p_entity_existing_chain` runs the compute once and then
+    funnels each row-stream through :func:`_write` so the per-sub-solve
+    :mod:`._flex_data_accumulator` captures the resulting frames.
+    """
+    solve_first = _read_solve_first_flag(solve_data_dir)
+    entities = _read_singles(input_dir / "entity.csv")
+    periods_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+
+    pre_existing = _load_ed_value_csv(
+        solve_data_dir / "p_entity_pre_existing.csv"
+    )
+    unitsize = _load_e_value_csv(solve_data_dir / "p_entity_unitsize.csv")
+
+    edd_by_ed: dict[tuple[str, str], list[str]] = {}
+    for (e, d_h, d) in _read_triples(solve_data_dir / "edd_history.csv"):
+        edd_by_ed.setdefault((e, d), []).append(d_h)
+
+    ppec, ppic, _ = _load_handoff_or_csv_realized(
+        solve_data_dir, prior_handoff,
+    )
+
+    ed_history_realized: set[tuple[str, str]] = set(ppec.keys())
+    for e_, d_ in _read_pairs(solve_data_dir / "ed_history_realized_first.csv"):
+        ed_history_realized.add((e_, d_))
+
+    entity_divest = frozenset(_read_singles(solve_data_dir / "entityDivest.csv"))
+    p_divested: dict[str, float] = {}
+    if prior_handoff is not None and prior_handoff.divest_cumulative is not None:
+        for r in prior_handoff.divest_cumulative.iter_rows(named=True):
+            p_divested[str(r["entity"])] = float(r["value"])
+    else:
+        p_divested = _load_e_value_csv(solve_data_dir / "p_entity_divested.csv")
+
+    later_existing: dict[tuple[str, str], float] = {}
+    later_invested: dict[tuple[str, str], float] = {}
+    if not solve_first:
+        for e in entities:
+            for d in periods_in_use:
+                tot_e = 0.0
+                tot_i = 0.0
+                for d_h in edd_by_ed.get((e, d), ()):
+                    if (e, d_h) in ed_history_realized:
+                        tot_e += ppec.get((e, d_h), 0.0)
+                        tot_i += ppic.get((e, d_h), 0.0)
+                later_existing[(e, d)] = tot_e
+                later_invested[(e, d)] = tot_i
+
+    later_rows: list[tuple[str, str, float]] = []
+    all_rows: list[tuple[str, str, float]] = []
+    count_rows: list[tuple[str, str, float]] = []
+    int_count_rows: list[tuple[str, str, int]] = []
+    prev_inv_rows: list[tuple[str, str, float]] = []
+    for e in entities:
+        us = unitsize.get(e, 0.0)
+        for d in periods_in_use:
+            v_later = 0.0 if solve_first else later_existing.get((e, d), 0.0)
+            later_rows.append((e, d, v_later))
+            if solve_first:
+                v_all = pre_existing.get((e, d), 0.0)
+            else:
+                v_all = later_existing.get((e, d), 0.0)
+                if e in entity_divest:
+                    v_all -= p_divested.get(e, 0.0)
+            all_rows.append((e, d, v_all))
+            cnt = v_all / us if us else 0.0
+            count_rows.append((e, d, cnt))
+            # round() with a single arg returns int in Py3 → legacy emits
+            # ``repr(int)`` (e.g. ``"3"``, not ``"3.0"``).  Preserve.
+            int_count_rows.append((e, d, round(cnt)))
+            v_prev = 0.0 if solve_first else later_invested.get((e, d), 0.0)
+            prev_inv_rows.append((e, d, v_prev))
+
+    return later_rows, all_rows, count_rows, int_count_rows, prev_inv_rows
+
+
+def derive_p_entity_existing_capacity_later_solves(
+    input_dir: Path, solve_data_dir: Path,
+    prior_handoff: "SolveHandoff | None" = None,
+) -> pl.DataFrame:
+    later_rows, _, _, _, _ = _compute_p_entity_existing_chain(
+        input_dir, solve_data_dir, prior_handoff,
+    )
+    return _ed_value_frame(later_rows)
+
+
+def derive_p_entity_all_existing(
+    input_dir: Path, solve_data_dir: Path,
+    prior_handoff: "SolveHandoff | None" = None,
+) -> pl.DataFrame:
+    _, all_rows, _, _, _ = _compute_p_entity_existing_chain(
+        input_dir, solve_data_dir, prior_handoff,
+    )
+    return _ed_value_frame(all_rows)
+
+
+def derive_p_entity_existing_count(
+    input_dir: Path, solve_data_dir: Path,
+    prior_handoff: "SolveHandoff | None" = None,
+) -> pl.DataFrame:
+    _, _, count_rows, _, _ = _compute_p_entity_existing_chain(
+        input_dir, solve_data_dir, prior_handoff,
+    )
+    return _ed_value_frame(count_rows)
+
+
+def derive_p_entity_existing_integer_count(
+    input_dir: Path, solve_data_dir: Path,
+    prior_handoff: "SolveHandoff | None" = None,
+) -> pl.DataFrame:
+    _, _, _, int_rows, _ = _compute_p_entity_existing_chain(
+        input_dir, solve_data_dir, prior_handoff,
+    )
+    return _ed_value_frame(int_rows)
+
+
+def derive_p_entity_previously_invested_capacity(
+    input_dir: Path, solve_data_dir: Path,
+    prior_handoff: "SolveHandoff | None" = None,
+) -> pl.DataFrame:
+    _, _, _, _, prev_rows = _compute_p_entity_existing_chain(
+        input_dir, solve_data_dir, prior_handoff,
+    )
+    return _ed_value_frame(prev_rows)
+
+
 def write_p_entity_existing_chain(
     input_dir: Path, solve_data_dir: Path,
     *, prior_handoff: "SolveHandoff | None" = None,
@@ -445,102 +629,31 @@ def write_p_entity_existing_chain(
     ``solve_data/p_entity_all_existing.csv``; the printf is retargeted
     to ``solve_data/solve__p_entity_all_existing.csv``.
     """
-    solve_first = _read_solve_first_flag(solve_data_dir)
-    entities = _read_singles(input_dir / "entity.csv")
-    periods_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
-
-    # ── pre-existing & unitsize (earlier batches) ─────────────────────
-    pre_existing = _load_ed_value_csv(
-        solve_data_dir / "p_entity_pre_existing.csv"
+    later_rows, all_rows, count_rows, int_rows, prev_rows = (
+        _compute_p_entity_existing_chain(
+            input_dir, solve_data_dir, prior_handoff,
+        )
     )
-    unitsize = _load_e_value_csv(solve_data_dir / "p_entity_unitsize.csv")
-
-    # ── edd_history: list of (e, d_history, d), grouped by (e, d) ─────
-    edd_by_ed: dict[tuple[str, str], list[str]] = {}
-    for (e, d_h, d) in _read_triples(solve_data_dir / "edd_history.csv"):
-        edd_by_ed.setdefault((e, d), []).append(d_h)
-
-    # ── prior solve's existing / invested capacity (per d_history) ────
-    ppec, ppic, _ = _load_handoff_or_csv_realized(
-        solve_data_dir, prior_handoff,
+    _write(
+        _ed_value_frame(later_rows),
+        solve_data_dir / "p_entity_existing_capacity_later_solves.csv",
     )
-
-    # ── ed_history_realized = handoff/CSV ppec keys ∪ first-solve seeds ─
-    ed_history_realized: set[tuple[str, str]] = set(ppec.keys())
-    for e_, d_ in _read_pairs(solve_data_dir / "ed_history_realized_first.csv"):
-        ed_history_realized.add((e_, d_))
-
-    # ── divest data (handoff or file) ─────────────────────────────────
-    entity_divest = frozenset(_read_singles(solve_data_dir / "entityDivest.csv"))
-    p_divested: dict[str, float] = {}
-    if prior_handoff is not None and prior_handoff.divest_cumulative is not None:
-        for r in prior_handoff.divest_cumulative.iter_rows(named=True):
-            p_divested[str(r["entity"])] = float(r["value"])
-    else:
-        p_divested = _load_e_value_csv(solve_data_dir / "p_entity_divested.csv")
-
-    # ── Compute later_solves (existing) and previously_invested ───────
-    later_existing: dict[tuple[str, str], float] = {}
-    later_invested: dict[tuple[str, str], float] = {}
-    if not solve_first:
-        for e in entities:
-            for d in periods_in_use:
-                tot_e = 0.0
-                tot_i = 0.0
-                for d_h in edd_by_ed.get((e, d), ()):
-                    if (e, d_h) in ed_history_realized:
-                        tot_e += ppec.get((e, d_h), 0.0)
-                        tot_i += ppic.get((e, d_h), 0.0)
-                later_existing[(e, d)] = tot_e
-                later_invested[(e, d)] = tot_i
-
-    # ── write p_entity_existing_capacity_later_solves ─────────────────
-    pelater = solve_data_dir / "p_entity_existing_capacity_later_solves.csv"
-    with pelater.open("w") as fh:
-        fh.write("entity,period,value\n")
-        for e in entities:
-            for d in periods_in_use:
-                v = 0.0 if solve_first else later_existing.get((e, d), 0.0)
-                fh.write(f"{e},{d},{repr(v)}\n")
-
-    # ── write p_entity_all_existing ───────────────────────────────────
-    all_existing: dict[tuple[str, str], float] = {}
-    pall = solve_data_dir / "p_entity_all_existing.csv"
-    with pall.open("w") as fh:
-        fh.write("entity,period,value\n")
-        for e in entities:
-            for d in periods_in_use:
-                if solve_first:
-                    v = pre_existing.get((e, d), 0.0)
-                else:
-                    v = later_existing.get((e, d), 0.0)
-                    if e in entity_divest:
-                        v -= p_divested.get(e, 0.0)
-                all_existing[(e, d)] = v
-                fh.write(f"{e},{d},{repr(v)}\n")
-
-    # ── p_entity_existing_count + integer_count ───────────────────────
-    pcount = solve_data_dir / "p_entity_existing_count.csv"
-    pintc = solve_data_dir / "p_entity_existing_integer_count.csv"
-    with pcount.open("w") as fhc, pintc.open("w") as fhi:
-        fhc.write("entity,period,value\n")
-        fhi.write("entity,period,value\n")
-        for e in entities:
-            us = unitsize.get(e, 0.0)
-            for d in periods_in_use:
-                ae = all_existing[(e, d)]
-                cnt = ae / us if us else 0.0
-                fhc.write(f"{e},{d},{repr(cnt)}\n")
-                fhi.write(f"{e},{d},{repr(round(cnt))}\n")
-
-    # ── p_entity_previously_invested_capacity ─────────────────────────
-    ppic_out = solve_data_dir / "p_entity_previously_invested_capacity.csv"
-    with ppic_out.open("w") as fh:
-        fh.write("entity,period,value\n")
-        for e in entities:
-            for d in periods_in_use:
-                v = 0.0 if solve_first else later_invested.get((e, d), 0.0)
-                fh.write(f"{e},{d},{repr(v)}\n")
+    _write(
+        _ed_value_frame(all_rows),
+        solve_data_dir / "p_entity_all_existing.csv",
+    )
+    _write(
+        _ed_value_frame(count_rows),
+        solve_data_dir / "p_entity_existing_count.csv",
+    )
+    _write(
+        _ed_value_frame(int_rows),
+        solve_data_dir / "p_entity_existing_integer_count.csv",
+    )
+    _write(
+        _ed_value_frame(prev_rows),
+        solve_data_dir / "p_entity_previously_invested_capacity.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -549,33 +662,20 @@ def write_p_entity_existing_chain(
 # ---------------------------------------------------------------------------
 
 
-def write_p_entity_capacity_max_chain(
+def _compute_p_entity_capacity_max_chain(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """Four cascading entity-capacity ceiling params (mod L1699-1764):
+) -> tuple[
+    list[tuple[str, str, float]],  # max_capacity rows (period_in_use only)
+    list[tuple[str, str, float]],  # max_units rows (full period_set)
+    list[tuple[str, str, float]],  # invest_cumulative_max rows
+    list[tuple[str, str, float]],  # dispatch_capacity_max rows
+]:
+    """Compute the four row-streams emitted by
+    :func:`write_p_entity_capacity_max_chain` in their canonical order.
 
-      * ``p_entity_max_capacity{e, d ∈ period_in_use}`` — 5-branch fork:
-            cumulative-cap if ``(e, d) ∈ ed_invest_cumulative``;
-            otherwise ``all_existing`` plus per-period / total /
-            max(per-period, total) extras + ``invest_no_limit`` slack.
-      * ``p_entity_max_units{e, d ∈ period}`` —
-            ``max_capacity / unitsize`` (0 outside ``period_in_use``).
-      * ``p_entity_invest_cumulative_max{e ∈ entityInvest, d}`` —
-            cumulative-cap minus existing, or per-period sum from
-            ``edd_invest`` (with ``invest_no_limit`` short-circuit).
-      * ``p_entity_dispatch_capacity_max{e, d}`` —
-            ``all_existing + (invest_cumulative_max if entityInvest else 0)``.
-
-    Reads ``p_entity_all_existing`` (just-written),
-    ``p_entity_unitsize``, ``ed_invest_cumulative``,
-    ``ed_cumulative_max_capacity``, ``ed_invest_period``, ``e_invest_total``,
-    ``ed_invest_max_period``, ``e_invest_max_total``,
-    ``ed_invest_forbidden_no_investment``, ``edd_invest``,
-    ``entityInvest``, ``entity__invest_method``,
-    ``p_max_flow_for_unconstrained_variables``.
-
-    Path-collision: mod's wide-format printf for ``p_entity_max_units``
-    is retargeted to ``solve__p_entity_max_units.csv``.
+    Extracted so each per-CSV ``derive_*`` returns a frame on demand and
+    the orchestrator funnels each stream through :func:`_write` for
+    accumulator capture.
     """
     entities = _read_singles(input_dir / "entity.csv")
     periods = _read_singles(solve_data_dir / "period_set.csv")
@@ -609,8 +709,6 @@ def write_p_entity_capacity_max_chain(
         _read_pairs(input_dir / "entity__invest_method.csv")
     )
 
-    # ── p_unconstrained_flow_cap = max_{m ∈ model} p_max_flow_for_...
-    # Default 1000000 when the file is absent / empty.
     p_unc = 1000000.0
     pmaxf_path = input_dir / "p_max_flow_for_unconstrained_variables.csv"
     if pmaxf_path.exists():
@@ -629,112 +727,175 @@ def write_p_entity_capacity_max_chain(
         if max_v is not None:
             p_unc = max_v
 
-    # ── edd_invest grouped by (e, d) ──────────────────────────────────
     edd_invest_by_ed: dict[tuple[str, str], list[str]] = {}
     for (e, d_inv, d) in _read_triples(solve_data_dir / "edd_invest.csv"):
         edd_invest_by_ed.setdefault((e, d), []).append(d_inv)
 
-    # ── compute p_entity_max_capacity ─────────────────────────────────
-    # Mod's domain is {e ∈ entity, d ∈ period_in_use}.  We emit only
-    # period_in_use rows (extra rows confuse domain-strictness checks).
     max_capacity: dict[tuple[str, str], float] = {}
-    out_max_cap = solve_data_dir / "p_entity_max_capacity.csv"
-    with out_max_cap.open("w") as fh:
-        fh.write("entity,period,value\n")
-        for e in entities:
-            in_total = e in invest_total
-            has_no_limit = (e, "invest_no_limit") in invest_method_pairs
-            for d in periods:
-                if d not in period_in_use:
-                    max_capacity[(e, d)] = 0.0
-                    continue
-                if (e, d) in invest_cumulative:
-                    v = cum_max_cap.get((e, d), 0.0)
-                else:
-                    v = all_existing.get((e, d), 0.0)
-                    in_period = (e, d) in invest_period
-                    imp = invest_max_period.get((e, d), 0.0)
-                    eim = e_invest_max_total.get(e, 0.0)
-                    if in_period and not in_total:
-                        v += imp
-                    if in_total and not in_period:
-                        v += eim
-                    if in_period and in_total:
-                        v += max(imp, eim)
-                    if has_no_limit:
-                        v += p_unc
-                max_capacity[(e, d)] = v
-                fh.write(f"{e},{d},{repr(v)}\n")
-
-    # ── p_entity_max_units = max_capacity / unitsize ──────────────────
-    # Domain is full ``period_set`` to mirror mod (out-of-use rows are 0).
-    out_max_units = solve_data_dir / "p_entity_max_units.csv"
-    with out_max_units.open("w") as fh:
-        fh.write("entity,period,value\n")
-        for e in entities:
-            us = unitsize.get(e, 0.0)
-            for d in periods:
-                mc = max_capacity[(e, d)]
-                v = mc / us if us else 0.0
-                fh.write(f"{e},{d},{repr(v)}\n")
-
-    # ── p_entity_invest_cumulative_max ────────────────────────────────
-    invest_cum_max: dict[tuple[str, str], float] = {}
-    out_icm = solve_data_dir / "p_entity_invest_cumulative_max.csv"
-    with out_icm.open("w") as fh:
-        fh.write("entity,period,value\n")
-        for e in entities:
-            if e not in entity_invest:
+    mc_rows: list[tuple[str, str, float]] = []
+    for e in entities:
+        in_total = e in invest_total
+        has_no_limit = (e, "invest_no_limit") in invest_method_pairs
+        for d in periods:
+            if d not in period_in_use:
+                max_capacity[(e, d)] = 0.0
                 continue
-            in_total = e in invest_total
-            has_no_limit_method = (e, "invest_no_limit") in invest_method_pairs
-            for d in periods:
-                if d not in period_in_use:
-                    invest_cum_max[(e, d)] = 0.0
-                    continue
-                if (e, d) in invest_cumulative:
-                    v = max(
-                        0.0,
-                        cum_max_cap.get((e, d), 0.0)
-                        - all_existing.get((e, d), 0.0),
-                    )
-                elif has_no_limit_method:
-                    v = p_unc
-                else:
-                    v = 0.0
-                    in_period = (e, d) in invest_period
-                    if in_period and not in_total:
-                        per_period_sum = sum(
-                            invest_max_period.get((e, d_inv), 0.0)
-                            for d_inv in edd_invest_by_ed.get((e, d), ())
-                            if (e, d_inv) in invest_period
-                            and (e, d_inv) not in invest_forbidden
-                        )
-                        v += per_period_sum
-                    if in_total and not in_period:
-                        v += e_invest_max_total.get(e, 0.0)
-                    if in_period and in_total:
-                        per_period_sum = sum(
-                            invest_max_period.get((e, d_inv), 0.0)
-                            for d_inv in edd_invest_by_ed.get((e, d), ())
-                            if (e, d_inv) in invest_period
-                            and (e, d_inv) not in invest_forbidden
-                        )
-                        v += max(
-                            per_period_sum, e_invest_max_total.get(e, 0.0),
-                        )
-                invest_cum_max[(e, d)] = v
-                fh.write(f"{e},{d},{repr(v)}\n")
-
-    # ── p_entity_dispatch_capacity_max ────────────────────────────────
-    out_dcm = solve_data_dir / "p_entity_dispatch_capacity_max.csv"
-    with out_dcm.open("w") as fh:
-        fh.write("entity,period,value\n")
-        for e in entities:
-            for d in periods:
-                if d not in period_in_use:
-                    continue
+            if (e, d) in invest_cumulative:
+                v = cum_max_cap.get((e, d), 0.0)
+            else:
                 v = all_existing.get((e, d), 0.0)
-                if e in entity_invest:
-                    v += invest_cum_max.get((e, d), 0.0)
-                fh.write(f"{e},{d},{repr(v)}\n")
+                in_period = (e, d) in invest_period
+                imp = invest_max_period.get((e, d), 0.0)
+                eim = e_invest_max_total.get(e, 0.0)
+                if in_period and not in_total:
+                    v += imp
+                if in_total and not in_period:
+                    v += eim
+                if in_period and in_total:
+                    v += max(imp, eim)
+                if has_no_limit:
+                    v += p_unc
+            max_capacity[(e, d)] = v
+            mc_rows.append((e, d, v))
+
+    mu_rows: list[tuple[str, str, float]] = []
+    for e in entities:
+        us = unitsize.get(e, 0.0)
+        for d in periods:
+            mc = max_capacity[(e, d)]
+            v = mc / us if us else 0.0
+            mu_rows.append((e, d, v))
+
+    invest_cum_max: dict[tuple[str, str], float] = {}
+    icm_rows: list[tuple[str, str, float]] = []
+    for e in entities:
+        if e not in entity_invest:
+            continue
+        in_total = e in invest_total
+        has_no_limit_method = (e, "invest_no_limit") in invest_method_pairs
+        for d in periods:
+            if d not in period_in_use:
+                invest_cum_max[(e, d)] = 0.0
+                continue
+            if (e, d) in invest_cumulative:
+                v = max(
+                    0.0,
+                    cum_max_cap.get((e, d), 0.0)
+                    - all_existing.get((e, d), 0.0),
+                )
+            elif has_no_limit_method:
+                v = p_unc
+            else:
+                v = 0.0
+                in_period = (e, d) in invest_period
+                if in_period and not in_total:
+                    per_period_sum = sum(
+                        invest_max_period.get((e, d_inv), 0.0)
+                        for d_inv in edd_invest_by_ed.get((e, d), ())
+                        if (e, d_inv) in invest_period
+                        and (e, d_inv) not in invest_forbidden
+                    )
+                    v += per_period_sum
+                if in_total and not in_period:
+                    v += e_invest_max_total.get(e, 0.0)
+                if in_period and in_total:
+                    per_period_sum = sum(
+                        invest_max_period.get((e, d_inv), 0.0)
+                        for d_inv in edd_invest_by_ed.get((e, d), ())
+                        if (e, d_inv) in invest_period
+                        and (e, d_inv) not in invest_forbidden
+                    )
+                    v += max(
+                        per_period_sum, e_invest_max_total.get(e, 0.0),
+                    )
+            invest_cum_max[(e, d)] = v
+            icm_rows.append((e, d, v))
+
+    dcm_rows: list[tuple[str, str, float]] = []
+    for e in entities:
+        for d in periods:
+            if d not in period_in_use:
+                continue
+            v = all_existing.get((e, d), 0.0)
+            if e in entity_invest:
+                v += invest_cum_max.get((e, d), 0.0)
+            dcm_rows.append((e, d, v))
+
+    return mc_rows, mu_rows, icm_rows, dcm_rows
+
+
+def derive_p_entity_max_capacity(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    mc_rows, _, _, _ = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
+    return _ed_value_frame(mc_rows)
+
+
+def derive_p_entity_max_units(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    _, mu_rows, _, _ = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
+    return _ed_value_frame(mu_rows)
+
+
+def derive_p_entity_invest_cumulative_max(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    _, _, icm_rows, _ = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
+    return _ed_value_frame(icm_rows)
+
+
+def derive_p_entity_dispatch_capacity_max(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    _, _, _, dcm_rows = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
+    return _ed_value_frame(dcm_rows)
+
+
+def write_p_entity_capacity_max_chain(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Four cascading entity-capacity ceiling params (mod L1699-1764):
+
+      * ``p_entity_max_capacity{e, d ∈ period_in_use}`` — 5-branch fork:
+            cumulative-cap if ``(e, d) ∈ ed_invest_cumulative``;
+            otherwise ``all_existing`` plus per-period / total /
+            max(per-period, total) extras + ``invest_no_limit`` slack.
+      * ``p_entity_max_units{e, d ∈ period}`` —
+            ``max_capacity / unitsize`` (0 outside ``period_in_use``).
+      * ``p_entity_invest_cumulative_max{e ∈ entityInvest, d}`` —
+            cumulative-cap minus existing, or per-period sum from
+            ``edd_invest`` (with ``invest_no_limit`` short-circuit).
+      * ``p_entity_dispatch_capacity_max{e, d}`` —
+            ``all_existing + (invest_cumulative_max if entityInvest else 0)``.
+
+    Reads ``p_entity_all_existing`` (just-written),
+    ``p_entity_unitsize``, ``ed_invest_cumulative``,
+    ``ed_cumulative_max_capacity``, ``ed_invest_period``, ``e_invest_total``,
+    ``ed_invest_max_period``, ``e_invest_max_total``,
+    ``ed_invest_forbidden_no_investment``, ``edd_invest``,
+    ``entityInvest``, ``entity__invest_method``,
+    ``p_max_flow_for_unconstrained_variables``.
+
+    Path-collision: mod's wide-format printf for ``p_entity_max_units``
+    is retargeted to ``solve__p_entity_max_units.csv``.
+    """
+    mc_rows, mu_rows, icm_rows, dcm_rows = _compute_p_entity_capacity_max_chain(
+        input_dir, solve_data_dir,
+    )
+    _write(
+        _ed_value_frame(mc_rows),
+        solve_data_dir / "p_entity_max_capacity.csv",
+    )
+    _write(
+        _ed_value_frame(mu_rows),
+        solve_data_dir / "p_entity_max_units.csv",
+    )
+    _write(
+        _ed_value_frame(icm_rows),
+        solve_data_dir / "p_entity_invest_cumulative_max.csv",
+    )
+    _write(
+        _ed_value_frame(dcm_rows),
+        solve_data_dir / "p_entity_dispatch_capacity_max.csv",
+    )

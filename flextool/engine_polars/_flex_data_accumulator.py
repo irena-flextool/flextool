@@ -54,6 +54,8 @@ _PATCH_MODULES = (
     "flextool.engine_polars._writer_mid_sets",
     "flextool.engine_polars._writer_calc_params",
     "flextool.engine_polars._writer_arc_unions",
+    "flextool.engine_polars._writer_chain_params",
+    "flextool.engine_polars._writer_co2_accumulators",
 )
 
 
@@ -309,6 +311,22 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process__source__timeParam.csv",
     "process__sink__timeParam.csv",
     "process__timeParam.csv",
+    # _writer_chain_params — Phase E-b lifted streamed writers
+    "p_entity_pre_existing.csv",
+    "p_entity_divest_cumulative_max.csv",
+    # — 5-CSV existing chain
+    "p_entity_existing_capacity_later_solves.csv",
+    "p_entity_all_existing.csv",
+    "p_entity_existing_count.csv",
+    "p_entity_existing_integer_count.csv",
+    "p_entity_previously_invested_capacity.csv",
+    # — 4-CSV capacity max chain
+    "p_entity_max_capacity.csv",
+    "p_entity_max_units.csv",
+    "p_entity_invest_cumulative_max.csv",
+    "p_entity_dispatch_capacity_max.csv",
+    # _writer_co2_accumulators — Phase E-b lifted
+    "co2_cum_realized_tonnes.csv",
 )
 
 
