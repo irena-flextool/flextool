@@ -80,8 +80,12 @@ def test_warm_chain_equivalence(scenario: str) -> None:
         pytest.skip(f"fixture DB {db_path} not present")
 
     scen = _scenario_for_work(scenario)
-    sols_cold = run_chain_from_db(db_path, scenario_name=scen, warm=False)
-    sols_warm = run_chain_from_db(db_path, scenario_name=scen, warm=True)
+    sols_cold = run_chain_from_db(
+        db_path, scenario_name=scen, warm=False, keep_solutions=True,
+    )
+    sols_warm = run_chain_from_db(
+        db_path, scenario_name=scen, warm=True, keep_solutions=True,
+    )
     assert list(sols_cold) == list(sols_warm), (
         f"{scenario}: warm and cold chains diverge in sub-solve order")
 
@@ -122,6 +126,7 @@ def test_warm_chain_cold_fallback() -> None:
         db_path,
         scenario_name="wind_battery_invest_lifetime_renew_4solve",
         warm=True,
+        keep_solutions=True,
     )
     n_warm = sum(1 for s in sols_warm.values() if s.warm_used)
     assert n_warm == 0, (
@@ -170,12 +175,14 @@ def test_warm_native_rolling_speedup() -> None:
     t0 = time.perf_counter()
     sols_cold = run_chain_from_db(
         db_path, scenario_name="fullYear_roll", warm=False,
+        keep_solutions=True,
     )
     t_cold = time.perf_counter() - t0
 
     t0 = time.perf_counter()
     sols_warm = run_chain_from_db(
         db_path, scenario_name="fullYear_roll", warm=True,
+        keep_solutions=True,
     )
     t_warm = time.perf_counter() - t0
 

@@ -41,6 +41,7 @@ def test_chain_runs_end_to_end() -> None:
 
     sols = run_chain_from_db(
         db_path, scenario_name="wind_battery_invest_lifetime_renew_4solve",
+        keep_solutions=True,
     )
     assert list(sols) == [
         "y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week",

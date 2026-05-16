@@ -220,6 +220,10 @@ def test_scenario(
         scenario_name=scenario,
         work_folder=workdir,
         bin_dir=test_bin_dir,
+        # Phase C.5 — the ``solve_steps`` block below consumes every
+        # sub-solve's ``flex_data`` + ``solution`` to union par/s over
+        # the full dt axis.  Opt out of the slim-step cascade.
+        keep_solutions=True,
     )
     assert steps, f"run_chain_from_db returned no steps for scenario '{scenario}'"
     last_step = next(reversed(steps.values()))

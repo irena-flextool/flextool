@@ -176,7 +176,7 @@ def test_run_chain_from_db_single_solve_smoke() -> None:
         pytest.skip("no scenarios in work_base")
     scenario = scenarios[0]
 
-    steps = run_chain_from_db(sqlite, scenario)
+    steps = run_chain_from_db(sqlite, scenario, keep_solutions=True)
     assert len(steps) >= 1, "expected at least one solve step"
     # Every step should have a non-None solution + handoff.
     for name, step in steps.items():
@@ -447,7 +447,7 @@ def test_native_orchestration_obj_parity(work_name: str, scenario: str) -> None:
             f"snapshot than _gen_*.py — capacity-margin file missing"
         )
 
-    steps = run_chain_from_db(sqlite, scenario)
+    steps = run_chain_from_db(sqlite, scenario, keep_solutions=True)
     assert steps, f"{work_name}: no solve steps"
 
     tolerance = _FIXTURE_OBJ_TOLERANCE.get(work_name, 1e-6)

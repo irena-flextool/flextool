@@ -53,7 +53,9 @@ def test_chain_with_apply_handoff(scenario: str, scenario_name: str) -> None:
     if not db_path.exists():
         pytest.skip(f"DB {db_path} not present")
 
-    sols = run_chain_from_db(db_path, scenario_name=scenario_name)
+    sols = run_chain_from_db(
+        db_path, scenario_name=scenario_name, keep_solutions=True,
+    )
     assert sols, f"{scenario}: chain produced no sub-solves"
 
     for sub_solve, step in sols.items():

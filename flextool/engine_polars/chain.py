@@ -220,7 +220,10 @@ def run_chain(
             f"work.name={work.name!r}"
         )
 
-    steps = run_chain_from_db(db_path, scenario, warm=warm)
+    # Phase C.5 — ``ChainStep`` keeps the per-step ``solution``
+    # contract for legacy callers; opt into the full per-step state on
+    # the underlying cascade.
+    steps = run_chain_from_db(db_path, scenario, warm=warm, keep_solutions=True)
     out: dict[str, ChainStep] = {}
     for name, step in steps.items():
         out[name] = ChainStep(

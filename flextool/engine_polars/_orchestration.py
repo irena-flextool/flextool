@@ -293,36 +293,55 @@ class OrchestrationStep:
         orchestration loop (e.g. ``"y2025_5week"`` or
         ``"dispatch_fullYear_roll_roll_3"``).
     solution : polar_high.Solution | None
-        The HiGHS solution.  ``None`` only on the failed-solve path.
+        The HiGHS solution.  By default (``keep_solutions=False`` on
+        :func:`run_chain_from_db` / :func:`run_orchestration`) only the
+        LAST sub-solve in a cascade retains its ``solution`` — earlier
+        steps clear this slot to release the HiGHS instance + variable
+        arrays.  Set ``keep_solutions=True`` to retain ``solution`` on
+        every step (Phase C.5 — memory discipline).  Also ``None`` on
+        the failed-solve path.
     handoff : SolveHandoff
-        Flexpy-derived handoff carriers, threaded forward.
+        Flexpy-derived handoff carriers, threaded forward.  Always
+        populated (kilobyte-sized; safe to retain across the cascade).
     obj : float | None
         Objective value (cached for quick comparison; equal to
-        ``solution.obj``).
+        ``solution.obj``).  Always populated when the solve succeeded —
+        survives the ``keep_solutions=False`` slim pass, so cascade-
+        wide objective sweeps work without ``keep_solutions=True``.
+    optimal : bool | None
+        Phase C.5 — slim summary mirror of ``solution.optimal`` that
+        survives the per-step memory release.  ``None`` only on the
+        failed-solve path (where ``solution`` is also ``None``).
+        Consumers that only need the optimal/non-optimal status (e.g.
+        CLI exit-code branch in ``cmd_run_flextool.py``) should read
+        this instead of ``solution.optimal`` so they work without
+        ``keep_solutions=True``.
     warm_used : bool
         Δ.12d — True if this solve was produced by warm-updating the
         prior solve's :class:`polar_high.WarmProblem` instance; False
         if it was a cold rebuild.  Always False for the first solve
-        and for ``warm=False`` runs.
+        and for ``warm=False`` runs.  Always populated (slim summary).
     flex_data : FlexData | None
         Δ.31 — the polars input bundle this sub-solve consumed.  Held
         on the step so downstream :func:`flextool.process_outputs.
         write_outputs` can build the parameter / set namespaces in
-        memory instead of re-parsing the workdir CSVs.  ``None`` only
-        on the failed-load path (the build-LP step would also have
-        failed, so callers usually short-circuit before reading it).
+        memory instead of re-parsing the workdir CSVs.  Subject to the
+        same ``keep_solutions`` gating as ``solution`` (Phase C.5):
+        only the LAST step retains ``flex_data`` by default.  ``None``
+        on the failed-load path.
     flex_data_accumulator : FlexDataAccumulator | None
         Phase C — the per-sub-solve writer-frame accumulator captured
-        during this iteration's preprocessing.  ``None`` until Phase C
-        wires the per-sub-solve loop; populated thereafter as a
-        parallel-write side channel.  NOT yet consumed by
-        ``load_flextool`` — Phase D wires the seed path.
+        during this iteration's preprocessing.  Subject to the same
+        ``keep_solutions`` gating as ``solution`` / ``flex_data``
+        (Phase C.5): only the LAST step retains it by default.
+        Phase D wires this as the ``seed=`` arg to ``load_flextool``.
     """
 
     solve_name: str
     solution: "Solution | None"
     handoff: SolveHandoff
     obj: float | None = None
+    optimal: bool | None = None
     warm_used: bool = False
     flex_data: "FlexData | None" = None
     flex_data_accumulator: "object | None" = None
@@ -448,6 +467,7 @@ def run_orchestration(
     db_url: str | None = None,
     scenario_name: str | None = None,
     warm: bool = False,
+    keep_solutions: bool = False,
 ) -> dict[str, OrchestrationStep]:
     """Drive the master loop natively.
 
@@ -531,7 +551,7 @@ def run_orchestration(
     # `solver.run(...)` callback inside that loop.
     return _drive_cascade(state, work_folder, solves, runner_factory,
                           db_url=db_url, scenario_name=scenario_name,
-                          warm=warm)
+                          warm=warm, keep_solutions=keep_solutions)
 
 
 def _drive_cascade(
@@ -542,6 +562,7 @@ def _drive_cascade(
     *,
     db_url: str | None = None,
     scenario_name: str | None = None,
+    keep_solutions: bool = False,
     warm: bool = False,
 ) -> dict[str, OrchestrationStep]:
     """Drive the flextool master loop with a flexpy cascade solver.
@@ -1159,11 +1180,19 @@ def _drive_cascade(
             # set so the previous sub-solve's data is observable, but
             # never accumulates further).
             _accum = getattr(self.state, "current_accumulator", None)
+            # Phase C.5 — populate `solution` / `flex_data` /
+            # `flex_data_accumulator` on every step here; the post-cascade
+            # slim pass in ``run_orchestration`` clears them on all but the
+            # LAST step (unless ``keep_solutions=True``).  We can't decide
+            # "last" inside this loop — flextool's master loop appends one
+            # sub-solve at a time and the cascade can grow on the fly
+            # (rolling expansions) — so the trim happens after the loop.
             self._all_steps[step_key] = OrchestrationStep(
                 solve_name=step_key,
                 solution=sol,
                 handoff=handoff,
                 obj=unscaled_obj,
+                optimal=bool(getattr(sol, "optimal", False)) if sol is not None else None,
                 warm_used=warm_used,
                 flex_data=data,
                 flex_data_accumulator=_accum,
@@ -1204,6 +1233,31 @@ def _drive_cascade(
     # Mirror the in-memory handoff dict back onto our state in case
     # callers want to inspect it.
     state.handoffs = runner.state.handoffs
+
+    # Phase C.5 — slim every step except the LAST, releasing the heaviest
+    # per-step state (Solution + FlexData + FlexDataAccumulator) once
+    # downstream consumers (handoff extraction, raw-output write) have
+    # run for that sub-solve.  ``keep_solutions=True`` opts out — used
+    # by tests that need per-step ``solution`` / ``flex_data`` access
+    # (e.g. ``tests/engine_polars/test_orchestration_parity.py`` parity
+    # sweeps, ``tests/engine_polars/test_warm_chain_runner.py``).
+    # Iteration order is the dict's insertion order: flextool's master
+    # loop appends one sub-solve at a time, so the last inserted key is
+    # the last cascade step — except for nested-cascade scenarios where
+    # an outer solve may close after its inner rolls, but the *retained*
+    # full-state step is still the last one consumers care about.  See
+    # cmd_run_flextool.py:540 (last_step.flex_data + last_step.solution).
+    if not keep_solutions and results:
+        last_key = next(reversed(results))
+        for k, step in results.items():
+            if k == last_key:
+                continue
+            step.solution = None
+            step.flex_data = None
+            step.flex_data_accumulator = None
+        # Free the HiGHS heap once the per-step references are gone.
+        # Cheap and a no-op on non-glibc.
+        _try_malloc_trim()
     return results
 
 
@@ -1221,6 +1275,7 @@ def run_chain_from_db(
     bin_dir: Path | str | None = None,
     logger: logging.Logger | None = None,
     warm: bool = False,
+    keep_solutions: bool = False,
 ) -> dict[str, OrchestrationStep]:
     """Run a flextool multi-solve scenario end-to-end natively.
 
@@ -1259,6 +1314,17 @@ def run_chain_from_db(
         in the cascade, applying ``_apply_warm_updates`` between solves
         rather than cold-rebuilding.  See
         :func:`run_orchestration` for full semantics.
+    keep_solutions : bool, default False
+        Phase C.5 — when False (default), only the LAST step in the
+        returned dict retains ``solution`` / ``flex_data`` /
+        ``flex_data_accumulator``; earlier steps clear those slots to
+        release the HiGHS instance + variable arrays + writer-frame
+        snapshot for that sub-solve.  All slim fields (``solve_name``,
+        ``obj``, ``optimal``, ``warm_used``, ``handoff``) remain
+        populated on every step.  Set ``True`` to retain the full
+        per-step state — required by tests that need per-step
+        ``solution`` / ``flex_data`` access (parity sweeps, warm
+        comparisons, etc.).
 
     Returns
     -------
@@ -1393,6 +1459,7 @@ def run_chain_from_db(
     return run_orchestration(
         state, work_folder, runner_factory=_runner_factory,
         db_url=db_url, scenario_name=scenario_name, warm=warm,
+        keep_solutions=keep_solutions,
     )
 
 
@@ -1639,6 +1706,7 @@ def run_single_solve_from_db(
         solution=sol,
         handoff=handoff,
         obj=unscaled_obj,
+        optimal=bool(getattr(sol, "optimal", False)) if sol is not None else None,
         warm_used=False,
         flex_data=flex_data,
     )

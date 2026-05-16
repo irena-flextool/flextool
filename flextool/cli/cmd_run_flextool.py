@@ -160,7 +160,7 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
             print("--- Fast single-solve time %.4s seconds ---" % all_solves_seconds)
             timing_recorder.record('all_solves', seconds=all_solves_seconds,
                                    t_start=t_solve_start)
-            if step.solution is None or not step.solution.optimal:
+            if not step.optimal:
                 logging.error(
                     "Fast single-solve: non-optimal (status=%r).",
                     getattr(step.solution, "status", None)
@@ -192,7 +192,12 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
     last_step = None
     for name, step in steps.items():
         last_step = step
-        if step.solution is None or not step.solution.optimal:
+        # Phase C.5 — intermediate steps no longer hold ``solution``
+        # under default (slim) cascade; read the slim ``optimal``
+        # summary instead so the non-optimal check works without
+        # ``keep_solutions=True``.  ``step.solution`` is only populated
+        # for the LAST step (or every step under ``keep_solutions``).
+        if not step.optimal:
             logging.error(
                 "Native cascade: solve %r non-optimal (status=%r); "
                 "exit=1 (infeasible/unbounded).",
