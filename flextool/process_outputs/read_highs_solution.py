@@ -76,6 +76,42 @@ _logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Step 1-e — Provider-aware lookup helper.
+#
+# Mirrors :func:`_provider_open` in ``input.py`` / ``_writer_arc_unions.py``:
+# Provider-first, transitional ``_seed_lookup`` fallback so callers that
+# haven't yet been plumbed with ``provider`` still benefit from the seed
+# funnel during the dual-write window.  Returns the polars frame (or
+# ``None``) — the four ``_load_realized_*`` helpers below convert it to
+# the shape they need.
+#
+# The Provider key mirrors the parent-qualified convention used by other
+# migrations: ``"<parent>/<basename>"`` without the ``.csv`` suffix.
+# Step 2 retires the seed-lookup branch; Step 1-g removes the
+# disk-fallback for files that live exclusively in the Provider.
+
+def _provider_lookup(provider: "object | None", path: "Path | str"):
+    """Return the polars frame for *path* sourced from the Provider, the
+    legacy in-memory seed, or ``None`` when neither carries the file.
+
+    Mirrors :func:`_seed_lookup` for the migration window: when
+    *provider* is non-None AND carries the named artefact, the
+    in-memory frame is returned directly; otherwise we consult the
+    seed funnel so unplumbed callers continue to short-circuit
+    under ``csv_emission_disabled()``.  Returns ``None`` when neither
+    has the file (caller falls back to its own disk read).
+    """
+    p = Path(path)
+    parent = p.parent.name
+    stem = p.stem
+    name = f"{parent}/{stem}" if parent else stem
+    if provider is not None and provider.has(name):
+        return provider.get(name)
+    from flextool.engine_polars._input_source import _seed_lookup
+    return _seed_lookup(path)
+
+
+# ---------------------------------------------------------------------------
 # Variable registry
 # ---------------------------------------------------------------------------
 
@@ -371,6 +407,8 @@ VARIABLE_SPECS: list[VariableSpec] = [
 
 def _load_realized_set(
     realized_dispatch_csv: Path | str | None,
+    *,
+    provider: "object | None" = None,
 ) -> set[tuple[str, str]] | None:
     """Return ``{(period, time), …}`` from ``realized_dispatch.csv``, or None.
 
@@ -382,10 +420,11 @@ def _load_realized_set(
     if realized_dispatch_csv is None:
         return None
     path = Path(realized_dispatch_csv)
-    # Phase E-f — seed-aware: under csv_emission_disabled() the file isn't
-    # on disk but the per-sub-solve seed has the frame.
-    from flextool.engine_polars._input_source import _seed_lookup
-    seeded = _seed_lookup(path)
+    # Step 1-e — Provider-aware: under csv_emission_disabled() the file
+    # isn't on disk but the per-sub-solve Provider has the frame.  The
+    # transitional seed-funnel fallback in :func:`_provider_lookup`
+    # keeps unplumbed callers working during the dual-write window.
+    seeded = _provider_lookup(provider, path)
     if seeded is not None:
         period_col = "period"
         time_col = "step" if "step" in seeded.columns else "time"
@@ -409,6 +448,8 @@ def _load_realized_set(
 
 def _load_realized_list(
     realized_dispatch_csv: Path | str | None,
+    *,
+    provider: "object | None" = None,
 ) -> list[tuple[str, str]] | None:
     """Return ``[(period, time), …]`` from ``realized_dispatch.csv`` in file order.
 
@@ -420,8 +461,7 @@ def _load_realized_list(
     if realized_dispatch_csv is None:
         return None
     path = Path(realized_dispatch_csv)
-    from flextool.engine_polars._input_source import _seed_lookup
-    seeded = _seed_lookup(path)
+    seeded = _provider_lookup(provider, path)
     if seeded is not None:
         period_col = "period"
         time_col = "step" if "step" in seeded.columns else "time"
@@ -444,13 +484,14 @@ def _load_realized_list(
 
 def _load_realized_periods(
     realized_periods_csv: Path | str | None,
+    *,
+    provider: "object | None" = None,
 ) -> set[str] | None:
     """Return ``{period, …}`` from a ``period``-only CSV, or None."""
     if realized_periods_csv is None:
         return None
     path = Path(realized_periods_csv)
-    from flextool.engine_polars._input_source import _seed_lookup
-    seeded = _seed_lookup(path)
+    seeded = _provider_lookup(provider, path)
     if seeded is not None:
         return set(seeded["period"].cast(str).to_list())
     if not path.exists():
@@ -648,6 +689,7 @@ def extract_variable(
     realized_periods_csv: Path | str | None = None,
     trailing_col_names: Sequence[str] = (),
     flex_data: "FlexData | None" = None,
+    provider: "object | None" = None,
 ) -> pd.DataFrame:
     """Extract one quantity from a solved HiGHS instance as a wide DataFrame.
 
@@ -731,7 +773,9 @@ def extract_variable(
         # Fallback for callers that only provide ``realized_dispatch_csv``
         # (e.g. unit tests with a synthetic CSV outside ``solve_data/``).
         if canonical_rows is None and realized_dispatch_csv is not None:
-            canonical_rows = _load_realized_list(realized_dispatch_csv)
+            canonical_rows = _load_realized_list(
+                realized_dispatch_csv, provider=provider,
+            )
     elif has_period:
         canonical_d = _load_canonical_d_order(work_folder, solve_name, flex_data=flex_data)
         if canonical_d is None and realized_periods_csv is not None:
@@ -869,6 +913,7 @@ def write_variable_parquet(
     file_name: str | None = None,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
+    provider: "object | None" = None,
 ) -> Path:
     """Extract the quantity described by *spec* and write a per-solve parquet.
 
@@ -918,6 +963,7 @@ def write_variable_parquet(
                 realized_periods_csv=realized_periods_csv,
                 trailing_col_names=spec.trailing_col_names,
                 flex_data=flex_data,
+                provider=provider,
             )
             df = src_df if df is None else df.add(src_df, fill_value=0.0)
         assert df is not None  # guaranteed: derived_from is non-empty
@@ -933,6 +979,7 @@ def write_variable_parquet(
             realized_periods_csv=realized_periods_csv,
             trailing_col_names=spec.trailing_col_names,
             flex_data=flex_data,
+            provider=provider,
         )
     # Agent 1.8 — block-aware output expansion.  Broadcast coarse-block
     # values to every covered fine timestep so parquet output stays
@@ -1651,7 +1698,8 @@ def _is_first_solve_from_p_model(work_folder: Path) -> bool:
     return bool(int(matches.iloc[0]))
 
 
-def _actual_solve_name(work_folder: Path, fallback: str) -> str:
+def _actual_solve_name(work_folder: Path, fallback: str,
+                        *, provider: "object | None" = None) -> str:
     """Return the roll-level solve name from ``solve_data/solve_current.csv``.
 
     In rolling-window scenarios, ``solver.run(complete_solve[solve])`` is
@@ -1663,10 +1711,11 @@ def _actual_solve_name(work_folder: Path, fallback: str) -> str:
     with phase 3's.
     """
     path = work_folder / "solve_data" / "solve_current.csv"
-    # Phase E-f — seed-aware: under csv_emission_disabled() the file isn't
-    # on disk, but the per-sub-solve seed has the frame.
-    from flextool.engine_polars._input_source import _seed_lookup
-    seeded = _seed_lookup(path)
+    # Step 1-e — Provider-aware: under csv_emission_disabled() the file
+    # isn't on disk, but the per-sub-solve Provider has the frame.  The
+    # transitional seed-funnel fallback in :func:`_provider_lookup`
+    # keeps unplumbed callers working during the dual-write window.
+    seeded = _provider_lookup(provider, path)
     if seeded is not None:
         if seeded.height == 0 or len(seeded.columns) == 0:
             return fallback
@@ -1691,6 +1740,7 @@ def write_all_variables(
     specs: Sequence[VariableSpec] | None = None,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
+    provider: "object | None" = None,
 ) -> list[Path]:
     """Iterate :data:`VARIABLE_SPECS` (or a custom list) and write parquets.
 
@@ -1722,6 +1772,7 @@ def write_all_variables(
                 realized_periods_csv=realized_periods_csv,
                 flex_data=flex_data,
                 scale_the_objective=scale_the_objective,
+                provider=provider,
             )
             written.append(path)
         except Exception as exc:

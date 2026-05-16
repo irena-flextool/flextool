@@ -1249,6 +1249,7 @@ def _drive_cascade(
             try:
                 step_key = _actual_solve_name(
                     self.state.paths.work_folder, complete_solve_name,
+                    provider=getattr(self.state, "current_provider", None),
                 )
             finally:
                 if _accum_for_name is not None:

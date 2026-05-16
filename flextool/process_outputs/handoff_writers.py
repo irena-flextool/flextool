@@ -81,6 +81,30 @@ _INV_SCALE_THE_OBJECTIVE = 1e6
 
 
 # ---------------------------------------------------------------------------
+# Step 1-e — Provider-aware lookup helper.
+#
+# Mirrors :func:`read_highs_solution._provider_lookup`: Provider-first,
+# transitional ``_seed_lookup`` fallback so callers that haven't yet
+# been plumbed with ``provider`` still benefit from the seed funnel
+# during the dual-write window.  Returns the polars frame (or
+# ``None``).  The Provider key uses the parent-qualified convention
+# (``"<parent>/<basename>"`` without the ``.csv`` suffix).
+
+def _provider_lookup_df(provider: "object | None", path: "Path | str"):
+    """Return the polars frame for *path* sourced from the Provider, the
+    legacy in-memory seed, or ``None`` when neither carries the file.
+    """
+    p = Path(path)
+    parent = p.parent.name
+    stem = p.stem
+    name = f"{parent}/{stem}" if parent else stem
+    if provider is not None and provider.has(name):
+        return provider.get(name)
+    from flextool.engine_polars._input_source import _seed_lookup
+    return _seed_lookup(path)
+
+
+# ---------------------------------------------------------------------------
 # Parameter / set loaders
 #
 # Parameter CSVs come from ``input/`` (write-once) or ``solve_data/``
@@ -100,17 +124,32 @@ def _load_unitsize(work_folder: Path) -> dict[str, float]:
     return df.loc["value"].astype(float).to_dict()
 
 
-def _load_pre_existing(work_folder: Path) -> dict[tuple[str, str], float]:
+def _load_pre_existing(
+    work_folder: Path,
+    *,
+    provider: "object | None" = None,
+) -> dict[tuple[str, str], float]:
     """Return ``{(period, entity): value}`` from ``solve__p_entity_pre_existing.csv``.
 
     CSV layout: rows indexed by (solve, period); entity columns.  Solve
     level is collapsed — the same value applies for any solve.
     """
     path = work_folder / "solve_data" / "solve__p_entity_pre_existing.csv"
-    # Phase E-f — seed-aware: read from in-memory seed if available
-    # under csv_emission_disabled().
-    from flextool.engine_polars._input_source import _seed_open
-    fh = _seed_open(path)
+    # Step 1-e — Provider-aware: under csv_emission_disabled() the file
+    # isn't on disk but the per-sub-solve Provider has the frame.
+    # Falls back to a transitional ``_seed_open`` lookup for callers
+    # not yet plumbed with ``provider``.
+    fh = None
+    if provider is not None and provider.has("solve_data/solve__p_entity_pre_existing"):
+        import io
+        df_pl = provider.get("solve_data/solve__p_entity_pre_existing")
+        buf = io.StringIO()
+        df_pl.write_csv(buf)
+        buf.seek(0)
+        fh = buf
+    else:
+        from flextool.engine_polars._input_source import _seed_open
+        fh = _seed_open(path)
     if fh is None:
         df = pd.read_csv(path, index_col=[0, 1])
     else:
@@ -380,6 +419,7 @@ def _resolve_unitsize(
 
 def _resolve_pre_existing(
     work_folder: Path, flex_data: "FlexData | None" = None,
+    *, provider: "object | None" = None,
 ) -> dict[tuple[str, str], float]:
     """``{(period, entity): value}`` — pre-existing capacity from FlexData.
 
@@ -391,7 +431,7 @@ def _resolve_pre_existing(
     # No direct in-memory equivalent on FlexData; fall back to disk.
     # (The audit's "wire kwarg" suggestion would require surfacing
     # ``solve__p_entity_pre_existing.csv`` as a FlexData field — deferred.)
-    return _load_pre_existing(work_folder)
+    return _load_pre_existing(work_folder, provider=provider)
 
 
 def _resolve_storage_fix_methods(
@@ -736,6 +776,7 @@ def write_p_entity_period_existing_capacity(
     prior_handoff: "SolveHandoff | None" = None,
     flex_data: "FlexData | None" = None,
     is_first_solve: bool | None = None,
+    provider: "object | None" = None,
 ) -> Path:
     """Write ``solve_data/p_entity_period_existing_capacity.csv``.
 
@@ -755,7 +796,7 @@ def write_p_entity_period_existing_capacity(
     out_path = work_folder / "solve_data" / "p_entity_period_existing_capacity.csv"
 
     unitsize = _resolve_unitsize(work_folder, flex_data)
-    pre_existing = _resolve_pre_existing(work_folder, flex_data)
+    pre_existing = _resolve_pre_existing(work_folder, flex_data, provider=provider)
     first_solve = _resolve_is_first_solve(work_folder, is_first_solve)
     prior_existing, prior_invested = (
         ({}, {}) if first_solve
@@ -764,6 +805,7 @@ def write_p_entity_period_existing_capacity(
 
     invest_df = extract_variable(
         h, "v_invest", ("entity",), solve_name=solve_name, has_time=False,
+        provider=provider,
     )
 
     # Periods to include in the iteration set.  For the FIRST solve the
@@ -772,15 +814,17 @@ def write_p_entity_period_existing_capacity(
     # solves only ``d_realize_invest`` adds new keys (the realized /
     # fix-storage periods only contribute on the first solve).
     realize_invest = _load_realized_periods(
-        work_folder / "solve_data" / "realized_invest_periods_of_current_solve.csv"
+        work_folder / "solve_data" / "realized_invest_periods_of_current_solve.csv",
+        provider=provider,
     ) or set()
     if first_solve:
-        from flextool.engine_polars._input_source import (
-            _seed_lookup as _seed_lookup_E_f,
-        )
+        # Step 1-e — Provider-aware: under csv_emission_disabled() the
+        # files aren't on disk but the per-sub-solve Provider has the
+        # frames.  Transitional seed-funnel fallback for unplumbed
+        # callsites lives in :func:`_provider_lookup_df` below.
         realized_periods: set[str] = set()
         rd_path = work_folder / "solve_data" / "realized_dispatch.csv"
-        _seeded_rd = _seed_lookup_E_f(rd_path)
+        _seeded_rd = _provider_lookup_df(provider, rd_path)
         if _seeded_rd is not None:
             realized_periods.update(
                 _seeded_rd["period"].cast(str).unique().to_list()
@@ -791,7 +835,7 @@ def write_p_entity_period_existing_capacity(
             )
         fix_storage_periods: set[str] = set()
         fs_path = work_folder / "solve_data" / "fix_storage_timesteps.csv"
-        _seeded_fs = _seed_lookup_E_f(fs_path)
+        _seeded_fs = _provider_lookup_df(provider, fs_path)
         if _seeded_fs is not None:
             if _seeded_fs.height > 0:
                 fix_storage_periods.update(
@@ -808,7 +852,8 @@ def write_p_entity_period_existing_capacity(
     # period_first is written by Python orchestration to solve_data/.
     # Fallback for the (unlikely) case it's missing: take min(realize_invest).
     period_first = _load_realized_periods(
-        work_folder / "solve_data" / "period_first.csv"
+        work_folder / "solve_data" / "period_first.csv",
+        provider=provider,
     ) or ({min(realize_invest)} if realize_invest else set())
 
     # ed_invest set (entity, period) — phase-1 dump.  CSV layout is
@@ -1576,6 +1621,7 @@ def write_all_handoffs(
     is_first_solve: bool | None = None,
     writer_state: "OutputWriterState | None" = None,
     scale_the_objective: float | None = None,
+    provider: "object | None" = None,
 ) -> list[Path]:
     """Write all six handoff files.
 
@@ -1619,7 +1665,7 @@ def write_all_handoffs(
         (write_fix_storage_quantity, fd_kwargs),
         (write_p_roll_continue_state, {"flex_data": flex_data}),
         (write_p_entity_period_existing_capacity,
-         {**fd_kwargs, "prior_handoff": prior_handoff}),
+         {**fd_kwargs, "prior_handoff": prior_handoff, "provider": provider}),
         (write_fix_storage_price,
          {**fd_kwargs, "scale_the_objective": scale_the_objective}),
         (write_fix_storage_usage, fd_kwargs),

@@ -241,7 +241,7 @@ def write_outputs_for_solve(
     # Some scenarios use a "complete-solve" name distinct from the
     # roll/solve-current name written into solve_data/ CSVs.  Mirror
     # solver_runner._run_highs_or_cplex's resolution.
-    roll_name = _actual_solve_name(work_folder, solve_name)
+    roll_name = _actual_solve_name(work_folder, solve_name, provider=provider)
 
     sd = work_folder / "solve_data"
     realized_dispatch_csv = sd / "realized_dispatch.csv"
@@ -280,6 +280,7 @@ def write_outputs_for_solve(
             # preserved.
             flex_data=flex_data,
             scale_the_objective=scale_the_objective,
+            provider=provider,
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
@@ -294,6 +295,7 @@ def write_outputs_for_solve(
             writer_state=writer_state,
             is_first_solve=is_first_solve,
             scale_the_objective=scale_the_objective,
+            provider=provider,
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
