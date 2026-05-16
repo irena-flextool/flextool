@@ -1078,12 +1078,25 @@ def _drive_cascade(
             # reads those refreshed files for the in-memory handoff.
             _t_wofs_start = time.perf_counter() if _phase_timing else 0.0
             try:
+                # Phase G — pass in-memory FlexData and the cascade-known
+                # ``is_first_solve`` boolean so handoff writers + extractors
+                # can short-circuit ~12 + ~10 per-iter CSV reads (audit:
+                # specs/in_memory_carriers_audit.md).  CSV fallback paths
+                # remain in place for callers that synthesize a Solution
+                # without a FlexData (e.g. unit tests).
+                _is_first = (
+                    self.state.last_captured_solve is None
+                    or len(self.state.handoffs or {}) == 0
+                )
                 write_outputs_for_solve(
                     sol,
                     work_folder=self.state.paths.work_folder,
                     solve_name=complete_solve_name,
                     prior_handoff=prior,
                     writer_state=writer_state,
+                    flex_data=data,
+                    is_first_solve=_is_first,
+                    scale_the_objective=effective_obj_scale,
                 )
             except Exception as exc:  # noqa: BLE001
                 self.state.logger.warning(

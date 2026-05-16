@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from polar_high import Solution
 
     from flextool.engine_polars._solve_handoff import SolveHandoff
+    from flextool.engine_polars.input import FlexData
 
 _logger = logging.getLogger(__name__)
 
@@ -157,6 +158,9 @@ def write_outputs_for_solve(
     solve_name: str,
     prior_handoff: "SolveHandoff | None" = None,
     writer_state: "OutputWriterState | None" = None,
+    flex_data: "FlexData | None" = None,
+    is_first_solve: bool | None = None,
+    scale_the_objective: float | None = None,
 ) -> None:
     """Adapter — emit TIER A artefacts for one cascade sub-solve.
 
@@ -253,6 +257,13 @@ def write_outputs_for_solve(
             realized_periods_csv=(
                 realized_periods_csv if realized_periods_csv.exists() else None
             ),
+            # Phase G — route in-memory carriers through to the
+            # extractor + custom writers so per-iter file reads
+            # (_load_canonical_*, _load_inflation_*, _load_row_scaler,
+            # scale_the_objective.csv) can short-circuit.  CSV fallback
+            # preserved.
+            flex_data=flex_data,
+            scale_the_objective=scale_the_objective,
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
@@ -263,29 +274,22 @@ def write_outputs_for_solve(
         write_all_handoffs(
             h, solve_name=roll_name, work_folder=work_folder,
             prior_handoff=prior_handoff,
+            flex_data=flex_data,
+            writer_state=writer_state,
+            is_first_solve=is_first_solve,
+            scale_the_objective=scale_the_objective,
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "write_all_handoffs failed for solve '%s': %s", solve_name, exc,
         )
 
-    # Refresh the writer-state's periods_already_emitted from the
-    # freshly-bumped period_capacity.csv (the canonical source).
-    if writer_state is not None:
-        pae_path = sd / "period_capacity.csv"
-        if pae_path.exists():
-            try:
-                import polars as pl
-                df = pl.read_csv(pae_path)
-                if "period" in df.columns and df.height > 0:
-                    writer_state.periods_already_emitted.update(
-                        str(p) for p in df["period"].to_list()
-                    )
-            except Exception as exc:  # noqa: BLE001
-                _logger.debug(
-                    "could not refresh periods_already_emitted from %s: %s",
-                    pae_path, exc,
-                )
+    # Phase G — ``writer_state.periods_already_emitted`` is updated
+    # in-place by ``handoff_writers._bump_period_capacity`` when the
+    # writer_state is threaded through (above).  The previous paranoia
+    # re-read of ``solve_data/period_capacity.csv`` was redundant because
+    # ``_bump_period_capacity`` is the sole producer and now updates
+    # both sinks atomically.  No file re-read here.
 
 
 __all__ = [
