@@ -58,6 +58,7 @@ _PATCH_MODULES = (
     "flextool.engine_polars._writer_co2_accumulators",
     "flextool.engine_polars._writer_pdt_params",
     "flextool.engine_polars._writer_period_params",
+    "flextool.engine_polars._writer_dispatchers",
 )
 
 
@@ -365,6 +366,29 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "ed_divest_min_period.csv",
     "ed_cumulative_max_capacity.csv",
     "ed_cumulative_min_capacity.csv",
+    # _writer_calc_params — Phase E-b lifted streamed writers
+    # — write_process_arc_method_joins (10 CSVs, methodgated arc joins)
+    "process_sink_toProcess.csv",
+    "process_process_toSource.csv",
+    "process_source_toSink.csv",
+    "process_source_toProcess_direct.csv",
+    "process_process_toSink_direct.csv",
+    "process_sink_toProcess_direct.csv",
+    "process_sink_toSource.csv",
+    "process_process_toSink_noConversion.csv",
+    "process_source_toProcess_noConversion.csv",
+    "process_process_toSource_direct.csv",
+    # — write_process_profile_method_joins (2 CSVs)
+    "process__profileProcess__toSink__profile__profile_method.csv",
+    "process__source__toProfileProcess__profile__profile_method.csv",
+    # _writer_dispatchers — Phase E-b lifted entity_period_calc_params
+    # (5 CSVs from a single own-compute monolith; dispatcher module
+    # joined _PATCH_MODULES to expose its new _write helper)
+    "pdProcess.csv",
+    "pdNode.csv",
+    "edEntity_lifetime.csv",
+    "ed_fixed_cost.csv",
+    "p_entity_unitsize.csv",
 )
 
 

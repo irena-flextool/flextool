@@ -329,11 +329,12 @@ def _build_arc_map(arc_df: pl.DataFrame, key: str, value: str) -> dict[str, list
     return out
 
 
-def write_process_arc_method_joins(input_dir: Path, solve_data_dir: Path) -> None:
-    """Emit the 10 method-gated process_*_to_* tables.
+def _arc_method_inputs(input_dir: Path) -> dict:
+    """Shared scan for the 10 process_*_to_* derives.
 
-    Iteration order mirrors the legacy module exactly so that the
-    deduped output preserves the same first-occurrence ordering.
+    Returns the bundle of in-memory sets/lists used by every
+    ``derive_process_*`` below.  Each public derive_X also calls this
+    helper directly so it remains standalone for accumulator capture.
     """
     pm = _drop_blank_rows(
         _read_csv(input_dir / "process_method.csv", ["process", "method"]),
@@ -352,151 +353,196 @@ def write_process_arc_method_joins(input_dir: Path, solve_data_dir: Path) -> Non
         ["process"],
     ).get_column("process").to_list()
 
-    p_with_2way_nvar = _processes_with_method_in(pm, _METHOD_2WAY_NVAR)
-    p_with_direct = _processes_with_method_in(pm, _METHOD_DIRECT)
-    p_with_2way_2var = _processes_with_method_in(pm, _METHOD_2WAY_2VAR)
-    p_with_1way_1var = _processes_with_method_in(pm, _METHOD_1WAY_1VAR)
-
     has_source = frozenset(sources.get_column("process").to_list())
     has_sink = frozenset(sinks.get_column("process").to_list())
-    process_no_source = frozenset(p for p in processes if p not in has_source)
-    process_no_sink = frozenset(p for p in processes if p not in has_sink)
 
-    sinks_by_process = _build_arc_map(sinks, "process", "sink")
-    sources_by_process = _build_arc_map(sources, "process", "source")
+    return {
+        "pm": pm,
+        "sources": sources,
+        "sinks": sinks,
+        "processes": processes,
+        "p_with_2way_nvar": _processes_with_method_in(pm, _METHOD_2WAY_NVAR),
+        "p_with_direct": _processes_with_method_in(pm, _METHOD_DIRECT),
+        "p_with_2way_2var": _processes_with_method_in(pm, _METHOD_2WAY_2VAR),
+        "p_with_1way_1var": _processes_with_method_in(pm, _METHOD_1WAY_1VAR),
+        "has_source": has_source,
+        "has_sink": has_sink,
+        "process_no_source": frozenset(p for p in processes if p not in has_source),
+        "process_no_sink": frozenset(p for p in processes if p not in has_sink),
+        "sinks_by_process": _build_arc_map(sinks, "process", "sink"),
+        "sources_by_process": _build_arc_map(sources, "process", "source"),
+        "sink_rows": list(sinks.iter_rows()),
+        "source_rows": list(sources.iter_rows()),
+    }
 
-    sink_rows = list(sinks.iter_rows())     # list of (process, sink) tuples
-    source_rows = list(sources.iter_rows()) # list of (process, source)
 
-    def _emit(path: Path, header: tuple[str, ...],
-              rows: list[tuple[str, ...]]) -> None:
-        deduped = list(dict.fromkeys(rows))
-        cols = {h: [r[i] for r in deduped] for i, h in enumerate(header)}
-        _write(pl.DataFrame(cols, schema={h: pl.Utf8 for h in header}),
-               path)
+def _to_frame(rows: list[tuple[str, ...]],
+              header: tuple[str, ...]) -> pl.DataFrame:
+    """Dedup + materialise to a pl.DataFrame with all-Utf8 columns."""
+    deduped = list(dict.fromkeys(rows))
+    cols = {h: [r[i] for r in deduped] for i, h in enumerate(header)}
+    return pl.DataFrame(cols, schema={h: pl.Utf8 for h in header})
 
-    # ---- process_sink_toProcess (mod L993) — method ∈ METHOD_2WAY_NVAR ----
-    rows_sink_toProcess = [
-        (p, sink, p) for p, sink in sink_rows if p in p_with_2way_nvar
+
+# ---- 10 derive_X for the process_*_to_* family ----
+
+def derive_process_sink_toProcess(input_dir: Path) -> pl.DataFrame:
+    """``process_sink_toProcess`` — METHOD_2WAY_NVAR filter on (p, sink)."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
+        (p, sink, p)
+        for p, sink in inp["sink_rows"]
+        if p in inp["p_with_2way_nvar"]
     ]
-    _emit(
-        solve_data_dir / "process_sink_toProcess.csv",
-        ("process", "sink", "process_aux"),
-        rows_sink_toProcess,
-    )
+    return _to_frame(rows, ("process", "sink", "process_aux"))
 
-    # ---- process_process_toSource (mod L999) — METHOD_2WAY_NVAR ----
-    rows_process_toSource = [
-        (p, p, source) for p, source in source_rows if p in p_with_2way_nvar
+
+def derive_process_process_toSource(input_dir: Path) -> pl.DataFrame:
+    """``process_process_toSource`` — METHOD_2WAY_NVAR filter on (p, source)."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
+        (p, p, source)
+        for p, source in inp["source_rows"]
+        if p in inp["p_with_2way_nvar"]
     ]
-    _emit(
-        solve_data_dir / "process_process_toSource.csv",
-        ("process_outer", "process", "source"),
-        rows_process_toSource,
-    )
+    return _to_frame(rows, ("process_outer", "process", "source"))
 
-    # ---- process_source_toSink (mod L1005) — METHOD_DIRECT ----
-    rows_source_toSink = [
+
+def derive_process_source_toSink(input_dir: Path) -> pl.DataFrame:
+    """``process_source_toSink`` — METHOD_DIRECT cross-product
+    of source rows and sinks_by_process."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
         (p, source, sink)
-        for p, source in source_rows
-        if p in p_with_direct
-        for sink in sinks_by_process.get(p, ())
+        for p, source in inp["source_rows"]
+        if p in inp["p_with_direct"]
+        for sink in inp["sinks_by_process"].get(p, ())
     ]
-    _emit(
-        solve_data_dir / "process_source_toSink.csv",
-        ("process", "source", "sink"),
-        rows_source_toSink,
-    )
+    return _to_frame(rows, ("process", "source", "sink"))
 
-    # ---- process_source_toProcess_direct (mod L1010) — METHOD_DIRECT ----
-    rows_source_toProcess_direct = [
-        (p, source, p) for p, source in source_rows if p in p_with_direct
+
+def derive_process_source_toProcess_direct(input_dir: Path) -> pl.DataFrame:
+    """``process_source_toProcess_direct`` — METHOD_DIRECT on (p, source)."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
+        (p, source, p)
+        for p, source in inp["source_rows"]
+        if p in inp["p_with_direct"]
     ]
-    _emit(
-        solve_data_dir / "process_source_toProcess_direct.csv",
-        ("process", "source", "process_aux"),
-        rows_source_toProcess_direct,
-    )
+    return _to_frame(rows, ("process", "source", "process_aux"))
 
-    # ---- process_process_toSink_direct (mod L1015) — METHOD_DIRECT ----
-    rows_process_toSink_direct = [
-        (p, p, sink) for p, sink in sink_rows if p in p_with_direct
+
+def derive_process_process_toSink_direct(input_dir: Path) -> pl.DataFrame:
+    """``process_process_toSink_direct`` — METHOD_DIRECT on (p, sink)."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
+        (p, p, sink)
+        for p, sink in inp["sink_rows"]
+        if p in inp["p_with_direct"]
     ]
-    _emit(
-        solve_data_dir / "process_process_toSink_direct.csv",
-        ("process_outer", "process", "sink"),
-        rows_process_toSink_direct,
-    )
+    return _to_frame(rows, ("process_outer", "process", "sink"))
 
-    # ---- process_sink_toProcess_direct (mod L1021) — METHOD_2WAY_2VAR ----
-    rows_sink_toProcess_direct = [
-        (p, sink, p) for p, sink in sink_rows if p in p_with_2way_2var
+
+def derive_process_sink_toProcess_direct(input_dir: Path) -> pl.DataFrame:
+    """``process_sink_toProcess_direct`` — METHOD_2WAY_2VAR on (p, sink)."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
+        (p, sink, p)
+        for p, sink in inp["sink_rows"]
+        if p in inp["p_with_2way_2var"]
     ]
-    _emit(
-        solve_data_dir / "process_sink_toProcess_direct.csv",
-        ("process", "sink", "process_aux"),
-        rows_sink_toProcess_direct,
-    )
+    return _to_frame(rows, ("process", "sink", "process_aux"))
 
-    # ---- process_sink_toSource (mod L1033) — METHOD_2WAY_2VAR ----
-    rows_sink_toSource = [
+
+def derive_process_sink_toSource(input_dir: Path) -> pl.DataFrame:
+    """``process_sink_toSource`` — METHOD_2WAY_2VAR cross-product
+    of sink rows and sources_by_process."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
         (p, sink, source)
-        for p, sink in sink_rows
-        if p in p_with_2way_2var
-        for source in sources_by_process.get(p, ())
+        for p, sink in inp["sink_rows"]
+        if p in inp["p_with_2way_2var"]
+        for source in inp["sources_by_process"].get(p, ())
     ]
-    _emit(
-        solve_data_dir / "process_sink_toSource.csv",
-        ("process", "sink", "source"),
-        rows_sink_toSource,
-    )
+    return _to_frame(rows, ("process", "sink", "source"))
 
-    # ---- process_process_toSink_noConversion (mod L1046) — METHOD_1WAY_1VAR ∧ no source ----
-    rows_process_toSink_noConv = [
-        (p, p, sink) for p, sink in sink_rows
-        if p in p_with_1way_1var and p in process_no_source
-    ]
-    _emit(
-        solve_data_dir / "process_process_toSink_noConversion.csv",
-        ("process_outer", "process", "sink"),
-        rows_process_toSink_noConv,
-    )
 
-    # ---- process_source_toProcess_noConversion (mod L1052) — METHOD_1WAY_1VAR ∧ no sink ----
-    rows_source_toProcess_noConv = [
-        (p, source, p) for p, source in source_rows
-        if p in p_with_1way_1var and p in process_no_sink
+def derive_process_process_toSink_noConversion(input_dir: Path) -> pl.DataFrame:
+    """``process_process_toSink_noConversion`` — METHOD_1WAY_1VAR ∧ no source."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
+        (p, p, sink)
+        for p, sink in inp["sink_rows"]
+        if p in inp["p_with_1way_1var"] and p in inp["process_no_source"]
     ]
-    _emit(
-        solve_data_dir / "process_source_toProcess_noConversion.csv",
-        ("process", "source", "process_aux"),
-        rows_source_toProcess_noConv,
-    )
+    return _to_frame(rows, ("process_outer", "process", "sink"))
 
-    # ---- process_process_toSource_direct (mod L1006 region) — METHOD_2WAY_2VAR ----
-    rows_process_toSource_direct = [
-        (p, p, source) for p, source in source_rows if p in p_with_2way_2var
+
+def derive_process_source_toProcess_noConversion(input_dir: Path) -> pl.DataFrame:
+    """``process_source_toProcess_noConversion`` — METHOD_1WAY_1VAR ∧ no sink."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
+        (p, source, p)
+        for p, source in inp["source_rows"]
+        if p in inp["p_with_1way_1var"] and p in inp["process_no_sink"]
     ]
-    _emit(
-        solve_data_dir / "process_process_toSource_direct.csv",
-        ("process_outer", "process", "source"),
-        rows_process_toSource_direct,
-    )
+    return _to_frame(rows, ("process", "source", "process_aux"))
+
+
+def derive_process_process_toSource_direct(input_dir: Path) -> pl.DataFrame:
+    """``process_process_toSource_direct`` — METHOD_2WAY_2VAR on (p, source)."""
+    inp = _arc_method_inputs(input_dir)
+    rows = [
+        (p, p, source)
+        for p, source in inp["source_rows"]
+        if p in inp["p_with_2way_2var"]
+    ]
+    return _to_frame(rows, ("process_outer", "process", "source"))
+
+
+def write_process_arc_method_joins(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit the 10 method-gated process_*_to_* tables.
+
+    Iteration order mirrors the legacy module exactly so that the
+    deduped output preserves the same first-occurrence ordering.
+    Each emitted CSV goes through ``_write(derive_X(...), path)`` so
+    Phase E-b's accumulator captures every frame.
+    """
+    _write(derive_process_sink_toProcess(input_dir),
+           solve_data_dir / "process_sink_toProcess.csv")
+    _write(derive_process_process_toSource(input_dir),
+           solve_data_dir / "process_process_toSource.csv")
+    _write(derive_process_source_toSink(input_dir),
+           solve_data_dir / "process_source_toSink.csv")
+    _write(derive_process_source_toProcess_direct(input_dir),
+           solve_data_dir / "process_source_toProcess_direct.csv")
+    _write(derive_process_process_toSink_direct(input_dir),
+           solve_data_dir / "process_process_toSink_direct.csv")
+    _write(derive_process_sink_toProcess_direct(input_dir),
+           solve_data_dir / "process_sink_toProcess_direct.csv")
+    _write(derive_process_sink_toSource(input_dir),
+           solve_data_dir / "process_sink_toSource.csv")
+    _write(derive_process_process_toSink_noConversion(input_dir),
+           solve_data_dir / "process_process_toSink_noConversion.csv")
+    _write(derive_process_source_toProcess_noConversion(input_dir),
+           solve_data_dir / "process_source_toProcess_noConversion.csv")
+    _write(derive_process_process_toSource_direct(input_dir),
+           solve_data_dir / "process_process_toSource_direct.csv")
 
 
 # ---- profile-method joins (mod L961, L969) --------------------------------
 
-def write_process_profile_method_joins(
-    input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """Two profile-method joins:
+def _profile_method_inputs(input_dir: Path) -> tuple[
+    pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, list[str],
+    frozenset[str], frozenset[str], frozenset[str],
+    dict[str, set[str]], dict[str, set[str]],
+    list[tuple[str, str, str, str]],
+]:
+    """Shared scan for both profile-method join derives.
 
-    * ``process__profileProcess__toSink__profile__profile_method``
-    * ``process__source__toProfileProcess__profile__profile_method``
-
-    Both join ``process__node__profile__profile_method`` against the
-    arc-side set (sinks / sources resp.), gated by "process has any
-    indirect method OR process has no sources/sinks".
+    Each public ``derive_*`` calls this so it is standalone for
+    accumulator capture; the wrapper :func:`write_process_profile_method_joins`
+    calls it once and feeds the same scan to both derives.
     """
     pm = _drop_blank_rows(
         _read_csv(input_dir / "process_method.csv", ["process", "method"]),
@@ -526,8 +572,6 @@ def write_process_profile_method_joins(
     has_sources = frozenset(sources.get_column("process").to_list())
     has_sinks = frozenset(sinks.get_column("process").to_list())
 
-    # Per-process arc node sets (preserving CSV order is irrelevant
-    # because we only check membership here).
     sinks_by_process: dict[str, set[str]] = {}
     for p, n in sinks.iter_rows():
         sinks_by_process.setdefault(p, set()).add(n)
@@ -537,10 +581,29 @@ def write_process_profile_method_joins(
 
     profiles_rows = list(profiles.iter_rows())  # (p, n, f, fm) tuples
 
-    # process__profileProcess__toSink__profile__profile_method
-    # Iteration: for each p in process (CSV order), for each profile row
-    # (CSV order), keep iff p == p2 AND (p, n) is an arc-sink AND
-    # (p has any indirect method OR p has no source rows).
+    return (
+        pm, sources, sinks, profiles, processes,
+        p_with_indirect, has_sources, has_sinks,
+        sinks_by_process, sources_by_process,
+        profiles_rows,
+    )
+
+
+def derive_process_profileProcess_toSink_profile_profile_method(
+    input_dir: Path,
+) -> pl.DataFrame:
+    """``process__profileProcess__toSink__profile__profile_method``:
+    join profile rows against (process, sink) arcs, gated by
+    "process has any indirect method OR process has no source rows".
+
+    Iteration order mirrors the legacy module exactly so first-seen
+    dedup preserves the legacy CSV row order.
+    """
+    (_pm, _sources, _sinks, _profiles, processes,
+     p_with_indirect, has_sources, _has_sinks,
+     sinks_by_process, _sources_by_process,
+     profiles_rows) = _profile_method_inputs(input_dir)
+
     rows_to_sink: list[tuple[str, str, str, str, str]] = []
     for p in processes:
         if not (p in p_with_indirect or p not in has_sources):
@@ -549,29 +612,33 @@ def write_process_profile_method_joins(
         for p2, n, f, fm in profiles_rows:
             if p2 == p and n in psinks:
                 rows_to_sink.append((p, p2, n, f, fm))
-
-    out_sink = solve_data_dir / "process__profileProcess__toSink__profile__profile_method.csv"
-    _write(
-        pl.DataFrame(
-            {
-                "process_outer":  [r[0] for r in dict.fromkeys(rows_to_sink)],
-                "process":        [r[1] for r in dict.fromkeys(rows_to_sink)],
-                "sink":           [r[2] for r in dict.fromkeys(rows_to_sink)],
-                "profile":        [r[3] for r in dict.fromkeys(rows_to_sink)],
-                "profile_method": [r[4] for r in dict.fromkeys(rows_to_sink)],
-            },
-            schema={
-                "process_outer": pl.Utf8, "process": pl.Utf8, "sink": pl.Utf8,
-                "profile": pl.Utf8, "profile_method": pl.Utf8,
-            },
-        ),
-        out_sink,
+    deduped = list(dict.fromkeys(rows_to_sink))
+    return pl.DataFrame(
+        {
+            "process_outer":  [r[0] for r in deduped],
+            "process":        [r[1] for r in deduped],
+            "sink":           [r[2] for r in deduped],
+            "profile":        [r[3] for r in deduped],
+            "profile_method": [r[4] for r in deduped],
+        },
+        schema={
+            "process_outer": pl.Utf8, "process": pl.Utf8, "sink": pl.Utf8,
+            "profile": pl.Utf8, "profile_method": pl.Utf8,
+        },
     )
 
-    # process__source__toProfileProcess__profile__profile_method
-    # Iteration: for each (p, source) in process_source (CSV order),
-    # for each profile row (CSV order), keep iff p == p2 AND src2 == source
-    # AND (p has any indirect method OR p has no sink rows).
+
+def derive_process_source_toProfileProcess_profile_profile_method(
+    input_dir: Path,
+) -> pl.DataFrame:
+    """``process__source__toProfileProcess__profile__profile_method``:
+    join profile rows against (process, source) arcs, gated by
+    "process has any indirect method OR process has no sink rows"."""
+    (_pm, sources, _sinks, _profiles, _processes,
+     p_with_indirect, _has_sources, has_sinks,
+     _sinks_by_process, _sources_by_process,
+     profiles_rows) = _profile_method_inputs(input_dir)
+
     rows_to_source: list[tuple[str, str, str, str, str]] = []
     for p, source in sources.iter_rows():
         if not (p in p_with_indirect or p not in has_sinks):
@@ -579,21 +646,38 @@ def write_process_profile_method_joins(
         for p2, src2, f, fm in profiles_rows:
             if p2 == p and src2 == source:
                 rows_to_source.append((p, source, p2, f, fm))
+    deduped = list(dict.fromkeys(rows_to_source))
+    return pl.DataFrame(
+        {
+            "process":        [r[0] for r in deduped],
+            "source":         [r[1] for r in deduped],
+            "process_aux":    [r[2] for r in deduped],
+            "profile":        [r[3] for r in deduped],
+            "profile_method": [r[4] for r in deduped],
+        },
+        schema={
+            "process": pl.Utf8, "source": pl.Utf8, "process_aux": pl.Utf8,
+            "profile": pl.Utf8, "profile_method": pl.Utf8,
+        },
+    )
 
-    out_source = solve_data_dir / "process__source__toProfileProcess__profile__profile_method.csv"
+
+def write_process_profile_method_joins(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Two profile-method joins:
+
+    * ``process__profileProcess__toSink__profile__profile_method``
+    * ``process__source__toProfileProcess__profile__profile_method``
+    """
     _write(
-        pl.DataFrame(
-            {
-                "process":        [r[0] for r in dict.fromkeys(rows_to_source)],
-                "source":         [r[1] for r in dict.fromkeys(rows_to_source)],
-                "process_aux":    [r[2] for r in dict.fromkeys(rows_to_source)],
-                "profile":        [r[3] for r in dict.fromkeys(rows_to_source)],
-                "profile_method": [r[4] for r in dict.fromkeys(rows_to_source)],
-            },
-            schema={
-                "process": pl.Utf8, "source": pl.Utf8, "process_aux": pl.Utf8,
-                "profile": pl.Utf8, "profile_method": pl.Utf8,
-            },
-        ),
-        out_source,
+        derive_process_profileProcess_toSink_profile_profile_method(input_dir),
+        solve_data_dir
+        / "process__profileProcess__toSink__profile__profile_method.csv",
+    )
+    _write(
+        derive_process_source_toProfileProcess_profile_profile_method(
+            input_dir),
+        solve_data_dir
+        / "process__source__toProfileProcess__profile__profile_method.csv",
     )

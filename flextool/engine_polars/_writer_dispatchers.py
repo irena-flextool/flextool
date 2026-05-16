@@ -56,6 +56,23 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+import polars as pl
+
+
+# ---------------------------------------------------------------------------
+# Polars-frame _write helper — patched by Phase E-b accumulator.
+#
+# This is the single emission funnel for the converted derive_* family in
+# this module.  The patched variant in
+# :mod:`._flex_data_accumulator.capture_frames` rebinds this name to also
+# capture (path.name -> df) into the per-sub-solve accumulator.
+# ---------------------------------------------------------------------------
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
+
 
 # ---------------------------------------------------------------------------
 # CSV I/O — same helpers as the sibling legacy modules.
@@ -372,19 +389,18 @@ def write_process_arc_unions(input_dir: Path, solve_data_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_keyed_2(path: Path, header: tuple[str, str, str],
-                   rows: list[tuple[str, str, float]]) -> None:
-    path.write_text(",".join(header) + "\n"
-                    + "".join(f"{a},{b},{repr(v)}\n" for a, b, v in rows))
+# ---- Phase E-b — derive_X family for each emitted CSV --------------------
+#
+# Each derive_X is standalone (rebuilds its own lookups) so it can be
+# called independently for accumulator capture.  The wrapper
+# :func:`write_entity_period_calc_params` constructs the shared input
+# bundle once via :func:`_entity_period_inputs` and feeds private
+# ``_compute_*`` helpers to avoid recomputing the PdLookup scans across
+# the five outputs.
 
 
-def write_entity_period_calc_params(input_dir: Path,
-                                    solve_data_dir: Path) -> None:
-    """Migrate pdProcess/pdNode + edEntity_lifetime + ed_fixed_cost +
-    p_entity_unitsize in one pass.
-
-    Byte-for-byte mirror of the legacy emitter.
-    """
+def _entity_period_inputs(input_dir: Path, solve_data_dir: Path) -> dict:
+    """Shared input bundle for the 5 entity-period derives."""
     from flextool.engine_polars._pdt_lookup import PdLookup
 
     pp = PdLookup(
@@ -398,99 +414,127 @@ def write_entity_period_calc_params(input_dir: Path,
         period_branch_csv=solve_data_dir / "period__branch.csv",
     )
 
-    process_set = frozenset(_read_singles(input_dir / "process.csv"))
-    node_set = frozenset(_read_singles(input_dir / "node.csv"))
+    return {
+        "pp": pp,
+        "pn": pn,
+        "process_set": frozenset(_read_singles(input_dir / "process.csv")),
+        "node_set": frozenset(_read_singles(input_dir / "node.csv")),
+        "process_period_in_use": _read_pairs(
+            solve_data_dir / "process__PeriodParam_in_use.csv"),
+        "node_period_in_use": _read_pairs(
+            solve_data_dir / "node__PeriodParam_in_use.csv"),
+        "period_with_history": _read_singles(
+            solve_data_dir / "period_with_history.csv"),
+        "entities": _read_singles(input_dir / "entity.csv"),
+    }
 
-    process_period_in_use = _read_pairs(
-        solve_data_dir / "process__PeriodParam_in_use.csv"
-    )
-    node_period_in_use = _read_pairs(
-        solve_data_dir / "node__PeriodParam_in_use.csv"
-    )
-    period_with_history = _read_singles(
-        solve_data_dir / "period_with_history.csv"
-    )
 
-    # ---- pdProcess ------------------------------------------------------
-    pdProcess_rows: list[tuple[str, str, str, float]] = []
-    for (p, param) in process_period_in_use:
-        for d in period_with_history:
+def _read_p_table(path: Path) -> dict[tuple[str, str], float]:
+    """Read a 3-col (entity, paramName, value) table, silently skipping
+    rows whose value isn't a float.  Mirrors the legacy local-loop in
+    :func:`write_entity_period_calc_params`."""
+    out: dict[tuple[str, str], float] = {}
+    if not path.exists():
+        return out
+    with path.open() as fh:
+        reader = csv.reader(fh)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 3 and row[0] and row[1]:
+                try:
+                    out[(row[0], row[1])] = float(row[2])
+                except ValueError:
+                    continue
+    return out
+
+
+def _compute_pdProcess(inp: dict) -> pl.DataFrame:
+    rows: list[tuple[str, str, str, str]] = []
+    pp = inp["pp"]
+    for (p, param) in inp["process_period_in_use"]:
+        for d in inp["period_with_history"]:
             v = pp.get(p, param, d)
-            pdProcess_rows.append((p, param, d, v))
-    (solve_data_dir / "pdProcess.csv").write_text(
-        "process,param,period,value\n"
-        + "".join(f"{p},{pa},{d},{repr(v)}\n" for p, pa, d, v in pdProcess_rows)
+            rows.append((p, param, d, repr(v)))
+    return pl.DataFrame(
+        {
+            "process": [r[0] for r in rows],
+            "param":   [r[1] for r in rows],
+            "period":  [r[2] for r in rows],
+            "value":   [r[3] for r in rows],
+        },
+        schema={"process": pl.Utf8, "param": pl.Utf8,
+                "period": pl.Utf8, "value": pl.Utf8},
     )
 
-    # ---- pdNode ---------------------------------------------------------
-    pdNode_rows: list[tuple[str, str, str, float]] = []
-    for (n, param) in node_period_in_use:
-        for d in period_with_history:
+
+def _compute_pdNode(inp: dict) -> pl.DataFrame:
+    rows: list[tuple[str, str, str, str]] = []
+    pn = inp["pn"]
+    for (n, param) in inp["node_period_in_use"]:
+        for d in inp["period_with_history"]:
             v = pn.get(n, param, d)
-            pdNode_rows.append((n, param, d, v))
-    (solve_data_dir / "pdNode.csv").write_text(
-        "node,param,period,value\n"
-        + "".join(f"{n},{pa},{d},{repr(v)}\n" for n, pa, d, v in pdNode_rows)
+            rows.append((n, param, d, repr(v)))
+    return pl.DataFrame(
+        {
+            "node":   [r[0] for r in rows],
+            "param":  [r[1] for r in rows],
+            "period": [r[2] for r in rows],
+            "value":  [r[3] for r in rows],
+        },
+        schema={"node": pl.Utf8, "param": pl.Utf8,
+                "period": pl.Utf8, "value": pl.Utf8},
     )
 
-    # ---- ed_* family ----------------------------------------------------
-    entities = _read_singles(input_dir / "entity.csv")
 
-    # edEntity_lifetime{e in entity, d in period_with_history}
-    rows: list[tuple[str, str, float]] = []
-    for e in entities:
-        for d in period_with_history:
+def _compute_edEntity_lifetime(inp: dict) -> pl.DataFrame:
+    pp = inp["pp"]
+    pn = inp["pn"]
+    process_set = inp["process_set"]
+    node_set = inp["node_set"]
+    rows: list[tuple[str, str, str]] = []
+    for e in inp["entities"]:
+        for d in inp["period_with_history"]:
             if e in process_set:
                 v = pp.get(e, "lifetime", d)
             elif e in node_set:
                 v = pn.get(e, "lifetime", d)
             else:
                 v = 0.0
-            rows.append((e, d, v))
-    _write_keyed_2(
-        solve_data_dir / "edEntity_lifetime.csv",
-        ("entity", "period", "value"), rows,
+            rows.append((e, d, repr(v)))
+    return pl.DataFrame(
+        {"entity": [r[0] for r in rows],
+         "period": [r[1] for r in rows],
+         "value":  [r[2] for r in rows]},
+        schema={"entity": pl.Utf8, "period": pl.Utf8, "value": pl.Utf8},
     )
 
-    # ed_fixed_cost{e in entity, d in period_with_history}: each side × 1000
-    rows = []
-    for e in entities:
-        for d in period_with_history:
+
+def _compute_ed_fixed_cost(inp: dict) -> pl.DataFrame:
+    pp = inp["pp"]
+    pn = inp["pn"]
+    process_set = inp["process_set"]
+    node_set = inp["node_set"]
+    rows: list[tuple[str, str, str]] = []
+    for e in inp["entities"]:
+        for d in inp["period_with_history"]:
             v = (1000.0 if e in node_set else 0.0) * pn.get(e, "fixed_cost", d) \
                 + (1000.0 if e in process_set else 0.0) * pp.get(e, "fixed_cost", d)
-            rows.append((e, d, v))
-    _write_keyed_2(
-        solve_data_dir / "ed_fixed_cost.csv",
-        ("entity", "period", "value"), rows,
+            rows.append((e, d, repr(v)))
+    return pl.DataFrame(
+        {"entity": [r[0] for r in rows],
+         "period": [r[1] for r in rows],
+         "value":  [r[2] for r in rows]},
+        schema={"entity": pl.Utf8, "period": pl.Utf8, "value": pl.Utf8},
     )
 
-    # ---- p_entity_unitsize{e in entity} (write_input scope) ------------
-    p_process: dict[tuple[str, str], float] = {}
-    pp_path = input_dir / "p_process.csv"
-    if pp_path.exists():
-        with pp_path.open() as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 3 and row[0] and row[1]:
-                    try:
-                        p_process[(row[0], row[1])] = float(row[2])
-                    except ValueError:
-                        continue
-    p_node: dict[tuple[str, str], float] = {}
-    pn_path = input_dir / "p_node.csv"
-    if pn_path.exists():
-        with pn_path.open() as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 3 and row[0] and row[1]:
-                    try:
-                        p_node[(row[0], row[1])] = float(row[2])
-                    except ValueError:
-                        continue
-    unitsize_rows: list[tuple[str, float]] = []
-    for e in entities:
+
+def _compute_p_entity_unitsize(input_dir: Path, inp: dict) -> pl.DataFrame:
+    p_process = _read_p_table(input_dir / "p_process.csv")
+    p_node = _read_p_table(input_dir / "p_node.csv")
+    process_set = inp["process_set"]
+    node_set = inp["node_set"]
+    rows: list[tuple[str, str]] = []
+    for e in inp["entities"]:
         if e in process_set:
             v = (p_process.get((e, "virtual_unitsize"), 0.0)
                  or p_process.get((e, "existing"), 0.0)
@@ -501,8 +545,79 @@ def write_entity_period_calc_params(input_dir: Path,
                  or 1000.0)
         else:
             v = 0.0
-        unitsize_rows.append((e, v))
-    (solve_data_dir / "p_entity_unitsize.csv").write_text(
-        "entity,value\n"
-        + "".join(f"{e},{repr(v)}\n" for e, v in unitsize_rows)
+        rows.append((e, repr(v)))
+    return pl.DataFrame(
+        {"entity": [r[0] for r in rows],
+         "value":  [r[1] for r in rows]},
+        schema={"entity": pl.Utf8, "value": pl.Utf8},
     )
+
+
+# ---- Public derive_X (each rebuilds its own input bundle) ----
+
+def derive_pdProcess(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """``pdProcess.csv`` — (process, param, period, value) for every
+    (process, param) in process__PeriodParam_in_use × period_with_history,
+    value pulled from PdLookup over (pd_process, p_process, period__branch).
+    """
+    return _compute_pdProcess(_entity_period_inputs(input_dir, solve_data_dir))
+
+
+def derive_pdNode(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """``pdNode.csv`` — node-side analogue of pdProcess."""
+    return _compute_pdNode(_entity_period_inputs(input_dir, solve_data_dir))
+
+
+def derive_edEntity_lifetime(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``edEntity_lifetime.csv`` — per-entity lifetime per period_with_history.
+    Process entities pull from the process PdLookup, node entities from the
+    node PdLookup, others get 0.0.
+    """
+    return _compute_edEntity_lifetime(
+        _entity_period_inputs(input_dir, solve_data_dir),
+    )
+
+
+def derive_ed_fixed_cost(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``ed_fixed_cost.csv`` — entity fixed cost summed across the
+    process and node side, each side scaled by 1000 if the entity is
+    a member of that side."""
+    return _compute_ed_fixed_cost(
+        _entity_period_inputs(input_dir, solve_data_dir),
+    )
+
+
+def derive_p_entity_unitsize(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``p_entity_unitsize.csv`` — per-entity ``virtual_unitsize`` first,
+    falling back to ``existing`` then to 1000.0; pulled from the
+    side-appropriate p_*.csv table."""
+    return _compute_p_entity_unitsize(
+        input_dir,
+        _entity_period_inputs(input_dir, solve_data_dir),
+    )
+
+
+def write_entity_period_calc_params(input_dir: Path,
+                                    solve_data_dir: Path) -> None:
+    """Migrate pdProcess/pdNode + edEntity_lifetime + ed_fixed_cost +
+    p_entity_unitsize in one pass.
+
+    Byte-for-byte mirror of the legacy emitter.  Each output flows
+    through ``_write(derive_X(...), path)`` so Phase E-b's accumulator
+    captures every frame.
+    """
+    inp = _entity_period_inputs(input_dir, solve_data_dir)
+    _write(_compute_pdProcess(inp), solve_data_dir / "pdProcess.csv")
+    _write(_compute_pdNode(inp), solve_data_dir / "pdNode.csv")
+    _write(_compute_edEntity_lifetime(inp),
+           solve_data_dir / "edEntity_lifetime.csv")
+    _write(_compute_ed_fixed_cost(inp),
+           solve_data_dir / "ed_fixed_cost.csv")
+    _write(_compute_p_entity_unitsize(input_dir, inp),
+           solve_data_dir / "p_entity_unitsize.csv")
