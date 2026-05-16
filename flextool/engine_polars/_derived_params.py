@@ -1995,7 +1995,7 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
                       .select("p", "d", "cap"))
     if workdir is not None:
         piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-        if piu_path.exists():
+        if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
             piu_df = _read_csv_file(piu_path)
             if piu_df.height > 0 and "period" in piu_df.columns:
                 pd_lf = (piu_df.lazy()
@@ -2952,7 +2952,7 @@ def _read_period_first(source: "InputSource",
     """
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_first.csv"
-        if p.exists():
+        if _seed_or_exists(p):  # Phase E-j — seed-aware
             try:
                 df = _read_csv_file(p)
                 if df.height > 0 and "period" in df.columns:
@@ -3235,7 +3235,7 @@ def _p_years_d_lf(source: "InputSource",
     # 1 — workdir CSV (authoritative).
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "p_years_d.csv"
-        if p.exists():
+        if _seed_or_exists(p):  # Phase E-j — seed-aware
             try:
                 df = _read_csv_file(p)
                 if df.height > 0 and "period" in df.columns:
@@ -3249,7 +3249,7 @@ def _p_years_d_lf(source: "InputSource",
             except Exception:
                 pass
         p2 = Path(workdir) / "solve_data" / "period_with_history.csv"
-        if p2.exists():
+        if _seed_or_exists(p2):  # Phase E-j — seed-aware
             try:
                 df = _read_csv_file(p2)
                 if df.height > 0 and "period" in df.columns:
@@ -3359,7 +3359,7 @@ def _period_in_use_set(source: "InputSource",
             return piu["d"].cast(pl.Utf8, strict=False).to_list()
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-        if p.exists():
+        if _seed_or_exists(p):  # Phase E-j — seed-aware
             df = _read_csv_file(p)
             if df.height > 0 and "period" in df.columns:
                 return df["period"].cast(pl.Utf8, strict=False).to_list()
@@ -5063,7 +5063,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
                 return Param(("e", "d"), df2)
     elif workdir is not None:
         pae_path = Path(workdir) / "solve_data" / "p_entity_all_existing.csv"
-        if pae_path.exists():
+        if _seed_or_exists(pae_path):  # Phase E-j — seed-aware
             try:
                 df = _read_csv_file(pae_path)
                 if df.height > 0 and "entity" in df.columns \
@@ -5529,7 +5529,7 @@ def _expand_branch_periods(period_order: list[str],
             return list(period_order)
         if not in_use:
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-            if piu_path.exists():
+            if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
                 try:
                     piu = _read_csv_file(piu_path)
                     if piu.height > 0:
@@ -5593,7 +5593,7 @@ def _dt_period_active_steps_from_workdir(
     if siu is None:
         sd = workdir / "solve_data"
         siu_path = sd / "steps_in_use.csv"
-        if not siu_path.exists():
+        if not _seed_or_exists(siu_path):  # Phase E-j — seed-aware
             return None
         try:
             siu_raw = _read_csv_file(siu_path)
@@ -5625,7 +5625,7 @@ def _dt_period_active_steps_from_workdir(
                 seen.add(d)
     else:
         piu_path = sd / "period_in_use_set.csv"
-        if piu_path.exists():
+        if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
             try:
                 piu_df = _read_csv_file(piu_path)
                 if piu_df.height > 0 and "period" in piu_df.columns:
@@ -5754,7 +5754,8 @@ def _dt_period_active_steps(source: "InputSource",
             steps_in_use_available = False
     if not steps_in_use_available and workdir is not None:
         steps_in_use_available = (
-            (Path(workdir) / "solve_data" / "steps_in_use.csv").exists()
+            _seed_or_exists(  # Phase E-j — seed-aware
+                Path(workdir) / "solve_data" / "steps_in_use.csv")
         )
     if steps_in_use_available and workdir is not None:
         wd_result = _dt_period_active_steps_from_workdir(
@@ -5811,7 +5812,7 @@ def _dt_period_active_steps(source: "InputSource",
     if workdir is not None:
         if not in_use:
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-            if piu_path.exists():
+            if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
                 try:
                     piu_df = _read_csv_file(piu_path)
                     if piu_df.height > 0:
@@ -5820,7 +5821,7 @@ def _dt_period_active_steps(source: "InputSource",
                     in_use = set()
         if pbf is None:
             pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
-            if pb_path.exists():
+            if _seed_or_exists(pb_path):  # Phase E-j — seed-aware
                 try:
                     pbf = _read_csv_file(pb_path)
                 except Exception:
@@ -5904,7 +5905,7 @@ def _dt_period_active_steps(source: "InputSource",
                 canonical = piu_ctx["d"].to_list()
         if canonical is None and workdir is not None:
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-            if piu_path.exists():
+            if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
                 try:
                     piu_df = _read_csv_file(piu_path)
                     if piu_df.height > 0:
@@ -6028,7 +6029,7 @@ def dtttdt_from_source(source: "InputSource",
             period_col, branch_col = "d_anchor", "b"
     if pbf is None and workdir is not None:
         pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
-        if pb_path.exists():
+        if _seed_or_exists(pb_path):  # Phase E-j — seed-aware
             try:
                 pbf = _read_csv_file(pb_path)
             except Exception:
@@ -7394,7 +7395,7 @@ def _periodAll_from_source(source: "InputSource",
     """
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "periodAll_set.csv"
-        if p.exists():
+        if _seed_or_exists(p):  # Phase E-j — seed-aware
             df = _read_csv_file(p)
             if df.height > 0 and "period" in df.columns:
                 return df["period"].cast(pl.Utf8, strict=False).to_list()
@@ -8252,7 +8253,7 @@ def p_f_d_k_from_source(
     # commodities.
     sd = Path(workdir) / "solve_data"
     cwl_path = sd / "commodity_with_ladder.csv"
-    if cwl_path.exists():
+    if _seed_or_exists(cwl_path):  # Phase E-j — seed-aware (no-op: writer not in expected_basenames)
         cwl = _read_csv_file(cwl_path)
         if cwl.height == 0:
             return None
@@ -8279,7 +8280,7 @@ def p_f_d_k_from_source(
                       .agg(pl.col("step_duration").sum().alias("sum_step")))
     else:
         siu = sd / "steps_in_use.csv"
-        if not siu.exists():
+        if not _seed_or_exists(siu):  # Phase E-j — seed-aware
             return None
         df = _read_csv_file(siu)
         if df.height == 0 or "period" not in df.columns:
@@ -8296,10 +8297,10 @@ def p_f_d_k_from_source(
                   .with_columns(pl.col("value").alias("share")))
     else:
         csy_path = sd / "complete_period_share_of_year_calc.csv"
-        if not csy_path.exists():
+        if not _seed_or_exists(csy_path):  # Phase E-j — seed-aware
             # Try the non-_calc variant (some fixtures only emit the latter).
             csy_path = sd / "complete_period_share_of_year.csv"
-        if not csy_path.exists():
+        if not _seed_or_exists(csy_path):  # Phase E-j — seed-aware (no-op for non-_calc variant)
             return None
         csy = (_read_csv_file(csy_path).lazy()
                   .rename({"period": "d"})
@@ -8307,7 +8308,7 @@ def p_f_d_k_from_source(
                                       .alias("share")))
     # ladder_cum_sim_hours — default 0.0 when absent.
     cum_path = sd / "ladder_cum_sim_hours.csv"
-    if cum_path.exists():
+    if _seed_or_exists(cum_path):  # Phase E-j — seed-aware
         cum_raw = _read_csv_file(cum_path)
         if cum_raw.height > 0 and "p_ladder_cum_sim_hours" in cum_raw.columns:
             cum_lf = (cum_raw.lazy()
@@ -8325,7 +8326,7 @@ def p_f_d_k_from_source(
         piu_lf = ctx.period_in_use.lazy().select("d")
     else:
         piu_path = sd / "period_in_use_set.csv"
-        if not piu_path.exists():
+        if not _seed_or_exists(piu_path):  # Phase E-j — seed-aware
             return None
         piu_lf = (_read_csv_file(piu_path).lazy()
                     .rename({"period": "d"})
@@ -8363,7 +8364,7 @@ def p_ladder_cum_realized_mwh_from_workdir(
     if workdir is None:
         return None
     rel_path = Path(workdir) / "solve_data" / "ladder_cum_realized_mwh.csv"
-    if not rel_path.exists():
+    if not _seed_or_exists(rel_path):  # Phase E-j — seed-aware
         return None
     raw = _read_csv_file(rel_path)
     if raw.height == 0:
