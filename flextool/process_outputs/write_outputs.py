@@ -963,3 +963,16 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 df.to_excel(writer, sheet_name=sheet_name)
 
         start = log_time('Wrote to Excel', start, timing_recorder)
+
+    # Phase F — write manifest.json describing the output bundle.
+    # Idempotent (safe to call multiple times); rooted at the work
+    # folder (parent of output_raw/).  Failure is non-fatal so it can't
+    # block a successful cascade.
+    try:
+        from flextool.engine_polars._parquet_bundle import write_manifest
+        raw_dir = raw_output_dir or 'output_raw'
+        bundle_root = os.path.dirname(raw_dir) or '.'
+        write_manifest(bundle_root)
+        start = log_time('Wrote manifest.json', start, timing_recorder)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Manifest write failed (non-fatal): %s", exc)
