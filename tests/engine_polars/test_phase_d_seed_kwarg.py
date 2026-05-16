@@ -193,21 +193,46 @@ def test_seed_kwarg_field_by_field_parity(tmp_path: Path) -> None:
 
 def test_seed_lookup_basename_and_suffix(tmp_path: Path) -> None:
     """``FlexDataAccumulator.lookup`` accepts ``Path``, basename, and
-    suffix-less names — the API contract for the seed hook."""
+    suffix-less names — the API contract for the seed hook.
+
+    Phase E-d — the accumulator now stores BOTH a bare-basename key
+    AND a ``"<parent>/<basename>"`` key per capture (to disambiguate
+    the ``input/X.csv`` vs ``solve_data/X.csv`` basename collision).
+    When the caller passes a qualified path, ``lookup`` returns ONLY
+    the matching parent-qualified frame.
+    """
     work, accum = _run_cascade(tmp_path)
     # Pick one key the work_base fixture is guaranteed to cover.
-    coverage_keys = [k for k in accum.frames if k.endswith(".csv")]
+    coverage_keys = [
+        k for k in accum.frames
+        if k.endswith(".csv") and "/" not in k
+    ]
     assert coverage_keys, "no .csv keys captured"
     key = coverage_keys[0]
     base = key[:-len(".csv")]
+
+    # Find which parent this key lives under by checking the qualified
+    # keys.  Phase E-d stores both bare and "parent/basename".
+    parent_keys = [
+        k for k in accum.frames
+        if k.endswith("/" + key)
+    ]
+    assert parent_keys, f"no parent-qualified key for {key}"
+    parent_dir = parent_keys[0].split("/", 1)[0]
 
     # 1. Bare basename round-trips.
     assert accum.lookup(key) is not None
     # 2. Suffix-less basename works.
     assert accum.lookup(base) is not None
-    # 3. Full path (with directory prefix) works.
-    assert accum.lookup(work / "solve_data" / key) is not None
-    # 4. Unknown basename → None.
+    # 3. Full path (with the correct directory prefix) works.
+    assert accum.lookup(work / parent_dir / key) is not None
+    # 4. Full path with the WRONG parent dir returns None (Phase E-d
+    #    disambiguation prevents wrong-frame lookups).
+    wrong_parent = "input" if parent_dir != "input" else "solve_data"
+    if not any(k.startswith(wrong_parent + "/") and k.endswith("/" + key)
+               for k in accum.frames):
+        assert accum.lookup(work / wrong_parent / key) is None
+    # 5. Unknown basename → None.
     assert accum.lookup("definitely_not_a_writer.csv") is None
 
 

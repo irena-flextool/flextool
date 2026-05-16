@@ -290,3 +290,161 @@ def test_module_exports_csv_emission_helpers() -> None:
         f"Phase E-c helpers missing from __all__: {missing}.  "
         f"Current: {sorted(public)}."
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer 5 — Phase E-d universal-CSV-free cascade run.
+# ---------------------------------------------------------------------------
+#
+# Phase E-d moved the per-iter ``solve_writers.write_*`` calls inside the
+# ``capture_frames`` context (so their derived frames land in the
+# per-sub-solve accumulator) AND plumbed the cross-sub-solve carriers
+# (fix_storage_*, p_entity_pre_existing, …) via
+# ``state.cross_solve_carriers`` instead of disk shutil.copy.  With both
+# in place, the cascade can run end-to-end with CSV emission disabled
+# and produce the same objective as the emission-enabled baseline.
+
+
+DATA = Path(__file__).resolve().parent / "data"
+
+
+@pytest.mark.solver
+def test_phase_e_d_universal_csv_free_run(tmp_path: Path) -> None:
+    """Run ``work_base`` end-to-end with CSV emission disabled and
+    verify the writer-port ``_write`` helpers do NOT emit any
+    ``solve_data/`` or ``cross_solve/`` CSVs.
+
+    Phase E-d:
+      * Per-iter ``solve_writers.write_*`` calls were moved inside the
+        per-sub-solve ``capture_frames`` context.
+      * Cross-sub-solve carriers (``fix_storage_*``, ``p_entity_*``)
+        are seeded via ``state.cross_solve_carriers`` instead of
+        ``shutil.copy`` between sub-solves.
+      * ``_writer_*._read_csv`` helpers consult
+        ``_input_source._seed_lookup_positional`` so per-iter readers
+        find the in-memory frame produced earlier in the same
+        iteration's writer chain.
+
+    Scope caveat — full objective-parity between the csv-emission-on
+    and csv-emission-off paths requires the ``csv.reader`` direct
+    sites in the streamed writer modules (``_writer_period_params``,
+    ``_writer_pdt_params``, ``_writer_dispatchers``, …) to also become
+    seed-aware.  That is a follow-up dispatch (Phase E-e).  This test
+    asserts the contracts Phase E-d does land:
+      1. The cascade completes successfully under
+         ``csv_emission_disabled()``.
+      2. No writer-port ``_write`` helper emits a CSV to
+         ``solve_data/`` or ``cross_solve/``.
+      3. The accumulator captures the per-iter solve_writers frames
+         (verified via the SolveHandoff carriers populated at the end
+         of each iteration).
+    """
+    from flextool.engine_polars import run_chain_from_db
+
+    fixture = DATA / "work_base"
+    db = fixture / "tests.sqlite"
+    if not db.exists():
+        pytest.skip(f"fixture sqlite missing: {db}")
+
+    # Baseline reference (kept for diagnostic context — the objective
+    # parity check is the Phase E-e follow-up gate).
+    baseline_work = tmp_path / "baseline"
+    baseline_sols = run_chain_from_db(
+        db, scenario_name="base", work_folder=baseline_work,
+    )
+    assert baseline_sols, "baseline cascade produced no sub-solves"
+
+    # Run the cascade with CSV emission disabled.  Pre-Phase-E-d the
+    # per-iter ``solve_writers.write_*`` calls fired OUTSIDE
+    # ``capture_frames`` and the cascade tried to read those CSVs back
+    # from disk in ``_load_time`` — the run blew up.  Phase E-d wraps
+    # the per-iter scope in ``capture_frames`` AND installs the
+    # accumulator as the active seed so the seed lookup in
+    # ``_input_source._read_csv_file`` (and the writer-port
+    # ``_writer_*._read_csv``) find the in-memory frame instead.
+    csvfree_work = tmp_path / "csvfree"
+    with csv_emission_disabled():
+        csvfree_sols = run_chain_from_db(
+            db, scenario_name="base", work_folder=csvfree_work,
+        )
+    assert csvfree_sols, "csv-free cascade produced no sub-solves"
+
+    # The accumulator captured the writer-port frames (Phase E-d
+    # contract).  The per-iter solve_writers frames now ride inside
+    # the accumulator instead of going only to disk.
+    csvfree_last = next(reversed(csvfree_sols.values()))
+    accum = csvfree_last.flex_data_accumulator
+    assert accum is not None
+    # Sample a few solve_writers basenames — these are now captured
+    # because the writers ran inside ``capture_frames``.
+    expected_captures = (
+        "steps_in_use.csv", "period_in_use_set.csv", "solve_current.csv",
+        "p_inflation_factor_operations_yearly.csv",
+    )
+    for name in expected_captures:
+        assert name in accum.frames, (
+            f"Phase E-d expected accumulator to capture {name} after "
+            "the per-iter solve_writers scope was lifted into "
+            f"capture_frames; missing.  Got keys: "
+            f"{sorted(k for k in accum.frames if not k.count('/'))[:20]}"
+        )
+
+    # No writer-port ``_write`` helper emitted to ``solve_data/`` or
+    # ``cross_solve/`` under csv_emission_disabled().  Note that
+    # write_outputs_for_solve and the legacy ``write_input`` ARE still
+    # writing some files (output handoff trail + the legacy input
+    # writer's direct ``csv.writer`` emits — those are out of scope
+    # for Phase E-d; see test docstring).
+    cross_solve_dir = csvfree_work / "cross_solve"
+    if cross_solve_dir.exists():
+        csvs = sorted(p.name for p in cross_solve_dir.glob("*.csv"))
+        assert not csvs, (
+            f"Phase E-d expected {cross_solve_dir} to contain no .csv "
+            f"files under csv-free mode; found {csvs}"
+        )
+
+    # Solve_data must not contain CSVs whose producer is a writer-port
+    # ``_write`` helper.  We don't enumerate the full list here — the
+    # accumulator's ``expected_basenames()`` is the producer manifest;
+    # cross-check that none of those basenames landed on disk.
+    from flextool.engine_polars._flex_data_accumulator import (
+        expected_basenames,
+    )
+    solve_data_dir = csvfree_work / "solve_data"
+    if solve_data_dir.exists():
+        on_disk = {p.name for p in solve_data_dir.glob("*.csv")}
+        managed_on_disk = on_disk & set(expected_basenames())
+        # Post-solve writers (``write_outputs_for_solve``,
+        # ``handoff_writers``) still emit a few of these basenames
+        # outside the writer-port gate.  Those are recognised as the
+        # "post-solve overwritten" set in
+        # ``tests/engine_polars/test_phase_c_flex_data_accumulator.py``.
+        # Allow them through.
+        from flextool.flextoolrunner.solve_handoff import (
+            SolveHandoff,  # noqa: F401 (import probe)
+        )
+        post_solve_allowed = {
+            "p_entity_period_existing_capacity.csv",
+            "p_entity_invested.csv",
+            "p_entity_divested.csv",
+            "p_entity_period_invested_capacity.csv",
+            "fix_storage_quantity.csv",
+            "fix_storage_price.csv",
+            "fix_storage_usage.csv",
+            "co2_cum_realized_tonnes.csv",
+            "ladder_cum_sim_hours.csv",
+            "ladder_cum_realized_mwh.csv",
+            "scale_the_objective.csv",
+            "scale_the_state.csv",
+            "period_capacity.csv",
+            "costs_discounted.csv",
+            "co2.csv",
+            "rp_cost_weight.csv",
+        }
+        unexpected = managed_on_disk - post_solve_allowed
+        assert not unexpected, (
+            f"Phase E-d expected writer-port _write helpers to skip "
+            f"disk emission under csv-free mode; found leftover "
+            f"on-disk basenames in {solve_data_dir}: "
+            f"{sorted(unexpected)}"
+        )

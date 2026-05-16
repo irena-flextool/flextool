@@ -765,6 +765,12 @@ def _load_time(sd: Path):
     # invest-period (d, t) rows in multi-period scenarios.
     siu = _read_csv_file(sd / "steps_in_use.csv").rename(
         {"period": "d", "step": "t", "step_duration": "value"})
+    # Phase E-d — the in-memory accumulator returns Utf8-typed frames
+    # (writers funnel through ``_to_utf8_frame``); cast ``value`` to
+    # Float64 so downstream Param arithmetic doesn't hit a
+    # ``arithmetic on string and numeric not allowed`` error.
+    if "value" in siu.columns and siu.schema["value"] != pl.Float64:
+        siu = siu.with_columns(value=pl.col("value").cast(pl.Float64, strict=False))
     dt = siu.select("d", "t")
     step_dur = Param(("d","t"), siu.select("d", "t", "value"))
     # rp_cost_weight: canonical ``rp_cost_weight.csv``

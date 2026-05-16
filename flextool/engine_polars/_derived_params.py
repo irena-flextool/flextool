@@ -123,11 +123,18 @@ def _scalar_default(source: "InputSource", entity_class: str,
 def _read_active_solve(workdir: Path) -> str | None:
     """Read ``solve_data/solve_current.csv`` and return the active solve
     name, or ``None`` when the file is absent / empty.
+
+    Phase E-d — when the in-memory seed has the file, consult it
+    directly so the cascade can run with CSV emission disabled.  The
+    bare ``p.exists()`` guard would otherwise short-circuit before
+    ``_read_csv_file`` (which is seed-aware) ever runs.
     """
     p = Path(workdir) / "solve_data" / "solve_current.csv"
-    if not p.exists():
+    from flextool.engine_polars._input_source import _seed_lookup
+    seeded = _seed_lookup(p)
+    if seeded is None and not p.exists():
         return None
-    df = _read_csv_file(p)
+    df = seeded if seeded is not None else _read_csv_file(p)
     if df.height == 0:
         return None
     col = df.columns[0]

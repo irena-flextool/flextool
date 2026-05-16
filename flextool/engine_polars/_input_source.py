@@ -99,6 +99,66 @@ def _seed_lookup(path: "Path | str") -> "pl.DataFrame | None":
     return lookup(path)
 
 
+def _seed_open(path: "Path | str"):
+    """Phase E-d — return a context-manager-compatible text handle for
+    *path* whose body comes from the in-memory ``FlexDataAccumulator``
+    seed when one is active.
+
+    Used by writer modules that consume CSVs via raw
+    ``with path.open() as fh: csv.reader(fh)`` — when the seed has the
+    file, we materialise its frame to a CSV string and hand back a
+    ``StringIO`` so the caller's iteration logic is unchanged.
+
+    Returns ``None`` when no seeded frame is available; the caller
+    should then ``path.open()`` as before.
+    """
+    seeded = _seed_lookup(path)
+    if seeded is None:
+        return None
+    import io
+    buf = io.StringIO()
+    # ``write_csv`` honours the cell types verbatim — the writers
+    # produce frames whose schema mirrors the on-disk CSV (Utf8 for
+    # the cells that legacy ``csv.reader`` sees as strings).
+    seeded.write_csv(buf)
+    buf.seek(0)
+    return buf
+
+
+def _seed_lookup_positional(
+    path: "Path | str", columns: list[str],
+) -> "pl.DataFrame | None":
+    """Phase E-d — seed-aware ``_read_csv`` shim used by the writer-port
+    ``_writer_*`` modules.
+
+    Each writer module defines a private ``_read_csv(path, columns)``
+    helper that:
+
+      1. Returns a typed empty frame when the file is missing.
+      2. Reads the CSV (Utf8 schema for parity with legacy
+         ``csv.reader``).
+      3. Trims trailing columns and renames by position (``columns``).
+
+    When a seed (per-sub-solve :class:`FlexDataAccumulator`) is active
+    AND the seed contains a frame keyed by this path's basename, this
+    helper returns that frame after the same positional column rename
+    the disk path performs — so subsequent expression chains see the
+    expected column names regardless of whether the source frame came
+    from disk or from the in-memory accumulator.
+
+    Returns ``None`` when no seed is active or the seed has no entry
+    for this basename — the caller then falls back to its on-disk
+    read path.
+    """
+    seeded = _seed_lookup(path)
+    if seeded is None:
+        return None
+    keep = seeded.columns[: len(columns)]
+    out = seeded.select(keep)
+    out.columns = columns
+    return out
+
+
 def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     """Single residual ``polars.read_csv`` site for the engine_polars
     package.

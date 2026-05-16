@@ -56,7 +56,18 @@ def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
     verbatim — critical for parity with the legacy ``csv.reader`` path
     (which preserves ``"0"`` as ``"0"`` rather than normalising to
     ``"0.0"``).
+
+    Phase E-d — seed-aware: when an in-memory ``FlexDataAccumulator``
+    seed is active and contains a frame for ``path.name``, return that
+    frame after the same positional rename.  This lets the cascade run
+    with CSV emission disabled while ``preprocessing_solve_time.run``
+    still finds inputs that were written-to-accumulator-only by the
+    earlier writers in the same iteration.
     """
+    from flextool.engine_polars._input_source import _seed_lookup_positional
+    seeded = _seed_lookup_positional(path, columns)
+    if seeded is not None:
+        return seeded
     if not path.exists() or path.stat().st_size == 0:
         return pl.DataFrame(
             {c: [] for c in columns},

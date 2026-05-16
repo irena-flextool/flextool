@@ -176,14 +176,25 @@ class FlexDataAccumulator:
     frames: dict[str, pl.DataFrame] = field(default_factory=dict)
 
     def capture(self, path: Path | str, df: pl.DataFrame) -> None:
-        """Stash a (path.name → frame) pair.  Overwrites on duplicate key."""
-        # Use basename so identical CSV names across runs collide
-        # deterministically (only one final frame per CSV target).
-        key = Path(path).name
+        """Stash a (path.name → frame) pair AND a parent-qualified pair.
+
+        Phase E-d — store TWO keys per capture: the bare basename (for
+        Phase D backward-compatible lookups) and a parent-qualified
+        ``"<parent>/<basename>"`` key (so callers reading the same
+        basename from ``input/`` vs ``solve_data/`` get distinct
+        frames; see ``timeline.csv`` basename collision).  ``lookup``
+        prefers the parent-qualified key when the caller passes a full
+        path; falls back to basename otherwise.
+        """
+        p = Path(path)
+        key = p.name
         # Clone to insulate accumulated state from any in-place mutation
         # the writer might do post-_write (none of the 37 thin writers do,
         # but the clone is cheap insurance — polars clone is a view alias).
         self.frames[key] = df
+        parent = p.parent.name
+        if parent:
+            self.frames[f"{parent}/{key}"] = df
 
     # Convenience for tests / Phase-D consumers.
     def __contains__(self, key: str) -> bool:
@@ -199,23 +210,31 @@ class FlexDataAccumulator:
     # Phase D — seed lookup
     # ------------------------------------------------------------------
     def lookup(self, target: "Path | str") -> "pl.DataFrame | None":
-        """Return the captured frame whose target CSV basename matches
-        *target*, or ``None`` when this accumulator does not cover the
-        file.
+        """Return the captured frame for *target*.
+
+        Phase E-d — prefer the parent-qualified key (``"<parent>/<csv>"``)
+        when *target* is a full ``Path`` so callers reading the same
+        basename from different directories (``input/timeline.csv`` vs
+        ``solve_data/timeline.csv``) get the correct frame.  Falls
+        back to the bare-basename key (Phase D backward compat).
 
         ``target`` may be a full ``Path`` (``<work>/solve_data/foo.csv``)
         or a bare basename (``"foo.csv"`` or ``"foo"`` — the ``.csv``
-        suffix is added when missing, to mirror
-        :meth:`CsvSource.get`'s call style).
-
-        Phase D's :func:`load_flextool` consumes this method through a
-        process-level seed hook installed in
-        :mod:`flextool.engine_polars._input_source`.  See
-        :func:`_install_seed` / :func:`_seed_lookup` there.
+        suffix is added when missing, to mirror :meth:`CsvSource.get`).
         """
-        name = Path(target).name
+        p = Path(target)
+        name = p.name
         if not name.endswith(".csv"):
             name = f"{name}.csv"
+        parent = p.parent.name if str(p.parent) != "." else ""
+        if parent:
+            # Caller provided a qualified path — return ONLY the
+            # parent-qualified frame.  Falling back to the bare basename
+            # would silently return the wrong frame when the same
+            # basename lives in two different parents (e.g.
+            # ``input/timeline.csv`` vs ``solve_data/timeline.csv``).
+            return self.frames.get(f"{parent}/{name}")
+        # Bare basename — Phase D backward-compat path.
         return self.frames.get(name)
 
 

@@ -57,7 +57,16 @@ import polars as pl
 # ---------------------------------------------------------------------------
 
 def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
-    """Read a tiny flextool CSV with positional column rename."""
+    """Read a tiny flextool CSV with positional column rename.
+
+    Phase E-d — seed-aware: when an in-memory ``FlexDataAccumulator``
+    seed is active and contains a frame for ``path.name``, return that
+    frame after the same positional rename.  Falls back to disk read.
+    """
+    from flextool.engine_polars._input_source import _seed_lookup_positional
+    seeded = _seed_lookup_positional(path, columns)
+    if seeded is not None:
+        return seeded
     if not path.exists() or path.stat().st_size == 0:
         return pl.DataFrame({c: [] for c in columns}, schema={c: pl.Utf8 for c in columns})
     df = pl.read_csv(

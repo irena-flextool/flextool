@@ -67,7 +67,14 @@ def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
     missing or contains only the header line.  Trailing columns in the
     file are dropped to match the legacy behaviour (which only indexes
     ``row[0:N]``).
+
+    Phase E-d — seed-aware: prefer in-memory accumulator frame when
+    active.  See ``_input_source._seed_lookup_positional``.
     """
+    from flextool.engine_polars._input_source import _seed_lookup_positional
+    seeded = _seed_lookup_positional(path, columns)
+    if seeded is not None:
+        return seeded
     if not path.exists() or path.stat().st_size == 0:
         return pl.DataFrame({c: [] for c in columns}, schema={c: pl.Utf8 for c in columns})
     df = pl.read_csv(

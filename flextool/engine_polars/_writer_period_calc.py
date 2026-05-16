@@ -64,7 +64,13 @@ def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
 
     Uses ``infer_schema_length=0`` so every column lands as ``Utf8`` —
     matches the legacy ``csv.reader`` path's exact-string preservation.
+
+    Phase E-d — seed-aware: prefer in-memory accumulator frame.
     """
+    from flextool.engine_polars._input_source import _seed_lookup_positional
+    seeded = _seed_lookup_positional(path, columns)
+    if seeded is not None:
+        return seeded
     if not path.exists() or path.stat().st_size == 0:
         return pl.DataFrame(
             {c: [] for c in columns},
