@@ -737,11 +737,19 @@ def _drive_cascade(
             _sub_solve_accum = getattr(
                 self.state, "current_accumulator", None,
             )
+            # Step 1-b — Provider lives alongside the accumulator; pass
+            # through so migrated readers (currently ``_read_p_flow_max``)
+            # consult ``provider.has`` / ``provider.get`` instead of the
+            # seed funnel.  Unmigrated readers still go through ``seed``.
+            _sub_solve_provider = getattr(
+                self.state, "current_provider", None,
+            )
             data = load_flextool(
                 self.state.paths.work_folder,
                 handoff=prior_for_load,
                 db_reader=cascade_db_reader,
                 seed=_sub_solve_accum,
+                provider=_sub_solve_provider,
             )
             # Release heap held by the broadcast cascade scratch frames.
             # On H2_trade y2050 this drops RSS ~1.6 GB / 41 %; expected

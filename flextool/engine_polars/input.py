@@ -201,15 +201,41 @@ def _read_capacity(path: Path,
               .select("e", "d", "value"))
 
 
-def _read_p_flow_max(path: Path) -> pl.DataFrame | None:
+def _read_p_flow_max(
+    path: Path,
+    provider: "object | None" = None,
+) -> pl.DataFrame | None:
     """Read flextool's canonical ``solve_data/p_flow_max.csv`` long-format
     file ``[process, source, sink, period, time, value]`` (the same file
-    flextool.mod consumes via ``table data IN``)."""
-    if not _seed_or_exists(path):
-        return None
-    df = _read_csv_file(path)
-    if df.height == 0:
-        return None
+    flextool.mod consumes via ``table data IN``).
+
+    Step 1-b — pilot reader migrated to :class:`FlexDataProvider`.  When
+    *provider* is supplied, the existence guard + frame fetch go through
+    ``provider.has`` / ``provider.get``; the *path* argument is then
+    redundant (kept for the dual-write window — it is removed in a
+    cleanup commit once every reader is migrated).  The lookup key
+    ``"solve_data/p_flow_max"`` is the parent-qualified, suffix-stripped
+    form of *path* — it mirrors what the writer puts under (the
+    dual-write in ``capture_frames`` stores both bare and qualified
+    keys); using the qualified form keeps the read disambiguated even
+    if a same-basename frame appears under another parent dir later.
+
+    When *provider* is ``None`` the legacy seed funnel path runs
+    unchanged.
+    """
+    if provider is not None:
+        name = "solve_data/p_flow_max"
+        if not provider.has(name):
+            return None
+        df = provider.get(name)
+        if df is None or df.height == 0:
+            return None
+    else:
+        if not _seed_or_exists(path):
+            return None
+        df = _read_csv_file(path)
+        if df.height == 0:
+            return None
     return df.rename({"process": "p", "period": "d", "time": "t"}) \
              .select("p", "source", "sink", "d", "t", "value")
 
@@ -849,7 +875,8 @@ def _load_node(sd: Path, dt: pl.DataFrame):
 
 def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                             block_layout: "BlockLayout | None" = None,
-                            *, source: "InputSource | None" = None):
+                            *, source: "InputSource | None" = None,
+                            provider: "object | None" = None):
     # Δ.17b Gap B: ``process_source_sink_canonical`` produces flextool's
     # preprocessing-side collapsed shape directly from Spine (DIRECT methods
     # cross-joined; INDIRECT methods kept as 2-arc form; 2way reverse arcs
@@ -1054,7 +1081,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     # TODO(Δ.12c+): no override-chain helper covers ``p_flow_upper`` yet —
     # the preprocessed p_flow_max.csv bakes in invest_max_cum etc. that
     # the source-driven path would have to recompute.
-    flow_upper_psskdt = _read_p_flow_max(sd / "p_flow_max.csv")
+    flow_upper_psskdt = _read_p_flow_max(sd / "p_flow_max.csv", provider=provider)
 
     return dict(
         pss = pss,
@@ -3104,7 +3131,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
                    *,
                    db_reader: "object | None" = None,
                    handoff: "object | None" = None,
-                   seed: "object | None" = None) -> FlexData:
+                   seed: "object | None" = None,
+                   provider: "object | None" = None) -> FlexData:
     """Load a :class:`FlexData` from either a workdir on disk or a
     :class:`flextool._input_source.FlexInputSource`.
 
@@ -3288,7 +3316,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # calls below run with String-dtype dim columns end-to-end.
 
         proc = _load_process_topology(inp, sd, dt, block_layout=block_layout,
-                                       source=db_reader)
+                                       source=db_reader,
+                                       provider=provider)
 
         # base_cap_pd = (p, d, base) for profile RHS — recompute here; small.
         base_cap_pd = None

@@ -247,6 +247,7 @@ class FlexDataAccumulator:
 @contextlib.contextmanager
 def capture_frames(
     accumulator: FlexDataAccumulator,
+    provider: "object | None" = None,
 ) -> Iterator[FlexDataAccumulator]:
     """Patch the participating writers' ``_write`` helper to capture
     derived frames into *accumulator* for the duration of the block.
@@ -260,6 +261,15 @@ def capture_frames(
     The patched ``_write`` still emits the CSV — Phase C is parallel-
     write mode.  CSV byte-identical parity tests stay green; the
     accumulator is purely additive.
+
+    Step 1-b — when *provider* (a :class:`FlexDataProvider`) is supplied,
+    every emission is ALSO mirrored into the provider under both the
+    bare-basename key and the parent-qualified key (matching
+    :meth:`FlexDataAccumulator.capture`'s dual-key semantics).  Names
+    are stored without the ``.csv`` suffix per the Provider's contract.
+    The dual-write coexists with the seed funnel for the duration of
+    the migration — Step 1-f / Step 2 retire the accumulator once every
+    reader consumes the Provider.
     """
     import importlib
 
@@ -272,6 +282,17 @@ def capture_frames(
             def _make_wrapped(_orig=original):  # late-bind per module
                 def _wrapped(df: pl.DataFrame, path: Path) -> None:
                     accumulator.capture(path, df)
+                    if provider is not None:
+                        # Mirror the accumulator's dual-key semantics:
+                        # store the bare basename (without ``.csv``) and,
+                        # when the writer emitted under a parent dir, the
+                        # parent-qualified variant as well.  The Provider
+                        # strips the ``.csv`` suffix in ``put``.
+                        p = Path(path)
+                        provider.put(p.name, df)
+                        parent = p.parent.name
+                        if parent:
+                            provider.put(f"{parent}/{p.name}", df)
                     _orig(df, path)
                 return _wrapped
             setattr(mod, "_write", _make_wrapped())

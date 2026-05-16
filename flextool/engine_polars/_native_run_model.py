@@ -77,6 +77,11 @@ from flextool.engine_polars._flex_data_accumulator import (
     FlexDataAccumulator,
     capture_frames,
 )
+# Step 1-b — :class:`FlexDataProvider` is constructed alongside the
+# per-sub-solve :class:`FlexDataAccumulator`.  Writers dual-write into
+# both during the migration; Step 1-f / Step 2 will retire the
+# accumulator once every reader consumes the Provider exclusively.
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
 
 # Native solve-tree expansion + stochastic branching + timeline helpers.
 from flextool.engine_polars._recursive_solve import (
@@ -375,8 +380,18 @@ def native_run_model(state, solver) -> int:
         cascade_input_accumulator = FlexDataAccumulator(solve_name="__cascade_input__")
         state.cascade_input_accumulator = cascade_input_accumulator
 
+    # Step 1-b — cascade-wide Provider seeded once and re-used for every
+    # sub-solve's pre-populated frames.  Lives alongside the cascade-wide
+    # accumulator until the dual-write window closes (Step 1-f / Step 2).
+    cascade_input_provider: "FlexDataProvider | None" = getattr(
+        state, "cascade_input_provider", None,
+    )
+    if cascade_input_provider is None:
+        cascade_input_provider = FlexDataProvider()
+        state.cascade_input_provider = cascade_input_provider
+
     # Solve-loop-invariant timesets — hoisted out of the per-solve loop.
-    with capture_frames(cascade_input_accumulator):
+    with capture_frames(cascade_input_accumulator, provider=cascade_input_provider):
         solve_writers.write_timesets(
             state.solve.timesets_used_by_solves,
             state.timeline.timesets__timeline,
@@ -443,10 +458,20 @@ def native_run_model(state, solver) -> int:
         sub_solve_accumulator = FlexDataAccumulator(
             solve_name=complete_solve[solve],
         )
+        # Step 1-b — per-sub-solve Provider.  Lives alongside the
+        # accumulator; writers dual-write into both via
+        # ``capture_frames(..., provider=...)``.  The Provider is
+        # pre-seeded from the same sources as the accumulator (cascade
+        # input + cross-sub-solve carriers + parent archive) so the
+        # data-flow surface across both carriers stays identical for
+        # the duration of the dual-write window.
+        sub_solve_provider = FlexDataProvider()
         # Seed cascade-wide ``input/*.csv`` frames so per-iter readers
         # find them in seed-mode (e.g. ``input/timesets_in_use.csv``).
         for _key, _frame in cascade_input_accumulator.frames.items():
             sub_solve_accumulator.frames[_key] = _frame
+        for _key, _frame in cascade_input_provider.items():
+            sub_solve_provider.put(_key, _frame)
         # Seed cross-sub-solve carriers from the prior tail.  Used for
         # the rolling-cascade fix_storage_* propagation which previously
         # depended on ``dump_csvs`` having written the prior solve's
@@ -457,6 +482,7 @@ def native_run_model(state, solver) -> int:
             state.cross_solve_carriers = carriers
         for _key, _frame in carriers.get("__last__", {}).items():
             sub_solve_accumulator.frames[_key] = _frame
+            sub_solve_provider.put(_key, _frame)
         # Per-parent archive — pull the parent's tail frames keyed under
         # ``parent_complete``.  Used by nested cascades that consume an
         # upper-level parent's fix_storage_*.
@@ -471,12 +497,13 @@ def native_run_model(state, solver) -> int:
         ):
             for _key, _frame in carriers[_parent_complete_for_carriers].items():
                 sub_solve_accumulator.frames[_key] = _frame
+                sub_solve_provider.put(_key, _frame)
 
         # Manual enter on ``capture_frames``.  We exit AFTER
         # preprocessing_solve_time.run completes (search ``# Phase E-d
         # capture exit`` below); the iteration body in between behaves
         # exactly as before.
-        _capture_ctx = capture_frames(sub_solve_accumulator)
+        _capture_ctx = capture_frames(sub_solve_accumulator, provider=sub_solve_provider)
         _capture_ctx.__enter__()
         # Phase E-d — also install the accumulator as the active seed
         # so per-iter readers (``_writer_per_solve._read_csv``, the
@@ -929,6 +956,9 @@ def native_run_model(state, solver) -> int:
         # to the per-sub-solve ``OrchestrationStep``.  Replaces any prior
         # sub-solve's accumulator (per-sub-solve memory discipline).
         state.current_accumulator = sub_solve_accumulator
+        # Step 1-b — Provider stash mirrors the accumulator stash.  Read
+        # by readers being migrated off the seed funnel.
+        state.current_provider = sub_solve_provider
         # Phase E-d — refresh cross-sub-solve carriers from this
         # iteration's tail.  ONLY the slim cross-solve carrier basenames
         # are retained; the ``__last__`` slot is overwritten so memory
