@@ -232,6 +232,70 @@ def _normalise_label(n: "str | None") -> "str | None":
     return s
 
 
+# Per-shape depth + per-level canonical label, used to disambiguate
+# silent-default ``index_name`` labels by consulting the per-parameter
+# allow-list.  Each entry: shape → tuple of canonical labels per depth
+# level (length 0/1/2).  Mirrors the enum membership.
+_SHAPE_LABELS: "dict[Shape, tuple[str, ...]]" = {
+    Shape.SCALAR:           (),
+    Shape.MAP_PERIOD:       ("period",),
+    Shape.MAP_TIME:         ("time",),
+    Shape.MAP_PERIOD_TIME:  ("period", "time"),
+    Shape.MAP_TIME_PERIOD:  ("time", "period"),
+}
+
+
+def _infer_silent_default_labels(
+    raw_labels: "list[str | None]",
+    allowed: "set[Shape]",
+) -> "list[str | None]":
+    """Fill silent-default ``index_name`` slots from the allow-list.
+
+    When the DB authored a Map without ``index_name`` (the spinedb_api
+    silent default ``"x"``), the raw label collapses to ``None`` through
+    :func:`_normalise_label`.  For parameters whose allow-list has a
+    *unique* choice at the observed depth + position, the silent default
+    is unambiguous: the registry only permits one shape with that
+    depth/position, so the author's intent is recoverable without
+    rewriting the DB.
+
+    Example: ``("group", "co2_max_period")`` admits
+    ``{SCALAR, MAP_PERIOD}``.  Depth=1 admits only ``MAP_PERIOD`` →
+    position-0 label is unambiguously ``"period"``.  Depth=1 for
+    ``("commodity", "price")`` admits both ``MAP_PERIOD`` and
+    ``MAP_TIME``: position-0 stays ``None`` (genuinely ambiguous; the
+    caller falls back).
+
+    Returns a fresh list with disambiguated labels filled in; original
+    non-silent labels are passed through unchanged.  The output has the
+    same length as ``raw_labels``.
+    """
+    normalised = [_normalise_label(n) for n in raw_labels]
+    depth = len(normalised)
+    if all(n is not None for n in normalised):
+        # No silent defaults to disambiguate.
+        return normalised
+    # Per the allow-list, which canonical-label tuples have matching
+    # depth?  Only shapes at the observed depth.
+    candidates = [
+        _SHAPE_LABELS[s] for s in allowed if len(_SHAPE_LABELS[s]) == depth
+    ]
+    if not candidates:
+        # No allowed shape at this depth — leave it for the post-resolve
+        # allow-list check / unresolved-shape branch.
+        return normalised
+    # For each position, the unique label across all candidates fills
+    # silent defaults.  Mixed positions stay ambiguous.
+    filled: "list[str | None]" = list(normalised)
+    for pos in range(depth):
+        if filled[pos] is not None:
+            continue
+        labels_at_pos = {cand[pos] for cand in candidates}
+        if len(labels_at_pos) == 1:
+            filled[pos] = next(iter(labels_at_pos))
+    return filled
+
+
 def _shape_from_indices(index_names: "list[str | None]",
                         ) -> "Shape | None":
     """Map a depth-ordered list of raw ``index_name`` labels to a
@@ -446,8 +510,18 @@ def resolve_param_shape(
     ent_cols = _entity_dim_columns_for_frame(df, source, entity_class)
     raw_labels = _read_index_names_from_source(
         source, entity_class, parameter_name)
+    # Δ.17c follow-up — disambiguate silent-default ``index_name`` labels
+    # against the per-parameter allow-list.  For parameters whose
+    # registry entry permits a unique shape at the observed (depth,
+    # position), the silent default is unambiguous and we can recover
+    # the author's intent without rewriting the DB.  Required to keep
+    # the Spine path on parity with the legacy CSV pipeline, which
+    # picks index dimensionality from value-domain probing (period
+    # tokens vs. timestep tokens) rather than the index_name label —
+    # see :func:`flextool.engine_polars._timeline.separate_period_and_timeseries_data`.
+    resolved_labels = _infer_silent_default_labels(raw_labels, allowed)
     try:
-        shape = _shape_from_indices(raw_labels)
+        shape = _shape_from_indices(resolved_labels)
     except _UnrecognisedIndex as exc:
         # User advice: "If does not match, error to the user."
         # We're strict only about *explicit* mismatches (e.g. ``branch`` on
@@ -476,7 +550,7 @@ def resolve_param_shape(
         # Render observed shape for the message — labels can be empty
         # so reconstruct from the labels list.
         observed = (shape.value if shape is not None
-                     else f"index_names={raw_labels}")
+                     else f"index_names={resolved_labels}")
         raise FlexToolConfigError(
             f"Parameter ({entity_class!r}, {parameter_name!r}) was authored "
             f"as {observed} but allowed shapes are: "
@@ -484,12 +558,39 @@ def resolve_param_shape(
             "or extend PARAM_ALLOWED_SHAPES."
         )
 
-    # Resolve the column names per the frame's actual columns.
-    period_col = "period" if "period" in df.columns else None
-    time_col = "t" if "t" in df.columns else None
+    # Δ.17c follow-up — when the resolver filled silent-default
+    # ``index_name`` labels from the allow-list, the source frame's
+    # columns still carry the silent-default names (e.g. ``"x"``) used
+    # by :meth:`SpineDbReader._discover_index_cols`.  Rename them to the
+    # canonical broadcast keys (``"period"`` / ``"t"``) so downstream
+    # broadcasters can locate the index columns.
+    df_for_broadcast = df
+    if any(_normalise_label(r) is None for r in raw_labels):
+        rename_map: "dict[str, str]" = {}
+        # raw_labels and resolved_labels are aligned per depth.  The
+        # SpineDbReader put non-entity, non-value columns in depth order;
+        # walk them in parallel.
+        non_ent_cols = [
+            c for c in df.columns if c not in ent_cols and c != "value"
+        ]
+        for col, raw, resolved_lbl in zip(
+            non_ent_cols, raw_labels, resolved_labels,
+        ):
+            if _normalise_label(raw) is not None:
+                continue
+            if resolved_lbl == "period" and col != "period":
+                rename_map[col] = "period"
+            elif resolved_lbl in ("time", "t") and col != "t":
+                rename_map[col] = "t"
+        if rename_map:
+            df_for_broadcast = df.rename(rename_map)
+
+    # Resolve the column names per the (possibly renamed) frame.
+    period_col = "period" if "period" in df_for_broadcast.columns else None
+    time_col = "t" if "t" in df_for_broadcast.columns else None
     return ResolvedShape(
         shape=shape,
-        frame=df,
+        frame=df_for_broadcast,
         entity_dim_columns=tuple(ent_cols),
         period_index_column=period_col,
         time_index_column=time_col,
