@@ -16,14 +16,38 @@ Ported writers (legacy LOC ~123):
 * ``write_pdtProcess_source``  — flextool.mod L1265 (6-branch, per-side).
 * ``write_pdtProcess_sink``    — flextool.mod L1279 (6-branch, per-side).
 
-Output CSVs are written row-by-row with ``repr(v)`` on the value column
-to preserve precision parity with the legacy writers (see
-:mod:`._writer_calc_params` module docstring for the rationale).
+Phase E-b lift — derive_X / _write split
+----------------------------------------
+
+Each writer is now a thin ``_write(derive_X(...), path)`` wrapper around
+its ``derive_*`` companion that materialises a canonical polars frame.
+The accumulator in :mod:`._flex_data_accumulator` captures these frames
+via its patched ``_write`` helper, so downstream Phase D / E-a
+consumers can read them straight out of memory instead of round-tripping
+through ``solve_data/*.csv`` on disk.
+
+These four writers are the high-memory hotspots flagged in
+``specs/sparse_writer_lessons_for_engine_polars.md`` §1 — a real
+``write_pdtProcess`` can emit a 441 MB / 280k-row dense CSV.  The
+sparse-emit optimisation (``filter(value != 0.0)`` + consumer-side
+``fill_null(0.0)``) is intentionally NOT applied here: byte-parity with
+the legacy dense emit must hold for ``test_writer_port_phase1.py``.
+The sparse-emit rework is a separate future dispatch that needs
+goldens regenerated and consumer-side overlays.
+
+Value-column semantics: the legacy emitters wrote ``f"...,{repr(v)}\\n"``
+which preserves the Python-type-as-emitted distinction
+between ``0`` (int) and ``0.0`` (float).  We mirror that by building
+``value`` as a ``Utf8`` column with ``repr(v)`` applied per-row (the
+same pattern :mod:`._writer_chain_params` uses for its
+``_ed_value_frame`` helper).
 """
 from __future__ import annotations
 
 import csv
 from pathlib import Path
+
+import polars as pl
 
 from flextool.engine_polars._pdt_lookup import (
     NODE_PARAM_DEF1,
@@ -32,6 +56,19 @@ from flextool.engine_polars._pdt_lookup import (
     PdtLookupPerSide,
     read_class_defaults,
 )
+
+
+# ---------------------------------------------------------------------------
+# Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
+# in :mod:`._writer_arc_unions` and the other patched modules.  All
+# writers in this module funnel their derived frames through this helper
+# so :mod:`._flex_data_accumulator` can capture them via its monkey-patch.
+# ---------------------------------------------------------------------------
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
 
 
 def _read_pairs(path: Path) -> list[tuple[str, str]]:
@@ -64,11 +101,18 @@ def _read_triples(path: Path) -> list[tuple[str, str, str]]:
 # Family — pdtProcess (mod L1227).
 # ---------------------------------------------------------------------------
 
-def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
-    """7-branch fallback over pbt/pd/pt/p + processParam_def1 + 0.
+def derive_pdtProcess(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """Materialise the ``pdtProcess`` frame.
 
-    Output: ``solve_data/pdtProcess.csv`` indexed by (process, param,
-    period, time).  Domain: ``process_TimeParam_in_use × dt``.
+    Columns: ``process, param, period, time, value`` — all ``Utf8``
+    (value cells are ``repr(v)`` so int/float distinction round-trips
+    byte-identically to the legacy ``f",{repr(v)}\\n"`` emit).
+
+    Domain: ``process_TimeParam_in_use × steps_in_use`` (dense; the
+    sparse-emit optimisation from
+    ``specs/sparse_writer_lessons_for_engine_polars.md`` §1 is NOT
+    applied — preserving byte-parity with the legacy writer is the
+    Phase E-b gate).
     """
     lookup = PdtLookup(
         pbt_csv=input_dir / "pbt_process.csv",
@@ -84,22 +128,58 @@ def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
     )
     domain = _read_pairs(solve_data_dir / "process_TimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
-    out_path = solve_data_dir / "pdtProcess.csv"
-    with out_path.open("w") as fh:
-        fh.write("process,param,period,time,value\n")
-        for (p, param) in domain:
-            for (d, t) in dt:
-                v = lookup.get(p, param, d, t)
-                fh.write(f"{p},{param},{d},{t},{repr(v)}\n")
+
+    n = len(domain) * len(dt)
+    processes: list[str] = [""] * n
+    params: list[str] = [""] * n
+    periods: list[str] = [""] * n
+    times: list[str] = [""] * n
+    values: list[str] = [""] * n
+    i = 0
+    for (p, param) in domain:
+        for (d, t) in dt:
+            v = lookup.get(p, param, d, t)
+            processes[i] = p
+            params[i] = param
+            periods[i] = d
+            times[i] = t
+            values[i] = repr(v)
+            i += 1
+    return pl.DataFrame(
+        {
+            "process": processes,
+            "param": params,
+            "period": periods,
+            "time": times,
+            "value": values,
+        },
+        schema={
+            "process": pl.Utf8,
+            "param": pl.Utf8,
+            "period": pl.Utf8,
+            "time": pl.Utf8,
+            "value": pl.Utf8,
+        },
+    )
+
+
+def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtProcess.csv`` (see derive docstring)."""
+    _write(
+        derive_pdtProcess(input_dir, solve_data_dir),
+        solve_data_dir / "pdtProcess.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
 # Family — pdtNode (mod L1176; time-first + class default).
 # ---------------------------------------------------------------------------
 
-def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
-    """9-branch fallback over pbt/pt/pd/p + nodeParam_def1 +
-    class_paramName_default + 0.  Time axis precedes period.
+def derive_pdtNode(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+    """Materialise the ``pdtNode`` frame.
+
+    Columns: ``node, param, period, time, value`` — all ``Utf8``.
+    Domain: ``node__TimeParam_in_use × steps_in_use``.
     """
     lookup = PdtLookup(
         pbt_csv=input_dir / "pbt_node.csv",
@@ -119,23 +199,129 @@ def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
     )
     domain = _read_pairs(solve_data_dir / "node__TimeParam_in_use.csv")
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
-    out_path = solve_data_dir / "pdtNode.csv"
-    with out_path.open("w") as fh:
-        fh.write("node,param,period,time,value\n")
-        for (n, param) in domain:
-            for (d, t) in dt:
-                v = lookup.get(n, param, d, t)
-                fh.write(f"{n},{param},{d},{t},{repr(v)}\n")
+
+    n = len(domain) * len(dt)
+    nodes: list[str] = [""] * n
+    params: list[str] = [""] * n
+    periods: list[str] = [""] * n
+    times: list[str] = [""] * n
+    values: list[str] = [""] * n
+    i = 0
+    for (nd, param) in domain:
+        for (d, t) in dt:
+            v = lookup.get(nd, param, d, t)
+            nodes[i] = nd
+            params[i] = param
+            periods[i] = d
+            times[i] = t
+            values[i] = repr(v)
+            i += 1
+    return pl.DataFrame(
+        {
+            "node": nodes,
+            "param": params,
+            "period": periods,
+            "time": times,
+            "value": values,
+        },
+        schema={
+            "node": pl.Utf8,
+            "param": pl.Utf8,
+            "period": pl.Utf8,
+            "time": pl.Utf8,
+            "value": pl.Utf8,
+        },
+    )
+
+
+def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtNode.csv`` (see derive docstring)."""
+    _write(
+        derive_pdtNode(input_dir, solve_data_dir),
+        solve_data_dir / "pdtNode.csv",
+    )
 
 
 # ---------------------------------------------------------------------------
 # Family — pdtProcess_source / pdtProcess_sink (mod L1265 / L1279).
 # ---------------------------------------------------------------------------
 
-def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path) -> None:
-    """6-branch fallback (no def1).  Domain:
-    ``process_source_sourceSinkTimeParam_in_use × dt``."""
+def _derive_pdtProcess_side(
+    *,
+    pbt_csv: Path,
+    pd_csv: Path,
+    pt_csv: Path,
+    p_csv: Path,
+    period_time_first_csv: Path,
+    solve_branch_csv: Path,
+    period_branch_csv: Path,
+    group_process_csv: Path,
+    group_stochastic_csv: Path,
+    domain_csv: Path,
+    dt_csv: Path,
+    side_col: str,
+) -> pl.DataFrame:
     lookup = PdtLookupPerSide(
+        pbt_csv=pbt_csv,
+        pd_csv=pd_csv,
+        pt_csv=pt_csv,
+        p_csv=p_csv,
+        period_time_first_csv=period_time_first_csv,
+        solve_branch_csv=solve_branch_csv,
+        period_branch_csv=period_branch_csv,
+        group_process_csv=group_process_csv,
+        group_stochastic_csv=group_stochastic_csv,
+    )
+    domain = _read_triples(domain_csv)
+    dt = _read_pairs(dt_csv)
+
+    n = len(domain) * len(dt)
+    processes: list[str] = [""] * n
+    sides: list[str] = [""] * n
+    params: list[str] = [""] * n
+    periods: list[str] = [""] * n
+    times: list[str] = [""] * n
+    values: list[str] = [""] * n
+    i = 0
+    for (p, side, param) in domain:
+        for (d, t) in dt:
+            v = lookup.get(p, side, param, d, t)
+            processes[i] = p
+            sides[i] = side
+            params[i] = param
+            periods[i] = d
+            times[i] = t
+            values[i] = repr(v)
+            i += 1
+    return pl.DataFrame(
+        {
+            "process": processes,
+            side_col: sides,
+            "param": params,
+            "period": periods,
+            "time": times,
+            "value": values,
+        },
+        schema={
+            "process": pl.Utf8,
+            side_col: pl.Utf8,
+            "param": pl.Utf8,
+            "period": pl.Utf8,
+            "time": pl.Utf8,
+            "value": pl.Utf8,
+        },
+    )
+
+
+def derive_pdtProcess_source(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise ``pdtProcess_source`` (mod L1265, 6-branch per-side).
+
+    Columns: ``process, source, param, period, time, value`` (all Utf8).
+    Domain: ``process_source_sourceSinkTimeParam_in_use × steps_in_use``.
+    """
+    return _derive_pdtProcess_side(
         pbt_csv=input_dir / "pbt_process_source.csv",
         pd_csv=input_dir / "pd_process_source.csv",
         pt_csv=input_dir / "pt_process_source.csv",
@@ -145,24 +331,29 @@ def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path) -> None:
         period_branch_csv=solve_data_dir / "period__branch.csv",
         group_process_csv=input_dir / "group__process.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+        domain_csv=solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv",
+        dt_csv=solve_data_dir / "steps_in_use.csv",
+        side_col="source",
     )
-    domain = _read_triples(
-        solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv"
-    )
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
-    out_path = solve_data_dir / "pdtProcess_source.csv"
-    with out_path.open("w") as fh:
-        fh.write("process,source,param,period,time,value\n")
-        for (p, src, param) in domain:
-            for (d, t) in dt:
-                v = lookup.get(p, src, param, d, t)
-                fh.write(f"{p},{src},{param},{d},{t},{repr(v)}\n")
 
 
-def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
-    """6-branch fallback (no def1).  Domain:
-    ``process_sink_sourceSinkTimeParam_in_use × dt``."""
-    lookup = PdtLookupPerSide(
+def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtProcess_source.csv`` (see derive docstring)."""
+    _write(
+        derive_pdtProcess_source(input_dir, solve_data_dir),
+        solve_data_dir / "pdtProcess_source.csv",
+    )
+
+
+def derive_pdtProcess_sink(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Materialise ``pdtProcess_sink`` (mod L1279, 6-branch per-side).
+
+    Columns: ``process, sink, param, period, time, value`` (all Utf8).
+    Domain: ``process_sink_sourceSinkTimeParam_in_use × steps_in_use``.
+    """
+    return _derive_pdtProcess_side(
         pbt_csv=input_dir / "pbt_process_sink.csv",
         pd_csv=input_dir / "pd_process_sink.csv",
         pt_csv=input_dir / "pt_process_sink.csv",
@@ -172,15 +363,15 @@ def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
         period_branch_csv=solve_data_dir / "period__branch.csv",
         group_process_csv=input_dir / "group__process.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+        domain_csv=solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv",
+        dt_csv=solve_data_dir / "steps_in_use.csv",
+        side_col="sink",
     )
-    domain = _read_triples(
-        solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv"
+
+
+def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
+    """Emit ``solve_data/pdtProcess_sink.csv`` (see derive docstring)."""
+    _write(
+        derive_pdtProcess_sink(input_dir, solve_data_dir),
+        solve_data_dir / "pdtProcess_sink.csv",
     )
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
-    out_path = solve_data_dir / "pdtProcess_sink.csv"
-    with out_path.open("w") as fh:
-        fh.write("process,sink,param,period,time,value\n")
-        for (p, snk, param) in domain:
-            for (d, t) in dt:
-                v = lookup.get(p, snk, param, d, t)
-                fh.write(f"{p},{snk},{param},{d},{t},{repr(v)}\n")

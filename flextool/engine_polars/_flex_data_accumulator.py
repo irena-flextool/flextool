@@ -56,6 +56,7 @@ _PATCH_MODULES = (
     "flextool.engine_polars._writer_arc_unions",
     "flextool.engine_polars._writer_chain_params",
     "flextool.engine_polars._writer_co2_accumulators",
+    "flextool.engine_polars._writer_pdt_params",
 )
 
 
@@ -327,6 +328,13 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "p_entity_dispatch_capacity_max.csv",
     # _writer_co2_accumulators — Phase E-b lifted
     "co2_cum_realized_tonnes.csv",
+    # _writer_pdt_params — Phase E-b lifted streamed writers
+    # (high-memory hot path; ~280k-row dense frames preserved for
+    # byte-parity, sparse-emit deferred per audit doc)
+    "pdtProcess.csv",
+    "pdtNode.csv",
+    "pdtProcess_source.csv",
+    "pdtProcess_sink.csv",
 )
 
 
