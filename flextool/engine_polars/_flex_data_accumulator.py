@@ -62,6 +62,7 @@ _PATCH_MODULES = (
     "flextool.engine_polars._writer_entity_annual",
     "flextool.engine_polars._writer_inflow_scaling",
     "flextool.engine_polars._writer_lp_scaling",
+    "flextool.engine_polars._writer_solve_writers",
 )
 
 
@@ -459,6 +460,73 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "_group_cap_pow10.csv",
     "group_capacity_for_scaling.csv",
     "inv_group_cap.csv",
+    # _writer_solve_writers — Phase E-b7 (34 small per-solve CSVs that
+    # emit from in-memory WriterSnapshot/timeline records; converted
+    # from csv.writer(newline="") + CRLF emit into the canonical
+    # derive_X -> _write(derive_X(...), path) pattern.  The new
+    # ``_write`` helper uses polars ``line_terminator="\r\n"`` to
+    # preserve byte-identical parity with the legacy ``csv.writer``
+    # output the writer_port_phase1 gate compares.  Empty / header-
+    # only emitters use an all-Utf8 ``_empty_frame`` so the captured
+    # frame has the correct schema even when the body is empty.)
+    "steps_in_timeline.csv",
+    "steps_in_use.csv",
+    "steps_complete_solve.csv",
+    "step_previous.csv",
+    "period_block_time.csv",
+    "period_block_succ.csv",
+    "p_years_represented.csv",
+    "period_with_history.csv",
+    "p_discount_years.csv",
+    "realized_invest_periods_of_current_solve.csv",
+    "invest_periods_of_current_solve.csv",
+    "period_last.csv",
+    "period_first_of_solve.csv",
+    "period_first.csv",
+    "p_model.csv",
+    "p_nested_model.csv",
+    "solve_current.csv",
+    "first_timesteps.csv",
+    "last_timesteps.csv",
+    "last_realized_timestep.csv",
+    "realized_dispatch.csv",
+    "fix_storage_timesteps.csv",
+    "period__branch.csv",
+    "branch_all.csv",
+    "time_branch_all.csv",
+    "solve_branch_weight.csv",
+    "solve_branch__time_branch.csv",
+    "p_entity_invested.csv",
+    "p_entity_divested.csv",
+    "p_entity_period_existing_capacity.csv",
+    "ladder_cum_realized_mwh.csv",
+    "ladder_cum_sim_hours.csv",
+    # NB co2_cum_realized_tonnes.csv already captured by
+    # _writer_co2_accumulators above; the empty-seed variant from
+    # write_empty_cumulative_files overwrites with the same header.
+    "fix_storage_price.csv",
+    "fix_storage_quantity.csv",
+    "fix_storage_usage.csv",
+    "p_roll_continue_state.csv",
+    "costs_discounted.csv",
+    "co2.csv",
+    "period_capacity.csv",
+    "timesets_in_use.csv",
+    "timesets__timeline.csv",
+    "solve_hole_multiplier.csv",
+    "p_use_row_scaling.csv",
+    "scale_the_objective.csv",
+    "scale_the_state.csv",
+    "delay_duration.csv",
+    "dtt__delay_duration.csv",
+    "rp_weights.csv",
+    "rp_base_chain.csv",
+    "rp_base_first.csv",
+    "rp_base_last.csv",
+    "rp_block_first.csv",
+    "rp_block_last.csv",
+    "rp_block_start_last.csv",
+    "rp_cost_weight.csv",
 )
 
 
