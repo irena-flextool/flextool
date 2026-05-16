@@ -170,4 +170,154 @@ def capture_frames(
             setattr(mod, "_write", original)
 
 
-__all__ = ["FlexDataAccumulator", "capture_frames"]
+__all__ = ["FlexDataAccumulator", "capture_frames", "expected_basenames"]
+
+
+# ---------------------------------------------------------------------------
+# Coverage manifest
+# ---------------------------------------------------------------------------
+#
+# Basenames of CSVs that go through one of the patched ``_write`` helpers.
+# This list is the public contract Phase D / E-a consumers can read against
+# to know which solve_data/*.csv files the accumulator captures in-memory.
+#
+# When you lift another streamed writer into the canonical
+# ``derive_X → _write(derive_X(...), path)`` shape, add its target basename
+# below.  The matching test in
+# ``tests/engine_polars/test_phase_c_flex_data_accumulator.py`` cross-checks
+# the captured-vs-disk frames for each basename present in the cascade run.
+
+_THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
+    # _writer_leaf_sets — 27 thin writers
+    "period_group.csv",
+    "period_node.csv",
+    "period_commodity.csv",
+    "period_process.csv",
+    "entityInvest.csv",
+    "entityDivest.csv",
+    "group_invest.csv",
+    "group_divest.csv",
+    "group_co2_price.csv",
+    "group_co2_max_period.csv",
+    "group_co2_max_total.csv",
+    "optional_yes.csv",
+    "reserve__upDown__group.csv",
+    "group_loss_share.csv",
+    "def_optional_yes.csv",
+    "process_delayed.csv",
+    "process_side.csv",
+    "period_solve.csv",
+    "time.csv",
+    "enable_optional_outputs.csv",
+    "nodeState_rp.csv",
+    "nodeStateBlock.csv",
+    "commodity__tier.csv",
+    "tier.csv",
+    "timeline.csv",
+    "timeline_steps.csv",
+    "commodity__tier_ann.csv",
+    # _writer_mid_sets — thin writers
+    "group_entity.csv",
+    "process_delayed__duration.csv",
+    "process__sink_nonSync.csv",
+    "entity_lifetime_method.csv",
+    "process_ct_method.csv",
+    "process_startup_method.csv",
+    "node_inflow_method.csv",
+    "node_storage_binding_method.csv",
+    "connection_param.csv",
+    "nodegroup_dispatch_node.csv",
+    "commodity_node_co2.csv",
+    "process__commodity__node.csv",
+    # _writer_calc_params — thin writers
+    "process_VRE.csv",
+    # _writer_arc_unions — thin writers + Phase E-b lifted streamed writers
+    # (this group expanded substantially when streamed writers were
+    # converted to the canonical derive_X → _write pattern)
+    "process_source_sink_param_t.csv",
+    "node__TimeParam_in_use.csv",
+    "process_source_delayed.csv",
+    "process_source_undelayed.csv",
+    "process_source_sink_param.csv",
+    "process__source__sink__profile__profile_method_connection.csv",
+    "process_method_sources_sinks.csv",
+    "ed_history_realized_first.csv",
+    "process__source__sinkIsNode.csv",
+    "process__source__sinkIsNode_2way1var.csv",
+    "process__source__sinkIsNode_not2way1var.csv",
+    "process__source__sinkIsNode_2way2var.csv",
+    "process_source_sink_ramp_method.csv",
+    "process_source_sink_coeff_zero.csv",
+    "process_source_sink_delayed.csv",
+    "process_source_sink_undelayed.csv",
+    "p_process_source_sink.csv",
+    "nodeGroupDispatch__process_fully_inside.csv",
+    # — ramp family + union (Phase E-b promoted)
+    "process_source_sink_ramp_limit_source_up.csv",
+    "process_source_sink_ramp_limit_sink_up.csv",
+    "process_source_sink_ramp_limit_source_down.csv",
+    "process_source_sink_ramp_limit_sink_down.csv",
+    "process_source_sink_ramp_cost.csv",
+    "process_source_sink_ramp.csv",
+    # — group_commodity_node co2 (Phase E-b)
+    "group_commodity_node_period_co2_total.csv",
+    "group_commodity_node_period_co2_period.csv",
+    # — param_in_use family (already _write; in audit scope)
+    "node__PeriodParam_in_use.csv",
+    "process__PeriodParam_in_use.csv",
+    "process_TimeParam_in_use.csv",
+    "process_source_sourceSinkTimeParam_in_use.csv",
+    "process_sink_sourceSinkTimeParam_in_use.csv",
+    "process_source_sourceSinkPeriodParam_in_use.csv",
+    "process_sink_sourceSinkPeriodParam_in_use.csv",
+    # — Phase E-b lifted streamed writers
+    "peedt.csv",
+    "process__source__sink__param_t.csv",
+    "gdt_maxInstantFlow.csv",
+    "gdt_minInstantFlow.csv",
+    "p_process_delay_weight.csv",
+    "gcndt_co2_price.csv",
+    "p_flow_min.csv",
+    "p_flow_max.csv",
+    "p_state_slack_share.csv",
+    "p_storage_state_reference_price.csv",
+    "ed_history_realized.csv",
+    "process__source__sink__profile__profile_method.csv",
+    "process_sinkIsNode_2way1var.csv",
+    "nodeSelfDischarge.csv",
+    "pdt_online_linear.csv",
+    "pdt_online_integer.csv",
+    # — 12-CSV nodeGroupDispatch family
+    "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv",
+    "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv",
+    "nodeGroupDispatch__group_aggregate__process__unit__to_node.csv",
+    "nodeGroupDispatch__group_aggregate__process__node__to_unit.csv",
+    "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv",
+    "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv",
+    "nodeGroupDispatch__connection_Not_in_aggregate.csv",
+    "nodeGroupDispatch__group_aggregate__process__connection__to_node.csv",
+    "nodeGroupDispatch__group_aggregate__process__node__to_connection.csv",
+    "nodeGroupDispatch__group_aggregate_Connection.csv",
+    "nodeGroupDispatch__group_aggregate_Unit_to_group.csv",
+    "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
+    # — 8-CSV param_t projections + timeParam
+    "process__param_t.csv",
+    "connection__param__time.csv",
+    "connection__param_t.csv",
+    "process__source__param_t.csv",
+    "process__sink__param_t.csv",
+    "process__source__timeParam.csv",
+    "process__sink__timeParam.csv",
+    "process__timeParam.csv",
+)
+
+
+def expected_basenames() -> tuple[str, ...]:
+    """Return the basenames the accumulator is expected to capture.
+
+    The list comes from the Phase B writer audit (every ``OK_thin_wrapper``
+    entry, plus the streamed writers lifted into the canonical pattern by
+    Phase E-b).  Tests use this to cross-check disk-vs-accumulator parity
+    without re-enumerating the list inline.
+    """
+    return _THIN_WRAPPER_BASENAMES

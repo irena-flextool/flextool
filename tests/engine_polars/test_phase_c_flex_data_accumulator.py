@@ -30,6 +30,7 @@ import pytest
 from flextool.engine_polars import run_chain_from_db
 from flextool.engine_polars._flex_data_accumulator import (
     FlexDataAccumulator,
+    expected_basenames,
 )
 
 
@@ -51,51 +52,10 @@ SCENARIO_NAME = "base"
 # corresponding FlexData fields via load_flextool's disk read.
 # ---------------------------------------------------------------------------
 
-ACCUMULATOR_COVERAGE: tuple[str, ...] = (
-    # _writer_leaf_sets (L0-L2)
-    "period_group.csv",
-    "period_node.csv",
-    "period_commodity.csv",
-    "period_process.csv",
-    "entityInvest.csv",
-    "entityDivest.csv",
-    "group_invest.csv",
-    "group_divest.csv",
-    "group_co2_price.csv",
-    "group_co2_max_period.csv",
-    "group_co2_max_total.csv",
-    "optional_yes.csv",
-    "reserve__upDown__group.csv",
-    "group_loss_share.csv",
-    "def_optional_yes.csv",
-    "process_delayed.csv",
-    "process_side.csv",
-    "period_solve.csv",
-    "time.csv",
-    "enable_optional_outputs.csv",
-    "nodeState_rp.csv",
-    "nodeStateBlock.csv",
-    "commodity__tier.csv",
-    "tier.csv",
-    "timeline.csv",
-    "timeline_steps.csv",
-    "commodity__tier_ann.csv",
-    # _writer_mid_sets (L3-L6)
-    "group_entity.csv",
-    "process_delayed__duration.csv",
-    "process__sink_nonSync.csv",
-    "entity_lifetime_method.csv",
-    "process_ct_method.csv",
-    "process_startup_method.csv",
-    "node_inflow_method.csv",
-    "node_storage_binding_method.csv",
-    "connection_param.csv",
-    "nodegroup_dispatch_node.csv",
-    "commodity_node_co2.csv",
-    "process__commodity__node.csv",
-    # _writer_calc_params (L7-L9)
-    "process_VRE.csv",
-)
+# Source-of-truth for the basenames the accumulator is expected to capture
+# is the helper in _flex_data_accumulator (Phase E-b promoted the list to
+# the accumulator module so producer + consumer share one manifest).
+ACCUMULATOR_COVERAGE: tuple[str, ...] = expected_basenames()
 
 
 def _normalise(df: pl.DataFrame) -> pl.DataFrame:

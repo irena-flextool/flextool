@@ -1006,9 +1006,9 @@ def write_process_source_sink_ramp_family(
 # process_source_sink_ramp_unions — 5-way union of ramp_*.csv files
 # ---------------------------------------------------------------------------
 
-def write_process_source_sink_ramp_unions(
-    input_dir: Path, solve_data_dir: Path,
-) -> None:
+def derive_process_source_sink_ramp_unions(
+    solve_data_dir: Path,
+) -> pl.DataFrame:
     """Order-preserving union of the 5 ramp-family triple sets."""
     ramp_files = (
         "process_source_sink_ramp_limit_source_up.csv",
@@ -1023,8 +1023,15 @@ def write_process_source_sink_ramp_unions(
             solve_data_dir / fname, ["process", "source", "sink"],
         ):
             seen.setdefault(r, None)
+    return _triples_frame(list(seen.keys()))
+
+
+def write_process_source_sink_ramp_unions(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Order-preserving union of the 5 ramp-family triple sets."""
     _write(
-        _triples_frame(list(seen.keys())),
+        derive_process_source_sink_ramp_unions(solve_data_dir),
         solve_data_dir / "process_source_sink_ramp.csv",
     )
 
@@ -1033,16 +1040,10 @@ def write_process_source_sink_ramp_unions(
 # group_commodity_node_period_co2_total (mod L1981)
 # ---------------------------------------------------------------------------
 
-def write_group_commodity_node_period_co2_total(
+def derive_group_commodity_node_period_co2_total(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """Join group_co2_max_total × group__node × commodity__node × p_commodity.
-
-    Emit rows ``(g, c, n)`` where:
-      * (g, n) ∈ group__node and g ∈ group_co2_max_total
-      * (c, n) ∈ commodity__node
-      * ``p_commodity[c, 'co2_content'] != 0``
-    """
+) -> pl.DataFrame:
+    """``group_commodity_node_period_co2_total`` 3-col frame; see writer."""
     cn = _read_n_col_rows(
         input_dir / "commodity__node.csv", ["commodity", "node"],
     )
@@ -1081,14 +1082,29 @@ def write_group_commodity_node_period_co2_total(
                 if key not in seen:
                     seen.add(key)
                     rows.append(key)
+    return pl.DataFrame(
+        {
+            "group":     [r[0] for r in rows],
+            "commodity": [r[1] for r in rows],
+            "node":      [r[2] for r in rows],
+        },
+        schema={"group": pl.Utf8, "commodity": pl.Utf8, "node": pl.Utf8},
+    )
+
+
+def write_group_commodity_node_period_co2_total(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """Join group_co2_max_total × group__node × commodity__node × p_commodity.
+
+    Emit rows ``(g, c, n)`` where:
+      * (g, n) ∈ group__node and g ∈ group_co2_max_total
+      * (c, n) ∈ commodity__node
+      * ``p_commodity[c, 'co2_content'] != 0``
+    """
     _write(
-        pl.DataFrame(
-            {
-                "group":     [r[0] for r in rows],
-                "commodity": [r[1] for r in rows],
-                "node":      [r[2] for r in rows],
-            },
-            schema={"group": pl.Utf8, "commodity": pl.Utf8, "node": pl.Utf8},
+        derive_group_commodity_node_period_co2_total(
+            input_dir, solve_data_dir,
         ),
         solve_data_dir / "group_commodity_node_period_co2_total.csv",
     )
@@ -1486,21 +1502,32 @@ def _write_csv_rows(path: Path, header: tuple[str, ...], rows) -> None:
                     + "".join(",".join(r) + "\n" for r in rows))
 
 
+def _rows_to_frame(rows, header: tuple[str, ...]) -> pl.DataFrame:
+    """Build an all-Utf8 ``pl.DataFrame`` from rows + a header tuple.
+
+    Mirrors the byte shape of :func:`_write_csv_rows` exactly: header
+    becomes column names; each tuple element a string cell.  Uses
+    column-of-tuples projection so empty-row frames still carry the
+    requested schema.
+    """
+    n = len(header)
+    cols: list[list[str]] = [[] for _ in range(n)]
+    for r in rows:
+        for i in range(n):
+            cols[i].append(r[i])
+    return pl.DataFrame(
+        {header[i]: cols[i] for i in range(n)},
+        schema={h: pl.Utf8 for h in header},
+    )
+
+
 # ---- write_small_set_derivations (mod L999, L1061, L1132, L1174, L1222-3) --
 
-def write_small_set_derivations(input_dir: Path, solve_data_dir: Path) -> None:
-    """flextool.mod L999, L1061, L1132, L1174, L1222-3 — 6 small derived sets.
-
-    Emits ``ed_history_realized``,
-    ``process__source__sink__profile__profile_method``,
-    ``process_sinkIsNode_2way1var``, ``nodeSelfDischarge``,
-    ``pdt_online_linear``, ``pdt_online_integer``.
-
-    See the legacy docstring for the full set of math-prog derivations.
+def derive_ed_history_realized(solve_data_dir: Path) -> pl.DataFrame:
+    """Order-preserving union of
+    ``p_entity_period_existing_capacity`` + ``ed_history_realized_first``,
+    projected to (entity, period).
     """
-    import csv
-
-    # ed_history_realized (mod L999)
     ed_read = _read_pairs_csv(
         solve_data_dir / "p_entity_period_existing_capacity.csv"
     )
@@ -1510,10 +1537,13 @@ def write_small_set_derivations(input_dir: Path, solve_data_dir: Path) -> None:
         seen_ed.setdefault(r, None)
     for r in ed_first:
         seen_ed.setdefault(r, None)
-    _write_csv_rows(solve_data_dir / "ed_history_realized.csv",
-                    ("entity", "period"), list(seen_ed.keys()))
+    return _rows_to_frame(list(seen_ed.keys()), ("entity", "period"))
 
-    # process__source__sink__profile__profile_method (mod L1061) — 4-way union
+
+def derive_process_source_sink_profile_method(
+    solve_data_dir: Path,
+) -> pl.DataFrame:
+    """4-way union of the *profile_method* sub-CSVs (5-col frame)."""
     seen_pf: dict[tuple[str, ...], None] = {}
     for fname in (
         "process__profileProcess__toSink__profile__profile_method.csv",
@@ -1523,23 +1553,31 @@ def write_small_set_derivations(input_dir: Path, solve_data_dir: Path) -> None:
     ):
         for r in _read_n_col_csv(solve_data_dir / fname, 5):
             seen_pf.setdefault(r, None)
-    _write_csv_rows(
-        solve_data_dir / "process__source__sink__profile__profile_method.csv",
-        ("process", "source", "sink", "profile", "profile_method"),
+    return _rows_to_frame(
         list(seen_pf.keys()),
+        ("process", "source", "sink", "profile", "profile_method"),
     )
 
-    # process_sinkIsNode_2way1var (mod L1132) — projection of column 0
+
+def derive_process_sinkIsNode_2way1var(
+    solve_data_dir: Path,
+) -> pl.DataFrame:
+    """Projection of column 0 of
+    ``process__source__sinkIsNode_2way1var.csv``."""
     triples = _read_n_col_csv(
         solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3
     )
     seen_p: dict[str, None] = {}
     for p, _, _ in triples:
         seen_p.setdefault(p, None)
-    _write_csv_rows(solve_data_dir / "process_sinkIsNode_2way1var.csv",
-                    ("process",), [(p,) for p in seen_p.keys()])
+    return _rows_to_frame([(p,) for p in seen_p.keys()], ("process",))
 
-    # nodeSelfDischarge (mod L1174) — exists filter on pdtNode
+
+def derive_nodeSelfDischarge(solve_data_dir: Path) -> pl.DataFrame:
+    """Subset of nodeState whose ``pdtNode[n, 'self_discharge_loss', d, t]``
+    is non-zero for at least one (d, t).
+    """
+    import csv
     nodeState = frozenset(_read_singles_csv(solve_data_dir / "nodeState.csv"))
     nodes_with_selfdischarge: set[str] = set()
     pdtn_path = solve_data_dir / "pdtNode.csv"
@@ -1555,12 +1593,17 @@ def write_small_set_derivations(input_dir: Path, solve_data_dir: Path) -> None:
                             nodes_with_selfdischarge.add(r[0])
                     except ValueError:
                         continue
-    _write_csv_rows(solve_data_dir / "nodeSelfDischarge.csv",
-                    ("node",),
-                    [(n,) for n in _read_singles_csv(solve_data_dir / "nodeState.csv")
-                     if n in nodes_with_selfdischarge])
+    rows = [
+        (n,)
+        for n in _read_singles_csv(solve_data_dir / "nodeState.csv")
+        if n in nodes_with_selfdischarge
+    ]
+    return _rows_to_frame(rows, ("node",))
 
-    # pdt_online_linear / pdt_online_integer (mod L1222-3) — startup-cost gate.
+
+def _scan_pd_startup(solve_data_dir: Path) -> set[tuple[str, str]]:
+    """(process, period) pairs where ``pdProcess[p, 'startup_cost', d]`` != 0."""
+    import csv
     pd_startup: set[tuple[str, str]] = set()
     pdp_path = solve_data_dir / "pdProcess.csv"
     if pdp_path.exists():
@@ -1574,19 +1617,67 @@ def write_small_set_derivations(input_dir: Path, solve_data_dir: Path) -> None:
                             pd_startup.add((r[0], r[2]))
                     except ValueError:
                         continue
+    return pd_startup
+
+
+def _derive_pdt_online(
+    solve_data_dir: Path, processes_csv: str,
+) -> pl.DataFrame:
+    pd_startup = _scan_pd_startup(solve_data_dir)
     dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
-    for fname_in, fname_out in (
-        ("process_online_linear.csv",  "pdt_online_linear.csv"),
-        ("process_online_integer.csv", "pdt_online_integer.csv"),
-    ):
-        procs = _read_singles_csv(solve_data_dir / fname_in)
-        rows: list[tuple[str, str, str]] = []
-        for p in procs:
-            for d, t in dt_pairs:
-                if (p, d) in pd_startup:
-                    rows.append((p, d, t))
-        _write_csv_rows(solve_data_dir / fname_out,
-                        ("process", "period", "time"), rows)
+    procs = _read_singles_csv(solve_data_dir / processes_csv)
+    rows: list[tuple[str, str, str]] = []
+    for p in procs:
+        for d, t in dt_pairs:
+            if (p, d) in pd_startup:
+                rows.append((p, d, t))
+    return _rows_to_frame(rows, ("process", "period", "time"))
+
+
+def derive_pdt_online_linear(solve_data_dir: Path) -> pl.DataFrame:
+    """``pdt_online_linear`` — process_online_linear × dt gated by startup_cost!=0."""
+    return _derive_pdt_online(solve_data_dir, "process_online_linear.csv")
+
+
+def derive_pdt_online_integer(solve_data_dir: Path) -> pl.DataFrame:
+    """``pdt_online_integer`` — process_online_integer × dt gated by startup_cost!=0."""
+    return _derive_pdt_online(solve_data_dir, "process_online_integer.csv")
+
+
+def write_small_set_derivations(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L999, L1061, L1132, L1174, L1222-3 — 6 small derived sets.
+
+    Emits ``ed_history_realized``,
+    ``process__source__sink__profile__profile_method``,
+    ``process_sinkIsNode_2way1var``, ``nodeSelfDischarge``,
+    ``pdt_online_linear``, ``pdt_online_integer``.
+
+    See the legacy docstring for the full set of math-prog derivations.
+    """
+    _write(
+        derive_ed_history_realized(solve_data_dir),
+        solve_data_dir / "ed_history_realized.csv",
+    )
+    _write(
+        derive_process_source_sink_profile_method(solve_data_dir),
+        solve_data_dir / "process__source__sink__profile__profile_method.csv",
+    )
+    _write(
+        derive_process_sinkIsNode_2way1var(solve_data_dir),
+        solve_data_dir / "process_sinkIsNode_2way1var.csv",
+    )
+    _write(
+        derive_nodeSelfDischarge(solve_data_dir),
+        solve_data_dir / "nodeSelfDischarge.csv",
+    )
+    _write(
+        derive_pdt_online_linear(solve_data_dir),
+        solve_data_dir / "pdt_online_linear.csv",
+    )
+    _write(
+        derive_pdt_online_integer(solve_data_dir),
+        solve_data_dir / "pdt_online_integer.csv",
+    )
 
 
 # ---- write_process_source_sink_param_with_time (mod L1187-1195) ------------
@@ -1601,16 +1692,12 @@ _SOURCE_SINK_TIME_PARAM_WITH_TIME: frozenset[str] = frozenset((
 ))
 
 
-def write_process_source_sink_param_with_time(
+def derive_process_source_sink_param_with_time(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """flextool.mod L1187-1195 — process_source_sink × SOURCE_SINK_TIME_PARAM
-    gated by static or time-variant param membership on either side, or via
-    process_connection.
+) -> pl.DataFrame:
+    """``process__source__sink__param_t`` 4-col frame.
 
-    Distinct from the sibling ``write_process_source_sink_param`` (3-col
-    set, no _t variants).  This one is the double-underscore-named set
-    ``process__source__sink__param_t``.
+    See :func:`write_process_source_sink_param_with_time` for semantics.
     """
     import csv
     triples = _read_n_col_csv(solve_data_dir / "process_source_sink.csv", 3)
@@ -1657,20 +1744,32 @@ def write_process_source_sink_param_with_time(
                     or ((p, param) in proc_param and p in proc_conn)
                     or ((p, param) in proc_param_t and p in proc_conn)):
                 rows.append((p, src, sink, param))
-    _write_csv_rows(solve_data_dir / "process__source__sink__param_t.csv",
-                    ("process", "source", "sink", "param"), rows)
+    return _rows_to_frame(rows, ("process", "source", "sink", "param"))
+
+
+def write_process_source_sink_param_with_time(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1187-1195 — process_source_sink × SOURCE_SINK_TIME_PARAM
+    gated by static or time-variant param membership on either side, or via
+    process_connection.
+
+    Distinct from the sibling ``write_process_source_sink_param`` (3-col
+    set, no _t variants).  This one is the double-underscore-named set
+    ``process__source__sink__param_t``.
+    """
+    _write(
+        derive_process_source_sink_param_with_time(input_dir, solve_data_dir),
+        solve_data_dir / "process__source__sink__param_t.csv",
+    )
 
 
 # ---- write_gdt_instant_flow_sets (mod L1131-1132) -------------------------
 
-def write_gdt_instant_flow_sets(
-    input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """flextool.mod L1131-1132 — gdt_maxInstantFlow + gdt_minInstantFlow.
-
-    Each row is included iff the corresponding ``pdtGroup[g, P, d, t]``
-    value is non-zero.
-    """
+def _scan_gdt_instant_flow_rows(
+    solve_data_dir: Path,
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+    """One scan over pdtGroup.csv, splitting max/min_instant_flow rows."""
     import csv
     max_rows: list[tuple[str, str, str]] = []
     min_rows: list[tuple[str, str, str]] = []
@@ -1691,23 +1790,46 @@ def write_gdt_instant_flow_sets(
                         max_rows.append((r[0], r[2], r[3]))
                     elif r[1] == "min_instant_flow":
                         min_rows.append((r[0], r[2], r[3]))
-    _write_csv_rows(solve_data_dir / "gdt_maxInstantFlow.csv",
-                    ("group", "period", "time"), max_rows)
-    _write_csv_rows(solve_data_dir / "gdt_minInstantFlow.csv",
-                    ("group", "period", "time"), min_rows)
+    return max_rows, min_rows
+
+
+def derive_gdt_max_instant_flow(solve_data_dir: Path) -> pl.DataFrame:
+    """``gdt_maxInstantFlow`` — pdtGroup rows with param=max_instant_flow."""
+    max_rows, _ = _scan_gdt_instant_flow_rows(solve_data_dir)
+    return _rows_to_frame(max_rows, ("group", "period", "time"))
+
+
+def derive_gdt_min_instant_flow(solve_data_dir: Path) -> pl.DataFrame:
+    """``gdt_minInstantFlow`` — pdtGroup rows with param=min_instant_flow."""
+    _, min_rows = _scan_gdt_instant_flow_rows(solve_data_dir)
+    return _rows_to_frame(min_rows, ("group", "period", "time"))
+
+
+def write_gdt_instant_flow_sets(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1131-1132 — gdt_maxInstantFlow + gdt_minInstantFlow.
+
+    Each row is included iff the corresponding ``pdtGroup[g, P, d, t]``
+    value is non-zero.  Both frames come from one scan of pdtGroup.csv.
+    """
+    max_rows, min_rows = _scan_gdt_instant_flow_rows(solve_data_dir)
+    _write(
+        _rows_to_frame(max_rows, ("group", "period", "time")),
+        solve_data_dir / "gdt_maxInstantFlow.csv",
+    )
+    _write(
+        _rows_to_frame(min_rows, ("group", "period", "time")),
+        solve_data_dir / "gdt_minInstantFlow.csv",
+    )
 
 
 # ---- write_p_process_delay_weight (mod L1096-1099) ------------------------
 
-def write_p_process_delay_weight(
+def derive_p_process_delay_weight(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """flextool.mod L1096-1099 — ``p_process_delay_weight``.
-
-    For each (p, td) in ``process_delayed__duration``: 1 if
-    ``(p, td) in process_delay_single`` else ``p_process_delay_weighted``
-    (default 0).
-    """
+) -> pl.DataFrame:
+    """``p_process_delay_weight`` 3-col frame; see writer docstring."""
     import csv
     delayed_duration = _read_pairs_csv(
         solve_data_dir / "process_delayed__duration.csv"
@@ -1731,14 +1853,30 @@ def write_p_process_delay_weight(
     for p, td in delayed_duration:
         v = 1.0 if (p, td) in delay_single else weighted.get((p, td), 0.0)
         rows.append((p, td, repr(v)))
-    _write_csv_rows(solve_data_dir / "p_process_delay_weight.csv",
-                    ("process", "delay_duration", "value"), rows)
+    return _rows_to_frame(rows, ("process", "delay_duration", "value"))
+
+
+def write_p_process_delay_weight(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1096-1099 — ``p_process_delay_weight``.
+
+    For each (p, td) in ``process_delayed__duration``: 1 if
+    ``(p, td) in process_delay_single`` else ``p_process_delay_weighted``
+    (default 0).
+    """
+    _write(
+        derive_p_process_delay_weight(input_dir, solve_data_dir),
+        solve_data_dir / "p_process_delay_weight.csv",
+    )
 
 
 # ---- write_gcndt_co2_price (mod L1542-1548) -------------------------------
 
-def write_gcndt_co2_price(input_dir: Path, solve_data_dir: Path) -> None:
-    """flextool.mod L1542-1548 — gcndt_co2_price 5-tuple set."""
+def derive_gcndt_co2_price(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``gcndt_co2_price`` 5-col frame; see writer docstring."""
     import csv
     g_co2_price = frozenset(
         _read_singles_csv(solve_data_dir / "group_co2_price.csv")
@@ -1792,16 +1930,28 @@ def write_gcndt_co2_price(input_dir: Path, solve_data_dir: Path) -> None:
             for d, t in dt_pairs:
                 if (g, d, t) in co2_price_dt:
                     rows.append((g, c, n, d, t))
-    _write_csv_rows(solve_data_dir / "gcndt_co2_price.csv",
-                    ("group", "commodity", "node", "period", "time"), rows)
+    return _rows_to_frame(
+        rows, ("group", "commodity", "node", "period", "time"),
+    )
+
+
+def write_gcndt_co2_price(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1542-1548 — gcndt_co2_price 5-tuple set."""
+    _write(
+        derive_gcndt_co2_price(input_dir, solve_data_dir),
+        solve_data_dir / "gcndt_co2_price.csv",
+    )
 
 
 # ---- write_group_commodity_node_period_co2_period (mod L1550-1555) --------
 
-def write_group_commodity_node_period_co2_period(
+def derive_group_commodity_node_period_co2_period(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """flextool.mod L1550-1555 — group_commodity_node_period_co2_period."""
+) -> pl.DataFrame:
+    """``group_commodity_node_period_co2_period`` 4-col frame.
+
+    See :func:`write_group_commodity_node_period_co2_period`.
+    """
     import csv
     g_co2_max_period = frozenset(
         _read_singles_csv(solve_data_dir / "group_co2_max_period.csv")
@@ -1839,29 +1989,61 @@ def write_group_commodity_node_period_co2_period(
                 continue
             for d in period_in_use:
                 rows.append((g, c, n, d))
-    _write_csv_rows(
+    return _rows_to_frame(rows, ("group", "commodity", "node", "period"))
+
+
+def write_group_commodity_node_period_co2_period(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1550-1555 — group_commodity_node_period_co2_period."""
+    _write(
+        derive_group_commodity_node_period_co2_period(input_dir, solve_data_dir),
         solve_data_dir / "group_commodity_node_period_co2_period.csv",
-        ("group", "commodity", "node", "period"), rows,
     )
 
 
 # ---- write_peedt (mod L1084) ----------------------------------------------
 
-def write_peedt(input_dir: Path, solve_data_dir: Path) -> None:
-    """flextool.mod L1084 — peedt = process_source_sink × dt.
+def derive_peedt(solve_data_dir: Path) -> pl.DataFrame:
+    """``peedt = process_source_sink × steps_in_use`` (5-col frame).
 
-    Streams output for full-year fixtures where this is hundreds of
-    thousands of rows.
+    Hot-path for full-year fixtures — up to ~280k rows.
     """
     triples = _read_n_col_csv(solve_data_dir / "process_source_sink.csv", 3)
     dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
-    out_path = solve_data_dir / "peedt.csv"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w") as fh:
-        fh.write("process,source,sink,period,time\n")
-        for p, src, snk in triples:
-            for d, t in dt_pairs:
-                fh.write(f"{p},{src},{snk},{d},{t}\n")
+    procs: list[str] = []
+    srcs: list[str] = []
+    snks: list[str] = []
+    ds: list[str] = []
+    ts: list[str] = []
+    for p, src, snk in triples:
+        for d, t in dt_pairs:
+            procs.append(p)
+            srcs.append(src)
+            snks.append(snk)
+            ds.append(d)
+            ts.append(t)
+    return pl.DataFrame(
+        {
+            "process": procs,
+            "source":  srcs,
+            "sink":    snks,
+            "period":  ds,
+            "time":    ts,
+        },
+        schema={
+            "process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8,
+            "period": pl.Utf8, "time": pl.Utf8,
+        },
+    )
+
+
+def write_peedt(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1084 — peedt = process_source_sink × dt.
+
+    280k-row hot path for full-year fixtures.
+    """
+    _write(derive_peedt(solve_data_dir), solve_data_dir / "peedt.csv")
 
 
 # ===========================================================================
@@ -1879,25 +2061,17 @@ def write_peedt(input_dir: Path, solve_data_dir: Path) -> None:
 # ---- write_p_flow_min (mod L1680-1684) ------------------------------------
 
 
-def write_p_flow_min(input_dir: Path, solve_data_dir: Path) -> None:
-    """flextool.mod L1680-1684 — ``p_flow_min{(p,source,sink,d,t) in peedt}``.
-
-    Emits only the non-zero rows.  The value is
-    ``-(p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])``
-    when ``(p, source, sink) in process__source__sinkIsNode_2way1var``,
-    else 0 (skipped — mod's bare-decl provides ``default 0``).
-    """
+def derive_p_flow_min(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``p_flow_min`` 6-col frame; see writer docstring."""
     import csv
     sinkIsNode = frozenset(_read_n_col_csv(
         solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3
     ))
+    cols = ("process", "source", "sink", "period", "time", "value")
     if not sinkIsNode:
-        _write_csv_rows(
-            solve_data_dir / "p_flow_min.csv",
-            ("process", "source", "sink", "period", "time", "value"),
-            [],
-        )
-        return
+        return _rows_to_frame([], cols)
 
     dcm: dict[tuple[str, str], float] = {}
     pdcm_path = solve_data_dir / "p_entity_dispatch_capacity_max.csv"
@@ -1934,23 +2108,30 @@ def write_p_flow_min(input_dir: Path, solve_data_dir: Path) -> None:
             continue
         v = -dcm.get((p, d), 0.0) / us
         rows.append((p, src, sink, d, t, repr(v)))
-    _write_csv_rows(
+    return _rows_to_frame(rows, cols)
+
+
+def write_p_flow_min(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1680-1684 — ``p_flow_min{(p,source,sink,d,t) in peedt}``.
+
+    Emits only the non-zero rows.  The value is
+    ``-(p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])``
+    when ``(p, source, sink) in process__source__sinkIsNode_2way1var``,
+    else 0 (skipped — mod's bare-decl provides ``default 0``).
+    """
+    _write(
+        derive_p_flow_min(input_dir, solve_data_dir),
         solve_data_dir / "p_flow_min.csv",
-        ("process", "source", "sink", "period", "time", "value"),
-        rows,
     )
 
 
 # ---- write_p_flow_max (mod L1661-1677) ------------------------------------
 
 
-def write_p_flow_max(input_dir: Path, solve_data_dir: Path) -> None:
-    """flextool.mod L1661-1677 — ``p_flow_max{(p,source,sink,d,t) in peedt}``.
-
-    Two-branch value formula, see legacy docstring at
-    ``process_arc_unions.write_p_flow_max``.  Every peedt row gets a
-    value (mod's bare-decl has no default).
-    """
+def derive_p_flow_max(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``p_flow_max`` 6-col frame; see :func:`write_p_flow_max`."""
     import csv
     coeff_zero = frozenset(_read_n_col_csv(
         solve_data_dir / "process_source_sink_coeff_zero.csv", 3
@@ -2077,22 +2258,31 @@ def write_p_flow_max(input_dir: Path, solve_data_dir: Path) -> None:
                          if (p, sink) in process_sink else 1.0)
             value = base * sink_coef
         rows.append((p, src, sink, d, t, repr(value)))
-    _write_csv_rows(
+    return _rows_to_frame(
+        rows, ("process", "source", "sink", "period", "time", "value"),
+    )
+
+
+def write_p_flow_max(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1661-1677 — ``p_flow_max{(p,source,sink,d,t) in peedt}``.
+
+    Two-branch value formula, see legacy docstring at
+    ``process_arc_unions.write_p_flow_max``.  Every peedt row gets a
+    value (mod's bare-decl has no default).
+    """
+    _write(
+        derive_p_flow_max(input_dir, solve_data_dir),
         solve_data_dir / "p_flow_max.csv",
-        ("process", "source", "sink", "period", "time", "value"),
-        rows,
     )
 
 
 # ---- write_p_state_slack_share (mod L1689-1691) ---------------------------
 
 
-def write_p_state_slack_share(input_dir: Path, solve_data_dir: Path) -> None:
-    """flextool.mod L1689-1691 — ``p_state_slack_share[g, n, d, t]``.
-
-    Inflow-weighted or equal share over the nodes of group ``g`` for
-    each ``(d, t) ∈ dt``, restricted to ``g ∈ group_loss_share``.
-    """
+def derive_p_state_slack_share(
+    input_dir: Path, solve_data_dir: Path,
+) -> pl.DataFrame:
+    """``p_state_slack_share`` 5-col frame; see writer docstring."""
     import csv
     g_loss = frozenset(
         _read_singles_csv(solve_data_dir / "group_loss_share.csv")
@@ -2135,27 +2325,30 @@ def write_p_state_slack_share(input_dir: Path, solve_data_dir: Path) -> None:
                 else:
                     v = 0.0
                 rows.append((g, n, d, t, repr(v)))
-    _write_csv_rows(
+    return _rows_to_frame(
+        rows, ("group", "node", "period", "time", "value"),
+    )
+
+
+def write_p_state_slack_share(input_dir: Path, solve_data_dir: Path) -> None:
+    """flextool.mod L1689-1691 — ``p_state_slack_share[g, n, d, t]``.
+
+    Inflow-weighted or equal share over the nodes of group ``g`` for
+    each ``(d, t) ∈ dt``, restricted to ``g ∈ group_loss_share``.
+    """
+    _write(
+        derive_p_state_slack_share(input_dir, solve_data_dir),
         solve_data_dir / "p_state_slack_share.csv",
-        ("group", "node", "period", "time", "value"), rows,
     )
 
 
 # ---- write_p_storage_state_reference_price (mod L1693-1698) ---------------
 
 
-def write_p_storage_state_reference_price(
+def derive_p_storage_state_reference_price(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """flextool.mod L1693-1698 — ``p_storage_state_reference_price[n, d]``.
-
-    Sum of ``p_fix_storage_price`` over the ``(d2, t2)`` matched by
-    ``period__branch`` + ``period__time_last`` + ``dtt_timeline_matching``
-    if any match exists, otherwise fall back to
-    ``pdNode[n, 'storage_state_reference_price', d]`` for nodes with
-    ``(n, 'use_reference_price') ∈ node__storage_solve_horizon_method``,
-    else 0.
-    """
+) -> pl.DataFrame:
+    """``p_storage_state_reference_price`` 3-col frame; see writer docstring."""
     import csv
     # (n, d2, t2) → value, keyed by (node, period, step) from fix_storage_price.
     fix_price: dict[tuple[str, str, str], float] = {}
@@ -2229,28 +2422,35 @@ def write_p_storage_state_reference_price(
             else:
                 value = 0.0
             rows.append((n, d, repr(value)))
-    _write_csv_rows(
+    return _rows_to_frame(rows, ("node", "period", "value"))
+
+
+def write_p_storage_state_reference_price(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1693-1698 — ``p_storage_state_reference_price[n, d]``.
+
+    Sum of ``p_fix_storage_price`` over the ``(d2, t2)`` matched by
+    ``period__branch`` + ``period__time_last`` + ``dtt_timeline_matching``
+    if any match exists, otherwise fall back to
+    ``pdNode[n, 'storage_state_reference_price', d]`` for nodes with
+    ``(n, 'use_reference_price') ∈ node__storage_solve_horizon_method``,
+    else 0.
+    """
+    _write(
+        derive_p_storage_state_reference_price(input_dir, solve_data_dir),
         solve_data_dir / "p_storage_state_reference_price.csv",
-        ("node", "period", "value"), rows,
     )
 
 
 # ---- write_node_group_dispatch_sets (mod L1596-1657) ----------------------
 
 
-def write_node_group_dispatch_sets(
+def _compute_node_group_dispatch_sets(
     input_dir: Path, solve_data_dir: Path,
-) -> None:
-    """flextool.mod L1596-1657 — 12 nodeGroupDispatch sets.
-
-    Joins ``process_source_sink_alwaysProcess`` with ``nodeGroupDispatch``
-    + ``group__node`` + ``group__process__node`` + ``flowAggregator`` +
-    ``process_unit`` / ``process_connection``.  Eight base sets partition
-    the (g, p, source, sink) space by side (sink-in-group vs source-in-
-    group), kind (unit vs connection) and aggregator presence (with-ga
-    vs no-ga).  Four projection sets project pairs (g, p) or (g, ga) from
-    the relevant base sets.  All sets share the prefilter
-    ``(g, p) ∉ nodeGroupDispatch__process_fully_inside``.
+) -> dict[str, tuple[tuple[str, ...], list[tuple[str, ...]]]]:
+    """One shared scan; returns ``{filename → (header, rows)}`` for the
+    12 nodeGroupDispatch CSVs.
     """
     ngd = _read_singles_csv(input_dir / "nodeGroupDispatch.csv")
     fag = frozenset(_read_singles_csv(input_dir / "flowAggregator.csv"))
@@ -2317,35 +2517,13 @@ def write_node_group_dispatch_sets(
         return out
 
     rows1 = _emit_4tuple(kind=p_unit, side="sink", not_aggregated=True)
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv",
-        ("group", "process", "unit", "node"), rows1,
-    )
     rows2 = _emit_4tuple(kind=p_unit, side="source", not_aggregated=True)
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv",
-        ("group", "process", "node", "unit"), rows2,
-    )
     rows3 = _emit_5tuple(kind=p_unit, side="sink")
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__unit__to_node.csv",
-        ("group", "group_aggregate", "unit", "source", "sink"), rows3,
-    )
     rows4 = _emit_5tuple(kind=p_unit, side="source")
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__node__to_unit.csv",
-        ("group", "group_aggregate", "unit", "source", "sink"), rows4,
-    )
     rows5 = _emit_4tuple(kind=p_conn, side="source", not_aggregated=True)
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv",
-        ("group", "process", "node", "connection"), rows5,
-    )
     rows6 = _emit_4tuple(kind=p_conn, side="sink", not_aggregated=True)
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv",
-        ("group", "process", "connection", "node"), rows6,
-    )
+    rows8 = _emit_5tuple(kind=p_conn, side="sink")
+    rows9 = _emit_5tuple(kind=p_conn, side="source")
 
     # Set 7 — projection of 5 ∪ 6 to (g, connection).
     seen7: dict[tuple[str, str], None] = {}
@@ -2353,48 +2531,78 @@ def write_node_group_dispatch_sets(
         seen7.setdefault((g, p), None)
     for g, p, _, _ in rows6:
         seen7.setdefault((g, p), None)
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__connection_Not_in_aggregate.csv",
-        ("group", "connection"), list(seen7.keys()),
-    )
-
-    rows8 = _emit_5tuple(kind=p_conn, side="sink")
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__connection__to_node.csv",
-        ("group", "group_aggregate", "connection", "source", "sink"), rows8,
-    )
-    rows9 = _emit_5tuple(kind=p_conn, side="source")
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__group_aggregate__process__node__to_connection.csv",
-        ("group", "group_aggregate", "connection", "source", "sink"), rows9,
-    )
-
     # Set 10 — projection of 8 ∪ 9 to (g, ga).
     seen10: dict[tuple[str, str], None] = {}
     for g, ga, _, _, _ in rows8:
         seen10.setdefault((g, ga), None)
     for g, ga, _, _, _ in rows9:
         seen10.setdefault((g, ga), None)
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__group_aggregate_Connection.csv",
-        ("group", "group_aggregate"), list(seen10.keys()),
-    )
     # Set 11 — projection of rows3 to (g, ga).
     seen11: dict[tuple[str, str], None] = {}
     for g, ga, _, _, _ in rows3:
         seen11.setdefault((g, ga), None)
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__group_aggregate_Unit_to_group.csv",
-        ("group", "group_aggregate"), list(seen11.keys()),
-    )
     # Set 12 — projection of rows4 to (g, ga).
     seen12: dict[tuple[str, str], None] = {}
     for g, ga, _, _, _ in rows4:
         seen12.setdefault((g, ga), None)
-    _write_csv_rows(
-        solve_data_dir / "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
-        ("group", "group_aggregate"), list(seen12.keys()),
-    )
+
+    return {
+        "nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.csv": (
+            ("group", "process", "unit", "node"), rows1,
+        ),
+        "nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.csv": (
+            ("group", "process", "node", "unit"), rows2,
+        ),
+        "nodeGroupDispatch__group_aggregate__process__unit__to_node.csv": (
+            ("group", "group_aggregate", "unit", "source", "sink"), rows3,
+        ),
+        "nodeGroupDispatch__group_aggregate__process__node__to_unit.csv": (
+            ("group", "group_aggregate", "unit", "source", "sink"), rows4,
+        ),
+        "nodeGroupDispatch__process__node__to_connection_Not_in_aggregate.csv": (
+            ("group", "process", "node", "connection"), rows5,
+        ),
+        "nodeGroupDispatch__process__connection__to_node_Not_in_aggregate.csv": (
+            ("group", "process", "connection", "node"), rows6,
+        ),
+        "nodeGroupDispatch__connection_Not_in_aggregate.csv": (
+            ("group", "connection"), list(seen7.keys()),
+        ),
+        "nodeGroupDispatch__group_aggregate__process__connection__to_node.csv": (
+            ("group", "group_aggregate", "connection", "source", "sink"), rows8,
+        ),
+        "nodeGroupDispatch__group_aggregate__process__node__to_connection.csv": (
+            ("group", "group_aggregate", "connection", "source", "sink"), rows9,
+        ),
+        "nodeGroupDispatch__group_aggregate_Connection.csv": (
+            ("group", "group_aggregate"), list(seen10.keys()),
+        ),
+        "nodeGroupDispatch__group_aggregate_Unit_to_group.csv": (
+            ("group", "group_aggregate"), list(seen11.keys()),
+        ),
+        "nodeGroupDispatch__group_aggregate_Group_to_unit.csv": (
+            ("group", "group_aggregate"), list(seen12.keys()),
+        ),
+    }
+
+
+def write_node_group_dispatch_sets(
+    input_dir: Path, solve_data_dir: Path,
+) -> None:
+    """flextool.mod L1596-1657 — 12 nodeGroupDispatch sets.
+
+    Joins ``process_source_sink_alwaysProcess`` with ``nodeGroupDispatch``
+    + ``group__node`` + ``group__process__node`` + ``flowAggregator`` +
+    ``process_unit`` / ``process_connection``.  Eight base sets partition
+    the (g, p, source, sink) space by side (sink-in-group vs source-in-
+    group), kind (unit vs connection) and aggregator presence (with-ga
+    vs no-ga).  Four projection sets project pairs (g, p) or (g, ga) from
+    the relevant base sets.  All sets share the prefilter
+    ``(g, p) ∉ nodeGroupDispatch__process_fully_inside``.
+    """
+    by_file = _compute_node_group_dispatch_sets(input_dir, solve_data_dir)
+    for fname, (header, rows) in by_file.items():
+        _write(_rows_to_frame(rows, header), solve_data_dir / fname)
 
 
 # ---------------------------------------------------------------------------
@@ -2525,31 +2733,35 @@ def write_param_t_projections_and_time_params(
     pp_t_seen, conn_pt_rows, conn_pt_seen = _read_pt_pp_t_seen(
         solve_data_dir / "pt_process.csv", proc_conn,
     )
-    _write_csv_rows(
+    _write(
+        _rows_to_frame(list(pp_t_seen.keys()), ("process", "param")),
         solve_data_dir / "process__param_t.csv",
-        ("process", "param"), list(pp_t_seen.keys()),
     )
-    _write_csv_rows(
+    _write(
+        _rows_to_frame(conn_pt_rows, ("connection", "param", "time")),
         solve_data_dir / "connection__param__time.csv",
-        ("connection", "param", "time"), conn_pt_rows,
     )
-    _write_csv_rows(
+    _write(
+        _rows_to_frame(list(conn_pt_seen.keys()), ("connection", "param")),
         solve_data_dir / "connection__param_t.csv",
-        ("connection", "param"), list(conn_pt_seen.keys()),
     )
 
     # process__source__param_t (drop time)
     pps_t_seen = _read_pps_t_seen(solve_data_dir / "pt_process_source.csv")
-    _write_csv_rows(
+    _write(
+        _rows_to_frame(
+            list(pps_t_seen.keys()), ("process", "source", "param"),
+        ),
         solve_data_dir / "process__source__param_t.csv",
-        ("process", "source", "param"), list(pps_t_seen.keys()),
     )
 
     # process__sink__param_t
     ppk_t_seen = _read_pps_t_seen(solve_data_dir / "pt_process_sink.csv")
-    _write_csv_rows(
+    _write(
+        _rows_to_frame(
+            list(ppk_t_seen.keys()), ("process", "sink", "param"),
+        ),
         solve_data_dir / "process__sink__param_t.csv",
-        ("process", "sink", "param"), list(ppk_t_seen.keys()),
     )
 
     # Static parameter sets from input/p_process_source.csv, p_process_sink.csv,
@@ -2575,9 +2787,9 @@ def write_param_t_projections_and_time_params(
             if ((p, src, param) in src_param
                     or (p, src, param) in pps_t_set):
                 rows_src_tp.append((p, src, param))
-    _write_csv_rows(
+    _write(
+        _rows_to_frame(rows_src_tp, ("process", "source", "param")),
         solve_data_dir / "process__source__timeParam.csv",
-        ("process", "source", "param"), rows_src_tp,
     )
 
     rows_snk_tp: list[tuple[str, str, str]] = []
@@ -2586,9 +2798,9 @@ def write_param_t_projections_and_time_params(
             if ((p, snk, param) in sink_param
                     or (p, snk, param) in ppk_t_set):
                 rows_snk_tp.append((p, snk, param))
-    _write_csv_rows(
+    _write(
+        _rows_to_frame(rows_snk_tp, ("process", "sink", "param")),
         solve_data_dir / "process__sink__timeParam.csv",
-        ("process", "sink", "param"), rows_snk_tp,
     )
 
     # process__timeParam — only for processes that are connections.
@@ -2600,7 +2812,7 @@ def write_param_t_projections_and_time_params(
         for param in _SS_TIME_PARAM_ENUM:
             if (p, param) in proc_param or (p, param) in pp_t_set:
                 rows_p_tp.append((p, param))
-    _write_csv_rows(
+    _write(
+        _rows_to_frame(rows_p_tp, ("process", "param")),
         solve_data_dir / "process__timeParam.csv",
-        ("process", "param"), rows_p_tp,
     )
