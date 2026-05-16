@@ -698,10 +698,29 @@ def _drive_cascade(
                 self.state.handoffs.get(self.state.last_captured_solve)
                 if self.state.last_captured_solve is not None else None
             )
+            # Phase E-a — pass the per-sub-solve writer-frame accumulator
+            # as ``seed=`` so ``load_flextool`` short-circuits disk reads
+            # for the ~108 CSV basenames the accumulator covers.  Phase C
+            # stashed the accumulator on ``state.current_accumulator``
+            # right before ``solver.run`` returned control (it is the
+            # accumulator for the CURRENT sub-solve, freshly populated by
+            # the preprocessing pass).  When the accumulator is absent
+            # (e.g. disabled by config or an error path that left the
+            # slot empty) we fall back to the disk-read path
+            # transparently — the seed kwarg defaults to ``None`` mean
+            # disk-read.  Note: in nested-cascade scenarios the parent
+            # solve's accumulator is replaced by the child solve's
+            # accumulator before the child reaches this call, so the
+            # accumulator read here is always the CHILD's (handoff doc
+            # gotcha re. nested cascades).
+            _sub_solve_accum = getattr(
+                self.state, "current_accumulator", None,
+            )
             data = load_flextool(
                 self.state.paths.work_folder,
                 handoff=prior_for_load,
                 db_reader=cascade_db_reader,
+                seed=_sub_solve_accum,
             )
             # Release heap held by the broadcast cascade scratch frames.
             # On H2_trade y2050 this drops RSS ~1.6 GB / 41 %; expected
