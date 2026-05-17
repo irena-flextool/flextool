@@ -111,6 +111,19 @@ def _resolve_db_url(case: _ParityCase, test_db_url: str, h2_parity_db_url: str) 
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason=(
+        "MPS parity is obsolete after the Δ.22 GMPL→native cascade "
+        "switch: ``flextool.mps`` was a glpsol/HiGHS-LP-file artefact "
+        "produced by the legacy MathProg pipeline; the native cascade "
+        "builds the LP directly via polar_high and never emits an MPS "
+        "file.  The baseline hashes (migration/baselines/*.json) "
+        "anchor a deleted code path.  Keeping the test under a skip "
+        "marker preserves the documented baselines + parity case "
+        "table; structural correctness is now covered by the in-memory "
+        "objective + per-solve parquet golden tests in test_scenarios.py."
+    )
+)
 @pytest.mark.solver
 @pytest.mark.parametrize("case", _CASES, ids=[c.name for c in _CASES])
 def test_mps_parity(
