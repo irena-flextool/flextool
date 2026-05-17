@@ -551,21 +551,40 @@ def _recommend_scale_the_objective(
 
 
 # user_bound_scale clamp.  HiGHS interprets ``user_bound_scale`` as a
-# **power of 2** (bounds × 2^N), so the magnitude per step is ~3×, not
-# 10×.  HiGHS itself rejects values outside [-30, 30]; -30 (= × 2^-30
-# ≈ 1e-9) is the practical floor for very wide row-bound spreads
-# (e.g. cumulative-ladder caps at 1e+8 paired with annual fractions
-# at 1e-6).  HiGHS' "Consider setting the user_bound_scale option
-# to <N>" warning text was the source of the older |N| ≤ 10
-# guidance — that was about the per-warning increment, not the
-# safe operating range.
-USER_BOUND_SCALE_MIN = -30
+# **power of 2** (bounds × 2^N), so each unit step is a ~3× compression.
+# Empirically (Rivendell S19/S17 with the polars engine), anything more
+# aggressive than ``N=-10`` (bounds × 2^-10 ≈ 1e-3) crushes legitimate
+# unit-magnitude bounds (e.g. reserve upper bounds at 1.0) below HiGHS'
+# warning threshold for "excessively small bounds" and trips presolve
+# infeasibility on the user-scaled model.  The clamp mirrors the
+# Agent-18e softening in :mod:`flextool.flextoolrunner.scaling`
+# (the legacy CSV-based analyzer's :data:`USER_BOUND_SCALE_MIN`).
+USER_BOUND_SCALE_MIN = -10
 USER_BOUND_SCALE_MAX = 0
 
 # Threshold (decades) above which we apply ``user_bound_scale``.
 # Below this the LP bounds are tight enough that HiGHS' own scaling is
 # sufficient.
 USER_BOUND_SCALE_TRIGGER_DECADES = 6.0
+
+# Geometric-midpoint policy constants — mirror Agent-18e additions in
+# :mod:`flextool.flextoolrunner.scaling`.  See
+# :func:`recommend_user_bound_scale_from_lp`.
+BOUND_SPREAD_THRESHOLD = 6.0
+"""Decades (base 10).  When the variable-bound spread
+``log10(abs_max) − log10(abs_min)`` across finite, non-zero LP bounds
+is at or below this, no ``user_bound_scale`` is recommended."""
+
+BOUND_ABS_MIN_EFFECTIVE_ZERO = 1e-30
+"""Below this, a measured ``abs_min`` is treated as zero (e.g. slack
+variables with no explicit lower cap register near float64 denormal).
+``sqrt(abs_max × abs_min)`` would underflow / drag the geometric
+midpoint to nothing; we fall back to the floor below instead."""
+
+BOUND_ABS_MIN_FLOOR_RATIO = 1e-6
+"""Floor for ``abs_min`` when missing or effectively zero: use
+``abs_max × BOUND_ABS_MIN_FLOOR_RATIO`` (i.e. treat the range as no
+wider than 6 decades for centering purposes)."""
 
 
 def _max_input_bound_proxy(family_stats: dict[str, FamilyStats]) -> Optional[float]:
@@ -642,27 +661,39 @@ def recommend_user_bound_scale_from_lp(
 
     The dict comes from :meth:`polar_high.Problem.peek_lp_ranges`; it
     has the form ``{'matrix': (lo, hi)|None, 'cost': ..., 'col_bound':
-    ..., 'row_bound': ...}``.  We look at the larger ``abs_max`` of the
-    row and column bound ranges — that's what HiGHS itself flags when
-    it prints "user-scaled problem has some excessively large row
-    bounds" — and choose ``N`` so ``2**N`` brings that max close to
-    ``1.0``.  HiGHS' ``user_bound_scale`` is a power of 2, NOT a power
-    of 10 — using ``log10`` here was a longstanding bug that left the
-    recommended scaling ~3.3× too gentle per "decade".
+    ..., 'row_bound': ...}``.  Algorithm (geometric-midpoint centering,
+    mirrors the Agent-18e policy in :func:`flextool.flextoolrunner.scaling.
+    decide_user_bound_scale`):
 
-    Two-sided safety guard: we also look at the *smallest* finite,
-    non-zero LP bound (``abs_min``).  Scaling shrinks bounds uniformly,
-    so picking ``N`` purely from the max can drag the small bounds
-    below HiGHS' primal-feasibility tolerance (≈ 1e-7) — at which point
-    a binding constraint (e.g. a CO2 cap on a small commodity flow)
-    becomes numerically slack and the LP picks a strictly cheaper but
-    *infeasible-w.r.t.-the-unscaled-model* solution.  We therefore
-    clamp ``N`` so the post-scale smallest bound stays ≥
-    ``MIN_SCALED_BOUND`` (≈ 1e-6, comfortably above the default 1e-7
-    feasibility tolerance).  When the LP bound spread is too wide for
-    a single ``N`` to satisfy both ends, we err on the side of
-    correctness (keep small bounds enforceable) rather than tight
-    HiGHS conditioning.
+    1. If the post-build bound spread (``log10(abs_max) − log10(abs_min)``
+       across finite, non-zero row + column bounds) is ≤ 6 decades, the LP
+       bounds are already tight enough — return ``0`` and let HiGHS' own
+       scaling handle it.
+
+    2. Otherwise pick ``N`` so the *geometric midpoint* of the bound
+       range lands at ``2^N × geo_mid ≈ 1``, i.e.
+       ``N = -round(log2(sqrt(abs_max × abs_min)))``.  This centers the
+       bound range around ``O(1)`` rather than collapsing its upper end
+       (the older anchored-to-max heuristic).
+
+    3. Clamp to ``[USER_BOUND_SCALE_MIN, 0]`` (= ``[-10, 0]``).
+
+    The geometric-midpoint formula is much gentler on the bottom end of
+    the range than anchoring to ``abs_max``.  A typical Rivendell-shaped
+    LP has bounds in roughly ``[1, 6e5]`` (slack-variable upper bound 1
+    paired with annual-flow RHS ~6e5); geometric midpoint ≈ 760 picks
+    ``N ≈ -10`` instead of ``N = -19`` from anchored-to-max.  Post-scale
+    bounds become ``[1e-3, 600]`` rather than ``[2e-6, 1.1]`` — HiGHS no
+    longer flags "excessively small bounds" and presolve no longer
+    spuriously declares the model infeasible.
+
+    Agent 18e rationale (from python-preprocessing's
+    ``decide_user_bound_scale``): the anchored-to-max heuristic picks
+    ``N=-20`` on rivendell S19, which compresses bounds by 2^-20 ≈ 1e-6
+    × — small bounds fall below HiGHS' practical precision and the
+    crossover simplex can no longer represent them.  Capping at ``-10``
+    (compression ~1000×) is enough to tame HiGHS' coefficient-ratio
+    reporting without crushing the bottom end.
 
     Returns an integer in
     ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]``.  ``0`` means
@@ -686,32 +717,34 @@ def recommend_user_bound_scale_from_lp(
             min_bounds.append(float(lo))
     if not max_bounds:
         return 0
-    max_bound = max(max_bounds)
-    # Trigger: ~2^10 = 1024 — matches the "max_bound > 1e3" heuristic
-    # used pre-fix, kept as 2^10 to make the threshold consistent with
-    # the new log2 scaling.
-    if max_bound <= 1024.0:
-        return 0
+    abs_max = max(max_bounds)
+    # Spread-threshold gate: don't bother scaling when the bound range
+    # already fits in ≤ 6 decades.  Matches BOUND_SPREAD_THRESHOLD in
+    # :mod:`flextool.flextoolrunner.scaling`.
+    if min_bounds:
+        abs_min = min(min_bounds)
+    else:
+        abs_min = abs_max * BOUND_ABS_MIN_FLOOR_RATIO
     try:
-        n = -int(round(math.log2(max_bound)))
+        spread = math.log10(abs_max) - math.log10(abs_min)
     except ValueError:
         return 0
-    # Two-sided guard: don't shrink small bounds below ~1e-6 (HiGHS'
-    # default primal_feasibility_tolerance is 1e-7).  If the smallest
-    # finite LP bound × 2**n would fall below this threshold, raise N
-    # (make it less negative) so the small bound survives.  Note that
-    # ``n`` is negative; ``n + k`` for positive k is less negative.
-    MIN_SCALED_BOUND = 1e-6
-    if min_bounds:
-        min_bound = min(min_bounds)
-        # We want min_bound * 2**n >= MIN_SCALED_BOUND, i.e.
-        #   n >= log2(MIN_SCALED_BOUND / min_bound).
-        try:
-            n_floor = int(math.ceil(math.log2(MIN_SCALED_BOUND / min_bound)))
-        except ValueError:
-            n_floor = USER_BOUND_SCALE_MIN
-        if n < n_floor:
-            n = n_floor
+    if spread <= BOUND_SPREAD_THRESHOLD:
+        return 0
+    # Geometric-midpoint centering.  Effectively-zero ``abs_min`` (e.g.
+    # 1e-300 from a slack with no lower cap) would collapse log2(geo_mid)
+    # to -inf; fall back to the 6-decade floor relative to abs_max.
+    if abs_min <= BOUND_ABS_MIN_EFFECTIVE_ZERO:
+        effective_min = abs_max * BOUND_ABS_MIN_FLOOR_RATIO
+    else:
+        effective_min = abs_min
+    try:
+        geo_mid = math.sqrt(abs_max * effective_min)
+        if geo_mid <= 0.0 or not math.isfinite(geo_mid):
+            return 0
+        n = -int(round(math.log2(geo_mid)))
+    except ValueError:
+        return 0
     if n > USER_BOUND_SCALE_MAX:
         n = USER_BOUND_SCALE_MAX
     if n < USER_BOUND_SCALE_MIN:
