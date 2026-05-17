@@ -83,6 +83,19 @@ def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     return pl.read_csv(path)
 
 
+def read_csv_fallback(path: "Path | str") -> pl.DataFrame:
+    """Off-cascade disk read of a single CSV.
+
+    Reserved for callers in :pyfile:`flextool/engine_polars/input.py`
+    that still serve workdir-only loader-unit tests.  Cascade code MUST
+    go through :class:`FlexDataProvider`; this is the single sanctioned
+    entry point for the residual disk-fallback path so the Rule 1
+    invariant scan can confirm input.py never calls ``_read_csv_file``
+    or ``pl.read_csv`` directly.
+    """
+    return _read_csv_file(path)
+
+
 def seed_provider_from_dir(
     provider,
     directory: "Path | str",

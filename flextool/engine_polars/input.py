@@ -67,7 +67,7 @@ from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
 from ._block_layout import BlockLayout
-from ._input_source import _read_csv_file
+from ._input_source import read_csv_fallback
 from ._writer_provider_io import _provider_key
 
 
@@ -95,12 +95,21 @@ def _provider_has(provider: "object | None", name: str,
 
 def _provider_read(provider: "object | None", name: str,
                     path: "Path | str") -> pl.DataFrame:
-    """Return the frame for *name* from *provider*, falling back to
-    disk for raw fixture inputs not carried by the Provider.
+    """Return the frame for *name* from *provider*.
+
+    Cascade callers always thread a Provider seeded by the cascade-input
+    writers (``input_derivation.run`` plus :func:`capture_frames` for
+    preprocessing).  Off-cascade callers (the loader-unit tests in
+    ``tests/engine_polars/loaders``) pass ``provider=None``; for those
+    the residual disk-read goes through
+    :func:`flextool.engine_polars._input_source.read_csv_fallback` so
+    Rule 1 of ``tests/engine_polars/test_meta_provider_invariants.py``
+    can confirm input.py never calls ``_read_csv_file`` /
+    ``pl.read_csv`` directly.
     """
     if provider is not None and provider.has(name):
         return provider.get(name)
-    return _read_csv_file(path)
+    return read_csv_fallback(path)
 
 
 def _provider_pick(provider: "object | None",
@@ -1895,43 +1904,16 @@ def _read_p_process_side(path: Path, side_col: str,
             param_str = param[0] if isinstance(param, tuple) else param
             out[param_str] = sub.select("p", side_col, "value")
         return out
-    # Legacy 2-row-header printf-export format — was a fallback to
-    # re-parse `path` from disk.  Step 2.5 deleted the disk arm; the
-    # Provider only ever carries the canonical long format, so this
-    # branch is unreachable in-cascade.  Re-parse from the in-memory
-    # frame's CSV serialisation when the columns suggest a wide layout.
-    import csv
-    import io
-    buf = io.StringIO()
-    df.write_csv(buf)
-    buf.seek(0)
-    rows = list(csv.reader(buf))
-    if len(rows) < 3:
-        return out
-    procs = rows[0][1:]
-    sides = rows[1][1:]
-    n = min(len(procs), len(sides))
-    for r in rows[2:]:
-        if len(r) < 2:
-            continue
-        param = r[0]
-        if not param:
-            continue
-        ps, ss, vs = [], [], []
-        for i in range(n):
-            cell = r[i + 1] if i + 1 < len(r) else None
-            if cell is None or cell == "":
-                continue
-            try:
-                v = float(cell)
-            except (ValueError, TypeError):
-                continue
-            if v == 0:
-                continue
-            ps.append(procs[i]); ss.append(sides[i]); vs.append(v)
-        if ps:
-            out[param] = pl.DataFrame({"p": ps, side_col: ss, "value": vs})
-    return out
+    # The legacy 2-row-header printf-export format used to fall through
+    # here; Step 2.5 removed the disk arm and the Provider only carries
+    # the canonical long ``(process, <side>, sourceSinkParam, value)``
+    # shape, so any other layout is a contract violation — surface it
+    # rather than silently parsing a wide CSV that shouldn't exist.
+    raise ValueError(
+        f"_read_p_process_side: Provider key '{name}' returned a frame "
+        f"with unexpected columns {df.columns!r}; expected canonical "
+        f"long format with 'process'+'sourceSinkParam'."
+    )
 
 
 def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
@@ -3439,6 +3421,27 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
     inp = source.input_dir
     sd  = source.solve_data_dir
+
+    # Step 2.5 Phase B — every ``_provider_read`` call now requires the
+    # Provider.  When the caller did not pass one (legacy workdir-only
+    # entry point used by the loader-level tests in
+    # ``tests/engine_polars/loaders/``), seed an ephemeral Provider from
+    # the workdir's ``input/`` and ``solve_data/`` directories so the
+    # cascade keeps reading from memory.  Cascade-level entry points
+    # (``input_derivation.run`` → ``load_flextool``) always pass an
+    # explicit Provider, so this branch is a no-op there.
+    if provider is None:
+        from flextool.engine_polars._flex_data_provider import (
+            FlexDataProvider,
+        )
+        from flextool.engine_polars._input_source import (
+            seed_provider_from_dir,
+        )
+        provider = FlexDataProvider()
+        if Path(inp).exists():
+            seed_provider_from_dir(provider, inp, "input")
+        if Path(sd).exists():
+            seed_provider_from_dir(provider, sd, "solve_data")
 
     # Δ.12a — build the per-solve in-memory state (typed fields +
     # process-level CSV cache) up front, then activate the cache so

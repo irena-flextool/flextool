@@ -116,12 +116,6 @@ PROVIDER_IMPL_ALLOWLIST: dict[str, str] = {
 # removed and the corresponding files retro-migrated.
 RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
     # --- Raw input fixture readers (input/*.csv not in Provider) ---
-    "input.py": (
-        "Loader: reads raw input/*.csv fixtures (entity, period, "
-        "profile etc.) not yet emitted by any writer into the "
-        "Provider.  Provider-first via _provider_open; disk arm "
-        "serves raw inputs."
-    ),
     "_region_filter.py": (
         "Reads input/regionSwitch.csv at region-filter setup."
     ),
