@@ -45,7 +45,7 @@ from build_lh2_three_region import (  # noqa: E402
 )
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.flextoolrunner.flextoolrunner import FlexToolRunner  # noqa: E402
+from flextool.engine_polars import run_chain_from_db  # noqa: E402
 
 
 # Tolerance lifted from the existing scenario-test convention.
@@ -86,23 +86,31 @@ def lh2_solve(
     import os
 
     workdir = tmp_path_factory.mktemp("lh2_run")
-    # FlexToolRunner reads the cwd at construction time for some
-    # downstream writers; pin it for this session by chdir'ing.
+    # Δ.22 migration: SolverRunner.run was deleted, so the legacy
+    # runner.run_model() path raises NotImplementedError.  Native
+    # cascade replacement is run_chain_from_db.  csv_dump=True snapshots
+    # solve_data/; keep_solutions=True retains the flex_data_provider
+    # so the derived input/ frames materialise to disk.
     prev_cwd = os.getcwd()
     try:
         os.chdir(workdir)
-        runner = FlexToolRunner(
-            input_db_url=lh2_db_url,
-            scenario_name=SCENARIO,
-            root_dir=workdir,
-            bin_dir=test_bin_dir,
+        steps = run_chain_from_db(
+            lh2_db_url,
+            SCENARIO,
             work_folder=workdir,
+            csv_dump=True,
+            keep_solutions=True,
         )
-        runner.write_input(lh2_db_url, SCENARIO)
-        rc = runner.run_model()
     finally:
         os.chdir(prev_cwd)
-    assert rc == 0, "LH2 three-region solve failed (return code != 0)"
+    assert steps, "run_chain_from_db returned no steps for LH2 fixture"
+    last_step = next(reversed(steps.values()))
+    assert last_step.solution is not None and last_step.solution.optimal, (
+        "LH2 three-region solve failed (last sub-solve not optimal)"
+    )
+    provider = getattr(last_step, "flex_data_provider", None)
+    if provider is not None:
+        provider.snapshot_processed_inputs(workdir)
     return workdir
 
 
