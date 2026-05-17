@@ -73,38 +73,14 @@ import polars as pl
 # CSV I/O — same conventions as the sibling _writer_*.py modules.
 # ---------------------------------------------------------------------------
 
-# Provider-aware open helper — Provider-first, then disk.  Provider keys
-# use the parent-qualified convention ``"<parent>/<basename>"`` without
-# the ``.csv`` suffix.
+# Provider-aware open helper — re-exported from the shared module.
+# Step 2.5 Phase B collapsed the local copy that carried a disk-fallback
+# arm; cascade code uses the Provider-only shim.
 
-def _provider_open(provider: "object | None", name: str,
-                    path: "Path | str"):
-    """Open a file-like handle for *name* sourced from the Provider or
-    disk; return ``None`` when neither has the file.
-    """
-    if provider is not None and provider.has(name):
-        import io
-        df = provider.get(name)
-        buf = io.StringIO()
-        df.write_csv(buf)
-        buf.seek(0)
-        return buf
-    p = Path(path)
-    if p.exists():
-        return p.open()
-    return None
-
-
-def _provider_key(path: "Path | str") -> str:
-    """Build the canonical Provider key for *path* — ``"<parent>/<stem>"``
-    when *path* has a parent dir, else the bare stem.
-    """
-    p = Path(path)
-    parent = p.parent.name
-    stem = p.stem
-    if parent:
-        return f"{parent}/{stem}"
-    return stem
+from flextool.engine_polars._writer_provider_io import (  # noqa: E402
+    _provider_key,
+    _provider_open,
+)
 
 
 def _read_csv(path: Path, columns: list[str],

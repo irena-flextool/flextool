@@ -308,6 +308,7 @@ def _resolve_pdtReserve(
 
 def derive_pdtReserve_upDown_group(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Build the canonical ``pdtReserve_upDown_group`` frame
     ``(reserve, upDown, group, param, period, time, value)``.
@@ -315,21 +316,35 @@ def derive_pdtReserve_upDown_group(
     Value column is pre-rendered with ``repr(float(v))`` for byte
     parity with the legacy emitter.
     """
-    pbt = _read_pbt_reserve(input_dir / "pbt_reserve__upDown__group.csv")
-    pt = _read_pt_reserve(input_dir / "pt_reserve__upDown__group.csv")
-    p = _read_p_reserve(input_dir / "p_reserve__upDown__group.csv")
+    pbt = _read_pbt_reserve(
+        input_dir / "pbt_reserve__upDown__group.csv", provider=provider,
+    )
+    pt = _read_pt_reserve(
+        input_dir / "pt_reserve__upDown__group.csv", provider=provider,
+    )
+    p = _read_p_reserve(
+        input_dir / "p_reserve__upDown__group.csv", provider=provider,
+    )
 
-    ts_for_d = _read_pairs_to_dict(solve_data_dir / "first_timesteps.csv", 0)
+    ts_for_d = _read_pairs_to_dict(
+        solve_data_dir / "first_timesteps.csv", 0, provider=provider,
+    )
     tb_for_d = _read_pairs_to_dict(
-        solve_data_dir / "solve_branch__time_branch.csv", 0,
+        solve_data_dir / "solve_branch__time_branch.csv", 0, provider=provider,
     )
-    pe_for_d = _read_pairs_to_dict(solve_data_dir / "period__branch.csv", 1)
+    pe_for_d = _read_pairs_to_dict(
+        solve_data_dir / "period__branch.csv", 1, provider=provider,
+    )
     groups_stoch = frozenset(
-        _read_singles(input_dir / "groupIncludeStochastics.csv")
+        _read_singles(
+            input_dir / "groupIncludeStochastics.csv", provider=provider,
+        )
     )
 
-    rug = _read_n_col(solve_data_dir / "reserve__upDown__group.csv", 3)
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    rug = _read_n_col(
+        solve_data_dir / "reserve__upDown__group.csv", 3, provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     rows: list[tuple] = []
     for (r, ud, g) in rug:
@@ -353,6 +368,7 @@ def derive_pdtReserve_upDown_group(
 
 def write_pdtReserve_upDown_group(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Native port of
     ``reserve_calc_params.write_pdtReserve_upDown_group``.
@@ -363,7 +379,9 @@ def write_pdtReserve_upDown_group(
     stochastic gate is direct (``g in groupIncludeStochastics``).
     """
     _write(
-        derive_pdtReserve_upDown_group(input_dir, solve_data_dir),
+        derive_pdtReserve_upDown_group(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "pdtReserve_upDown_group.csv",
     )
 
@@ -398,12 +416,14 @@ def _compute_process_reserve_active(
 
     rug_by_ru: dict[tuple[str, str], list[str]] = {}
     for r, ud, g in _read_n_col(
-        solve_data_dir / "reserve__upDown__group.csv", 3,
+        solve_data_dir / "reserve__upDown__group.csv", 3, provider=provider,
     ):
         rug_by_ru.setdefault((r, ud), []).append(g)
 
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
-    prun = _read_n_col(input_dir / "process__reserve__upDown__node.csv", 4)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    prun = _read_n_col(
+        input_dir / "process__reserve__upDown__node.csv", 4, provider=provider,
+    )
 
     active_rows: list[tuple[str, str, str, str]] = []
     for (p, r, ud, n) in prun:
@@ -421,6 +441,7 @@ def _compute_process_reserve_active(
 
 def derive_process_reserve_upDown_node_active(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Build the ``process_reserve_upDown_node_active`` frame
     ``(process, reserve, upDown, node)`` — entries from
@@ -428,7 +449,9 @@ def derive_process_reserve_upDown_node_active(
     the matching ``reserve__upDown__group × dt`` cross product is
     nonzero.
     """
-    active_rows, _dt = _compute_process_reserve_active(input_dir, solve_data_dir)
+    active_rows, _dt = _compute_process_reserve_active(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _to_utf8_frame(
         ("process", "reserve", "upDown", "node"), active_rows,
     )
@@ -436,11 +459,14 @@ def derive_process_reserve_upDown_node_active(
 
 def derive_prundt(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Build the ``prundt`` frame —
     ``process_reserve_upDown_node_active × dt``.
     """
-    active_rows, dt = _compute_process_reserve_active(input_dir, solve_data_dir)
+    active_rows, dt = _compute_process_reserve_active(
+        input_dir, solve_data_dir, provider=provider,
+    )
     rows: list[tuple[str, str, str, str, str, str]] = []
     for (p, r, ud, n) in active_rows:
         for (d, t) in dt:
@@ -452,6 +478,7 @@ def derive_prundt(
 
 def write_process_reserve_upDown_node_active_and_prundt(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Native port of
     ``reserve_calc_params.write_process_reserve_upDown_node_active_and_prundt``.
@@ -470,7 +497,9 @@ def write_process_reserve_upDown_node_active_and_prundt(
     rows whose first two columns equal them; ``g`` is fresh.
     """
     # Compute once and split into two derive frames to avoid re-scanning.
-    active_rows, dt = _compute_process_reserve_active(input_dir, solve_data_dir)
+    active_rows, dt = _compute_process_reserve_active(
+        input_dir, solve_data_dir, provider=provider,
+    )
     _write(
         _to_utf8_frame(
             ("process", "reserve", "upDown", "node"), active_rows,
@@ -520,6 +549,7 @@ def _read_p_process_reserve(
 
 def _compute_reserve_filters(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> tuple[
     list[tuple[str, str, str, str, str]],  # reliability rows (with value)
     list[tuple[str, str, str, str]],       # increase_reserve_ratio rows
@@ -530,10 +560,11 @@ def _compute_reserve_filters(
     pre-stringified via ``repr(float(v))``.
     """
     p_prn = _read_p_process_reserve(
-        input_dir / "p_process__reserve__upDown__node.csv"
+        input_dir / "p_process__reserve__upDown__node.csv", provider=provider,
     )
     active = _read_n_col(
         solve_data_dir / "process_reserve_upDown_node_active.csv", 4,
+        provider=provider,
     )
 
     rel_rows: list[tuple[str, str, str, str, str]] = []
@@ -557,10 +588,13 @@ def _compute_reserve_filters(
 
 def derive_p_process_reserve_upDown_node_reliability(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Reliability fallback frame (process, reserve, upDown, node, value).
     Default 1 with the legacy zero→1 collapse already applied."""
-    rel_rows, _i, _l, _p = _compute_reserve_filters(input_dir, solve_data_dir)
+    rel_rows, _i, _l, _p = _compute_reserve_filters(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _to_utf8_frame(
         ("process", "reserve", "upDown", "node", "value"), rel_rows,
     )
@@ -568,9 +602,12 @@ def derive_p_process_reserve_upDown_node_reliability(
 
 def derive_process_reserve_upDown_node_increase_reserve_ratio(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Frame of ``(p, r, ud, n)`` where ``increase_reserve_ratio > 0``."""
-    _r, incr_rows, _l, _p = _compute_reserve_filters(input_dir, solve_data_dir)
+    _r, incr_rows, _l, _p = _compute_reserve_filters(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _to_utf8_frame(
         ("process", "reserve", "upDown", "node"), incr_rows,
     )
@@ -578,9 +615,12 @@ def derive_process_reserve_upDown_node_increase_reserve_ratio(
 
 def derive_process_reserve_upDown_node_large_failure_ratio(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Frame of ``(p, r, ud, n)`` where ``large_failure_ratio > 0``."""
-    _r, _i, lf_rows, _p = _compute_reserve_filters(input_dir, solve_data_dir)
+    _r, _i, lf_rows, _p = _compute_reserve_filters(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _to_utf8_frame(
         ("process", "reserve", "upDown", "node"), lf_rows,
     )
@@ -588,14 +628,18 @@ def derive_process_reserve_upDown_node_large_failure_ratio(
 
 def derive_process_large_failure(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """First-column setof projection of the large_failure_ratio frame."""
-    _r, _i, _l, process_lf = _compute_reserve_filters(input_dir, solve_data_dir)
+    _r, _i, _l, process_lf = _compute_reserve_filters(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _to_utf8_frame(("process",), process_lf)
 
 
 def write_process_reserve_filters_and_reliability(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Native port of
     ``reserve_calc_params.write_process_reserve_filters_and_reliability``.
@@ -617,7 +661,7 @@ def write_process_reserve_filters_and_reliability(
     """
     # Single shared scan, four canonical emits.
     rel_rows, incr_rows, lf_rows, process_lf = _compute_reserve_filters(
-        input_dir, solve_data_dir,
+        input_dir, solve_data_dir, provider=provider,
     )
     _write(
         _to_utf8_frame(

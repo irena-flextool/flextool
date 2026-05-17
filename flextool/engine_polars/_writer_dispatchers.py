@@ -860,9 +860,11 @@ def _compute_ed_fixed_cost(inp: dict) -> pl.DataFrame:
     )
 
 
-def _compute_p_entity_unitsize(input_dir: Path, inp: dict) -> pl.DataFrame:
-    p_process = _read_p_table(input_dir / "p_process.csv")
-    p_node = _read_p_table(input_dir / "p_node.csv")
+def _compute_p_entity_unitsize(input_dir: Path, inp: dict,
+                                *, provider: "object | None" = None,
+                                ) -> pl.DataFrame:
+    p_process = _read_p_table(input_dir / "p_process.csv", provider=provider)
+    p_node = _read_p_table(input_dir / "p_node.csv", provider=provider)
     process_set = inp["process_set"]
     node_set = inp["node_set"]
     rows: list[tuple[str, str]] = []
@@ -939,6 +941,7 @@ def derive_p_entity_unitsize(
     return _compute_p_entity_unitsize(
         input_dir,
         _entity_period_inputs(input_dir, solve_data_dir, provider=provider),
+        provider=provider,
     )
 
 
@@ -959,5 +962,5 @@ def write_entity_period_calc_params(input_dir: Path,
            solve_data_dir / "edEntity_lifetime.csv")
     _write(_compute_ed_fixed_cost(inp),
            solve_data_dir / "ed_fixed_cost.csv")
-    _write(_compute_p_entity_unitsize(input_dir, inp),
+    _write(_compute_p_entity_unitsize(input_dir, inp, provider=provider),
            solve_data_dir / "p_entity_unitsize.csv")
