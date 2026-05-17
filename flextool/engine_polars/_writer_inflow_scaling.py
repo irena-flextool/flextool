@@ -219,6 +219,7 @@ def _rows_to_frame(
 
 def _compute_inflow_scaling_frames(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> dict[str, pl.DataFrame]:
     """Compute every inflow-scaling CSV in one pass, returning a dict
     keyed by output basename.
@@ -233,46 +234,53 @@ def _compute_inflow_scaling_frames(
     out: dict[str, pl.DataFrame] = {}
 
     # ── Sources ────────────────────────────────────────────────────────
-    nodes = _read_singles(input_dir / "node.csv")
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
-    time_set = _read_singles(solve_data_dir / "time.csv")
-    p_node = _read_keyed2_float(input_dir / "p_node.csv")
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
+    time_set = _read_singles(solve_data_dir / "time.csv", provider=provider)
+    p_node = _read_keyed2_float(input_dir / "p_node.csv", provider=provider)
     pt_node_inflow = _read_keyed2_float(
-        solve_data_dir / "pt_node_inflow.csv"
+        solve_data_dir / "pt_node_inflow.csv", provider=provider,
     )
     # The "(n, t) is explicitly set" predicate uses ONLY (n, t) presence
     # in pt_node_inflow.csv — values are read separately above.
     node_time_inflow = frozenset(_read_pairs(
-        solve_data_dir / "pt_node_inflow.csv"
+        solve_data_dir / "pt_node_inflow.csv", provider=provider,
     ))
 
-    inflow_method = _read_pairs(solve_data_dir / "node__inflow_method.csv")
+    inflow_method = _read_pairs(solve_data_dir / "node__inflow_method.csv",
+                                provider=provider)
     methods_for_node: dict[str, set[str]] = {}
     for n, m in inflow_method:
         methods_for_node.setdefault(n, set()).add(m)
 
-    pdNode = _read_keyed3_float(solve_data_dir / "pdNode.csv")
+    pdNode = _read_keyed3_float(solve_data_dir / "pdNode.csv", provider=provider)
     cpsoy = _read_keyed_float(
-        solve_data_dir / "complete_period_share_of_year_calc.csv"
+        solve_data_dir / "complete_period_share_of_year_calc.csv",
+        provider=provider,
     )
     p_tdy = _read_keyed_float(
-        solve_data_dir / "p_timeline_duration_in_years.csv"
+        solve_data_dir / "p_timeline_duration_in_years.csv",
+        provider=provider,
     )
 
     # period__timeline (Python output): list of (period, timeline) pairs.
-    period_timeline = _read_pairs(solve_data_dir / "period__timeline_set.csv")
+    period_timeline = _read_pairs(solve_data_dir / "period__timeline_set.csv",
+                                   provider=provider)
     timelines_for_d: dict[str, list[str]] = {}
     for d, tl in period_timeline:
         timelines_for_d.setdefault(d, []).append(tl)
 
     # complete_time_in_use (Python output, _set suffix).
     complete_time_in_use = _read_singles(
-        solve_data_dir / "complete_time_in_use_set.csv"
+        solve_data_dir / "complete_time_in_use_set.csv",
+        provider=provider,
     )
 
     # dt_complete from steps_complete_solve.csv — (period, step) pairs.
     dt_complete_pairs = _read_pairs(
-        solve_data_dir / "steps_complete_solve.csv"
+        solve_data_dir / "steps_complete_solve.csv",
+        provider=provider,
     )
     dt_complete_for_d: dict[str, list[str]] = {}
     for d, t in dt_complete_pairs:
@@ -695,6 +703,7 @@ def derive_new_old_section(
 
 def write_node_inflow_scaling_params(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Native port of
     ``node_inflow_scaling_params.write_node_inflow_scaling_params``.
@@ -703,7 +712,12 @@ def write_node_inflow_scaling_params(
     inflow-scaling parameters (annual / proportional / peak families).
     Each output flows through ``_write(frame, path)`` so the Phase E-b
     accumulator captures every emitted frame.
+
+    Step 1-g — *provider* threads the per-sub-solve Provider so the
+    internal ``_read_*`` helpers resolve their frames in-memory before
+    falling back to disk.
     """
-    frames = _compute_inflow_scaling_frames(input_dir, solve_data_dir)
+    frames = _compute_inflow_scaling_frames(input_dir, solve_data_dir,
+                                              provider=provider)
     for basename, df in frames.items():
         _write(df, solve_data_dir / basename)
