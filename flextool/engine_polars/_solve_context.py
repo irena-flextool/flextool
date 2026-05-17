@@ -203,7 +203,8 @@ class SolveContext:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_workdir(cls, workdir: Path | str) -> "SolveContext":
+    def from_workdir(cls, workdir: Path | str,
+                      *, provider: "object | None" = None) -> "SolveContext":
         """Construct a SolveContext from a flextool workdir.
 
         Eagerly reads only the cheap typed scalars
@@ -218,17 +219,23 @@ class SolveContext:
         attribute access.  Most parity tests only consume one or two,
         so paying the IO cost upfront for a bag of frames the test
         never touches dominates the cache savings on small fixtures.
+
+        Step 1-g-4b — *provider* threads the live
+        :class:`FlexDataProvider` through to the four eager scalar
+        readers so they hit the in-memory frames before falling back
+        to the seed funnel / disk.
         """
         wd = Path(workdir)
         sd = wd / "solve_data"
         ctx = cls(workdir=wd)
-        ctx.solve_name = _read_active_solve(wd)
-        ctx.solveFirst = _read_solve_first(wd)
+        ctx.solve_name = _read_active_solve(wd, provider=provider)
+        ctx.solveFirst = _read_solve_first(wd, provider=provider)
         ctx.realized_periods = _read_realized_dispatch_periods(
-            sd / "realized_dispatch.csv"
+            sd / "realized_dispatch.csv", provider=provider,
         )
         ctx.realized_invest_periods = _read_period_set(
-            sd / "realized_invest_periods_of_current_solve.csv"
+            sd / "realized_invest_periods_of_current_solve.csv",
+            provider=provider,
         )
         return ctx
 
@@ -464,10 +471,26 @@ def _maybe_read(path: Path) -> pl.DataFrame:
         return pl.DataFrame()
 
 
-def _read_active_solve(workdir: Path) -> str | None:
-    """Mirror of ``_derived_params._read_active_solve``."""
-    from flextool.engine_polars._input_source import _seed_lookup
+def _read_active_solve(workdir: Path,
+                        *, provider: "object | None" = None) -> str | None:
+    """Mirror of ``_derived_params._read_active_solve``.
+
+    Step 1-g-4b — Provider-first read.  The legacy seed-funnel
+    middle tier remains via :func:`_provider_open`'s internal
+    ``_seed_lookup`` fallback until Step 2 deletes both.
+    """
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_key, _provider_open,
+    )
     p = workdir / "solve_data" / "solve_current.csv"
+    if provider is not None and provider.has(_provider_key(p)):
+        df = provider.get(_provider_key(p))
+        if df is None or df.height == 0:
+            return None
+        col = df.columns[0]
+        return df[col][0]
+    # Fallback: seed-funnel / disk read (pre-migration behaviour).
+    from flextool.engine_polars._input_source import _seed_lookup
     seeded = _seed_lookup(p)
     if seeded is None and not p.exists():
         return None
@@ -481,21 +504,24 @@ def _read_active_solve(workdir: Path) -> str | None:
     return df[col][0]
 
 
-def _read_solve_first(work_folder: Path) -> bool:
+def _read_solve_first(work_folder: Path,
+                       *, provider: "object | None" = None) -> bool:
     """Mirror of ``input._read_solve_first``.
 
     Reads ``modelParam == 'solveFirst'`` from ``p_model.csv``.  Resolves
     in order: ``solve_data/p_model.csv`` → ``input/p_model.csv`` → True.
     """
     import csv as _csv
-    from flextool.engine_polars._input_source import _seed_open
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_key, _provider_open,
+    )
 
     for cand in ("solve_data/p_model.csv", "input/p_model.csv"):
         path = work_folder / cand
-        seeded = _seed_open(path)
-        if seeded is None and not path.exists():
+        seeded = _provider_open(provider, _provider_key(path), path)
+        if seeded is None:
             continue
-        with (seeded if seeded is not None else path.open()) as fh:
+        with seeded as fh:
             reader = _csv.reader(fh)
             header = next(reader, None) or []
             try:
@@ -516,16 +542,19 @@ def _read_solve_first(work_folder: Path) -> bool:
     return True
 
 
-def _read_period_set(path: Path) -> set[str]:
+def _read_period_set(path: Path,
+                      *, provider: "object | None" = None) -> set[str]:
     """Read a single-column period CSV (header row, then one period per row)."""
     import csv as _csv
-    from flextool.engine_polars._input_source import _seed_open
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_key, _provider_open,
+    )
 
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return set()
     out: set[str] = set()
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = _csv.reader(fh)
         next(reader, None)
         for r in reader:
@@ -534,16 +563,19 @@ def _read_period_set(path: Path) -> set[str]:
     return out
 
 
-def _read_realized_dispatch_periods(path: Path) -> set[str]:
+def _read_realized_dispatch_periods(path: Path,
+                                     *, provider: "object | None" = None) -> set[str]:
     """Read distinct periods from ``realized_dispatch.csv``."""
     import csv as _csv
-    from flextool.engine_polars._input_source import _seed_open
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_key, _provider_open,
+    )
 
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return set()
     out: set[str] = set()
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = _csv.reader(fh)
         header = next(reader, None) or []
         try:

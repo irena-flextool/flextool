@@ -3488,7 +3488,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
     if ctx_workdir is not None:
         from flextool.engine_polars._solve_context import SolveContext
         try:
-            ctx = SolveContext.from_workdir(ctx_workdir)
+            ctx = SolveContext.from_workdir(ctx_workdir, provider=provider)
         except Exception:  # pragma: no cover — defensive
             ctx = None
     if ctx is not None:
