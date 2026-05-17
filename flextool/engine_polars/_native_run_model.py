@@ -487,6 +487,13 @@ def native_run_model(state, solver) -> int:
         import flextool.engine_polars._input_source as _is_mod_E_d
         _prior_seed_E_d = _is_mod_E_d._active_seed
         _install_seed_E_d(sub_solve_provider)
+        # S1-g-3 — expose the per-sub-solve Provider to writer entry
+        # points BEFORE preprocessing runs, so native writers threaded
+        # with ``provider=`` (via :func:`_writer_solve_time.run`) can
+        # fetch it from ``state.current_provider``.  Writers not yet
+        # threaded still resolve their reads via the Provider-as-seed
+        # bridge installed above; Step 2 deletes both paths.
+        state.current_provider = sub_solve_provider
 
         solve_writers.write_full_timelines(
             state.timeline.stochastic_timesteps[solve],

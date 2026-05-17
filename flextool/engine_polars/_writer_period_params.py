@@ -33,7 +33,10 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars._input_source import _seed_open
+from flextool.engine_polars._writer_provider_io import (
+    _provider_key,
+    _provider_open,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -71,22 +74,24 @@ def _utf8_frame(columns: dict[str, list[str]]) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _read_singles(path: Path) -> list[str]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_singles(path: Path,
+                  *, provider: "object | None" = None) -> list[str]:
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         return [r[0] for r in reader if r and r[0]]
 
 
-def _read_pairs(path: Path) -> list[tuple[str, str]]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_pairs(path: Path,
+                *, provider: "object | None" = None) -> list[tuple[str, str]]:
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[tuple[str, str]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -95,14 +100,16 @@ def _read_pairs(path: Path) -> list[tuple[str, str]]:
     return out
 
 
-def _read_pairs_to_dict(path: Path, key_col: int) -> dict[str, list[str]]:
+def _read_pairs_to_dict(path: Path, key_col: int,
+                        *, provider: "object | None" = None,
+                        ) -> dict[str, list[str]]:
     """Generic two-col CSV → ``key_col → list[other_col]``."""
     out: dict[str, list[str]] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
     other_col = 1 - key_col
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -112,14 +119,20 @@ def _read_pairs_to_dict(path: Path, key_col: int) -> dict[str, list[str]]:
 
 
 def _read_stochastic_entities(group_entity_csv: Path,
-                              group_stochastic_csv: Path) -> set[str]:
+                              group_stochastic_csv: Path,
+                              *, provider: "object | None" = None,
+                              ) -> set[str]:
     """``stoch_entity = { e : exists g ∈ groupIncludeStochastics with (g, e) ∈ group__<entity> }``."""
-    stoch_groups = frozenset(_read_singles(group_stochastic_csv))
+    stoch_groups = frozenset(
+        _read_singles(group_stochastic_csv, provider=provider)
+    )
     out: set[str] = set()
-    seeded = _seed_open(group_entity_csv)
-    if seeded is None and not group_entity_csv.exists():
+    seeded = _provider_open(
+        provider, _provider_key(group_entity_csv), group_entity_csv,
+    )
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else group_entity_csv.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -133,7 +146,9 @@ def _read_stochastic_entities(group_entity_csv: Path,
 # ---------------------------------------------------------------------------
 
 
-def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
+                         *, provider: "object | None" = None,
+                         ) -> pl.DataFrame:
     """Materialise the ``pdtNodeInflow`` frame.
 
     Columns: ``node, period, time, value`` — all ``Utf8`` (value cells
@@ -152,40 +167,48 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     Domain: nodes whose method is anything BUT ``no_inflow``.  Non-
     balance-union nodes get 0 (mod L1280 guard).
     """
-    nodes = _read_singles(input_dir / "node.csv")
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     inflow_method_pairs = frozenset(
-        _read_pairs(solve_data_dir / "node__inflow_method.csv")
+        _read_pairs(solve_data_dir / "node__inflow_method.csv",
+                    provider=provider)
     )
-    n_balance = frozenset(_read_singles(solve_data_dir / "nodeBalance.csv"))
+    n_balance = frozenset(
+        _read_singles(solve_data_dir / "nodeBalance.csv", provider=provider)
+    )
     n_balance_period = frozenset(
-        _read_singles(solve_data_dir / "nodeBalancePeriod.csv")
+        _read_singles(solve_data_dir / "nodeBalancePeriod.csv",
+                      provider=provider)
     )
     balance_union = n_balance | n_balance_period
 
     stoch_node = _read_stochastic_entities(
         input_dir / "group__node.csv",
         input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
     )
 
     ts_for_d = _read_pairs_to_dict(
         solve_data_dir / "first_timesteps.csv", key_col=0,
+        provider=provider,
     )
     tb_for_d = _read_pairs_to_dict(
         solve_data_dir / "solve_branch__time_branch.csv", key_col=0,
+        provider=provider,
     )
     # period__branch.csv stores (db, d) — child key column is 1.
     pe_for_d = _read_pairs_to_dict(
         solve_data_dir / "period__branch.csv", key_col=1,
+        provider=provider,
     )
 
     # pbt_node_inflow{(n, branch, ts, t) → value}
     pbt_inflow: dict[tuple[str, str, str, str], float] = {}
     pbt_path = input_dir / "pbt_node_inflow.csv"
-    pbt_seeded = _seed_open(pbt_path)
-    if pbt_seeded is not None or pbt_path.exists():
-        with (pbt_seeded if pbt_seeded is not None else pbt_path.open()) as fh:
+    pbt_seeded = _provider_open(provider, _provider_key(pbt_path), pbt_path)
+    if pbt_seeded is not None:
+        with pbt_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -198,9 +221,9 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     # ptNode_inflow{(n, t) → value}
     pt_inflow: dict[tuple[str, str], float] = {}
     pti_path = solve_data_dir / "ptNode_inflow.csv"
-    pti_seeded = _seed_open(pti_path)
-    if pti_seeded is not None or pti_path.exists():
-        with (pti_seeded if pti_seeded is not None else pti_path.open()) as fh:
+    pti_seeded = _provider_open(provider, _provider_key(pti_path), pti_path)
+    if pti_seeded is not None:
+        with pti_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -214,9 +237,9 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     pdNode_af: dict[tuple[str, str], float] = {}
     pdNode_pk: dict[tuple[str, str], float] = {}
     pdn_path = solve_data_dir / "pdNode.csv"
-    pdn_seeded = _seed_open(pdn_path)
-    if pdn_seeded is not None or pdn_path.exists():
-        with (pdn_seeded if pdn_seeded is not None else pdn_path.open()) as fh:
+    pdn_seeded = _provider_open(provider, _provider_key(pdn_path), pdn_path)
+    if pdn_seeded is not None:
+        with pdn_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -232,10 +255,10 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
 
     def _read_2_keyed_value(path: Path) -> dict[tuple[str, str], float]:
         out: dict[tuple[str, str], float] = {}
-        seeded = _seed_open(path)
-        if seeded is None and not path.exists():
+        seeded = _provider_open(provider, _provider_key(path), path)
+        if seeded is None:
             return out
-        with (seeded if seeded is not None else path.open()) as fh:
+        with seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -329,10 +352,11 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     })
 
 
-def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
+                        *, provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdtNodeInflow.csv`` (see derive docstring)."""
     _write(
-        derive_pdtNodeInflow(input_dir, solve_data_dir),
+        derive_pdtNodeInflow(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtNodeInflow.csv",
     )
 
@@ -342,7 +366,8 @@ def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
+                      *, provider: "object | None" = None) -> pl.DataFrame:
     """Materialise the ``pdtProfile`` frame.
 
     Branches:
@@ -355,15 +380,15 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
 
     Domain: every profile in ``input/profile.csv`` × ``dt``.
     """
-    profiles = _read_singles(input_dir / "profile.csv")
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    profiles = _read_singles(input_dir / "profile.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     # pbt / pt / p loaders.
     pbt_profile: dict[tuple[str, str, str, str], float] = {}
     pbt_path = input_dir / "pbt_profile.csv"
-    pbt_seeded = _seed_open(pbt_path)
-    if pbt_seeded is not None or pbt_path.exists():
-        with (pbt_seeded if pbt_seeded is not None else pbt_path.open()) as fh:
+    pbt_seeded = _provider_open(provider, _provider_key(pbt_path), pbt_path)
+    if pbt_seeded is not None:
+        with pbt_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -374,9 +399,9 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
                         continue
     pt_profile: dict[tuple[str, str], float] = {}
     pt_path = solve_data_dir / "pt_profile.csv"
-    pt_seeded = _seed_open(pt_path)
-    if pt_seeded is not None or pt_path.exists():
-        with (pt_seeded if pt_seeded is not None else pt_path.open()) as fh:
+    pt_seeded = _provider_open(provider, _provider_key(pt_path), pt_path)
+    if pt_seeded is not None:
+        with pt_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -387,9 +412,9 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
                         continue
     p_profile: dict[str, float] = {}
     p_path = input_dir / "p_profile.csv"
-    p_seeded = _seed_open(p_path)
-    if p_seeded is not None or p_path.exists():
-        with (p_seeded if p_seeded is not None else p_path.open()) as fh:
+    p_seeded = _provider_open(provider, _provider_key(p_path), p_path)
+    if p_seeded is not None:
+        with p_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -402,12 +427,15 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     # Branch indices.
     ts_for_d = _read_pairs_to_dict(
         solve_data_dir / "first_timesteps.csv", key_col=0,
+        provider=provider,
     )
     tb_for_d = _read_pairs_to_dict(
         solve_data_dir / "solve_branch__time_branch.csv", key_col=0,
+        provider=provider,
     )
     pe_for_d = _read_pairs_to_dict(
         solve_data_dir / "period__branch.csv", key_col=1,
+        provider=provider,
     )
 
     # Stochastic profile UNION: any profile referenced via a stochastic
@@ -415,34 +443,36 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     stoch_processes = _read_stochastic_entities(
         input_dir / "group__process.csv",
         input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
     )
     stoch_nodes = _read_stochastic_entities(
         input_dir / "group__node.csv",
         input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
     )
     stoch_profile: set[str] = set()
     pp_path = input_dir / "process__profile__profile_method.csv"
-    pp_seeded = _seed_open(pp_path)
-    if pp_seeded is not None or pp_path.exists():
-        with (pp_seeded if pp_seeded is not None else pp_path.open()) as fh:
+    pp_seeded = _provider_open(provider, _provider_key(pp_path), pp_path)
+    if pp_seeded is not None:
+        with pp_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
                 if len(row) >= 2 and row[0] in stoch_processes and row[1]:
                     stoch_profile.add(row[1])
     np_path = input_dir / "node__profile__profile_method.csv"
-    np_seeded = _seed_open(np_path)
-    if np_seeded is not None or np_path.exists():
-        with (np_seeded if np_seeded is not None else np_path.open()) as fh:
+    np_seeded = _provider_open(provider, _provider_key(np_path), np_path)
+    if np_seeded is not None:
+        with np_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
                 if len(row) >= 2 and row[0] in stoch_nodes and row[1]:
                     stoch_profile.add(row[1])
     pnp_path = input_dir / "process__node__profile__profile_method.csv"
-    pnp_seeded = _seed_open(pnp_path)
-    if pnp_seeded is not None or pnp_path.exists():
-        with (pnp_seeded if pnp_seeded is not None else pnp_path.open()) as fh:
+    pnp_seeded = _provider_open(provider, _provider_key(pnp_path), pnp_path)
+    if pnp_seeded is not None:
+        with pnp_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -510,10 +540,11 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     })
 
 
-def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdtProfile(input_dir: Path, solve_data_dir: Path,
+                     *, provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdtProfile.csv`` (see derive docstring)."""
     _write(
-        derive_pdtProfile(input_dir, solve_data_dir),
+        derive_pdtProfile(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtProfile.csv",
     )
 
@@ -525,6 +556,7 @@ def write_pdtProfile(input_dir: Path, solve_data_dir: Path) -> None:
 
 def _derive_conversion_trio(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Build the three ``pdtConversion_rate`` / ``pdtProcess_section`` /
     ``pdtProcess_slope`` frames in a single pass.
@@ -534,19 +566,20 @@ def _derive_conversion_trio(
     here so the work isn't duplicated across three independent
     ``derive_*`` calls.
     """
-    processes = _read_singles(input_dir / "process.csv")
+    processes = _read_singles(input_dir / "process.csv", provider=provider)
     process_minload = frozenset(
-        _read_singles(solve_data_dir / "process_minload.csv")
+        _read_singles(solve_data_dir / "process_minload.csv",
+                      provider=provider)
     )
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     eff: dict[tuple[str, str, str], float] = {}
     min_load: dict[tuple[str, str, str], float] = {}
     eff_min: dict[tuple[str, str, str], float] = {}
     pdt_path = solve_data_dir / "pdtProcess.csv"
-    pdt_seeded = _seed_open(pdt_path)
-    if pdt_seeded is not None or pdt_path.exists():
-        with (pdt_seeded if pdt_seeded is not None else pdt_path.open()) as fh:
+    pdt_seeded = _provider_open(provider, _provider_key(pdt_path), pdt_path)
+    if pdt_seeded is not None:
+        with pdt_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -633,31 +666,41 @@ def _derive_conversion_trio(
 
 def derive_pdtConversion_rate(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise just the ``pdtConversion_rate`` frame (callers needing
     all three should use :func:`_derive_conversion_trio` instead)."""
-    conv, _sec, _slope = _derive_conversion_trio(input_dir, solve_data_dir)
+    conv, _sec, _slope = _derive_conversion_trio(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return conv
 
 
 def derive_pdtProcess_section(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise just the ``pdtProcess_section`` frame."""
-    _conv, sec, _slope = _derive_conversion_trio(input_dir, solve_data_dir)
+    _conv, sec, _slope = _derive_conversion_trio(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return sec
 
 
 def derive_pdtProcess_slope(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise just the ``pdtProcess_slope`` frame."""
-    _conv, _sec, slope = _derive_conversion_trio(input_dir, solve_data_dir)
+    _conv, _sec, slope = _derive_conversion_trio(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return slope
 
 
 def write_pdtConversion_rate_section_slope(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Emit ``pdtConversion_rate.csv``, ``pdtProcess_section.csv``,
     ``pdtProcess_slope.csv``.
@@ -668,7 +711,9 @@ def write_pdtConversion_rate_section_slope(
     :func:`flextool.flextoolrunner.preprocessing.entity_period_calc_params.write_pdtConversion_rate_section_slope`
     for the exact formulas (mirrored here as-is).
     """
-    conv, sec, slope = _derive_conversion_trio(input_dir, solve_data_dir)
+    conv, sec, slope = _derive_conversion_trio(
+        input_dir, solve_data_dir, provider=provider,
+    )
     _write(conv, solve_data_dir / "pdtConversion_rate.csv")
     _write(sec, solve_data_dir / "pdtProcess_section.csv")
     _write(slope, solve_data_dir / "pdtProcess_slope.csv")
@@ -679,12 +724,14 @@ def write_pdtConversion_rate_section_slope(
 # ---------------------------------------------------------------------------
 
 
-def _read_quads(path: Path) -> list[tuple[str, str, str, str]]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_quads(path: Path,
+                *, provider: "object | None" = None,
+                ) -> list[tuple[str, str, str, str]]:
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[tuple[str, str, str, str]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -693,12 +740,15 @@ def _read_quads(path: Path) -> list[tuple[str, str, str, str]]:
     return out
 
 
-def _load_pbt_per_side(path: Path) -> dict[tuple[str, str, str, str, str, str], float]:
+def _load_pbt_per_side(
+    path: Path,
+    *, provider: "object | None" = None,
+) -> dict[tuple[str, str, str, str, str, str], float]:
     out: dict[tuple[str, str, str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -710,12 +760,15 @@ def _load_pbt_per_side(path: Path) -> dict[tuple[str, str, str, str, str, str], 
     return out
 
 
-def _load_pt_per_side(path: Path) -> dict[tuple[str, str, str, str], float]:
+def _load_pt_per_side(
+    path: Path,
+    *, provider: "object | None" = None,
+) -> dict[tuple[str, str, str, str], float]:
     out: dict[tuple[str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -727,12 +780,15 @@ def _load_pt_per_side(path: Path) -> dict[tuple[str, str, str, str], float]:
     return out
 
 
-def _load_p_per_side(path: Path) -> dict[tuple[str, str, str], float]:
+def _load_p_per_side(
+    path: Path,
+    *, provider: "object | None" = None,
+) -> dict[tuple[str, str, str], float]:
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -746,6 +802,7 @@ def _load_p_per_side(path: Path) -> dict[tuple[str, str, str], float]:
 
 def derive_pdtProcess_source_sink(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise the ``pdtProcess_source_sink`` frame (11-branch fallback).
 
@@ -765,20 +822,31 @@ def derive_pdtProcess_source_sink(
      10. ``p_process[p, param]`` (only when ``p ∈ process_connection``)
      11. 0.
     """
-    domain = _read_quads(solve_data_dir / "process__source__sink__param_t.csv")
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    domain = _read_quads(
+        solve_data_dir / "process__source__sink__param_t.csv",
+        provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
-    pbt_sink = _load_pbt_per_side(input_dir / "pbt_process_sink.csv")
-    pbt_source = _load_pbt_per_side(input_dir / "pbt_process_source.csv")
+    pbt_sink = _load_pbt_per_side(
+        input_dir / "pbt_process_sink.csv", provider=provider,
+    )
+    pbt_source = _load_pbt_per_side(
+        input_dir / "pbt_process_source.csv", provider=provider,
+    )
 
-    pt_sink = _load_pt_per_side(input_dir / "pt_process_sink.csv")
-    pt_source = _load_pt_per_side(input_dir / "pt_process_source.csv")
+    pt_sink = _load_pt_per_side(
+        input_dir / "pt_process_sink.csv", provider=provider,
+    )
+    pt_source = _load_pt_per_side(
+        input_dir / "pt_process_source.csv", provider=provider,
+    )
 
     pt_process: dict[tuple[str, str, str], float] = {}
     ptp_path = input_dir / "pt_process.csv"
-    ptp_seeded = _seed_open(ptp_path)
-    if ptp_seeded is not None or ptp_path.exists():
-        with (ptp_seeded if ptp_seeded is not None else ptp_path.open()) as fh:
+    ptp_seeded = _provider_open(provider, _provider_key(ptp_path), ptp_path)
+    if ptp_seeded is not None:
+        with ptp_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -788,14 +856,18 @@ def derive_pdtProcess_source_sink(
                     except ValueError:
                         continue
 
-    p_source = _load_p_per_side(input_dir / "p_process_source.csv")
-    p_sink = _load_p_per_side(input_dir / "p_process_sink.csv")
+    p_source = _load_p_per_side(
+        input_dir / "p_process_source.csv", provider=provider,
+    )
+    p_sink = _load_p_per_side(
+        input_dir / "p_process_sink.csv", provider=provider,
+    )
 
     p_process: dict[tuple[str, str], float] = {}
     pp_path = input_dir / "p_process.csv"
-    pp_seeded = _seed_open(pp_path)
-    if pp_seeded is not None or pp_path.exists():
-        with (pp_seeded if pp_seeded is not None else pp_path.open()) as fh:
+    pp_seeded = _provider_open(provider, _provider_key(pp_path), pp_path)
+    if pp_seeded is not None:
+        with pp_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -806,22 +878,26 @@ def derive_pdtProcess_source_sink(
                         continue
 
     process_connection = frozenset(
-        _read_singles(input_dir / "process_connection.csv")
+        _read_singles(input_dir / "process_connection.csv", provider=provider)
     )
 
     ts_for_d = _read_pairs_to_dict(
         solve_data_dir / "first_timesteps.csv", key_col=0,
+        provider=provider,
     )
     tb_for_d = _read_pairs_to_dict(
         solve_data_dir / "solve_branch__time_branch.csv", key_col=0,
+        provider=provider,
     )
     pe_for_d = _read_pairs_to_dict(
         solve_data_dir / "period__branch.csv", key_col=1,
+        provider=provider,
     )
 
     stoch_processes = _read_stochastic_entities(
         input_dir / "group__process.csv",
         input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
     )
 
     proc: list[str] = []
@@ -940,10 +1016,14 @@ def derive_pdtProcess_source_sink(
     })
 
 
-def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path,
+                                 *, provider: "object | None" = None,
+                                 ) -> None:
     """Emit ``solve_data/pdtProcess_source_sink.csv`` (see derive docstring)."""
     _write(
-        derive_pdtProcess_source_sink(input_dir, solve_data_dir),
+        derive_pdtProcess_source_sink(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "pdtProcess_source_sink.csv",
     )
 
@@ -978,16 +1058,18 @@ _GROUP_PARAM_DEFAULT_5000: frozenset[str] = frozenset((
 ))
 
 
-def _read_p_2(path: Path) -> dict[tuple[str, str], float]:
+def _read_p_2(path: Path,
+              *, provider: "object | None" = None,
+              ) -> dict[tuple[str, str], float]:
     """Read a 3-col CSV ``(key1, key2, value)`` into a dict.
 
     Mirrors legacy ``_read_p_2`` (entity_period_calc_params.py L1965).
     """
     out: dict[tuple[str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -999,13 +1081,15 @@ def _read_p_2(path: Path) -> dict[tuple[str, str], float]:
     return out
 
 
-def _read_pd_2(path: Path) -> dict[tuple[str, str, str], float]:
+def _read_pd_2(path: Path,
+               *, provider: "object | None" = None,
+               ) -> dict[tuple[str, str, str], float]:
     """Read a 4-col CSV ``(k1, k2, k3, value)`` into a dict."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1017,14 +1101,18 @@ def _read_pd_2(path: Path) -> dict[tuple[str, str, str], float]:
     return out
 
 
-def _read_branches_for_d(period_branch_csv: Path) -> dict[str, list[str]]:
+def _read_branches_for_d(period_branch_csv: Path,
+                         *, provider: "object | None" = None,
+                         ) -> dict[str, list[str]]:
     """``period__branch.csv`` is ``(branch_period, period)`` — index by
     the child period (column 1) and gather branch list."""
     out: dict[str, list[str]] = {}
-    seeded = _seed_open(period_branch_csv)
-    if seeded is None and not period_branch_csv.exists():
+    seeded = _provider_open(
+        provider, _provider_key(period_branch_csv), period_branch_csv,
+    )
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else period_branch_csv.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1038,7 +1126,8 @@ def _read_branches_for_d(period_branch_csv: Path) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def derive_pdGroup(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdGroup(input_dir: Path, solve_data_dir: Path,
+                   *, provider: "object | None" = None) -> pl.DataFrame:
     """Materialise the ``pdGroup`` frame (5-branch fallback per (g, param, d)).
 
     Branches:
@@ -1048,11 +1137,15 @@ def derive_pdGroup(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
       4. ``5000`` when ``param`` is a 5000-default penalty.
       5. ``0``.
     """
-    pd_g = _read_pd_2(input_dir / "pd_group.csv")
-    p_g = _read_p_2(input_dir / "p_group.csv")
-    branches_for_d = _read_branches_for_d(solve_data_dir / "period__branch.csv")
-    groups = _read_singles(input_dir / "group.csv")
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+    pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
+    p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
+    branches_for_d = _read_branches_for_d(
+        solve_data_dir / "period__branch.csv", provider=provider,
+    )
+    groups = _read_singles(input_dir / "group.csv", provider=provider)
+    period_in_use = _read_singles(
+        solve_data_dir / "period_in_use_set.csv", provider=provider,
+    )
 
     g_col: list[str] = []
     p_col: list[str] = []
@@ -1086,10 +1179,11 @@ def derive_pdGroup(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     })
 
 
-def write_pdGroup(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdGroup(input_dir: Path, solve_data_dir: Path,
+                  *, provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdGroup.csv`` (see derive docstring)."""
     _write(
-        derive_pdGroup(input_dir, solve_data_dir),
+        derive_pdGroup(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdGroup.csv",
     )
 
@@ -1099,17 +1193,18 @@ def write_pdGroup(input_dir: Path, solve_data_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def derive_pdtGroup(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
+                    *, provider: "object | None" = None) -> pl.DataFrame:
     """Materialise the ``pdtGroup`` frame.
 
     Branches: ``pt_group[g, param, t]`` → ``pd_group[g, param, d]`` →
     ``p_group[g, param]`` → 0.
     """
-    pt_g = _read_pd_2(input_dir / "pt_group.csv")  # same (k1, k2, k3, v) shape
-    pd_g = _read_pd_2(input_dir / "pd_group.csv")
-    p_g = _read_p_2(input_dir / "p_group.csv")
-    groups = _read_singles(input_dir / "group.csv")
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    pt_g = _read_pd_2(input_dir / "pt_group.csv", provider=provider)  # same (k1, k2, k3, v) shape
+    pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
+    p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
+    groups = _read_singles(input_dir / "group.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     g_col: list[str] = []
     p_col: list[str] = []
@@ -1138,10 +1233,11 @@ def derive_pdtGroup(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     })
 
 
-def write_pdtGroup(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdtGroup(input_dir: Path, solve_data_dir: Path,
+                   *, provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdtGroup.csv`` (see derive docstring)."""
     _write(
-        derive_pdtGroup(input_dir, solve_data_dir),
+        derive_pdtGroup(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtGroup.csv",
     )
 
@@ -1154,7 +1250,8 @@ def write_pdtGroup(input_dir: Path, solve_data_dir: Path) -> None:
 _COMMODITY_PERIOD_PARAM: tuple[str, ...] = ("price",)
 
 
-def derive_pdCommodity(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdCommodity(input_dir: Path, solve_data_dir: Path,
+                       *, provider: "object | None" = None) -> pl.DataFrame:
     """Materialise the ``pdCommodity`` frame.
 
     Branches per (c, 'price', d):
@@ -1162,11 +1259,15 @@ def derive_pdCommodity(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
       2. ``sum_{db ∈ branches_for_d[d]} pd_commodity[c, 'price', db]`` — fold.
       3. ``p_commodity[c, 'price']``                     — scalar (default 0).
     """
-    pd_c = _read_pd_2(input_dir / "pd_commodity.csv")
-    p_c = _read_p_2(input_dir / "p_commodity.csv")
-    branches_for_d = _read_branches_for_d(solve_data_dir / "period__branch.csv")
-    commodities = _read_singles(input_dir / "commodity.csv")
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+    pd_c = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
+    p_c = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
+    branches_for_d = _read_branches_for_d(
+        solve_data_dir / "period__branch.csv", provider=provider,
+    )
+    commodities = _read_singles(input_dir / "commodity.csv", provider=provider)
+    period_in_use = _read_singles(
+        solve_data_dir / "period_in_use_set.csv", provider=provider,
+    )
 
     c_col: list[str] = []
     p_col: list[str] = []
@@ -1196,10 +1297,11 @@ def derive_pdCommodity(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     })
 
 
-def write_pdCommodity(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdCommodity(input_dir: Path, solve_data_dir: Path,
+                      *, provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdCommodity.csv`` (see derive docstring)."""
     _write(
-        derive_pdCommodity(input_dir, solve_data_dir),
+        derive_pdCommodity(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdCommodity.csv",
     )
 
@@ -1212,17 +1314,18 @@ def write_pdCommodity(input_dir: Path, solve_data_dir: Path) -> None:
 _COMMODITY_TIME_PARAM: tuple[str, ...] = ("price",)
 
 
-def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
+                        *, provider: "object | None" = None) -> pl.DataFrame:
     """Materialise the ``pdtCommodity`` frame.
 
     Domain: commodity × commodityTimeParam × dt.
     Branches: ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → 0.
     """
-    pt = _read_pd_2(input_dir / "pt_commodity.csv")
-    pd_ = _read_pd_2(input_dir / "pd_commodity.csv")
-    p = _read_p_2(input_dir / "p_commodity.csv")
-    commodities = _read_singles(input_dir / "commodity.csv")
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    pt = _read_pd_2(input_dir / "pt_commodity.csv", provider=provider)
+    pd_ = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
+    p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
+    commodities = _read_singles(input_dir / "commodity.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     c_col: list[str] = []
     p_col: list[str] = []
@@ -1248,10 +1351,11 @@ def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     })
 
 
-def write_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdtCommodity(input_dir: Path, solve_data_dir: Path,
+                       *, provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdtCommodity.csv`` (see derive docstring)."""
     _write(
-        derive_pdtCommodity(input_dir, solve_data_dir),
+        derive_pdtCommodity(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtCommodity.csv",
     )
 
@@ -1263,13 +1367,15 @@ def write_pdtCommodity(input_dir: Path, solve_data_dir: Path) -> None:
 
 def _derive_positive_negative_inflow(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Build both ``p_positive_inflow`` and ``p_negative_inflow`` frames
     from a single read of ``pdtNodeInflow.csv``."""
-    nodes = _read_singles(input_dir / "node.csv")
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
     inflow_method_pairs = frozenset(
-        _read_pairs(solve_data_dir / "node__inflow_method.csv")
+        _read_pairs(solve_data_dir / "node__inflow_method.csv",
+                    provider=provider)
     )
     no_inflow_nodes = frozenset(
         n for n in nodes if (n, "no_inflow") in inflow_method_pairs
@@ -1277,9 +1383,11 @@ def _derive_positive_negative_inflow(
 
     pdt_inflow: dict[tuple[str, str, str], float] = {}
     pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
-    pdtni_seeded = _seed_open(pdtni_path)
-    if pdtni_seeded is not None or pdtni_path.exists():
-        with (pdtni_seeded if pdtni_seeded is not None else pdtni_path.open()) as fh:
+    pdtni_seeded = _provider_open(
+        provider, _provider_key(pdtni_path), pdtni_path,
+    )
+    if pdtni_seeded is not None:
+        with pdtni_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -1330,22 +1438,29 @@ def _derive_positive_negative_inflow(
 
 def derive_p_positive_inflow(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise just the ``p_positive_inflow`` frame."""
-    pos, _neg = _derive_positive_negative_inflow(input_dir, solve_data_dir)
+    pos, _neg = _derive_positive_negative_inflow(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return pos
 
 
 def derive_p_negative_inflow(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise just the ``p_negative_inflow`` frame."""
-    _pos, neg = _derive_positive_negative_inflow(input_dir, solve_data_dir)
+    _pos, neg = _derive_positive_negative_inflow(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return neg
 
 
 def write_p_positive_negative_inflow(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Emit ``p_positive_inflow.csv`` and ``p_negative_inflow.csv``
     from ``solve_data/pdtNodeInflow.csv`` (native, written upstream).
@@ -1355,7 +1470,9 @@ def write_p_positive_negative_inflow(
     * ``p_negative_inflow`` covers all nodes — ``no_inflow`` nodes emit
       explicit ``0.0`` (matches the mod's all-nodes domain).
     """
-    pos, neg = _derive_positive_negative_inflow(input_dir, solve_data_dir)
+    pos, neg = _derive_positive_negative_inflow(
+        input_dir, solve_data_dir, provider=provider,
+    )
     _write(pos, solve_data_dir / "p_positive_inflow.csv")
     _write(neg, solve_data_dir / "p_negative_inflow.csv")
 
@@ -1366,12 +1483,14 @@ def write_p_positive_negative_inflow(
 # ---------------------------------------------------------------------------
 
 
-def _read_triples(path: Path) -> list[tuple[str, str, str]]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_triples(path: Path,
+                  *, provider: "object | None" = None,
+                  ) -> list[tuple[str, str, str]]:
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[tuple[str, str, str]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1382,15 +1501,17 @@ def _read_triples(path: Path) -> list[tuple[str, str, str]]:
 
 def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
                        key_cols: tuple[int, ...],
-                       val_col: int) -> dict[tuple, float]:
+                       val_col: int,
+                       *, provider: "object | None" = None,
+                       ) -> dict[tuple, float]:
     """Read a long-format pdtX CSV, filter rows where col[param_col] ==
     param_value, return dict[tuple(row[c] for c in key_cols)] = float(row[val_col]).
     """
     out: dict[tuple, float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1413,6 +1534,7 @@ def _write_5col(path: Path, header: tuple[str, ...], rows: list[tuple]) -> None:
 
 def _derive_varCost_pair(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Build both ``pdtProcess__source__sink__dt_varCost`` frames in one
     pass — the basic and ``_alwaysProcess`` variants share the same
@@ -1422,24 +1544,34 @@ def _derive_varCost_pair(
         solve_data_dir / "pdtProcess.csv",
         param_col=1, param_value="other_operational_cost",
         key_cols=(0, 2, 3), val_col=4,
+        provider=provider,
     )  # (process, period, time) → value
     pdt_src = _read_pdt_at_param(
         solve_data_dir / "pdtProcess_source.csv",
         param_col=2, param_value="other_operational_cost",
         key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
     )  # (process, source, period, time) → value
     pdt_snk = _read_pdt_at_param(
         solve_data_dir / "pdtProcess_sink.csv",
         param_col=2, param_value="other_operational_cost",
         key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
     )  # (process, sink, period, time) → value
-    proc_src = frozenset(_read_pairs(input_dir / "process__source.csv"))
-    proc_snk = frozenset(_read_pairs(input_dir / "process__sink.csv"))
-    pss = _read_triples(solve_data_dir / "process_source_sink.csv")
-    pss_always = _read_triples(
-        solve_data_dir / "process_source_sink_alwaysProcess.csv"
+    proc_src = frozenset(
+        _read_pairs(input_dir / "process__source.csv", provider=provider)
     )
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    proc_snk = frozenset(
+        _read_pairs(input_dir / "process__sink.csv", provider=provider)
+    )
+    pss = _read_triples(
+        solve_data_dir / "process_source_sink.csv", provider=provider,
+    )
+    pss_always = _read_triples(
+        solve_data_dir / "process_source_sink_alwaysProcess.csv",
+        provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     def _build(rows_iter: list[tuple[str, str, str]],
                always: bool) -> pl.DataFrame:
@@ -1477,23 +1609,30 @@ def _derive_varCost_pair(
 
 def derive_pdtProcess__source__sink__dt_varCost(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise the ``pdtProcess__source__sink__dt_varCost`` frame."""
-    basic, _always = _derive_varCost_pair(input_dir, solve_data_dir)
+    basic, _always = _derive_varCost_pair(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return basic
 
 
 def derive_pdtProcess__source__sink__dt_varCost_alwaysProcess(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise the ``pdtProcess__source__sink__dt_varCost_alwaysProcess``
     frame."""
-    _basic, always = _derive_varCost_pair(input_dir, solve_data_dir)
+    _basic, always = _derive_varCost_pair(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return always
 
 
 def write_pdtProcess__source__sink__dt_varCost_pair(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """flextool.mod L1493, L1502 — two ``varCost`` calc params keyed on
     ``process_source_sink`` and ``process_source_sink_alwaysProcess``.
@@ -1503,7 +1642,9 @@ def write_pdtProcess__source__sink__dt_varCost_pair(
     ``_alwaysProcess`` variant additionally gates the third term on
     ``(p, sink) ∈ process_sink ∪ process_source``.
     """
-    basic, always = _derive_varCost_pair(input_dir, solve_data_dir)
+    basic, always = _derive_varCost_pair(
+        input_dir, solve_data_dir, provider=provider,
+    )
     _write(basic, solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv")
     _write(always, solve_data_dir
                    / "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv")
@@ -1526,28 +1667,32 @@ def _filter_rows_to_frame(
 
 def _derive_pssdt_varCost_filters(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Build all four ``pssdt_varCost_*`` filter frames in one pass."""
     pdt = _read_pdt_at_param(
         solve_data_dir / "pdtProcess.csv",
         param_col=1, param_value="other_operational_cost",
         key_cols=(0, 2, 3), val_col=4,
+        provider=provider,
     )
     pdt_src = _read_pdt_at_param(
         solve_data_dir / "pdtProcess_source.csv",
         param_col=2, param_value="other_operational_cost",
         key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
     )
     pdt_snk = _read_pdt_at_param(
         solve_data_dir / "pdtProcess_sink.csv",
         param_col=2, param_value="other_operational_cost",
         key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
     )
     varcost: dict[tuple[str, str, str, str, str], float] = {}
     vp = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
-    vp_seeded = _seed_open(vp)
-    if vp_seeded is not None or vp.exists():
-        with (vp_seeded if vp_seeded is not None else vp.open()) as fh:
+    vp_seeded = _provider_open(provider, _provider_key(vp), vp)
+    if vp_seeded is not None:
+        with vp_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -1557,11 +1702,19 @@ def _derive_pssdt_varCost_filters(
                     except ValueError:
                         continue
 
-    proc_src = frozenset(_read_pairs(input_dir / "process__source.csv"))
-    proc_snk = frozenset(_read_pairs(input_dir / "process__sink.csv"))
-    pss_noEff = _read_triples(solve_data_dir / "process_source_sink_noEff.csv")
-    pss_eff = _read_triples(solve_data_dir / "process_source_sink_eff.csv")
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    proc_src = frozenset(
+        _read_pairs(input_dir / "process__source.csv", provider=provider)
+    )
+    proc_snk = frozenset(
+        _read_pairs(input_dir / "process__sink.csv", provider=provider)
+    )
+    pss_noEff = _read_triples(
+        solve_data_dir / "process_source_sink_noEff.csv", provider=provider,
+    )
+    pss_eff = _read_triples(
+        solve_data_dir / "process_source_sink_eff.csv", provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     no_eff: list[tuple[str, str, str, str, str]] = []
     for (p, src, snk) in pss_noEff:
@@ -1597,30 +1750,43 @@ def _derive_pssdt_varCost_filters(
 
 def derive_pssdt_varCost_noEff(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    return _derive_pssdt_varCost_filters(input_dir, solve_data_dir)[0]
+    return _derive_pssdt_varCost_filters(
+        input_dir, solve_data_dir, provider=provider,
+    )[0]
 
 
 def derive_pssdt_varCost_eff_unit_source(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    return _derive_pssdt_varCost_filters(input_dir, solve_data_dir)[1]
+    return _derive_pssdt_varCost_filters(
+        input_dir, solve_data_dir, provider=provider,
+    )[1]
 
 
 def derive_pssdt_varCost_eff_unit_sink(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    return _derive_pssdt_varCost_filters(input_dir, solve_data_dir)[2]
+    return _derive_pssdt_varCost_filters(
+        input_dir, solve_data_dir, provider=provider,
+    )[2]
 
 
 def derive_pssdt_varCost_eff_connection(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    return _derive_pssdt_varCost_filters(input_dir, solve_data_dir)[3]
+    return _derive_pssdt_varCost_filters(
+        input_dir, solve_data_dir, provider=provider,
+    )[3]
 
 
 def write_pssdt_varCost_filters(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """flextool.mod L1498-1501 — four filter sets keyed on pdt-* OOC values.
 
@@ -1628,7 +1794,7 @@ def write_pssdt_varCost_filters(
     :func:`write_pdtProcess__source__sink__dt_varCost_pair`.
     """
     no_eff, eff_src, eff_snk, eff_conn = _derive_pssdt_varCost_filters(
-        input_dir, solve_data_dir,
+        input_dir, solve_data_dir, provider=provider,
     )
     _write(no_eff, solve_data_dir / "pssdt_varCost_noEff.csv")
     _write(eff_src, solve_data_dir / "pssdt_varCost_eff_unit_source.csv")
@@ -1638,13 +1804,15 @@ def write_pssdt_varCost_filters(
 
 # ---- write_cap_reduction_params (mod L1637-1663) --------------------------
 
-def _read_p_side_3(path: Path) -> dict[tuple[str, str, str], float]:
+def _read_p_side_3(path: Path,
+                   *, provider: "object | None" = None,
+                   ) -> dict[tuple[str, str, str], float]:
     """Per-side 4-col CSV ``(k1, k2, k3, value)`` → ``(k1, k2, k3) → v``."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1658,6 +1826,7 @@ def _read_p_side_3(path: Path) -> dict[tuple[str, str, str], float]:
 
 def _cap_reduction_inputs(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> tuple[
     dict[tuple[str, str], float],
     dict[tuple[str, str, str], float],
@@ -1670,9 +1839,9 @@ def _cap_reduction_inputs(
     """Shared input loading for the 4 cap-reduction derives."""
     p_process: dict[tuple[str, str], float] = {}
     pp_path = input_dir / "p_process.csv"
-    pp_seeded = _seed_open(pp_path)
-    if pp_seeded is not None or pp_path.exists():
-        with (pp_seeded if pp_seeded is not None else pp_path.open()) as fh:
+    pp_seeded = _provider_open(provider, _provider_key(pp_path), pp_path)
+    if pp_seeded is not None:
+        with pp_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -1682,19 +1851,23 @@ def _cap_reduction_inputs(
                     except ValueError:
                         continue
 
-    p_process_source = _read_p_side_3(input_dir / "p_process_source.csv")
-    p_process_sink = _read_p_side_3(input_dir / "p_process_sink.csv")
-    process_online = frozenset(
-        _read_singles(solve_data_dir / "process_online.csv")
+    p_process_source = _read_p_side_3(
+        input_dir / "p_process_source.csv", provider=provider,
     )
-    proc_src = _read_pairs(input_dir / "process__source.csv")
-    proc_snk = _read_pairs(input_dir / "process__sink.csv")
+    p_process_sink = _read_p_side_3(
+        input_dir / "p_process_sink.csv", provider=provider,
+    )
+    process_online = frozenset(
+        _read_singles(solve_data_dir / "process_online.csv", provider=provider)
+    )
+    proc_src = _read_pairs(input_dir / "process__source.csv", provider=provider)
+    proc_snk = _read_pairs(input_dir / "process__sink.csv", provider=provider)
 
     dt_with_dur: list[tuple[str, str, float]] = []
     su_path = solve_data_dir / "steps_in_use.csv"
-    su_seeded = _seed_open(su_path)
-    if su_seeded is not None or su_path.exists():
-        with (su_seeded if su_seeded is not None else su_path.open()) as fh:
+    su_seeded = _provider_open(provider, _provider_key(su_path), su_path)
+    if su_seeded is not None:
+        with su_seeded as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for row in reader:
@@ -1749,9 +1922,10 @@ def _cap_reduction_frame(
 
 def derive_p_startup_cap_reduction_sink(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     (pp, _ps, psnk, online, _proc_src, proc_snk, dtd) = _cap_reduction_inputs(
-        input_dir, solve_data_dir,
+        input_dir, solve_data_dir, provider=provider,
     )
     return _cap_reduction_frame(psnk, proc_snk, "ramp_speed_up", "sink",
                                 pp, online, dtd)
@@ -1759,9 +1933,10 @@ def derive_p_startup_cap_reduction_sink(
 
 def derive_p_shutdown_cap_reduction_sink(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     (pp, _ps, psnk, online, _proc_src, proc_snk, dtd) = _cap_reduction_inputs(
-        input_dir, solve_data_dir,
+        input_dir, solve_data_dir, provider=provider,
     )
     return _cap_reduction_frame(psnk, proc_snk, "ramp_speed_down", "sink",
                                 pp, online, dtd)
@@ -1769,9 +1944,10 @@ def derive_p_shutdown_cap_reduction_sink(
 
 def derive_p_startup_cap_reduction_source(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     (pp, psrc, _psnk, online, proc_src, _proc_snk, dtd) = _cap_reduction_inputs(
-        input_dir, solve_data_dir,
+        input_dir, solve_data_dir, provider=provider,
     )
     return _cap_reduction_frame(psrc, proc_src, "ramp_speed_up", "source",
                                 pp, online, dtd)
@@ -1779,9 +1955,10 @@ def derive_p_startup_cap_reduction_source(
 
 def derive_p_shutdown_cap_reduction_source(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     (pp, psrc, _psnk, online, proc_src, _proc_snk, dtd) = _cap_reduction_inputs(
-        input_dir, solve_data_dir,
+        input_dir, solve_data_dir, provider=provider,
     )
     return _cap_reduction_frame(psrc, proc_src, "ramp_speed_down", "source",
                                 pp, online, dtd)
@@ -1789,12 +1966,13 @@ def derive_p_shutdown_cap_reduction_source(
 
 def write_cap_reduction_params(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """flextool.mod L1637-1663 — Morales-Espana startup/shutdown capacity
     reduction params (4 calc params, 1 per side × startup/shutdown).
     """
     (pp, psrc, psnk, online, proc_src, proc_snk, dtd) = _cap_reduction_inputs(
-        input_dir, solve_data_dir,
+        input_dir, solve_data_dir, provider=provider,
     )
     _write(
         _cap_reduction_frame(psnk, proc_snk, "ramp_speed_up", "sink",
@@ -1820,12 +1998,14 @@ def write_cap_reduction_params(
 
 # ---- write_ed_period_params (mod L1252-1255 family, ed_*_period) ----------
 
-def _read_ed_pairs(path: Path) -> list[tuple[str, str]]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_ed_pairs(path: Path,
+                   *, provider: "object | None" = None,
+                   ) -> list[tuple[str, str]]:
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[tuple[str, str]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -1877,7 +2057,8 @@ _ED_PERIOD_PARAM_SPECS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def _ed_period_inputs(input_dir: Path, solve_data_dir: Path):
+def _ed_period_inputs(input_dir: Path, solve_data_dir: Path,
+                      *, provider: "object | None" = None):
     from flextool.engine_polars._pdt_lookup import PdLookup
     pp = PdLookup(
         pd_csv=input_dir / "pd_process.csv",
@@ -1889,57 +2070,84 @@ def _ed_period_inputs(input_dir: Path, solve_data_dir: Path):
         p_csv=input_dir / "p_node.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
     )
-    process_set = frozenset(_read_singles(input_dir / "process.csv"))
-    node_set = frozenset(_read_singles(input_dir / "node.csv"))
-    ed_invest_pairs = _read_ed_pairs(solve_data_dir / "ed_invest.csv")
-    ed_divest_pairs = _read_ed_pairs(solve_data_dir / "ed_divest.csv")
+    process_set = frozenset(
+        _read_singles(input_dir / "process.csv", provider=provider)
+    )
+    node_set = frozenset(
+        _read_singles(input_dir / "node.csv", provider=provider)
+    )
+    ed_invest_pairs = _read_ed_pairs(
+        solve_data_dir / "ed_invest.csv", provider=provider,
+    )
+    ed_divest_pairs = _read_ed_pairs(
+        solve_data_dir / "ed_divest.csv", provider=provider,
+    )
     return pp, pn, process_set, node_set, ed_invest_pairs, ed_divest_pairs
 
 
 def derive_ed_invest_max_period(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    pp, pn, ps, ns, inv, _div = _ed_period_inputs(input_dir, solve_data_dir)
+    pp, pn, ps, ns, inv, _div = _ed_period_inputs(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _ed_period_compute(inv, "invest_max_period", pp, pn, ps, ns)
 
 
 def derive_ed_invest_min_period(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    pp, pn, ps, ns, inv, _div = _ed_period_inputs(input_dir, solve_data_dir)
+    pp, pn, ps, ns, inv, _div = _ed_period_inputs(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _ed_period_compute(inv, "invest_min_period", pp, pn, ps, ns)
 
 
 def derive_ed_divest_max_period(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    pp, pn, ps, ns, _inv, div = _ed_period_inputs(input_dir, solve_data_dir)
+    pp, pn, ps, ns, _inv, div = _ed_period_inputs(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _ed_period_compute(div, "retire_max_period", pp, pn, ps, ns)
 
 
 def derive_ed_divest_min_period(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    pp, pn, ps, ns, _inv, div = _ed_period_inputs(input_dir, solve_data_dir)
+    pp, pn, ps, ns, _inv, div = _ed_period_inputs(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _ed_period_compute(div, "retire_min_period", pp, pn, ps, ns)
 
 
 def derive_ed_cumulative_max_capacity(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    pp, pn, ps, ns, inv, _div = _ed_period_inputs(input_dir, solve_data_dir)
+    pp, pn, ps, ns, inv, _div = _ed_period_inputs(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _ed_period_compute(inv, "cumulative_max_capacity", pp, pn, ps, ns)
 
 
 def derive_ed_cumulative_min_capacity(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    pp, pn, ps, ns, inv, _div = _ed_period_inputs(input_dir, solve_data_dir)
+    pp, pn, ps, ns, inv, _div = _ed_period_inputs(
+        input_dir, solve_data_dir, provider=provider,
+    )
     return _ed_period_compute(inv, "cumulative_min_capacity", pp, pn, ps, ns)
 
 
 def write_ed_period_params(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """``ed_*_period`` / ``ed_cumulative_*`` family — six calc params
     keyed on ``ed_invest`` / ``ed_divest``.
@@ -1949,7 +2157,9 @@ def write_ed_period_params(
     nodes are disjoint by construction, so exactly one of the
     ``PdLookup`` branches fires per entity row.
     """
-    pp, pn, ps, ns, inv, div = _ed_period_inputs(input_dir, solve_data_dir)
+    pp, pn, ps, ns, inv, div = _ed_period_inputs(
+        input_dir, solve_data_dir, provider=provider,
+    )
     pair_for = {"invest": inv, "divest": div}
     for fname, tag, mod_param in _ED_PERIOD_PARAM_SPECS:
         frame = _ed_period_compute(pair_for[tag], mod_param, pp, pn, ps, ns)
