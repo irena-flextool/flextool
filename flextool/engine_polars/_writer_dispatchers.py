@@ -688,7 +688,8 @@ def write_process_arc_unions(input_dir: Path, solve_data_dir: Path) -> None:
 # the five outputs.
 
 
-def _entity_period_inputs(input_dir: Path, solve_data_dir: Path) -> dict:
+def _entity_period_inputs(input_dir: Path, solve_data_dir: Path,
+                            *, provider: "object | None" = None) -> dict:
     """Shared input bundle for the 5 entity-period derives."""
     from flextool.engine_polars._pdt_lookup import PdLookup
 
@@ -696,25 +697,27 @@ def _entity_period_inputs(input_dir: Path, solve_data_dir: Path) -> dict:
         pd_csv=input_dir / "pd_process.csv",
         p_csv=input_dir / "p_process.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
+        provider=provider,
     )
     pn = PdLookup(
         pd_csv=input_dir / "pd_node.csv",
         p_csv=input_dir / "p_node.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
+        provider=provider,
     )
 
     return {
         "pp": pp,
         "pn": pn,
-        "process_set": frozenset(_read_singles(input_dir / "process.csv")),
-        "node_set": frozenset(_read_singles(input_dir / "node.csv")),
+        "process_set": frozenset(_read_singles(input_dir / "process.csv", provider=provider)),
+        "node_set": frozenset(_read_singles(input_dir / "node.csv", provider=provider)),
         "process_period_in_use": _read_pairs(
-            solve_data_dir / "process__PeriodParam_in_use.csv"),
+            solve_data_dir / "process__PeriodParam_in_use.csv", provider=provider),
         "node_period_in_use": _read_pairs(
-            solve_data_dir / "node__PeriodParam_in_use.csv"),
+            solve_data_dir / "node__PeriodParam_in_use.csv", provider=provider),
         "period_with_history": _read_singles(
-            solve_data_dir / "period_with_history.csv"),
-        "entities": _read_singles(input_dir / "entity.csv"),
+            solve_data_dir / "period_with_history.csv", provider=provider),
+        "entities": _read_singles(input_dir / "entity.csv", provider=provider),
     }
 
 
@@ -847,56 +850,64 @@ def _compute_p_entity_unitsize(input_dir: Path, inp: dict) -> pl.DataFrame:
 
 # ---- Public derive_X (each rebuilds its own input bundle) ----
 
-def derive_pdProcess(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdProcess(input_dir: Path, solve_data_dir: Path,
+                       *, provider: "object | None" = None) -> pl.DataFrame:
     """``pdProcess.csv`` — (process, param, period, value) for every
     (process, param) in process__PeriodParam_in_use × period_with_history,
     value pulled from PdLookup over (pd_process, p_process, period__branch).
     """
-    return _compute_pdProcess(_entity_period_inputs(input_dir, solve_data_dir))
+    return _compute_pdProcess(
+        _entity_period_inputs(input_dir, solve_data_dir, provider=provider))
 
 
-def derive_pdNode(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdNode(input_dir: Path, solve_data_dir: Path,
+                   *, provider: "object | None" = None) -> pl.DataFrame:
     """``pdNode.csv`` — node-side analogue of pdProcess."""
-    return _compute_pdNode(_entity_period_inputs(input_dir, solve_data_dir))
+    return _compute_pdNode(
+        _entity_period_inputs(input_dir, solve_data_dir, provider=provider))
 
 
 def derive_edEntity_lifetime(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``edEntity_lifetime.csv`` — per-entity lifetime per period_with_history.
     Process entities pull from the process PdLookup, node entities from the
     node PdLookup, others get 0.0.
     """
     return _compute_edEntity_lifetime(
-        _entity_period_inputs(input_dir, solve_data_dir),
+        _entity_period_inputs(input_dir, solve_data_dir, provider=provider),
     )
 
 
 def derive_ed_fixed_cost(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``ed_fixed_cost.csv`` — entity fixed cost summed across the
     process and node side, each side scaled by 1000 if the entity is
     a member of that side."""
     return _compute_ed_fixed_cost(
-        _entity_period_inputs(input_dir, solve_data_dir),
+        _entity_period_inputs(input_dir, solve_data_dir, provider=provider),
     )
 
 
 def derive_p_entity_unitsize(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``p_entity_unitsize.csv`` — per-entity ``virtual_unitsize`` first,
     falling back to ``existing`` then to 1000.0; pulled from the
     side-appropriate p_*.csv table."""
     return _compute_p_entity_unitsize(
         input_dir,
-        _entity_period_inputs(input_dir, solve_data_dir),
+        _entity_period_inputs(input_dir, solve_data_dir, provider=provider),
     )
 
 
 def write_entity_period_calc_params(input_dir: Path,
-                                    solve_data_dir: Path) -> None:
+                                    solve_data_dir: Path,
+                                    *, provider: "object | None" = None) -> None:
     """Migrate pdProcess/pdNode + edEntity_lifetime + ed_fixed_cost +
     p_entity_unitsize in one pass.
 
@@ -904,7 +915,7 @@ def write_entity_period_calc_params(input_dir: Path,
     through ``_write(derive_X(...), path)`` so Phase E-b's accumulator
     captures every frame.
     """
-    inp = _entity_period_inputs(input_dir, solve_data_dir)
+    inp = _entity_period_inputs(input_dir, solve_data_dir, provider=provider)
     _write(_compute_pdProcess(inp), solve_data_dir / "pdProcess.csv")
     _write(_compute_pdNode(inp), solve_data_dir / "pdNode.csv")
     _write(_compute_edEntity_lifetime(inp),

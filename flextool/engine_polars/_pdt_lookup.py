@@ -41,20 +41,24 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from flextool.engine_polars._input_source import _seed_open
+from flextool.engine_polars._writer_provider_io import (
+    _provider_key,
+    _provider_open,
+)
 
 
 # ---------------------------------------------------------------------------
 # Shared CSV readers (mirror legacy helpers byte-for-byte).
 # ---------------------------------------------------------------------------
 
-def _read_pd(path: Path) -> dict[tuple[str, str, str], float]:
+def _read_pd(path: Path,
+              *, provider: "object | None" = None) -> dict[tuple[str, str, str], float]:
     """4-col CSV: (entity, param, period, value)."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -66,13 +70,14 @@ def _read_pd(path: Path) -> dict[tuple[str, str, str], float]:
     return out
 
 
-def _read_p(path: Path) -> dict[tuple[str, str], float]:
+def _read_p(path: Path,
+             *, provider: "object | None" = None) -> dict[tuple[str, str], float]:
     """3-col CSV: (entity, param, value)."""
     out: dict[tuple[str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -84,13 +89,14 @@ def _read_p(path: Path) -> dict[tuple[str, str], float]:
     return out
 
 
-def _read_pt(path: Path) -> dict[tuple[str, str, str], float]:
+def _read_pt(path: Path,
+              *, provider: "object | None" = None) -> dict[tuple[str, str, str], float]:
     """4-col CSV: (entity, param, time, value)."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -102,13 +108,14 @@ def _read_pt(path: Path) -> dict[tuple[str, str, str], float]:
     return out
 
 
-def _read_pbt(path: Path) -> dict[tuple[str, str, str, str, str], float]:
+def _read_pbt(path: Path,
+               *, provider: "object | None" = None) -> dict[tuple[str, str, str, str, str], float]:
     """6-col CSV: (entity, param, branch, time_start, time, value)."""
     out: dict[tuple[str, str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -120,13 +127,14 @@ def _read_pbt(path: Path) -> dict[tuple[str, str, str, str, str], float]:
     return out
 
 
-def _read_pd_3(path: Path) -> dict[tuple[str, str, str, str], float]:
+def _read_pd_3(path: Path,
+                *, provider: "object | None" = None) -> dict[tuple[str, str, str, str], float]:
     """5-col CSV: (e1, e2, param, period, value)."""
     out: dict[tuple[str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -138,13 +146,14 @@ def _read_pd_3(path: Path) -> dict[tuple[str, str, str, str], float]:
     return out
 
 
-def _read_pt_3(path: Path) -> dict[tuple[str, str, str, str], float]:
+def _read_pt_3(path: Path,
+                *, provider: "object | None" = None) -> dict[tuple[str, str, str, str], float]:
     """5-col CSV: (e1, e2, param, time, value)."""
     out: dict[tuple[str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -156,13 +165,14 @@ def _read_pt_3(path: Path) -> dict[tuple[str, str, str, str], float]:
     return out
 
 
-def _read_p_3(path: Path) -> dict[tuple[str, str, str], float]:
+def _read_p_3(path: Path,
+               *, provider: "object | None" = None) -> dict[tuple[str, str, str], float]:
     """4-col CSV: (e1, e2, param, value)."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -174,13 +184,14 @@ def _read_p_3(path: Path) -> dict[tuple[str, str, str], float]:
     return out
 
 
-def _read_pbt_3(path: Path) -> dict[tuple[str, str, str, str, str, str], float]:
+def _read_pbt_3(path: Path,
+                 *, provider: "object | None" = None) -> dict[tuple[str, str, str, str, str, str], float]:
     """7-col CSV: (e1, e2, param, branch, time_start, time, value)."""
     out: dict[tuple[str, str, str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -192,14 +203,15 @@ def _read_pbt_3(path: Path) -> dict[tuple[str, str, str, str, str, str], float]:
     return out
 
 
-def _read_pairs_to_dict(path: Path, key_col: int) -> dict[str, list[str]]:
+def _read_pairs_to_dict(path: Path, key_col: int,
+                         *, provider: "object | None" = None) -> dict[str, list[str]]:
     """Generic two-col CSV → ``key_col → list[other_col]``."""
     out: dict[str, list[str]] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
     other_col = 1 - key_col
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -208,13 +220,14 @@ def _read_pairs_to_dict(path: Path, key_col: int) -> dict[str, list[str]]:
     return out
 
 
-def _read_period_branch(path: Path) -> dict[str, list[str]]:
+def _read_period_branch(path: Path,
+                         *, provider: "object | None" = None) -> dict[str, list[str]]:
     """Build ``d → [db]`` from ``period__branch.csv`` (col0=db, col1=d)."""
     out: dict[str, list[str]] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -223,11 +236,12 @@ def _read_period_branch(path: Path) -> dict[str, list[str]]:
     return out
 
 
-def _read_singles(path: Path) -> list[str]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_singles(path: Path,
+                   *, provider: "object | None" = None) -> list[str]:
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         return [r[0] for r in reader if r and r[0]]
@@ -242,13 +256,14 @@ PROCESS_PARAM_DEF1: frozenset[str] = frozenset({"efficiency", "availability"})
 NODE_PARAM_DEF1: frozenset[str] = frozenset({"availability"})
 
 
-def read_class_defaults(path: Path, class_name: str) -> dict[str, float]:
+def read_class_defaults(path: Path, class_name: str,
+                         *, provider: "object | None" = None) -> dict[str, float]:
     """Read ``input/default_values.csv`` filtered to ``class_name``."""
     out: dict[str, float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -278,10 +293,12 @@ class PdLookup:
         pd_csv: Path,             # input/pd_<class>.csv
         p_csv: Path,              # input/p_<class>.csv
         period_branch_csv: Path,  # solve_data/period__branch.csv
+        *,
+        provider: "object | None" = None,
     ) -> None:
-        self._pd = _read_pd(pd_csv)
-        self._p = _read_p(p_csv)
-        self._branches_for_d = _read_period_branch(period_branch_csv)
+        self._pd = _read_pd(pd_csv, provider=provider)
+        self._p = _read_p(p_csv, provider=provider)
+        self._branches_for_d = _read_period_branch(period_branch_csv, provider=provider)
 
     def get(self, e: str, param: str, d: str) -> float:
         if (e, param, d) in self._pd:
@@ -334,19 +351,21 @@ class PdtLookup:
         param_def1: frozenset[str],
         time_first_priority: bool = False,
         class_default_values: dict[str, float] | None = None,
+        *,
+        provider: "object | None" = None,
     ) -> None:
-        self._pbt = _read_pbt(pbt_csv)
-        self._pd = _read_pd(pd_csv)
-        self._pt = _read_pt(pt_csv)
-        self._p = _read_p(p_csv)
-        self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0)
-        self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0)
-        self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1)
-        groups_stoch = frozenset(_read_singles(group_stochastic_csv))
+        self._pbt = _read_pbt(pbt_csv, provider=provider)
+        self._pd = _read_pd(pd_csv, provider=provider)
+        self._pt = _read_pt(pt_csv, provider=provider)
+        self._p = _read_p(p_csv, provider=provider)
+        self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
+        self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
+        self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
+        groups_stoch = frozenset(_read_singles(group_stochastic_csv, provider=provider))
         self._stoch_entity: set[str] = set()
-        ge_seeded = _seed_open(group_entity_csv)
-        if ge_seeded is not None or group_entity_csv.exists():
-            with (ge_seeded if ge_seeded is not None else group_entity_csv.open()) as fh:
+        ge_seeded = _provider_open(provider, _provider_key(group_entity_csv), group_entity_csv)
+        if ge_seeded is not None:
+            with ge_seeded as fh:
                 reader = csv.reader(fh)
                 next(reader, None)
                 for row in reader:
@@ -438,19 +457,21 @@ class PdtLookupPerSide:
         period_branch_csv: Path,
         group_process_csv: Path,
         group_stochastic_csv: Path,
+        *,
+        provider: "object | None" = None,
     ) -> None:
-        self._pbt = _read_pbt_3(pbt_csv)
-        self._pd = _read_pd_3(pd_csv)
-        self._pt = _read_pt_3(pt_csv)
-        self._p = _read_p_3(p_csv)
-        self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0)
-        self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0)
-        self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1)
-        groups_stoch = frozenset(_read_singles(group_stochastic_csv))
+        self._pbt = _read_pbt_3(pbt_csv, provider=provider)
+        self._pd = _read_pd_3(pd_csv, provider=provider)
+        self._pt = _read_pt_3(pt_csv, provider=provider)
+        self._p = _read_p_3(p_csv, provider=provider)
+        self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
+        self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
+        self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
+        groups_stoch = frozenset(_read_singles(group_stochastic_csv, provider=provider))
         self._stoch_process: set[str] = set()
-        gp_seeded = _seed_open(group_process_csv)
-        if gp_seeded is not None or group_process_csv.exists():
-            with (gp_seeded if gp_seeded is not None else group_process_csv.open()) as fh:
+        gp_seeded = _provider_open(provider, _provider_key(group_process_csv), group_process_csv)
+        if gp_seeded is not None:
+            with gp_seeded as fh:
                 reader = csv.reader(fh)
                 next(reader, None)
                 for row in reader:

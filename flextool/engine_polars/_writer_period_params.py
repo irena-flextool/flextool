@@ -2064,11 +2064,13 @@ def _ed_period_inputs(input_dir: Path, solve_data_dir: Path,
         pd_csv=input_dir / "pd_process.csv",
         p_csv=input_dir / "p_process.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
+        provider=provider,
     )
     pn = PdLookup(
         pd_csv=input_dir / "pd_node.csv",
         p_csv=input_dir / "p_node.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
+        provider=provider,
     )
     process_set = frozenset(
         _read_singles(input_dir / "process.csv", provider=provider)

@@ -80,20 +80,23 @@ def _read_csv(path: Path, columns: list[str],
     return df
 
 
-def _read_singles(path: Path) -> list[str]:
-    df = _read_csv(path, ["v"])
+def _read_singles(path: Path,
+                   *, provider: "object | None" = None) -> list[str]:
+    df = _read_csv(path, ["v"], provider=provider)
     return [v for v in df["v"].to_list() if v]
 
 
-def _read_pairs(path: Path) -> list[tuple[str, str]]:
-    df = _read_csv(path, ["a", "b"])
+def _read_pairs(path: Path,
+                 *, provider: "object | None" = None) -> list[tuple[str, str]]:
+    df = _read_csv(path, ["a", "b"], provider=provider)
     return [(a, b) for a, b in zip(df["a"].to_list(), df["b"].to_list())
             if a and b]
 
 
-def _read_keyed_value(path: Path) -> dict[str, float]:
+def _read_keyed_value(path: Path,
+                       *, provider: "object | None" = None) -> dict[str, float]:
     """``(key, value)`` 2-col CSV → ``dict[str, float]``, blanks skipped."""
-    df = _read_csv(path, ["key", "value"])
+    df = _read_csv(path, ["key", "value"], provider=provider)
     out: dict[str, float] = {}
     for k, v in zip(df["key"].to_list(), df["value"].to_list()):
         if not k or v is None or v == "":
@@ -105,9 +108,10 @@ def _read_keyed_value(path: Path) -> dict[str, float]:
     return out
 
 
-def _read_pdv(path: Path) -> dict[tuple[str, str], float]:
+def _read_pdv(path: Path,
+               *, provider: "object | None" = None) -> dict[tuple[str, str], float]:
     """``(entity, period, value)`` 3-col CSV → dict."""
-    df = _read_csv(path, ["entity", "period", "value"])
+    df = _read_csv(path, ["entity", "period", "value"], provider=provider)
     out: dict[tuple[str, str], float] = {}
     for e, d, v in zip(df["entity"].to_list(),
                        df["period"].to_list(),
@@ -235,49 +239,54 @@ def _inflation_window_sum(
 # ---------------------------------------------------------------------------
 
 
-def _entity_annual_inputs(input_dir: Path, solve_data_dir: Path) -> dict:
+def _entity_annual_inputs(input_dir: Path, solve_data_dir: Path,
+                            *, provider: "object | None" = None) -> dict:
     """Shared input bundle for the 6 entity-annual derives."""
     pp = PdLookup(
         pd_csv=input_dir / "pd_process.csv",
         p_csv=input_dir / "p_process.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
+        provider=provider,
     )
     pn = PdLookup(
         pd_csv=input_dir / "pd_node.csv",
         p_csv=input_dir / "p_node.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
+        provider=provider,
     )
     methods_for_entity: dict[str, list[str]] = {}
-    for e, m in _read_pairs(input_dir / "entity__invest_method.csv"):
+    for e, m in _read_pairs(input_dir / "entity__invest_method.csv",
+                             provider=provider):
         methods_for_entity.setdefault(e, []).append(m)
     lifetime_methods_for_entity: dict[str, list[str]] = {}
-    for e, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv"):
+    for e, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv",
+                             provider=provider):
         lifetime_methods_for_entity.setdefault(e, []).append(m)
     return {
         "pp": pp,
         "pn": pn,
-        "process_set": frozenset(_read_singles(input_dir / "process.csv")),
-        "node_set": frozenset(_read_singles(input_dir / "node.csv")),
-        "entityInvest": _read_singles(solve_data_dir / "entityInvest.csv"),
-        "entityDivest": _read_singles(solve_data_dir / "entityDivest.csv"),
+        "process_set": frozenset(_read_singles(input_dir / "process.csv", provider=provider)),
+        "node_set": frozenset(_read_singles(input_dir / "node.csv", provider=provider)),
+        "entityInvest": _read_singles(solve_data_dir / "entityInvest.csv", provider=provider),
+        "entityDivest": _read_singles(solve_data_dir / "entityDivest.csv", provider=provider),
         "period_invest": _read_singles(
-            solve_data_dir / "invest_periods_of_current_solve.csv"),
+            solve_data_dir / "invest_periods_of_current_solve.csv", provider=provider),
         "period_in_use": _read_singles(
-            solve_data_dir / "period_in_use_set.csv"),
+            solve_data_dir / "period_in_use_set.csv", provider=provider),
         "methods_for_entity": methods_for_entity,
         "lifetime_methods_for_entity": lifetime_methods_for_entity,
         "p_discount_years": _read_keyed_value(
-            solve_data_dir / "p_discount_years.csv"),
+            solve_data_dir / "p_discount_years.csv", provider=provider),
         "p_inflation_invest": _read_keyed_value(
-            solve_data_dir / "p_inflation_factor_investment_yearly.csv"),
+            solve_data_dir / "p_inflation_factor_investment_yearly.csv", provider=provider),
         "p_inflation_ops": _read_keyed_value(
-            solve_data_dir / "p_inflation_factor_operations_yearly.csv"),
+            solve_data_dir / "p_inflation_factor_operations_yearly.csv", provider=provider),
         "edEntity_lifetime": _read_pdv(
-            solve_data_dir / "edEntity_lifetime.csv"),
-        "ed_fixed_cost": _read_pdv(solve_data_dir / "ed_fixed_cost.csv"),
+            solve_data_dir / "edEntity_lifetime.csv", provider=provider),
+        "ed_fixed_cost": _read_pdv(solve_data_dir / "ed_fixed_cost.csv", provider=provider),
         "period_with_history": _read_singles(
-            solve_data_dir / "period_with_history.csv"),
-        "entities": _read_singles(input_dir / "entity.csv"),
+            solve_data_dir / "period_with_history.csv", provider=provider),
+        "entities": _read_singles(input_dir / "entity.csv", provider=provider),
     }
 
 
@@ -444,59 +453,66 @@ def _rows_lifetime_fixed_cost_divest(inp: dict) -> list[tuple[str, str, float]]:
 
 def derive_ed_entity_annual(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``ed_entity_annual.csv`` — per-(entity, period) annuity sum across
     allowed invest methods, gated by entity class (node vs process)."""
-    rows, _ = _ann_pair(_entity_annual_inputs(input_dir, solve_data_dir))
+    rows, _ = _ann_pair(_entity_annual_inputs(input_dir, solve_data_dir, provider=provider))
     return _rows_to_frame(rows)
 
 
 def derive_ed_entity_annual_discounted(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``ed_entity_annual_discounted.csv`` — annuity scaled by the
     inflation-window sum keyed by reinvest_choice / no_investment / reinvest_automatic."""
-    _, rows_disc = _ann_pair(_entity_annual_inputs(input_dir, solve_data_dir))
+    _, rows_disc = _ann_pair(_entity_annual_inputs(input_dir, solve_data_dir, provider=provider))
     return _rows_to_frame(rows_disc)
 
 
 def derive_ed_entity_annual_divest(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``ed_entity_annual_divest.csv`` — divest-side annuity sum."""
-    rows, _ = _div_pair(_entity_annual_inputs(input_dir, solve_data_dir))
+    rows, _ = _div_pair(_entity_annual_inputs(input_dir, solve_data_dir, provider=provider))
     return _rows_to_frame(rows)
 
 
 def derive_ed_entity_annual_divest_discounted(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``ed_entity_annual_divest_discounted.csv`` — divest annuity scaled
     by the inflation-window sum (always closed window)."""
-    _, rows_disc = _div_pair(_entity_annual_inputs(input_dir, solve_data_dir))
+    _, rows_disc = _div_pair(_entity_annual_inputs(input_dir, solve_data_dir, provider=provider))
     return _rows_to_frame(rows_disc)
 
 
 def derive_ed_lifetime_fixed_cost(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``ed_lifetime_fixed_cost.csv`` — per-(entity, period) lifetime
     fixed-cost using p_inflation_factor_OPERATIONS_yearly."""
     return _rows_to_frame(_rows_lifetime_fixed_cost(
-        _entity_annual_inputs(input_dir, solve_data_dir)))
+        _entity_annual_inputs(input_dir, solve_data_dir, provider=provider)))
 
 
 def derive_ed_lifetime_fixed_cost_divest(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``ed_lifetime_fixed_cost_divest.csv`` — divest variant; uses
     p_inflation_factor_INVESTMENT_yearly per mod L1651 (asymmetric)."""
     return _rows_to_frame(_rows_lifetime_fixed_cost_divest(
-        _entity_annual_inputs(input_dir, solve_data_dir)))
+        _entity_annual_inputs(input_dir, solve_data_dir, provider=provider)))
 
 
 def write_entity_annual_calc_params(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Native port of ``entity_annual_calc_params.write_entity_annual_calc_params``.
 
@@ -511,7 +527,7 @@ def write_entity_annual_calc_params(
     (``_ann_pair`` / ``_div_pair``) avoid recomputing per-method annuities
     across the matched annual / annual_discounted CSV pairs.
     """
-    inp = _entity_annual_inputs(input_dir, solve_data_dir)
+    inp = _entity_annual_inputs(input_dir, solve_data_dir, provider=provider)
 
     rows_ann, rows_ann_disc = _ann_pair(inp)
     _write(_rows_to_frame(rows_ann),

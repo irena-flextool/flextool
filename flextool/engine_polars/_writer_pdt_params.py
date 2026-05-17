@@ -141,6 +141,7 @@ def derive_pdtProcess(input_dir: Path, solve_data_dir: Path,
         group_entity_csv=input_dir / "group__process.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
         param_def1=PROCESS_PARAM_DEF1,
+        provider=provider,
     )
     domain = _read_pairs(
         solve_data_dir / "process_TimeParam_in_use.csv", provider=provider,
@@ -216,8 +217,9 @@ def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
         param_def1=NODE_PARAM_DEF1,
         time_first_priority=True,
         class_default_values=read_class_defaults(
-            input_dir / "default_values.csv", "node"
+            input_dir / "default_values.csv", "node", provider=provider,
         ),
+        provider=provider,
     )
     domain = _read_pairs(
         solve_data_dir / "node__TimeParam_in_use.csv", provider=provider,
@@ -298,6 +300,7 @@ def _derive_pdtProcess_side(
         period_branch_csv=period_branch_csv,
         group_process_csv=group_process_csv,
         group_stochastic_csv=group_stochastic_csv,
+        provider=provider,
     )
     domain = _read_triples(domain_csv, provider=provider)
     dt = _read_pairs(dt_csv, provider=provider)
