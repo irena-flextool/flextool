@@ -102,10 +102,18 @@ def _provider_lookup_positional(
     """
     if provider is not None and provider.has(name):
         df = provider.get(name)
-        keep = df.columns[: len(columns)]
-        out = df.select(keep)
-        out.columns = columns
-        return out
+        # Step 1-g — guard against a width mismatch between the Provider's
+        # stored frame and the caller's expected schema.  This shows up
+        # when the qualified key (``"input/timeline"``) falls back to a
+        # bare key (``"timeline"``) that was stashed by a different
+        # writer with a narrower frame (the legacy ``provider.get``'s
+        # qualified-→-bare fallback collides on basenames).  When widths
+        # diverge, treat as a miss so the caller's disk fallback wins.
+        if df.width >= len(columns):
+            keep = df.columns[: len(columns)]
+            out = df.select(keep)
+            out.columns = columns
+            return out
     from flextool.engine_polars._input_source import _seed_lookup_positional
     return _seed_lookup_positional(path, columns)
 

@@ -95,9 +95,10 @@ def _read_csv(path: Path, columns: list[str],
     return df
 
 
-def _read_singles(path: Path) -> list[str]:
+def _read_singles(path: Path,
+                  *, provider: "object | None" = None) -> list[str]:
     """List the first column of a header+rows CSV, dropping blanks."""
-    df = _read_csv(path, ["v"])
+    df = _read_csv(path, ["v"], provider=provider)
     return [v for v in df["v"].to_list() if v]
 
 
@@ -168,9 +169,10 @@ def _write_keyed_2(path: Path, header: tuple[str, str, str],
 
 def _read_step_duration(
     path: Path,
+    *, provider: "object | None" = None,
 ) -> tuple[dict[tuple[str, str], float], dict[str, None]]:
     """Read (period, step, duration) CSV → (dict, ordered-set of periods)."""
-    df = _read_csv(path, ["period", "step", "duration"])
+    df = _read_csv(path, ["period", "step", "duration"], provider=provider)
     out: dict[tuple[str, str], float] = {}
     periods: dict[str, None] = {}
     for d, t, v in zip(df["period"].to_list(),
@@ -186,9 +188,10 @@ def _read_step_duration(
     return out, periods
 
 
-def _read_pb_pairs(path: Path) -> list[tuple[str, str]]:
+def _read_pb_pairs(path: Path,
+                   *, provider: "object | None" = None) -> list[tuple[str, str]]:
     """Read period__branch.csv → list of (period, branch) tuples."""
-    df = _read_csv(path, ["period", "branch"])
+    df = _read_csv(path, ["period", "branch"], provider=provider)
     return [(d, b) for d, b in zip(df["period"].to_list(),
                                    df["branch"].to_list())
             if d and b]
@@ -201,6 +204,7 @@ def _read_pb_pairs(path: Path) -> list[tuple[str, str]]:
 
 def write_period_calculated_params(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Native port of
     ``period_calculated_params.write_period_calculated_params``.
@@ -210,24 +214,25 @@ def write_period_calculated_params(
     """
     # ── Sources ────────────────────────────────────────────────────────
     step_duration, _period_set = _read_step_duration(
-        solve_data_dir / "steps_in_use.csv"
+        solve_data_dir / "steps_in_use.csv", provider=provider,
     )
     complete_step_duration, _ = _read_step_duration(
-        solve_data_dir / "steps_complete_solve.csv"
+        solve_data_dir / "steps_complete_solve.csv", provider=provider,
     )
 
-    pb_rows = _read_pb_pairs(solve_data_dir / "period__branch.csv")
+    pb_rows = _read_pb_pairs(solve_data_dir / "period__branch.csv",
+                             provider=provider)
     branches_for_d: dict[str, list[str]] = {}
     for d, b in pb_rows:
         branches_for_d.setdefault(d, []).append(b)
 
     timeline_step_duration, timelines = _read_step_duration(
-        input_dir / "timeline.csv"
+        input_dir / "timeline.csv", provider=provider,
     )
 
     # period_with_history: (period, year_value)
     pwh_df = _read_csv(solve_data_dir / "period_with_history.csv",
-                       ["period", "value"])
+                       ["period", "value"], provider=provider)
     p_period_from_solve: dict[str, float] = {}
     period_with_history: list[str] = []
     for d, v in zip(pwh_df["period"].to_list(),
@@ -246,6 +251,7 @@ def write_period_calculated_params(
     pyr_df = _read_csv(
         solve_data_dir / "p_years_represented.csv",
         ["period", "year", "p_years_from_solve", "value"],
+        provider=provider,
     )
     p_years_represented: dict[tuple[str, str], float] = {}
     years_for_period: dict[str, list[str]] = {}
@@ -260,8 +266,10 @@ def write_period_calculated_params(
         except (ValueError, TypeError):
             continue
 
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
-    periodAll = _read_singles(solve_data_dir / "periodAll_set.csv")
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
+    periodAll = _read_singles(solve_data_dir / "periodAll_set.csv",
+                              provider=provider)
 
     # ── Per-row aggregations ───────────────────────────────────────────
     sum_step_dur_by_period: dict[str, float] = {}
@@ -352,7 +360,7 @@ def write_period_calculated_params(
 
     # ── Inflation factors ──────────────────────────────────────────────
     def _scalar_max(csv_path: Path, default: float) -> float:
-        rows_df = _read_csv(csv_path, ["key", "value"])
+        rows_df = _read_csv(csv_path, ["key", "value"], provider=provider)
         vals: list[float] = []
         for v in rows_df["value"].to_list():
             if v is None or v == "":
@@ -443,7 +451,8 @@ def write_period_calculated_params(
 
     # p_inflation_factor_*_yearly — investment over period_set,
     # operations over period_in_use.
-    period_universe = _read_singles(solve_data_dir / "period_set.csv")
+    period_universe = _read_singles(solve_data_dir / "period_set.csv",
+                                     provider=provider)
     inv_yearly = [
         (d, inflation_invest.get(d, 1.0)) for d in period_universe
     ]
@@ -465,6 +474,7 @@ def write_period_calculated_params(
     ladder_df = _read_csv(
         solve_data_dir / "ladder_cum_sim_hours.csv",
         ["period", "value"],
+        provider=provider,
     )
     p_ladder_cum: dict[str, float] = {}
     for d, v in zip(ladder_df["period"].to_list(),
@@ -492,7 +502,8 @@ def write_period_calculated_params(
 # ---------------------------------------------------------------------------
 
 
-def write_branch_weights(input_dir: Path, solve_data_dir: Path) -> None:
+def write_branch_weights(input_dir: Path, solve_data_dir: Path,
+                          *, provider: "object | None" = None) -> None:
     """Native port of ``period_calculated_params.write_branch_weights``.
 
     Both ``pd_branch_weight`` and ``pdt_branch_weight`` normalise
@@ -501,13 +512,15 @@ def write_branch_weights(input_dir: Path, solve_data_dir: Path) -> None:
     """
     del input_dir  # legacy signature parity; no input/ reads here.
 
-    pb_rows = _read_pb_pairs(solve_data_dir / "period__branch.csv")
+    pb_rows = _read_pb_pairs(solve_data_dir / "period__branch.csv",
+                             provider=provider)
     pb_set = frozenset(pb_rows)
 
     # solve_branch_weight (branch, value) → default 1.0 per mod default.
     sbw_df = _read_csv(
         solve_data_dir / "solve_branch_weight.csv",
         ["branch", "value"],
+        provider=provider,
     )
     branch_weight: dict[str, float] = {}
     for b, v in zip(sbw_df["branch"].to_list(), sbw_df["value"].to_list()):
@@ -525,6 +538,7 @@ def write_branch_weights(input_dir: Path, solve_data_dir: Path) -> None:
     ft_df = _read_csv(
         solve_data_dir / "first_timesteps.csv",
         ["period", "step"],
+        provider=provider,
     )
     times_with_first_set: dict[str, set[str]] = {}
     first_time_for_d: dict[str, str] = {}
@@ -538,6 +552,7 @@ def write_branch_weights(input_dir: Path, solve_data_dir: Path) -> None:
     su_df = _read_csv(
         solve_data_dir / "steps_in_use.csv",
         ["period", "step"],
+        provider=provider,
     )
     dt_pairs: list[tuple[str, str]] = []
     branches_for_t: dict[str, set[str]] = {}
@@ -547,7 +562,8 @@ def write_branch_weights(input_dir: Path, solve_data_dir: Path) -> None:
         dt_pairs.append((d, t))
         branches_for_t.setdefault(t, set()).add(d)
 
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
 
     # ── pd_branch_weight ───────────────────────────────────────────────
     pd_rows: list[tuple[str, float]] = []
