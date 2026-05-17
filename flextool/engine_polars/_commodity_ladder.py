@@ -88,22 +88,31 @@ def has_feature(d) -> bool:
 # ---------------------------------------------------------------------------
 # Data loading
 
-def _read_single_col(path: Path, col_in: str, col_out: str) -> pl.DataFrame | None:
-    if not path.exists():
-        return None
-    df = _read_csv_file(path)
-    if df.height == 0:
+def _read_single_col(
+    path: Path,
+    col_in: str,
+    col_out: str,
+    *,
+    provider: "object | None" = None,
+    provider_key: str | None = None,
+) -> pl.DataFrame | None:
+    df = _provider_or_disk(provider, provider_key, path)
+    if df is None or df.height == 0:
         return None
     if col_in in df.columns and col_in != col_out:
         df = df.rename({col_in: col_out})
     return df.select(col_out)
 
 
-def _read_long_csv(path: Path, rename: dict[str, str]) -> pl.DataFrame | None:
-    if not path.exists():
-        return None
-    df = _read_csv_file(path)
-    if df.height == 0:
+def _read_long_csv(
+    path: Path,
+    rename: dict[str, str],
+    *,
+    provider: "object | None" = None,
+    provider_key: str | None = None,
+) -> pl.DataFrame | None:
+    df = _provider_or_disk(provider, provider_key, path)
+    if df is None or df.height == 0:
         return None
     cols_present = {c: r for c, r in rename.items() if c in df.columns}
     if cols_present:
@@ -113,7 +122,7 @@ def _read_long_csv(path: Path, rename: dict[str, str]) -> pl.DataFrame | None:
 
 def _provider_or_disk(
     provider: "object | None",
-    key: str,
+    key: str | None,
     path: Path,
 ) -> "pl.DataFrame | None":
     """Resolve *key* via the Provider, falling back to *path* on disk.
@@ -125,7 +134,7 @@ def _provider_or_disk(
     cascade-input Provider; the disk arm survives only for off-cascade
     fixture loaders that seed the workdir without a Provider.
     """
-    if provider is not None and provider.has(key):
+    if provider is not None and key is not None and provider.has(key):
         df = provider.get(key)
         if df is not None and df.height > 0:
             return df
@@ -185,40 +194,80 @@ def load_data(
         p_ladder_cum_realized_mwh=None,
     )
 
-    cwl = _read_single_col(sd / "commodity_with_ladder.csv", "commodity", "c")
+    # Provider key layout for ladder per-solve frames:
+    #   * ``solve_data/commodity_with_ladder*`` — emitted by
+    #     :func:`flextool.input_derivation._commodity_ladder_sets.derive_commodity_ladder_sets`
+    #     into the cascade-input Provider under the parent-qualified key.
+    #   * ``solve_data/cnd_ladder_set.csv`` & ``solve_data/cndi_ladder_*_set.csv``
+    #     — written by :func:`_writer_per_solve.write_per_solve_sets` under
+    #     ``capture_frames`` which stores both the bare ``basename.csv`` and
+    #     ``solve_data/basename.csv`` keys (see
+    #     :func:`_flex_data_accumulator.capture_frames`).
+    #   * ``solve_data/ci_ladder_cumulative.csv`` — written by
+    #     :func:`_writer_mid_sets.write_ci_ladder_cumulative`.
+    #   * ``solve_data/commodity__tier_ann.csv`` — written by
+    #     :func:`_writer_leaf_sets`.
+    # In cascade mode (``csv_dump=False``) these files never reach disk; the
+    # Provider is the authoritative source.  The disk arm survives for
+    # off-cascade fixture loaders that seed the workdir without a Provider.
+    cwl = _read_single_col(
+        sd / "commodity_with_ladder.csv", "commodity", "c",
+        provider=provider, provider_key="solve_data/commodity_with_ladder",
+    )
     if cwl is None:
         return blank
 
     cwla = _read_single_col(
-        sd / "commodity_with_ladder_annual.csv", "commodity", "c")
+        sd / "commodity_with_ladder_annual.csv", "commodity", "c",
+        provider=provider,
+        provider_key="solve_data/commodity_with_ladder_annual",
+    )
     cwlc = _read_single_col(
-        sd / "commodity_with_ladder_cumulative.csv", "commodity", "c")
+        sd / "commodity_with_ladder_cumulative.csv", "commodity", "c",
+        provider=provider,
+        provider_key="solve_data/commodity_with_ladder_cumulative",
+    )
 
-    cnd = _read_long_csv(sd / "cnd_ladder_set.csv",
-                         {"commodity": "c", "node": "n", "period": "d"})
+    cnd = _read_long_csv(
+        sd / "cnd_ladder_set.csv",
+        {"commodity": "c", "node": "n", "period": "d"},
+        provider=provider, provider_key="solve_data/cnd_ladder_set.csv",
+    )
     if cnd is not None:
         cnd = cnd.select("c", "n", "d")
 
-    def _read_cndi(path: Path) -> pl.DataFrame | None:
-        df = _read_long_csv(path, {"commodity": "c", "node": "n",
-                                    "period": "d", "tier": "i"})
+    def _read_cndi(path: Path, key: str) -> pl.DataFrame | None:
+        df = _read_long_csv(
+            path,
+            {"commodity": "c", "node": "n", "period": "d", "tier": "i"},
+            provider=provider, provider_key=key,
+        )
         if df is None:
             return None
         # Tier is integer-as-string in the CSV; keep it as string for
         # consistent join keys (Param tables also keep it as Utf8).
         return df.with_columns(pl.col("i").cast(pl.Utf8)).select("c", "n", "d", "i")
 
-    cndi = _read_cndi(sd / "cndi_ladder_set.csv")
-    cndi_ann = _read_cndi(sd / "cndi_ladder_ann_set.csv")
-    cndi_cum = _read_cndi(sd / "cndi_ladder_cum_set.csv")
+    cndi = _read_cndi(
+        sd / "cndi_ladder_set.csv", "solve_data/cndi_ladder_set.csv")
+    cndi_ann = _read_cndi(
+        sd / "cndi_ladder_ann_set.csv", "solve_data/cndi_ladder_ann_set.csv")
+    cndi_cum = _read_cndi(
+        sd / "cndi_ladder_cum_set.csv", "solve_data/cndi_ladder_cum_set.csv")
 
-    ci_cum = _read_long_csv(sd / "ci_ladder_cumulative.csv",
-                             {"commodity": "c", "tier": "i"})
+    ci_cum = _read_long_csv(
+        sd / "ci_ladder_cumulative.csv",
+        {"commodity": "c", "tier": "i"},
+        provider=provider, provider_key="solve_data/ci_ladder_cumulative.csv",
+    )
     if ci_cum is not None:
         ci_cum = ci_cum.with_columns(pl.col("i").cast(pl.Utf8)).select("c", "i")
 
-    ct_ann = _read_long_csv(sd / "commodity__tier_ann.csv",
-                             {"commodity": "c", "tier": "i"})
+    ct_ann = _read_long_csv(
+        sd / "commodity__tier_ann.csv",
+        {"commodity": "c", "tier": "i"},
+        provider=provider, provider_key="solve_data/commodity__tier_ann.csv",
+    )
     if ct_ann is not None:
         ct_ann = ct_ann.with_columns(pl.col("i").cast(pl.Utf8)).select("c", "i")
     # commodity__tier_cum mirrors the input CSV's (commodity, tier) projection.
@@ -290,24 +339,34 @@ def load_data(
     # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
     # variant fixtures or all fixtures explicitly pass db_reader=.
     p_f_d_k = None
-    fdk_path = sd / "f_d_k.csv"
-    if fdk_path.exists():
-        fdk = _read_csv_file(fdk_path)
-        if fdk.height > 0:
-            fdk = fdk.rename({"period": "d"}).select("d", "value")
-            p_f_d_k = Param(("d",), fdk)
+    fdk = _provider_or_disk(
+        provider, "solve_data/f_d_k.csv", sd / "f_d_k.csv",
+    )
+    if fdk is not None and fdk.height > 0:
+        # Provider-captured frame stores ``value`` as Utf8 (see
+        # ``_writer_period_calc._keyed_frame``); cast to Float64 to match
+        # the disk arm's ``pl.read_csv`` numeric inference.
+        fdk = (fdk.rename({"period": "d"})
+               .with_columns(pl.col("value").cast(pl.Float64))
+               .select("d", "value"))
+        p_f_d_k = Param(("d",), fdk)
 
     p_realized = None
-    rel_path = sd / "ladder_cum_realized_mwh.csv"
-    if rel_path.exists():
-        rel = _read_csv_file(rel_path)
-        if rel.height > 0:
-            value_col = "p_ladder_cum_realized_mwh" if "p_ladder_cum_realized_mwh" in rel.columns else "value"
-            rel = (rel.rename({"commodity": "c", "tier": "i", "period": "d",
-                                value_col: "value"})
-                   .with_columns(pl.col("i").cast(pl.Utf8))
-                   .select("c", "i", "d", "value"))
-            p_realized = Param(("c", "i", "d"), rel)
+    rel = _provider_or_disk(
+        provider,
+        "solve_data/ladder_cum_realized_mwh.csv",
+        sd / "ladder_cum_realized_mwh.csv",
+    )
+    if rel is not None and rel.height > 0:
+        value_col = "p_ladder_cum_realized_mwh" if "p_ladder_cum_realized_mwh" in rel.columns else "value"
+        rel = (rel.rename({"commodity": "c", "tier": "i", "period": "d",
+                            value_col: "value"})
+               .with_columns(
+                   pl.col("i").cast(pl.Utf8),
+                   pl.col("value").cast(pl.Float64),
+               )
+               .select("c", "i", "d", "value"))
+        p_realized = Param(("c", "i", "d"), rel)
 
     return dict(
         commodity_with_ladder=cwl,

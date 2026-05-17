@@ -169,8 +169,12 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "not yet in the Provider."
     ),
     "_commodity_ladder.py": (
-        "Reads commodity-ladder raw input fixtures (cum_input, "
-        "annual, p_commodity, fdk_release etc.) pre-Provider."
+        "Loader: Provider-first via _provider_or_disk for all 10 "
+        "ladder per-solve frames (commodity_with_ladder*, "
+        "cnd/cndi_ladder_*, ci_ladder_cumulative, commodity__tier_ann, "
+        "f_d_k, ladder_cum_realized_mwh) plus the 2 input/ raw "
+        "ladder CSVs.  Disk arm reserved for off-cascade fixture "
+        "loaders that seed the workdir without a Provider."
     ),
     "_dc_power_flow.py": (
         "Reads raw branch / pcs DC-power-flow input fixtures."
