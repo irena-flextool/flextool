@@ -583,6 +583,17 @@ def write_per_solve_sets(solve_data_dir: Path,
 
     # p_online_dt — {p in process_online, (d, t) in dt : ∃ (p, b)
     # in process_block with (b, d, t) in block_step_duration}.
+    #
+    # Fallback for UC processes without an explicit ``process_block``
+    # row (e.g. single-solve fixtures where ``_native_input_writer``
+    # ships a header-only ``process_block.csv``): default to the
+    # ``default`` block.  Matches ``_native_input_writer``'s comment
+    # that empty entity_block / process_block stubs "fall through to
+    # identity (every entity mapped to 'default')".  This restores the
+    # .mod's pre-v51 invariant — UC processes without an explicit
+    # block use the per-step timeline, so all downstream UC machinery
+    # (v_online_linear, minimum_uptime_linear, etc.) is populated.
+    # BUG p_online_dt_empty_no_blocks (specs/model_bugs.md).
     proc_online = frozenset(
         v for v in _read_csv(solve_data_dir / "process_online.csv",
                              ["process"], provider=provider)["process"].to_list() if v
@@ -611,9 +622,19 @@ def write_per_solve_sets(solve_data_dir: Path,
     online_rows: list[tuple[str, str, str]] = []
     for p in proc_online:
         seen_pdt: set[tuple[str, str]] = set()
-        for b in proc_blocks.get(p, ()):
-            for d, t in block_dt.get(b, ()):
-                if (d, t) in dt_set and (d, t) not in seen_pdt:
+        blocks_for_p = proc_blocks.get(p)
+        if blocks_for_p:
+            for b in blocks_for_p:
+                for d, t in block_dt.get(b, ()):
+                    if (d, t) in dt_set and (d, t) not in seen_pdt:
+                        seen_pdt.add((d, t))
+                        online_rows.append((p, d, t))
+        else:
+            # Fallback: no process_block row → use the per-step timeline
+            # (steps_in_use).  Iterate in CSV order so output is stable.
+            for d, t in zip(su_df["period"].to_list(),
+                            su_df["time"].to_list()):
+                if d and t and (d, t) not in seen_pdt:
                     seen_pdt.add((d, t))
                     online_rows.append((p, d, t))
     _write_tuples(

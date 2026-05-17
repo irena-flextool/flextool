@@ -16,14 +16,13 @@ therefore the constraint) only materialises at ``(p, d, t)`` tuples in
 
 summed across the two suffixes.
 
-NOTE — known cascade-side gap (documented in specs/model_bugs.md, see
-``# BUG p_online_dt_empty_no_blocks`` at the bottom of that file): for
-scenarios whose online process has no ``process_block`` row,
-``p_online_dt`` is empty and the entire UC block (including
-``minimum_uptime``) collapses to zero rows.  The test still passes —
-``expected == actual == 0`` — but the diagnostic value is preserved:
-if a future code change emits a ``minimum_uptime`` row where the
-cascade's data pipeline says none should exist, the test asserts.
+Bug fixed: ``BUG p_online_dt_empty_no_blocks`` (specs/model_bugs.md) —
+``_writer_per_solve.write_per_solve_sets`` now falls back to the
+per-step timeline (``steps_in_use``) for UC processes without a
+``process_block`` row, so ``p_online_dt`` is non-empty and the UC
+constraints (``minimum_uptime``, ``maxOnline_linear`` …) are
+populated.  See also ``test_p_online_dt_fallback.py`` for a direct
+regression assertion on this fallback.
 """
 from __future__ import annotations
 
