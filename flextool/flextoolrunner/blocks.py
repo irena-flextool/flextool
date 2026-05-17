@@ -1280,6 +1280,53 @@ def write_block_data(
 # ---------------------------------------------------------------------------
 
 
+def _read_input_rows(
+    inp: Path,
+    basename: str,
+    provider: "object | None" = None,
+) -> list[list[str]]:
+    """Read rows from ``inp/<basename>.csv``, falling back to *provider*.
+
+    Returns a list of row lists with the header stripped.  When the
+    Provider is supplied and the disk file is absent / empty, looks up
+    the frame under the canonical ``input/<stem>`` key the cascade uses.
+
+    Returning the same row-of-strings shape as the legacy ``csv.reader``
+    loops keeps the existing assembly code byte-identical.
+    """
+    path = inp / basename
+    if path.exists() and path.stat().st_size > 0:
+        with open(path) as f:
+            reader = csv.reader(f)
+            next(reader, None)
+            return [row for row in reader if row]
+    if provider is None:
+        return []
+    stem = basename[:-4] if basename.endswith(".csv") else basename
+    # Try the canonical ``input/<stem>`` first (post-Δ.20 input writer);
+    # then the bare ``<stem>`` for the legacy alias.
+    for key in (f"input/{stem}", stem):
+        try:
+            if provider.has(key):
+                df = provider.get(key)
+                if df is None or df.height == 0:
+                    return []
+                # Cast every column to str so the downstream consumers
+                # (which expect csv.reader output) receive consistent
+                # string rows.
+                rows: list[list[str]] = []
+                cols = df.columns
+                str_df = df.with_columns(
+                    [pl.col(c).cast(pl.Utf8) for c in cols]
+                )
+                for row in str_df.iter_rows():
+                    rows.append([("" if v is None else str(v)) for v in row])
+                return rows
+        except Exception:  # pragma: no cover — defensive only
+            continue
+    return []
+
+
 def write_block_data_for_solve(
     solve: str,
     solve_config: "SolveConfig",
@@ -1287,6 +1334,7 @@ def write_block_data_for_solve(
     work_folder: Path,
     active_time_list: dict[str, list] | None = None,
     default_jump_list: Iterable[tuple] | None = None,
+    provider: "object | None" = None,
 ) -> BlockAssignments:
     """End-to-end helper called from the orchestration loop.
 
@@ -1295,6 +1343,15 @@ def write_block_data_for_solve(
     set and writes all four ``solve_data/`` CSVs.
 
     Returns the BlockAssignments in case downstream agents want them.
+
+    Parameters
+    ----------
+    provider : FlexDataProvider | None
+        When supplied, reads from the Provider for any ``input/*.csv``
+        that is missing from disk.  Required by the cascade path
+        (``_native_run_model.py``) because the cascade keeps the
+        ``input/`` frames in memory rather than flushing them to disk
+        before this hook runs.
     """
     wf = Path(work_folder)
     inp = wf / "input"
@@ -1303,90 +1360,77 @@ def write_block_data_for_solve(
     nodes: list[str] = []
     units: list[str] = []
     connections: list[str] = []
-    ent_csv = inp / "entity.csv"
-    # Partition entities by the class files.
-    if (inp / "node.csv").exists():
-        with open(inp / "node.csv") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if row:
-                    nodes.append(row[0])
-    if (inp / "process_unit.csv").exists():
-        with open(inp / "process_unit.csv") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if row:
-                    units.append(row[0])
-    if (inp / "process_connection.csv").exists():
-        with open(inp / "process_connection.csv") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if row:
-                    connections.append(row[0])
-    if not nodes and not units and not connections and ent_csv.exists():
+    for row in _read_input_rows(inp, "node.csv", provider):
+        if row:
+            nodes.append(row[0])
+    for row in _read_input_rows(inp, "process_unit.csv", provider):
+        if row:
+            units.append(row[0])
+    for row in _read_input_rows(inp, "process_connection.csv", provider):
+        if row:
+            connections.append(row[0])
+    if not nodes and not units and not connections:
         # Fall back to entity.csv when per-class files are empty (rare
         # pre-v42 fixtures).
-        with open(ent_csv) as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if row:
-                    nodes.append(row[0])
+        for row in _read_input_rows(inp, "entity.csv", provider):
+            if row:
+                nodes.append(row[0])
 
     # Resolution groups --------------------------------------------------
     resolution_groups: dict[str, float] = {}
     # Read p_group.csv — the universal group-level parameter dump.  We
     # fall back to DB-less defaults when the file is absent (unit tests
     # short-circuit this path via ``derive_blocks`` directly).
+    p_group_rows = _read_input_rows(inp, "p_group.csv", provider)
+    # Header from disk (if present) tells us the column order; otherwise
+    # we know the layout from input_writer.py: (group, groupParam, p_group).
     p_group_csv = inp / "p_group.csv"
-    if p_group_csv.exists():
+    p_group_header: list[str] | None = None
+    if p_group_csv.exists() and p_group_csv.stat().st_size > 0:
         with open(p_group_csv) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row.get("groupParam") == "new_stepduration":
-                    try:
-                        resolution_groups[row["group"]] = float(row["p_group"])
-                    except (TypeError, ValueError):
-                        continue
+            p_group_header = next(csv.reader(f), None)
+    if p_group_header is None:
+        p_group_header = ["group", "groupParam", "p_group"]
+    def _row_dict(row: list[str], header: list[str]) -> dict[str, str]:
+        return {h: (row[i] if i < len(row) else "") for i, h in enumerate(header)}
+    for row in p_group_rows:
+        r = _row_dict(row, p_group_header)
+        if r.get("groupParam") == "new_stepduration":
+            try:
+                resolution_groups[r["group"]] = float(r["p_group"])
+            except (TypeError, ValueError):
+                continue
     decomposition_groups: dict[str, str] = {}
     # Agent 1.9: decomposition_method is a string enum and lives in its
     # own ``p_group_decomposition.csv`` (separate from the numeric
     # ``p_group.csv``).  Older fixtures may still write the row to
     # ``p_group.csv`` — fall back to it for compatibility.
     p_group_decomp_csv = inp / "p_group_decomposition.csv"
-    if p_group_decomp_csv.exists():
+    p_group_decomp_header: list[str] | None = None
+    if p_group_decomp_csv.exists() and p_group_decomp_csv.stat().st_size > 0:
         with open(p_group_decomp_csv) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row.get("groupParam") == "decomposition_method":
-                    decomposition_groups[row["group"]] = str(row["p_group"])
-    if not decomposition_groups and p_group_csv.exists():
-        with open(p_group_csv) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row.get("groupParam") == "decomposition_method":
-                    decomposition_groups[row["group"]] = str(row["p_group"])
+            p_group_decomp_header = next(csv.reader(f), None)
+    if p_group_decomp_header is None:
+        p_group_decomp_header = ["group", "groupParam", "p_group"]
+    for row in _read_input_rows(inp, "p_group_decomposition.csv", provider):
+        r = _row_dict(row, p_group_decomp_header)
+        if r.get("groupParam") == "decomposition_method":
+            decomposition_groups[r["group"]] = str(r["p_group"])
+    if not decomposition_groups:
+        for row in p_group_rows:
+            r = _row_dict(row, p_group_header)
+            if r.get("groupParam") == "decomposition_method":
+                decomposition_groups[r["group"]] = str(r["p_group"])
 
     # Group memberships --------------------------------------------------
     group_node: list[tuple[str, str]] = []
     group_process: list[tuple[str, str]] = []
-    if (inp / "group__node.csv").exists():
-        with open(inp / "group__node.csv") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2:
-                    group_node.append((row[0], row[1]))
-    if (inp / "group__process.csv").exists():
-        with open(inp / "group__process.csv") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2:
-                    group_process.append((row[0], row[1]))
+    for row in _read_input_rows(inp, "group__node.csv", provider):
+        if len(row) >= 2:
+            group_node.append((row[0], row[1]))
+    for row in _read_input_rows(inp, "group__process.csv", provider):
+        if len(row) >= 2:
+            group_process.append((row[0], row[1]))
 
     # Split group_process into group_unit / group_connection so the
     # validator can cite the right class (and so the derivation can
@@ -1402,25 +1446,15 @@ def write_block_data_for_solve(
     # ``process__reserve__upDown__node.csv`` lists the process/node
     # participants.
     reserve_upDown_group: list[tuple[str, str, str]] = []
-    rugm_csv = inp / "reserve__upDown__group__method.csv"
-    if rugm_csv.exists():
-        with open(rugm_csv) as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 4 and row[3] != "no_reserve":
-                    reserve_upDown_group.append((row[0], row[1], row[2]))
+    for row in _read_input_rows(inp, "reserve__upDown__group__method.csv", provider):
+        if len(row) >= 4 and row[3] != "no_reserve":
+            reserve_upDown_group.append((row[0], row[1], row[2]))
     process_reserve_upDown_node: list[tuple[str, str, str, str]] = []
-    prun_csv = inp / "process__reserve__upDown__node.csv"
-    if prun_csv.exists():
-        with open(prun_csv) as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 4:
-                    process_reserve_upDown_node.append(
-                        (row[0], row[1], row[2], row[3])
-                    )
+    for row in _read_input_rows(inp, "process__reserve__upDown__node.csv", provider):
+        if len(row) >= 4:
+            process_reserve_upDown_node.append(
+                (row[0], row[1], row[2], row[3])
+            )
 
     # Validation --------------------------------------------------------
     validate_group_membership(
@@ -1434,20 +1468,12 @@ def write_block_data_for_solve(
     process_source_sink: list[tuple[str, str, str]] = []
     sources: dict[str, list[str]] = defaultdict(list)
     sinks: dict[str, list[str]] = defaultdict(list)
-    if (inp / "process__source.csv").exists():
-        with open(inp / "process__source.csv") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2:
-                    sources[row[0]].append(row[1])
-    if (inp / "process__sink.csv").exists():
-        with open(inp / "process__sink.csv") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2:
-                    sinks[row[0]].append(row[1])
+    for row in _read_input_rows(inp, "process__source.csv", provider):
+        if len(row) >= 2:
+            sources[row[0]].append(row[1])
+    for row in _read_input_rows(inp, "process__sink.csv", provider):
+        if len(row) >= 2:
+            sinks[row[0]].append(row[1])
     for p in set(list(sources.keys()) + list(sinks.keys())):
         src_list = sources.get(p, [""])
         snk_list = sinks.get(p, [""])
@@ -1457,14 +1483,9 @@ def write_block_data_for_solve(
 
     # Process ct_method --------------------------------------------------
     process_ct_method: dict[str, str] = {}
-    ctm_csv = inp / "process__ct_method.csv"
-    if ctm_csv.exists():
-        with open(ctm_csv) as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2:
-                    process_ct_method[row[0]] = row[1]
+    for row in _read_input_rows(inp, "process__ct_method.csv", provider):
+        if len(row) >= 2:
+            process_ct_method[row[0]] = row[1]
 
     # Derive + write ----------------------------------------------------
     block_assignments = derive_blocks(

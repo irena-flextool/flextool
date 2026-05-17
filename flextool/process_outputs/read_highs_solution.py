@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import NamedTuple, Sequence, TYPE_CHECKING
 
 import pandas as pd
+import polars as pl
 
 from flextool.lean_parquet import write_lean_parquet
 
@@ -972,7 +973,10 @@ def write_variable_parquet(
     # Apply BEFORE unscale so the row scaler (keyed at the fine grid)
     # multiplies the broadcasted values consistently.
     if spec.expand_by is not None:
-        df = _apply_block_expand(df, spec.expand_by, work_folder, flex_data=flex_data)
+        df = _apply_block_expand(
+            df, spec.expand_by, work_folder,
+            flex_data=flex_data, provider=provider,
+        )
     # Agent 9 — row-scaling un-scaling applied at the output boundary.
     # Source CSV comes from the same work folder as realized_*_csv
     # (``work_folder`` was inferred above for the scale_the_objective
@@ -1166,6 +1170,8 @@ def _load_row_scaler(
 
 def _load_entity_block_map(
     work_folder: Path | str | None, kind: str,
+    *,
+    provider: "object | None" = None,
 ) -> dict[str, str]:
     """Return ``{entity: block}`` read from ``solve_data/{entity,process}_block.csv``.
 
@@ -1175,20 +1181,35 @@ def _load_entity_block_map(
     * ``kind="process_block"`` → reads ``process_block.csv`` (columns
       ``process, block``) — per-process unified block (Agent 1.6).
 
-    Missing file / missing entity → empty / default fall-through (caller
-    treats entity as on the ``"default"`` block, i.e. identity overlap).
+    When *provider* is supplied and carries the frame (cascade path —
+    block CSVs are kept in memory rather than flushed to disk), the
+    Provider lookup wins over the disk read.  Missing both →
+    empty / default fall-through (caller treats every entity as on the
+    ``"default"`` block, i.e. identity overlap).
     """
-    if work_folder is None:
+    if work_folder is None and provider is None:
         return {}
-    wf = Path(work_folder)
     if kind == "node_block":
-        path = wf / "solve_data" / "entity_block.csv"
+        path = (Path(work_folder) if work_folder is not None else Path()) / "solve_data" / "entity_block.csv"
         key_col = "entity"
     elif kind == "process_block":
-        path = wf / "solve_data" / "process_block.csv"
+        path = (Path(work_folder) if work_folder is not None else Path()) / "solve_data" / "process_block.csv"
         key_col = "process"
     else:
         return {}
+    # Δ.31 — provider-first: the cascade keeps block frames in-memory
+    # because ``write_block_data_for_solve`` runs inside
+    # ``capture_frames``, which routes ``_write`` to the Provider rather
+    # than disk.  Without this lookup the output writer would broadcast
+    # nothing for daily-block fixtures (lh2_three_region).
+    pframe = _provider_lookup(provider, path)
+    if pframe is not None and pframe.height > 0:
+        cols = pframe.columns
+        if key_col in cols and "block" in cols:
+            return dict(zip(
+                pframe[key_col].cast(pl.Utf8).to_list(),
+                pframe["block"].cast(pl.Utf8).to_list(),
+            ))
     if not path.exists():
         return {}
     try:
@@ -1202,6 +1223,8 @@ def _load_entity_block_map(
 
 def _load_overlap_fine_to_coarse(
     work_folder: Path | str | None,
+    *,
+    provider: "object | None" = None,
 ) -> dict[tuple[str, str, str], str]:
     """Return ``{(period, block_coarse, step_fine): step_coarse}``.
 
@@ -1211,17 +1234,24 @@ def _load_overlap_fine_to_coarse(
     rows used to broadcast a coarse-block value to every fine timestep
     it covers.
 
-    Missing file → empty dict (caller treats every entity as on the
+    Provider-first: when *provider* carries the frame, prefer it over
+    the disk read (cascade path keeps the block CSVs in memory).
+    Missing both → empty dict (caller treats every entity as on the
     default block → identity broadcast).
     """
-    if work_folder is None:
+    if work_folder is None and provider is None:
         return {}
-    path = Path(work_folder) / "solve_data" / "overlap_set.csv"
-    if not path.exists():
-        return {}
-    try:
-        df = pd.read_csv(path, dtype=str)
-    except Exception:
+    path = (Path(work_folder) if work_folder is not None else Path()) / "solve_data" / "overlap_set.csv"
+    pframe = _provider_lookup(provider, path)
+    df: pd.DataFrame | None = None
+    if pframe is not None and pframe.height > 0:
+        df = pframe.to_pandas()
+    elif path.exists():
+        try:
+            df = pd.read_csv(path, dtype=str)
+        except Exception:
+            return {}
+    if df is None:
         return {}
     required = {"period", "block_coarse", "step_coarse", "block_fine", "step_fine"}
     if not required.issubset(df.columns):
@@ -1244,6 +1274,7 @@ def _apply_block_expand(
     work_folder: Path | str | None,
     *,
     flex_data: "FlexData | None" = None,
+    provider: "object | None" = None,
 ) -> pd.DataFrame:
     """Broadcast coarse-block variable values to covered fine timesteps.
 
@@ -1269,12 +1300,14 @@ def _apply_block_expand(
     if "period" not in level_names or "time" not in level_names:
         return df
 
-    entity_block = _load_entity_block_map(work_folder, expand_by)
+    entity_block = _load_entity_block_map(
+        work_folder, expand_by, provider=provider,
+    )
     # Fast path: no entity on a non-default block → nothing to do.
     if not any(v != "default" for v in entity_block.values()):
         return df
 
-    overlap = _load_overlap_fine_to_coarse(work_folder)
+    overlap = _load_overlap_fine_to_coarse(work_folder, provider=provider)
     if not overlap:
         return df
 

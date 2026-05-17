@@ -734,6 +734,12 @@ def native_run_model(state, solver) -> int:
         previous_complete_solve = complete_solve[solve]
 
         # ---- Block data (Agent 1.1) ----
+        # Δ.31: thread the per-sub-solve Provider so the legacy reads
+        # find the ``input/*.csv`` frames in memory.  Without this the
+        # cascade silently produces a single-block layout (the input/
+        # CSVs are kept on the Provider rather than flushed to disk),
+        # collapsing every coarse-block fixture (e.g. lh2_three_region)
+        # to the default block and breaking the daily-block aggregation.
         try:
             write_block_data_for_solve(
                 solve=complete_solve[solve],
@@ -742,6 +748,7 @@ def native_run_model(state, solver) -> int:
                 work_folder=wf,
                 active_time_list=active_time_lists[solve],
                 default_jump_list=jump_lists[solve],
+                provider=sub_solve_provider,
             )
         except FlexToolConfigError:
             raise

@@ -312,6 +312,64 @@ class TestLh2ThreeRegion:
                 f"broadcast to every covered fine timestep."
             )
 
+    def test_daily_block_broadcast_invariant_every_arc(
+        self, lh2_solve: Path
+    ) -> None:
+        """Bug A1 regression — every daily-block arc has 24 identical
+        v_flow rows per day after the writer broadcast.
+
+        The cascade path keeps the block CSVs (entity_block.csv,
+        process_block.csv, overlap_set.csv) in the Provider rather than
+        flushing them to disk.  Before the A1 fix, the output writer's
+        ``_load_entity_block_map`` / ``_load_overlap_fine_to_coarse``
+        only consulted disk and silently returned empty dicts — leaving
+        every coarse-block flow value unbroadcast.  This test pins the
+        invariant: ALL daily-block arcs (not just the canonical
+        liquefier + pipe spot checks above) must show zero intra-day
+        spread.
+        """
+        df = self._read_v_flow(lh2_solve)
+        # Every column in v_flow is a ``(process, source, sink)`` tuple.
+        # The daily-group processes are the liquefiers and the pipes —
+        # both sides live on the daily block, so the writer must
+        # broadcast across all 24 hours of each day.
+        daily_processes = {
+            "liquefier_A", "liquefier_B", "liquefier_C",
+            "pipe_AB", "pipe_BC",
+        }
+        checked = 0
+        for col_str in df.columns:
+            # Column labels are stringified Python tuples produced by
+            # _output_writer; parse the process name out of the string.
+            # Lightweight inline parse — Python's ast.literal_eval works
+            # but ast import overhead vs the tuple-shape check is moot.
+            import ast
+            try:
+                col = ast.literal_eval(col_str)
+            except (ValueError, SyntaxError):
+                continue
+            if not (isinstance(col, tuple) and len(col) == 3):
+                continue
+            process = col[0]
+            if process not in daily_processes:
+                continue
+            flows = df[col_str].astype(float).to_numpy()
+            for d in range(N_DAYS):
+                day_slice = flows[d * 24 : (d + 1) * 24]
+                spread = day_slice.max() - day_slice.min()
+                assert spread < 1e-9, (
+                    f"{col_str} day {d + 1}: daily-block v_flow varies "
+                    f"intra-day (spread={spread:.3e}); the writer's "
+                    f"block-aware broadcast (Agent 1.8) must replicate "
+                    f"the coarse-step value to every fine hour."
+                )
+            checked += 1
+        assert checked > 0, (
+            "no daily-block arcs found in v_flow output — the fixture "
+            "should always carry at least the three liquefier arcs.  "
+            f"Have columns: {df.columns.tolist()[:6]}"
+        )
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
