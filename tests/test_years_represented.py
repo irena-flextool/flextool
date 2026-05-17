@@ -27,7 +27,7 @@ if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
 from db_utils import json_to_db
-from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
+from flextool.engine_polars import run_chain_from_db
 
 
 # ---------------------------------------------------------------------------
@@ -40,29 +40,60 @@ def _run_scenario(
     bin_dir: Path,
     workdir: Path,
 ) -> Path:
-    """Run a scenario and return the workdir (where output_raw/ lives)."""
-    runner = FlexToolRunner(
-        input_db_url=db_url,
-        scenario_name=scenario,
-        root_dir=workdir,
-        bin_dir=bin_dir,
+    """Run a scenario via the native cascade and return the workdir.
+
+    Δ.22 migration: ``SolverRunner.run`` was deleted, so the legacy
+    ``runner.run_model()`` path raises :class:`NotImplementedError`.
+    The cascade replacement is :func:`run_chain_from_db`.  ``csv_dump=
+    True`` emits the inflation factor / years_represented CSVs to
+    ``solve_data/``; ``keep_solutions=True`` retains the
+    flex_data_provider on every step so its derived input/ frames can
+    be snapshotted alongside.
+    """
+    steps = run_chain_from_db(
+        db_url, scenario, work_folder=workdir,
+        csv_dump=True, keep_solutions=True,
     )
-    runner.write_input(db_url, scenario)
-    return_code = runner.run_model()
-    assert return_code == 0, f"Model run failed for scenario '{scenario}'"
+    last_step = next(reversed(list(steps.values())))
+    assert last_step.optimal, (
+        f"Model run failed for scenario '{scenario}': "
+        f"last step not optimal"
+    )
+    provider = getattr(last_step, "flex_data_provider", None)
+    if provider is not None:
+        provider.snapshot_processed_inputs(workdir)
     return workdir
 
 
+def _inflation_factor_csv(workdir: Path, basename: str) -> Path:
+    """Locate an inflation factor CSV after a native-cascade run.
+
+    The legacy preprocessing wrote ``solve_data/solve__p_<name>.csv``;
+    the cascade writes ``solve_data/p_<name>.csv`` (no ``solve__``
+    prefix).  Same column layout (``period,value``) and same numeric
+    values.  Accept either filename to keep the test forward-compatible.
+    """
+    cascade_path = workdir / "solve_data" / basename
+    if cascade_path.exists():
+        return cascade_path
+    legacy_path = workdir / "solve_data" / f"solve__{basename}"
+    return legacy_path
+
+
 def _read_inflation_factor_operations(workdir: Path) -> pd.DataFrame:
-    """Read solve__p_inflation_factor_operations_yearly.csv from solve_data/."""
-    csv_path = workdir / "solve_data" / "solve__p_inflation_factor_operations_yearly.csv"
+    """Read p_inflation_factor_operations_yearly.csv from solve_data/."""
+    csv_path = _inflation_factor_csv(
+        workdir, "p_inflation_factor_operations_yearly.csv",
+    )
     assert csv_path.exists(), f"Missing {csv_path}"
     return pd.read_csv(csv_path)
 
 
 def _read_inflation_factor_investment(workdir: Path) -> pd.DataFrame:
-    """Read solve__p_inflation_factor_investment_yearly.csv from solve_data/."""
-    csv_path = workdir / "solve_data" / "solve__p_inflation_factor_investment_yearly.csv"
+    """Read p_inflation_factor_investment_yearly.csv from solve_data/."""
+    csv_path = _inflation_factor_csv(
+        workdir, "p_inflation_factor_investment_yearly.csv",
+    )
     assert csv_path.exists(), f"Missing {csv_path}"
     return pd.read_csv(csv_path)
 
@@ -99,7 +130,10 @@ def _add_half_year_scenario(db_url: str) -> None:
                 ("solve", "y2020_half_year", "period_timeset", period_timeset, "half_year"),
                 ("solve", "y2020_half_year", "realized_periods", realized_periods, "half_year"),
                 ("solve", "y2020_half_year", "solve_mode", "single_solve", "half_year"),
-                ("solve", "y2020_half_year", "solver", "glpsol", "half_year"),
+                # ``highs`` matches the test DB's other solves (the
+                # native cascade only ships HiGHS; ``glpsol`` was the
+                # legacy default but the cascade rejects it).
+                ("solve", "y2020_half_year", "solver", "highs", "half_year"),
                 ("solve", "y2020_half_year", "years_represented", years_represented, "half_year"),
             ],
         )
@@ -140,7 +174,9 @@ def _add_2_5_year_scenario(db_url: str) -> None:
                 ("solve", "y2020_2_5_year", "period_timeset", period_timeset, "two_and_half_year"),
                 ("solve", "y2020_2_5_year", "realized_periods", realized_periods, "two_and_half_year"),
                 ("solve", "y2020_2_5_year", "solve_mode", "single_solve", "two_and_half_year"),
-                ("solve", "y2020_2_5_year", "solver", "glpsol", "two_and_half_year"),
+                # ``highs`` matches the test DB's other solves; see
+                # the ``half_year`` note above.
+                ("solve", "y2020_2_5_year", "solver", "highs", "two_and_half_year"),
                 ("solve", "y2020_2_5_year", "years_represented", years_represented, "two_and_half_year"),
             ],
         )
