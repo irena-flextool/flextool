@@ -1915,10 +1915,21 @@ def write_input(
 
         _validate_timeline_timestep_duration(db)
 
+        # Step 2.5-E Phase E — _PARAMETER_SPECS materialised by the
+        # SpineDBBackend.  Each spec's frame lands in the cascade-input
+        # Provider under the canonical ``input/<stem>`` key; the legacy
+        # ``write_parameter`` disk write is deleted at this site.
         for spec in _PARAMETER_SPECS:
-            prefixed_spec = dict(spec)
-            prefixed_spec["filename"] = str(wf / spec["filename"])
-            write_parameter(db, precision_digits=precision_digits, **prefixed_spec)
+            _spec_kwargs = {
+                k: v for k, v in spec.items() if k != "filename"
+            }
+            _frame = _backend_default.parameter_values(**_spec_kwargs)
+            _spec_path = Path(spec["filename"])
+            _key = (
+                f"{_spec_path.parent.name}/{_spec_path.stem}"
+                if _spec_path.parent.name else _spec_path.stem
+            )
+            provider.put(_key, _frame)
 
         ct_method_overrides = _write_dc_power_flow_data(db, wf, logger)
         _write_process_method(db, wf, logger, ct_method_overrides=ct_method_overrides)
@@ -2186,181 +2197,10 @@ def _validate_group_output_memberships(db, logger: logging.Logger) -> None:
                 )
 
 
-def write_parameter(
-    db,
-    cl_pars: list[tuple[str, str]],
-    header: str,
-    filename: str,
-    filter_in_type: list[str] | None = None,
-    filter_out_index: str | None = None,
-    filter_in_value: str | None = None,
-    no_value: bool = False,
-    param_print: bool = False,
-    dimens: list[int] | None = None,
-    param_loc: int | None = None,
-    no_entity: bool | None = None,
-    precision_digits: int = 0,
-) -> None:
-    # Parameters whose value is a structural identifier (method name,
-    # entity reference, tier index, boolean flag) rather than a numerical
-    # coefficient.  Rounding these would corrupt the model — skip.
-    # Conservative policy: skip the param if *any* of its cl_pars
-    # definitions is in the structural set.  The per-value `filter_in_type`
-    # filters (``"str"``, ``"bool"``) already guard most of these, but
-    # being explicit keeps the intent documented.
-    _STRUCTURAL_PARAM_NAMES: frozenset[str] = frozenset({
-        # method names
-        "ct_method", "transfer_method", "conversion_method",
-        "startup_method", "fork_method", "inflow_method",
-        "invest_method", "lifetime_method", "ramp_method",
-        "minimum_time_method", "storage_binding_method",
-        "storage_nested_fix_method", "storage_solve_horizon_method",
-        "storage_start_end_method", "profile_method", "reserve_method",
-        "co2_method", "loss_share_type", "price_method",
-        "solver", "solve_mode", "highs_method", "highs_parallel",
-        "highs_presolve", "solver_precommand", "solver_arguments",
-        # structural flags / references
-        "is_DC", "sense", "node_type", "has_capacity_margin",
-        "has_inertia", "has_non_synchronous", "include_stochastics",
-        "output_nodeGroup_dispatch", "output_nodeGroup_indicators",
-        "output_flowGroup_indicators", "flow_aggregator",
-        "output_connection__node__node_flow_t",
-        "output_connection_flow_separate", "output_horizon",
-        "output_ramp_envelope", "output_unit__node_flow_t",
-        "output_unit__node_ramp_t", "exclude_entity_outputs",
-        # set membership / name references
-        "solves", "contains_solves", "model",
-        "realized_periods", "realized_invest_periods",
-        "fix_storage_periods", "invest_periods", "periods_available",
-        "debug", "version",
-    })
-    effective_precision = 0 if any(
-        par in _STRUCTURAL_PARAM_NAMES for _, par in cl_pars
-    ) else precision_digits
-    # interpret map dimensionality and map into map for later comparisons
-    type_filter_map_dim = []
-    if filter_in_type:
-        # Work on a local copy to avoid mutating the caller's list
-        filter_in_type = list(filter_in_type)
-        map_found = False
-        for type_filter in filter_in_type:
-            if type_filter in ["1d_map", "2d_map", "3d_map", "4d_map", "5d_map"]:
-                if map_found:
-                    message = "Trying to have two different dimensionalities in the same parameter to be written out"
-                    logging.error(message)
-                    raise FlexToolConfigError(message)
-                map_found = True
-                type_filter_map_dim = int(type_filter[0])
-                filter_in_type.remove(type_filter)
-        if map_found:
-            filter_in_type.append("map")
-    params = []
-    for cl_par in cl_pars:
-        params = params + db.find_parameter_values(entity_class_name=cl_par[0],
-                                                    parameter_definition_name=cl_par[1])
-    with open(filename, 'w') as realfile:
-        realfile.write(header + "\n")
-        for param in params:
-            # Skip parameters with None type (value cleared in an alternative)
-            if param["type"] is None:
-                continue
-            # This filter ensures that the parameter is of required type (skip to next if not)
-            if filter_in_type and param["type"] not in filter_in_type:
-                continue
-
-            entity_byname = param["entity_byname"]
-            if dimens:
-                temp_entity_byname = [None] * len(entity_byname)
-                for i, dimen in enumerate(dimens):
-                    temp_entity_byname[dimen] = entity_byname[i]
-                entity_byname = temp_entity_byname
-
-
-            if param_print:
-                if param_loc is not None:
-                    collect = []
-                    for (i, byname) in enumerate(entity_byname):
-                        if i == param_loc:
-                            collect.append(param["parameter_definition_name"])
-                        collect.append(byname)
-                    first_cols = ','.join(collect)
-                else:
-                    if no_entity:
-                        first_cols = param["parameter_definition_name"]
-                    else:
-                        first_cols = ','.join(entity_byname) + ',' + param["parameter_definition_name"]
-            else:
-                first_cols = ','.join(entity_byname)
-            if param["type"] == "map":
-                # If the first parameter index contains filter_out_index, then skip the parameter (maybe should be extended to other indexes)
-                if filter_out_index and param["parsed_value"].index_name == filter_out_index:
-                    continue
-                # Check that map dimensionality matches with filter requirement (if not, then skip)
-                if filter_in_type and type_filter_map_dim != api.parameter_value.from_database_to_dimension_count(param["value"], param["type"]):
-                    continue
-                value = param["parsed_value"]
-                indexes = []
-                if api.parameter_value.from_database_to_dimension_count(param["value"], param["type"]) <= 1:
-                    result = [str(ind) for ind in value.indexes]
-                    # Doing a zip, since there can be multiple rows in the map
-                    result = list(zip(
-                        result,
-                        [format_scalar_for_csv(v, effective_precision)
-                         for v in value.values],
-                    ))
-                    for res in result:
-                        if no_value:
-                            realfile.write(first_cols + ',' + res[0] + '\n')
-                        else:
-                            realfile.write(first_cols + ',' + ','.join(res) + '\n')
-                else:
-                    flat_map = api.convert_map_to_table(value)
-                    for (i, index) in enumerate(flat_map):
-                        if no_value:
-                            realfile.write(first_cols + ',' + ','.join(index[:-1]) + '\n')
-                        else:
-                            # Only the trailing column holds the numeric
-                            # value; preceding columns are indexes
-                            # (period, time, branch, …) — leave those raw.
-                            index[-1] = format_scalar_for_csv(
-                                index[-1], effective_precision,
-                            )
-                            realfile.write(first_cols + ',' + ','.join(index) + '\n')
-            elif param["type"] == "array" or param["type"] == "time_series":
-                for row in param["parsed_value"].values:
-                    realfile.write(
-                        ','.join(entity_byname) + ','
-                        + format_scalar_for_csv(row, effective_precision)
-                        + '\n'
-                    )
-            elif param["type"] == "str" or param["type"] == "float" or param["type"] == "bool":
-                # Filter based on values: only if the value is found, then data is written
-                if filter_in_value and param["parsed_value"] != filter_in_value:
-                    continue
-                if no_value:
-                    realfile.write(first_cols + '\n')
-                else:
-                    realfile.write(
-                        first_cols + ','
-                        + format_scalar_for_csv(
-                            param["parsed_value"], effective_precision,
-                        )
-                        + '\n'
-                    )
-            else:
-                if not filter_in_type:
-                    filter_in_type = ["bool", "str", "float", "array", "time_series", "map"]
-                message = (f"Input data found in a parameter not of supported type."
-                           f"\nEntity: {','.join(entity_byname)}"
-                           f"\nParameter: {param['parameter_definition_name']}"
-                           f"\nSupported types: {filter_in_type}"
-                           f"\nParameter type: {param['type']}")
-                logging.error(message)
-                raise FlexToolConfigError(message)
-
-
-
-# Step 2.5 Phase 2 — write_default_values() deleted; its body lives in
-# flextool.spinedb_backend.SpineDBBackend.parameter_defaults(), which
+# Step 2.5-E Phase E — write_parameter() deleted; its body lives in
+# flextool.spinedb_backend.SpineDBBackend.parameter_values(), which
 # returns a polars DataFrame for placement into the cascade-input
 # Provider.  No disk write at this site.
+#
+# Step 2.5 Phase 2 — write_default_values() deleted; its body lives in
+# flextool.spinedb_backend.SpineDBBackend.parameter_defaults().
