@@ -1870,10 +1870,31 @@ def write_input(
             api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
         os.makedirs(wf / "input", exist_ok=True)
 
+        # Step 2.5 Phase 2 — _DEFAULT_VALUES_SPECS materialised by the
+        # SpineDBBackend; frames land in the cascade-input Provider
+        # under their canonical input/<stem> key, replacing the legacy
+        # ``input/<stem>.csv`` disk write (deleted at this site).
+        from flextool.spinedb_backend import SpineDBBackend
+        _backend_default = SpineDBBackend.__new__(SpineDBBackend)
+        _backend_default._db = db                              # type: ignore[attr-defined]
+        _backend_default._api = api                            # type: ignore[attr-defined]
+        _backend_default._precision_digits = precision_digits  # type: ignore[attr-defined]
         for spec in _DEFAULT_VALUES_SPECS:
-            prefixed_spec = dict(spec)
-            prefixed_spec["filename"] = str(wf / spec["filename"])
-            write_default_values(db, precision_digits=precision_digits, **prefixed_spec)
+            _frame = _backend_default.parameter_defaults(
+                cl_pars=spec["cl_pars"],
+                header=spec["header"],
+                filter_in_type=spec.get("filter_in_type"),
+                only_value=spec.get("only_value", False),
+            )
+            # Canonical Provider key — matches ``_provider_key`` in
+            # :mod:`flextool.engine_polars._writer_provider_io`:
+            # ``"<parent_dir_name>/<stem>"``.  E.g. ``input/default_values``.
+            _spec_path = Path(spec["filename"])
+            _key = (
+                f"{_spec_path.parent.name}/{_spec_path.stem}"
+                if _spec_path.parent.name else _spec_path.stem
+            )
+            provider.put(_key, _frame)
 
         for spec in _ENTITY_SPECS:
             write_entity(db, spec.classes, spec.header, str(wf / spec.filename),
@@ -2353,42 +2374,7 @@ def write_parameter(
 
 
 
-def write_default_values(
-    db,
-    cl_pars: list[tuple[str, str]],
-    header: str,
-    filename: str,
-    filter_in_type: list[str] | None = None,
-    only_value: bool = False,
-    precision_digits: int = 0,
-) -> None:
-    param_defs = []
-    definitions = db.find_parameter_definitions()#entity_class_name=cl_par[0], name=cl_par[1])
-    for cl_par in cl_pars:
-        for definition in definitions:
-            if definition["entity_class_name"] == cl_par[0] and definition["name"] == cl_par[1]:
-                param_defs.append(definition)
-    with open(filename, 'w') as realfile:
-        realfile.write(header + "\n")
-        for param in param_defs:
-            # This filter ensures that the parameter is of required type (skip to next if not)
-            if filter_in_type and param["default_type"] not in filter_in_type:
-                continue
-
-            if param["default_type"] == "str" or param["default_type"] == "float" or param["default_type"] == "bool":
-                raw_default = api.from_database(
-                    param["default_value"], param["default_type"],
-                )
-                formatted = format_scalar_for_csv(raw_default, precision_digits)
-                if only_value:
-                    realfile.write(formatted + '\n')
-                else:
-                    realfile.write(
-                        param["entity_class_name"] + ","
-                        + param["name"] + "," + formatted + '\n'
-                    )
-            else:
-                message = ("Default_value found in a parameter definition not of supported default type"
-                           "\nParameter: " + param["parameter_definition_name"])
-                logging.error(message)
-                raise FlexToolConfigError(message)
+# Step 2.5 Phase 2 — write_default_values() deleted; its body lives in
+# flextool.spinedb_backend.SpineDBBackend.parameter_defaults(), which
+# returns a polars DataFrame for placement into the cascade-input
+# Provider.  No disk write at this site.
