@@ -927,25 +927,44 @@ class TestPGLibCase14Integration:
             f"--- stderr ---\n{result.stderr[-2000:]}"
         )
 
-        # Read v_obj.csv from work directory
-        v_obj_path = work_dir / "output_raw" / "v_obj.csv"
-        assert v_obj_path.exists(), f"v_obj.csv not found at {v_obj_path}"
-        with open(v_obj_path) as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            row = next(reader)
-            obj_value = float(row[1])
+        # Δ.22: the legacy GMPL-mod CSV outputs (``output_raw/v_obj.csv``,
+        # ``v_angle.csv``, ``v_flow.csv``) are no longer produced — the
+        # native cascade writes per-solve parquets instead
+        # (``v_obj__<solve>.parquet``, …).  Read those, materialise
+        # the columns the original assertions expected.
+        from flextool.lean_parquet import read_lean_parquet
 
-        # Read v_angle.csv
-        v_angle_path = work_dir / "output_raw" / "v_angle.csv"
-        assert v_angle_path.exists(), f"v_angle.csv not found at {v_angle_path}"
-        with open(v_angle_path) as f:
-            reader = csv.DictReader(f)
-            angle_row = next(reader)
+        v_obj_pq = next(
+            (work_dir / "output_raw").glob("v_obj__*.parquet"), None,
+        )
+        assert v_obj_pq is not None, (
+            f"No v_obj parquet under {work_dir / 'output_raw'}"
+        )
+        obj_df = read_lean_parquet(v_obj_pq)
+        obj_value = float(obj_df["objective"].iloc[-1])
 
-        # Read v_flow.csv
-        v_flow_path = work_dir / "output_raw" / "v_flow.csv"
-        assert v_flow_path.exists(), f"v_flow.csv not found at {v_flow_path}"
+        v_angle_pq = next(
+            (work_dir / "output_raw").glob("v_angle__*.parquet"), None,
+        )
+        assert v_angle_pq is not None, (
+            f"No v_angle parquet under {work_dir / 'output_raw'}"
+        )
+        angle_df = read_lean_parquet(v_angle_pq)
+        # Mirror the original ``DictReader`` ``angle_row`` shape — a
+        # dict ``{bus_label: value_string}``.  The parquet's columns are
+        # the node names; values arrive numeric so str-cast on the way
+        # out to mirror the CSV reader's behaviour.
+        angle_row = {
+            str(col): str(angle_df[col].iloc[0])
+            for col in angle_df.columns
+        }
+
+        v_flow_pq = next(
+            (work_dir / "output_raw").glob("v_flow__*.parquet"), None,
+        )
+        assert v_flow_pq is not None, (
+            f"No v_flow parquet under {work_dir / 'output_raw'}"
+        )
 
         return {
             "case": case,
