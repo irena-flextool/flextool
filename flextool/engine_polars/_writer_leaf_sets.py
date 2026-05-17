@@ -123,13 +123,17 @@ _PERIOD_PARAM_SOURCES: list[tuple[str, str]] = [
 ]
 
 
-def derive_period_param_set(input_dir: Path, source_csv: str) -> pl.DataFrame:
+def derive_period_param_set(input_dir: Path, source_csv: str,
+                             *, provider: "object | None" = None,
+                             ) -> pl.DataFrame:
     """Project the ``period`` column out of a ``pd_*.csv`` file.
 
     Legacy: setof {(e, param, d, value) in entity__param__period} (d).
     Order = first occurrence in the source CSV.
     """
-    df = _read_csv(input_dir / source_csv, ["entity", "param", "period", "value"])
+    df = _read_csv(input_dir / source_csv,
+                   ["entity", "param", "period", "value"],
+                   provider=provider)
     return (
         df.filter(pl.col("period") != "")
           .select("period")
@@ -137,9 +141,14 @@ def derive_period_param_set(input_dir: Path, source_csv: str) -> pl.DataFrame:
     )
 
 
-def write_period_param_sets(input_dir: Path, solve_data_dir: Path) -> None:
+def write_period_param_sets(input_dir: Path, solve_data_dir: Path,
+                             *, provider: "object | None" = None,
+                             ) -> None:
     for source_csv, target_name in _PERIOD_PARAM_SOURCES:
-        _write(derive_period_param_set(input_dir, source_csv), solve_data_dir / target_name)
+        _write(
+            derive_period_param_set(input_dir, source_csv, provider=provider),
+            solve_data_dir / target_name,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -161,31 +170,49 @@ def _project_entity_by_method(
     )
 
 
-def derive_entity_invest(input_dir: Path) -> pl.DataFrame:
-    df = _read_csv(input_dir / "entity__invest_method.csv", ["entity", "method"])
+def derive_entity_invest(input_dir: Path,
+                          *, provider: "object | None" = None,
+                          ) -> pl.DataFrame:
+    df = _read_csv(input_dir / "entity__invest_method.csv",
+                   ["entity", "method"], provider=provider)
     return _project_entity_by_method(df, _INVEST_METHOD_NOT_ALLOWED, "entity")
 
 
-def derive_entity_divest(input_dir: Path) -> pl.DataFrame:
-    df = _read_csv(input_dir / "entity__invest_method.csv", ["entity", "method"])
+def derive_entity_divest(input_dir: Path,
+                          *, provider: "object | None" = None,
+                          ) -> pl.DataFrame:
+    df = _read_csv(input_dir / "entity__invest_method.csv",
+                   ["entity", "method"], provider=provider)
     return _project_entity_by_method(df, _DIVEST_METHOD_NOT_ALLOWED, "entity")
 
 
-def derive_group_invest(input_dir: Path) -> pl.DataFrame:
-    df = _read_csv(input_dir / "group__invest_method.csv", ["entity", "method"])
+def derive_group_invest(input_dir: Path,
+                         *, provider: "object | None" = None,
+                         ) -> pl.DataFrame:
+    df = _read_csv(input_dir / "group__invest_method.csv",
+                   ["entity", "method"], provider=provider)
     return _project_entity_by_method(df, _INVEST_METHOD_NOT_ALLOWED, "group")
 
 
-def derive_group_divest(input_dir: Path) -> pl.DataFrame:
-    df = _read_csv(input_dir / "group__invest_method.csv", ["entity", "method"])
+def derive_group_divest(input_dir: Path,
+                         *, provider: "object | None" = None,
+                         ) -> pl.DataFrame:
+    df = _read_csv(input_dir / "group__invest_method.csv",
+                   ["entity", "method"], provider=provider)
     return _project_entity_by_method(df, _DIVEST_METHOD_NOT_ALLOWED, "group")
 
 
-def write_invest_method_sets(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_entity_invest(input_dir), solve_data_dir / "entityInvest.csv")
-    _write(derive_entity_divest(input_dir), solve_data_dir / "entityDivest.csv")
-    _write(derive_group_invest(input_dir), solve_data_dir / "group_invest.csv")
-    _write(derive_group_divest(input_dir), solve_data_dir / "group_divest.csv")
+def write_invest_method_sets(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> None:
+    _write(derive_entity_invest(input_dir, provider=provider),
+           solve_data_dir / "entityInvest.csv")
+    _write(derive_entity_divest(input_dir, provider=provider),
+           solve_data_dir / "entityDivest.csv")
+    _write(derive_group_invest(input_dir, provider=provider),
+           solve_data_dir / "group_invest.csv")
+    _write(derive_group_divest(input_dir, provider=provider),
+           solve_data_dir / "group_divest.csv")
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +231,9 @@ def _project_group_by_method_in(
     )
 
 
-def derive_group_co2(input_dir: Path, kind: str) -> pl.DataFrame:
+def derive_group_co2(input_dir: Path, kind: str,
+                      *, provider: "object | None" = None,
+                      ) -> pl.DataFrame:
     """Project groups whose co2_method ∈ allowed set.
 
     ``kind`` is one of ``"price"``, ``"max_period"``, ``"max_total"``.
@@ -214,26 +243,33 @@ def derive_group_co2(input_dir: Path, kind: str) -> pl.DataFrame:
         "max_period": _CO2_MAX_PERIOD_METHOD,
         "max_total":  _CO2_MAX_TOTAL_METHOD,
     }[kind]
-    df = _read_csv(input_dir / "group__co2_method.csv", ["group", "method"])
+    df = _read_csv(input_dir / "group__co2_method.csv",
+                   ["group", "method"], provider=provider)
     return _project_group_by_method_in(df, allowed)
 
 
-def write_co2_method_sets(input_dir: Path, solve_data_dir: Path) -> None:
+def write_co2_method_sets(input_dir: Path, solve_data_dir: Path,
+                           *, provider: "object | None" = None,
+                           ) -> None:
     for kind, target in (
         ("price",      "group_co2_price.csv"),
         ("max_period", "group_co2_max_period.csv"),
         ("max_total",  "group_co2_max_total.csv"),
     ):
-        _write(derive_group_co2(input_dir, kind), solve_data_dir / target)
+        _write(derive_group_co2(input_dir, kind, provider=provider),
+               solve_data_dir / target)
 
 
 # ---------------------------------------------------------------------------
 # Family 4 — simple_projections (legacy: preprocessing/simple_projections.py)
 # ---------------------------------------------------------------------------
 
-def derive_optional_yes(input_dir: Path) -> pl.DataFrame:
+def derive_optional_yes(input_dir: Path,
+                         *, provider: "object | None" = None,
+                         ) -> pl.DataFrame:
     """optional_outputs filtered to value == 'yes'."""
-    df = _read_csv(input_dir / "optional_outputs.csv", ["output", "value"])
+    df = _read_csv(input_dir / "optional_outputs.csv",
+                   ["output", "value"], provider=provider)
     return (
         df.filter(pl.col("value") == "yes")
           .select("output")
@@ -241,11 +277,14 @@ def derive_optional_yes(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_reserve_upDown_group(input_dir: Path) -> pl.DataFrame:
+def derive_reserve_upDown_group(input_dir: Path,
+                                 *, provider: "object | None" = None,
+                                 ) -> pl.DataFrame:
     """3-tuple (reserve, upDown, group) for method != 'no_reserve'."""
     df = _read_csv(
         input_dir / "reserve__upDown__group__method.csv",
         ["reserve", "upDown", "group", "method"],
+        provider=provider,
     )
     return (
         df.filter(pl.col("method") != "no_reserve")
@@ -254,8 +293,11 @@ def derive_reserve_upDown_group(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_group_loss_share(input_dir: Path) -> pl.DataFrame:
-    df = _read_csv(input_dir / "group__loss_share_type.csv", ["group", "type"])
+def derive_group_loss_share(input_dir: Path,
+                             *, provider: "object | None" = None,
+                             ) -> pl.DataFrame:
+    df = _read_csv(input_dir / "group__loss_share_type.csv",
+                   ["group", "type"], provider=provider)
     return (
         df.filter(pl.col("group") != "")
           .select("group")
@@ -263,11 +305,15 @@ def derive_group_loss_share(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_def_optional_yes(input_dir: Path) -> pl.DataFrame:
+def derive_def_optional_yes(input_dir: Path,
+                             *, provider: "object | None" = None,
+                             ) -> pl.DataFrame:
     """def_optional_outputs filtered to 'yes' and not overridden 'no'."""
-    explicit = _read_csv(input_dir / "optional_outputs.csv", ["output", "value"])
+    explicit = _read_csv(input_dir / "optional_outputs.csv",
+                         ["output", "value"], provider=provider)
     explicit_no = explicit.filter(pl.col("value") == "no").select("output")
-    defaults = _read_csv(input_dir / "def_optional_outputs.csv", ["output", "value"])
+    defaults = _read_csv(input_dir / "def_optional_outputs.csv",
+                          ["output", "value"], provider=provider)
     return (
         defaults.filter(pl.col("value") == "yes")
                 .join(explicit_no, on="output", how="anti")
@@ -276,11 +322,14 @@ def derive_def_optional_yes(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_process_delayed(solve_data_dir: Path) -> pl.DataFrame:
+def derive_process_delayed(solve_data_dir: Path,
+                            *, provider: "object | None" = None,
+                            ) -> pl.DataFrame:
     """Project ``process`` out of solve_data/process_delayed__duration.csv."""
     df = _read_csv(
         solve_data_dir / "process_delayed__duration.csv",
         ["process", "duration"],
+        provider=provider,
     )
     return (
         df.filter(pl.col("process") != "")
@@ -294,9 +343,12 @@ def derive_process_side() -> pl.DataFrame:
     return pl.DataFrame({"side": ["source", "sink"]})
 
 
-def derive_period_solve(solve_data_dir: Path) -> pl.DataFrame:
+def derive_period_solve(solve_data_dir: Path,
+                         *, provider: "object | None" = None,
+                         ) -> pl.DataFrame:
     """Project ``period`` out of solve_data/solve_period.csv."""
-    df = _read_csv(solve_data_dir / "solve_period.csv", ["solve", "period"])
+    df = _read_csv(solve_data_dir / "solve_period.csv",
+                   ["solve", "period"], provider=provider)
     return (
         df.filter(pl.col("period") != "")
           .select("period")
@@ -304,9 +356,12 @@ def derive_period_solve(solve_data_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_time_set(input_dir: Path) -> pl.DataFrame:
+def derive_time_set(input_dir: Path,
+                     *, provider: "object | None" = None,
+                     ) -> pl.DataFrame:
     """Project ``time`` out of input/timeline.csv (cols: timeline, step, ...)."""
-    df = _read_csv(input_dir / "timeline.csv", ["timeline", "step"])
+    df = _read_csv(input_dir / "timeline.csv",
+                   ["timeline", "step"], provider=provider)
     return (
         df.filter(pl.col("step") != "")
           .select(pl.col("step").alias("time"))
@@ -314,10 +369,14 @@ def derive_time_set(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_enable_optional_outputs(solve_data_dir: Path) -> pl.DataFrame:
+def derive_enable_optional_outputs(solve_data_dir: Path,
+                                    *, provider: "object | None" = None,
+                                    ) -> pl.DataFrame:
     """Union of optional_yes and def_optional_yes (order: optional first)."""
-    a = _read_csv(solve_data_dir / "optional_yes.csv", ["output"])
-    b = _read_csv(solve_data_dir / "def_optional_yes.csv", ["output"])
+    a = _read_csv(solve_data_dir / "optional_yes.csv", ["output"],
+                  provider=provider)
+    b = _read_csv(solve_data_dir / "def_optional_yes.csv", ["output"],
+                  provider=provider)
     return (
         pl.concat([a, b], how="vertical")
           .filter(pl.col("output") != "")
@@ -328,15 +387,18 @@ def derive_enable_optional_outputs(solve_data_dir: Path) -> pl.DataFrame:
 
 def derive_node_state_subset(
     solve_data_dir: Path, binding_method: str,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Filter nodeState by a specific storage_binding_method.
 
     ``binding_method`` is one of ``"bind_using_blended_weights"`` (→
     nodeState_rp) or ``"bind_intraperiod_blocks"`` (→ nodeStateBlock).
     """
-    state = _read_csv(solve_data_dir / "nodeState.csv", ["node"])
+    state = _read_csv(solve_data_dir / "nodeState.csv", ["node"],
+                     provider=provider)
     binding = _read_csv(
-        solve_data_dir / "node__storage_binding_method.csv", ["node", "method"],
+        solve_data_dir / "node__storage_binding_method.csv",
+        ["node", "method"], provider=provider,
     )
     matching = binding.filter(pl.col("method") == binding_method).select("node")
     return (
@@ -348,15 +410,18 @@ def derive_node_state_subset(
 
 def derive_commodity_tier(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """commodity__tier = commodity__tier_cum ∪ commodity__tier_ann."""
     cum = _read_csv(
         input_dir / "commodity_ladder_cumulative.csv",
         ["commodity", "tier"],
+        provider=provider,
     )
     ann = _read_csv(
         solve_data_dir / "commodity__tier_ann.csv",
         ["commodity", "tier"],
+        provider=provider,
     )
     return (
         pl.concat([cum, ann], how="vertical")
@@ -372,11 +437,14 @@ def derive_tier(commodity_tier: pl.DataFrame) -> pl.DataFrame:
 
 # --- simple_setof_projections: 4 trivial single-column projections ---------
 
-def derive_solve_period(input_dir: Path) -> pl.DataFrame:
+def derive_solve_period(input_dir: Path,
+                         *, provider: "object | None" = None,
+                         ) -> pl.DataFrame:
     """(solve, period) projected from input/timesets_in_use.csv."""
     df = _read_csv(
         input_dir / "timesets_in_use.csv",
         ["solve", "period", "tb"],
+        provider=provider,
     )
     return (
         df.filter((pl.col("solve") != "") & (pl.col("period") != ""))
@@ -385,10 +453,13 @@ def derive_solve_period(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_timeline(input_dir: Path) -> pl.DataFrame:
+def derive_timeline(input_dir: Path,
+                     *, provider: "object | None" = None,
+                     ) -> pl.DataFrame:
     """``timeline`` projected from input/timesets__timeline.csv (col 1)."""
     df = _read_csv(
         input_dir / "timesets__timeline.csv", ["tb", "timeline"],
+        provider=provider,
     )
     return (
         df.filter(pl.col("timeline") != "")
@@ -397,9 +468,12 @@ def derive_timeline(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_timeline_steps(input_dir: Path) -> pl.DataFrame:
+def derive_timeline_steps(input_dir: Path,
+                           *, provider: "object | None" = None,
+                           ) -> pl.DataFrame:
     """(timeline, step) projected from input/timeline.csv."""
-    df = _read_csv(input_dir / "timeline.csv", ["timeline", "step"])
+    df = _read_csv(input_dir / "timeline.csv",
+                   ["timeline", "step"], provider=provider)
     return (
         df.filter((pl.col("timeline") != "") & (pl.col("step") != ""))
           .select("timeline", "step")
@@ -407,7 +481,9 @@ def derive_timeline_steps(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_commodity_tier_ann(input_dir: Path) -> pl.DataFrame:
+def derive_commodity_tier_ann(input_dir: Path,
+                               *, provider: "object | None" = None,
+                               ) -> pl.DataFrame:
     """(commodity, tier) projected from input/commodity_ladder_annual.csv.
 
     Header order: commodity, period, tier, price, quantity — tier is col 2.
@@ -415,6 +491,7 @@ def derive_commodity_tier_ann(input_dir: Path) -> pl.DataFrame:
     df = _read_csv(
         input_dir / "commodity_ladder_annual.csv",
         ["commodity", "period", "tier", "price", "quantity"],
+        provider=provider,
     )
     return (
         df.filter((pl.col("commodity") != "") & (pl.col("tier") != ""))
@@ -425,65 +502,104 @@ def derive_commodity_tier_ann(input_dir: Path) -> pl.DataFrame:
 
 # --- orchestrators for simple_projections (preserves legacy call order) ----
 
-def write_optional_yes(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_optional_yes(input_dir), solve_data_dir / "optional_yes.csv")
+def write_optional_yes(input_dir: Path, solve_data_dir: Path,
+                        *, provider: "object | None" = None,
+                        ) -> None:
+    _write(derive_optional_yes(input_dir, provider=provider),
+           solve_data_dir / "optional_yes.csv")
 
 
-def write_reserve_upDown_group(input_dir: Path, solve_data_dir: Path) -> None:
+def write_reserve_upDown_group(input_dir: Path, solve_data_dir: Path,
+                                *, provider: "object | None" = None,
+                                ) -> None:
     _write(
-        derive_reserve_upDown_group(input_dir),
+        derive_reserve_upDown_group(input_dir, provider=provider),
         solve_data_dir / "reserve__upDown__group.csv",
     )
 
 
-def write_group_loss_share(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_group_loss_share(input_dir), solve_data_dir / "group_loss_share.csv")
+def write_group_loss_share(input_dir: Path, solve_data_dir: Path,
+                            *, provider: "object | None" = None,
+                            ) -> None:
+    _write(derive_group_loss_share(input_dir, provider=provider),
+           solve_data_dir / "group_loss_share.csv")
 
 
-def write_def_optional_yes(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_def_optional_yes(input_dir), solve_data_dir / "def_optional_yes.csv")
+def write_def_optional_yes(input_dir: Path, solve_data_dir: Path,
+                            *, provider: "object | None" = None,
+                            ) -> None:
+    _write(derive_def_optional_yes(input_dir, provider=provider),
+           solve_data_dir / "def_optional_yes.csv")
 
 
-def write_process_delayed(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process_delayed(input_dir: Path, solve_data_dir: Path,
+                           *, provider: "object | None" = None,
+                           ) -> None:
     # input_dir is unused — kept for legacy signature parity.
     del input_dir
-    _write(derive_process_delayed(solve_data_dir), solve_data_dir / "process_delayed.csv")
+    _write(derive_process_delayed(solve_data_dir, provider=provider),
+           solve_data_dir / "process_delayed.csv")
 
 
-def write_process_side(solve_data_dir: Path) -> None:
+def write_process_side(solve_data_dir: Path,
+                        *, provider: "object | None" = None,
+                        ) -> None:
+    # provider unused for the constant-set derivation; accepted for
+    # late-binding override-dispatch parity.
+    del provider
     _write(derive_process_side(), solve_data_dir / "process_side.csv")
 
 
-def write_period_solve(solve_data_dir: Path) -> None:
-    _write(derive_period_solve(solve_data_dir), solve_data_dir / "period_solve.csv")
+def write_period_solve(solve_data_dir: Path,
+                        *, provider: "object | None" = None,
+                        ) -> None:
+    _write(derive_period_solve(solve_data_dir, provider=provider),
+           solve_data_dir / "period_solve.csv")
 
 
-def write_time_set(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_time_set(input_dir), solve_data_dir / "time.csv")
+def write_time_set(input_dir: Path, solve_data_dir: Path,
+                    *, provider: "object | None" = None,
+                    ) -> None:
+    _write(derive_time_set(input_dir, provider=provider),
+           solve_data_dir / "time.csv")
 
 
-def write_enable_optional_outputs(solve_data_dir: Path) -> None:
+def write_enable_optional_outputs(solve_data_dir: Path,
+                                   *, provider: "object | None" = None,
+                                   ) -> None:
     _write(
-        derive_enable_optional_outputs(solve_data_dir),
+        derive_enable_optional_outputs(solve_data_dir, provider=provider),
         solve_data_dir / "enable_optional_outputs.csv",
     )
 
 
-def write_node_state_subsets(solve_data_dir: Path) -> None:
-    rp = derive_node_state_subset(solve_data_dir, "bind_using_blended_weights")
-    block = derive_node_state_subset(solve_data_dir, "bind_intraperiod_blocks")
+def write_node_state_subsets(solve_data_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> None:
+    rp = derive_node_state_subset(solve_data_dir, "bind_using_blended_weights",
+                                  provider=provider)
+    block = derive_node_state_subset(solve_data_dir, "bind_intraperiod_blocks",
+                                     provider=provider)
     _write(rp, solve_data_dir / "nodeState_rp.csv")
     _write(block, solve_data_dir / "nodeStateBlock.csv")
 
 
-def write_commodity_tier_sets(input_dir: Path, solve_data_dir: Path) -> None:
-    ct = derive_commodity_tier(input_dir, solve_data_dir)
+def write_commodity_tier_sets(input_dir: Path, solve_data_dir: Path,
+                                *, provider: "object | None" = None,
+                                ) -> None:
+    ct = derive_commodity_tier(input_dir, solve_data_dir, provider=provider)
     _write(ct, solve_data_dir / "commodity__tier.csv")
     _write(derive_tier(ct), solve_data_dir / "tier.csv")
 
 
-def write_simple_setof_projections(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_solve_period(input_dir), solve_data_dir / "solve_period.csv")
-    _write(derive_timeline(input_dir), solve_data_dir / "timeline.csv")
-    _write(derive_timeline_steps(input_dir), solve_data_dir / "timeline_steps.csv")
-    _write(derive_commodity_tier_ann(input_dir), solve_data_dir / "commodity__tier_ann.csv")
+def write_simple_setof_projections(input_dir: Path, solve_data_dir: Path,
+                                     *, provider: "object | None" = None,
+                                     ) -> None:
+    _write(derive_solve_period(input_dir, provider=provider),
+           solve_data_dir / "solve_period.csv")
+    _write(derive_timeline(input_dir, provider=provider),
+           solve_data_dir / "timeline.csv")
+    _write(derive_timeline_steps(input_dir, provider=provider),
+           solve_data_dir / "timeline_steps.csv")
+    _write(derive_commodity_tier_ann(input_dir, provider=provider),
+           solve_data_dir / "commodity__tier_ann.csv")
