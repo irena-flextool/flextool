@@ -1895,10 +1895,17 @@ def _read_p_process_side(path: Path, side_col: str,
             param_str = param[0] if isinstance(param, tuple) else param
             out[param_str] = sub.select("p", side_col, "value")
         return out
-    # legacy 2-row-header printf-export format
+    # Legacy 2-row-header printf-export format — was a fallback to
+    # re-parse `path` from disk.  Step 2.5 deleted the disk arm; the
+    # Provider only ever carries the canonical long format, so this
+    # branch is unreachable in-cascade.  Re-parse from the in-memory
+    # frame's CSV serialisation when the columns suggest a wide layout.
     import csv
-    with path.open() as f:
-        rows = list(csv.reader(f))
+    import io
+    buf = io.StringIO()
+    df.write_csv(buf)
+    buf.seek(0)
+    rows = list(csv.reader(buf))
     if len(rows) < 3:
         return out
     procs = rows[0][1:]
@@ -3797,23 +3804,28 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # canonical row order comes from this frame's downstream
         # ``dt_realize_dispatch`` MultiIndex.
         flex_data.realized_dispatch = _load_handoff_aux_pair(
-            sd / "dt_realize_dispatch_set.csv", ("period", "time"))
+            sd / "dt_realize_dispatch_set.csv", ("period", "time"),
+            provider=provider)
         if flex_data.realized_dispatch is not None:
             flex_data.realized_dispatch = flex_data.realized_dispatch.rename(
                 {"time": "step"})
         if flex_data.realized_dispatch is None:
             flex_data.realized_dispatch = _load_handoff_aux_pair(
-                sd / "realized_dispatch.csv", ("period", "step"))
+                sd / "realized_dispatch.csv", ("period", "step"),
+                provider=provider)
         flex_data.period__time_last = _load_handoff_aux_pair(
-            sd / "period__time_last.csv", ("period", "step"))
+            sd / "period__time_last.csv", ("period", "step"),
+            provider=provider)
         # ``node__storage_nested_fix_method`` lives in solve_data/ for
         # cascade solves; fall back to input/ if not yet copied.  Explicit
         # ``is None`` chain (DataFrame is non-truthy in polars).
         nsfm = _load_handoff_aux_pair(
-            sd / "node__storage_nested_fix_method.csv", ("node", "method"))
+            sd / "node__storage_nested_fix_method.csv", ("node", "method"),
+            provider=provider)
         if nsfm is None:
             nsfm = _load_handoff_aux_pair(
-                inp / "node__storage_nested_fix_method.csv", ("node", "method"))
+                inp / "node__storage_nested_fix_method.csv", ("node", "method"),
+                provider=provider)
         flex_data.node__storage_nested_fix_method = nsfm
 
         # Δ.3/Δ.4 — DB-direct construction.  Replaces the previous 3-pass
