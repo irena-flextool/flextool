@@ -30,7 +30,7 @@ import pytest
 from spinedb_api import DatabaseMapping, import_data
 
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
-from flextool.flextoolrunner.input_writer import METHODS_MAPPING
+from flextool.input_derivation._specs import METHODS_MAPPING
 from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
 from flextool.input_derivation._process_method import derive_process_method
 from flextool.spinedb_backend import SpineDBBackend

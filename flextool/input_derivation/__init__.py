@@ -114,7 +114,7 @@ def run(
         Float precision forwarded to ``SpineDBBackend.parameter_values``.
     """
     from flextool.spinedb_backend import SpineDBBackend
-    from flextool.flextoolrunner.input_writer import (  # noqa: E402 — local import to break circulars
+    from flextool.input_derivation._specs import (
         _ENTITY_SPECS,
         _PARAMETER_SPECS,
         _DEFAULT_VALUES_SPECS,

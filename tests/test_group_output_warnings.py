@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from spinedb_api import DatabaseMapping
 
-from flextool.flextoolrunner.input_writer import _validate_group_output_memberships
+from flextool.input_derivation._specs import _validate_group_output_memberships
 
 
 def _build_db(tmp_path: Path, parameter_values: list[tuple[str, str]],

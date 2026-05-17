@@ -5,7 +5,7 @@ from spinedb_api import DatabaseMapping
 from pathlib import Path
 
 from flextool.flextoolrunner.db_reader import check_version
-from flextool.flextoolrunner import input_writer
+from flextool.input_derivation import run as _input_derivation_run
 from flextool.flextoolrunner import orchestration
 from flextool.flextoolrunner.solve_config import SolveConfig
 from flextool.flextoolrunner.timeline_config import TimelineConfig
@@ -161,13 +161,13 @@ class FlexToolRunner:
         if provider is None:
             from flextool.engine_polars._flex_data_provider import FlexDataProvider
             provider = FlexDataProvider()
-        input_writer.write_input(
+        _input_derivation_run(
             input_db_url,
-            scenario_name,
+            provider,
             self.state.logger,
+            scenario_name=scenario_name,
             work_folder=self.state.paths.work_folder,
             precision_digits=precision_digits,
-            provider=provider,
         )
         # Step 2.5-G Phase A — persist the cascade-input Provider on
         # ``self.state`` so the legacy ``orchestration.run_model`` path

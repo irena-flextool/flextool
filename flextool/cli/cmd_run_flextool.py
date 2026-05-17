@@ -400,10 +400,12 @@ def main():
     # without invoking the solver.  The Lagrangian coordinator (Agent
     # 3.2) then orchestrates multiple region solves itself.
     if args.region:
-        from flextool.flextoolrunner import input_writer as _input_writer
+        from flextool.flextoolrunner.region_decomposition import (
+            write_input_for_region as _write_input_for_region,
+        )
         _region_output = wf / f"input_region_{args.region}"
         try:
-            result = _input_writer.write_input_for_region(
+            result = _write_input_for_region(
                 input_db_url=input_db_url,
                 scenario_name=scenario_name,
                 logger=logging.getLogger("flextool.region_filter"),

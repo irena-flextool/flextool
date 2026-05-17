@@ -35,10 +35,7 @@ from collections.abc import Mapping
 
 import polars as pl
 
-# METHODS_MAPPING lives in input_writer as a module invariant; re-use
-# the existing constant rather than duplicating it.  Re-export is a
-# follow-up if we want to retire the input_writer module entirely.
-from flextool.flextoolrunner.input_writer import METHODS_MAPPING
+from flextool.input_derivation._specs import METHODS_MAPPING
 
 
 def derive_process_method(

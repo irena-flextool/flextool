@@ -1,24 +1,29 @@
-"""
-input_writer.py — Write input/ CSV files from the database.
+"""Specification tables + validators for the SpineDB → Provider pipeline.
 
-Entry point: write_input(input_db_url, scenario_name, logger, *, provider, ...)
-All write_entity / write_parameter / write_default_values calls are internal helpers.
+This module holds the canonical EAV → tabular materialiser
+specifications (``_ENTITY_SPECS``, ``_PARAMETER_SPECS``,
+``_DEFAULT_VALUES_SPECS``), the ``METHODS_MAPPING`` lookup, plus a
+handful of validators that gate :func:`flextool.input_derivation.run`.
+
+Pre-Step-2.5 this content lived in
+``flextool.flextoolrunner.input_writer``; that 2356-LOC monolith was
+torn down in items 13-18 and its content split into:
+
+* :mod:`flextool.input_derivation` — the run-time entry point;
+* this module — declarative specs + validators;
+* :mod:`flextool.spinedb_backend` — the EAV → polars materialisers
+  (``SpineDBBackend.entities`` / ``parameter_values`` /
+  ``parameter_defaults``);
+* :mod:`flextool.engine_polars._writer_*` — the native polars writers
+  that consume the materialised frames and emit derived ``solve_data/``
+  frames.
 """
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
-from typing import NamedTuple, TYPE_CHECKING
-
-import spinedb_api as api
-from spinedb_api import DatabaseMapping
-
-if TYPE_CHECKING:
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from typing import NamedTuple
 
 from flextool.flextoolrunner.runner_state import FlexToolConfigError
-from flextool.flextoolrunner.precision import format_scalar_for_csv
 
 
 # ---------------------------------------------------------------------------
@@ -1104,113 +1109,6 @@ def _validate_ladder_methods(db, logger: logging.Logger) -> None:
                 f"Map(tier -> {{price, quantity}}) or a 2d "
                 f"Map(tier -> Map(period -> {{price, quantity}}))."
             )
-
-
-
-def write_input(
-    input_db_url: str,
-    scenario_name: str | None,
-    logger: logging.Logger,
-    work_folder: Path | None = None,
-    precision_digits: int = 0,
-    *,
-    provider: "FlexDataProvider",
-) -> None:
-    """Thin shim around :func:`flextool.input_derivation.run` — see item 18.
-
-    Pre-Step-2.5 this function was the 1000-LOC entry point for the
-    EAV-to-tabular emission + write_input-time preprocessing.  Step 2.5
-    items 13-15 ported every piece into :mod:`flextool.input_derivation`
-    (SpineDBBackend spec loops + DB-driven derivations + native writer
-    dispatch) and into :mod:`flextool.engine_polars._writer_*` (the
-    native polars writers).  This shim survives until item 18 deletes
-    :mod:`flextool.flextoolrunner.input_writer` entirely.
-    """
-    if provider is None:  # pragma: no cover — explicit guard
-        raise TypeError(
-            "write_input requires a FlexDataProvider; pass an ephemeral "
-            "provider for one-shot CSV-only callers (Step 2.5 contract).",
-        )
-    from flextool.input_derivation import run as _input_derivation_run
-    _input_derivation_run(
-        input_db_url,
-        provider,
-        logger,
-        scenario_name=scenario_name,
-        work_folder=work_folder,
-        precision_digits=precision_digits,
-    )
-
-
-def write_input_for_region(
-    input_db_url: str,
-    scenario_name: str | None,
-    logger: logging.Logger,
-    region_group: str,
-    output_dir: Path,
-    work_folder: Path | None = None,
-    precision_digits: int = 0,
-) -> dict:
-    """Write a self-contained ``input_region_<region>/`` directory for one
-    decomposition region's standalone GMPL solve (Agent 3.1).
-
-    This is a thin wrapper around :func:`write_input` plus the regional
-    filter in :mod:`flextool.flextoolrunner.region_filter`.  The monolithic
-    ``input/`` is produced first (exactly as in a normal run), then the
-    filter copies and filters each CSV into *output_dir*, synthesising
-    virtual import/export nodes and half-flow connections for every
-    cross-region process.
-
-    Parameters
-    ----------
-    input_db_url, scenario_name, logger, work_folder, precision_digits
-        Same semantics as :func:`write_input`.
-    region_group
-        The group name whose ``decomposition_method`` is ``lagrangian_region``.
-        Must exist in the database.
-    output_dir
-        Destination directory, typically
-        ``work_folder / "input_region_<region>"``.  Created if missing.
-
-    Returns a dict: ``{"region": ..., "half_flows": [...], "kept_nodes": ...,
-    "kept_units": ..., "kept_connections": ...}``.
-    """
-    from flextool.flextoolrunner import region_filter
-
-    wf = work_folder if work_folder is not None else Path.cwd()
-    # Produce the full input/ directory first — this is the staging area.
-    # Construct an ephemeral cascade-input Provider; the region wrapper
-    # only consumes the on-disk staging area, so the Provider goes
-    # unused here.  Step 2.5 contract requires the Provider be present
-    # even when the caller doesn't consume it.
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
-    _ephemeral_provider = FlexDataProvider()
-    write_input(
-        input_db_url,
-        scenario_name,
-        logger,
-        work_folder=work_folder,
-        precision_digits=precision_digits,
-        provider=_ephemeral_provider,
-    )
-    all_regions = region_filter.discover_decomposition_regions_from_db(input_db_url)
-    if region_group not in all_regions:
-        raise FlexToolConfigError(
-            f"Region '{region_group}' is not declared with "
-            f"decomposition_method='lagrangian_region' in the database. "
-            f"Available regions: {sorted(all_regions) or '(none)'}"
-        )
-    result = region_filter.build_region_directory(
-        input_dir=wf / "input",
-        output_dir=Path(output_dir),
-        region=region_group,
-        all_regions=all_regions,
-    )
-    region_filter.write_region_coupling_manifest(
-        work_folder=wf,
-        results=[result],
-    )
-    return result
 
 
 def _validate_group_output_memberships(db, logger: logging.Logger) -> None:

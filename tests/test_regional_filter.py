@@ -46,7 +46,10 @@ if str(TEST_DIR / "fixtures") not in sys.path:
 from build_lh2_three_region import SCENARIO  # noqa: E402
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.flextoolrunner import input_writer  # noqa: E402
+from flextool.input_derivation import run as _input_derivation_run  # noqa: E402
+from flextool.flextoolrunner.region_decomposition import (  # noqa: E402
+    write_input_for_region,
+)
 from flextool.flextoolrunner.region_filter import (  # noqa: E402
     HalfFlow,
     build_region_directory,
@@ -83,12 +86,12 @@ def staged_input(
         from flextool.engine_polars._flex_data_provider import (
             FlexDataProvider,
         )
-        input_writer.write_input(
+        _input_derivation_run(
             lh2_db_url,
-            SCENARIO,
+            FlexDataProvider(),
             logging.getLogger("test_regional_filter"),
+            scenario_name=SCENARIO,
             work_folder=workdir,
-            provider=FlexDataProvider(),
         )
     finally:
         os.chdir(prev_cwd)
@@ -361,7 +364,7 @@ class TestRegionCouplingManifest:
         prev_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            result = input_writer.write_input_for_region(
+            result = write_input_for_region(
                 input_db_url=lh2_db_url,
                 scenario_name=SCENARIO,
                 logger=logging.getLogger("test_region_manifest"),

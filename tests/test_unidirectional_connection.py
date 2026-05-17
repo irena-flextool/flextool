@@ -21,10 +21,11 @@ from pathlib import Path
 import pytest
 from spinedb_api import DatabaseMapping, import_data
 
-from flextool.flextoolrunner.input_writer import (
-    METHODS_MAPPING,
-    _write_process_method,
-)
+from flextool.input_derivation._specs import METHODS_MAPPING
+from flextool.input_derivation._process_method import derive_process_method
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.spinedb_backend import SpineDBBackend
+import spinedb_api as _spinedb_api
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -110,21 +111,22 @@ def test_write_process_method_routes_unidirectional_to_1way_1var_off(
         assert not errors, f"data import errors: {errors}"
         db.commit_session("test data")
 
-    work_dir = tmp_path
-    (work_dir / "input").mkdir(exist_ok=True)
     logger = logging.getLogger("test_unidirectional_connection")
-
+    provider = FlexDataProvider()
     with DatabaseMapping(db_url) as db:
         db.fetch_all("entity")
         db.fetch_all("parameter_value")
-        _write_process_method(db, work_dir, logger, ct_method_overrides=None)
-
-    process_method_csv = work_dir / "input" / "process_method.csv"
-    assert process_method_csv.exists(), "process_method.csv was not written"
-    with open(process_method_csv) as f:
-        rows = list(csv.DictReader(f))
-    methods = {r["process"]: r["method"] for r in rows}
+        backend = SpineDBBackend.__new__(SpineDBBackend)
+        backend._db = db                                  # type: ignore[attr-defined]
+        backend._api = _spinedb_api                       # type: ignore[attr-defined]
+        backend._precision_digits = 0                     # type: ignore[attr-defined]
+        derive_process_method(backend, provider, logger,
+                              ct_method_overrides=None)
+    frame = provider.get("input/process_method")
+    assert frame is not None and frame.height > 0, "process_method frame empty"
+    methods = {row["process"]: row["method"]
+               for row in frame.iter_rows(named=True)}
     assert methods.get("uni_line") == "method_1way_1var_off", (
         f"uni_line was classified as {methods.get('uni_line')!r}; "
-        f"expected 'method_1way_1var_off'. Full CSV rows: {rows}"
+        f"expected 'method_1way_1var_off'. Frame: {frame}"
     )
