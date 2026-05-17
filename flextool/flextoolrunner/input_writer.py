@@ -6,7 +6,6 @@ All write_entity / write_parameter / write_default_values calls are internal hel
 """
 from __future__ import annotations
 
-import csv
 import logging
 import os
 from pathlib import Path
@@ -968,26 +967,6 @@ METHODS_MAPPING: dict[tuple[str, str, str], str] = {
 }
 
 
-def _tier_sort_key(t: str) -> tuple[int, str]:
-    """Stable sort by integer tier when possible, else by string."""
-    try:
-        return (0, f"{int(t):020d}")
-    except ValueError:
-        return (1, t)
-
-
-def _quantity_sentinel(quantity: str) -> str:
-    """GMPL's CSV reader rejects 'inf'/'Infinity'.  Convert user-facing
-    infinite quantities into the 1e30 sentinel the mod interprets as the
-    unbounded tail tier (see ladder_tier_cap_infinite_cum / _ann)."""
-    try:
-        q_float = float(quantity)
-    except ValueError:
-        q_float = float("inf")
-    if q_float == float("inf") or q_float >= 1e30:
-        return "1e30"
-    return quantity
-
 
 def _get_commodity_price_methods(db) -> dict[str, str]:
     """Return ``{commodity: price_method}`` for every commodity whose
@@ -1005,78 +984,6 @@ def _get_commodity_price_methods(db) -> dict[str, str]:
     return out
 
 
-def _collect_periods(db, wf: Path) -> list[str]:
-    """Return the model's period list (for 1d-map → per-period expansion
-    of ``price_ladder_annual``).
-
-    Reads the periods from ``input/periods_available.csv`` which
-    ``write_parameter`` already emitted for the ``model.periods_available``
-    parameter.  Falls back to scanning ``model.periods_available`` values
-    from the DB if the CSV is empty (e.g. when periods come exclusively
-    from ``period_timeset``).  Periods from ``period_timeset`` are not
-    available at writer-run time, so when the CSV is empty and no
-    ``periods_available`` is set we return an empty list — the annual
-    writer then emits no rows for 1d ladders (and the preflight already
-    caught the "price_ladder_annual set but empty" case).
-    """
-    periods: list[str] = []
-    seen: set[str] = set()
-    csv_path = wf / "input" / "periods_available.csv"
-    if csv_path.exists():
-        with open(csv_path) as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-            for row in reader:
-                if not row:
-                    continue
-                # File layout: "model,period_from_model"; take column 1.
-                p = row[-1].strip()
-                if p and p not in seen:
-                    periods.append(p)
-                    seen.add(p)
-    if periods:
-        return periods
-    # Fallback 1: pull periods_available direct from the DB as a map /
-    # array.  Values are period names.
-    for pv in db.find_parameter_values(
-        entity_class_name="model",
-        parameter_definition_name="periods_available",
-    ):
-        if pv["type"] is None:
-            continue
-        val = pv["parsed_value"]
-        try:
-            flat = api.convert_map_to_table(val)
-        except Exception:
-            flat = []
-        for entry in flat:
-            for c in (str(x) for x in entry):
-                if c and c not in seen:
-                    periods.append(c)
-                    seen.add(c)
-    if periods:
-        return periods
-    # Fallback 2: scan solve.period_timeset map indexes.  For typical
-    # test setups this is where periods live.
-    for pv in db.find_parameter_values(
-        entity_class_name="solve",
-        parameter_definition_name="period_timeset",
-    ):
-        if pv["type"] is None:
-            continue
-        val = pv["parsed_value"]
-        try:
-            flat = api.convert_map_to_table(val)
-        except Exception:
-            flat = []
-        for entry in flat:
-            # Row layout: [period, timeset] for a simple Map.
-            if len(entry) >= 1:
-                p = str(entry[0])
-                if p and p not in seen:
-                    periods.append(p)
-                    seen.add(p)
-    return periods
 
 
 def _validate_timeline_timestep_duration(db) -> None:
@@ -1159,221 +1066,6 @@ def _validate_ladder_methods(db, logger: logging.Logger) -> None:
             )
 
 
-def _iter_flat_ladder_rows(
-    value,
-    commodity: str,
-    logger: logging.Logger,
-) -> list[list]:
-    """Flatten a Spine map ladder value.  Returns the raw list-of-lists
-    from ``convert_map_to_table`` or an empty list on failure.
-    """
-    try:
-        return api.convert_map_to_table(value)
-    except Exception as exc:
-        logger.warning(
-            "Could not flatten ladder for commodity '%s': %s",
-            commodity, exc,
-        )
-        return []
-
-
-def _write_commodity_ladder_cumulative(
-    db, wf: Path, logger: logging.Logger,
-) -> None:
-    """Emit ``input/commodity_ladder_cumulative.csv`` with columns
-    ``commodity, tier, price, quantity`` — one row per (commodity, tier).
-
-    Only the ``commodity.price_ladder_cumulative`` parameter is consulted
-    (always a 2d map: ``Map(tier -> {price, quantity})`` — 2d in Spine's
-    counting because ``{price, quantity}`` is a second index layer).  The
-    ``price_method`` filter happens mod-side via the
-    ``commodity_with_ladder_cumulative`` set.
-    """
-    filepath = wf / "input" / "commodity_ladder_cumulative.csv"
-    rows: list[tuple[str, int, str, str]] = []
-
-    for pv in db.find_parameter_values(
-        entity_class_name="commodity",
-        parameter_definition_name="price_ladder_cumulative",
-    ):
-        if pv["type"] is None:
-            continue
-        if pv["type"] != "map":
-            logger.warning(
-                "commodity.price_ladder_cumulative on '%s' has type %s "
-                "(expected nested 1d map); skipping.",
-                pv["entity_byname"][0], pv["type"],
-            )
-            continue
-        commodity = pv["entity_byname"][0]
-        flat = _iter_flat_ladder_rows(pv["parsed_value"], commodity, logger)
-        per_tier: dict[str, dict[str, str]] = {}
-        for entry in flat:
-            # Expected layout: [tier_idx, facet, value] (length 3).
-            if len(entry) < 3:
-                continue
-            tier_str = str(entry[0])
-            facet = str(entry[1])
-            val = entry[-1]
-            per_tier.setdefault(tier_str, {})[facet] = str(val)
-
-        for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
-            facets = per_tier[tier_str]
-            price = facets.get("price", "0")
-            quantity = _quantity_sentinel(facets.get("quantity", "inf"))
-            try:
-                tier_int = int(tier_str)
-            except ValueError:
-                logger.warning(
-                    "commodity.price_ladder_cumulative tier on '%s' is not "
-                    "an integer ('%s'); skipping tier.",
-                    commodity, tier_str,
-                )
-                continue
-            rows.append((commodity, tier_int, price, quantity))
-
-    with open(filepath, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["commodity", "tier", "price", "quantity"])
-        for row in rows:
-            writer.writerow(row)
-
-
-def _write_commodity_ladder_annual(
-    db, wf: Path, logger: logging.Logger,
-) -> None:
-    """Emit ``input/commodity_ladder_annual.csv`` with columns
-    ``commodity, period, tier, price, quantity`` — one row per
-    (commodity, period, tier).
-
-    Reads ``commodity.price_ladder_annual``.  Auto-detects the map depth:
-
-    * 2d form (Spine 2d_map): ``Map(tier -> {price, quantity})`` — the
-      same (price, quantity) is expanded across every model period.
-    * 3d form (Spine 3d_map): ``Map(period -> Map(tier -> {price,
-      quantity}))`` — per-period rows are kept as-is.
-    """
-    filepath = wf / "input" / "commodity_ladder_annual.csv"
-    rows: list[tuple[str, int, str, str, str]] = []
-    periods_cache: list[str] | None = None
-
-    for pv in db.find_parameter_values(
-        entity_class_name="commodity",
-        parameter_definition_name="price_ladder_annual",
-    ):
-        if pv["type"] is None:
-            continue
-        if pv["type"] != "map":
-            logger.warning(
-                "commodity.price_ladder_annual on '%s' has type %s "
-                "(expected nested map); skipping.",
-                pv["entity_byname"][0], pv["type"],
-            )
-            continue
-        commodity = pv["entity_byname"][0]
-        flat = _iter_flat_ladder_rows(pv["parsed_value"], commodity, logger)
-        if not flat:
-            continue
-
-        # Depth detection via the flat table row length.  Spine's Map
-        # dimension count matches the flat row length: 2d_map yields
-        # length-3 rows, 3d_map yields length-4 rows.
-        #   2d_map: [tier, facet, value]                      → len 3
-        #   3d_map: [period, tier, facet, value]              → len 4
-        max_len = max((len(row) for row in flat), default=0)
-        if max_len == 3:
-            # 2d_map → expand across all model periods.
-            per_tier: dict[str, dict[str, str]] = {}
-            for entry in flat:
-                if len(entry) < 3:
-                    continue
-                tier_str = str(entry[0])
-                facet = str(entry[1])
-                val = entry[-1]
-                per_tier.setdefault(tier_str, {})[facet] = str(val)
-            if periods_cache is None:
-                periods_cache = _collect_periods(db, wf)
-            if not periods_cache:
-                logger.warning(
-                    "commodity.price_ladder_annual on '%s' is 2d_map but "
-                    "no model periods were available for expansion; "
-                    "skipping.", commodity,
-                )
-                continue
-            for period in periods_cache:
-                for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
-                    facets = per_tier[tier_str]
-                    price = facets.get("price", "0")
-                    quantity = _quantity_sentinel(facets.get("quantity", "inf"))
-                    try:
-                        tier_int = int(tier_str)
-                    except ValueError:
-                        logger.warning(
-                            "commodity.price_ladder_annual tier on '%s' is "
-                            "not an integer ('%s'); skipping tier.",
-                            commodity, tier_str,
-                        )
-                        continue
-                    rows.append(
-                        (commodity, period, tier_int, price, quantity)
-                    )
-        elif max_len >= 4:
-            # 3d_map → per-period.  Flat row layout [period, tier,
-            # facet, value] — Spine nests Map(period -> Map(tier ->
-            # {price, quantity})).
-            per_period_tier: dict[tuple[str, str], dict[str, str]] = {}
-            for entry in flat:
-                if len(entry) < 4:
-                    continue
-                period = str(entry[0])
-                tier_str = str(entry[1])
-                facet = str(entry[2])
-                val = entry[-1]
-                per_period_tier.setdefault(
-                    (period, tier_str), {}
-                )[facet] = str(val)
-
-            def _sort_key(k: tuple[str, str]) -> tuple:
-                return (k[0], _tier_sort_key(k[1]))
-
-            for (period, tier_str) in sorted(
-                per_period_tier.keys(), key=_sort_key,
-            ):
-                facets = per_period_tier[(period, tier_str)]
-                price = facets.get("price", "0")
-                quantity = _quantity_sentinel(facets.get("quantity", "inf"))
-                try:
-                    tier_int = int(tier_str)
-                except ValueError:
-                    logger.warning(
-                        "commodity.price_ladder_annual tier on '%s' is not "
-                        "an integer ('%s'); skipping tier.",
-                        commodity, tier_str,
-                    )
-                    continue
-                rows.append(
-                    (commodity, period, tier_int, price, quantity)
-                )
-        else:
-            logger.warning(
-                "commodity.price_ladder_annual on '%s' has unexpected "
-                "flattened shape (max row length %d); skipping.",
-                commodity, max_len,
-            )
-            continue
-
-    with open(filepath, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(
-            ["commodity", "period", "tier", "price", "quantity"]
-        )
-        for row in rows:
-            writer.writerow(row)
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def write_input(
     input_db_url: str,
@@ -1505,14 +1197,26 @@ def write_input(
             ct_method_overrides=ct_method_overrides,
         )
         _validate_ladder_methods(db, logger)
-        _write_commodity_ladder_cumulative(db, wf, logger)
-        _write_commodity_ladder_annual(db, wf, logger)
+        # Step 2.5-F Phase D + Phase E — commodity ladder derivations
+        # moved to ``flextool.input_derivation._commodity_ladder``.
+        # Both emit their frames to the cascade-input Provider; no
+        # disk write at this site.
+        from flextool.input_derivation._commodity_ladder import (
+            derive_commodity_ladder_cumulative,
+            derive_commodity_ladder_annual,
+        )
+        derive_commodity_ladder_cumulative(_backend_default, provider, logger)
+        derive_commodity_ladder_annual(_backend_default, provider, logger)
         # Migrated from flextool.mod:468-470 — commodity_with_ladder*
         # filtered subsets used to be derived inside MathProg via setof
         # filters on p_commodity_price_method. Computed in Python for
-        # cheaper matrix generation; loaded back via table data IN.
+        # cheaper matrix generation.
+        #
+        # Step 2.5-F Phase F: derivation moved to
+        # ``flextool.input_derivation._commodity_ladder_sets``; the
+        # three frames land on the cascade-input Provider under
+        # ``solve_data/commodity_with_ladder*``.  No disk write here.
         from flextool.flextoolrunner.preprocessing import (
-            commodity_ladder_sets,
             period_param_sets,
             invest_method_sets,
             co2_method_sets,
@@ -1521,11 +1225,12 @@ def write_input(
             method_with_fallback_sets,
             nonsync_sets,
         )
+        from flextool.input_derivation._commodity_ladder_sets import (
+            derive_commodity_ladder_sets,
+        )
         input_dir = wf / "input"
         solve_data_dir = wf / "solve_data"
-        commodity_ladder_sets.write_commodity_ladder_sets(
-            _get_commodity_price_methods(db), solve_data_dir,
-        )
+        derive_commodity_ladder_sets(_backend_default, provider)
         # L0 Batch 1: simple projections / filters of already-written
         # input/*.csv tables. Each function reads a CSV that the spec-
         # driven write_parameter loop above produced and writes a

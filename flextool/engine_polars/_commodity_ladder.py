@@ -111,13 +111,56 @@ def _read_long_csv(path: Path, rename: dict[str, str]) -> pl.DataFrame | None:
     return df
 
 
-def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
-    """Load ladder CSVs from ``input/`` and ``solve_data/``.
+def _provider_or_disk(
+    provider: "object | None",
+    key: str,
+    path: Path,
+) -> "pl.DataFrame | None":
+    """Resolve *key* via the Provider, falling back to *path* on disk.
+
+    Returns ``None`` when neither source has a non-empty frame.
+
+    CASCADE INVARIANT EXEMPT: ladder CSV inputs are emitted by the
+    Phase D / E ``input_derivation._commodity_ladder`` writers into the
+    cascade-input Provider; the disk arm survives only for off-cascade
+    fixture loaders that seed the workdir without a Provider.
+    """
+    if provider is not None and provider.has(key):
+        df = provider.get(key)
+        if df is not None and df.height > 0:
+            return df
+    if not path.exists():
+        return None
+    df = _read_csv_file(path)
+    return df if df.height > 0 else None
+
+
+def load_data(
+    inp_dir: str | Path,
+    sd_dir: str | Path,
+    *,
+    provider: "object | None" = None,
+) -> dict:
+    """Load ladder frames via the Provider (disk-fallback for
+    off-cascade fixture loaders).
 
     Returns a dict with keys matching ``FlexData`` field names.  Values
     are ``None`` (or empty frames) when the feature is inactive (every
     fixture without ``price_method = price_ladder_*`` has header-only
-    CSVs, which return None here).
+    frames, which return None here).
+
+    Step 2.5-F Phases D + E
+    -----------------------
+
+    ``input/commodity_ladder_cumulative`` and
+    ``input/commodity_ladder_annual`` are produced by
+    :func:`flextool.input_derivation._commodity_ladder.derive_commodity_ladder_cumulative`
+    / ``derive_commodity_ladder_annual`` and placed on the
+    cascade-input Provider; in-cascade the Provider is the
+    authoritative source.  The ``solve_data/commodity_with_ladder*``
+    frames are still produced by the legacy
+    :mod:`flextool.flextoolrunner.preprocessing.commodity_ladder_sets`
+    until Phase F lands.
     """
     inp = Path(inp_dir)
     sd = Path(sd_dir)
@@ -180,55 +223,58 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
         ct_ann = ct_ann.with_columns(pl.col("i").cast(pl.Utf8)).select("c", "i")
     # commodity__tier_cum mirrors the input CSV's (commodity, tier) projection.
     ct_cum = None
-    cum_inp_path = inp / "commodity_ladder_cumulative.csv"
-    if cum_inp_path.exists():
-        cum_inp = _read_csv_file(cum_inp_path)
-        if cum_inp.height > 0:
-            ct_cum = (cum_inp.rename({"commodity": "c", "tier": "i"})
-                      .with_columns(pl.col("i").cast(pl.Utf8))
-                      .select("c", "i").unique())
+    cum_inp = _provider_or_disk(
+        provider, "input/commodity_ladder_cumulative",
+        inp / "commodity_ladder_cumulative.csv",
+    )
+    if cum_inp is not None:
+        ct_cum = (cum_inp.rename({"commodity": "c", "tier": "i"})
+                  .with_columns(pl.col("i").cast(pl.Utf8))
+                  .select("c", "i").unique())
 
     # ── Annual price/quantity Params (c, i, d) ─────────────────────────
     p_ann_price = None
     p_ann_quantity = None
-    ann_path = inp / "commodity_ladder_annual.csv"
-    if ann_path.exists():
-        ann = _read_csv_file(ann_path)
-        if ann.height > 0:
-            ann = (ann.rename({"commodity": "c", "tier": "i", "period": "d"})
-                   .with_columns(pl.col("i").cast(pl.Utf8))
-                   .select("c", "i", "d", "price", "quantity"))
-            # The CSV's "1e30" sentinel is written as a Float64 by polars.
-            p_ann_price = Param(
-                ("c", "i", "d"),
-                ann.select("c", "i", "d",
-                           value=pl.col("price").cast(pl.Float64)),
-            )
-            p_ann_quantity = Param(
-                ("c", "i", "d"),
-                ann.select("c", "i", "d",
-                           value=pl.col("quantity").cast(pl.Float64)),
-            )
+    ann = _provider_or_disk(
+        provider, "input/commodity_ladder_annual",
+        inp / "commodity_ladder_annual.csv",
+    )
+    if ann is not None:
+        ann = (ann.rename({"commodity": "c", "tier": "i", "period": "d"})
+               .with_columns(pl.col("i").cast(pl.Utf8))
+               .select("c", "i", "d", "price", "quantity"))
+        # The CSV's "1e30" sentinel is written as a Float64 by polars.
+        p_ann_price = Param(
+            ("c", "i", "d"),
+            ann.select("c", "i", "d",
+                       value=pl.col("price").cast(pl.Float64)),
+        )
+        p_ann_quantity = Param(
+            ("c", "i", "d"),
+            ann.select("c", "i", "d",
+                       value=pl.col("quantity").cast(pl.Float64)),
+        )
 
     # ── Cumulative price/quantity Params (c, i) ─────────────────────────
     p_cum_price = None
     p_cum_quantity = None
-    cum_path = inp / "commodity_ladder_cumulative.csv"
-    if cum_path.exists():
-        cum = _read_csv_file(cum_path)
-        if cum.height > 0:
-            cum = (cum.rename({"commodity": "c", "tier": "i"})
-                   .with_columns(pl.col("i").cast(pl.Utf8))
-                   .select("c", "i", "price", "quantity"))
-            p_cum_price = Param(
-                ("c", "i"),
-                cum.select("c", "i", value=pl.col("price").cast(pl.Float64)),
-            )
-            p_cum_quantity = Param(
-                ("c", "i"),
-                cum.select("c", "i",
-                           value=pl.col("quantity").cast(pl.Float64)),
-            )
+    cum = _provider_or_disk(
+        provider, "input/commodity_ladder_cumulative",
+        inp / "commodity_ladder_cumulative.csv",
+    )
+    if cum is not None:
+        cum = (cum.rename({"commodity": "c", "tier": "i"})
+               .with_columns(pl.col("i").cast(pl.Utf8))
+               .select("c", "i", "price", "quantity"))
+        p_cum_price = Param(
+            ("c", "i"),
+            cum.select("c", "i", value=pl.col("price").cast(pl.Float64)),
+        )
+        p_cum_quantity = Param(
+            ("c", "i"),
+            cum.select("c", "i",
+                       value=pl.col("quantity").cast(pl.Float64)),
+        )
 
     # Δ.12-drop: ``p_commodity_unitsize`` produced authoritatively by
     # ``apply_direct_params.p_commodity_unitsize_from_source`` (Δ.4b).

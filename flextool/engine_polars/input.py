@@ -3660,7 +3660,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
         dc_pf_data = _dc_power_flow.load_data(inp_dir=inp, provider=provider)
 
         # ─── Commodity price ladder data ─────────────────────────────────────
-        ladder_data = _commodity_ladder.load_data(inp_dir=inp, sd_dir=sd)
+        # Step 2.5-F Phases D + E: Provider carries the two ladder
+        # ``input/commodity_ladder_*`` frames; disk arm reserved for
+        # off-cascade fixture loaders.
+        ladder_data = _commodity_ladder.load_data(
+            inp_dir=inp, sd_dir=sd, provider=provider,
+        )
 
         # ─── Multi-branch stochastic data (A6) ───────────────────────────────
         stoch_data = _load_stochastics(inp=inp, sd=sd, dt=dt, provider=provider)
