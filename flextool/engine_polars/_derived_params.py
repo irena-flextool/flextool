@@ -8276,7 +8276,7 @@ def apply_derived_f(
     from . import _derived_npv
 
     # 1. Cluster A (lazy NPV / inflation / fixed cost cascade).
-    _derived_npv.apply_npv(flex_data, source, workdir)
+    _derived_npv.apply_npv(flex_data, source, workdir, provider=provider)
 
     # 2. Handoff state -----------------------------------------------
     # Δ.12b — unconditional assignment.  Each helper returns ``None``

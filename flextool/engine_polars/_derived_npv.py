@@ -1168,7 +1168,9 @@ def ed_lifetime_fixed_cost_divest_from_source(
 
 def apply_npv(flex_data: object,
                   source: "InputSource",
-                  workdir: Path) -> None:
+                  workdir: Path,
+                  *,
+                  provider: "object | None" = None) -> None:
     """Wire the cluster-A NPV helpers into ``flex_data`` (mutates in place).
 
     Order:
@@ -1191,11 +1193,11 @@ def apply_npv(flex_data: object,
         _periodAll_from_source, _read_period_with_history,
     )
 
-    active_solve = _read_active_solve(workdir)
-    period_in_use = _period_in_use_set(source, active_solve, workdir)
-    period_universe = _periodAll_from_source(source, active_solve, workdir)
+    active_solve = _read_active_solve(workdir, provider=provider)
+    period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
+    period_universe = _periodAll_from_source(source, active_solve, workdir=workdir, provider=provider)
     period_invest = _solve_periods(source, active_solve, "invest_periods") or []
-    period_with_history = (_read_period_with_history(workdir)
+    period_with_history = (_read_period_with_history(workdir, provider=provider)
                               or list(period_in_use))
 
     # 1. p_inflation_op (None == no inflation data → field stays default).
