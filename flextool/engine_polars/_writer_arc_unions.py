@@ -73,52 +73,20 @@ import polars as pl
 # CSV I/O — same conventions as the sibling _writer_*.py modules.
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Step 1-d — Provider-aware open helper.
-#
-# Mirrors :func:`_provider_open` in ``input.py`` (Step 1-c): the migrated
-# inline ``_seed_open(path)`` sites switch to a Provider-first +
-# disk-fallback equivalent.  When ``provider`` is non-None AND carries
-# the named artefact, we serialise it to a ``StringIO`` so the caller's
-# ``csv.reader`` chain is unchanged.  Otherwise we open the disk file
-# directly (matching ``_seed_open``'s caller convention: ``None`` means
-# "neither in memory nor on disk — return the missing-file sentinel").
-#
-# Provider keys mirror the parent-qualified convention used by other
-# migrations: ``"<parent>/<basename>"`` without the ``.csv`` suffix
-# (e.g. ``"solve_data/p_entity_unitsize"``, ``"input/p_process.csv"`` →
-# ``"input/p_process"``).  Step 2 retires the disk-fallback for files
-# now living exclusively in the Provider.
+# Provider-aware open helper — Provider-first, then disk.  Provider keys
+# use the parent-qualified convention ``"<parent>/<basename>"`` without
+# the ``.csv`` suffix.
 
 def _provider_open(provider: "object | None", name: str,
                     path: "Path | str"):
-    """Open a file-like handle for *name* sourced from the Provider, the
-    legacy in-memory seed, or from disk; return ``None`` when none of
-    the three has the file.
-
-    Mirrors ``input._provider_open`` with one transitional addition: a
-    middle tier consulting :func:`_seed_lookup` so callers that haven't
-    yet been plumbed with ``provider`` still benefit from the seed
-    funnel during Step 1-d / 1-e (the dual-write window).  Step 2
-    drops the seed-lookup branch once every caller threads the
-    Provider; the on-disk fallback is retained until Step 1-g removes
-    the unused ``Path`` arguments.
+    """Open a file-like handle for *name* sourced from the Provider or
+    disk; return ``None`` when neither has the file.
     """
     if provider is not None and provider.has(name):
         import io
         df = provider.get(name)
         buf = io.StringIO()
         df.write_csv(buf)
-        buf.seek(0)
-        return buf
-    # Transitional — fall back to the legacy seed lookup so unplumbed
-    # callsites continue to find in-memory frames during the migration.
-    from flextool.engine_polars._input_source import _seed_lookup
-    seeded = _seed_lookup(path)
-    if seeded is not None:
-        import io
-        buf = io.StringIO()
-        seeded.write_csv(buf)
         buf.seek(0)
         return buf
     p = Path(path)
@@ -129,10 +97,7 @@ def _provider_open(provider: "object | None", name: str,
 
 def _provider_key(path: "Path | str") -> str:
     """Build the canonical Provider key for *path* — ``"<parent>/<stem>"``
-    when *path* has a parent dir, else the bare stem.  Mirrors the
-    parent-qualified dual-key semantics in
-    :meth:`FlexDataAccumulator.capture` (which the writers populate via
-    ``capture_frames``).
+    when *path* has a parent dir, else the bare stem.
     """
     p = Path(path)
     parent = p.parent.name

@@ -53,158 +53,6 @@ Kind = Literal["input", "solve_data"]
 _active_cache: dict[Path, pl.DataFrame] | None = None
 
 
-# ---------------------------------------------------------------------------
-# Phase D — in-memory seed hook
-# ---------------------------------------------------------------------------
-#
-# When ``load_flextool`` is called with ``seed=<FlexDataAccumulator>``, the
-# loader registers the accumulator here for the duration of the build.
-# :func:`_read_csv_file` consults the seed before issuing any disk read: if
-# the requested path's basename is among the seed's captured frames, the
-# in-memory frame replaces the disk read.  Otherwise the existing cache +
-# disk-read path runs unchanged.
-#
-# Memory discipline (handoff decision #11): the seed is per-sub-solve.  The
-# install / clear pair is bound to the lifetime of one ``load_flextool``
-# call.  Nested seeds are not supported — the API enforces this via the
-# explicit clear in :func:`load_flextool`'s ``finally``.
-#
-# Type kept ``object | None`` to avoid an import cycle with
-# ``_flex_data_accumulator`` (which itself doesn't import this module).
-_active_seed: "object | None" = None
-
-
-def _install_seed(seed: "object | None") -> None:
-    """Phase D — install / clear the process-level FlexData seed.
-
-    Pass the accumulator instance to activate seed-mode lookups in
-    :func:`_read_csv_file`; pass ``None`` to clear.  See module docstring.
-    """
-    global _active_seed
-    _active_seed = seed
-
-
-def _seed_lookup(path: "Path | str") -> "pl.DataFrame | None":
-    """Return the seeded frame for *path*, or ``None``.
-
-    The seed exposes a ``lookup(path) -> pl.DataFrame | None`` method
-    keyed by CSV basename.  When no seed is active, returns ``None``.
-    """
-    seed = _active_seed
-    if seed is None:
-        return None
-    lookup = getattr(seed, "lookup", None)
-    if lookup is None:
-        return None
-    return lookup(path)
-
-
-def _seed_open(path: "Path | str"):
-    """Phase E-d — return a context-manager-compatible text handle for
-    *path* whose body comes from the in-memory ``FlexDataAccumulator``
-    seed when one is active.
-
-    Used by writer modules that consume CSVs via raw
-    ``with path.open() as fh: csv.reader(fh)`` — when the seed has the
-    file, we materialise its frame to a CSV string and hand back a
-    ``StringIO`` so the caller's iteration logic is unchanged.
-
-    Returns ``None`` when no seeded frame is available; the caller
-    should then ``path.open()`` as before.
-    """
-    seeded = _seed_lookup(path)
-    if seeded is None:
-        return None
-    import io
-    buf = io.StringIO()
-    # ``write_csv`` honours the cell types verbatim — the writers
-    # produce frames whose schema mirrors the on-disk CSV (Utf8 for
-    # the cells that legacy ``csv.reader`` sees as strings).
-    seeded.write_csv(buf)
-    buf.seek(0)
-    return buf
-
-
-def _seed_lookup_positional(
-    path: "Path | str", columns: list[str],
-) -> "pl.DataFrame | None":
-    """Phase E-d — seed-aware ``_read_csv`` shim used by the writer-port
-    ``_writer_*`` modules.
-
-    Each writer module defines a private ``_read_csv(path, columns)``
-    helper that:
-
-      1. Returns a typed empty frame when the file is missing.
-      2. Reads the CSV (Utf8 schema for parity with legacy
-         ``csv.reader``).
-      3. Trims trailing columns and renames by position (``columns``).
-
-    When a seed (per-sub-solve :class:`FlexDataAccumulator`) is active
-    AND the seed contains a frame keyed by this path's basename, this
-    helper returns that frame after the same positional column rename
-    the disk path performs — so subsequent expression chains see the
-    expected column names regardless of whether the source frame came
-    from disk or from the in-memory accumulator.
-
-    Returns ``None`` when no seed is active or the seed has no entry
-    for this basename — the caller then falls back to its on-disk
-    read path.
-    """
-    seeded = _seed_lookup(path)
-    if seeded is None:
-        return None
-    keep = seeded.columns[: len(columns)]
-    out = seeded.select(keep)
-    out.columns = columns
-    return out
-
-
-def _seed_or_pick(*paths: "Path | str") -> "Path | None":
-    """Phase E-f — return the first ``Path`` in *paths* for which the
-    seed has a frame OR the file exists on disk; ``None`` if none.
-
-    Use as the seed-aware replacement for inline patterns like::
-
-        (sd / "x.csv") if (sd / "x.csv").exists() else (inp / "x.csv")
-
-    where the caller would then read whichever exists.  Under
-    :func:`csv_emission_disabled`, the disk file may be absent for the
-    basenames the seed covers — but the seed has the frame under the
-    parent-qualified key (``"solve_data/x.csv"`` vs ``"input/x.csv"``),
-    so we MUST pick the seeded variant to feed the seed-aware reader
-    chain.
-    """
-    for p in paths:
-        if _seed_lookup(p) is not None or Path(p).exists():
-            return Path(p)
-    return None
-
-
-def _seed_or_exists(path: "Path | str") -> bool:
-    """Phase E-f — return True iff the seed has a frame for *path* or the
-    file exists on disk.
-
-    Use as the seed-aware replacement for the bare ``path.exists()``
-    guard at the head of loader-side ``_read_*`` / ``_load_*`` /
-    ``_slice_*`` helpers.  When True, the caller should then read via
-    :func:`_read_csv_file` (which itself is seed-aware) or the helper's
-    existing disk path.  When False, the file is genuinely missing and
-    the caller should return its missing-file sentinel (``None`` /
-    empty frame / sentinel tuple).
-
-    This makes the loader-side reads runnable under
-    :func:`csv_emission_disabled` for the basenames covered by the
-    active per-sub-solve seed — the same gate Phase E-e wired for the
-    writer-side ``csv.reader`` sites.
-
-    When no seed is active the behaviour collapses to ``path.exists()``,
-    so the csv-emission-on path is byte-identical to pre-Phase-E-f.
-    """
-    if _seed_lookup(path) is not None:
-        return True
-    return Path(path).exists()
-
-
 def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     """Single residual ``polars.read_csv`` site for the engine_polars
     package.
@@ -212,33 +60,12 @@ def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     CSV-retirement (Γ.8.F) gates every workdir CSV read in the loader
     path through this helper so the package-wide grep for
     ``pl.read_csv`` returns only the ``CsvSource``-internal sites
-    (``CsvSource.get`` plus this helper).  The helper exists so non-
-    source-code paths (helpers in ``_derived_params.py`` /
-    ``_group_slack.py`` / ... that take a workdir directly) can stay
-    funnel-compliant without having to construct a full ``CsvSource``
-    on the hot path.
+    (``CsvSource.get`` plus this helper).
 
     Δ.12a — when a per-solve cache is active (set via
     :func:`_install_csv_cache` from the ``SolveContext`` constructor),
-    repeated reads of the same absolute path hit memory.  This is the
-    cheap, transparent way to deduplicate the dozens of
-    ``period_in_use_set.csv`` / ``period__branch.csv`` /
-    ``edd_history.csv`` reads that happen across the apply_derived_*
-    helpers.  Behaviour is otherwise identical to
-    ``polars.read_csv(path)``.
-
-    Phase D — when an in-memory FlexData seed is active and the
-    requested path's basename matches one of the seed's captured frames,
-    the seeded frame is returned in place of the disk read.  The seed
-    holds frames that were produced by the writer-port thin-wrapper
-    writers earlier in the same sub-solve; Phase C asserted those
-    frames are byte-equivalent to the on-disk CSV.  The cache (when
-    active) is bypassed for seeded reads — the seed itself is the
-    in-memory cache for those basenames.
+    repeated reads of the same absolute path hit memory.
     """
-    seeded = _seed_lookup(path)
-    if seeded is not None:
-        return seeded
     if _active_cache is not None:
         # Use the str form as cache key — avoids the per-call ``Path.resolve``
         # syscall (which adds ~50µs each and dominates the cache miss path
@@ -420,12 +247,6 @@ class CsvSource:
         d = self.input_dir if kind == "input" else self.solve_data_dir
         fname = name if name.endswith(".csv") else f"{name}.csv"
         path = d / fname
-        # Phase D — consult the in-memory FlexData seed before probing
-        # disk.  Seed mode (Phase E onwards) may run without the CSV
-        # actually present on disk for the seeded basenames.
-        seeded = _seed_lookup(path)
-        if seeded is not None:
-            return seeded
         if not path.exists():
             return None
         return _read_csv_file(path)

@@ -67,39 +67,22 @@ from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
 from ._block_layout import BlockLayout
-from ._input_source import _read_csv_file, _seed_or_exists, _seed_or_pick
+from ._input_source import _read_csv_file
 from ._writer_provider_io import _provider_key
 
 
 # ---------------------------------------------------------------------------
-# Step 1-c — Provider-aware existence / read / open helpers.
+# Provider-aware existence / read / open helpers.
 #
-# These wrap :class:`FlexDataProvider` so the per-site migration is a
-# mechanical one-line swap from ``_seed_or_exists(path)`` /
-# ``_read_csv_file(path)`` / ``_seed_open(path)`` to a Provider-first +
-# disk-fallback equivalent.  Behavioural intent matches the seed funnel
-# exactly: when the Provider already carries the named artefact (every
-# writer-captured CSV is dual-written into the Provider during the
-# Step 1 migration window), we use the in-memory frame; otherwise we
-# fall back to the on-disk path the seed funnel previously consulted
-# via its own existence/read path.
-#
-# Step 2 will retire the disk-fallback for files now living exclusively
-# in the Provider; Step 1-g will drop the unused ``Path`` arguments
-# threaded alongside the new ``provider`` kwarg.  Both deletions
-# happen *after* this commit lands.
+# Each helper consults the live :class:`FlexDataProvider` first and falls
+# back to the on-disk CSV at *path* when the Provider does not carry the
+# named artefact.  ``provider=None`` collapses to a plain disk check —
+# this preserves behaviour for test paths that don't construct a
+# Provider.
 
 def _provider_has(provider: "object | None", name: str,
                    path: "Path | str") -> bool:
-    """True iff *provider* has *name* OR *path* exists on disk.
-
-    Mirrors :func:`_seed_or_exists` semantics: the seed funnel
-    returned True when its lookup-by-basename hit OR the disk file was
-    materialised.  The Provider's ``has`` uses the same lookup
-    convention (parent-qualified / bare).  When *provider* is ``None``
-    we fall back to a plain disk check — this matches the legacy
-    behaviour for test paths that don't construct a Provider.
-    """
+    """True iff *provider* has *name* OR *path* exists on disk."""
     if provider is not None and provider.has(name):
         return True
     return Path(path).exists()
@@ -109,11 +92,6 @@ def _provider_read(provider: "object | None", name: str,
                     path: "Path | str") -> pl.DataFrame:
     """Return the frame for *name* from *provider*, or fall back to a
     disk read at *path*.
-
-    Pair with :func:`_provider_has` for the existence guard.  When
-    *provider* is supplied AND carries the frame, the in-memory copy
-    is returned; otherwise we re-read from disk via
-    :func:`_read_csv_file` (which itself is cache-aware).
     """
     if provider is not None and provider.has(name):
         return provider.get(name)
@@ -125,12 +103,9 @@ def _provider_pick(provider: "object | None",
     """Return the first ``Path`` for which the Provider has the matching
     *name* OR the disk file exists; ``None`` if none.
 
-    Mirrors :func:`_seed_or_pick`'s precedence: first hit wins, so
-    callers can prefer ``solve_data/`` over ``input/`` (or vice versa)
-    simply by ordering the candidate tuples.  Each candidate is a
-    ``(name, path)`` pair — the *name* is the Provider key
-    (parent-qualified, suffix-stripped); the *path* is the disk
-    fallback consulted when the Provider is absent or doesn't carry
+    Each candidate is a ``(name, path)`` pair — the *name* is the
+    Provider key (parent-qualified, suffix-stripped); the *path* is the
+    disk fallback consulted when the Provider is absent or doesn't carry
     the frame.
     """
     for name, path in candidates:
@@ -144,11 +119,8 @@ def _provider_open(provider: "object | None", name: str,
     """Open a file-like handle for *name* sourced from the Provider or
     from disk; return ``None`` when neither has the file.
 
-    Mirrors :func:`_seed_open`'s contract: when the Provider carries
-    the frame we serialise it to a ``StringIO`` (so the caller's
-    ``csv.reader`` chain is unchanged); otherwise we open the disk
-    file directly.  ``None`` means the artefact is genuinely absent
-    and the caller should return its missing-file sentinel.
+    When the Provider carries the frame, the helper serialises it to a
+    ``StringIO`` so the caller's ``csv.reader`` chain is unchanged.
     """
     if provider is not None and provider.has(name):
         import io
@@ -3361,7 +3333,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
                    *,
                    db_reader: "object | None" = None,
                    handoff: "object | None" = None,
-                   seed: "object | None" = None,
                    provider: "object | None" = None) -> FlexData:
     """Load a :class:`FlexData` from either a workdir on disk or a
     :class:`flextool._input_source.FlexInputSource`.
@@ -3481,38 +3452,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
             ctx_workdir = Path(source.input_dir).parent
         except Exception:  # pragma: no cover — defensive
             ctx_workdir = None
-    # Phase D — when a FlexData seed (e.g. a
-    # :class:`FlexDataAccumulator` captured by ``_native_run_model``) is
-    # supplied, install it as the process-level read-hook for the
-    # duration of this ``load_flextool`` call.  Every
-    # :func:`_read_csv_file` (and :meth:`CsvSource.get`) call inside the
-    # loader will return the seeded frame in place of the disk read when
-    # the requested path's basename is among the seed's captured frames.
-    # Non-covered basenames fall through to the existing disk-read path
-    # (the 103 special-handling writers from the Phase B audit; their
-    # FlexData fields are still populated by the disk-read helpers).
-    #
-    # The override chain (apply_direct_params, apply_derived_a..g, the
-    # handoff overlay, the synthetic-solve fallback) runs UNCHANGED on
-    # top of the seed-or-disk-built FlexData — the seed is purely the
-    # starting state, not a replacement for the Spine overlay
-    # (handoff doc gotcha #7).
-    #
-    # Phase E-e — install the seed BEFORE constructing the SolveContext.
-    # ``SolveContext.from_workdir`` reads ``solve_data/solve_current.csv``
-    # via ``_read_active_solve`` to populate ``ctx.solve_name``; under
-    # CSV-emission-disabled the file is only available via the in-memory
-    # seed, so the seed must be active for the read to find it.
-    # Otherwise the derived_a..g cascade short-circuits on
-    # ``active_solve is None``, leaving cost-bearing Params empty and
-    # collapsing the objective to 0.
-    from flextool.engine_polars._input_source import (
-        _install_seed as _install_seed_hook,
-    )
-    seed_installed = seed is not None
-    if seed_installed:
-        _install_seed_hook(seed)
-
     if ctx_workdir is not None:
         from flextool.engine_polars._solve_context import SolveContext
         try:
@@ -3938,8 +3877,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
     finally:
         if ctx is not None:
             ctx.deactivate()
-        if seed_installed:
-            _install_seed_hook(None)
 
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",

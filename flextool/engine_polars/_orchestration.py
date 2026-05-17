@@ -719,12 +719,6 @@ def _drive_cascade(
                 self.state.handoffs.get(self.state.last_captured_solve)
                 if self.state.last_captured_solve is not None else None
             )
-            # Step 1-f — the per-sub-solve Provider doubles as the
-            # ``seed=`` for unmigrated loaders inside ``load_flextool``
-            # (its ``.lookup(path)`` mirrors :meth:`FlexDataAccumulator.lookup`).
-            # Migrated loaders prefer the explicit ``provider=`` kwarg.
-            # Step 2 collapses both arguments once every loader is
-            # plumbed.
             _sub_solve_provider = getattr(
                 self.state, "current_provider", None,
             )
@@ -732,7 +726,6 @@ def _drive_cascade(
                 self.state.paths.work_folder,
                 handoff=prior_for_load,
                 db_reader=cascade_db_reader,
-                seed=_sub_solve_provider,
                 provider=_sub_solve_provider,
             )
             # Release heap held by the broadcast cascade scratch frames.
@@ -1080,37 +1073,19 @@ def _drive_cascade(
                     self.state.last_captured_solve is None
                     or len(self.state.handoffs or {}) == 0
                 )
-                # Step 1-f — install the per-sub-solve Provider as the
-                # active seed for the duration of ``write_outputs_for_solve``.
-                # The Provider exposes ``.lookup(path)`` with the same
-                # semantics as :meth:`FlexDataAccumulator.lookup`, so any
-                # unthreaded reader inside the call chain still resolves
-                # its frames from the in-memory carrier.  Step 2 deletes
-                # the seed funnel together with this boilerplate.
-                from flextool.engine_polars._input_source import (
-                    _install_seed as _install_seed_wofs,
+                write_outputs_for_solve(
+                    sol,
+                    work_folder=self.state.paths.work_folder,
+                    solve_name=complete_solve_name,
+                    prior_handoff=prior,
+                    writer_state=writer_state,
+                    flex_data=data,
+                    is_first_solve=_is_first,
+                    scale_the_objective=effective_obj_scale,
+                    provider=getattr(
+                        self.state, "current_provider", None,
+                    ),
                 )
-                import flextool.engine_polars._input_source as _is_mod_wofs
-                _prior_seed_wofs = _is_mod_wofs._active_seed
-                _install_seed_wofs(
-                    getattr(self.state, "current_provider", None),
-                )
-                try:
-                    write_outputs_for_solve(
-                        sol,
-                        work_folder=self.state.paths.work_folder,
-                        solve_name=complete_solve_name,
-                        prior_handoff=prior,
-                        writer_state=writer_state,
-                        flex_data=data,
-                        is_first_solve=_is_first,
-                        scale_the_objective=effective_obj_scale,
-                        provider=getattr(
-                            self.state, "current_provider", None,
-                        ),
-                    )
-                finally:
-                    _install_seed_wofs(_prior_seed_wofs)
             except Exception as exc:  # noqa: BLE001
                 self.state.logger.warning(
                     f"write_outputs_for_solve failed for "
@@ -1142,31 +1117,13 @@ def _drive_cascade(
                 and self.state.handoffs is not None else None
             )
             _t_bhf_start = time.perf_counter() if _phase_timing else 0.0
-            # Step 1-f — install the per-sub-solve Provider as the
-            # active seed for the duration of ``build_handoff_from_flexpy``.
-            # The Provider exposes ``.lookup(path)`` with the same
-            # semantics as :meth:`FlexDataAccumulator.lookup`, so any
-            # unthreaded reader inside the call chain still resolves its
-            # frames from the in-memory carrier.  Step 2 deletes the
-            # seed funnel together with this boilerplate.
-            from flextool.engine_polars._input_source import (
-                _install_seed as _install_seed_bhf,
+            handoff = build_handoff_from_flexpy(
+                sol, self.state.paths.work_folder, complete_solve_name,
+                prior_handoff=prior,
+                flex_data=data,
+                parent_handoff=parent_handoff,
+                provider=getattr(self.state, "current_provider", None),
             )
-            import flextool.engine_polars._input_source as _is_mod_bhf
-            _prior_seed_bhf = _is_mod_bhf._active_seed
-            _install_seed_bhf(
-                getattr(self.state, "current_provider", None),
-            )
-            try:
-                handoff = build_handoff_from_flexpy(
-                    sol, self.state.paths.work_folder, complete_solve_name,
-                    prior_handoff=prior,
-                    flex_data=data,
-                    parent_handoff=parent_handoff,
-                    provider=getattr(self.state, "current_provider", None),
-                )
-            finally:
-                _install_seed_bhf(_prior_seed_bhf)
             if _phase_timing:
                 _tr.record(
                     "handoff_part",
@@ -1212,26 +1169,10 @@ def _drive_cascade(
             from flextool.process_outputs.read_highs_solution import (
                 _actual_solve_name,
             )
-            # Step 1-f — install the per-sub-solve Provider as the
-            # active seed for the duration of ``_actual_solve_name``.
-            # The Provider exposes ``.lookup(path)`` with the same
-            # semantics as :meth:`FlexDataAccumulator.lookup`.  Step 2
-            # deletes the seed funnel together with this boilerplate.
-            from flextool.engine_polars._input_source import (
-                _install_seed as _install_seed_E_f,
+            step_key = _actual_solve_name(
+                self.state.paths.work_folder, complete_solve_name,
+                provider=getattr(self.state, "current_provider", None),
             )
-            import flextool.engine_polars._input_source as _is_mod_E_f
-            _prior_seed_E_f = _is_mod_E_f._active_seed
-            _install_seed_E_f(
-                getattr(self.state, "current_provider", None),
-            )
-            try:
-                step_key = _actual_solve_name(
-                    self.state.paths.work_folder, complete_solve_name,
-                    provider=getattr(self.state, "current_provider", None),
-                )
-            finally:
-                _install_seed_E_f(_prior_seed_E_f)
             # Step 1-f — the in-memory accumulator is no longer
             # populated; the per-sub-solve Provider replaced it as the
             # cascade's data carrier.  ``OrchestrationStep`` retains

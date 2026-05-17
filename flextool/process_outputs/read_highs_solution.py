@@ -76,30 +76,15 @@ _logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Step 1-e — Provider-aware lookup helper.
-#
-# Mirrors :func:`_provider_open` in ``input.py`` / ``_writer_arc_unions.py``:
-# Provider-first, transitional ``_seed_lookup`` fallback so callers that
-# haven't yet been plumbed with ``provider`` still benefit from the seed
-# funnel during the dual-write window.  Returns the polars frame (or
-# ``None``) — the four ``_load_realized_*`` helpers below convert it to
-# the shape they need.
-#
-# The Provider key mirrors the parent-qualified convention used by other
-# migrations: ``"<parent>/<basename>"`` without the ``.csv`` suffix.
-# Step 2 retires the seed-lookup branch; Step 1-g removes the
-# disk-fallback for files that live exclusively in the Provider.
+# Provider-aware lookup helper — Provider-first, then ``None`` (caller
+# falls back to its own disk read).  Provider key uses the
+# parent-qualified convention (``"<parent>/<basename>"`` without
+# ``.csv``).
 
 def _provider_lookup(provider: "object | None", path: "Path | str"):
-    """Return the polars frame for *path* sourced from the Provider, the
-    legacy in-memory seed, or ``None`` when neither carries the file.
-
-    Mirrors :func:`_seed_lookup` for the migration window: when
-    *provider* is non-None AND carries the named artefact, the
-    in-memory frame is returned directly; otherwise we consult the
-    seed funnel so unplumbed callers continue to short-circuit
-    under ``csv_emission_disabled()``.  Returns ``None`` when neither
-    has the file (caller falls back to its own disk read).
+    """Return the polars frame for *path* sourced from the Provider, or
+    ``None`` when the Provider doesn't carry it (caller falls back to
+    its own disk read).
     """
     p = Path(path)
     parent = p.parent.name
@@ -107,8 +92,7 @@ def _provider_lookup(provider: "object | None", path: "Path | str"):
     name = f"{parent}/{stem}" if parent else stem
     if provider is not None and provider.has(name):
         return provider.get(name)
-    from flextool.engine_polars._input_source import _seed_lookup
-    return _seed_lookup(path)
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -1,47 +1,28 @@
-"""Step 1-a — :class:`FlexDataProvider` scaffolding.
+""":class:`FlexDataProvider` — single carrier for preprocessing artefacts.
 
-The Provider is the single abstraction that eventually replaces both the
-in-memory :class:`FlexDataAccumulator` carrier and the path-based seed
-funnel (:func:`_seed_lookup` / :func:`_seed_or_exists` / :func:`_seed_or_pick`
-/ :func:`_seed_open`).  See
-``specs/flex_data_provider_migration_handoff.md`` for the multi-step plan.
-
-This file is the *first* step (S1-a): a plain dict-backed class with
-``get`` / ``has`` / ``put`` plus stub ``snapshot_*`` methods.  It is NOT
-yet wired into the cascade — the loaders, writers, post-processing
-readers, and orchestration still use the seed funnel.  Subsequent steps
-migrate consumers one file at a time, then delete the seed funnel
-wholesale.
+The Provider is the single abstraction by which loaders, writers,
+post-processing readers, and orchestration exchange preprocessing
+artefacts.  Dict-backed: ``put(name, frame)`` stores a frame;
+``get(name)`` / ``has(name)`` look it up by basename (without the
+``.csv`` suffix) or by parent-qualified key (``"<parent>/<stem>"``).
 
 Name conventions
 ----------------
 
 * The Provider keys frames by *name*: the CSV basename **without** the
   ``.csv`` suffix (e.g. ``"p_flow_max"``, ``"pdtNode"``,
-  ``"realized_dispatch"``).  This mirrors the public interface contract
-  in the handoff (Step 1 section) and is one step removed from the
-  accumulator's path-style keys (``"p_flow_max.csv"``).
+  ``"realized_dispatch"``).
 * Parent-qualified variants (``"solve_data/p_flow_max"``,
   ``"input/timeline"``) are supported.  When the same basename appears
   in two source directories (the canonical example is ``timeline.csv``
   which exists in both ``input/`` and ``solve_data/``), the caller can
   disambiguate by passing the qualified key.
-* Lookup is bidirectional and mirrors the seed funnel's ``_seed_or_pick``
-  pattern.  ``get`` first tries the exact key as supplied; failing that:
+* Lookup is bidirectional.  ``get`` first tries the exact key; failing
+  that:
 
   * If the supplied key is *bare* (no ``/``), it falls back to scanning
-    for any stored qualified key whose tail matches.  This is the
-    "promote bare lookup to whatever qualified frame is present" path.
+    for any stored qualified key whose tail matches.
   * If the supplied key is *qualified*, it falls back to the bare tail.
-    This is the "demote qualified lookup to the basename" path; same
-    behaviour as the seed funnel passing a qualified path to
-    ``_seed_lookup`` when only the bare basename was stashed.
-
-  The two-direction fallback is intentional for the scaffolding stage —
-  consumers being migrated in Step 1 read with whichever form the
-  legacy seed call used (bare for ``_seed_or_exists``, qualified for
-  ``_seed_open``).  Once every consumer is migrated and we settle on a
-  single style, the fallback can be tightened.
 
 * ``has(name)`` returns ``True`` iff ``get(name)`` would return a
   non-``None`` frame, and uses the same lookup logic.
@@ -51,9 +32,7 @@ Suffix handling
 
 The Provider stores keys *without* the ``.csv`` suffix.  ``get`` /
 ``has`` / ``put`` accept either form — a trailing ``.csv`` is stripped
-before keying.  This matches the handoff's interface contract: "Names
-are basenames without the .csv suffix" while still being lenient about
-callers that pass full filenames.
+before keying.
 """
 from __future__ import annotations
 
@@ -137,56 +116,19 @@ class FlexDataProvider:
         parent, tail = _split_qualified(key)
         if parent == "":
             # Bare lookup — promote to whatever qualified frame matches
-            # by tail.  Mirrors ``_seed_or_pick`` which accepts the
-            # first hit across multiple parent dirs.
+            # by tail.
             for stored_key, frame in self._frames.items():
                 stored_parent, stored_tail = _split_qualified(stored_key)
                 if stored_parent and stored_tail == key:
                     return frame
             return None
-        # Qualified lookup — fall back to bare tail.  Mirrors the seed
-        # funnel's behaviour when only the bare basename was stashed
-        # but the caller passes a full path.
+        # Qualified lookup — fall back to bare tail.
         return self._frames.get(tail)
 
     def has(self, name: str) -> bool:
         """Return ``True`` iff :meth:`get` would return a non-``None``
         frame for *name*."""
         return self.get(name) is not None
-
-    # ------------------------------------------------------------------
-    # Step 1-f — seed-funnel adapter
-    # ------------------------------------------------------------------
-    #
-    # Until Step 2 deletes the seed funnel, the Provider doubles as the
-    # ``_active_seed`` object so the few writer-side reads that have not
-    # yet been threaded with an explicit ``provider`` kwarg (Step 1-g
-    # work) still resolve from in-memory frames.  ``_seed_lookup`` only
-    # calls ``.lookup(path)`` on the active seed; expose a method with
-    # the same signature as :meth:`FlexDataAccumulator.lookup`.
-
-    def lookup(self, target: "Path | str") -> "pl.DataFrame | None":
-        """Return the stored frame for *target*, or ``None``.
-
-        ``target`` may be a full ``Path`` (``<work>/solve_data/foo.csv``)
-        or a bare basename (``"foo.csv"`` or ``"foo"``).  When *target*
-        is a qualified path with a parent dir, the parent-qualified key
-        is consulted first (``"<parent>/<stem>"``); the bare stem is
-        the fallback.  Mirrors :meth:`FlexDataAccumulator.lookup`'s
-        dual-key semantics so the seed funnel returns identical frames
-        across the migration window.
-        """
-        p = Path(target)
-        stem = p.name
-        if stem.endswith(".csv"):
-            stem = stem[:-4]
-        parent = p.parent.name if str(p.parent) != "." else ""
-        if parent:
-            # Qualified caller — return ONLY the parent-qualified frame
-            # to disambiguate basename collisions across input/ vs
-            # solve_data/.
-            return self._frames.get(f"{parent}/{stem}")
-        return self._frames.get(stem)
 
     # ------------------------------------------------------------------
     # Iteration helpers (handy for tests + future snapshot impls).

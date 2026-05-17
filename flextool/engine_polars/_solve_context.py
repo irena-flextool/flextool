@@ -475,13 +475,10 @@ def _read_active_solve(workdir: Path,
                         *, provider: "object | None" = None) -> str | None:
     """Mirror of ``_derived_params._read_active_solve``.
 
-    Step 1-g-4b — Provider-first read.  The legacy seed-funnel
-    middle tier remains via :func:`_provider_open`'s internal
-    ``_seed_lookup`` fallback until Step 2 deletes both.
+    Provider-first read; falls back to disk when the Provider is absent
+    or doesn't carry the frame.
     """
-    from flextool.engine_polars._writer_provider_io import (
-        _provider_key, _provider_open,
-    )
+    from flextool.engine_polars._writer_provider_io import _provider_key
     p = workdir / "solve_data" / "solve_current.csv"
     if provider is not None and provider.has(_provider_key(p)):
         df = provider.get(_provider_key(p))
@@ -489,13 +486,10 @@ def _read_active_solve(workdir: Path,
             return None
         col = df.columns[0]
         return df[col][0]
-    # Fallback: seed-funnel / disk read (pre-migration behaviour).
-    from flextool.engine_polars._input_source import _seed_lookup
-    seeded = _seed_lookup(p)
-    if seeded is None and not p.exists():
+    if not p.exists():
         return None
     try:
-        df = seeded if seeded is not None else _read_csv_file(p)
+        df = _read_csv_file(p)
     except pl.exceptions.NoDataError:
         return None
     if df.height == 0:

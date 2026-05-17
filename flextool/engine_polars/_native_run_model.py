@@ -104,8 +104,8 @@ def _fan_out_fix_storage(fix_storage):
 
     Mirrors the disk fan-out in
     ``_solve_handoff.write_fix_storage_files_from_handoff`` but keeps
-    the result in-memory so the next sub-solve's accumulator can seed
-    them via ``_seed_lookup``.
+    the result in-memory so the next sub-solve's Provider can be
+    pre-seeded with them.
     """
     import polars as pl
     out: dict[str, "pl.DataFrame"] = {}
@@ -473,20 +473,6 @@ def native_run_model(state, solver) -> int:
         # as before.
         _capture_ctx = capture_frames(provider=sub_solve_provider)
         _capture_ctx.__enter__()
-        # Step 1-f — install the per-sub-solve Provider as the active
-        # seed.  The Provider exposes a ``.lookup(path)`` method with
-        # the same semantics as :meth:`FlexDataAccumulator.lookup`, so
-        # the few writer-side reads that have not yet been threaded
-        # with an explicit ``provider`` kwarg (Step 1-g cleanup) still
-        # resolve their frames from the in-memory carrier.  Step 2
-        # deletes the seed funnel entirely; until then this preserves
-        # the disk-free invariant for the cascade.
-        from flextool.engine_polars._input_source import (
-            _install_seed as _install_seed_E_d,
-        )
-        import flextool.engine_polars._input_source as _is_mod_E_d
-        _prior_seed_E_d = _is_mod_E_d._active_seed
-        _install_seed_E_d(sub_solve_provider)
         # S1-g-3 — expose the per-sub-solve Provider to writer entry
         # points BEFORE preprocessing runs, so native writers threaded
         # with ``provider=`` (via :func:`_writer_solve_time.run`) can
@@ -926,8 +912,6 @@ def native_run_model(state, solver) -> int:
         finally:
             # ---- capture exit ----
             _capture_ctx.__exit__(None, None, None)
-            # Restore the prior seed (typically None outside the cascade).
-            _install_seed_E_d(_prior_seed_E_d)
         # Step 1-f — Provider stash on state.  Read by
         # ``_FlexpyCascadeSolver.run`` to thread through into
         # ``load_flextool`` / ``write_outputs_for_solve`` /

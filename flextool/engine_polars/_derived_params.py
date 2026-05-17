@@ -44,25 +44,22 @@ import polars as pl
 from polar_high import Param
 
 from ._axis_enums import schema_dtype
-from ._input_source import _read_csv_file, _seed_or_exists
+from ._input_source import _read_csv_file
 from ._writer_provider_io import _provider_key
 
 
 def _provider_or_exists(
     provider: "object | None", path: "Path | str",
 ) -> bool:
-    """Step 1-g-5 — Provider-first replacement for :func:`_seed_or_exists`.
+    """Provider-first existence check.
 
     Returns ``True`` iff the live :class:`FlexDataProvider` carries the
     artefact for *path* (under its canonical name) OR the file exists on
-    disk.  Falls through to the seed-funnel adapter when *provider* is
-    ``None`` so the small number of callers that still don't thread the
-    Provider keep working during the migration window.  Step 2 drops the
-    seed-funnel fallback once every caller passes ``provider``.
+    disk.
     """
     if provider is not None and provider.has(_provider_key(path)):
         return True
-    return _seed_or_exists(path)
+    return Path(path).exists()
 
 # Derived-param helpers operate on a ``source`` (InputSource); FlexData
 # is not yet built when the broadcast cascade runs.  ``_enums = None``
@@ -155,11 +152,9 @@ def _read_active_solve(workdir: Path,
             return None
         col = df.columns[0]
         return df[col][0]
-    from flextool.engine_polars._input_source import _seed_lookup
-    seeded = _seed_lookup(p)
-    if seeded is None and not p.exists():
+    if not p.exists():
         return None
-    df = seeded if seeded is not None else _read_csv_file(p)
+    df = _read_csv_file(p)
     if df.height == 0:
         return None
     col = df.columns[0]

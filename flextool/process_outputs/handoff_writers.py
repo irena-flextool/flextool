@@ -81,18 +81,14 @@ _INV_SCALE_THE_OBJECTIVE = 1e6
 
 
 # ---------------------------------------------------------------------------
-# Step 1-e — Provider-aware lookup helper.
-#
-# Mirrors :func:`read_highs_solution._provider_lookup`: Provider-first,
-# transitional ``_seed_lookup`` fallback so callers that haven't yet
-# been plumbed with ``provider`` still benefit from the seed funnel
-# during the dual-write window.  Returns the polars frame (or
-# ``None``).  The Provider key uses the parent-qualified convention
-# (``"<parent>/<basename>"`` without the ``.csv`` suffix).
+# Provider-aware lookup helper — Provider-first, then ``None`` (caller
+# falls back to its own disk read).  Provider key uses the
+# parent-qualified convention (``"<parent>/<basename>"`` without
+# ``.csv``).
 
 def _provider_lookup_df(provider: "object | None", path: "Path | str"):
-    """Return the polars frame for *path* sourced from the Provider, the
-    legacy in-memory seed, or ``None`` when neither carries the file.
+    """Return the polars frame for *path* sourced from the Provider, or
+    ``None`` when the Provider doesn't carry it.
     """
     p = Path(path)
     parent = p.parent.name
@@ -100,8 +96,7 @@ def _provider_lookup_df(provider: "object | None", path: "Path | str"):
     name = f"{parent}/{stem}" if parent else stem
     if provider is not None and provider.has(name):
         return provider.get(name)
-    from flextool.engine_polars._input_source import _seed_lookup
-    return _seed_lookup(path)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -135,10 +130,8 @@ def _load_pre_existing(
     level is collapsed — the same value applies for any solve.
     """
     path = work_folder / "solve_data" / "solve__p_entity_pre_existing.csv"
-    # Step 1-e — Provider-aware: under csv_emission_disabled() the file
-    # isn't on disk but the per-sub-solve Provider has the frame.
-    # Falls back to a transitional ``_seed_open`` lookup for callers
-    # not yet plumbed with ``provider``.
+    # Provider-first: when the per-sub-solve Provider has the frame, use
+    # it; otherwise read from disk.
     fh = None
     if provider is not None and provider.has("solve_data/solve__p_entity_pre_existing"):
         import io
@@ -147,9 +140,6 @@ def _load_pre_existing(
         df_pl.write_csv(buf)
         buf.seek(0)
         fh = buf
-    else:
-        from flextool.engine_polars._input_source import _seed_open
-        fh = _seed_open(path)
     if fh is None:
         df = pd.read_csv(path, index_col=[0, 1])
     else:
