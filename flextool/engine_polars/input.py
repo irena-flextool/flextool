@@ -3474,7 +3474,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # at each call site.  When the orchestrator transitions to building
         # ``BlockLayout`` natively (Δ.3+), this load_from_solve_data call
         # becomes a no-op or is replaced by passing the live layout in.
-        block_layout = BlockLayout.load_from_solve_data(sd)
+        block_layout = BlockLayout.load_from_solve_data(sd, provider=provider)
 
         dt, step_dur, rp_cw, infl, psh = _load_time(sd, provider=provider)
         nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt, provider=provider)

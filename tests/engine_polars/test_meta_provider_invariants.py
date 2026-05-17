@@ -122,10 +122,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Provider.  Provider-first via _provider_open; disk arm "
         "serves raw inputs."
     ),
-    "_block_layout.py": (
-        "Reads raw input/timeblocks.csv during block-layout "
-        "construction (pre-Provider)."
-    ),
     "_region_filter.py": (
         "Reads input/regionSwitch.csv at region-filter setup."
     ),

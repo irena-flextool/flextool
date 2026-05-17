@@ -236,32 +236,39 @@ def load_block_bundle(
     workdir: Path | None,
     *,
     block_layout: "BlockLayout | None" = None,
+    provider: "object | None" = None,
 ) -> BlockBundle | None:
-    """Load a :class:`BlockBundle` from ``workdir/solve_data``.
+    """Load a :class:`BlockBundle` from a Provider (preferred) or an
+    in-memory layout.
 
     When ``block_layout`` is supplied (Phase 2 multi-block fast-path),
-    wrap that in-memory layout directly and skip the workdir CSV read
-    entirely — the fast loader's :meth:`BlockLayout.from_source` builds
-    an identical layout without preprocessing and stashes it on
-    ``FlexData.block_layout``.  Callers in ``apply_derived_*`` thread
-    ``flex_data.block_layout`` here so single- and multi-block fixtures
-    behave the same on both paths.
+    wrap that layout directly.  Otherwise route through
+    :meth:`BlockLayout.load_from_solve_data` against *provider*.
+
+    The legacy ``workdir``-only signature is honoured by seeding an
+    ephemeral Provider from ``workdir/solve_data`` via
+    :func:`_input_source.seed_provider_from_dir`.  This keeps off-
+    cascade tests (and the few callers that still pass a workdir
+    without a Provider) working while the cascade itself never
+    touches disk.
 
     Returns ``None`` if neither input yields a non-empty layout.
-    Empty here means: no ``entity_block``, no ``process_side_block``,
-    no ``block_step_duration`` rows.  Callers fall back to no-op
-    behaviour when ``None`` is returned.
     """
     if block_layout is not None:
         if block_layout.is_empty():
             return None
         return BlockBundle(layout=block_layout)
-    if workdir is None:
+    if provider is None and workdir is None:
         return None
-    sd = Path(workdir) / "solve_data"
-    if not sd.exists():
-        return None
-    layout = BlockLayout.load_from_solve_data(sd)
+    if provider is None and workdir is not None:
+        sd = Path(workdir) / "solve_data"
+        if not sd.exists():
+            return None
+    sd = (
+        Path(workdir) / "solve_data" if workdir is not None
+        else Path(".")
+    )
+    layout = BlockLayout.load_from_solve_data(sd, provider=provider)
     if layout.is_empty():
         return None
     return BlockBundle(layout=layout)

@@ -47,6 +47,32 @@ from ._axis_enums import schema_dtype
 from ._writer_provider_io import _provider_key
 
 
+def _load_block_layout_with_seed(workdir, provider):
+    """Common helper for the three block-aware derived-helpers that
+    consume a ``BlockLayout`` from a Provider.
+
+    Resolution order:
+
+    1. *provider* is non-None → :meth:`BlockLayout.load_from_solve_data`
+       reads from it directly (cascade path).
+    2. *provider* is None but *workdir* is set →
+       :meth:`load_from_solve_data` seeds an ephemeral Provider from
+       ``workdir/solve_data`` internally.
+    3. Neither available → ``None``.
+    """
+    from flextool.engine_polars._block_layout import BlockLayout
+    if provider is None and workdir is None:
+        return None
+    from pathlib import Path
+    if workdir is not None:
+        sd = Path(workdir) / "solve_data"
+        if provider is None and not sd.exists():
+            return None
+    else:
+        sd = Path(".")
+    return BlockLayout.load_from_solve_data(sd, provider=provider)
+
+
 def _provider_has_key(provider, path: "Path | str") -> bool:
     """Provider-only existence check.  Returns ``True`` iff the live
     :class:`FlexDataProvider` carries the artefact for *path* (under
@@ -2513,7 +2539,9 @@ def apply_derived_b(
         # over-constrained.
         fd_layout_b = getattr(flex_data, "block_layout", None)
         try:
-            bundle = load_block_bundle(workdir, block_layout=fd_layout_b)
+            bundle = load_block_bundle(
+                workdir, block_layout=fd_layout_b, provider=provider,
+            )
         except Exception:
             bundle = None
         ftn_db = flow_to_n_block_filtered(pss_frame, bundle)
@@ -6278,10 +6306,8 @@ def period_block_family_from_source(source: "InputSource",
     # the fast loader and stashed on FlexData) over the workdir CSV
     # read — on the fast path the workdir's solve_data/ is empty.
     bl = block_layout
-    if bl is None and workdir is not None:
-        from flextool.engine_polars._block_layout import BlockLayout
-        sd = Path(workdir) / "solve_data"
-        bl = BlockLayout.load_from_solve_data(sd)
+    if bl is None and (workdir is not None or provider is not None):
+        bl = _load_block_layout_with_seed(workdir, provider)
     if bl is not None:
         eb = bl.entity_block_frame
         bsd = bl.block_step_duration_frame
@@ -6419,6 +6445,7 @@ def nodeStateBlock_from_source(source: "InputSource",
                                   workdir: Path | None,
                                   *,
                                   block_layout: "BlockLayout | None" = None,
+                                  provider: "object | None" = None,
                                   ) -> pl.DataFrame | None:
     """Synthesise the ``nodeStateBlock`` set per audit §3.9.2.
 
@@ -6459,10 +6486,9 @@ def nodeStateBlock_from_source(source: "InputSource",
     # (built source-only by the fast loader and stashed on FlexData) so
     # the workdir CSV read can be skipped when ``solve_data/`` is empty.
     bl = block_layout
-    if bl is None and workdir is not None:
+    if bl is None and (workdir is not None or provider is not None):
         from flextool.engine_polars._block_layout import BlockLayout
-        sd = Path(workdir) / "solve_data"
-        bl = BlockLayout.load_from_solve_data(sd)
+        bl = _load_block_layout_with_seed(workdir, provider)
     if bl is not None:
         eb = bl.entity_block_frame
         bsd = bl.block_step_duration_frame
@@ -6504,6 +6530,7 @@ def arc_block_dt_from_source(source: "InputSource",
                                  pss: pl.DataFrame | None,
                                  *,
                                  block_layout: "BlockLayout | None" = None,
+                                 provider: "object | None" = None,
                                  ) -> dict | None:
     """Build per-arc daily-block aggregation frames.
 
@@ -6537,9 +6564,9 @@ def arc_block_dt_from_source(source: "InputSource",
     # the workdir CSV read can be skipped when ``solve_data/`` is empty.
     bl = block_layout
     if bl is None:
-        from flextool.engine_polars._block_layout import BlockLayout
-        sd = Path(workdir) / "solve_data"
-        bl = BlockLayout.load_from_solve_data(sd)
+        bl = _load_block_layout_with_seed(workdir, provider)
+        if bl is None:
+            return None
     if (bl is None
             or bl.process_side_block_frame.height == 0
             or bl.block_step_duration_frame.height == 0):
@@ -7140,7 +7167,9 @@ def apply_derived_e(
     # workdir's solve_data/ is empty.
     fd_layout = getattr(flex_data, "block_layout", None)
     try:
-        block_bundle = load_block_bundle(workdir, block_layout=fd_layout)
+        block_bundle = load_block_bundle(
+            workdir, block_layout=fd_layout, provider=provider,
+        )
     except Exception:
         block_bundle = None
 
@@ -7165,7 +7194,8 @@ def apply_derived_e(
     pb_family = None
     if has_state:
         pb_family = period_block_family_from_source(
-            source, active_solve, workdir, block_layout=fd_layout, ctx=ctx)
+            source, active_solve, workdir, block_layout=fd_layout, ctx=ctx,
+            provider=provider)
     period_block_time_for_arc: pl.DataFrame | None = None
     if pb_family is not None:
         flex_data.period_block = pb_family["period_block"]
@@ -7189,7 +7219,7 @@ def apply_derived_e(
     nsb_db = None
     if has_state:
         nsb_db = nodeStateBlock_from_source(
-            source, workdir, block_layout=fd_layout)
+            source, workdir, block_layout=fd_layout, provider=provider)
         flex_data.nodeStateBlock = nsb_db
 
     # 4. arc block weights --------------------------------------------
@@ -7206,7 +7236,7 @@ def apply_derived_e(
             and pss is not None):
         arc = arc_block_dt_from_source(
             source, workdir, nsb_db, period_block_time_for_arc, pss,
-            block_layout=fd_layout)
+            block_layout=fd_layout, provider=provider)
         if arc is not None:
             for k in ("arc_sink_block_dt", "arc_source_block_dt",
                        "p_arc_sink_weight", "p_arc_source_weight"):

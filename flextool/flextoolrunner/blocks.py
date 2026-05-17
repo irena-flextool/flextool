@@ -75,7 +75,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
+import polars as pl
+
 from flextool.flextoolrunner.runner_state import FlexToolConfigError
+
+
+# ---------------------------------------------------------------------------
+# Single-frame writer (canonical _write helper)
+# ---------------------------------------------------------------------------
+
+
+def _write(df: pl.DataFrame, path: Path) -> None:
+    """Emit *df* to *path*, creating parent dirs as needed.
+
+    Wrapped by :func:`flextool.engine_polars._flex_data_accumulator.capture_frames`
+    so the eight per-solve block CSVs flow into a Provider in-memory
+    instead of disk when the cascade captures.  Outside the context the
+    helper writes directly to disk.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_csv(path)
 
 if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
     from flextool.flextoolrunner.solve_config import SolveConfig
@@ -1061,6 +1081,133 @@ def derive_block_boundaries(
 # ---------------------------------------------------------------------------
 
 
+def _entity_block_frame(block_assignments: BlockAssignments) -> pl.DataFrame:
+    rows = list(block_assignments.node_block.items())
+    return pl.DataFrame(
+        {
+            "entity": [r[0] for r in rows],
+            "block": [r[1] for r in rows],
+        },
+        schema={"entity": pl.Utf8, "block": pl.Utf8},
+    )
+
+
+def _process_side_block_frame(
+    block_assignments: BlockAssignments,
+) -> pl.DataFrame:
+    procs: list[str] = []
+    sides: list[str] = []
+    blocks: list[str] = []
+    for process, block in block_assignments.process_block_in.items():
+        procs.append(process)
+        sides.append("source")
+        blocks.append(block)
+    for process, block in block_assignments.process_block_out.items():
+        procs.append(process)
+        sides.append("sink")
+        blocks.append(block)
+    return pl.DataFrame(
+        {"process": procs, "side": sides, "block": blocks},
+        schema={"process": pl.Utf8, "side": pl.Utf8, "block": pl.Utf8},
+    )
+
+
+def _process_block_frame(
+    block_assignments: BlockAssignments,
+) -> pl.DataFrame:
+    rows = list(block_assignments.process_block.items())
+    return pl.DataFrame(
+        {
+            "process": [r[0] for r in rows],
+            "block": [r[1] for r in rows],
+        },
+        schema={"process": pl.Utf8, "block": pl.Utf8},
+    )
+
+
+def _block_step_duration_frame(
+    block_timelines: BlockTimelines | None,
+) -> pl.DataFrame:
+    blocks: list[str] = []
+    periods: list[str] = []
+    steps: list[str] = []
+    durs: list[float] = []
+    if block_timelines is not None:
+        for block, period_rows in block_timelines.per_block.items():
+            for period, rows in period_rows.items():
+                for step, dur in rows:
+                    blocks.append(block)
+                    periods.append(period)
+                    steps.append(step)
+                    durs.append(float(dur))
+    return pl.DataFrame(
+        {
+            "block": blocks, "period": periods,
+            "step": steps, "step_duration": durs,
+        },
+        schema={
+            "block": pl.Utf8, "period": pl.Utf8,
+            "step": pl.Utf8, "step_duration": pl.Float64,
+        },
+    )
+
+
+def _overlap_set_frame(overlap_set: OverlapSet) -> pl.DataFrame:
+    rows = overlap_set.rows
+    return pl.DataFrame(
+        {
+            "period": [r[0] for r in rows],
+            "block_coarse": [r[1] for r in rows],
+            "step_coarse": [r[2] for r in rows],
+            "block_fine": [r[3] for r in rows],
+            "step_fine": [r[4] for r in rows],
+            "fraction": [r[5] for r in rows],
+        },
+        schema={
+            "period": pl.Utf8, "block_coarse": pl.Utf8,
+            "step_coarse": pl.Utf8, "block_fine": pl.Utf8,
+            "step_fine": pl.Utf8, "fraction": pl.Float64,
+        },
+    )
+
+
+def _block_step_previous_frame(
+    block_predecessors: BlockPredecessors | None,
+) -> pl.DataFrame:
+    rows = block_predecessors.rows if block_predecessors is not None else []
+    return pl.DataFrame(
+        {
+            "block": [r[0] for r in rows],
+            "period": [r[1] for r in rows],
+            "step": [r[2] for r in rows],
+            "step_previous": [r[3] for r in rows],
+            "step_previous_within_timeset": [r[4] for r in rows],
+            "period_previous": [r[5] for r in rows],
+            "step_previous_within_solve": [r[6] for r in rows],
+        },
+        schema={
+            "block": pl.Utf8, "period": pl.Utf8, "step": pl.Utf8,
+            "step_previous": pl.Utf8,
+            "step_previous_within_timeset": pl.Utf8,
+            "period_previous": pl.Utf8,
+            "step_previous_within_solve": pl.Utf8,
+        },
+    )
+
+
+def _block_period_time_frame(
+    rows: list[tuple[str, str, str]],
+) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "block": [r[0] for r in rows],
+            "period": [r[1] for r in rows],
+            "step": [r[2] for r in rows],
+        },
+        schema={"block": pl.Utf8, "period": pl.Utf8, "step": pl.Utf8},
+    )
+
+
 def write_block_data(
     block_assignments: BlockAssignments,
     overlap_set: OverlapSet,
@@ -1069,96 +1216,63 @@ def write_block_data(
     block_predecessors: BlockPredecessors | None = None,
     block_boundaries: BlockBoundaries | None = None,
 ) -> None:
-    """Emit the four block CSVs into *solve_data_dir*.
+    """Emit the eight block CSVs into *solve_data_dir*.
+
+    Each emission flows through :func:`_write` so the cascade's
+    ``capture_frames`` monkey-patch routes the frame into the Provider
+    rather than disk when active.
 
     Files:
 
-    * ``entity_block.csv``        ``entity,block`` — one row per node.
-    * ``process_side_block.csv``  ``process,side,block`` — two rows per
-                                   process (source + sink).
-    * ``block_step_duration.csv`` ``block,period,step,step_duration`` —
-                                   per-block timeline.  The default
-                                   block emits every ``(period, step)``
-                                   from the solve's timeline.
-    * ``overlap_set.csv``         ``period,block_coarse,step_coarse,
-                                   block_fine,step_fine,fraction``.
+    * ``entity_block.csv``           ``entity,block``.
+    * ``process_side_block.csv``     ``process,side,block``.
+    * ``process_block.csv``          ``process,block`` (Agent 1.6 unified).
+    * ``block_step_duration.csv``    ``block,period,step,step_duration``.
+    * ``overlap_set.csv``            ``period,block_coarse,step_coarse,
+                                      block_fine,step_fine,fraction``.
+    * ``block_step_previous.csv``    per-block predecessor 7-tuples.
+    * ``block_period_time_first.csv``
+    * ``block_period_time_last.csv``
     """
     solve_data_dir = Path(solve_data_dir)
-    solve_data_dir.mkdir(parents=True, exist_ok=True)
-
-    # entity_block.csv --------------------------------------------------
-    with open(solve_data_dir / "entity_block.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["entity", "block"])
-        for node, block in block_assignments.node_block.items():
-            writer.writerow([node, block])
-
-    # process_side_block.csv -------------------------------------------
-    with open(solve_data_dir / "process_side_block.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["process", "side", "block"])
-        for process, block in block_assignments.process_block_in.items():
-            writer.writerow([process, "source", block])
-        for process, block in block_assignments.process_block_out.items():
-            writer.writerow([process, "sink", block])
-
-    # process_block.csv (Agent 1.6) ------------------------------------
-    # Per-process unified block for UC / ramp / profile constraints.
-    # In the degenerate case every process maps to ``DEFAULT_BLOCK``.
-    with open(solve_data_dir / "process_block.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["process", "block"])
-        for process, block in block_assignments.process_block.items():
-            writer.writerow([process, block])
-
-    # block_step_duration.csv ------------------------------------------
-    with open(solve_data_dir / "block_step_duration.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["block", "period", "step", "step_duration"])
-        if block_timelines is not None:
-            for block, period_rows in block_timelines.per_block.items():
-                for period, rows in period_rows.items():
-                    for step, dur in rows:
-                        writer.writerow([block, period, step, dur])
-
-    # overlap_set.csv --------------------------------------------------
-    with open(solve_data_dir / "overlap_set.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(
-            ["period", "block_coarse", "step_coarse",
-             "block_fine", "step_fine", "fraction"]
-        )
-        for row in overlap_set.rows:
-            writer.writerow(row)
-
-    # block_step_previous.csv (Agent 1.4) -------------------------------
-    # Per-block predecessor relations, analogous to step_previous.csv.
-    # In the degenerate case the default-block rows match step_previous
-    # bit-identically (they're reprojected from the same jump_list).
-    with open(solve_data_dir / "block_step_previous.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(
-            ["block", "period", "step", "step_previous",
-             "step_previous_within_timeset", "period_previous",
-             "step_previous_within_solve"]
-        )
-        if block_predecessors is not None:
-            for row in block_predecessors.rows:
-                writer.writerow(row)
-
-    # block_period_time_first.csv / block_period_time_last.csv (Agent 1.4)
-    with open(solve_data_dir / "block_period_time_first.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["block", "period", "step"])
-        if block_boundaries is not None:
-            for row in block_boundaries.first:
-                writer.writerow(row)
-    with open(solve_data_dir / "block_period_time_last.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["block", "period", "step"])
-        if block_boundaries is not None:
-            for row in block_boundaries.last:
-                writer.writerow(row)
+    _write(
+        _entity_block_frame(block_assignments),
+        solve_data_dir / "entity_block.csv",
+    )
+    _write(
+        _process_side_block_frame(block_assignments),
+        solve_data_dir / "process_side_block.csv",
+    )
+    _write(
+        _process_block_frame(block_assignments),
+        solve_data_dir / "process_block.csv",
+    )
+    _write(
+        _block_step_duration_frame(block_timelines),
+        solve_data_dir / "block_step_duration.csv",
+    )
+    _write(
+        _overlap_set_frame(overlap_set),
+        solve_data_dir / "overlap_set.csv",
+    )
+    _write(
+        _block_step_previous_frame(block_predecessors),
+        solve_data_dir / "block_step_previous.csv",
+    )
+    first_rows = (
+        block_boundaries.first if block_boundaries is not None else []
+    )
+    last_rows = (
+        block_boundaries.last if block_boundaries is not None else []
+    )
+    _write(
+        _block_period_time_frame(first_rows),
+        solve_data_dir / "block_period_time_first.csv",
+    )
+    _write(
+        _block_period_time_frame(last_rows),
+        solve_data_dir / "block_period_time_last.csv",
+    )
 
 
 # ---------------------------------------------------------------------------

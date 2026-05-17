@@ -48,6 +48,7 @@ _PATCH_MODULES = (
     "flextool.engine_polars._writer_period_calc",
     "flextool.engine_polars._writer_per_solve",
     "flextool.engine_polars._writer_reserve",
+    "flextool.flextoolrunner.blocks",
 )
 
 
@@ -540,6 +541,18 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_reserve_upDown_node_increase_reserve_ratio.csv",
     "process_reserve_upDown_node_large_failure_ratio.csv",
     "process_large_failure.csv",
+    # flextoolrunner.blocks — Step 2.5 Phase A: write_block_data routed
+    # through the shared _write helper so the eight per-solve block
+    # frames (Agent 1.1 / 1.4 / 1.6) populate the Provider via
+    # capture_frames instead of staying disk-only.
+    "entity_block.csv",
+    "process_side_block.csv",
+    "process_block.csv",
+    "block_step_duration.csv",
+    "overlap_set.csv",
+    "block_step_previous.csv",
+    "block_period_time_first.csv",
+    "block_period_time_last.csv",
 )
 
 

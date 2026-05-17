@@ -72,6 +72,25 @@ if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
 DEFAULT_BLOCK = "default"
 
 
+# Eight per-solve block CSV stems written by
+# ``flextool.flextoolrunner.blocks.write_block_data`` and consumed by
+# :meth:`BlockLayout.load_from_solve_data`.  Defined as a module
+# constant so the off-cascade workdir bridge can seed only these files
+# into the ephemeral Provider (without picking up unrelated workdir
+# artefacts like ``solve_progress.csv`` whose ragged shape would fail
+# the strict CSV reader).
+_BLOCK_CSV_STEMS: tuple[str, ...] = (
+    "entity_block",
+    "process_side_block",
+    "process_block",
+    "block_step_duration",
+    "overlap_set",
+    "block_step_previous",
+    "block_period_time_first",
+    "block_period_time_last",
+)
+
+
 # Direct (1var) and indirect (nvar) ct_method classification — matches
 # ``set method_direct`` / ``set method_indirect`` in flextool_base.dat.
 # Classification is at the ct_method level: unknown values default to
@@ -1229,48 +1248,86 @@ class BlockLayout:
 
     @classmethod
     def load_from_solve_data(
-        cls, solve_data_dir, *, missing_ok: bool = True,
+        cls,
+        solve_data_dir,
+        *,
+        missing_ok: bool = True,
+        provider: "object | None" = None,
     ) -> "BlockLayout":
-        """Load a ``BlockLayout`` from flextool's solve_data/ block CSVs.
+        """Load a ``BlockLayout`` from a :class:`FlexDataProvider`.
 
-        Used as a transitional bridge: while the orchestrator still
-        drives flextool's ``write_block_data_for_solve``, downstream
-        helpers can consume a single in-memory ``BlockLayout`` instead
-        of re-reading the same CSVs over and over.
-
-        Only the *output frames* are populated — the internal
-        bookkeeping dicts (``node_block``, ``process_block``, etc.)
-        are reconstructed from the frames as a convenience for
-        callers that index by entity name.
+        Step 2.5 Phase A: ``blocks.write_block_data`` is now patched
+        into ``_PATCH_MODULES`` so the eight per-solve block frames
+        live in the Provider after the cascade's preprocessing pass.
+        Callers MUST pass *provider*.  When only a workdir is available
+        (off-cascade tests, transitional bridges), use
+        :func:`flextool.engine_polars._input_source.seed_provider_from_dir`
+        on ``workdir/"solve_data"`` to construct an ephemeral Provider
+        first.
 
         Parameters
         ----------
         solve_data_dir : Path
-            Directory containing the block CSVs (``entity_block.csv``,
-            ``process_side_block.csv``, ``process_block.csv``,
-            ``block_step_duration.csv``, ``overlap_set.csv``,
-            ``block_step_previous.csv``, ``block_period_time_first.csv``,
-            ``block_period_time_last.csv``).
+            Retained for symmetry with the legacy signature; unused
+            when *provider* carries every requested key.  The
+            classmethod will refuse to read disk directly — the
+            workdir-bridge contract is now Provider-only.
         missing_ok : bool
-            When True (default), missing CSVs produce empty frames.
-            When False, raise FileNotFoundError on the first missing.
+            When True (default), missing Provider keys produce empty
+            frames.  When False, raise ``KeyError`` on the first
+            missing key.
+        provider :
+            :class:`FlexDataProvider` to serve frames from.  Required.
 
         Returns
         -------
         BlockLayout
-            Populated from on-disk CSVs.  ``per_block_timeline`` is
-            reconstructed from ``block_step_duration_frame`` rows.
+            Populated layout.  ``per_block_timeline`` is reconstructed
+            from ``block_step_duration_frame`` rows.
         """
-        from pathlib import Path as _Path
-        sd = _Path(solve_data_dir)
+        if provider is None:
+            # Off-cascade bridge path: seed an ephemeral Provider from
+            # the workdir CSV directory and serve from that.  Cascade
+            # callers always pass *provider* explicitly; this branch is
+            # reserved for tests and the legacy ``load_block_bundle``
+            # contract.  Centralised here so the Rule 1 audit can stay
+            # strict — no bare ``pl.read_csv`` / ``_read_csv_file`` in
+            # this module.
+            from pathlib import Path as _Path
+            from flextool.engine_polars._flex_data_provider import (
+                FlexDataProvider,
+            )
+            from flextool.engine_polars._input_source import (
+                seed_provider_from_dir,
+            )
+            sd_dir = _Path(solve_data_dir)
+            provider = FlexDataProvider()
+            seed_provider_from_dir(
+                provider, sd_dir, "solve_data",
+                names=_BLOCK_CSV_STEMS,
+            )
 
         def _read(name: str, schema: dict) -> pl.DataFrame:
-            p = sd / name
-            if not p.exists():
-                if missing_ok:
-                    return pl.DataFrame(schema=schema)
-                raise FileNotFoundError(p)
-            return pl.read_csv(p, schema_overrides=schema)
+            stem = name.removesuffix(".csv")
+            for k in (f"solve_data/{stem}", stem):
+                if provider.has(k):
+                    df = provider.get(k)
+                    # Coerce dtypes — Provider may carry Utf8 for
+                    # numeric columns when the writer's _empty_frame
+                    # shortcut hits.
+                    for col, dt in schema.items():
+                        if col in df.columns and df.schema[col] != dt:
+                            df = df.with_columns(
+                                pl.col(col).cast(dt, strict=False),
+                            )
+                    return df
+            if missing_ok:
+                return pl.DataFrame(schema=schema)
+            raise KeyError(
+                f"BlockLayout.load_from_solve_data: provider has no "
+                f"key for '{name}' (tried 'solve_data/{stem}' and "
+                f"'{stem}')."
+            )
 
         layout = cls()
         layout.entity_block_frame = _read(

@@ -83,6 +83,55 @@ def _read_csv_file(path: "Path | str") -> pl.DataFrame:
     return pl.read_csv(path)
 
 
+def seed_provider_from_dir(
+    provider,
+    directory: "Path | str",
+    kind: str,
+    *,
+    names: "tuple[str, ...] | None" = None,
+) -> int:
+    """Off-cascade test/bridge helper: populate *provider* by reading
+    CSV files under *directory* and keying them under both
+    ``"<stem>"`` and ``"{kind}/<stem>"``.
+
+    Mirrors the dual-key convention used by :func:`capture_frames`.
+    Returns the count of files seeded.  Missing directories are a
+    no-op (return 0).  Callers in cascade code must NOT reach for
+    this helper: it exists for test fixtures, region-decomposition
+    seeding, and the off-cascade workdir bridge.
+
+    Parameters
+    ----------
+    provider
+        :class:`FlexDataProvider` to populate.
+    directory
+        Source directory.
+    kind
+        Prefix for the parent-qualified key (``"input"`` or
+        ``"solve_data"``).
+    names
+        Optional explicit allow-list of stems (without ``.csv``) to
+        consume.  When ``None`` every ``*.csv`` is read.  Use the
+        explicit form to skip non-canonical files in directories that
+        also carry ragged or human-readable artefacts (e.g.
+        ``solve_progress.csv``).
+    """
+    d = Path(directory)
+    if not d.exists() or not d.is_dir():
+        return 0
+    if names is not None:
+        targets = [d / f"{n}.csv" for n in names if (d / f"{n}.csv").exists()]
+    else:
+        targets = sorted(d.glob("*.csv"))
+    seeded = 0
+    for p in targets:
+        df = _read_csv_file(p)
+        provider.put(p.stem, df)
+        provider.put(f"{kind}/{p.stem}", df)
+        seeded += 1
+    return seeded
+
+
 def _install_csv_cache(cache: "dict[Path, pl.DataFrame] | None") -> None:
     """Δ.12a — install / clear the process-level CSV-read cache.
 
