@@ -237,17 +237,44 @@ def _ctx_read(
 
     Returns ``None`` if the file is absent (matches the existing
     pre-existence-check pattern most helper sites use).
+
+    BUG A4 / A2-followup fix: when *provider* is supplied alongside
+    *ctx*, consult it before falling back to ``ctx.read_csv``.  In
+    cascade mode :func:`capture_frames` SKIPS the on-disk write
+    (writes live in the Provider only); ``ctx.read_csv`` then returns
+    ``None`` for every cascade-internal artefact and the caller misses
+    files that have just been produced upstream this iteration
+    (``period__branch.csv`` is the canonical regression case — the
+    stochastic-branch periods would be silently dropped from the
+    timeline).
     """
+    # Resolve the path eagerly so the Provider can be consulted first
+    # regardless of which read backend (ctx / disk) we ultimately use.
+    if workdir is not None:
+        if kind == "solve_data":
+            path = Path(workdir) / "solve_data" / name
+        elif kind == "input":
+            path = Path(workdir) / "input" / name
+        else:
+            path = Path(workdir) / name
+    else:
+        path = None
+
+    # Provider-first when supplied: in cascade mode the writer emits
+    # into the Provider only (capture_frames skips disk), so the
+    # Provider is the authoritative carrier this iteration.
+    if provider is not None and path is not None and _provider_has_key(
+        provider, path,
+    ):
+        try:
+            return _provider_read(provider, path)
+        except pl.exceptions.NoDataError:
+            return pl.DataFrame()
+
     if ctx is not None:
         return ctx.read_csv(name, kind=kind)
-    if workdir is None:
+    if path is None:
         return None
-    if kind == "solve_data":
-        path = Path(workdir) / "solve_data" / name
-    elif kind == "input":
-        path = Path(workdir) / "input" / name
-    else:
-        path = Path(workdir) / name
     # Phase E-h — seed-aware existence check.  Bare ``path.exists()``
     # short-circuits to None when the cascade runs with CSV emission
     # disabled (Phase E-c default), even though the active in-memory
@@ -1224,7 +1251,8 @@ def apply_derived_a(
         sd_for_share = getattr(flex_data, "p_step_duration", None)
     else:
         dt_step = dt_and_step_duration_from_source(source, active_solve,
-                                                       workdir, ctx=ctx)
+                                                       workdir, ctx=ctx,
+                                                       provider=provider)
         if dt_step is None:
             # Without dt we can't derive the dependent Params either; bail.
             return

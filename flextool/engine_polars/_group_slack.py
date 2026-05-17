@@ -1161,10 +1161,17 @@ def add_objective_terms(m, d, vars: dict, op_factor) -> "Expr | None":
     9.3 Capacity-margin slack (period-only, NO step_duration / rp_cost_weight /
     pdt_branch_weight):
       + Σ_{g,d} vq_capacity_margin · group_capacity_for_scaling
-                · pdGroup_penalty_capacity_margin · inflation_op
+                · pdGroup_penalty_capacity_margin · 1000 · inflation_op
       Asymmetry preserved per .mod — capacity_margin is a planning-level
       slack and intentionally un-weighted by pdt_branch_weight.  See
       audit/a6_stochastic_audit.md §5.
+
+      The ``× 1000`` converts ``penalty_capacity_margin`` from the
+      template unit ``CUR/kW`` to the objective unit ``CUR/MW``
+      (``vq_capacity_margin`` is in MW).  This matches the convention
+      established by
+      :mod:`flextool.process_outputs.calc_slacks` (commit 6a03dd90 —
+      "Cost aggregation semantic fixes").  BUG A4 fix.
     """
     pieces: list[Expr] = []
 
@@ -1188,11 +1195,18 @@ def add_objective_terms(m, d, vars: dict, op_factor) -> "Expr | None":
             and d.pdGroup_penalty_capacity_margin is not None \
             and d.p_inflation_op is not None:
         # Period-only term: no step_duration / rp_cost_weight / period_share.
+        # BUG A4 fix: include the × 1000 unit conversion (CUR/kW → CUR/MW)
+        # that matches ``calc_slacks.costPenalty_capacity_margin_d``'s
+        # ``.mul(1000.0)``.  Without it the LP objective under-counts the
+        # capacity-margin slack penalty by 1000× and
+        # ``test_solver_matches_python`` reports a 1.58 M-CUR delta on the
+        # ``capacity_margin`` scenario.
         pieces.append(Sum(
             vars["vq_capacity_margin"]
               * d.p_group_capacity_for_scaling
               * d.pdGroup_penalty_capacity_margin
-              * d.p_inflation_op))
+              * d.p_inflation_op
+              * 1000.0))
 
     if not pieces:
         return None
