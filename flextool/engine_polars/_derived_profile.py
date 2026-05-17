@@ -77,22 +77,26 @@ from ._input_source import _read_csv_file
 from ._writer_provider_io import _provider_key
 
 
-def _provider_has_or_exists(provider, path: "Path") -> bool:
+def _provider_has_or_exists(provider, path: "Path") -> bool:  # CASCADE INVARIANT EXEMPT: raw input/profile/*.csv fixtures not yet carried by the Provider — disk arm retained until input layer migration completes.
     """Provider-first existence check used by the profile cascade.
 
     Returns ``True`` iff the Provider carries the canonical name for
     *path* OR the file exists on disk.  Disk arm retained for raw
     profile fixtures (``input/profile/*``) not captured by writers in
     ``_PATCH_MODULES``.
+
+    CASCADE INVARIANT EXEMPT: see tests/engine_polars/test_meta_provider_invariants.py
     """
     if provider is not None and provider.has(_provider_key(path)):
         return True
     return path.exists()
 
 
-def _provider_or_read_csv(provider, path: "Path") -> "pl.DataFrame":
+def _provider_or_read_csv(provider, path: "Path") -> "pl.DataFrame":  # CASCADE INVARIANT EXEMPT: raw input/profile/*.csv fixtures not yet carried by the Provider — disk arm retained until input layer migration completes.
     """Provider-first read used by the profile cascade; falls back to
     disk for raw inputs not in the Provider.
+
+    CASCADE INVARIANT EXEMPT: see tests/engine_polars/test_meta_provider_invariants.py
     """
     if provider is not None and provider.has(_provider_key(path)):
         return provider.get(_provider_key(path))

@@ -48,7 +48,7 @@ from ._input_source import _read_csv_file
 from ._writer_provider_io import _provider_key
 
 
-def _provider_or_exists(
+def _provider_or_exists(  # CASCADE INVARIANT EXEMPT: raw input/*.csv fixtures (and input_writer.py outputs not yet routed through the Provider) require the disk-fallback arm until the input layer lands in the Provider.
     provider: "object | None", path: "Path | str",
 ) -> bool:
     """Provider-first existence check.
@@ -59,6 +59,8 @@ def _provider_or_exists(
     artefacts emitted by writers in ``_PATCH_MODULES``; the disk arm is
     retained for raw fixture inputs (``input/*.csv``) not carried by
     the Provider.
+
+    CASCADE INVARIANT EXEMPT: see tests/engine_polars/test_meta_provider_invariants.py
     """
     if provider is not None and provider.has(_provider_key(path)):
         return True
