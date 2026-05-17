@@ -397,8 +397,22 @@ def write_all_branches(
     solve_branch__time_branch_list: list[tuple[str, str]],
     logger: logging.Logger,
     work_folder: Path | None = None,
+    *,
+    provider: "object | None" = None,
 ) -> None:
-    """Write all branches in all solves."""
+    """Write all branches in all solves.
+
+    The seven ``pbt_*.csv`` source frames are looked up via
+    :func:`_provider_open` (Step 2.5-G Phase A): the cascade-input
+    Provider supplies them in-cascade, falling back to disk for
+    off-cascade callers.  Mirrors
+    :func:`flextool.engine_polars._writer_solve_writers.write_all_branches`.
+    """
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_key,
+        _provider_open,
+    )
+
     wf = work_folder if work_folder is not None else Path.cwd()
     branches = []
     for solve in period__branch_list:
@@ -422,7 +436,15 @@ def write_all_branches(
 
     time_branches = []
     for filename in timeseries_names:
-        with open(wf / 'input' / filename, 'r', encoding='utf-8') as blk:
+        in_path = wf / 'input' / filename
+        handle = _provider_open(provider, _provider_key(in_path), in_path)
+        if handle is None:
+            # Neither Provider nor disk carries this pbt_* frame.
+            # Legacy behaviour was a hard FileNotFoundError; the engine_
+            # polars twin treats this as "no rows contributed" and
+            # continues — match that contract.
+            continue
+        with handle as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
             while True:

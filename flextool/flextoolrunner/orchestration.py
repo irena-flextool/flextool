@@ -372,7 +372,13 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         solve_writers.write_delayed_durations(active_time_lists[solve], complete_solve[solve], state.solve.delay_durations, work_folder=wf)
         state.logger.debug("Possible stochastics")
         solve_writers.write_branch__period_relationship(period__branch_lists[solve], str(wf / 'solve_data/period__branch.csv'))
-        solve_writers.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve], state.logger, work_folder=wf)
+        solve_writers.write_all_branches(
+            period__branch_lists,
+            solve_branch__time_branch_lists[solve],
+            state.logger,
+            work_folder=wf,
+            provider=getattr(state, "cascade_input_provider", None),
+        )
         solve_writers.write_branch_weights_and_map(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve], state.solve.stochastic_branches, work_folder=wf)
         solve_writers.write_first_and_last_periods(active_time_lists[solve], state.solve.timesets_used_by_solves[complete_solve[solve]], period__branch_lists[solve], work_folder=wf)
 
@@ -390,7 +396,13 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
         if previous_complete_solve != complete_solve[solve]:
             state.logger.debug("Aggregating timeline and parameters for the new step size")
-            state.timeline.create_averaged_timeseries(complete_solve[solve], state.solve, state.logger, work_folder=wf)
+            state.timeline.create_averaged_timeseries(
+                complete_solve[solve],
+                state.solve,
+                state.logger,
+                work_folder=wf,
+                provider=getattr(state, "cascade_input_provider", None),
+            )
         previous_complete_solve = complete_solve[solve]
 
         # Agent 1.1 (flex-temporal + decomposition): derive per-entity
