@@ -313,6 +313,176 @@ def _pdtX_multi_col(
     return out
 
 
+def _build_pssdt_varCost_alwaysProcess(
+    flex_data: "FlexData",
+    *,
+    solve_name: str,
+) -> pd.DataFrame:
+    """Build the ``_alwaysProcess``-keyed varCost frame for post-processing.
+
+    The .mod's objective splits ``other_operational_cost`` into four
+    sums (``pssdt_varCost_noEff``, ``..._eff_unit_source``,
+    ``..._eff_unit_sink``, ``..._eff_connection``).  Python
+    post-processing collapses them into a single ``(p, source, sink)``
+    multiplication against ``r.flow_dt``; because ``r.flow_dt`` is
+    indexed by ``process_source_sink_alwaysProcess`` tuples, varCost
+    needs the same keying.
+
+    Reference: ``_writer_period_params._derive_varCost_pair`` (used to
+    write ``pdtProcess__source__sink__dt_varCost_alwaysProcess.csv``)
+    for the exact algebra.  Replicated here directly on FlexData
+    Params (``p_pdt_varCost_source``, ``p_pdt_varCost_sink``,
+    ``p_pdt_varCost_process``) so we don't need to round-trip via the
+    on-disk CSV.
+
+    Returns a wide ``DataFrame`` with row index ``(solve, period, time)``
+    and column MultiIndex ``(process, source, sink)``.  Tuples where
+    every dt-row would be zero are dropped (matches the CSV writer's
+    ``filter(value != 0.0)``).
+    """
+    pss_frame = flex_data.process_source_sink
+    if pss_frame is None or pss_frame.height == 0:
+        return _empty_pdtX_multi_col(
+            col_names=("process", "source", "sink"),
+        )
+
+    # Build alwaysProcess pss: each direct-method arc (src != p, snk != p)
+    # contributes BOTH ``(p, src, p)`` and ``(p, p, snk)``; arcs where p
+    # already appears as endpoint pass through unchanged.  This mirrors
+    # the cascade-side derivation in
+    # ``flextool.process_outputs.read_sets`` ~ L380-390.
+    pss_pdf = pss_frame.select("p", "source", "sink").to_pandas()
+    always_rows: list[tuple[str, str, str]] = []
+    for p, src, snk in zip(
+        pss_pdf["p"], pss_pdf["source"], pss_pdf["sink"],
+    ):
+        if src == p or snk == p:
+            always_rows.append((p, src, snk))
+        else:
+            always_rows.append((p, src, p))
+            always_rows.append((p, p, snk))
+    # Dedup preserving order.
+    always_rows = list(dict.fromkeys(always_rows))
+
+    # Membership sets used to gate per-side OOC contributions.  Use the
+    # canonical (process, node) sets (input-arc nodes for source,
+    # output-arc nodes for sink); ``process_source_sink`` itself
+    # contains intermediate (p, p) entries for indirect units and so
+    # cannot be projected directly.
+    proc_src_pairs: set[tuple[str, str]] = set()
+    if (flex_data.process_source_canonical is not None
+            and flex_data.process_source_canonical.height > 0):
+        for p, n in flex_data.process_source_canonical.select(
+            "p", "source",
+        ).iter_rows():
+            proc_src_pairs.add((str(p), str(n)))
+    proc_snk_pairs: set[tuple[str, str]] = set()
+    if (flex_data.process_sink_canonical is not None
+            and flex_data.process_sink_canonical.height > 0):
+        for p, n in flex_data.process_sink_canonical.select(
+            "p", "sink",
+        ).iter_rows():
+            proc_snk_pairs.add((str(p), str(n)))
+
+    def _as_lookup_dt(
+        param, key_cols: tuple[str, ...],
+    ) -> dict[tuple[str, ...], float]:
+        """Materialise a FlexData Param into a dict ``key → value`` where
+        ``key`` is the ordered tuple of stringified ``key_cols``.
+        """
+        out: dict[tuple[str, ...], float] = {}
+        if param is None or param.frame.height == 0:
+            return out
+        for row in param.frame.select(*key_cols, "value").iter_rows():
+            *k, v = row
+            out[tuple(str(x) for x in k)] = float(v)
+        return out
+
+    src_ooc = _as_lookup_dt(
+        flex_data.p_pdt_varCost_source, ("p", "source", "d", "t"),
+    )
+    snk_ooc = _as_lookup_dt(
+        flex_data.p_pdt_varCost_sink, ("p", "sink", "d", "t"),
+    )
+    proc_ooc = _as_lookup_dt(
+        flex_data.p_pdt_varCost_process, ("p", "d", "t"),
+    )
+
+    # dt grid for the broadcast.
+    dt_frame = flex_data.dt
+    if dt_frame is None or dt_frame.height == 0:
+        return _empty_pdtX_multi_col(
+            col_names=("process", "source", "sink"),
+        )
+    dt_pairs = [
+        (str(d), str(t))
+        for d, t in dt_frame.select("d", "t").iter_rows()
+    ]
+
+    # Build (solve, period, time, process, source, sink, value) long frame.
+    # For each alwaysProcess tuple + each (d, t), sum gated contributions.
+    rec_solve: list[str] = []
+    rec_d: list[str] = []
+    rec_t: list[str] = []
+    rec_p: list[str] = []
+    rec_src: list[str] = []
+    rec_snk: list[str] = []
+    rec_v: list[float] = []
+    for (p, src, snk) in always_rows:
+        # Track whether this tuple ever has a non-zero value — drop if
+        # universally zero (matches the CSV writer's filter).
+        any_nonzero = False
+        local_pairs: list[tuple[str, str, float]] = []
+        for (d, t) in dt_pairs:
+            v = 0.0
+            if (p, src) in proc_src_pairs:
+                v += src_ooc.get((p, src, d, t), 0.0)
+            if (p, snk) in proc_snk_pairs:
+                v += snk_ooc.get((p, snk, d, t), 0.0)
+            # alwaysProcess gating for the process-level OOC term:
+            # include only when one of the (always-process) endpoints is
+            # in process_source ∪ process_sink (matches
+            # ``_derive_varCost_pair`` ``if always: ... if (p, snk) in
+            # proc_snk or (p, snk) in proc_src``).
+            if (p, snk) in proc_snk_pairs or (p, snk) in proc_src_pairs:
+                v += proc_ooc.get((p, d, t), 0.0)
+            if v != 0.0:
+                any_nonzero = True
+            local_pairs.append((d, t, v))
+        if not any_nonzero:
+            continue
+        for (d, t, v) in local_pairs:
+            rec_solve.append(solve_name)
+            rec_d.append(d)
+            rec_t.append(t)
+            rec_p.append(p)
+            rec_src.append(src)
+            rec_snk.append(snk)
+            rec_v.append(v)
+
+    if not rec_solve:
+        return _empty_pdtX_multi_col(
+            col_names=("process", "source", "sink"),
+        )
+
+    long_pl = pl.DataFrame({
+        "solve": rec_solve,
+        "d": rec_d,
+        "t": rec_t,
+        "p": rec_p,
+        "source": rec_src,
+        "sink": rec_snk,
+        "value": rec_v,
+    })
+    return wide_multi_col(
+        long_pl,
+        row_dims=("solve", "d", "t"),
+        col_dims=("p", "source", "sink"),
+        row_names=("solve", "period", "time"),
+        col_names=("process", "source", "sink"),
+    )
+
+
 def _entity_all_capacity(
     flex_data: "FlexData",
     solution: "Solution",
@@ -897,10 +1067,23 @@ def read_parameters(
     )
 
     # process_source_sink_varCost — (solve, period, time) × (process, source, sink).
-    p.process_source_sink_varCost = _pdtX_multi_col(
-        flex_data.p_pssdt_varCost, solve_name=solve_name,
-        col_dims=("p", "source", "sink"),
-        col_names=("process", "source", "sink"),
+    #
+    # The post-processing in calc_costs.py multiplies this against
+    # ``r.flow_dt`` whose columns are keyed by
+    # ``process_source_sink_alwaysProcess`` tuples (each direct-method
+    # unit contributes one ``(p, source, p)`` source-side column and one
+    # ``(p, p, sink)`` sink-side column).  Therefore the varCost frame
+    # must use the same ``_alwaysProcess`` keying — NOT the LP's
+    # pss-keyed ``p_pssdt_varCost`` Param (which the .mod uses only for
+    # the ``pssdt_varCost_noEff`` objective term).  For
+    # ``min_load_efficiency`` (``eff_unit_source``) units the source-side
+    # cost lives on the ``(p, source, p)`` tuple alongside the
+    # slope+section fuel flow in ``r.flow_dt``; without the rekey, the
+    # column intersection is empty and the bucket is silently zero
+    # (regression guard:
+    # ``tests/test_cost_aggregation_semantics.TestMinLoadEfficiencySectionTerm``).
+    p.process_source_sink_varCost = _build_pssdt_varCost_alwaysProcess(
+        flex_data, solve_name=solve_name,
     )
 
     # node_self_discharge_loss / node_penalty_up / node_penalty_down /

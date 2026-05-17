@@ -138,6 +138,142 @@ def _run_scenario(
     return workdir / "output_csv" / scenario
 
 
+def _read_pdt_process_param_for(
+    csv_path: Path, *, process: str, solve: str,
+) -> pd.Series:
+    """Load a long-format ``pdtProcess_<param>.csv``
+    (columns: ``process,period,time,value``) and return a Series of the
+    ``value`` for the given ``process``, indexed by
+    ``(solve, period, time)``.
+
+    The native cascade writes these as long format (matching the .mod
+    input schema).  The legacy mod also wrote a wide-format dump to
+    ``solve__pdtProcess_<param>.csv`` post-solve; that file is not
+    produced by the cascade because the values are time-invariant for a
+    single-solve dispatch and identical to the long-format input.
+    """
+    df = pd.read_csv(csv_path)
+    sub = df[df["process"] == process]
+    assert not sub.empty, (
+        f"{csv_path.name} contains no rows for process={process!r}; "
+        f"available processes: {sorted(df['process'].unique().tolist())}"
+    )
+    out = pd.Series(
+        sub["value"].astype(float).to_numpy(),
+        index=pd.MultiIndex.from_arrays(
+            [
+                [solve] * len(sub),
+                sub["period"].astype(str).to_numpy(),
+                sub["time"].astype(str).to_numpy(),
+            ],
+            names=["solve", "period", "time"],
+        ),
+        name=process,
+    )
+    return out
+
+
+def _read_entity_unitsize(workdir: Path, entity: str) -> float:
+    """Read the per-entity unitsize from ``solve_data/p_entity_unitsize.csv``.
+
+    Layout written by the cascade is long-format ``entity,value`` (one
+    row per entity).  Returns the value for ``entity``.  The legacy
+    pipeline emitted a wide-transposed ``input/p_entity_unitsize.csv``
+    (``entity,e1,e2,…`` / ``value,v1,v2,…``); the cascade's
+    ``snapshot_processed_inputs`` writes the same long form to
+    ``workdir/p_entity_unitsize.csv`` and the per-solve
+    ``DIRECT_WRITES`` dumps it under ``solve_data/``.  Both have the
+    same ``entity,value`` schema.
+    """
+    for path in (
+        workdir / "solve_data" / "p_entity_unitsize.csv",
+        workdir / "p_entity_unitsize.csv",
+        workdir / "input" / "p_entity_unitsize.csv",
+    ):
+        if path.exists():
+            df = pd.read_csv(path)
+            if "entity" in df.columns and "value" in df.columns:
+                # Long format.
+                row = df.loc[df["entity"] == entity]
+                assert not row.empty, (
+                    f"Entity {entity!r} not in {path}; "
+                    f"available: {df['entity'].tolist()}"
+                )
+                return float(row["value"].iloc[0])
+            # Legacy wide-transposed: index_col=0 → row "value" carries
+            # per-entity unitsize columns.
+            df = pd.read_csv(path, index_col=0)
+            return float(df.loc["value", entity])
+    raise FileNotFoundError(
+        f"p_entity_unitsize.csv not found in {workdir} (checked "
+        f"solve_data/, root, and input/)."
+    )
+
+
+def _read_pdt_step_duration(
+    solve_data: Path, *, solve: str,
+) -> pd.Series:
+    """Return per-(solve, period, time) ``step_duration`` as a Series.
+
+    The native cascade emits ``solve_data/steps_in_use.csv`` with
+    columns ``period,step,step_duration`` (no ``solve`` column — single
+    solve per workdir).  Broadcast ``solve`` across rows so the Series
+    aligns with the (solve, period, time) MultiIndex used elsewhere.
+    The legacy mod printf wrote ``p_step_duration.csv`` as
+    ``solve,period,time,value``; the cascade replaces that with this
+    sparse handoff CSV.
+    """
+    p = solve_data / "steps_in_use.csv"
+    df = pd.read_csv(p)
+    n = len(df)
+    return pd.Series(
+        df["step_duration"].astype(float).to_numpy(),
+        index=pd.MultiIndex.from_arrays(
+            [
+                [solve] * n,
+                df["period"].astype(str).to_numpy(),
+                df["step"].astype(str).to_numpy(),
+            ],
+            names=["solve", "period", "time"],
+        ),
+        name="step_duration",
+    )
+
+
+def _read_pdt_rp_cost_weight(
+    solve_data: Path, *, solve: str, periods: list[str], times: list[str],
+) -> pd.Series:
+    """Return per-(solve, period, time) ``rp_cost_weight`` Series.
+
+    The cascade emits ``solve_data/rp_cost_weight.csv`` sparsely
+    (header-only when all weights default to 1.0).  Fill missing rows
+    with 1.0 to match the .mod default, then index by
+    (solve, period, time).
+    """
+    p = solve_data / "rp_cost_weight.csv"
+    df = pd.read_csv(p)
+    weights: dict[tuple[str, str], float] = {}
+    if not df.empty and "period" in df.columns and "time" in df.columns:
+        for _, row in df.iterrows():
+            weights[(str(row["period"]), str(row["time"]))] = float(row["weight"])
+    values = [
+        weights.get((str(d), str(t)), 1.0)
+        for d, t in zip(periods, times)
+    ]
+    return pd.Series(
+        values,
+        index=pd.MultiIndex.from_arrays(
+            [
+                [solve] * len(periods),
+                [str(d) for d in periods],
+                [str(t) for t in times],
+            ],
+            names=["solve", "period", "time"],
+        ),
+        name="rp_cost_weight",
+    )
+
+
 def _read_summary_solve(csv_dir: Path) -> dict:
     """Parse ``summary_solve.csv`` into a flat dict of the top-level totals.
 
@@ -602,7 +738,6 @@ class TestMinLoadEfficiencySectionTerm:
         # parent-parent (``output_csv/<scenario>`` inside workdir).
         workdir = csv_dir.parent.parent
         solve_data = workdir / "solve_data"
-        input_dir = workdir / "input"
 
         # v_flow output at west (1-unit-scaled -- we multiply by unitsize below).
         # unit__outputNode__dt.csv has a 2-row header: [unit, node].
@@ -622,34 +757,39 @@ class TestMinLoadEfficiencySectionTerm:
         online.index.names = ["solve", "period", "time"]
         online_coal = online["coal_plant"].astype(float)
 
-        # pdtProcess_slope and pdtProcess_section (per (d, t)).
-        slope = pd.read_csv(
-            solve_data / "pdtProcess_slope.csv", index_col=[0, 1, 2],
-        )["coal_plant"].astype(float)
-        slope.index.names = ["solve", "period", "time"]
-        section = pd.read_csv(
-            solve_data / "pdtProcess_section.csv", index_col=[0, 1, 2],
-        )["coal_plant"].astype(float)
-        section.index.names = ["solve", "period", "time"]
-
-        # Entity unitsize (virtual_unitsize). coal_plant has virtual_unitsize
-        # = 250 in the coal_unit_size alternative -- but coal_min_load_wind
-        # does NOT include that alternative, so unitsize defaults to 1.0.
-        # Read it from the written input CSV to avoid hard-coding.
-        unitsize_df = pd.read_csv(
-            input_dir / "p_entity_unitsize.csv", index_col=0,
+        # pdtProcess_slope and pdtProcess_section (per (d, t)).  The native
+        # cascade writes these as long-format ``process,period,time,value``
+        # CSVs (matching the .mod input schema; the legacy post-solve
+        # ``.mod`` print of the wide ``solve__pdtProcess_*`` dump is not
+        # produced by the cascade since the values are time-invariant for a
+        # single-solve dispatch).  Filter to ``coal_plant`` and broadcast
+        # to the (solve, period, time) index by reusing the unique solve
+        # label from the output flow.
+        solve_label = flow_out.index.get_level_values(0).unique()[0]
+        slope = _read_pdt_process_param_for(
+            solve_data / "pdtProcess_slope.csv",
+            process="coal_plant",
+            solve=solve_label,
         )
-        unitsize_coal = float(unitsize_df.loc["value", "coal_plant"])
+        section = _read_pdt_process_param_for(
+            solve_data / "pdtProcess_section.csv",
+            process="coal_plant",
+            solve=solve_label,
+        )
 
-        # Per-step scaling factor used by compute_costs.
-        step_duration = pd.read_csv(
-            solve_data / "p_step_duration.csv", index_col=[0, 1, 2],
-        )["value"].astype(float)
-        step_duration.index.names = ["solve", "period", "time"]
-        rp_cost_weight = pd.read_csv(
-            solve_data / "p_rp_cost_weight.csv", index_col=[0, 1, 2],
-        )["value"].astype(float)
-        rp_cost_weight.index.names = ["solve", "period", "time"]
+        # Entity unitsize (virtual_unitsize).  Read from the cascade's
+        # ``solve_data/p_entity_unitsize.csv`` (long-format ``entity,value``).
+        unitsize_coal = _read_entity_unitsize(workdir, entity="coal_plant")
+
+        # Per-step scaling factor used by compute_costs.  Cascade-native:
+        # ``steps_in_use.csv`` carries (period, step, step_duration);
+        # ``rp_cost_weight.csv`` is sparse with implicit 1.0 default.
+        step_duration = _read_pdt_step_duration(solve_data, solve=solve_label)
+        periods = step_duration.index.get_level_values("period").tolist()
+        times = step_duration.index.get_level_values("time").tolist()
+        rp_cost_weight = _read_pdt_rp_cost_weight(
+            solve_data, solve=solve_label, periods=periods, times=times,
+        )
 
         # Align everything on the actual cost index.
         idx = actual.index
@@ -699,29 +839,25 @@ class TestMinLoadEfficiencySectionTerm:
         """
         workdir = csv_dir.parent.parent
         solve_data = workdir / "solve_data"
-        input_dir = workdir / "input"
 
         online = pd.read_csv(
             csv_dir / "unit_online__dt.csv", index_col=[0, 1, 2],
         )["coal_plant"].astype(float)
         online.index.names = ["solve", "period", "time"]
-        section = pd.read_csv(
-            solve_data / "pdtProcess_section.csv", index_col=[0, 1, 2],
-        )["coal_plant"].astype(float)
-        section.index.names = ["solve", "period", "time"]
-        step_duration = pd.read_csv(
-            solve_data / "p_step_duration.csv", index_col=[0, 1, 2],
-        )["value"].astype(float)
-        step_duration.index.names = ["solve", "period", "time"]
-        rp_cost_weight = pd.read_csv(
-            solve_data / "p_rp_cost_weight.csv", index_col=[0, 1, 2],
-        )["value"].astype(float)
-        rp_cost_weight.index.names = ["solve", "period", "time"]
-
-        unitsize_coal = float(
-            pd.read_csv(input_dir / "p_entity_unitsize.csv", index_col=0)
-            .loc["value", "coal_plant"]
+        solve_label = online.index.get_level_values(0).unique()[0]
+        section = _read_pdt_process_param_for(
+            solve_data / "pdtProcess_section.csv",
+            process="coal_plant",
+            solve=solve_label,
         )
+        step_duration = _read_pdt_step_duration(solve_data, solve=solve_label)
+        periods = step_duration.index.get_level_values("period").tolist()
+        times = step_duration.index.get_level_values("time").tolist()
+        rp_cost_weight = _read_pdt_rp_cost_weight(
+            solve_data, solve=solve_label, periods=periods, times=times,
+        )
+
+        unitsize_coal = _read_entity_unitsize(workdir, entity="coal_plant")
 
         idx = online.index
         section_contrib = (
@@ -738,6 +874,37 @@ class TestMinLoadEfficiencySectionTerm:
         assert section_contrib.abs().sum() > 100.0, (
             f"Section contribution is negligible ({section_contrib.abs().sum()}); "
             "scenario does not reliably exercise the section path."
+        )
+
+    def test_coal_plant_present_in_outputs(self, csv_dir: Path) -> None:
+        """Regression guard for bug A3 — the cascade's
+        ``unit__outputNode__dt.csv`` must carry the ``coal_plant``
+        column for the ``coal_min_load_wind`` fixture even after the
+        ``other_operational_cost`` patch is applied on
+        ``(coal_plant, coal_market)``.  Earlier triage suspected a
+        cascade-side regression where the patched-DB run dropped the
+        ``coal_plant`` column; the real defect was on the cost
+        aggregation side, but having a direct sanity check on the LP
+        output catches any future regression that elides coal-plant
+        flows from the output writer.
+        """
+        flow_out = pd.read_csv(
+            csv_dir / "unit__outputNode__dt.csv",
+            header=[0, 1],
+            index_col=[0, 1, 2],
+        )
+        units = flow_out.columns.get_level_values(0)
+        assert "coal_plant" in set(units), (
+            "unit__outputNode__dt.csv is missing the 'coal_plant' "
+            "column; cascade-side regression in v_flow per-unit emission."
+            f"  Columns present: {sorted(set(units))}"
+        )
+        # And the column must carry non-trivial flow somewhere — a
+        # silently-zero column would also indicate a regression.
+        coal_col = flow_out[("coal_plant", "west")].astype(float)
+        assert coal_col.abs().sum() > 0.0, (
+            "coal_plant→west output flow is identically zero; the LP "
+            "is not producing through coal_plant on the patched DB."
         )
 
 
