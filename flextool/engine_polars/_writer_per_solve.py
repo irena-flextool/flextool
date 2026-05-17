@@ -51,15 +51,8 @@ _DIVEST_PERIOD_METHODS: frozenset[str] = frozenset((
 
 def _read_csv(path: Path, columns: list[str],
               *, provider: "object | None" = None) -> pl.DataFrame:
-    """Eager-read a tiny flextool CSV with positional column rename.
-
-    Uses ``infer_schema_length=0`` so every column lands as ``Utf8``
-    verbatim — critical for parity with the legacy ``csv.reader`` path
-    (which preserves ``"0"`` as ``"0"`` rather than normalising to
-    ``"0.0"``).
-
-    Step 1-g — Provider-first; falls back to the legacy seed lookup
-    (still installed during the migration window) and then to disk.
+    """Provider-only — returns an empty all-Utf8 frame on Provider miss.
+    Step 2.5 Phase C dropped the disk-fallback arm.
     """
     from flextool.engine_polars._writer_provider_io import (
         _provider_key,
@@ -70,21 +63,10 @@ def _read_csv(path: Path, columns: list[str],
     )
     if seeded is not None:
         return seeded
-    if not path.exists() or path.stat().st_size == 0:
-        return pl.DataFrame(
-            {c: [] for c in columns},
-            schema={c: pl.Utf8 for c in columns},
-        )
-    df = pl.read_csv(
-        path,
-        has_header=True,
-        infer_schema_length=0,
-        truncate_ragged_lines=True,
+    return pl.DataFrame(
+        {c: [] for c in columns},
+        schema={c: pl.Utf8 for c in columns},
     )
-    keep = df.columns[: len(columns)]
-    df = df.select(keep)
-    df.columns = columns
-    return df
 
 
 def _to_utf8_frame(

@@ -4800,6 +4800,7 @@ def build_handoff_from_flexpy(
         native_co2 = compute_co2_rolling_accumulator(
             flex_data, sol, work_folder=work_folder,
             prior_cumulative_co2=prior_df,
+            provider=provider,
         )
         if native_co2.height > 0:
             cumulative_co2_df = (native_co2

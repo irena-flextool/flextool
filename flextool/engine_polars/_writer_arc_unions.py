@@ -86,12 +86,11 @@ from flextool.engine_polars._writer_provider_io import (  # noqa: E402
 def _read_csv(path: Path, columns: list[str],
               *,
               provider: "object | None" = None) -> pl.DataFrame:
-    """Read a tiny flextool CSV with positional column rename.
+    """Provider-only — Step 2.5 Phase C dropped the disk-fallback arm.
 
-    Step 1-g-6 — Provider-first.  When ``provider`` is non-None and
-    carries the named artefact, return the in-memory frame after the
-    same positional rename.  Falls through to the legacy seed lookup
-    (during the Step 1-g dual-write window) and finally to disk.
+    Returns the Provider's frame sliced to *columns* with positional
+    rename; returns an empty all-Utf8 frame when the Provider misses
+    the key (matches legacy missing-CSV behaviour).
     """
     from flextool.engine_polars._writer_provider_io import (
         _provider_lookup_positional,
@@ -101,18 +100,9 @@ def _read_csv(path: Path, columns: list[str],
     )
     if seeded is not None:
         return seeded
-    if not path.exists() or path.stat().st_size == 0:
-        return pl.DataFrame({c: [] for c in columns}, schema={c: pl.Utf8 for c in columns})
-    df = pl.read_csv(
-        path,
-        has_header=True,
-        schema_overrides={c: pl.Utf8 for c in columns},
-        truncate_ragged_lines=True,
+    return pl.DataFrame(
+        {c: [] for c in columns}, schema={c: pl.Utf8 for c in columns},
     )
-    keep = df.columns[: len(columns)]
-    df = df.select(keep)
-    df.columns = columns
-    return df
 
 
 def _write(df: pl.DataFrame, path: Path) -> None:
@@ -1094,11 +1084,13 @@ def _read_p_proc_side_lookup(path: Path,
                               *,
                               provider: "object | None" = None,
                               ) -> dict[tuple[str, str, str], float]:
-    """Read p_process_source / p_process_sink: (process, side, param) → value."""
+    """Read p_process_source / p_process_sink: (process, side, param) → value.
+
+    Provider-only after Step 2.5 Phase C — returns empty when the
+    Provider misses the key (matches legacy missing-CSV behaviour).
+    """
     out: dict[tuple[str, str, str], float] = {}
-    # Provider-first; fall through to disk only if not in memory.
-    if (provider is None or not provider.has(_provider_key(path))) \
-            and (not path.exists() or path.stat().st_size == 0):
+    if provider is None or not provider.has(_provider_key(path)):
         return out
     df = _read_csv(path, ["process", "side", "param", "value"], provider=provider)
     df = _drop_blank_rows(df, ["process", "side", "param"])
@@ -1263,8 +1255,7 @@ def derive_group_commodity_node_period_co2_total(
 
     p_commodity: dict[tuple[str, str], float] = {}
     pc_path = input_dir / "p_commodity.csv"
-    _pc_has = (provider is not None and provider.has(_provider_key(pc_path))) \
-        or (pc_path.exists() and pc_path.stat().st_size > 0)
+    _pc_has = provider is not None and provider.has(_provider_key(pc_path))
     if _pc_has:
         pc_df = _read_csv(
             pc_path, ["commodity", "param", "value"], provider=provider,

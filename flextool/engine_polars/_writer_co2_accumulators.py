@@ -20,8 +20,6 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from ._input_source import _read_csv_file
-
 if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
 
@@ -46,12 +44,19 @@ def _write(df: pl.DataFrame, path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _read_co2_max_total_groups(work_folder: Path) -> set[str]:
-    """Active ``co2_max_total`` cap groups from ``input/group__co2_method.csv``."""
-    p = work_folder / "input" / "group__co2_method.csv"
-    if not p.exists():
+def _read_co2_max_total_groups(
+    work_folder: Path,
+    *, provider: "object | None" = None,
+) -> set[str]:
+    """Active ``co2_max_total`` cap groups from ``input/group__co2_method.csv``.
+
+    Provider-only after Step 2.5 Phase C — returns an empty set if
+    the Provider doesn't carry the frame.  Cascade callers always
+    populate the Provider with the SpineDBBackend spec output.
+    """
+    if provider is None or not provider.has("input/group__co2_method"):
         return set()
-    df = _read_csv_file(p)
+    df = provider.get("input/group__co2_method")
     if df.height == 0 or {"group", "co2_method"} - set(df.columns):
         return set()
     return set(
@@ -61,12 +66,17 @@ def _read_co2_max_total_groups(work_folder: Path) -> set[str]:
     )
 
 
-def _read_commodity_node_co2(work_folder: Path) -> pl.DataFrame:
-    """``(c, n)`` pairs from ``solve_data/commodity_node_co2.csv``."""
-    p = work_folder / "solve_data" / "commodity_node_co2.csv"
-    if not p.exists():
+def _read_commodity_node_co2(
+    work_folder: Path,
+    *, provider: "object | None" = None,
+) -> pl.DataFrame:
+    """``(c, n)`` pairs from ``solve_data/commodity_node_co2.csv``.
+
+    Provider-only after Step 2.5 Phase C.
+    """
+    if provider is None or not provider.has("solve_data/commodity_node_co2"):
         return pl.DataFrame(schema={"c": pl.Utf8, "n": pl.Utf8})
-    df = _read_csv_file(p)
+    df = provider.get("solve_data/commodity_node_co2")
     if df.height == 0:
         return pl.DataFrame(schema={"c": pl.Utf8, "n": pl.Utf8})
     return df.rename({"commodity": "c", "node": "n"}).select("c", "n").unique()
@@ -104,17 +114,18 @@ def compute_co2_rolling_accumulator(
     *,
     work_folder: Path,
     prior_cumulative_co2: "pl.DataFrame | None" = None,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Native compute of ``co2_cum_realized_tonnes`` for the current solve.
 
     Returns ``[group, period, p_co2_cum_realized_tonnes]``.  Empty frame
     when no CO2-cap group is active.
     """
-    co2_groups = _read_co2_max_total_groups(work_folder)
+    co2_groups = _read_co2_max_total_groups(work_folder, provider=provider)
     if not co2_groups:
         return pl.DataFrame(schema=_SCHEMA_OUT)
 
-    cn_co2 = _read_commodity_node_co2(work_folder)
+    cn_co2 = _read_commodity_node_co2(work_folder, provider=provider)
     if cn_co2.height == 0:
         return pl.DataFrame(schema=_SCHEMA_OUT)
 
@@ -369,6 +380,7 @@ def derive_co2_cum_realized_tonnes(
     *,
     work_folder: Path,
     prior_handoff: "SolveHandoff | None" = None,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Return the canonical formatted ``co2_cum_realized_tonnes`` CSV frame.
 
@@ -383,6 +395,7 @@ def derive_co2_cum_realized_tonnes(
         flex_data, sol,
         work_folder=work_folder,
         prior_cumulative_co2=prior_df,
+        provider=provider,
     )
     return _format_co2_cum_frame(frame)
 
@@ -394,6 +407,7 @@ def write_co2_rolling_accumulator(
     solve_name: str,
     work_folder: Path,
     prior_handoff: "SolveHandoff | None" = None,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Compute + write ``solve_data/co2_cum_realized_tonnes.csv`` natively.
 
@@ -410,6 +424,7 @@ def write_co2_rolling_accumulator(
         flex_data, sol,
         work_folder=work_folder,
         prior_cumulative_co2=prior_df,
+        provider=provider,
     )
     _write(_format_co2_cum_frame(frame), out_path)
     _logger.info("wrote %s (%d rows)", out_path, frame.height)

@@ -52,8 +52,8 @@ _DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
 
 def _read_csv(path: Path, columns: list[str],
               *, provider: "object | None" = None) -> pl.DataFrame:
-    # Step 1-g — Provider-first; falls back to legacy seed lookup
-    # (still installed during the migration window) then disk.
+    """Provider-only — returns empty all-Utf8 frame on Provider miss.
+    Step 2.5 Phase C dropped the disk-fallback arm."""
     from flextool.engine_polars._writer_provider_io import (
         _provider_key,
         _provider_lookup_positional,
@@ -63,21 +63,10 @@ def _read_csv(path: Path, columns: list[str],
     )
     if seeded is not None:
         return seeded
-    if not path.exists() or path.stat().st_size == 0:
-        return pl.DataFrame(
-            {c: [] for c in columns},
-            schema={c: pl.Utf8 for c in columns},
-        )
-    df = pl.read_csv(
-        path,
-        has_header=True,
-        infer_schema_length=0,
-        truncate_ragged_lines=True,
+    return pl.DataFrame(
+        {c: [] for c in columns},
+        schema={c: pl.Utf8 for c in columns},
     )
-    keep = df.columns[: len(columns)]
-    df = df.select(keep)
-    df.columns = columns
-    return df
 
 
 def _read_singles(path: Path,

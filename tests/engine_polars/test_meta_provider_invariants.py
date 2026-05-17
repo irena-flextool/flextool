@@ -209,63 +209,41 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "input_writer-produced artefacts not yet routed through "
         "the Provider."
     ),
-    # --- Writer-port modules: _provider_open + csv.reader pattern ---
-    # Step 2.5: these writers are now the CANONICAL implementations
-    # (legacy preprocessing/* deleted in item 15).  The disk-read code
-    # path within each writer is unreachable in cascade — the cascade
-    # always supplies a Provider via input_derivation.run /
-    # _writer_solve_time.run, and capture_frames thereafter.  The disk
-    # arm survives as a safety net for the legacy single-solve
-    # flextoolrunner.orchestration code path that
-    # engine_polars/_spinedb_source.py still drives without populating
-    # a Provider for every writer.  Per the audit Section 9: this is
-    # OFF-CASCADE; the meta-test forbids new disk reads in cascade
-    # modules so adding NEW disk-fallback paths is still blocked.
+    # --- Writer-port modules: Provider-only csv.reader on in-memory buffers ---
+    # Step 2.5 Phase C collapsed the disk-fallback arms in every writer
+    # _read_csv / _read_* helper.  These modules now read the Provider
+    # exclusively (via _provider_open which raises on a missing
+    # provider).  The remaining ``csv.reader(fh)`` sites in these
+    # writers operate on file-like buffers returned by
+    # _provider_open(provider, ...) — i.e. the bytes are served from
+    # the in-memory FlexDataProvider, not from disk.  The Rule 1 AST
+    # detector can't distinguish "csv.reader on Provider buffer" from
+    # "csv.reader on path.open()" so these entries remain to document
+    # the documented-safe usage; the writers whose csv.reader sites
+    # are gone (post-Phase-C) have been removed from this allowlist.
     "_writer_arc_unions.py": (
-        "OFF-CASCADE-FIXTURES: csv.reader sites operate on "
-        "_provider_open() results.  In-cascade always Provider-first; "
-        "disk arm only reached by the legacy single-solve path."
-    ),
-    "_writer_calc_params.py": (
-        "OFF-CASCADE-FIXTURES: pl.read_csv site is Provider-first "
-        "with disk fallback for the legacy single-solve path."
+        "csv.reader sites operate on _provider_open() in-memory "
+        "buffers — Provider-only after Step 2.5 Phase C."
     ),
     "_writer_chain_params.py": (
-        "OFF-CASCADE-FIXTURES: csv.reader sites via _provider_open."
-    ),
-    "_writer_co2_accumulators.py": (
-        "OFF-CASCADE-FIXTURES: _read_csv_file fallback after "
-        "Provider miss; reached only by legacy single-solve."
+        "csv.reader sites operate on _provider_open() in-memory "
+        "buffers — Provider-only after Step 2.5 Phase C."
     ),
     "_writer_dispatchers.py": (
-        "OFF-CASCADE-FIXTURES: csv.reader sites via _provider_open."
-    ),
-    "_writer_entity_annual.py": (
-        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
-    ),
-    "_writer_leaf_sets.py": (
-        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
-    ),
-    "_writer_lp_scaling.py": (
-        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
-    ),
-    "_writer_mid_sets.py": (
-        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
+        "csv.reader sites operate on _provider_open() in-memory "
+        "buffers — Provider-only after Step 2.5 Phase C."
     ),
     "_writer_pdt_params.py": (
-        "OFF-CASCADE-FIXTURES: csv.reader sites via _provider_open."
-    ),
-    "_writer_per_solve.py": (
-        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
-    ),
-    "_writer_period_calc.py": (
-        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
+        "csv.reader sites operate on _provider_open() in-memory "
+        "buffers — Provider-only after Step 2.5 Phase C."
     ),
     "_writer_period_params.py": (
-        "OFF-CASCADE-FIXTURES: csv.reader sites via _provider_open."
+        "csv.reader sites operate on _provider_open() in-memory "
+        "buffers — Provider-only after Step 2.5 Phase C."
     ),
     "_writer_solve_writers.py": (
-        "OFF-CASCADE-FIXTURES: csv.reader site via _provider_open."
+        "csv.reader site operates on _provider_open() in-memory "
+        "buffer — Provider-only after Step 2.5 Phase C."
     ),
 }
 

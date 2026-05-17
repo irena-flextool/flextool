@@ -58,12 +58,11 @@ import polars as pl
 
 def _read_csv(path: Path, columns: list[str],
               *, provider: "object | None" = None) -> pl.DataFrame:
-    """Read a tiny flextool CSV with positional column rename.
+    """Read a tiny flextool CSV via the Provider.
 
-    Step 1-g — Provider-first: when *provider* has a frame keyed on
-    ``path``'s basename, return that frame after the same positional
-    rename.  Falls back to the legacy seed lookup (still installed as
-    the active seed during the migration window) and then disk.
+    Returns the Provider's frame sliced to *columns*; returns an empty
+    all-``Utf8`` frame when the Provider misses the key.  Step 2.5
+    Phase C dropped the disk-fallback arm.
     """
     from flextool.engine_polars._writer_provider_io import (
         _provider_key,
@@ -74,18 +73,7 @@ def _read_csv(path: Path, columns: list[str],
     )
     if seeded is not None:
         return seeded
-    if not path.exists() or path.stat().st_size == 0:
-        return pl.DataFrame({c: [] for c in columns}, schema={c: pl.Utf8 for c in columns})
-    df = pl.read_csv(
-        path,
-        has_header=True,
-        schema_overrides={c: pl.Utf8 for c in columns},
-        truncate_ragged_lines=True,
-    )
-    keep = df.columns[: len(columns)]
-    df = df.select(keep)
-    df.columns = columns
-    return df
+    return pl.DataFrame({c: [] for c in columns}, schema={c: pl.Utf8 for c in columns})
 
 
 def _write(df: pl.DataFrame, path: Path) -> None:
