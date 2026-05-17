@@ -64,7 +64,6 @@ import polars as pl
 
 from polar_high import Param, Sum, Where
 
-from ._input_source import _read_csv_file
 
 if TYPE_CHECKING:
     from polar_high.engine import Var
@@ -96,7 +95,7 @@ def _read_single_col(
     provider: "object | None" = None,
     provider_key: str | None = None,
 ) -> pl.DataFrame | None:
-    df = _provider_or_disk(provider, provider_key, path)
+    df = _provider_get(provider, provider_key, path)
     if df is None or df.height == 0:
         return None
     if col_in in df.columns and col_in != col_out:
@@ -111,7 +110,7 @@ def _read_long_csv(
     provider: "object | None" = None,
     provider_key: str | None = None,
 ) -> pl.DataFrame | None:
-    df = _provider_or_disk(provider, provider_key, path)
+    df = _provider_get(provider, provider_key, path)
     if df is None or df.height == 0:
         return None
     cols_present = {c: r for c, r in rename.items() if c in df.columns}
@@ -120,28 +119,20 @@ def _read_long_csv(
     return df
 
 
-def _provider_or_disk(
+def _provider_get(
     provider: "object | None",
     key: str | None,
-    path: Path,
+    path: Path,  # noqa: ARG001 — kept for API; disk arm removed in Step 2.5
 ) -> "pl.DataFrame | None":
-    """Resolve *key* via the Provider, falling back to *path* on disk.
-
-    Returns ``None`` when neither source has a non-empty frame.
-
-    CASCADE INVARIANT EXEMPT: ladder CSV inputs are emitted by the
-    Phase D / E ``input_derivation._commodity_ladder`` writers into the
-    cascade-input Provider; the disk arm survives only for off-cascade
-    fixture loaders that seed the workdir without a Provider.
+    """Resolve *key* via the Provider.  Returns ``None`` when the
+    Provider doesn't carry *key* or the frame is empty.  The
+    disk-fallback arm was removed in Step 2.5 — cascade modules
+    consume frames exclusively from the Provider.
     """
-    if provider is not None and key is not None and provider.has(key):
-        df = provider.get(key)
-        if df is not None and df.height > 0:
-            return df
-    if not path.exists():
+    if provider is None or key is None or not provider.has(key):
         return None
-    df = _read_csv_file(path)
-    return df if df.height > 0 else None
+    df = provider.get(key)
+    return df if df is not None and df.height > 0 else None
 
 
 def load_data(
@@ -272,7 +263,7 @@ def load_data(
         ct_ann = ct_ann.with_columns(pl.col("i").cast(pl.Utf8)).select("c", "i")
     # commodity__tier_cum mirrors the input CSV's (commodity, tier) projection.
     ct_cum = None
-    cum_inp = _provider_or_disk(
+    cum_inp = _provider_get(
         provider, "input/commodity_ladder_cumulative",
         inp / "commodity_ladder_cumulative.csv",
     )
@@ -284,7 +275,7 @@ def load_data(
     # ── Annual price/quantity Params (c, i, d) ─────────────────────────
     p_ann_price = None
     p_ann_quantity = None
-    ann = _provider_or_disk(
+    ann = _provider_get(
         provider, "input/commodity_ladder_annual",
         inp / "commodity_ladder_annual.csv",
     )
@@ -307,7 +298,7 @@ def load_data(
     # ── Cumulative price/quantity Params (c, i) ─────────────────────────
     p_cum_price = None
     p_cum_quantity = None
-    cum = _provider_or_disk(
+    cum = _provider_get(
         provider, "input/commodity_ladder_cumulative",
         inp / "commodity_ladder_cumulative.csv",
     )
@@ -339,7 +330,7 @@ def load_data(
     # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
     # variant fixtures or all fixtures explicitly pass db_reader=.
     p_f_d_k = None
-    fdk = _provider_or_disk(
+    fdk = _provider_get(
         provider, "solve_data/f_d_k.csv", sd / "f_d_k.csv",
     )
     if fdk is not None and fdk.height > 0:
@@ -352,7 +343,7 @@ def load_data(
         p_f_d_k = Param(("d",), fdk)
 
     p_realized = None
-    rel = _provider_or_disk(
+    rel = _provider_get(
         provider,
         "solve_data/ladder_cum_realized_mwh.csv",
         sd / "ladder_cum_realized_mwh.csv",

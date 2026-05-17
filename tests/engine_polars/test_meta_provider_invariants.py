@@ -156,17 +156,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Reads delay-chain raw input fixtures (pd, pw, dtt, src) "
         "not yet in the Provider."
     ),
-    "_commodity_ladder.py": (
-        "Loader: Provider-first via _provider_or_disk for all 10 "
-        "ladder per-solve frames (commodity_with_ladder*, "
-        "cnd/cndi_ladder_*, ci_ladder_cumulative, commodity__tier_ann, "
-        "f_d_k, ladder_cum_realized_mwh) plus the 2 input/ raw "
-        "ladder CSVs.  Disk arm reserved for off-cascade fixture "
-        "loaders that seed the workdir without a Provider."
-    ),
-    "_dc_power_flow.py": (
-        "Reads raw branch / pcs DC-power-flow input fixtures."
-    ),
     "_group_slack.py": (
         "Reads group-slack input fixtures (process__sink_nonSync, "
         "process__group_inside_group_nonSync, group_capacity_share, "

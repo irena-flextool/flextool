@@ -58,7 +58,6 @@ import polars as pl
 
 from polar_high import Param, Where
 
-from ._input_source import _read_csv_file
 
 if TYPE_CHECKING:
     from polar_high.engine import Var
@@ -127,15 +126,12 @@ def load_data(
     )
 
     def _frame_for(key: str, path: Path) -> "pl.DataFrame | None":
-        if provider is not None and provider.has(key):
-            df = provider.get(key)
-            if df is None or df.height == 0:
-                return None
-            return df
-        if not path.exists():
+        if provider is None or not provider.has(key):
             return None
-        df = _read_csv_file(path)
-        return df if df.height > 0 else None
+        df = provider.get(key)
+        if df is None or df.height == 0:
+            return None
+        return df
 
     def _project_single(df: "pl.DataFrame | None", col_in: str,
                         col_out: str) -> "pl.DataFrame | None":
