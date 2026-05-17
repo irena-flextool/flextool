@@ -56,7 +56,7 @@ if str(TEST_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.flextoolrunner.flextoolrunner import FlexToolRunner  # noqa: E402
+from flextool.engine_polars import run_chain_from_db  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
 
@@ -312,19 +312,49 @@ def cumulative_db_url_overspend(
 def _run(
     scenario: str, db_url: str, bin_dir: Path, workdir: Path,
 ) -> None:
-    runner = FlexToolRunner(
-        input_db_url=db_url,
-        scenario_name=scenario,
-        root_dir=workdir,
-        bin_dir=bin_dir,
+    """Run *scenario* end-to-end via the native cascade.
+
+    Δ.22 migration: ``SolverRunner.run`` was deleted, so the legacy
+    ``runner.run_model()`` path raises :class:`NotImplementedError`.
+    The cascade replacement is :func:`run_chain_from_db`.  ``csv_dump=
+    True`` enables the per-solve snapshot to ``solve_data/`` (writes
+    ``ladder_cum_realized_mwh.csv`` / ``ladder_cum_sim_hours.csv``);
+    ``keep_solutions=True`` retains ``flex_data_provider`` on every step
+    so the snapshot-to-disk call below can materialise the cascade's
+    derived ``input/`` frames (``commodity_ladder_annual.csv`` etc).
+    """
+    steps = run_chain_from_db(
+        db_url, scenario, work_folder=workdir,
+        csv_dump=True, keep_solutions=True,
     )
-    runner.write_input(db_url, scenario)
-    rc = runner.run_model()
-    assert rc == 0, f"Model run failed for scenario '{scenario}'"
+    last_step = next(reversed(list(steps.values())))
+    assert last_step.optimal, (
+        f"Model run failed for scenario '{scenario}': "
+        f"last step not optimal"
+    )
+    provider = getattr(last_step, "flex_data_provider", None)
+    if provider is not None:
+        provider.snapshot_processed_inputs(workdir)
+
+
+def _ladder_csv_path(workdir: Path, filename: str) -> Path:
+    """Locate a ladder-accumulator CSV after a native-cascade run.
+
+    The cascade keeps the cross-solve carrier frame as a bare Provider
+    key (no ``solve_data/`` prefix); ``snapshot_processed_inputs`` thus
+    materialises it under ``workdir/<filename>``, NOT ``workdir/
+    solve_data/<filename>``.  The legacy preprocessing pipeline wrote
+    these CSVs under ``solve_data/``; we accept either location for
+    forward compatibility, preferring the cascade-native bare layout.
+    """
+    bare = workdir / filename
+    if bare.exists():
+        return bare
+    return workdir / "solve_data" / filename
 
 
 def _read_accumulator(workdir: Path) -> dict[tuple[str, int, str], float]:
-    path = workdir / "solve_data" / "ladder_cum_realized_mwh.csv"
+    path = _ladder_csv_path(workdir, "ladder_cum_realized_mwh.csv")
     assert path.exists(), f"Accumulator CSV missing: {path}"
     out: dict[tuple[str, int, str], float] = {}
     for row in csv.DictReader(open(path)):
@@ -334,7 +364,7 @@ def _read_accumulator(workdir: Path) -> dict[tuple[str, int, str], float]:
 
 
 def _read_sim_hours(workdir: Path) -> dict[str, float]:
-    path = workdir / "solve_data" / "ladder_cum_sim_hours.csv"
+    path = _ladder_csv_path(workdir, "ladder_cum_sim_hours.csv")
     assert path.exists(), f"Sim hours CSV missing: {path}"
     out: dict[str, float] = {}
     for row in csv.DictReader(open(path)):
