@@ -203,48 +203,15 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Reads workdir solve_data/p_model.csv and similar context "
         "files at solve-context build time (pre-Provider)."
     ),
-    "_pdt_lookup.py": (
-        "Reads workdir pdt/*.csv lookup tables with csv.reader; "
-        "Provider-first via _provider_open, disk fallback for "
-        "input_writer-produced artefacts not yet routed through "
-        "the Provider."
-    ),
-    # --- Writer-port modules: Provider-only csv.reader on in-memory buffers ---
-    # Step 2.5 Phase C collapsed the disk-fallback arms in every writer
-    # _read_csv / _read_* helper.  These modules now read the Provider
-    # exclusively (via _provider_open which raises on a missing
-    # provider).  The remaining ``csv.reader(fh)`` sites in these
-    # writers operate on file-like buffers returned by
-    # _provider_open(provider, ...) — i.e. the bytes are served from
-    # the in-memory FlexDataProvider, not from disk.  The Rule 1 AST
-    # detector can't distinguish "csv.reader on Provider buffer" from
-    # "csv.reader on path.open()" so these entries remain to document
-    # the documented-safe usage; the writers whose csv.reader sites
-    # are gone (post-Phase-C) have been removed from this allowlist.
-    "_writer_arc_unions.py": (
-        "csv.reader sites operate on _provider_open() in-memory "
-        "buffers — Provider-only after Step 2.5 Phase C."
-    ),
-    "_writer_chain_params.py": (
-        "csv.reader sites operate on _provider_open() in-memory "
-        "buffers — Provider-only after Step 2.5 Phase C."
-    ),
-    "_writer_dispatchers.py": (
-        "csv.reader sites operate on _provider_open() in-memory "
-        "buffers — Provider-only after Step 2.5 Phase C."
-    ),
-    "_writer_pdt_params.py": (
-        "csv.reader sites operate on _provider_open() in-memory "
-        "buffers — Provider-only after Step 2.5 Phase C."
-    ),
-    "_writer_period_params.py": (
-        "csv.reader sites operate on _provider_open() in-memory "
-        "buffers — Provider-only after Step 2.5 Phase C."
-    ),
-    "_writer_solve_writers.py": (
-        "csv.reader site operates on _provider_open() in-memory "
-        "buffer — Provider-only after Step 2.5 Phase C."
-    ),
+    # Note: `_pdt_lookup.py` and the writer-port modules
+    # (`_writer_arc_unions.py`, `_writer_chain_params.py`,
+    # `_writer_dispatchers.py`, `_writer_pdt_params.py`,
+    # `_writer_period_params.py`, `_writer_solve_writers.py`) previously
+    # appeared here because the Rule 1 AST detector couldn't distinguish
+    # `csv.reader(fh)` on a `_provider_open()` in-memory buffer from
+    # `csv.reader(open(path))` on disk.  The detector now whitelists
+    # `csv.reader` sites whose enclosing function calls `_provider_open`,
+    # so those files no longer need allowlist entries.
 }
 
 
@@ -312,9 +279,40 @@ def _is_csv_reader_call(call: ast.Call) -> bool:
     )
 
 
+def _function_uses_provider_open(func_node: ast.AST) -> bool:
+    """Return True iff *func_node* contains a call to ``_provider_open``.
+
+    Used to whitelist ``csv.reader(fh)`` sites where ``fh`` is produced
+    by ``_provider_open(provider, ...)`` — i.e. served from the
+    in-memory Provider, never from disk.
+    """
+    for sub in ast.walk(func_node):
+        if not isinstance(sub, ast.Call):
+            continue
+        f = sub.func
+        if isinstance(f, ast.Name) and f.id == "_provider_open":
+            return True
+        if isinstance(f, ast.Attribute) and f.attr == "_provider_open":
+            return True
+    return False
+
+
 def _detect_rule1_violations(path: Path, tree: ast.AST) -> list[Violation]:
     out: list[Violation] = []
     fname = path.name
+    # Map each ast node to its enclosing function (None for module-level).
+    parent_func: dict[int, ast.AST] = {}
+
+    def _walk(node: ast.AST, current_func: ast.AST | None) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            current_func = node
+        if isinstance(node, ast.Call):
+            parent_func[id(node)] = current_func  # type: ignore[assignment]
+        for child in ast.iter_child_nodes(node):
+            _walk(child, current_func)
+
+    _walk(tree, None)
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -335,6 +333,14 @@ def _detect_rule1_violations(path: Path, tree: ast.AST) -> list[Violation]:
                 "Provider-fallback helper, not a cascade entry point.",
             ))
         elif _is_csv_reader_call(node):
+            # Whitelist: csv.reader on a handle produced by
+            # _provider_open(...) inside the same function.  The
+            # Provider serves the bytes from memory in this case.
+            enclosing = parent_func.get(id(node))
+            if enclosing is not None and _function_uses_provider_open(
+                enclosing
+            ):
+                continue
             out.append(Violation(
                 fname, node.lineno, "csv.reader(<fh>)",
                 "Cascade code must obtain the file handle from "
