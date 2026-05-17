@@ -30,11 +30,9 @@ import pytest
 from spinedb_api import DatabaseMapping, import_data
 
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
-from flextool.flextoolrunner.input_writer import (
-    METHODS_MAPPING,
-    _write_process_method,
-)
+from flextool.flextoolrunner.input_writer import METHODS_MAPPING
 from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
+from flextool.input_derivation._process_method import derive_process_method
 from flextool.spinedb_backend import SpineDBBackend
 
 
@@ -136,30 +134,38 @@ def _add_data(url: str, **kwargs) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Legacy CSV helpers — used only by tests that still call
-# _write_process_method (Phase C will port this; until then the
-# process_method assertions still read its on-disk CSV output).
+# Process-method helper (Phase C) — runs ``derive_process_method``
+# against an opened DatabaseMapping and returns the Provider's
+# ``input/process_method`` frame as ``{process: method}``.
 # ---------------------------------------------------------------------------
 
-def _read_csv(filepath: Path) -> list[dict[str, str]]:
-    with open(filepath) as f:
-        return list(csv.DictReader(f))
+
+def _run_process_method(
+    db, ct_method_overrides: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Run :func:`derive_process_method` and return ``{process: method}``."""
+    backend = SpineDBBackend.__new__(SpineDBBackend)
+    backend._db = db  # type: ignore[attr-defined]
+    import spinedb_api as _api
+    backend._api = _api  # type: ignore[attr-defined]
+    backend._precision_digits = 0  # type: ignore[attr-defined]
+    provider = FlexDataProvider()
+    derive_process_method(
+        backend, provider, logger,
+        ct_method_overrides=ct_method_overrides or {},
+    )
+    df = provider.get("input/process_method")
+    if df is None or df.height == 0:
+        return {}
+    return dict(zip(
+        df.get_column("process").to_list(),
+        df.get_column("method").to_list(),
+    ))
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture()
-def work_dir(tmp_path: Path) -> Path:
-    """Create work directory with input/ subdirectory.
-
-    Used only by ``_write_process_method`` tests below (the DC PF
-    derivation itself takes no work dir — frames land on the Provider).
-    """
-    (tmp_path / "input").mkdir()
-    return tmp_path
-
 
 @pytest.fixture()
 def triangle_db(tmp_path: Path) -> str:
@@ -575,11 +581,12 @@ class TestGroupTransferMethodOverride:
 
 
 # ===================================================================
-# Test 6: _write_process_method with DC PF overrides
-# (Phase C will port this; until then process_method still emits CSV.)
+# Test 6: derive_process_method with DC PF overrides
 # ===================================================================
 
+
 class TestProcessMethodWithOverrides:
+    """Tests for :func:`derive_process_method` (Phase C)."""
 
     def test_dc_pf_override_changes_method(self, tmp_path: Path) -> None:
         """DC PF override changes connection method to method_2way_1var_off.
@@ -588,8 +595,6 @@ class TestProcessMethodWithOverrides:
         """
         db_path = str(tmp_path / "pm.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -603,23 +608,19 @@ class TestProcessMethodWithOverrides:
             ],
         )
 
-        ct_overrides = {"line1": "no_losses_no_variable_cost"}
-
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_process_method(db, wf, logger, ct_method_overrides=ct_overrides)
+            method_map = _run_process_method(
+                db, ct_method_overrides={"line1": "no_losses_no_variable_cost"},
+            )
 
-        rows = _read_csv(wf / "input" / "process_method.csv")
-        method_map = {r["process"]: r["method"] for r in rows}
         assert method_map["line1"] == "method_2way_1var_off"
 
     def test_regular_connection_without_override(self, tmp_path: Path) -> None:
         """Connection with transfer_method=regular (no override) -> method_2way_2var_exclude."""
         db_path = str(tmp_path / "pm_regular.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -636,18 +637,14 @@ class TestProcessMethodWithOverrides:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_process_method(db, wf, logger, ct_method_overrides={})
+            method_map = _run_process_method(db)
 
-        rows = _read_csv(wf / "input" / "process_method.csv")
-        method_map = {r["process"]: r["method"] for r in rows}
         assert method_map["c12"] == "method_2way_2var_exclude"
 
     def test_unit_method_not_affected_by_ct_overrides(self, tmp_path: Path) -> None:
         """Unit methods are not affected by connection ct_method overrides."""
         db_path = str(tmp_path / "pm_unit.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -664,18 +661,14 @@ class TestProcessMethodWithOverrides:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_process_method(db, wf, logger, ct_method_overrides={})
+            method_map = _run_process_method(db)
 
-        rows = _read_csv(wf / "input" / "process_method.csv")
-        method_map = {r["process"]: r["method"] for r in rows}
         assert method_map["gen"] == "method_1way_1var_off"
 
     def test_fork_yes_with_multiple_sinks(self, tmp_path: Path) -> None:
         """Connection with >1 sink gets fork_yes, changing method variant."""
         db_path = str(tmp_path / "pm_fork.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         # connection__node__node creates both a source and a sink per row
         # Two rows => 2 sources + 2 sinks => fork_yes
@@ -695,10 +688,8 @@ class TestProcessMethodWithOverrides:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_process_method(db, wf, logger, ct_method_overrides={})
+            method_map = _run_process_method(db)
 
-        rows = _read_csv(wf / "input" / "process_method.csv")
-        method_map = {r["process"]: r["method"] for r in rows}
         # no_losses_no_variable_cost + no_startup + fork_yes -> method_2way_nvar_off
         assert method_map["c123"] == "method_2way_nvar_off"
 
