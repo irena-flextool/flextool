@@ -1204,8 +1204,22 @@ def _drive_cascade(
     from flextool.engine_polars._native_input_writer import _native_leaf_set_override
     _real_capture = _flx_orch.capture_post_solve
     _flx_orch.capture_post_solve = lambda state, solve_name: None
+    # Step 2.5 Phase 3a — late-bound provider lookup.  Per-sub-solve
+    # writers run inside ``native_run_model`` which sets
+    # ``state.current_provider = sub_solve_provider`` for each iter; the
+    # callable here returns whatever is currently active.  Falls back to
+    # ``cascade_input_provider`` for pre-loop hooks (e.g.
+    # ``write_timesets``).
+    _cascade_provider = getattr(
+        runner.state, "cascade_input_provider", None,
+    )
+    def _live_provider():
+        p = getattr(runner.state, "current_provider", None)
+        if p is not None:
+            return p
+        return _cascade_provider
     try:
-        with _native_leaf_set_override():
+        with _native_leaf_set_override(provider=_live_provider):
             native_run_model(runner.state, _FlexpyCascadeSolver(runner.state))
     finally:
         _flx_orch.capture_post_solve = _real_capture

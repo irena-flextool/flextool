@@ -269,7 +269,7 @@ def write_workdir_inputs(
     # ``engine_polars``.
     from flextool.flextoolrunner.input_writer import write_input as _flx_write_input
 
-    with _native_leaf_set_override():
+    with _native_leaf_set_override(provider=provider):
         _flx_write_input(
             db_url,
             scenario_name,
@@ -288,7 +288,10 @@ import contextlib  # noqa: E402  (placed near the override helper for locality)
 
 
 @contextlib.contextmanager
-def _native_leaf_set_override():
+def _native_leaf_set_override(
+    *,
+    provider: "object | None" = None,
+):
     """Monkey-patch legacy preprocessing families to invoke the native
     polars writers in :mod:`._writer_leaf_sets` (L0-L2),
     :mod:`._writer_mid_sets` (L3-L6) and :mod:`._writer_calc_params`
@@ -302,7 +305,22 @@ def _native_leaf_set_override():
     (``process_arc_unions``, ``entity_period_calc_params`` — together
     ~4.7 kLOC) still delegate to legacy code — deferred out of
     Phase 1 scope.
+
+    Parameters
+    ----------
+    provider
+        Active cascade-input :class:`FlexDataProvider` (or per-sub-solve
+        provider).  When supplied, each native override target is
+        wrapped in :func:`functools.partial` binding ``provider=...``
+        so calls from the legacy ``input_writer.write_input`` /
+        ``preprocessing.solve_time.run`` dispatch — which use the
+        positional ``(input_dir, solve_data_dir)`` signature — still
+        thread the Provider into the native ``_read_csv`` chain.
+        Native entry points whose signature does not accept
+        ``provider=`` simply ignore the bound kwarg (the partial swap
+        only succeeds when the target accepts the kwarg).
     """
+    import inspect as _inspect
     # L0-L2 — leaf-level set projections.
     from flextool.flextoolrunner.preprocessing import (
         co2_method_sets as _legacy_co2,
@@ -766,8 +784,48 @@ def _native_leaf_set_override():
     saved: list[tuple[object, str, object]] = [
         (mod, name, getattr(mod, name)) for mod, name, _ in overrides
     ]
+    # Step 2.5 Phase 3a — bind the active Provider into each override
+    # target so positional ``(input_dir, solve_data_dir)`` call sites in
+    # ``input_writer.write_input`` / ``preprocessing.solve_time.run``
+    # thread the Provider into the native ``_read_csv`` chain.  When
+    # the native function does not accept ``provider=``, the bind is
+    # skipped — those legacy-only writers still resolve their reads
+    # via the cascade workdir's residual disk slice.
+    #
+    # ``provider`` may be either a :class:`FlexDataProvider` (write-time
+    # cascade-input Provider, fixed for the whole context) OR a
+    # zero-arg callable returning the *current* Provider at each call
+    # site (per-sub-solve loop: returns ``state.current_provider``).
+    # The callable form is needed because the override surrounds the
+    # entire solve loop in :func:`_drive_cascade`, and the per-sub-solve
+    # Provider is created inside :func:`native_run_model` for each iter.
+    _provider_get: "callable | None" = None
+    if callable(provider) and not hasattr(provider, "put"):
+        _provider_get = provider  # type: ignore[assignment]
+    elif provider is not None:
+        _provider_get = lambda _p=provider: _p  # noqa: E731
+
     for mod, name, native_fn in overrides:
-        setattr(mod, name, native_fn)
+        bound_fn = native_fn
+        if _provider_get is not None:
+            try:
+                _sig = _inspect.signature(native_fn)
+            except (TypeError, ValueError):  # builtins, etc.
+                _sig = None
+            if _sig is not None and "provider" in _sig.parameters:
+                # Late-binding wrapper — looks up the *current* Provider
+                # on every call so per-sub-solve providers (set on
+                # ``state.current_provider`` inside ``native_run_model``)
+                # propagate through the override.
+                def _make_late_bound(_fn=native_fn, _get=_provider_get):
+                    def _wrapped(*args, **kwargs):
+                        if "provider" not in kwargs:
+                            kwargs["provider"] = _get()
+                        return _fn(*args, **kwargs)
+                    _wrapped.__wrapped__ = _fn
+                    return _wrapped
+                bound_fn = _make_late_bound()
+        setattr(mod, name, bound_fn)
     try:
         yield
     finally:

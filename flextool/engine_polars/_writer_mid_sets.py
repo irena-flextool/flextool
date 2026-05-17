@@ -108,16 +108,19 @@ _NODE_TYPE_PARTITIONS: list[tuple[str, frozenset[str]]] = [
 ]
 
 
-def derive_node_effective_type(input_dir: Path) -> pl.DataFrame:
+def derive_node_effective_type(input_dir: Path,
+                                *, provider: "object | None" = None,
+                                ) -> pl.DataFrame:
     """Materialize every node with its effective ``p_node_type``.
 
     Nodes without an explicit row in ``p_node_type.csv`` get the
     flextool.mod default ``'balance'``.  Order = ``node.csv`` order
     (mod's would-be iteration order).
     """
-    nodes = _read_csv(input_dir / "node.csv", ["node"])
+    nodes = _read_csv(input_dir / "node.csv", ["node"], provider=provider)
     nodes = _drop_blank_rows(nodes, ["node"])
-    explicit = _read_csv(input_dir / "p_node_type.csv", ["node", "type"])
+    explicit = _read_csv(input_dir / "p_node_type.csv", ["node", "type"],
+                         provider=provider)
     explicit = _drop_blank_rows(explicit, ["node", "type"])
     return (
         nodes.join(explicit, on="node", how="left")
@@ -127,8 +130,10 @@ def derive_node_effective_type(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def write_node_type_sets(input_dir: Path, solve_data_dir: Path) -> None:
-    effective = derive_node_effective_type(input_dir)
+def write_node_type_sets(input_dir: Path, solve_data_dir: Path,
+                          *, provider: "object | None" = None,
+                          ) -> None:
+    effective = derive_node_effective_type(input_dir, provider=provider)
     for fname, types in _NODE_TYPE_PARTITIONS:
         out = (
             effective.filter(pl.col("type").is_in(list(types)))
@@ -153,27 +158,40 @@ def _ordered_union_pairs(
     )
 
 
-def derive_group_entity(input_dir: Path) -> pl.DataFrame:
+def derive_group_entity(input_dir: Path,
+                         *, provider: "object | None" = None,
+                         ) -> pl.DataFrame:
     """flextool.mod:287 — ``group_process ∪ group_node``."""
-    gp = _read_csv(input_dir / "group__process.csv", ["group", "entity"])
-    gn = _read_csv(input_dir / "group__node.csv",    ["group", "entity"])
+    gp = _read_csv(input_dir / "group__process.csv", ["group", "entity"],
+                   provider=provider)
+    gn = _read_csv(input_dir / "group__node.csv",    ["group", "entity"],
+                   provider=provider)
     return _ordered_union_pairs([gp, gn], ["group", "entity"])
 
 
-def derive_process_delayed__duration(input_dir: Path) -> pl.DataFrame:
+def derive_process_delayed__duration(input_dir: Path,
+                                      *, provider: "object | None" = None,
+                                      ) -> pl.DataFrame:
     """flextool.mod:950 — ``process_delay_weighted ∪ process_delay_single``."""
-    w = _read_csv(input_dir / "p_process_delay_weighted.csv", ["process", "delay_duration"])
-    s = _read_csv(input_dir / "process_delay_single.csv",     ["process", "delay_duration"])
+    w = _read_csv(input_dir / "p_process_delay_weighted.csv",
+                  ["process", "delay_duration"], provider=provider)
+    s = _read_csv(input_dir / "process_delay_single.csv",
+                  ["process", "delay_duration"], provider=provider)
     return _ordered_union_pairs([w, s], ["process", "delay_duration"])
 
 
-def write_group_entity(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_group_entity(input_dir), solve_data_dir / "group_entity.csv")
+def write_group_entity(input_dir: Path, solve_data_dir: Path,
+                        *, provider: "object | None" = None,
+                        ) -> None:
+    _write(derive_group_entity(input_dir, provider=provider),
+           solve_data_dir / "group_entity.csv")
 
 
-def write_process_delayed__duration(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process_delayed__duration(input_dir: Path, solve_data_dir: Path,
+                                     *, provider: "object | None" = None,
+                                     ) -> None:
     _write(
-        derive_process_delayed__duration(input_dir),
+        derive_process_delayed__duration(input_dir, provider=provider),
         solve_data_dir / "process_delayed__duration.csv",
     )
 
@@ -187,14 +205,18 @@ def write_process_delayed__duration(input_dir: Path, solve_data_dir: Path) -> No
 _PI_LITERAL = "3.14159265"
 
 
-def derive_dc_angle_bounds(input_dir: Path) -> tuple[pl.DataFrame, pl.DataFrame]:
+def derive_dc_angle_bounds(input_dir: Path,
+                            *, provider: "object | None" = None,
+                            ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Return (lower, upper) frames for nodes participating in DC flow.
 
     ref nodes pin both bounds to ``0``; other DC nodes get ``±π``.
     """
-    dc = _read_csv(input_dir / "node_dc_power_flow.csv", ["node"])
+    dc = _read_csv(input_dir / "node_dc_power_flow.csv", ["node"],
+                   provider=provider)
     dc = _drop_blank_rows(dc, ["node"])
-    ref = _read_csv(input_dir / "node_reference_angle.csv", ["node"])
+    ref = _read_csv(input_dir / "node_reference_angle.csv", ["node"],
+                    provider=provider)
     ref_set = ref.filter(pl.col("node") != "").get_column("node").to_list()
 
     lower_values = pl.when(pl.col("node").is_in(ref_set)).then(pl.lit("0")).otherwise(pl.lit(f"-{_PI_LITERAL}"))
@@ -204,8 +226,10 @@ def derive_dc_angle_bounds(input_dir: Path) -> tuple[pl.DataFrame, pl.DataFrame]
     return lower, upper
 
 
-def write_dc_angle_bounds(input_dir: Path, solve_data_dir: Path) -> None:
-    lower, upper = derive_dc_angle_bounds(input_dir)
+def write_dc_angle_bounds(input_dir: Path, solve_data_dir: Path,
+                           *, provider: "object | None" = None,
+                           ) -> None:
+    lower, upper = derive_dc_angle_bounds(input_dir, provider=provider)
     _write(lower, solve_data_dir / "p_angle_lower.csv")
     _write(upper, solve_data_dir / "p_angle_upper.csv")
 
@@ -231,18 +255,23 @@ _RESERVE_N_1_METHODS: frozenset[str] = frozenset((
 _RESERVE_QUAD_COLS = ["reserve", "upDown", "group", "method"]
 
 
-def derive_reserve_universe(input_dir: Path) -> pl.DataFrame:
+def derive_reserve_universe(input_dir: Path,
+                             *, provider: "object | None" = None,
+                             ) -> pl.DataFrame:
     """Single-column ``reserve`` projected from the quad CSV."""
-    quad = _read_csv(input_dir / "reserve__upDown__group__method.csv", _RESERVE_QUAD_COLS)
+    quad = _read_csv(input_dir / "reserve__upDown__group__method.csv",
+                     _RESERVE_QUAD_COLS, provider=provider)
     quad = _drop_blank_rows(quad, _RESERVE_QUAD_COLS)
     return quad.select("reserve").unique(maintain_order=True)
 
 
 def derive_reserve_method_partition(
     input_dir: Path, allowed: frozenset[str],
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """4-tuple rows whose method ∈ allowed.  Order preserved, deduped."""
-    quad = _read_csv(input_dir / "reserve__upDown__group__method.csv", _RESERVE_QUAD_COLS)
+    quad = _read_csv(input_dir / "reserve__upDown__group__method.csv",
+                     _RESERVE_QUAD_COLS, provider=provider)
     quad = _drop_blank_rows(quad, _RESERVE_QUAD_COLS)
     return (
         quad.filter(pl.col("method").is_in(list(allowed)))
@@ -250,15 +279,19 @@ def derive_reserve_method_partition(
     )
 
 
-def write_reserve_partitions(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_reserve_universe(input_dir), solve_data_dir / "reserve.csv")
+def write_reserve_partitions(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> None:
+    _write(derive_reserve_universe(input_dir, provider=provider),
+           solve_data_dir / "reserve.csv")
     for fname, allowed in (
         ("reserve__upDown__group__method_timeseries.csv", _RESERVE_TIMESERIES_METHODS),
         ("reserve__upDown__group__method_dynamic.csv",    _RESERVE_DYNAMIC_METHODS),
         ("reserve__upDown__group__method_n_1.csv",        _RESERVE_N_1_METHODS),
     ):
         _write(
-            derive_reserve_method_partition(input_dir, allowed),
+            derive_reserve_method_partition(input_dir, allowed,
+                                            provider=provider),
             solve_data_dir / fname,
         )
 
@@ -267,7 +300,9 @@ def write_reserve_partitions(input_dir: Path, solve_data_dir: Path) -> None:
 # Family 9 — nonsync_sets (legacy: preprocessing/nonsync_sets.py)
 # ===========================================================================
 
-def derive_process__sink_nonSync(input_dir: Path) -> pl.DataFrame:
+def derive_process__sink_nonSync(input_dir: Path,
+                                  *, provider: "object | None" = None,
+                                  ) -> pl.DataFrame:
     """flextool.mod:1980-1985 — 3-branch OR over sink/source membership.
 
     Output: (process, sink) 2-tuples.  Branch order (deduped):
@@ -275,15 +310,19 @@ def derive_process__sink_nonSync(input_dir: Path) -> pl.DataFrame:
       2. ``(p, sink) in process_sink`` AND ``p in process_nonSync_connection``
       3. ``(p, source) in process_source`` AND ``p in process_nonSync_connection``
     """
-    sinks = _read_csv(input_dir / "process__sink.csv", ["process", "sink"])
+    sinks = _read_csv(input_dir / "process__sink.csv", ["process", "sink"],
+                       provider=provider)
     sinks = _drop_blank_rows(sinks, ["process", "sink"])
-    sources = _read_csv(input_dir / "process__source.csv", ["process", "sink"])
+    sources = _read_csv(input_dir / "process__source.csv", ["process", "sink"],
+                        provider=provider)
     sources = _drop_blank_rows(sources, ["process", "sink"])
     nonsync_units = _read_csv(
         input_dir / "process__sink_nonSync_unit.csv", ["process", "sink"],
+        provider=provider,
     )
     nonsync_conn = _read_csv(
         input_dir / "process_nonSync_connection.csv", ["process"],
+        provider=provider,
     )
     nonsync_conn_set = (
         nonsync_conn.filter(pl.col("process") != "")
@@ -313,25 +352,32 @@ def derive_process__sink_nonSync(input_dir: Path) -> pl.DataFrame:
     return combined.unique(maintain_order=True)
 
 
-def derive_process__group_inside_group_nonSync(input_dir: Path) -> pl.DataFrame:
+def derive_process__group_inside_group_nonSync(input_dir: Path,
+                                                 *, provider: "object | None" = None,
+                                                 ) -> pl.DataFrame:
     """flextool.mod:2017-2023 — exists (source, sink) ∈ g, source ≠ sink, for p.
 
     Iterate process × groupNonSync in CSV order to match the order the
     mod's nested loops would produce.
     """
-    nonsync_groups = _read_csv(input_dir / "groupNonSync.csv", ["group"])
+    nonsync_groups = _read_csv(input_dir / "groupNonSync.csv", ["group"],
+                                provider=provider)
     nonsync_groups = _drop_blank_rows(nonsync_groups, ["group"])
     if nonsync_groups.height == 0:
         return pl.DataFrame({"process": [], "group": []},
                             schema={"process": pl.Utf8, "group": pl.Utf8})
 
-    processes = _read_csv(input_dir / "process.csv", ["process"])
+    processes = _read_csv(input_dir / "process.csv", ["process"],
+                          provider=provider)
     processes = _drop_blank_rows(processes, ["process"])
-    group_nodes = _read_csv(input_dir / "group__node.csv", ["group", "node"])
+    group_nodes = _read_csv(input_dir / "group__node.csv", ["group", "node"],
+                             provider=provider)
     group_nodes = _drop_blank_rows(group_nodes, ["group", "node"])
-    sources = _read_csv(input_dir / "process__source.csv", ["process", "node"])
+    sources = _read_csv(input_dir / "process__source.csv", ["process", "node"],
+                        provider=provider)
     sources = _drop_blank_rows(sources, ["process", "node"])
-    sinks = _read_csv(input_dir / "process__sink.csv", ["process", "node"])
+    sinks = _read_csv(input_dir / "process__sink.csv", ["process", "node"],
+                      provider=provider)
     sinks = _drop_blank_rows(sinks, ["process", "node"])
 
     # Lookup tables.  We materialise to python dicts because the per-row
@@ -374,18 +420,22 @@ def derive_process__group_inside_group_nonSync(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def write_process__sink_nonSync(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process__sink_nonSync(input_dir: Path, solve_data_dir: Path,
+                                  *, provider: "object | None" = None,
+                                  ) -> None:
     _write(
-        derive_process__sink_nonSync(input_dir),
+        derive_process__sink_nonSync(input_dir, provider=provider),
         solve_data_dir / "process__sink_nonSync.csv",
     )
 
 
 def write_process_group_inside_group_nonsync(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     _write(
-        derive_process__group_inside_group_nonSync(input_dir),
+        derive_process__group_inside_group_nonSync(input_dir,
+                                                    provider=provider),
         solve_data_dir / "process__group_inside_group_nonSync.csv",
     )
 
@@ -443,12 +493,16 @@ def _per_entity_fallback(
     )
 
 
-def derive_entity_lifetime_method(input_dir: Path) -> pl.DataFrame:
+def derive_entity_lifetime_method(input_dir: Path,
+                                    *, provider: "object | None" = None,
+                                    ) -> pl.DataFrame:
     explicit = _read_csv(
-        input_dir / "entity__lifetime_method.csv", ["entity", "lifetime_method"],
+        input_dir / "entity__lifetime_method.csv",
+        ["entity", "lifetime_method"], provider=provider,
     )
     explicit = _drop_blank_rows(explicit, ["entity", "lifetime_method"])
-    entities = _read_csv(input_dir / "entity.csv", ["entity"])
+    entities = _read_csv(input_dir / "entity.csv", ["entity"],
+                          provider=provider)
     entities = _drop_blank_rows(entities, ["entity"])
     defaults = {e: _LIFETIME_METHOD_DEFAULT
                 for e in entities.get_column("entity").to_list()}
@@ -457,21 +511,27 @@ def derive_entity_lifetime_method(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_process_ct_method(input_dir: Path) -> pl.DataFrame:
+def derive_process_ct_method(input_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> pl.DataFrame:
     explicit = _read_csv(
         input_dir / "process__ct_method.csv", ["process", "ct_method"],
+        provider=provider,
     )
     explicit = _drop_blank_rows(explicit, ["process", "ct_method"])
-    processes = _read_csv(input_dir / "process.csv", ["process"])
+    processes = _read_csv(input_dir / "process.csv", ["process"],
+                           provider=provider)
     processes = _drop_blank_rows(processes, ["process"])
     connections = set(
         _drop_blank_rows(
-            _read_csv(input_dir / "process_connection.csv", ["process"]), ["process"],
+            _read_csv(input_dir / "process_connection.csv", ["process"],
+                       provider=provider), ["process"],
         ).get_column("process").to_list()
     )
     units = set(
         _drop_blank_rows(
-            _read_csv(input_dir / "process_unit.csv", ["process"]), ["process"],
+            _read_csv(input_dir / "process_unit.csv", ["process"],
+                       provider=provider), ["process"],
         ).get_column("process").to_list()
     )
 
@@ -488,12 +548,15 @@ def derive_process_ct_method(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_node_inflow_method(input_dir: Path) -> pl.DataFrame:
+def derive_node_inflow_method(input_dir: Path,
+                               *, provider: "object | None" = None,
+                               ) -> pl.DataFrame:
     explicit = _read_csv(
         input_dir / "node__inflow_method.csv", ["node", "inflow_method"],
+        provider=provider,
     )
     explicit = _drop_blank_rows(explicit, ["node", "inflow_method"])
-    nodes = _read_csv(input_dir / "node.csv", ["node"])
+    nodes = _read_csv(input_dir / "node.csv", ["node"], provider=provider)
     nodes = _drop_blank_rows(nodes, ["node"])
     defaults = {n: _INFLOW_METHOD_DEFAULT
                 for n in nodes.get_column("node").to_list()}
@@ -502,13 +565,15 @@ def derive_node_inflow_method(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_node_storage_binding_method(input_dir: Path) -> pl.DataFrame:
+def derive_node_storage_binding_method(input_dir: Path,
+                                        *, provider: "object | None" = None,
+                                        ) -> pl.DataFrame:
     explicit = _read_csv(
         input_dir / "node__storage_binding_method.csv",
-        ["node", "storage_binding_method"],
+        ["node", "storage_binding_method"], provider=provider,
     )
     explicit = _drop_blank_rows(explicit, ["node", "storage_binding_method"])
-    nodes = _read_csv(input_dir / "node.csv", ["node"])
+    nodes = _read_csv(input_dir / "node.csv", ["node"], provider=provider)
     nodes = _drop_blank_rows(nodes, ["node"])
     defaults = {n: _STORAGE_BINDING_METHOD_DEFAULT
                 for n in nodes.get_column("node").to_list()}
@@ -517,12 +582,16 @@ def derive_node_storage_binding_method(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_process_startup_method(input_dir: Path) -> pl.DataFrame:
+def derive_process_startup_method(input_dir: Path,
+                                    *, provider: "object | None" = None,
+                                    ) -> pl.DataFrame:
     explicit = _read_csv(
-        input_dir / "process__startup_method.csv", ["process", "startup_method"],
+        input_dir / "process__startup_method.csv",
+        ["process", "startup_method"], provider=provider,
     )
     explicit = _drop_blank_rows(explicit, ["process", "startup_method"])
-    processes = _read_csv(input_dir / "process.csv", ["process"])
+    processes = _read_csv(input_dir / "process.csv", ["process"],
+                           provider=provider)
     processes = _drop_blank_rows(processes, ["process"])
     defaults = {p: _STARTUP_METHOD_NO
                 for p in processes.get_column("process").to_list()}
@@ -531,34 +600,45 @@ def derive_process_startup_method(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def write_entity_lifetime_method(input_dir: Path, solve_data_dir: Path) -> None:
+def write_entity_lifetime_method(input_dir: Path, solve_data_dir: Path,
+                                  *, provider: "object | None" = None,
+                                  ) -> None:
     _write(
-        derive_entity_lifetime_method(input_dir),
+        derive_entity_lifetime_method(input_dir, provider=provider),
         solve_data_dir / "entity__lifetime_method.csv",
     )
 
 
-def write_process_ct_method(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_process_ct_method(input_dir), solve_data_dir / "process__ct_method.csv")
+def write_process_ct_method(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> None:
+    _write(derive_process_ct_method(input_dir, provider=provider),
+           solve_data_dir / "process__ct_method.csv")
 
 
-def write_process_startup_method(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process_startup_method(input_dir: Path, solve_data_dir: Path,
+                                  *, provider: "object | None" = None,
+                                  ) -> None:
     _write(
-        derive_process_startup_method(input_dir),
+        derive_process_startup_method(input_dir, provider=provider),
         solve_data_dir / "process__startup_method.csv",
     )
 
 
-def write_node_inflow_method(input_dir: Path, solve_data_dir: Path) -> None:
+def write_node_inflow_method(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> None:
     _write(
-        derive_node_inflow_method(input_dir),
+        derive_node_inflow_method(input_dir, provider=provider),
         solve_data_dir / "node__inflow_method.csv",
     )
 
 
-def write_node_storage_binding_method(input_dir: Path, solve_data_dir: Path) -> None:
+def write_node_storage_binding_method(input_dir: Path, solve_data_dir: Path,
+                                        *, provider: "object | None" = None,
+                                        ) -> None:
     _write(
-        derive_node_storage_binding_method(input_dir),
+        derive_node_storage_binding_method(input_dir, provider=provider),
         solve_data_dir / "node__storage_binding_method.csv",
     )
 
@@ -580,8 +660,9 @@ _CUMULATIVE_METHODS: frozenset[str] = frozenset(("cumulative_limits",))
 
 def _entities_with_method_in(
     method_csv: Path, allowed: frozenset[str], col1: str,
+    *, provider: "object | None" = None,
 ) -> set[str]:
-    df = _read_csv(method_csv, [col1, "method"])
+    df = _read_csv(method_csv, [col1, "method"], provider=provider)
     df = _drop_blank_rows(df, [col1, "method"])
     return set(
         df.filter(pl.col("method").is_in(list(allowed)))
@@ -591,52 +672,69 @@ def _entities_with_method_in(
 
 def _filter_singles(
     universe_csv: Path, with_method: set[str], col: str,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    universe = _read_csv(universe_csv, [col])
+    universe = _read_csv(universe_csv, [col], provider=provider)
     universe = _drop_blank_rows(universe, [col])
     return universe.filter(pl.col(col).is_in(list(with_method)))
 
 
-def write_invest_total_sets(input_dir: Path, solve_data_dir: Path) -> None:
+def write_invest_total_sets(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> None:
     entity_methods_csv = input_dir / "entity__invest_method.csv"
     group_methods_csv = input_dir / "group__invest_method.csv"
 
-    e_with_invest = _entities_with_method_in(entity_methods_csv, _INVEST_TOTAL_METHODS, "entity")
-    e_with_retire = _entities_with_method_in(entity_methods_csv, _RETIRE_TOTAL_METHODS, "entity")
-    g_with_invest = _entities_with_method_in(group_methods_csv,  _INVEST_TOTAL_METHODS, "group")
-    g_with_retire = _entities_with_method_in(group_methods_csv,  _RETIRE_TOTAL_METHODS, "group")
-    g_with_cum    = _entities_with_method_in(group_methods_csv,  _CUMULATIVE_METHODS,   "group")
+    e_with_invest = _entities_with_method_in(
+        entity_methods_csv, _INVEST_TOTAL_METHODS, "entity", provider=provider)
+    e_with_retire = _entities_with_method_in(
+        entity_methods_csv, _RETIRE_TOTAL_METHODS, "entity", provider=provider)
+    g_with_invest = _entities_with_method_in(
+        group_methods_csv,  _INVEST_TOTAL_METHODS, "group", provider=provider)
+    g_with_retire = _entities_with_method_in(
+        group_methods_csv,  _RETIRE_TOTAL_METHODS, "group", provider=provider)
+    g_with_cum    = _entities_with_method_in(
+        group_methods_csv,  _CUMULATIVE_METHODS,   "group", provider=provider)
 
     _write(
-        _filter_singles(solve_data_dir / "entityInvest.csv", e_with_invest, "entity"),
+        _filter_singles(solve_data_dir / "entityInvest.csv", e_with_invest,
+                         "entity", provider=provider),
         solve_data_dir / "e_invest_total.csv",
     )
     _write(
-        _filter_singles(solve_data_dir / "entityDivest.csv", e_with_retire, "entity"),
+        _filter_singles(solve_data_dir / "entityDivest.csv", e_with_retire,
+                         "entity", provider=provider),
         solve_data_dir / "e_divest_total.csv",
     )
     _write(
-        _filter_singles(solve_data_dir / "group_invest.csv", g_with_invest, "group"),
+        _filter_singles(solve_data_dir / "group_invest.csv", g_with_invest,
+                         "group", provider=provider),
         solve_data_dir / "g_invest_total.csv",
     )
     _write(
-        _filter_singles(solve_data_dir / "group_divest.csv", g_with_retire, "group"),
+        _filter_singles(solve_data_dir / "group_divest.csv", g_with_retire,
+                         "group", provider=provider),
         solve_data_dir / "g_divest_total.csv",
     )
     _write(
-        _filter_singles(solve_data_dir / "group_invest.csv", g_with_cum, "group"),
+        _filter_singles(solve_data_dir / "group_invest.csv", g_with_cum,
+                         "group", provider=provider),
         solve_data_dir / "g_invest_cumulative.csv",
     )
 
 
-def write_ci_ladder_cumulative(input_dir: Path, solve_data_dir: Path) -> None:
+def write_ci_ladder_cumulative(input_dir: Path, solve_data_dir: Path,
+                                *, provider: "object | None" = None,
+                                ) -> None:
     """flextool.mod:2000 — commodity__tier_cum filtered to ladder-cumulative."""
     cum = _read_csv(
         input_dir / "commodity_ladder_cumulative.csv", ["commodity", "tier"],
+        provider=provider,
     )
     cum = _drop_blank_rows(cum, ["commodity", "tier"])
     with_cum = _read_csv(
         solve_data_dir / "commodity_with_ladder_cumulative.csv", ["commodity"],
+        provider=provider,
     )
     with_cum_set = (
         with_cum.filter(pl.col("commodity") != "")
@@ -653,15 +751,19 @@ def write_ci_ladder_cumulative(input_dir: Path, solve_data_dir: Path) -> None:
 # Family 12 — structural_filters (legacy: preprocessing/structural_filters.py)
 # ===========================================================================
 
-def derive_connection_param(input_dir: Path) -> pl.DataFrame:
+def derive_connection_param(input_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> pl.DataFrame:
     """connection__param = process__param filtered by p ∈ process_connection.
 
     p_process.csv layout: (process, processParam, value).  We project the
     first two columns and filter by the connection-process membership.
     """
-    pp = _read_csv(input_dir / "p_process.csv", ["process", "processParam"])
+    pp = _read_csv(input_dir / "p_process.csv", ["process", "processParam"],
+                   provider=provider)
     pp = _drop_blank_rows(pp, ["process", "processParam"])
-    connections = _read_csv(input_dir / "process_connection.csv", ["process"])
+    connections = _read_csv(input_dir / "process_connection.csv", ["process"],
+                             provider=provider)
     conn_set = (
         connections.filter(pl.col("process") != "")
                    .get_column("process").to_list()
@@ -672,11 +774,15 @@ def derive_connection_param(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_nodegroup_dispatch_node(input_dir: Path) -> pl.DataFrame:
+def derive_nodegroup_dispatch_node(input_dir: Path,
+                                     *, provider: "object | None" = None,
+                                     ) -> pl.DataFrame:
     """nodeGroupDispatch ∩ ``{g : ∃ n with (g, n) in group__node}``."""
-    groups = _read_csv(input_dir / "nodeGroupDispatch.csv", ["group"])
+    groups = _read_csv(input_dir / "nodeGroupDispatch.csv", ["group"],
+                        provider=provider)
     groups = _drop_blank_rows(groups, ["group"])
-    gn = _read_csv(input_dir / "group__node.csv", ["group", "node"])
+    gn = _read_csv(input_dir / "group__node.csv", ["group", "node"],
+                    provider=provider)
     gn = _drop_blank_rows(gn, ["group", "node"])
     groups_with_nodes = gn.select("group").unique()
     return (
@@ -685,16 +791,20 @@ def derive_nodegroup_dispatch_node(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_commodity_node_co2(input_dir: Path) -> pl.DataFrame:
+def derive_commodity_node_co2(input_dir: Path,
+                                *, provider: "object | None" = None,
+                                ) -> pl.DataFrame:
     """commodity_node filtered by ``p_commodity[c, 'co2_content'] != 0``.
 
     flextool.mod:2011.  ``default 0`` on p_commodity means commodities
     without an explicit ``co2_content`` row are excluded (0 is falsy).
     """
-    cn = _read_csv(input_dir / "commodity__node.csv", ["commodity", "node"])
+    cn = _read_csv(input_dir / "commodity__node.csv", ["commodity", "node"],
+                    provider=provider)
     cn = _drop_blank_rows(cn, ["commodity", "node"])
     p_commodity = _read_csv(
         input_dir / "p_commodity.csv", ["commodity", "param", "value"],
+        provider=provider,
     )
     co2 = (
         p_commodity.filter(
@@ -711,18 +821,24 @@ def derive_commodity_node_co2(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_process__commodity__node(input_dir: Path) -> pl.DataFrame:
+def derive_process__commodity__node(input_dir: Path,
+                                       *, provider: "object | None" = None,
+                                       ) -> pl.DataFrame:
     """process × commodity_node where (p, n) is an arc endpoint of p.
 
     flextool.mod:2009.  Iteration order: process.csv × commodity__node.csv.
     """
-    processes = _read_csv(input_dir / "process.csv", ["process"])
+    processes = _read_csv(input_dir / "process.csv", ["process"],
+                           provider=provider)
     processes = _drop_blank_rows(processes, ["process"])
-    cn = _read_csv(input_dir / "commodity__node.csv", ["commodity", "node"])
+    cn = _read_csv(input_dir / "commodity__node.csv", ["commodity", "node"],
+                    provider=provider)
     cn = _drop_blank_rows(cn, ["commodity", "node"])
-    sources = _read_csv(input_dir / "process__source.csv", ["process", "node"])
+    sources = _read_csv(input_dir / "process__source.csv", ["process", "node"],
+                         provider=provider)
     sources = _drop_blank_rows(sources, ["process", "node"])
-    sinks = _read_csv(input_dir / "process__sink.csv", ["process", "node"])
+    sinks = _read_csv(input_dir / "process__sink.csv", ["process", "node"],
+                       provider=provider)
     sinks = _drop_blank_rows(sinks, ["process", "node"])
 
     # arc_endpoints[p] = set of nodes (source ∪ sink)
@@ -757,15 +873,17 @@ def derive_process__commodity__node(input_dir: Path) -> pl.DataFrame:
 
 def _derive_coeff_zero(
     arc_csv: Path, coef_csv: Path, second_col: str,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """(process, source/sink) rows whose max-capacity-coefficient is 0.
 
     Default of 1 on missing coefficients means only EXPLICITLY-zero rows
     appear in the output (matches the mod's truthy-check behaviour).
     """
-    arcs = _read_csv(arc_csv, ["process", second_col])
+    arcs = _read_csv(arc_csv, ["process", second_col], provider=provider)
     arcs = _drop_blank_rows(arcs, ["process", second_col])
-    coef = _read_csv(coef_csv, ["process", second_col, "value"])
+    coef = _read_csv(coef_csv, ["process", second_col, "value"],
+                      provider=provider)
     zeros = (
         coef.filter(
             (pl.col("process") != "")
@@ -782,53 +900,68 @@ def _derive_coeff_zero(
     )
 
 
-def derive_process_source_coeff_zero(input_dir: Path) -> pl.DataFrame:
+def derive_process_source_coeff_zero(input_dir: Path,
+                                       *, provider: "object | None" = None,
+                                       ) -> pl.DataFrame:
     return _derive_coeff_zero(
         input_dir / "process__source.csv",
         input_dir / "p_process_source_max_capacity_coefficient.csv",
-        "source",
+        "source", provider=provider,
     )
 
 
-def derive_process_sink_coeff_zero(input_dir: Path) -> pl.DataFrame:
+def derive_process_sink_coeff_zero(input_dir: Path,
+                                     *, provider: "object | None" = None,
+                                     ) -> pl.DataFrame:
     return _derive_coeff_zero(
         input_dir / "process__sink.csv",
         input_dir / "p_process_sink_max_capacity_coefficient.csv",
-        "sink",
+        "sink", provider=provider,
     )
 
 
-def write_connection_param(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_connection_param(input_dir), solve_data_dir / "connection__param.csv")
+def write_connection_param(input_dir: Path, solve_data_dir: Path,
+                            *, provider: "object | None" = None,
+                            ) -> None:
+    _write(derive_connection_param(input_dir, provider=provider),
+           solve_data_dir / "connection__param.csv")
 
 
-def write_nodegroup_dispatch_node(input_dir: Path, solve_data_dir: Path) -> None:
+def write_nodegroup_dispatch_node(input_dir: Path, solve_data_dir: Path,
+                                    *, provider: "object | None" = None,
+                                    ) -> None:
     _write(
-        derive_nodegroup_dispatch_node(input_dir),
+        derive_nodegroup_dispatch_node(input_dir, provider=provider),
         solve_data_dir / "nodeGroupDispatch_node.csv",
     )
 
 
-def write_commodity_node_co2(input_dir: Path, solve_data_dir: Path) -> None:
+def write_commodity_node_co2(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> None:
     _write(
-        derive_commodity_node_co2(input_dir),
+        derive_commodity_node_co2(input_dir, provider=provider),
         solve_data_dir / "commodity_node_co2.csv",
     )
 
 
-def write_process__commodity__node(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process__commodity__node(input_dir: Path, solve_data_dir: Path,
+                                     *, provider: "object | None" = None,
+                                     ) -> None:
     _write(
-        derive_process__commodity__node(input_dir),
+        derive_process__commodity__node(input_dir, provider=provider),
         solve_data_dir / "process__commodity__node.csv",
     )
 
 
-def write_process_coeff_zero_sets(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process_coeff_zero_sets(input_dir: Path, solve_data_dir: Path,
+                                    *, provider: "object | None" = None,
+                                    ) -> None:
     _write(
-        derive_process_source_coeff_zero(input_dir),
+        derive_process_source_coeff_zero(input_dir, provider=provider),
         solve_data_dir / "process_source_coeff_zero.csv",
     )
     _write(
-        derive_process_sink_coeff_zero(input_dir),
+        derive_process_sink_coeff_zero(input_dir, provider=provider),
         solve_data_dir / "process_sink_coeff_zero.csv",
     )

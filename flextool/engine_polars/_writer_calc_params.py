@@ -113,7 +113,9 @@ _ENTITY_TOTAL_SPEC: list[tuple[str, str, str]] = [
 ]
 
 
-def _read_param_lookup(path: Path) -> dict[tuple[str, str], float]:
+def _read_param_lookup(path: Path,
+                        *, provider: "object | None" = None,
+                        ) -> dict[tuple[str, str], float]:
     """Read a 3-col (entity, paramName, value) CSV into a python dict.
 
     Mirrors ``entity_total_caps._read_param_table``: silently skip
@@ -121,7 +123,7 @@ def _read_param_lookup(path: Path) -> dict[tuple[str, str], float]:
     dict (rather than a polars frame) keeps the per-entity summation
     below straightforward — input tables are tiny.
     """
-    df = _read_csv(path, ["entity", "paramName", "value"])
+    df = _read_csv(path, ["entity", "paramName", "value"], provider=provider)
     out: dict[tuple[str, str], float] = {}
     for e, p, v in df.iter_rows():
         if not e or not p:
@@ -167,25 +169,30 @@ def derive_entity_total_cap(
     )
 
 
-def write_entity_total_caps(input_dir: Path, solve_data_dir: Path) -> None:
+def write_entity_total_caps(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> None:
     """Write all four ``e_*_total`` params keyed on entityInvest/Divest."""
     process_set = frozenset(
-        _drop_blank_rows(_read_csv(input_dir / "process.csv", ["process"]), ["process"])
+        _drop_blank_rows(_read_csv(input_dir / "process.csv", ["process"],
+                                     provider=provider), ["process"])
         .get_column("process").to_list()
     )
     node_set = frozenset(
-        _drop_blank_rows(_read_csv(input_dir / "node.csv", ["node"]), ["node"])
+        _drop_blank_rows(_read_csv(input_dir / "node.csv", ["node"],
+                                     provider=provider), ["node"])
         .get_column("node").to_list()
     )
-    p_process = _read_param_lookup(input_dir / "p_process.csv")
-    p_node = _read_param_lookup(input_dir / "p_node.csv")
+    p_process = _read_param_lookup(input_dir / "p_process.csv",
+                                     provider=provider)
+    p_node = _read_param_lookup(input_dir / "p_node.csv", provider=provider)
 
     # Cache the entity-key lists per source CSV (entityInvest is reused
     # by both invest_max and invest_min, same for entityDivest).
     key_cache: dict[str, list[str]] = {}
     for _, src, _ in _ENTITY_TOTAL_SPEC:
         if src not in key_cache:
-            df = _read_csv(solve_data_dir / src, ["entity"])
+            df = _read_csv(solve_data_dir / src, ["entity"], provider=provider)
             df = _drop_blank_rows(df, ["entity"])
             key_cache[src] = df.get_column("entity").to_list()
 
@@ -236,10 +243,13 @@ _METHOD_1WAY_1VAR: frozenset[str] = frozenset((
 
 # ---- process-method projections (mod L1121-L1194) -------------------------
 
-def derive_process_online_linear(input_dir: Path) -> pl.DataFrame:
+def derive_process_online_linear(input_dir: Path,
+                                   *, provider: "object | None" = None,
+                                   ) -> pl.DataFrame:
     """``process_online_linear`` = projection of process_method onto
     rows whose method ∈ METHOD_LP."""
-    pm = _read_csv(input_dir / "process_method.csv", ["process", "method"])
+    pm = _read_csv(input_dir / "process_method.csv", ["process", "method"],
+                    provider=provider)
     pm = _drop_blank_rows(pm, ["process", "method"])
     return (
         pm.filter(pl.col("method").is_in(list(_METHOD_LP)))
@@ -248,9 +258,12 @@ def derive_process_online_linear(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_process_online_integer(input_dir: Path) -> pl.DataFrame:
+def derive_process_online_integer(input_dir: Path,
+                                    *, provider: "object | None" = None,
+                                    ) -> pl.DataFrame:
     """``process_online_integer`` = METHOD_MIP filter on process_method."""
-    pm = _read_csv(input_dir / "process_method.csv", ["process", "method"])
+    pm = _read_csv(input_dir / "process_method.csv", ["process", "method"],
+                    provider=provider)
     pm = _drop_blank_rows(pm, ["process", "method"])
     return (
         pm.filter(pl.col("method").is_in(list(_METHOD_MIP)))
@@ -259,9 +272,12 @@ def derive_process_online_integer(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def derive_process_method_indirect(input_dir: Path) -> pl.DataFrame:
+def derive_process_method_indirect(input_dir: Path,
+                                     *, provider: "object | None" = None,
+                                     ) -> pl.DataFrame:
     """``process__method_indirect`` = METHOD_INDIRECT filter, both columns kept."""
-    pm = _read_csv(input_dir / "process_method.csv", ["process", "method"])
+    pm = _read_csv(input_dir / "process_method.csv", ["process", "method"],
+                    provider=provider)
     pm = _drop_blank_rows(pm, ["process", "method"])
     return (
         pm.filter(pl.col("method").is_in(list(_METHOD_INDIRECT)))
@@ -269,30 +285,37 @@ def derive_process_method_indirect(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def write_process_method_projections(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_process_online_linear(input_dir),
+def write_process_method_projections(input_dir: Path, solve_data_dir: Path,
+                                       *, provider: "object | None" = None,
+                                       ) -> None:
+    _write(derive_process_online_linear(input_dir, provider=provider),
            solve_data_dir / "process_online_linear.csv")
-    _write(derive_process_online_integer(input_dir),
+    _write(derive_process_online_integer(input_dir, provider=provider),
            solve_data_dir / "process_online_integer.csv")
-    _write(derive_process_method_indirect(input_dir),
+    _write(derive_process_method_indirect(input_dir, provider=provider),
            solve_data_dir / "process__method_indirect.csv")
 
 
 # ---- process_VRE (mod L2248) ----------------------------------------------
 
-def derive_process_VRE(input_dir: Path) -> pl.DataFrame:
+def derive_process_VRE(input_dir: Path,
+                         *, provider: "object | None" = None,
+                         ) -> pl.DataFrame:
     """``process_VRE`` = process_unit ∩ no-source ∩ has-upper-limit-profile.
 
     flextool.mod:2248 — VRE units have no source arc (free-energy
     primary input) and at least one ``upper_limit`` profile method.
     """
-    units = _read_csv(input_dir / "process_unit.csv", ["process"])
+    units = _read_csv(input_dir / "process_unit.csv", ["process"],
+                       provider=provider)
     units = _drop_blank_rows(units, ["process"])
-    sources = _read_csv(input_dir / "process__source.csv", ["process", "source"])
+    sources = _read_csv(input_dir / "process__source.csv",
+                         ["process", "source"], provider=provider)
     sources = _drop_blank_rows(sources, ["process", "source"])
     profiles = _read_csv(
         input_dir / "process__node__profile__profile_method.csv",
         ["process", "node", "profile", "profile_method"],
+        provider=provider,
     )
     profiles = _drop_blank_rows(
         profiles, ["process", "node", "profile", "profile_method"],
@@ -312,8 +335,11 @@ def derive_process_VRE(input_dir: Path) -> pl.DataFrame:
     )
 
 
-def write_process_VRE(input_dir: Path, solve_data_dir: Path) -> None:
-    _write(derive_process_VRE(input_dir), solve_data_dir / "process_VRE.csv")
+def write_process_VRE(input_dir: Path, solve_data_dir: Path,
+                        *, provider: "object | None" = None,
+                        ) -> None:
+    _write(derive_process_VRE(input_dir, provider=provider),
+           solve_data_dir / "process_VRE.csv")
 
 
 # ---- process_*_to_* family (mod L993-L1052) -------------------------------
@@ -345,7 +371,9 @@ def _build_arc_map(arc_df: pl.DataFrame, key: str, value: str) -> dict[str, list
     return out
 
 
-def _arc_method_inputs(input_dir: Path) -> dict:
+def _arc_method_inputs(input_dir: Path,
+                        *, provider: "object | None" = None,
+                        ) -> dict:
     """Shared scan for the 10 process_*_to_* derives.
 
     Returns the bundle of in-memory sets/lists used by every
@@ -353,19 +381,22 @@ def _arc_method_inputs(input_dir: Path) -> dict:
     helper directly so it remains standalone for accumulator capture.
     """
     pm = _drop_blank_rows(
-        _read_csv(input_dir / "process_method.csv", ["process", "method"]),
+        _read_csv(input_dir / "process_method.csv", ["process", "method"],
+                   provider=provider),
         ["process", "method"],
     )
     sources = _drop_blank_rows(
-        _read_csv(input_dir / "process__source.csv", ["process", "source"]),
+        _read_csv(input_dir / "process__source.csv", ["process", "source"],
+                   provider=provider),
         ["process", "source"],
     )
     sinks = _drop_blank_rows(
-        _read_csv(input_dir / "process__sink.csv", ["process", "sink"]),
+        _read_csv(input_dir / "process__sink.csv", ["process", "sink"],
+                   provider=provider),
         ["process", "sink"],
     )
     processes = _drop_blank_rows(
-        _read_csv(input_dir / "process.csv", ["process"]),
+        _read_csv(input_dir / "process.csv", ["process"], provider=provider),
         ["process"],
     ).get_column("process").to_list()
 
@@ -402,9 +433,11 @@ def _to_frame(rows: list[tuple[str, ...]],
 
 # ---- 10 derive_X for the process_*_to_* family ----
 
-def derive_process_sink_toProcess(input_dir: Path) -> pl.DataFrame:
+def derive_process_sink_toProcess(input_dir: Path,
+                                    *, provider: "object | None" = None,
+                                    ) -> pl.DataFrame:
     """``process_sink_toProcess`` — METHOD_2WAY_NVAR filter on (p, sink)."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, sink, p)
         for p, sink in inp["sink_rows"]
@@ -413,9 +446,11 @@ def derive_process_sink_toProcess(input_dir: Path) -> pl.DataFrame:
     return _to_frame(rows, ("process", "sink", "process_aux"))
 
 
-def derive_process_process_toSource(input_dir: Path) -> pl.DataFrame:
+def derive_process_process_toSource(input_dir: Path,
+                                      *, provider: "object | None" = None,
+                                      ) -> pl.DataFrame:
     """``process_process_toSource`` — METHOD_2WAY_NVAR filter on (p, source)."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, p, source)
         for p, source in inp["source_rows"]
@@ -424,10 +459,12 @@ def derive_process_process_toSource(input_dir: Path) -> pl.DataFrame:
     return _to_frame(rows, ("process_outer", "process", "source"))
 
 
-def derive_process_source_toSink(input_dir: Path) -> pl.DataFrame:
+def derive_process_source_toSink(input_dir: Path,
+                                   *, provider: "object | None" = None,
+                                   ) -> pl.DataFrame:
     """``process_source_toSink`` — METHOD_DIRECT cross-product
     of source rows and sinks_by_process."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, source, sink)
         for p, source in inp["source_rows"]
@@ -437,9 +474,11 @@ def derive_process_source_toSink(input_dir: Path) -> pl.DataFrame:
     return _to_frame(rows, ("process", "source", "sink"))
 
 
-def derive_process_source_toProcess_direct(input_dir: Path) -> pl.DataFrame:
+def derive_process_source_toProcess_direct(input_dir: Path,
+                                              *, provider: "object | None" = None,
+                                              ) -> pl.DataFrame:
     """``process_source_toProcess_direct`` — METHOD_DIRECT on (p, source)."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, source, p)
         for p, source in inp["source_rows"]
@@ -448,9 +487,11 @@ def derive_process_source_toProcess_direct(input_dir: Path) -> pl.DataFrame:
     return _to_frame(rows, ("process", "source", "process_aux"))
 
 
-def derive_process_process_toSink_direct(input_dir: Path) -> pl.DataFrame:
+def derive_process_process_toSink_direct(input_dir: Path,
+                                            *, provider: "object | None" = None,
+                                            ) -> pl.DataFrame:
     """``process_process_toSink_direct`` — METHOD_DIRECT on (p, sink)."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, p, sink)
         for p, sink in inp["sink_rows"]
@@ -459,9 +500,11 @@ def derive_process_process_toSink_direct(input_dir: Path) -> pl.DataFrame:
     return _to_frame(rows, ("process_outer", "process", "sink"))
 
 
-def derive_process_sink_toProcess_direct(input_dir: Path) -> pl.DataFrame:
+def derive_process_sink_toProcess_direct(input_dir: Path,
+                                            *, provider: "object | None" = None,
+                                            ) -> pl.DataFrame:
     """``process_sink_toProcess_direct`` — METHOD_2WAY_2VAR on (p, sink)."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, sink, p)
         for p, sink in inp["sink_rows"]
@@ -470,10 +513,12 @@ def derive_process_sink_toProcess_direct(input_dir: Path) -> pl.DataFrame:
     return _to_frame(rows, ("process", "sink", "process_aux"))
 
 
-def derive_process_sink_toSource(input_dir: Path) -> pl.DataFrame:
+def derive_process_sink_toSource(input_dir: Path,
+                                   *, provider: "object | None" = None,
+                                   ) -> pl.DataFrame:
     """``process_sink_toSource`` — METHOD_2WAY_2VAR cross-product
     of sink rows and sources_by_process."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, sink, source)
         for p, sink in inp["sink_rows"]
@@ -483,9 +528,11 @@ def derive_process_sink_toSource(input_dir: Path) -> pl.DataFrame:
     return _to_frame(rows, ("process", "sink", "source"))
 
 
-def derive_process_process_toSink_noConversion(input_dir: Path) -> pl.DataFrame:
+def derive_process_process_toSink_noConversion(input_dir: Path,
+                                                  *, provider: "object | None" = None,
+                                                  ) -> pl.DataFrame:
     """``process_process_toSink_noConversion`` — METHOD_1WAY_1VAR ∧ no source."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, p, sink)
         for p, sink in inp["sink_rows"]
@@ -494,9 +541,11 @@ def derive_process_process_toSink_noConversion(input_dir: Path) -> pl.DataFrame:
     return _to_frame(rows, ("process_outer", "process", "sink"))
 
 
-def derive_process_source_toProcess_noConversion(input_dir: Path) -> pl.DataFrame:
+def derive_process_source_toProcess_noConversion(input_dir: Path,
+                                                    *, provider: "object | None" = None,
+                                                    ) -> pl.DataFrame:
     """``process_source_toProcess_noConversion`` — METHOD_1WAY_1VAR ∧ no sink."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, source, p)
         for p, source in inp["source_rows"]
@@ -505,9 +554,11 @@ def derive_process_source_toProcess_noConversion(input_dir: Path) -> pl.DataFram
     return _to_frame(rows, ("process", "source", "process_aux"))
 
 
-def derive_process_process_toSource_direct(input_dir: Path) -> pl.DataFrame:
+def derive_process_process_toSource_direct(input_dir: Path,
+                                              *, provider: "object | None" = None,
+                                              ) -> pl.DataFrame:
     """``process_process_toSource_direct`` — METHOD_2WAY_2VAR on (p, source)."""
-    inp = _arc_method_inputs(input_dir)
+    inp = _arc_method_inputs(input_dir, provider=provider)
     rows = [
         (p, p, source)
         for p, source in inp["source_rows"]
@@ -516,7 +567,9 @@ def derive_process_process_toSource_direct(input_dir: Path) -> pl.DataFrame:
     return _to_frame(rows, ("process_outer", "process", "source"))
 
 
-def write_process_arc_method_joins(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process_arc_method_joins(input_dir: Path, solve_data_dir: Path,
+                                     *, provider: "object | None" = None,
+                                     ) -> None:
     """Emit the 10 method-gated process_*_to_* tables.
 
     Iteration order mirrors the legacy module exactly so that the
@@ -524,31 +577,37 @@ def write_process_arc_method_joins(input_dir: Path, solve_data_dir: Path) -> Non
     Each emitted CSV goes through ``_write(derive_X(...), path)`` so
     Phase E-b's accumulator captures every frame.
     """
-    _write(derive_process_sink_toProcess(input_dir),
+    _write(derive_process_sink_toProcess(input_dir, provider=provider),
            solve_data_dir / "process_sink_toProcess.csv")
-    _write(derive_process_process_toSource(input_dir),
+    _write(derive_process_process_toSource(input_dir, provider=provider),
            solve_data_dir / "process_process_toSource.csv")
-    _write(derive_process_source_toSink(input_dir),
+    _write(derive_process_source_toSink(input_dir, provider=provider),
            solve_data_dir / "process_source_toSink.csv")
-    _write(derive_process_source_toProcess_direct(input_dir),
+    _write(derive_process_source_toProcess_direct(input_dir,
+                                                    provider=provider),
            solve_data_dir / "process_source_toProcess_direct.csv")
-    _write(derive_process_process_toSink_direct(input_dir),
+    _write(derive_process_process_toSink_direct(input_dir, provider=provider),
            solve_data_dir / "process_process_toSink_direct.csv")
-    _write(derive_process_sink_toProcess_direct(input_dir),
+    _write(derive_process_sink_toProcess_direct(input_dir, provider=provider),
            solve_data_dir / "process_sink_toProcess_direct.csv")
-    _write(derive_process_sink_toSource(input_dir),
+    _write(derive_process_sink_toSource(input_dir, provider=provider),
            solve_data_dir / "process_sink_toSource.csv")
-    _write(derive_process_process_toSink_noConversion(input_dir),
+    _write(derive_process_process_toSink_noConversion(input_dir,
+                                                        provider=provider),
            solve_data_dir / "process_process_toSink_noConversion.csv")
-    _write(derive_process_source_toProcess_noConversion(input_dir),
+    _write(derive_process_source_toProcess_noConversion(input_dir,
+                                                          provider=provider),
            solve_data_dir / "process_source_toProcess_noConversion.csv")
-    _write(derive_process_process_toSource_direct(input_dir),
+    _write(derive_process_process_toSource_direct(input_dir,
+                                                    provider=provider),
            solve_data_dir / "process_process_toSource_direct.csv")
 
 
 # ---- profile-method joins (mod L961, L969) --------------------------------
 
-def _profile_method_inputs(input_dir: Path) -> tuple[
+def _profile_method_inputs(input_dir: Path,
+                             *, provider: "object | None" = None,
+                             ) -> tuple[
     pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, list[str],
     frozenset[str], frozenset[str], frozenset[str],
     dict[str, set[str]], dict[str, set[str]],
@@ -561,26 +620,30 @@ def _profile_method_inputs(input_dir: Path) -> tuple[
     calls it once and feeds the same scan to both derives.
     """
     pm = _drop_blank_rows(
-        _read_csv(input_dir / "process_method.csv", ["process", "method"]),
+        _read_csv(input_dir / "process_method.csv", ["process", "method"],
+                   provider=provider),
         ["process", "method"],
     )
     sources = _drop_blank_rows(
-        _read_csv(input_dir / "process__source.csv", ["process", "source"]),
+        _read_csv(input_dir / "process__source.csv", ["process", "source"],
+                   provider=provider),
         ["process", "source"],
     )
     sinks = _drop_blank_rows(
-        _read_csv(input_dir / "process__sink.csv", ["process", "sink"]),
+        _read_csv(input_dir / "process__sink.csv", ["process", "sink"],
+                   provider=provider),
         ["process", "sink"],
     )
     profiles = _drop_blank_rows(
         _read_csv(
             input_dir / "process__node__profile__profile_method.csv",
             ["process", "node", "profile", "profile_method"],
+            provider=provider,
         ),
         ["process", "node", "profile", "profile_method"],
     )
     processes = _drop_blank_rows(
-        _read_csv(input_dir / "process.csv", ["process"]),
+        _read_csv(input_dir / "process.csv", ["process"], provider=provider),
         ["process"],
     ).get_column("process").to_list()
 
@@ -607,6 +670,7 @@ def _profile_method_inputs(input_dir: Path) -> tuple[
 
 def derive_process_profileProcess_toSink_profile_profile_method(
     input_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``process__profileProcess__toSink__profile__profile_method``:
     join profile rows against (process, sink) arcs, gated by
@@ -618,7 +682,7 @@ def derive_process_profileProcess_toSink_profile_profile_method(
     (_pm, _sources, _sinks, _profiles, processes,
      p_with_indirect, has_sources, _has_sinks,
      sinks_by_process, _sources_by_process,
-     profiles_rows) = _profile_method_inputs(input_dir)
+     profiles_rows) = _profile_method_inputs(input_dir, provider=provider)
 
     rows_to_sink: list[tuple[str, str, str, str, str]] = []
     for p in processes:
@@ -646,6 +710,7 @@ def derive_process_profileProcess_toSink_profile_profile_method(
 
 def derive_process_source_toProfileProcess_profile_profile_method(
     input_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``process__source__toProfileProcess__profile__profile_method``:
     join profile rows against (process, source) arcs, gated by
@@ -653,7 +718,7 @@ def derive_process_source_toProfileProcess_profile_profile_method(
     (_pm, sources, _sinks, _profiles, _processes,
      p_with_indirect, _has_sources, has_sinks,
      _sinks_by_process, _sources_by_process,
-     profiles_rows) = _profile_method_inputs(input_dir)
+     profiles_rows) = _profile_method_inputs(input_dir, provider=provider)
 
     rows_to_source: list[tuple[str, str, str, str, str]] = []
     for p, source in sources.iter_rows():
@@ -680,6 +745,7 @@ def derive_process_source_toProfileProcess_profile_profile_method(
 
 def write_process_profile_method_joins(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Two profile-method joins:
 
@@ -687,13 +753,14 @@ def write_process_profile_method_joins(
     * ``process__source__toProfileProcess__profile__profile_method``
     """
     _write(
-        derive_process_profileProcess_toSink_profile_profile_method(input_dir),
+        derive_process_profileProcess_toSink_profile_profile_method(
+            input_dir, provider=provider),
         solve_data_dir
         / "process__profileProcess__toSink__profile__profile_method.csv",
     )
     _write(
         derive_process_source_toProfileProcess_profile_profile_method(
-            input_dir),
+            input_dir, provider=provider),
         solve_data_dir
         / "process__source__toProfileProcess__profile__profile_method.csv",
     )
