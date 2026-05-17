@@ -262,21 +262,23 @@ def write_workdir_inputs(
     (work_folder / "input").mkdir(exist_ok=True)
     (work_folder / "solve_data").mkdir(exist_ok=True)
 
-    # Δ.20 — delegate to flextool's input_writer.write_input as a pure
-    # function call.  This is intentionally documented as a transitional
-    # delegation (see module docstring).  The cascade no longer reaches
-    # into ``FlexToolRunner.write_input``; the call site is now owned by
-    # ``engine_polars``.
-    from flextool.flextoolrunner.input_writer import write_input as _flx_write_input
+    # Step 2.5 item 14 — route directly through input_derivation.run.
+    # input_derivation dispatches native polars writers itself; the
+    # legacy ``_native_leaf_set_override`` monkey-patch wrapper is no
+    # longer needed at this call site.  ``capture_frames`` is entered
+    # so each writer's ``_write(df, path)`` populates *provider* under
+    # the canonical key without touching disk.
+    from flextool.input_derivation import run as _input_derivation_run
+    from flextool.engine_polars._flex_data_accumulator import capture_frames
 
-    with _native_leaf_set_override(provider=provider):
-        _flx_write_input(
+    with capture_frames(provider=provider):
+        _input_derivation_run(
             db_url,
-            scenario_name,
+            provider,
             logger,
+            scenario_name=scenario_name,
             work_folder=work_folder,
             precision_digits=precision_digits,
-            provider=provider,
         )
 
 
