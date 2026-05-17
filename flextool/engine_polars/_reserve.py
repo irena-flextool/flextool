@@ -44,7 +44,19 @@ from polar_high import Sum, Where, Param
 from polar_high.engine import Var
 
 from ._axis_enums import schema_dtype
-from ._input_source import _read_csv_file
+from ._writer_provider_io import _provider_key
+
+
+def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
+    """Provider-only fetch.  Returns ``None`` when the Provider is
+    missing or doesn't carry *path*'s canonical key.
+    """
+    if provider is None:
+        return None
+    key = _provider_key(path)
+    if not provider.has(key):
+        return None
+    return provider.get(key)
 
 # Reserve loader runs at workdir-CSV seed phase — no FlexData in scope.
 # ``schema_dtype(None, ...)`` returns ``pl.Utf8`` so the empty/default
@@ -103,7 +115,8 @@ def _check(d, fields: tuple[str, ...]) -> None:
 # Loader
 
 def load_data(inp: Path | str, sd: Path | str,
-              dt: pl.DataFrame | None = None) -> dict:
+              dt: pl.DataFrame | None = None,
+              *, provider=None) -> dict:
     """Read all reserve CSVs from ``inp/`` (input) and ``sd/`` (solve_data),
     return a plain dict of ``field_name -> Param-or-DataFrame``.
 
@@ -128,10 +141,8 @@ def load_data(inp: Path | str, sd: Path | str,
 
     # ── Core (r, ud, g) set ─────────────────────────────────────────────
     rug_path = sd / "reserve__upDown__group.csv"
-    if not rug_path.exists():
-        return out
-    rug = _read_csv_file(rug_path)
-    if rug.height == 0:
+    rug = _provider_get(provider, rug_path)
+    if rug is None or rug.height == 0:
         return out
     rug = rug.rename({"reserve": "r", "upDown": "ud", "group": "g"}) \
               .select("r", "ud", "g")
@@ -144,17 +155,10 @@ def load_data(inp: Path | str, sd: Path | str,
         ("n_1",        "reserve_upDown_group_method_n_1"),
     ]:
         path = sd / f"reserve__upDown__group__method_{method}.csv"
-        if path.exists():
-            df = _read_csv_file(path)
-            if df.height > 0:
-                df = df.rename({"reserve": "r", "upDown": "ud", "group": "g"}) \
-                       .select("r", "ud", "g", "method")
-            else:
-                df = pl.DataFrame(schema={
-                    "r": schema_dtype(_enums, "r"),
-                    "ud": schema_dtype(_enums, "ud"),
-                    "g": schema_dtype(_enums, "g"),
-                    "method": pl.Utf8})
+        df = _provider_get(provider, path)
+        if df is not None and df.height > 0:
+            df = df.rename({"reserve": "r", "upDown": "ud", "group": "g"}) \
+                   .select("r", "ud", "g", "method")
         else:
             df = pl.DataFrame(schema={
                 "r": schema_dtype(_enums, "r"),
@@ -171,8 +175,8 @@ def load_data(inp: Path | str, sd: Path | str,
 
     # ── process_reserve_upDown_node_increase_reserve_ratio (dynamic RHS) ─
     irr_path = sd / "process_reserve_upDown_node_increase_reserve_ratio.csv"
-    if irr_path.exists():
-        irr = _read_csv_file(irr_path)
+    irr = _provider_get(provider, irr_path)
+    if irr is not None:
         if irr.height > 0:
             irr = irr.rename({"process": "p", "reserve": "r",
                                "upDown": "ud", "node": "n"}) \
@@ -187,8 +191,8 @@ def load_data(inp: Path | str, sd: Path | str,
 
     # ── process_reserve_upDown_node_large_failure_ratio (n-1 RHS) ──────
     lfr_path = sd / "process_reserve_upDown_node_large_failure_ratio.csv"
-    if lfr_path.exists():
-        lfr = _read_csv_file(lfr_path)
+    lfr = _provider_get(provider, lfr_path)
+    if lfr is not None:
         if lfr.height > 0:
             lfr = lfr.rename({"process": "p", "reserve": "r",
                                "upDown": "ud", "node": "n"}) \
@@ -208,15 +212,19 @@ def load_data(inp: Path | str, sd: Path | str,
     # reads are vulnerable to the bug class fixed upstream in flextool
     # 042fae23 (preprocessing path typo silently dropped group data).
     gn = None
-    for path in (sd / "group_node.csv", inp / "group__node.csv"):
-        if path.exists():
-            df = _read_csv_file(path)
-            if df.height > 0:
-                gn = df.rename({"group": "g", "node": "n"}).select("g", "n").unique()
-                break
+    gn_paths = (sd / "group_node.csv", inp / "group__node.csv")
+    seen_any = False
+    for path in gn_paths:
+        df = _provider_get(provider, path)
+        if df is None:
+            continue
+        seen_any = True
+        if df.height > 0:
+            gn = df.rename({"group": "g", "node": "n"}).select("g", "n").unique()
+            break
     if gn is not None:
         out["group_node"] = gn
-    elif (sd / "group_node.csv").exists() or (inp / "group__node.csv").exists():
+    elif seen_any:
         out["group_node"] = pl.DataFrame(schema={
             "g": schema_dtype(_enums, "g"),
             "n": schema_dtype(_enums, "n")})
@@ -226,8 +234,8 @@ def load_data(inp: Path | str, sd: Path | str,
 
     # ── pdtReserve_upDown_group: long-format reservation timeseries ───
     pdtR_path = sd / "pdtReserve_upDown_group.csv"
-    if pdtR_path.exists():
-        pdtR = _read_csv_file(pdtR_path)
+    pdtR = _provider_get(provider, pdtR_path)
+    if pdtR is not None:
         if pdtR.height > 0:
             pdtR = pdtR.rename({"reserve": "r", "upDown": "ud",
                                  "group": "g", "period": "d", "time": "t"})

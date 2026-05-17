@@ -3635,7 +3635,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         )
 
         # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
-        reserve_data = _reserve.load_data(inp=inp, sd=sd, dt=dt)
+        reserve_data = _reserve.load_data(inp=inp, sd=sd, dt=dt,
+                                            provider=provider)
         # ``group_node`` is shared between _group_slack and _reserve (both
         # populate it from the canonical solve_data/group_node.csv).  Drop the
         # reserve copy to avoid duplicate-kwargs at the FlexData(...) call when

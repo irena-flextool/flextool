@@ -155,9 +155,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
     "_region_filter.py": (
         "Reads input/regionSwitch.csv at region-filter setup."
     ),
-    "_reserve.py": (
-        "Reads raw reserve-class input fixtures."
-    ),
     "_solve_handoff.py": (
         "Reads workdir solve-data CSV at Provider-less handoff "
         "boundary (post-Step-2 the Provider is threaded through, "
