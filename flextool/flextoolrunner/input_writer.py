@@ -1896,9 +1896,22 @@ def write_input(
             )
             provider.put(_key, _frame)
 
+        # Step 2.5 Phase 3 — _ENTITY_SPECS migrated to SpineDBBackend.entities.
+        # The 16 entity-class frames now flow through the cascade-input
+        # Provider under the canonical input/<stem> key.  No disk writes
+        # at this site; write_entity has been deleted.
         for spec in _ENTITY_SPECS:
-            write_entity(db, spec.classes, spec.header, str(wf / spec.filename),
-                         entity_dimens=spec.entity_dimens)
+            _entity_frame = _backend_default.entities(
+                classes=spec.classes,
+                header=spec.header,
+                entity_dimens=spec.entity_dimens,
+            )
+            _spec_path = Path(spec.filename)
+            _key = (
+                f"{_spec_path.parent.name}/{_spec_path.stem}"
+                if _spec_path.parent.name else _spec_path.stem
+            )
+            provider.put(_key, _entity_frame)
 
         _validate_timeline_timestep_duration(db)
 
@@ -2171,33 +2184,6 @@ def _validate_group_output_memberships(db, logger: logging.Logger) -> None:
                     "Group '%s' has %s: yes but no %s members — output will be empty.",
                     group_name, param_name, required_members,
                 )
-
-
-def write_entity(
-    db,
-    cl: list[str],
-    header: str,
-    filename: str,
-    entity_dimens: list[list[int]] | None = None,
-) -> None:
-    entities = []
-    for (i, ent_class) in enumerate(cl):
-        class_entity_dimens = None
-        if entity_dimens:
-            class_entity_dimens = entity_dimens[i]
-        for entity in db.find_entities(entity_class_name=ent_class):
-            if class_entity_dimens is None:
-                entities.append(','.join(entity["entity_byname"]))
-            else:
-                entity_dim = []
-                for x in class_entity_dimens:
-                    entity_dim.append(entity["entity_byname"][x])
-                entities.append(','.join(entity_dim))
-
-    with open(filename, 'w') as realfile:
-        realfile.write(header + "\n")
-        for entity in entities:
-            realfile.write(entity + "\n")
 
 
 def write_parameter(
