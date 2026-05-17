@@ -45,6 +45,24 @@ from polar_high import Param
 
 from ._axis_enums import schema_dtype
 from ._input_source import _read_csv_file, _seed_or_exists
+from ._writer_provider_io import _provider_key
+
+
+def _provider_or_exists(
+    provider: "object | None", path: "Path | str",
+) -> bool:
+    """Step 1-g-5 — Provider-first replacement for :func:`_seed_or_exists`.
+
+    Returns ``True`` iff the live :class:`FlexDataProvider` carries the
+    artefact for *path* (under its canonical name) OR the file exists on
+    disk.  Falls through to the seed-funnel adapter when *provider* is
+    ``None`` so the small number of callers that still don't thread the
+    Provider keep working during the migration window.  Step 2 drops the
+    seed-funnel fallback once every caller passes ``provider``.
+    """
+    if provider is not None and provider.has(_provider_key(path)):
+        return True
+    return _seed_or_exists(path)
 
 # Derived-param helpers operate on a ``source`` (InputSource); FlexData
 # is not yet built when the broadcast cascade runs.  ``_enums = None``
@@ -120,16 +138,23 @@ def _scalar_default(source: "InputSource", entity_class: str,
     return fallback if d is None else d
 
 
-def _read_active_solve(workdir: Path) -> str | None:
+def _read_active_solve(workdir: Path,
+                         *, provider: "object | None" = None) -> str | None:
     """Read ``solve_data/solve_current.csv`` and return the active solve
     name, or ``None`` when the file is absent / empty.
 
-    Phase E-d — when the in-memory seed has the file, consult it
-    directly so the cascade can run with CSV emission disabled.  The
-    bare ``p.exists()`` guard would otherwise short-circuit before
-    ``_read_csv_file`` (which is seed-aware) ever runs.
+    Step 1-g-5 — Provider-first read.  When the live
+    :class:`FlexDataProvider` carries the frame, the in-memory copy is
+    consulted; otherwise the legacy seed-lookup / disk read runs (the
+    funnel is dropped wholesale in Step 2).
     """
     p = Path(workdir) / "solve_data" / "solve_current.csv"
+    if provider is not None and provider.has(_provider_key(p)):
+        df = provider.get(_provider_key(p))
+        if df is None or df.height == 0:
+            return None
+        col = df.columns[0]
+        return df[col][0]
     from flextool.engine_polars._input_source import _seed_lookup
     seeded = _seed_lookup(p)
     if seeded is None and not p.exists():
@@ -174,6 +199,7 @@ def _ctx_read(
     name: str,
     *,
     kind: str = "solve_data",
+    provider: "object | None" = None,
 ) -> "pl.DataFrame | None":
     """Δ.12a — single funnel for workdir CSV reads inside derived helpers.
 
@@ -202,7 +228,7 @@ def _ctx_read(
     # disabled (Phase E-c default), even though the active in-memory
     # accumulator holds the frame.  ``_seed_or_exists`` consults the
     # seed first, so the subsequent ``_read_csv_file`` finds the data.
-    if not _seed_or_exists(path):
+    if not _provider_or_exists(provider, path):
         return None
     try:
         return _read_csv_file(path)
@@ -221,6 +247,7 @@ def dt_and_step_duration_from_source(
     workdir: Path | None = None,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> tuple[pl.DataFrame, Param] | None:
     """Compute the per-(d, t) ``dt`` set and ``p_step_duration`` Param
     for the active solve.
@@ -251,7 +278,7 @@ def dt_and_step_duration_from_source(
     if ctx is not None and ctx.period_in_use.height > 0:
         realized_p = ctx.period_in_use.lazy().select("d").unique()
     elif workdir is not None:
-        piu = _ctx_read(ctx, workdir, "period_in_use_set.csv")
+        piu = _ctx_read(ctx, workdir, "period_in_use_set.csv", provider=provider)
         if piu is not None and piu.height > 0 and "period" in piu.columns:
             realized_p = (piu.lazy()
                             .select(pl.col("period").alias("d"))
@@ -289,7 +316,7 @@ def dt_and_step_duration_from_source(
     # use the anchor's timeset via ``period__branch.csv`` (anchor → branch
     # map; flextool's per_solve_sets.py:65-95 does this implicitly by
     # writing per-branch steps_in_use rows under the anchor's timeset).
-    pb_raw = _ctx_read(ctx, workdir, "period__branch.csv") if workdir is not None or ctx is not None else None
+    pb_raw = _ctx_read(ctx, workdir, "period__branch.csv", provider=provider) if workdir is not None or ctx is not None else None
     if pb_raw is not None and pb_raw.height > 0:
         pb_lf = (pb_raw.lazy()
                     .rename({"period": "anchor", "branch": "d"})
@@ -830,7 +857,9 @@ def p_inflow_from_source(
 # ---------------------------------------------------------------------------
 
 
-def _read_p_entity_all_existing_csv(workdir: Path | None
+def _read_p_entity_all_existing_csv(workdir: Path | None,
+                                       *,
+                                       provider: "object | None" = None,
                                        ) -> pl.DataFrame | None:
     """Γ.6.D — direct read of ``solve_data/p_entity_all_existing.csv``.
 
@@ -852,7 +881,7 @@ def _read_p_entity_all_existing_csv(workdir: Path | None
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "p_entity_all_existing.csv"
-    if not _seed_or_exists(p):
+    if not _provider_or_exists(provider, p):
         return None
     try:
         df = _read_csv_file(p)
@@ -873,6 +902,8 @@ def p_process_existing_count_from_source(
     dt: pl.DataFrame,
     active_solve: str | None = None,
     workdir: Path | None = None,
+    *,
+    provider: "object | None" = None,
 ) -> Param | None:
     """Per-(p, d) existing unit count = ``existing / unitsize``.
 
@@ -901,7 +932,7 @@ def p_process_existing_count_from_source(
     # when available (carries multi-solve handoff state and lifetime
     # gate already integrated).  We still need the unitsize cascade per
     # entity to convert capacity → unit count.
-    pae_csv = _read_p_entity_all_existing_csv(workdir)
+    pae_csv = _read_p_entity_all_existing_csv(workdir, provider=provider)
     if pae_csv is not None and pae_csv.height > 0:
         # Restrict to process-side entities (unit ∪ connection).
         proc_set, _, _ = _entity_classes_lookup(source)
@@ -1118,6 +1149,7 @@ def apply_derived_a(
     workdir: Path,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> None:
     """Apply Γ.3.A foundational Derived Params, mutating ``flex_data``
     in place.
@@ -1137,7 +1169,7 @@ def apply_derived_a(
         p_rp_cost_weight, pd_branch_weight, pdt_branch_weight, p_inflow
         → p_process_existing_count, p_profile_value (high-risk, last).
     """
-    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
     if active_solve is None:
         # Single-solve fixtures may omit solve_current.csv; fall back to
         # the FlexData's already-loaded dt (no override possible).
@@ -1195,7 +1227,7 @@ def apply_derived_a(
     # ``p_years_represented_d_calc.csv`` writer; consumed by
     # ``process_outputs.read_parameters`` to scale annualised
     # per-period costs / CO2 to absolute totals.
-    pad = _periodAll_from_source(source, active_solve, workdir)
+    pad = _periodAll_from_source(source, active_solve, workdir, provider=provider)
     flex_data.p_years_represented_d = p_years_represented_d_from_source(
         source, active_solve, pad)
 
@@ -1797,6 +1829,8 @@ def flow_from_n(source: "InputSource",
 def _flow_upper_existing_from_chained_csv(source: "InputSource",
                                               pss: pl.DataFrame,
                                               workdir: Path | None,
+                                              *,
+                                              provider: "object | None" = None,
                                               ) -> "Param | None":
     """Γ.6.D — build ``p_flow_upper_existing`` from the canonical
     ``solve_data/p_entity_all_existing.csv`` when it exists, divided by
@@ -1805,7 +1839,7 @@ def _flow_upper_existing_from_chained_csv(source: "InputSource",
     Returns None when the CSV is absent (caller falls back to the
     raw-existing path).
     """
-    pae_csv = _read_p_entity_all_existing_csv(workdir)
+    pae_csv = _read_p_entity_all_existing_csv(workdir, provider=provider)
     if pae_csv is None or pae_csv.height == 0:
         return None
     proc_set, _, _ = _entity_classes_lookup(source)
@@ -1837,6 +1871,7 @@ def p_flow_upper_existing_from_source(source: "InputSource",
                                          workdir: Path | None = None,
                                          *,
                                          ctx: "SolveContext | None" = None,
+                                         provider: "object | None" = None,
                                          ) -> "Param | None":
     """Cross-join ``base_cap_pd = existing_capacity / unitsize`` per
     (p, d) with ``pss`` to produce per-arc structural existing bound.
@@ -1873,7 +1908,7 @@ def p_flow_upper_existing_from_source(source: "InputSource",
             pl.col(_index_col(e_unit, "period")).alias("d"),
             pl.col("value").cast(pl.Float64).alias("cap"),
         ) if _index_col(e_unit, "period") in e_unit.columns
-            else _broadcast_existing_to_pd(e_unit, source, workdir, ctx=ctx))
+            else _broadcast_existing_to_pd(e_unit, source, workdir, ctx=ctx, provider=provider))
     e_conn = _try_param_explicit(source, "connection", "existing")
     if e_conn is not None:
         parts.append(e_conn.lazy().select(
@@ -1881,7 +1916,7 @@ def p_flow_upper_existing_from_source(source: "InputSource",
             pl.col(_index_col(e_conn, "period")).alias("d"),
             pl.col("value").cast(pl.Float64).alias("cap"),
         ) if _index_col(e_conn, "period") in e_conn.columns
-            else _broadcast_existing_to_pd(e_conn, source, workdir, ctx=ctx))
+            else _broadcast_existing_to_pd(e_conn, source, workdir, ctx=ctx, provider=provider))
     if not parts:
         return None
 
@@ -1970,6 +2005,7 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
                                  workdir: Path | None = None,
                                  *,
                                  ctx: "SolveContext | None" = None,
+                                 provider: "object | None" = None,
                                  ) -> pl.LazyFrame:
     """Fallback: when ``existing`` is a scalar (not 1d_map), broadcast
     over ``period_in_use``.
@@ -1995,7 +2031,7 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
                       .select("p", "d", "cap"))
     if workdir is not None:
         piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-        if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
+        if _provider_or_exists(provider, piu_path):  # Step 1-g-5 — Provider-first
             piu_df = _read_csv_file(piu_path)
             if piu_df.height > 0 and "period" in piu_df.columns:
                 pd_lf = (piu_df.lazy()
@@ -2401,6 +2437,7 @@ def apply_derived_b(
     workdir: Path,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> None:
     """Apply Γ.3.B Derived Params, mutating ``flex_data`` in place.
 
@@ -2413,7 +2450,7 @@ def apply_derived_b(
     Δ.4 deleted the deprecated wrapper alias.
     """
     # Active solve (used for existing-period broadcast in some helpers).
-    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
 
     # Build the classifier once.  Δ.12b: hard errors here would
     # indicate a malformed source — let them propagate instead of
@@ -2936,7 +2973,10 @@ def _per_entity_period_cost(source: "InputSource",
 
 def _read_period_first(source: "InputSource",
                           active_solve: str | None,
-                          workdir: Path | None) -> list[str]:
+                          workdir: Path | None,
+                          *,
+                          provider: "object | None" = None,
+                          ) -> list[str]:
     """Return ``period_first`` for the active solve (Γ.6.D).
 
     Mirrors flextool's ``solve_writers.write_periods`` (line 216-226):
@@ -2952,7 +2992,7 @@ def _read_period_first(source: "InputSource",
     """
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_first.csv"
-        if _seed_or_exists(p):  # Phase E-j — seed-aware
+        if _provider_or_exists(provider, p):  # Phase E-j — seed-aware
             try:
                 df = _read_csv_file(p)
                 if df.height > 0 and "period" in df.columns:
@@ -2970,6 +3010,8 @@ def _read_period_first(source: "InputSource",
 def _lifetime_gate_sums(source: "InputSource",
                             active_solve: str | None,
                             workdir: Path | None,
+                            *,
+                            provider: "object | None" = None,
                             ) -> dict[str, float]:
     """Per-entity ``life_sum`` for the ``reinvest_choice`` /
     ``no_investment`` lifetime gate (Γ.6.D).
@@ -2985,11 +3027,11 @@ def _lifetime_gate_sums(source: "InputSource",
     ``no_investment`` are returned; other methods don't trigger the
     expiry gate so callers can safely treat ``e ∉ map`` as "no gate".
     """
-    period_first = _read_period_first(source, active_solve, workdir)
+    period_first = _read_period_first(source, active_solve, workdir, provider=provider)
     if not period_first:
         return {}
     # p_years_d for those periods.
-    pyd_lf = _p_years_d_lf(source, active_solve, workdir)
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     pyd: dict[str, float] = {}
     if pyd_lf is not None:
         pyd_df = pyd_lf.collect()
@@ -3025,6 +3067,8 @@ def _lifetime_expired_pairs(source: "InputSource",
                                 workdir: Path | None,
                                 methods: tuple[str, ...] = (
                                     "reinvest_choice", "no_investment"),
+                                *,
+                                provider: "object | None" = None,
                                 ) -> set[tuple[str, str]]:
     """Set of (e, d) pairs whose pre-existing capacity has expired
     (Γ.6.D).
@@ -3053,13 +3097,13 @@ def _lifetime_expired_pairs(source: "InputSource",
     if not sums:
         return set()
 
-    pyd_lf = _p_years_d_lf(source, active_solve, workdir)
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         return set()
     pyd_df = pyd_lf.collect()
     pyd: dict[str, float] = {str(r["d"]): float(r["yr"])
                                 for r in pyd_df.iter_rows(named=True)}
-    piu = _period_in_use_set(source, active_solve, workdir)
+    piu = _period_in_use_set(source, active_solve, workdir, provider=provider)
     if not piu:
         return set()
     out: set[tuple[str, str]] = set()
@@ -3214,6 +3258,8 @@ def ed_divest_set_from_source(source: "InputSource",
 def _p_years_d_lf(source: "InputSource",
                     active_solve: str,
                     workdir: Path | None = None,
+                    *,
+                    provider: "object | None" = None,
                     ) -> pl.LazyFrame | None:
     """Build per-period ``p_years_d`` for the active solve.
 
@@ -3235,7 +3281,7 @@ def _p_years_d_lf(source: "InputSource",
     # 1 — workdir CSV (authoritative).
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "p_years_d.csv"
-        if _seed_or_exists(p):  # Phase E-j — seed-aware
+        if _provider_or_exists(provider, p):  # Phase E-j — seed-aware
             try:
                 df = _read_csv_file(p)
                 if df.height > 0 and "period" in df.columns:
@@ -3249,7 +3295,7 @@ def _p_years_d_lf(source: "InputSource",
             except Exception:
                 pass
         p2 = Path(workdir) / "solve_data" / "period_with_history.csv"
-        if _seed_or_exists(p2):  # Phase E-j — seed-aware
+        if _provider_or_exists(provider, p2):  # Phase E-j — seed-aware
             try:
                 df = _read_csv_file(p2)
                 if df.height > 0 and "period" in df.columns:
@@ -3294,7 +3340,7 @@ def _p_years_d_lf(source: "InputSource",
                     "yr": [r[1] for r in rows],
                 }).lazy()
     # 4 — fallback to integer-indexed period_in_use.
-    periods = _period_in_use_set(source, active_solve)
+    periods = _period_in_use_set(source, active_solve, provider=provider)
     if periods:
         return pl.LazyFrame({
             "d": periods,
@@ -3338,6 +3384,7 @@ def _period_in_use_set(source: "InputSource",
                           active_solve: str | None,
                           workdir: Path | None = None,
                           *,
+                          provider: "object | None" = None,
                           ctx: "SolveContext | None" = None) -> list[str]:
     """Compute the canonical ``period_in_use`` set for the active solve.
 
@@ -3359,7 +3406,7 @@ def _period_in_use_set(source: "InputSource",
             return piu["d"].cast(pl.Utf8, strict=False).to_list()
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-        if _seed_or_exists(p):  # Phase E-j — seed-aware
+        if _provider_or_exists(provider, p):  # Phase E-j — seed-aware
             df = _read_csv_file(p)
             if df.height > 0 and "period" in df.columns:
                 return df["period"].cast(pl.Utf8, strict=False).to_list()
@@ -3377,6 +3424,8 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
                                             active_solve: str | None,
                                             ed_invest: pl.DataFrame | None,
                                             workdir: Path | None = None,
+                                            *,
+                                            provider: "object | None" = None,
                                             ) -> pl.DataFrame | None:
     """Build the strict-lookback (e, d_invest, d) tuples used by the
     user-constraint LHS prebuilt-capacity term (mod L2885-2898).
@@ -3407,10 +3456,10 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
             "d_invest": schema_dtype(_enums, "d_invest"),
             "d": schema_dtype(_enums, "d"),
         })
-    pyd_lf = _p_years_d_lf(source, active_solve, workdir)
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         return None
-    periods = _period_in_use_set(source, active_solve, workdir)
+    periods = _period_in_use_set(source, active_solve, workdir, provider=provider)
     if not periods:
         return pl.DataFrame(schema={
             "e": schema_dtype(_enums, "e"),
@@ -3427,6 +3476,8 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
 def edd_divest_active_from_source(source: "InputSource",
                                       active_solve: str | None,
                                       pd_divest: pl.DataFrame | None,
+                                      *,
+                                      provider: "object | None" = None,
                                       ) -> pl.DataFrame | None:
     """Build the active-divest (p, d_divest, d) tuples — see audit §3.7.3.
 
@@ -3439,10 +3490,10 @@ def edd_divest_active_from_source(source: "InputSource",
             "d_divest": schema_dtype(_enums, "d_divest"),
             "d": schema_dtype(_enums, "d"),
         })
-    pyd_lf = _p_years_d_lf(source, active_solve)
+    pyd_lf = _p_years_d_lf(source, active_solve, provider=provider)
     if pyd_lf is None:
         return None
-    periods = _period_in_use_set(source, active_solve)
+    periods = _period_in_use_set(source, active_solve, provider=provider)
     if not periods:
         return pl.DataFrame(schema={
             "p": schema_dtype(_enums, "p"),
@@ -3624,6 +3675,7 @@ def p_entity_max_units_from_source(source: "InputSource",
                                        p_entity_all_existing: "Param | None" = None,
                                        *,
                                        ctx: "SolveContext | None" = None,
+                                       provider: "object | None" = None,
                                        ) -> "Param | None":
     """Per-(e, d) maximum new-unit count = ``max_capacity / unitsize``.
 
@@ -3650,7 +3702,7 @@ def p_entity_max_units_from_source(source: "InputSource",
     if ed_invest is None or ed_invest.height == 0:
         return None
 
-    piu = _period_in_use_set(source, active_solve, workdir, ctx=ctx)
+    piu = _period_in_use_set(source, active_solve, workdir, ctx=ctx, provider=provider)
     if not piu:
         return None
     period_set = set(piu)
@@ -3692,7 +3744,7 @@ def p_entity_max_units_from_source(source: "InputSource",
     else:
         pae_param = p_entity_all_existing_from_source(source, active_solve,
                                                          workdir=workdir,
-                                                         ctx=ctx)
+                                                         ctx=ctx, provider=provider)
         if pae_param is None:
             existing_map = {}
         else:
@@ -4493,6 +4545,8 @@ def process_group_inside_nonSync_from_source(source: "InputSource"
 def p_group_capacity_for_scaling_from_source(source: "InputSource",
                                                   active_solve: str | None,
                                                   workdir: Path | None = None,
+                                                  *,
+                                                  provider: "object | None" = None,
                                                   ) -> "Param | None":
     """Per-(g, d) row scaling factor.  Algorithm (audit §3.12.2,
     ``lp_scaling_params.py:91-244``): pow10-clamped per-group capacity
@@ -4504,7 +4558,7 @@ def p_group_capacity_for_scaling_from_source(source: "InputSource",
     (rare; activated via ``solve.use_row_scaling``) returns None and the
     CSV value survives.
     """
-    period_in_use = _period_in_use_set(source, active_solve, workdir)
+    period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
     if not period_in_use:
         return None
     groups_df = _try_entities(source, "group")
@@ -4553,6 +4607,8 @@ def p_inv_group_cap_from_source(source: "InputSource",
 def p_node_capacity_for_scaling_from_source(source: "InputSource",
                                                   active_solve: str | None,
                                                   workdir: Path | None = None,
+                                                  *,
+                                                  provider: "object | None" = None,
                                                   ) -> "Param | None":
     """Per-(n, d) row scaling factor for slack-penalty terms in the
     objective (``vq_up``/``vq_down`` × ``p_penalty`` × this factor).
@@ -4577,7 +4633,7 @@ def p_node_capacity_for_scaling_from_source(source: "InputSource",
     ``solve.use_row_scaling=1``.  For now the helper bails (returns
     None) when scaling is active so the seed CSV survives.
     """
-    period_in_use = _period_in_use_set(source, active_solve, workdir)
+    period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
     if not period_in_use:
         return None
     # Detect scaling active: solve.use_row_scaling truthy.
@@ -4734,6 +4790,7 @@ def apply_derived_c(
     workdir: Path,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> None:
     """Apply Γ.3.C Derived Params, mutating ``flex_data`` in place.
 
@@ -4747,7 +4804,7 @@ def apply_derived_c(
     Δ.3 replaced the previous ``derived_overrides_c`` dict-return;
     Δ.4 deleted the deprecated wrapper alias.
     """
-    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
     dt_csv = getattr(flex_data, "dt", None)
     sd_csv = getattr(flex_data, "p_step_duration", None)
 
@@ -4943,8 +5000,8 @@ def apply_derived_c(
             edd_invest_set_lf as _edd_invest_lf,
         )
         period_in_use = _period_in_use_set(source, active_solve, workdir,
-                                              ctx=ctx)
-        period_with_history = (_read_period_with_history(workdir)
+                                              ctx=ctx, provider=provider)
+        period_with_history = (_read_period_with_history(workdir, provider=provider)
                                   or list(period_in_use))
         try:
             edd_inv_db = _edd_invest_lf(
@@ -5004,6 +5061,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
                                         workdir: Path | None = None,
                                         *,
                                         ctx: "SolveContext | None" = None,
+                                        provider: "object | None" = None,
                                         ) -> "Param | None":
     """§3.11 — sum of pre-existing capacity per (entity, period).
 
@@ -5028,7 +5086,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
     that aren't covered by ``entity.existing`` — captures the
     multi-solve state passed via ``apply_handoff``.
     """
-    piu = _period_in_use_set(source, active_solve, workdir, ctx=ctx)
+    piu = _period_in_use_set(source, active_solve, workdir, ctx=ctx, provider=provider)
     if not piu:
         return None
 
@@ -5063,7 +5121,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
                 return Param(("e", "d"), df2)
     elif workdir is not None:
         pae_path = Path(workdir) / "solve_data" / "p_entity_all_existing.csv"
-        if _seed_or_exists(pae_path):  # Phase E-j — seed-aware
+        if _provider_or_exists(provider, pae_path):  # Phase E-j — seed-aware
             try:
                 df = _read_csv_file(pae_path)
                 if df.height > 0 and "entity" in df.columns \
@@ -5397,6 +5455,7 @@ def apply_derived_d(
     workdir: Path,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> None:
     """Apply Γ.3.D Derived Params, mutating ``flex_data`` in place.
 
@@ -5410,11 +5469,11 @@ def apply_derived_d(
     (no DC-PF reference angle / no reserve relationships /
     no chained existing capacity).  Hard exceptions propagate.
     """
-    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
 
     # ─── §3.11 p_entity_all_existing — Δ.12b: unconditional ──────────
     flex_data.p_entity_all_existing = p_entity_all_existing_from_source(
-        source, active_solve, workdir, ctx=ctx)
+        source, active_solve, workdir, ctx=ctx, provider=provider)
 
     # Δ.12c — ``apply_existing_chain`` was previously invoked here, but
     # it consumes the handoff carriers (``p_entity_previously_invested_capacity``
@@ -5487,6 +5546,7 @@ def _expand_branch_periods(period_order: list[str],
                               workdir: Path | None,
                               *,
                               ctx: "SolveContext | None" = None,
+                              provider: "object | None" = None,
                               ) -> list[str]:
     """Given a period_order coming from solve.realized_periods +
     period_timeset, add stochastic-branch periods read from
@@ -5519,7 +5579,7 @@ def _expand_branch_periods(period_order: list[str],
         if workdir is None:
             return list(period_order)
         p = Path(workdir) / "solve_data" / "period__branch.csv"
-        if not _seed_or_exists(p):  # Phase E-h — seed-aware
+        if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
             return list(period_order)
         try:
             df = _read_csv_file(p)
@@ -5529,7 +5589,7 @@ def _expand_branch_periods(period_order: list[str],
             return list(period_order)
         if not in_use:
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-            if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
+            if _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
                 try:
                     piu = _read_csv_file(piu_path)
                     if piu.height > 0:
@@ -5561,6 +5621,7 @@ def _dt_period_active_steps_from_workdir(
     workdir: Path,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> dict | None:
     """Δ.12c-fix2 gap #5 — preprocessing-only-timeline fallback.
 
@@ -5593,7 +5654,7 @@ def _dt_period_active_steps_from_workdir(
     if siu is None:
         sd = workdir / "solve_data"
         siu_path = sd / "steps_in_use.csv"
-        if not _seed_or_exists(siu_path):  # Phase E-j — seed-aware
+        if not _provider_or_exists(provider, siu_path):  # Phase E-j — seed-aware
             return None
         try:
             siu_raw = _read_csv_file(siu_path)
@@ -5625,7 +5686,7 @@ def _dt_period_active_steps_from_workdir(
                 seen.add(d)
     else:
         piu_path = sd / "period_in_use_set.csv"
-        if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
+        if _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
             try:
                 piu_df = _read_csv_file(piu_path)
                 if piu_df.height > 0 and "period" in piu_df.columns:
@@ -5716,6 +5777,7 @@ def _dt_period_active_steps(source: "InputSource",
                               workdir: Path | None = None,
                               *,
                               ctx: "SolveContext | None" = None,
+                              provider: "object | None" = None,
                               ) -> dict | None:
     """Build the per-period active-step structure used by every storage
     block-algebra helper.
@@ -5754,12 +5816,12 @@ def _dt_period_active_steps(source: "InputSource",
             steps_in_use_available = False
     if not steps_in_use_available and workdir is not None:
         steps_in_use_available = (
-            _seed_or_exists(  # Phase E-j — seed-aware
+            _provider_or_exists(provider,   # Phase E-j — seed-aware
                 Path(workdir) / "solve_data" / "steps_in_use.csv")
         )
     if steps_in_use_available and workdir is not None:
         wd_result = _dt_period_active_steps_from_workdir(
-            source, workdir, ctx=ctx)
+            source, workdir, ctx=ctx, provider=provider)
         if wd_result is not None:
             return wd_result
 
@@ -5768,7 +5830,7 @@ def _dt_period_active_steps(source: "InputSource",
         # Try preprocessing-only fallback before bailing.
         if workdir is not None:
             return _dt_period_active_steps_from_workdir(
-                source, workdir, ctx=ctx)
+                source, workdir, ctx=ctx, provider=provider)
         return None
     period_col = next((c for c in ("period", "x")
                         if c in p_ts.columns), None)
@@ -5784,7 +5846,7 @@ def _dt_period_active_steps(source: "InputSource",
         # only fallback.
         if workdir is not None:
             wd_result = _dt_period_active_steps_from_workdir(
-                source, workdir, ctx=ctx)
+                source, workdir, ctx=ctx, provider=provider)
             if wd_result is not None:
                 return wd_result
         # No fallback available — caller will bail.
@@ -5812,7 +5874,7 @@ def _dt_period_active_steps(source: "InputSource",
     if workdir is not None:
         if not in_use:
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-            if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
+            if _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
                 try:
                     piu_df = _read_csv_file(piu_path)
                     if piu_df.height > 0:
@@ -5821,7 +5883,7 @@ def _dt_period_active_steps(source: "InputSource",
                     in_use = set()
         if pbf is None:
             pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
-            if _seed_or_exists(pb_path):  # Phase E-j — seed-aware
+            if _provider_or_exists(provider, pb_path):  # Phase E-j — seed-aware
                 try:
                     pbf = _read_csv_file(pb_path)
                 except Exception:
@@ -5896,7 +5958,7 @@ def _dt_period_active_steps(source: "InputSource",
     # Workdir-aware branch expansion + reorder by period_in_use_set
     # insertion order (canonical flextool active_time_list ordering).
     if workdir is not None or ctx is not None:
-        period_order = _expand_branch_periods(period_order, workdir, ctx=ctx)
+        period_order = _expand_branch_periods(period_order, workdir, ctx=ctx, provider=provider)
         # Path B Cat B: prefer ctx.period_in_use over CSV read.
         canonical: list[str] | None = None
         if ctx is not None:
@@ -5905,7 +5967,7 @@ def _dt_period_active_steps(source: "InputSource",
                 canonical = piu_ctx["d"].to_list()
         if canonical is None and workdir is not None:
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-            if _seed_or_exists(piu_path):  # Phase E-j — seed-aware
+            if _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
                 try:
                     piu_df = _read_csv_file(piu_path)
                     if piu_df.height > 0:
@@ -5991,6 +6053,7 @@ def dtttdt_from_source(source: "InputSource",
                           workdir: Path | None = None,
                           *,
                           ctx: "SolveContext | None" = None,
+                          provider: "object | None" = None,
                           ) -> pl.DataFrame | None:
     """Build the canonical ``(d, t, t_previous, t_previous_within_timeset,
     d_previous, t_previous_within_solve)`` dispatch-step lag frame.
@@ -6007,7 +6070,7 @@ def dtttdt_from_source(source: "InputSource",
       * Within-period predecessor: previous step in the same period
         cyclically (first wraps to block_last of the period).
     """
-    info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx)
+    info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx, provider=provider)
     if info is None:
         return None
     per_period = info["per_period"]
@@ -6029,7 +6092,7 @@ def dtttdt_from_source(source: "InputSource",
             period_col, branch_col = "d_anchor", "b"
     if pbf is None and workdir is not None:
         pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
-        if _seed_or_exists(pb_path):  # Phase E-j — seed-aware
+        if _provider_or_exists(provider, pb_path):  # Phase E-j — seed-aware
             try:
                 pbf = _read_csv_file(pb_path)
             except Exception:
@@ -6149,6 +6212,7 @@ def period_block_family_from_source(source: "InputSource",
                                        *,
                                        block_layout: "BlockLayout | None" = None,
                                        ctx: "SolveContext | None" = None,
+                                       provider: "object | None" = None,
                                        ) -> dict | None:
     """Build the ``period_block_set`` / ``period_block_succ`` /
     ``period_block_time`` frames mirrored on
@@ -6173,7 +6237,7 @@ def period_block_family_from_source(source: "InputSource",
 
     Returns dict with the three frames or None when source insufficient.
     """
-    info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx)
+    info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx, provider=provider)
     if info is None:
         return None
     per_period = info["per_period"]
@@ -6547,6 +6611,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
                                                 *,
                                                 ctx: "SolveContext | None"
                                                   = None,
+                                                provider: "object | None" = None,
                                                 ) -> "Param | None":
     """``p_state_existing_capacity`` per (n, d) — node existing capacity
     restricted to nodes carrying state (``nodeState`` set).
@@ -6560,10 +6625,10 @@ def p_state_existing_capacity_from_source(source: "InputSource",
         return None
     state_n = set(nodeState_df["n"].to_list())
     # Full period set (realized + invest + stochastic-branch siblings).
-    piu_base = _period_in_use_set(source, active_solve, ctx=ctx) if active_solve \
+    piu_base = _period_in_use_set(source, active_solve, ctx=ctx, provider=provider) if active_solve \
                 else []
-    full_periods = _expand_branch_periods(piu_base, workdir, ctx=ctx)
-    pae = p_entity_all_existing_from_source(source, active_solve, workdir, ctx=ctx)
+    full_periods = _expand_branch_periods(piu_base, workdir, ctx=ctx, provider=provider)
+    pae = p_entity_all_existing_from_source(source, active_solve, workdir, ctx=ctx, provider=provider)
     if pae is not None and pae.frame.height > 0:
         base = (pae.frame.lazy()
                   .rename({"e": "n"})
@@ -6574,7 +6639,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
         # anchor's existing value.
         if full_periods and len(full_periods) > base["d"].n_unique():
             anchor_branches = _expand_branch_periods(
-                base["d"].unique().to_list(), workdir, ctx=ctx)
+                base["d"].unique().to_list(), workdir, ctx=ctx, provider=provider)
             # Build (anchor → list of d) mapping
             extra_rows: list[tuple[str, str, float]] = []
             covered = set(base["d"].to_list())
@@ -6583,7 +6648,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
                     continue
                 # Find anchor whose row to copy: any anchor it expanded
                 # from.  Walk period__branch.csv to find anchor mapping.
-                anchor_for_d = _branch_anchor(d, workdir, ctx=ctx)
+                anchor_for_d = _branch_anchor(d, workdir, ctx=ctx, provider=provider)
                 if anchor_for_d is None:
                     continue
                 rows_for_anchor = base.filter(
@@ -6627,6 +6692,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
 
 def _branch_anchor(branch: str, workdir: Path | None,
                       *, ctx: "SolveContext | None" = None,
+                      provider: "object | None" = None,
                       ) -> str | None:
     """Return the anchor period whose ``period__branch.csv`` row maps
     to *branch*.  None if no mapping found.
@@ -6648,7 +6714,7 @@ def _branch_anchor(branch: str, workdir: Path | None,
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "period__branch.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
     try:
         df = _read_csv_file(p)
@@ -6814,7 +6880,9 @@ def storage_use_reference_value_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
-def p_roll_continue_state_from_workdir(workdir: Path | None
+def p_roll_continue_state_from_workdir(workdir: Path | None,
+                                            *,
+                                            provider: "object | None" = None,
                                             ) -> "Param | None":
     """Read the rolling-handoff ``p_roll_continue_state`` from the
     on-disk CSV (written by a prior solve via
@@ -6824,7 +6892,7 @@ def p_roll_continue_state_from_workdir(workdir: Path | None
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "p_roll_continue_state.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     df.columns = [c.strip() for c in df.columns]
@@ -6836,7 +6904,9 @@ def p_roll_continue_state_from_workdir(workdir: Path | None
     return Param(("n",), df)
 
 
-def p_fix_storage_quantity_from_workdir(workdir: Path | None
+def p_fix_storage_quantity_from_workdir(workdir: Path | None,
+                                              *,
+                                              provider: "object | None" = None,
                                               ) -> "Param | None":
     """Read the rolling-handoff ``p_fix_storage_quantity`` from
     ``solve_data/fix_storage_quantity.csv``.
@@ -6844,7 +6914,7 @@ def p_fix_storage_quantity_from_workdir(workdir: Path | None
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "fix_storage_quantity.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     if df.height == 0:
@@ -6861,7 +6931,9 @@ def p_fix_storage_quantity_from_workdir(workdir: Path | None
 # ---------------------------------------------------------------------------
 
 
-def dtt_timeline_matching_from_workdir(workdir: Path | None
+def dtt_timeline_matching_from_workdir(workdir: Path | None,
+                                              *,
+                                              provider: "object | None" = None,
                                               ) -> pl.DataFrame | None:
     """Per-solve timeline matching map ``(d, t, t_upper)`` between a
     sub-solve's fine timesteps and the upper-level coarse timesteps.
@@ -6870,7 +6942,7 @@ def dtt_timeline_matching_from_workdir(workdir: Path | None
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "timeline_matching_map.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     if df.height == 0:
@@ -6885,6 +6957,7 @@ def period_branch_from_source(source: "InputSource",
                                 workdir: Path | None,
                                 *,
                                 ctx: "SolveContext | None" = None,
+                                provider: "object | None" = None,
                                 ) -> pl.DataFrame | None:
     """``period_branch`` rolling-handoff helper — (d_upper, d) anchor →
     branch map per audit §3.9.8.
@@ -6911,7 +6984,7 @@ def period_branch_from_source(source: "InputSource",
                     .unique())
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period__branch.csv"
-        if _seed_or_exists(p):  # Phase E-h — seed-aware
+        if _provider_or_exists(provider, p):  # Phase E-h — seed-aware
             df = _read_csv_file(p)
             if df.height > 0:
                 return (df
@@ -7025,6 +7098,7 @@ def apply_derived_e(
     workdir: Path,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> None:
     """Apply Γ.3.E storage block algebra (§3.9), mutating ``flex_data``
     in place.
@@ -7054,7 +7128,7 @@ def apply_derived_e(
         flow_from_nodeBalance_block_filtered,
     )
 
-    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
     nodeState_df = getattr(flex_data, "nodeState", None)
     has_state = (nodeState_df is not None
                   and getattr(nodeState_df, "height", 0) > 0)
@@ -7084,7 +7158,7 @@ def apply_derived_e(
     # because fixtures genuinely lacking timeline data on the source AND
     # the workdir CSV (very rare; not present in the engine_polars
     # corpus) still need to fall through to the seed-loaded value.
-    dtttdt_db = dtttdt_from_source(source, active_solve, workdir, ctx=ctx)
+    dtttdt_db = dtttdt_from_source(source, active_solve, workdir, ctx=ctx, provider=provider)
     if dtttdt_db is not None:
         flex_data.dtttdt = dtttdt_db
 
@@ -7200,11 +7274,11 @@ def apply_derived_e(
     # at seed time but produced later by a prior solve).
     if has_state:
         if getattr(flex_data, "p_roll_continue_state", None) is None:
-            flex_data.p_roll_continue_state = p_roll_continue_state_from_workdir(workdir)
+            flex_data.p_roll_continue_state = p_roll_continue_state_from_workdir(workdir, provider=provider)
         if getattr(flex_data, "p_fix_storage_quantity", None) is None:
-            flex_data.p_fix_storage_quantity = p_fix_storage_quantity_from_workdir(workdir)
-        flex_data.dtt_timeline_matching = dtt_timeline_matching_from_workdir(workdir)
-        flex_data.period_branch = period_branch_from_source(source, workdir, ctx=ctx)
+            flex_data.p_fix_storage_quantity = p_fix_storage_quantity_from_workdir(workdir, provider=provider)
+        flex_data.dtt_timeline_matching = dtt_timeline_matching_from_workdir(workdir, provider=provider)
+        flex_data.period_branch = period_branch_from_source(source, workdir, ctx=ctx, provider=provider)
 
 
 
@@ -7384,6 +7458,8 @@ def _years_for_period_from_source(source: "InputSource",
 
 def _periodAll_from_source(source: "InputSource",
                               active_solve: str | None,
+                              *,
+                              provider: "object | None" = None,
                               workdir: Path | None = None) -> list[str]:
     """Compute the periodAll set for the active solve.
 
@@ -7395,7 +7471,7 @@ def _periodAll_from_source(source: "InputSource",
     """
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "periodAll_set.csv"
-        if _seed_or_exists(p):  # Phase E-j — seed-aware
+        if _provider_or_exists(provider, p):  # Phase E-j — seed-aware
             df = _read_csv_file(p)
             if df.height > 0 and "period" in df.columns:
                 return df["period"].cast(pl.Utf8, strict=False).to_list()
@@ -7412,6 +7488,8 @@ def _periodAll_from_source(source: "InputSource",
 def _inflation_yearly_from_source(source: "InputSource",
                                      active_solve: str | None,
                                      workdir: Path | None = None,
+                                     *,
+                                     provider: "object | None" = None,
                                      ) -> tuple[dict[str, float],
                                                  dict[str, float]] | None:
     """Compute ``p_inflation_factor_investment_yearly[d]`` and
@@ -7439,7 +7517,7 @@ def _inflation_yearly_from_source(source: "InputSource",
             ``ops_factor[d] = sum_y pyr[d, y] * (1 + rate)^(-until_ops)``
             When ``sum_y pyr[d, y] == 0`` → factor = 1.0.
     """
-    period_universe = _periodAll_from_source(source, active_solve, workdir)
+    period_universe = _periodAll_from_source(source, active_solve, workdir, provider=provider)
     if not period_universe:
         return None
     rate, off_inv, off_ops = _solve_inflation_inputs(source)
@@ -7504,6 +7582,8 @@ def p_inflation_op_full_cascade_from_source(source: "InputSource",
                                                 active_solve: str | None,
                                                 dt: pl.DataFrame,
                                                 workdir: Path | None = None,
+                                                *,
+                                                provider: "object | None" = None,
                                                 ) -> "Param | None":
     """Full multi-year inflation cascade for ``p_inflation_op``.
 
@@ -7517,7 +7597,7 @@ def p_inflation_op_full_cascade_from_source(source: "InputSource",
     if factors is None:
         return None
     _inv, ops = factors
-    period_in_use = _period_in_use_set(source, active_solve, workdir)
+    period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
     if not period_in_use:
         return None
     rows = [(d, ops.get(d, 1.0)) for d in period_in_use]
@@ -7533,13 +7613,16 @@ def p_inflation_op_full_cascade_from_source(source: "InputSource",
 
 
 def _read_handoff_e_d_from_workdir(workdir: Path,
-                                       name: str) -> "Param | None":
+                                       name: str,
+                                       *,
+                                       provider: "object | None" = None,
+                                       ) -> "Param | None":
     """Read a (entity, period, value) handoff CSV; mirror the loader's
     zero-filter (input.py:1316-1328).  Returns None when the file is
     absent / empty / all-zero.
     """
     p = Path(workdir) / "solve_data" / f"{name}.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     if df.height == 0:
@@ -7556,11 +7639,13 @@ def _read_handoff_e_d_from_workdir(workdir: Path,
 
 
 def _read_handoff_e_from_workdir(workdir: Path, name: str,
-                                    value_col: str | None = None
+                                    value_col: str | None = None,
+                                    *,
+                                    provider: "object | None" = None,
                                     ) -> "Param | None":
     """Wide-format (entity, p_entity_invested) → Param ((e,), value)."""
     p = Path(workdir) / "solve_data" / f"{name}.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
     df = _read_csv_file(p)
     if df.height == 0:
@@ -7582,7 +7667,10 @@ def _read_handoff_e_from_workdir(workdir: Path, name: str,
 
 
 def p_entity_previously_invested_capacity_from_workdir(
-        workdir: Path) -> "Param | None":
+        workdir: Path,
+        *,
+        provider: "object | None" = None,
+        ) -> "Param | None":
     """Per-solve handoff carrier (§3.7.7).  Read-side mirror of the
     chain runner's write-side: ``solve_data/p_entity_previously_invested_capacity.csv``
     holds the cumulative prior-solve invest summed across the entity's
@@ -7595,22 +7683,22 @@ def p_entity_previously_invested_capacity_from_workdir(
     it doesn't manufacture state.
     """
     return _read_handoff_e_d_from_workdir(
-        workdir, "p_entity_previously_invested_capacity")
+        workdir, "p_entity_previously_invested_capacity", provider=provider)
 
 
-def p_entity_invested_from_workdir(workdir: Path) -> "Param | None":
+def p_entity_invested_from_workdir(workdir: Path, *, provider: "object | None" = None) -> "Param | None":
     """Per-entity scalar of cumulative prior-solve invest (§3.7.8).
 
     Read from ``solve_data/p_entity_invested.csv`` (a 2-column
     ``entity, p_entity_invested`` wide CSV).  Single-solve fixtures
     leave this header-only; reads as ``None``.
     """
-    return _read_handoff_e_from_workdir(workdir, "p_entity_invested")
+    return _read_handoff_e_from_workdir(workdir, "p_entity_invested", provider=provider)
 
 
-def p_entity_divested_from_workdir(workdir: Path) -> "Param | None":
+def p_entity_divested_from_workdir(workdir: Path, *, provider: "object | None" = None) -> "Param | None":
     """Per-entity scalar of cumulative prior-solve divest (§3.7.8)."""
-    return _read_handoff_e_from_workdir(workdir, "p_entity_divested")
+    return _read_handoff_e_from_workdir(workdir, "p_entity_divested", provider=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -7900,7 +7988,7 @@ def _p_discount_years_from_source(source: "InputSource",
     return out
 
 
-def _read_period_with_history(workdir: Path | None) -> list[str]:
+def _read_period_with_history(workdir: Path | None, *, provider: "object | None" = None) -> list[str]:
     """Read ``solve_data/period_with_history.csv`` from disk if present.
 
     For multi-solve chain runs flextool's per-solve preprocessing
@@ -7914,7 +8002,7 @@ def _read_period_with_history(workdir: Path | None) -> list[str]:
     if workdir is None:
         return []
     p = Path(workdir) / "solve_data" / "period_with_history.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return []
     df = _read_csv_file(p)
     if df.height == 0 or "period" not in df.columns:
@@ -7927,6 +8015,8 @@ def ed_entity_annual_family_from_source(source: "InputSource",
                                             ed_invest: pl.DataFrame | None,
                                             ed_divest: pl.DataFrame | None,
                                             workdir: Path | None = None,
+                                            *,
+                                            provider: "object | None" = None,
                                             ) -> dict[str, "Param | None"]:
     """Compute ``ed_entity_annual``, ``ed_entity_annual_discounted``,
     ``ed_entity_annual_divest``, ``ed_entity_annual_divest_discounted``
@@ -7938,7 +8028,7 @@ def ed_entity_annual_family_from_source(source: "InputSource",
     discounted sum); the dict is shaped that way too.
     """
     factors = _inflation_yearly_from_source(source, active_solve, workdir)
-    period_in_use = _period_in_use_set(source, active_solve, workdir)
+    period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
     period_invest = _solve_periods(source, active_solve, "invest_periods") or []
 
     cost_invest = _per_entity_period_value(source, "invest_cost")
@@ -7982,7 +8072,7 @@ def ed_entity_annual_family_from_source(source: "InputSource",
     # accumulate periods across prior solves; we read the per-solve
     # CSV when present (it's written by flextool's orchestration at
     # L262).  For single-solve fixtures the file equals period_in_use.
-    period_with_history = _read_period_with_history(workdir) \
+    period_with_history = _read_period_with_history(workdir, provider=provider) \
                               or list(period_in_use)
     edEntity_lifetime = _ed_lifetime_mapping(
         source, all_entities, period_with_history)
@@ -8154,6 +8244,7 @@ def apply_derived_f(
     workdir: Path,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> None:
     """Apply Γ.3.F lifetime cascade family + handoff state + multi-year
     inflation cascade, mutating ``flex_data`` in place.
@@ -8222,6 +8313,7 @@ def p_f_d_k_from_source(
     workdir: Path | None,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> "Param | None":
     """Per-period "fraction realised this solve" for the price-ladder
     feature (audit §3.17.1).
@@ -8253,7 +8345,7 @@ def p_f_d_k_from_source(
     # commodities.
     sd = Path(workdir) / "solve_data"
     cwl_path = sd / "commodity_with_ladder.csv"
-    if _seed_or_exists(cwl_path):  # Phase E-j — seed-aware (no-op: writer not in expected_basenames)
+    if _provider_or_exists(provider, cwl_path):  # Phase E-j — seed-aware (no-op: writer not in expected_basenames)
         cwl = _read_csv_file(cwl_path)
         if cwl.height == 0:
             return None
@@ -8280,7 +8372,7 @@ def p_f_d_k_from_source(
                       .agg(pl.col("step_duration").sum().alias("sum_step")))
     else:
         siu = sd / "steps_in_use.csv"
-        if not _seed_or_exists(siu):  # Phase E-j — seed-aware
+        if not _provider_or_exists(provider, siu):  # Phase E-j — seed-aware
             return None
         df = _read_csv_file(siu)
         if df.height == 0 or "period" not in df.columns:
@@ -8297,10 +8389,10 @@ def p_f_d_k_from_source(
                   .with_columns(pl.col("value").alias("share")))
     else:
         csy_path = sd / "complete_period_share_of_year_calc.csv"
-        if not _seed_or_exists(csy_path):  # Phase E-j — seed-aware
+        if not _provider_or_exists(provider, csy_path):  # Phase E-j — seed-aware
             # Try the non-_calc variant (some fixtures only emit the latter).
             csy_path = sd / "complete_period_share_of_year.csv"
-        if not _seed_or_exists(csy_path):  # Phase E-j — seed-aware (no-op for non-_calc variant)
+        if not _provider_or_exists(provider, csy_path):  # Phase E-j — seed-aware (no-op for non-_calc variant)
             return None
         csy = (_read_csv_file(csy_path).lazy()
                   .rename({"period": "d"})
@@ -8308,7 +8400,7 @@ def p_f_d_k_from_source(
                                       .alias("share")))
     # ladder_cum_sim_hours — default 0.0 when absent.
     cum_path = sd / "ladder_cum_sim_hours.csv"
-    if _seed_or_exists(cum_path):  # Phase E-j — seed-aware
+    if _provider_or_exists(provider, cum_path):  # Phase E-j — seed-aware
         cum_raw = _read_csv_file(cum_path)
         if cum_raw.height > 0 and "p_ladder_cum_sim_hours" in cum_raw.columns:
             cum_lf = (cum_raw.lazy()
@@ -8326,7 +8418,7 @@ def p_f_d_k_from_source(
         piu_lf = ctx.period_in_use.lazy().select("d")
     else:
         piu_path = sd / "period_in_use_set.csv"
-        if not _seed_or_exists(piu_path):  # Phase E-j — seed-aware
+        if not _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
             return None
         piu_lf = (_read_csv_file(piu_path).lazy()
                     .rename({"period": "d"})
@@ -8352,6 +8444,8 @@ def p_f_d_k_from_source(
 
 def p_ladder_cum_realized_mwh_from_workdir(
     workdir: Path | None,
+    *,
+    provider: "object | None" = None,
 ) -> "Param | None":
     """Per-(c, i, d) cumulative realized MWh handoff carrier
     (audit §3.17.2).
@@ -8364,7 +8458,7 @@ def p_ladder_cum_realized_mwh_from_workdir(
     if workdir is None:
         return None
     rel_path = Path(workdir) / "solve_data" / "ladder_cum_realized_mwh.csv"
-    if not _seed_or_exists(rel_path):  # Phase E-j — seed-aware
+    if not _provider_or_exists(provider, rel_path):  # Phase E-j — seed-aware
         return None
     raw = _read_csv_file(rel_path)
     if raw.height == 0:
@@ -8678,7 +8772,9 @@ def dtt__delay_duration_from_source(
 # ---------------------------------------------------------------------------
 
 
-def _read_period_branch_pairs(workdir: Path | None
+def _read_period_branch_pairs(workdir: Path | None,
+                                  *,
+                                  provider: "object | None" = None,
                                   ) -> list[tuple[str, str]]:
     """Read ``solve_data/period__branch.csv`` as a list of (d2, b)
     pairs — d2 is the parent period, b is the sibling branch.
@@ -8686,7 +8782,7 @@ def _read_period_branch_pairs(workdir: Path | None
     if workdir is None:
         return []
     p = Path(workdir) / "solve_data" / "period__branch.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return []
     df = _read_csv_file(p)
     if df.height == 0:
@@ -8701,14 +8797,16 @@ def _read_period_branch_pairs(workdir: Path | None
     return [(str(r[d_col]), str(r[b_col])) for r in df.iter_rows(named=True)]
 
 
-def _read_solve_branch_weights(workdir: Path | None
+def _read_solve_branch_weights(workdir: Path | None,
+                                   *,
+                                   provider: "object | None" = None,
                                    ) -> dict[str, float]:
     """Read ``solve_data/solve_branch_weight.csv`` as branch → weight."""
     out: dict[str, float] = {}
     if workdir is None:
         return out
     p = Path(workdir) / "solve_data" / "solve_branch_weight.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return out
     df = _read_csv_file(p)
     if df.height == 0:
@@ -8728,14 +8826,16 @@ def _read_solve_branch_weights(workdir: Path | None
     return out
 
 
-def _read_first_timesteps(workdir: Path | None
+def _read_first_timesteps(workdir: Path | None,
+                              *,
+                              provider: "object | None" = None,
                               ) -> dict[str, str]:
     """Read ``solve_data/first_timesteps.csv`` as period → first step."""
     out: dict[str, str] = {}
     if workdir is None:
         return out
     p = Path(workdir) / "solve_data" / "first_timesteps.csv"
-    if not _seed_or_exists(p):  # Phase E-h — seed-aware
+    if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return out
     df = _read_csv_file(p)
     if df.height == 0:
@@ -8807,7 +8907,9 @@ def apply_synthetic_invest_sets(flex_data: object,
                                      source: "InputSource",
                                      active_solve: str,
                                      synthetic: tuple[str, str],
-                                     workdir: "Path | None" = None) -> None:
+                                     workdir: "Path | None" = None,
+                                     *,
+                                     provider: "object | None" = None) -> None:
     """Δ.19 — populate the invest-set FlexData fields for a synthetic
     ``<base>_<anchor>`` solve, replacing the matching disk reads in
     ``_invest_seeds.py``.
@@ -8889,8 +8991,8 @@ def apply_synthetic_invest_sets(flex_data: object,
     # the synthetic-solve snapshot).
     if (ed_inv is not None and ed_inv.height > 0
             and workdir is not None):
-        period_in_use = _period_in_use_set(source, active_solve, workdir)
-        period_with_history = (_read_period_with_history(workdir)
+        period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
+        period_with_history = (_read_period_with_history(workdir, provider=provider)
                                   or list(period_in_use))
         try:
             edd_inv = _edd_invest_lf(
@@ -8924,6 +9026,7 @@ def apply_derived_g(
     workdir: Path,
     *,
     ctx: "SolveContext | None" = None,
+    provider: "object | None" = None,
 ) -> None:
     """Apply Γ.3.G residual Derived Params, mutating ``flex_data``
     in place.
@@ -8939,7 +9042,7 @@ def apply_derived_g(
     Δ.3 replaced the previous ``derived_overrides_g`` dict-return;
     Δ.4 deleted the deprecated wrapper alias.
     """
-    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
     dt = getattr(flex_data, "dt", None)
 
     # Δ.12b — assignment is unconditional; helpers are authoritative
@@ -8949,11 +9052,11 @@ def apply_derived_g(
 
     # ─── §3.17.1 p_f_d_k ───────────────────────────────────────────
     flex_data.p_f_d_k = p_f_d_k_from_source(source, active_solve, workdir,
-                                                  ctx=ctx)
+                                                  ctx=ctx, provider=provider)
 
     # ─── §3.17.2 p_ladder_cum_realized_mwh ─────────────────────────
     flex_data.p_ladder_cum_realized_mwh = (
-        p_ladder_cum_realized_mwh_from_workdir(workdir))
+        p_ladder_cum_realized_mwh_from_workdir(workdir, provider=provider))
 
     # ─── §3.13.1 prundt ────────────────────────────────────────────
     flex_data.prundt = prundt_from_source(source, active_solve, dt)

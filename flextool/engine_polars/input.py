@@ -3868,7 +3868,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # the model-build cross-joins then operate on Enum-typed
         # frames.
         if db_reader is not None:
-            _apply_db_overrides(flex_data, db_reader, source, ctx=ctx)
+            _apply_db_overrides(flex_data, db_reader, source, ctx=ctx,
+                                 provider=provider)
 
         # Δ.11 — overlay in-memory handoff carriers onto the FlexData
         # built so far.  Replaces the previous post-load ``apply_handoff``
@@ -3913,7 +3914,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                           source: "object",
-                          ctx: "object | None" = None) -> None:
+                          ctx: "object | None" = None,
+                          *,
+                          provider: "object | None" = None) -> None:
     """Apply the DB-direct construction passes to ``flex_data`` in
     place.  Δ.3 consolidates the previous 9-wrapper override chain into
     a single linear sequence; each ``apply_*`` callee mutates
@@ -3999,14 +4002,15 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # on the CSV-seed path because those bake in multi-year discounting
     # that the per-sub-solve filter doesn't compose cleanly with —
     # deferred to a future dispatch.
-    active_solve = _drv._read_active_solve(workdir_path)
+    active_solve = _drv._read_active_solve(workdir_path, provider=provider)
     if active_solve is not None and not _drv._solve_in_spine(db_reader,
                                                                   active_solve):
         synth = _drv._resolve_synthetic_solve(db_reader, active_solve)
         if synth is not None:
             _timed("c.synth invest_sets",
                    _drv.apply_synthetic_invest_sets,
-                   flex_data, db_reader, active_solve, synth, workdir_path)
+                   flex_data, db_reader, active_solve, synth, workdir_path,
+                   provider=provider)
         # Δ.28 — synthetic solve: apply_derived_a is skipped, but in the
         # slow path ``flex_data.dt`` is already populated from CSV (see
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct
@@ -4014,7 +4018,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
         return
 
-    _timed("3  derived_a", _drv.apply_derived_a, flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("3  derived_a", _drv.apply_derived_a, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
 
     # Δ.28 — pass 1b: broadcast-needing Direct Params now have
     # ``flex_data.dt`` populated by ``apply_derived_a`` step 1.  The
@@ -4027,12 +4031,12 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # fields empty on the fast path even when Spine carried the data.
     _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
 
-    _timed("4  derived_b", _drv.apply_derived_b, flex_data, db_reader, workdir_path, ctx=ctx)
-    _timed("5  derived_c", _drv.apply_derived_c, flex_data, db_reader, workdir_path, ctx=ctx)
-    _timed("6  derived_d", _drv.apply_derived_d, flex_data, db_reader, workdir_path, ctx=ctx)
-    _timed("7  derived_e", _drv.apply_derived_e, flex_data, db_reader, workdir_path, ctx=ctx)
-    _timed("8  derived_f", _drv.apply_derived_f, flex_data, db_reader, workdir_path, ctx=ctx)
-    _timed("9  derived_g", _drv.apply_derived_g, flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("4  derived_b", _drv.apply_derived_b, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _timed("5  derived_c", _drv.apply_derived_c, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _timed("6  derived_d", _drv.apply_derived_d, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _timed("7  derived_e", _drv.apply_derived_e, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _timed("8  derived_f", _drv.apply_derived_f, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _timed("9  derived_g", _drv.apply_derived_g, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
 
     # Δ.12c — ``apply_existing_chain`` runs LAST (after ``apply_derived_f``)
     # so that the handoff carriers ``p_entity_previously_invested_capacity``
