@@ -68,6 +68,7 @@ from . import _dc_power_flow
 from . import _commodity_ladder
 from ._block_layout import BlockLayout
 from ._input_source import _read_csv_file, _seed_or_exists, _seed_or_pick
+from ._writer_provider_io import _provider_key
 
 
 # ---------------------------------------------------------------------------
@@ -172,8 +173,9 @@ from ._axis_enums import (  # substrate retained for Path B — see handoff
 # CSV-shape helpers (same three shapes as before)
 
 def _read_long(path: Path, *, drop=("solve",), rename=None,
-               cast_value: bool = True) -> pl.DataFrame:
-    df = _read_csv_file(path)
+               cast_value: bool = True,
+               provider: "object | None" = None) -> pl.DataFrame:
+    df = _provider_read(provider, _provider_key(path), path)
     df = df.drop([c for c in drop if c in df.columns])
     if rename: df = df.rename(rename)
     if cast_value and "value" in df.columns:
@@ -183,13 +185,15 @@ def _read_long(path: Path, *, drop=("solve",), rename=None,
 
 
 def _read_wide_per_entity(path: Path, value_col: str = "value",
-                          rename=None) -> pl.DataFrame:
+                          rename=None,
+                          *,
+                          provider: "object | None" = None) -> pl.DataFrame:
     """Reads a wide-per-entity CSV (header: solve, period, time, e1, e2,…)
     OR a long CSV (header: <entity_col>, period, time, value) — the new
     Python-preprocessed format.  In the long case the entity column is
     whatever flextool's preprocessor wrote (node / process / commodity
     /…); the caller's ``rename={'entity': X}`` is applied either way."""
-    df = _read_csv_file(path)
+    df = _provider_read(provider, _provider_key(path), path)
     if "value" in df.columns and "solve" not in df.columns:
         # Long format from new Python preprocessing.  Entity column is
         # the first; rename to "entity" to keep the downstream contract.
@@ -213,13 +217,15 @@ def _read_wide_per_entity(path: Path, value_col: str = "value",
     return out
 
 
-def _read_unitsize(path: Path) -> pl.DataFrame:
+def _read_unitsize(path: Path,
+                    *,
+                    provider: "object | None" = None) -> pl.DataFrame:
     """Read ``p_entity_unitsize.csv``.  The canonical Python-preprocessing
     output is long-format ``(entity, value)`` in ``solve_data/``.  The
     ``.mod`` also printf's a wide-format twin to ``input/`` (one row,
     columns are entity names) — supported as a fallback for legacy
     fixtures."""
-    df = _read_csv_file(path)
+    df = _provider_read(provider, _provider_key(path), path)
     if {"entity", "value"}.issubset(df.columns):
         return (df.rename({"entity": "e"})
                   .with_columns(value=pl.col("value")
@@ -893,7 +899,8 @@ def _load_time(sd: Path,
     # ``dt.csv`` and ``p_step_duration.csv`` are .mod printf debug-exports
     # that only cover dispatch periods — using them silently drops the
     # invest-period (d, t) rows in multi-period scenarios.
-    siu = _read_csv_file(sd / "steps_in_use.csv").rename(
+    siu = _provider_read(provider, "solve_data/steps_in_use",
+                          sd / "steps_in_use.csv").rename(
         {"period": "d", "step": "t", "step_duration": "value"})
     # Phase E-d — the in-memory accumulator returns Utf8-typed frames
     # (writers funnel through ``_to_utf8_frame``); cast ``value`` to
@@ -927,24 +934,28 @@ def _load_time(sd: Path,
                                      .select("d","t","value"))
     rp_cw = Param(("d","t"), rp_default)
     infl = Param(("d",),
-        _read_long(sd / "p_inflation_factor_operations_yearly.csv", rename={"period": "d"}))
+        _read_long(sd / "p_inflation_factor_operations_yearly.csv",
+                    rename={"period": "d"}, provider=provider))
     # complete_period_share_of_year: canonical
     # ``complete_period_share_of_year_calc.csv``.
     psh = Param(("d",),
         _read_long(sd / "complete_period_share_of_year_calc.csv",
-                    rename={"period": "d"}))
+                    rename={"period": "d"}, provider=provider))
     return dt, step_dur, rp_cw, infl, psh
 
 
 def _load_node(sd: Path, dt: pl.DataFrame,
                 *,
                 provider: "object | None" = None):
-    nb = _read_csv_file(sd / "nodeBalance.csv").rename({"node": "n"})
+    nb = _provider_read(provider, "solve_data/nodeBalance",
+                         sd / "nodeBalance.csv").rename({"node": "n"})
     # pdtNodeInflow.csv is canonical (.mod reads it via `table data IN`).
     # TODO(Δ.18+): retire pdtNodeInflow.csv read when ``apply_derived_a``
     # extends ``p_inflow_from_source`` to cover ``inflow_method ∈ {scale_to_*}``
     # and stochastic 3d_map shapes.
-    inflow_long = _read_wide_per_entity(sd / "pdtNodeInflow.csv", rename={"entity":"n"})
+    inflow_long = _read_wide_per_entity(sd / "pdtNodeInflow.csv",
+                                          rename={"entity":"n"},
+                                          provider=provider)
 
     # Δ.18 — CSV-fallback seed for ``p_penalty_up`` / ``p_penalty_down``
     # from the wide-by-param ``pdtNode.csv`` slice.  Override chain
@@ -1150,7 +1161,8 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             if ffn_filtered.height > 0 and ffn_filtered.height < flow_from_n.height:
                 flow_from_n = ffn_filtered
 
-    cn = _read_csv_file(inp / "commodity__node.csv")
+    cn = _provider_read(provider, "input/commodity__node",
+                          inp / "commodity__node.csv")
     flow_from_commodity_eff = (pss_eff
         .join(cn, left_on="source", right_on="node", how="inner")
         .rename({"commodity": "c"})
@@ -1176,7 +1188,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         provider,
         ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
         ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
-    ) or (inp / "p_entity_unitsize.csv"))
+    ) or (inp / "p_entity_unitsize.csv"), provider=provider)
     unitsize_p = (unitsize_long.rename({"e": "p"})
                        .filter(pl.col("p").is_in(pss["p"].unique())))
 
@@ -1186,7 +1198,9 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     # CSV read.
     # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
     # variant fixtures or all fixtures explicitly pass db_reader=.
-    slope_long = _read_wide_per_entity(sd / "pdtProcess_slope.csv", rename={"entity":"p"})
+    slope_long = _read_wide_per_entity(sd / "pdtProcess_slope.csv",
+                                         rename={"entity":"p"},
+                                         provider=provider)
     # Δ.17c Gap C: ``p_commodity_price`` produced authoritatively by
     # ``apply_direct_params`` via ``p_commodity_price_from_source``
     # (uses the ``_param_shapes`` resolver — scalar / 1d_map[period] /
@@ -1239,14 +1253,21 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
 # Optional features (CO2 price, CO2 cap, indirect, user-defined, profiles)
 
 def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
-                     pss_noEff: pl.DataFrame | None = None):
+                     pss_noEff: pl.DataFrame | None = None,
+                     *,
+                     provider: "object | None" = None):
     if pss_eff is None: return (None, None, None, None)
     files = ["group_co2_price.csv", "commodity_node_co2.csv", "pdtGroup.csv"]
-    if not all((sd / f).exists() for f in files): return (None, None, None, None)
-    g_price = _read_csv_file(sd / "group_co2_price.csv").rename({"group": "g"})
+    if not all(_provider_has(provider, f"solve_data/{Path(f).stem}", sd / f)
+                for f in files):
+        return (None, None, None, None)
+    g_price = _provider_read(provider, "solve_data/group_co2_price",
+                              sd / "group_co2_price.csv").rename({"group": "g"})
     if g_price.height == 0: return (None, None, None, None)
-    cn_co2 = _read_csv_file(sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
-    g_node = _read_csv_file(inp / "group__node.csv").rename({"group":"g","node":"n"})
+    cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
+                              sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
+    g_node = _provider_read(provider, "input/group__node",
+                              inp / "group__node.csv").rename({"group":"g","node":"n"})
     gcn = (g_price.join(g_node, on="g", how="inner")
                   .join(cn_co2, on="n", how="inner")
                   .select("g","c","n"))
@@ -1272,7 +1293,8 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     # Keep the seed.
     # TODO(Δ.12c+): retire when all callers either pass an explicit
     # db_reader= or a workdir whose tests.sqlite + scenario auto-resolve.
-    p_comm = _read_csv_file(inp / "p_commodity.csv")
+    p_comm = _provider_read(provider, "input/p_commodity",
+                              inp / "p_commodity.csv")
     co2_content = Param(("c",),
         p_comm.filter(pl.col("commodityParam")=="co2_content")
               .rename({"commodity":"c","p_commodity":"value"})
@@ -1297,10 +1319,12 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     p = sd / "group_co2_max_period.csv"
     if not _provider_has(provider, "solve_data/group_co2_max_period", p):
         return (None, None, None, None, None)
-    g_max = _read_csv_file(p).rename({"group":"g"})
+    g_max = _provider_read(provider, "solve_data/group_co2_max_period", p).rename({"group":"g"})
     if g_max.height == 0: return (None, None, None, None, None)
-    cn_co2 = _read_csv_file(sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
-    g_node = _read_csv_file(inp / "group__node.csv").rename({"group":"g","node":"n"})
+    cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
+                              sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
+    g_node = _provider_read(provider, "input/group__node",
+                              inp / "group__node.csv").rename({"group":"g","node":"n"})
     gcn = (g_max.join(g_node, on="g", how="inner")
                 .join(cn_co2, on="n", how="inner")
                 .select("g","c","n"))
@@ -1368,9 +1392,11 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     g_max = _provider_read(provider, "solve_data/group_co2_max_total", p).rename({"group": "g"})
     if g_max.height == 0:
         return (None, None, None, None)
-    cn_co2 = _read_csv_file(sd / "commodity_node_co2.csv").rename(
+    cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
+                              sd / "commodity_node_co2.csv").rename(
         {"commodity": "c", "node": "n"})
-    g_node = _read_csv_file(inp / "group__node.csv").rename(
+    g_node = _provider_read(provider, "input/group__node",
+                              inp / "group__node.csv").rename(
         {"group": "g", "node": "n"})
     gcn = (g_max.join(g_node, on="g", how="inner")
                 .join(cn_co2, on="n", how="inner")
@@ -2038,7 +2064,8 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
                           .select("p").unique())
 
     # p_online_dt — block-aware variable indexing (process, period, step)
-    p_odt = _read_csv_file(sd / "p_online_dt_set.csv").rename({"process": "p", "step": "t"})
+    p_odt = _provider_read(provider, "solve_data/p_online_dt_set",
+                              sd / "p_online_dt_set.csv").rename({"process": "p", "step": "t"})
     p_odt = p_odt.select("p", "period", "t").rename({"period": "d"})
 
     # Δ.12-drop: ``p_min_load`` produced authoritatively by
@@ -2262,7 +2289,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             provider,
             ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
             ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
-        ) or (inp / "p_entity_unitsize.csv"))
+        ) or (inp / "p_entity_unitsize.csv"), provider=provider)
         state_existing = (cap_long.rename({"e": "n", "value": "cap"})
             .filter(pl.col("n").is_in(nodeState["n"]))
             .select("n", "d", "cap"))
@@ -2647,7 +2674,8 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
     pdt_profile = sd / "pdtProfile.csv"
     profile_value = None
     if _provider_has(provider, "solve_data/pdtProfile", pdt_profile):
-        prof_long = _read_wide_per_entity(pdt_profile, rename={"entity":"f"})
+        prof_long = _read_wide_per_entity(pdt_profile, rename={"entity":"f"},
+                                            provider=provider)
         if "profile" in upper.columns:
             upper = upper.rename({"profile": "f"})
             lower = lower.rename({"profile": "f"})
@@ -3535,7 +3563,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 provider,
                 ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
                 ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
-            ) or (inp / "p_entity_unitsize.csv"))
+            ) or (inp / "p_entity_unitsize.csv"), provider=provider)
             # p_all_entity_unitsize: unfiltered — covers processes, connections AND nodes.
             # Used by the scaling analyzer to compute the full entity-unitsize spread.
             if unitsize_long.height > 0:
@@ -3574,7 +3602,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
                            .select("p", "source", "sink", "d", "value"))
 
         flow_co2_p, flow_co2_p_noEff, co2c, co2pr = _load_co2_price(
-            inp, sd, proc["pss_eff"], proc.get("pss_noEff"))
+            inp, sd, proc["pss_eff"], proc.get("pss_noEff"),
+            provider=provider)
         g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped = _load_co2_cap(
             inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"),
             provider=provider)
@@ -3583,7 +3612,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
             inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"),
             provider=provider)
         if (co2_max_p is not None or co2_max_total_p is not None) and co2c is None:
-            p_comm = _read_csv_file(inp / "p_commodity.csv")
+            p_comm = _provider_read(provider, "input/p_commodity",
+                                      inp / "p_commodity.csv")
             co2c = Param(("c",),
                 p_comm.filter(pl.col("commodityParam")=="co2_content")
                       .rename({"commodity":"c","p_commodity":"value"})
@@ -4210,7 +4240,7 @@ def _read_unitsize_long(work_folder: Path,
         if not _provider_has(provider, key, src):
             continue
         try:
-            df = _read_unitsize(src)
+            df = _read_unitsize(src, provider=provider)
         except Exception:  # noqa: BLE001 — best-effort fallback
             continue
         for r in df.iter_rows(named=True):
@@ -5081,7 +5111,8 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
                 for r in ehrf.iter_rows(named=True):
                     ed_realized.add((str(r["entity"]), str(r["period"])))
         # Sum realized_invest over historical d_h per (e, d).
-        edd_hist = _read_csv_file(solve_data_dir / "edd_history.csv")
+        edd_hist = _provider_read(provider, "solve_data/edd_history",
+                                    solve_data_dir / "edd_history.csv")
         prev_inv: dict[tuple[str, str], float] = {}
         if edd_hist.height > 0:
             for r in edd_hist.iter_rows(named=True):
