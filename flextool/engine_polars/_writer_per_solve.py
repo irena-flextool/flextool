@@ -129,15 +129,17 @@ def _write_tuples(path: Path, header: tuple[str, ...],
     _write(_to_utf8_frame(header, rows), path)
 
 
-def _read_singles(path: Path) -> list[str]:
+def _read_singles(path: Path,
+                  *, provider: "object | None" = None) -> list[str]:
     """List the first column of a header+rows CSV, dropping blanks."""
-    df = _read_csv(path, ["v"])
+    df = _read_csv(path, ["v"], provider=provider)
     return [v for v in df["v"].to_list() if v]
 
 
-def _read_pairs(path: Path) -> list[tuple[str, str]]:
+def _read_pairs(path: Path,
+                *, provider: "object | None" = None) -> list[tuple[str, str]]:
     """List 2-tuples from a 2+-column CSV, dropping rows with any blank."""
-    df = _read_csv(path, ["a", "b"])
+    df = _read_csv(path, ["a", "b"], provider=provider)
     return [(a, b) for a, b in zip(df["a"].to_list(), df["b"].to_list())
             if a and b]
 
@@ -161,18 +163,26 @@ def _project_column(df: pl.DataFrame, col_idx: int) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def write_per_solve_sets(solve_data_dir: Path) -> None:
+def write_per_solve_sets(solve_data_dir: Path,
+                          *, provider: "object | None" = None) -> None:
     """Native port of ``per_solve_sets.write_per_solve_sets``.
 
     Emits the ~24 small per-solve derived set CSVs.  Reads upstream CSVs
     that ``orchestration.py`` / ``solve_writers.py`` / ``blocks.py`` have
     already written for the current solve, plus a handful of immutable
     ``input/`` CSVs reached via ``solve_data_dir.parent / "input"``.
+
+    Step 1-g — *provider* threads the per-sub-solve Provider so the
+    internal ``_read_csv`` / ``_read_singles`` / ``_read_pairs`` calls
+    resolve via the in-memory Provider before falling back to disk.
+    The dispatcher ``_writer_solve_time.run`` forwards
+    ``state.current_provider`` here when the writer's signature accepts
+    it.
     """
     input_dir = solve_data_dir.parent / "input"
 
     # ── branch ← period__branch ─────────────────────────────────────────
-    df = _read_csv(solve_data_dir / "period__branch.csv", ["period", "branch"])
+    df = _read_csv(solve_data_dir / "period__branch.csv", ["period", "branch"], provider=provider)
     _write_singles(
         solve_data_dir / "branch_set.csv", "branch",
         _project_column(df, 1),
@@ -180,7 +190,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 
     # ── year ← p_years_represented (period, year) ───────────────────────
     df = _read_csv(solve_data_dir / "p_years_represented.csv",
-                   ["period", "year"])
+                   ["period", "year"], provider=provider)
     _write_singles(
         solve_data_dir / "year_set.csv", "year",
         _project_column(df, 1),
@@ -188,7 +198,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 
     # ── period_from_period_time ← steps_in_timeline (period, ...) ───────
     df = _read_csv(solve_data_dir / "steps_in_timeline.csv",
-                   ["period", "step"])
+                   ["period", "step"], provider=provider)
     _write_singles(
         solve_data_dir / "period_from_period_time_set.csv", "period",
         _project_column(df, 0),
@@ -196,7 +206,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 
     # ── period_in_use, time_in_use ← steps_in_use (period, time) ────────
     df = _read_csv(solve_data_dir / "steps_in_use.csv",
-                   ["period", "time"])
+                   ["period", "time"], provider=provider)
     _write_singles(
         solve_data_dir / "period_in_use_set.csv", "period",
         _project_column(df, 0),
@@ -208,7 +218,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 
     # ── complete_time_in_use ← steps_complete_solve (period, time) ──────
     df = _read_csv(solve_data_dir / "steps_complete_solve.csv",
-                   ["period", "time"])
+                   ["period", "time"], provider=provider)
     _write_singles(
         solve_data_dir / "complete_time_in_use_set.csv", "time",
         _project_column(df, 1),
@@ -216,7 +226,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 
     # ── rp_base_period, rp_rep_period ← rp_weights ──────────────────────
     df = _read_csv(solve_data_dir / "rp_weights.csv",
-                   ["base", "rep", "weight"])
+                   ["base", "rep", "weight"], provider=provider)
     _write_singles(
         solve_data_dir / "rp_base_period_set.csv", "period",
         _project_column(df, 0),
@@ -228,7 +238,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 
     # ── period_block ← period_block_time (period, block_first, ...) ─────
     df = _read_csv(solve_data_dir / "period_block_time.csv",
-                   ["period", "block_first", "step"])
+                   ["period", "block_first", "step"], provider=provider)
     pb_pairs = [
         (p, b) for p, b in zip(df["period"].to_list(),
                                df["block_first"].to_list())
@@ -249,7 +259,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
     df = _read_csv(
         solve_data_dir / "step_previous.csv",
         ["period", "time", "time_previous", "tprev_within_ts",
-         "period_previous", "tprev_within_solve"],
+         "period_previous", "tprev_within_solve"], provider=provider
     )
     triples = list(zip(
         df["period"].to_list(),
@@ -269,16 +279,16 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 
     # ── d_fix_storage_period ← fix_storage_timesteps ────────────────────
     df = _read_csv(solve_data_dir / "fix_storage_timesteps.csv",
-                   ["period", "step"])
+                   ["period", "step"], provider=provider)
     _write_singles(
         solve_data_dir / "d_fix_storage_period_set.csv", "period",
         _project_column(df, 0),
     )
 
     # ── period ← periods_available ∪ period_from_period_time_set ────────
-    pa = _read_csv(input_dir / "periods_available.csv", ["period"])
+    pa = _read_csv(input_dir / "periods_available.csv", ["period"], provider=provider)
     pfpt = _read_csv(
-        solve_data_dir / "period_from_period_time_set.csv", ["period"],
+        solve_data_dir / "period_from_period_time_set.csv", ["period"], provider=provider
     )
     seen_p: dict[str, None] = {}
     for v in pa["period"].to_list() + pfpt["period"].to_list():
@@ -295,10 +305,10 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
         "period_group.csv", "period_node.csv", "period_commodity.csv",
         "period_process.csv", "period_solve.csv",
     ):
-        for v in _read_csv(solve_data_dir / fname, ["period"])["period"].to_list():
+        for v in _read_csv(solve_data_dir / fname, ["period"], provider=provider)["period"].to_list():
             if v and v not in seen_pa:
                 seen_pa[v] = None
-    for v in _read_csv(solve_data_dir / "branch_set.csv", ["period"])["period"].to_list():
+    for v in _read_csv(solve_data_dir / "branch_set.csv", ["period"], provider=provider)["period"].to_list():
         if v and v not in seen_pa:
             seen_pa[v] = None
     _write_singles(
@@ -310,25 +320,25 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
     #           process_block, block_step_duration, overlap_set coarse+fine)
     seen_b: dict[str, None] = {}
 
-    df = _read_csv(solve_data_dir / "entity_block.csv", ["entity", "block"])
+    df = _read_csv(solve_data_dir / "entity_block.csv", ["entity", "block"], provider=provider)
     for v in df["block"].to_list():
         if v and v not in seen_b:
             seen_b[v] = None
 
     df = _read_csv(solve_data_dir / "process_side_block.csv",
-                   ["process", "side", "block"])
+                   ["process", "side", "block"], provider=provider)
     for v in df["block"].to_list():
         if v and v not in seen_b:
             seen_b[v] = None
 
     df = _read_csv(solve_data_dir / "process_block.csv",
-                   ["process", "block"])
+                   ["process", "block"], provider=provider)
     for v in df["block"].to_list():
         if v and v not in seen_b:
             seen_b[v] = None
 
     df = _read_csv(solve_data_dir / "block_step_duration.csv",
-                   ["block", "period", "step", "duration"])
+                   ["block", "period", "step", "duration"], provider=provider)
     for v in df["block"].to_list():
         if v and v not in seen_b:
             seen_b[v] = None
@@ -336,7 +346,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
     # overlap_set: cols (period, b_coarse, t_coarse, b_fine, t_fine, fraction)
     df = _read_csv(solve_data_dir / "overlap_set.csv",
                    ["period", "b_coarse", "t_coarse",
-                    "b_fine", "t_fine", "fraction"])
+                    "b_fine", "t_fine", "fraction"], provider=provider)
     for v in df["b_coarse"].to_list():
         if v and v not in seen_b:
             seen_b[v] = None
@@ -351,11 +361,11 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
     # ── period__timeline = {(d, tl): ∃ s in current solve, (s, d, tb)
     #     in timesets_in_use, (tb, tl) in timesets__timeline}
     spt = _read_csv(input_dir / "timesets_in_use.csv",
-                    ["solve", "period", "timeset"])
-    cur_solve = _read_csv(solve_data_dir / "solve_current.csv", ["solve"])
+                    ["solve", "period", "timeset"], provider=provider)
+    cur_solve = _read_csv(solve_data_dir / "solve_current.csv", ["solve"], provider=provider)
     cur_solve_set = frozenset(v for v in cur_solve["solve"].to_list() if v)
     tt = _read_csv(input_dir / "timesets__timeline.csv",
-                   ["timeset", "timeline"])
+                   ["timeset", "timeline"], provider=provider)
     tb_to_tl: dict[str, list[str]] = {}
     for ts, tl in zip(tt["timeset"].to_list(), tt["timeline"].to_list()):
         if ts and tl:
@@ -377,14 +387,14 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
     # ── dt_realize_dispatch = if 'output_horizon' in
     #     enable_optional_outputs then dt else dt_realize_dispatch_input
     enable = _read_csv(solve_data_dir / "enable_optional_outputs.csv",
-                       ["flag"])
+                       ["flag"], provider=provider)
     enable_set = frozenset(v for v in enable["flag"].to_list() if v)
     if "output_horizon" in enable_set:
         rows_df = _read_csv(solve_data_dir / "steps_in_use.csv",
-                            ["period", "time"])
+                            ["period", "time"], provider=provider)
     else:
         rows_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
-                            ["period", "time"])
+                            ["period", "time"], provider=provider)
     drd_pairs_raw = list(zip(rows_df["period"].to_list(),
                              rows_df["time"].to_list()))
     seen_drd: dict[tuple[str, str], None] = {}
@@ -412,7 +422,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
     #   realized_invest_periods_of_current_solve
     drealize = _read_csv(
         solve_data_dir / "realized_invest_periods_of_current_solve.csv",
-        ["period"],
+        ["period"], provider=provider
     )
     union_seen: dict[str, None] = dict(drp_seen)
     for v in drealize["period"].to_list():
@@ -425,9 +435,9 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 
     # dt_non_anticipativity = realized_dispatch ∪ fix_storage_timesteps
     a_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
-                     ["period", "time"])
+                     ["period", "time"], provider=provider)
     b_df = _read_csv(solve_data_dir / "fix_storage_timesteps.csv",
-                     ["period", "time"])
+                     ["period", "time"], provider=provider)
     dtna_seen: dict[tuple[str, str], None] = {}
     for src in (a_df, b_df):
         for d, t in zip(src["period"].to_list(), src["time"].to_list()):
@@ -445,7 +455,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
     ):
         df = _read_csv(solve_data_dir / src,
                        ["process", "period", "time",
-                        "period_back", "time_back"])
+                        "period_back", "time_back"], provider=provider)
         triples = list(zip(
             df["process"].to_list(),
             df["period"].to_list(),
@@ -464,35 +474,35 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 
     # cnd_ladder family — period_in_use × commodity__node × commodity_with_ladder*.
     cn_df = _read_csv(input_dir / "commodity__node.csv",
-                      ["commodity", "node"])
+                      ["commodity", "node"], provider=provider)
     cn_pairs = [
         (c, n) for c, n in zip(cn_df["commodity"].to_list(),
                                cn_df["node"].to_list())
         if c and n
     ]
     pin_use_df = _read_csv(solve_data_dir / "period_in_use_set.csv",
-                           ["period"])
+                           ["period"], provider=provider)
     pin_use = [v for v in pin_use_df["period"].to_list() if v]
     with_ladder = frozenset(
         v for v in _read_csv(solve_data_dir / "commodity_with_ladder.csv",
-                             ["commodity"])["commodity"].to_list() if v
+                             ["commodity"], provider=provider)["commodity"].to_list() if v
     )
     with_ladder_cum = frozenset(
         v for v in _read_csv(
             solve_data_dir / "commodity_with_ladder_cumulative.csv",
-            ["commodity"],
+            ["commodity"], provider=provider
         )["commodity"].to_list() if v
     )
     with_ladder_ann = frozenset(
         v for v in _read_csv(
             solve_data_dir / "commodity_with_ladder_annual.csv",
-            ["commodity"],
+            ["commodity"], provider=provider
         )["commodity"].to_list() if v
     )
     cum_df = _read_csv(input_dir / "commodity_ladder_cumulative.csv",
-                       ["commodity", "tier"])
+                       ["commodity", "tier"], provider=provider)
     ann_df = _read_csv(solve_data_dir / "commodity__tier_ann.csv",
-                       ["commodity", "tier"])
+                       ["commodity", "tier"], provider=provider)
     tiers_for_cum: dict[str, list[str]] = {}
     for c, i in zip(cum_df["commodity"].to_list(), cum_df["tier"].to_list()):
         if c and i:
@@ -560,7 +570,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
     spv_df = _read_csv(
         solve_data_dir / "step_previous.csv",
         ["period", "time", "time_previous", "tprev_within_ts",
-         "period_previous", "tprev_within_solve"],
+         "period_previous", "tprev_within_solve"], provider=provider
     )
     quads_raw = list(zip(
         spv_df["period_previous"].to_list(),
@@ -587,7 +597,7 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
         ("fix_storage_usage.csv",    "n_fix_storage_usage_set.csv"),
     ):
         df = _read_csv(solve_data_dir / src,
-                       ["period", "step", "node", "value"])
+                       ["period", "step", "node", "value"], provider=provider)
         _write_singles(
             solve_data_dir / dst, "node",
             _project_column(df, 2),
@@ -597,24 +607,24 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
     # in process_block with (b, d, t) in block_step_duration}.
     proc_online = frozenset(
         v for v in _read_csv(solve_data_dir / "process_online.csv",
-                             ["process"])["process"].to_list() if v
+                             ["process"], provider=provider)["process"].to_list() if v
     )
     proc_blocks: dict[str, list[str]] = {}
     pb_df = _read_csv(solve_data_dir / "process_block.csv",
-                      ["process", "block"])
+                      ["process", "block"], provider=provider)
     for p, b in zip(pb_df["process"].to_list(), pb_df["block"].to_list()):
         if p and b:
             proc_blocks.setdefault(p, []).append(b)
     block_dt: dict[str, set[tuple[str, str]]] = {}
     bsd_df = _read_csv(solve_data_dir / "block_step_duration.csv",
-                       ["block", "period", "step", "duration"])
+                       ["block", "period", "step", "duration"], provider=provider)
     for b, d, t in zip(bsd_df["block"].to_list(),
                        bsd_df["period"].to_list(),
                        bsd_df["step"].to_list()):
         if b and d and t:
             block_dt.setdefault(b, set()).add((d, t))
     su_df = _read_csv(solve_data_dir / "steps_in_use.csv",
-                      ["period", "time"])
+                      ["period", "time"], provider=provider)
     dt_set = frozenset(
         (d, t) for d, t in zip(su_df["period"].to_list(),
                                su_df["time"].to_list())
@@ -640,9 +650,10 @@ def write_per_solve_sets(solve_data_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _read_keyed_value_kv(path: Path) -> dict[str, float]:
+def _read_keyed_value_kv(path: Path,
+                         *, provider: "object | None" = None) -> dict[str, float]:
     """Read a (key, value) CSV into a dict (float values, blanks skipped)."""
-    df = _read_csv(path, ["key", "value"])
+    df = _read_csv(path, ["key", "value"], provider=provider)
     out: dict[str, float] = {}
     for k, v in zip(df["key"].to_list(), df["value"].to_list()):
         if not k or v is None or v == "":
@@ -654,9 +665,10 @@ def _read_keyed_value_kv(path: Path) -> dict[str, float]:
     return out
 
 
-def _read_pdv(path: Path) -> dict[tuple[str, str], float]:
+def _read_pdv(path: Path,
+              *, provider: "object | None" = None) -> dict[tuple[str, str], float]:
     """Read a 3-col (entity, period, value) CSV into a dict."""
-    df = _read_csv(path, ["entity", "period", "value"])
+    df = _read_csv(path, ["entity", "period", "value"], provider=provider)
     out: dict[tuple[str, str], float] = {}
     for e, d, v in zip(df["entity"].to_list(),
                        df["period"].to_list(),
@@ -670,38 +682,39 @@ def _read_pdv(path: Path) -> dict[tuple[str, str], float]:
     return out
 
 
-def write_invest_divest_sets(input_dir: Path, solve_data_dir: Path) -> None:
+def write_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None) -> None:
     """Native port of ``invest_divest_sets.write_invest_divest_sets``.
 
     Emits 15 CSVs: ed_invest / ed_divest (filtered + method-projected),
     edd_history family (3 + union + 2 derived), pd_*/nd_* projections
     and gd_* group projections.
     """
-    entityInvest = _read_singles(solve_data_dir / "entityInvest.csv")
-    entityDivest = _read_singles(solve_data_dir / "entityDivest.csv")
+    entityInvest = _read_singles(solve_data_dir / "entityInvest.csv", provider=provider)
+    entityDivest = _read_singles(solve_data_dir / "entityDivest.csv", provider=provider)
     period_invest = _read_singles(
-        solve_data_dir / "invest_periods_of_current_solve.csv"
+        solve_data_dir / "invest_periods_of_current_solve.csv", provider=provider
     )
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv", provider=provider)
     period_with_history = _read_singles(
-        solve_data_dir / "period_with_history.csv"
+        solve_data_dir / "period_with_history.csv", provider=provider
     )
-    process_set = frozenset(_read_singles(input_dir / "process.csv"))
-    node_set = frozenset(_read_singles(input_dir / "node.csv"))
-    entity_set = _read_singles(input_dir / "entity.csv")
+    process_set = frozenset(_read_singles(input_dir / "process.csv", provider=provider))
+    node_set = frozenset(_read_singles(input_dir / "node.csv", provider=provider))
+    entity_set = _read_singles(input_dir / "entity.csv", provider=provider)
 
     # Capacity-constraint membership — has_*[entity] sets.
     pcc_inv = _read_pairs(
-        input_dir / "p_process_constraint_invested_capacity_coefficient.csv"
+        input_dir / "p_process_constraint_invested_capacity_coefficient.csv", provider=provider
     )
     pcc_pre = _read_pairs(
-        input_dir / "p_process_constraint_pre_built_capacity_coefficient.csv"
+        input_dir / "p_process_constraint_pre_built_capacity_coefficient.csv", provider=provider
     )
     ncc_inv = _read_pairs(
-        input_dir / "p_node_constraint_invested_capacity_coefficient.csv"
+        input_dir / "p_node_constraint_invested_capacity_coefficient.csv", provider=provider
     )
     ncc_pre = _read_pairs(
-        input_dir / "p_node_constraint_pre_built_capacity_coefficient.csv"
+        input_dir / "p_node_constraint_pre_built_capacity_coefficient.csv", provider=provider
     )
     has_capacity_constraint = (
         frozenset(p for p, _ in pcc_inv)
@@ -710,32 +723,32 @@ def write_invest_divest_sets(input_dir: Path, solve_data_dir: Path) -> None:
         | frozenset(n for n, _ in ncc_pre)
     )
 
-    eea = _read_pdv(solve_data_dir / "ed_entity_annual.csv")
-    eead = _read_pdv(solve_data_dir / "ed_entity_annual_divest.csv")
+    eea = _read_pdv(solve_data_dir / "ed_entity_annual.csv", provider=provider)
+    eead = _read_pdv(solve_data_dir / "ed_entity_annual_divest.csv", provider=provider)
 
     # entity__invest_method (input/) — entity → set of method strings.
-    eim = _read_pairs(input_dir / "entity__invest_method.csv")
+    eim = _read_pairs(input_dir / "entity__invest_method.csv", provider=provider)
     methods_for_e: dict[str, set[str]] = {}
     for e, m in eim:
         methods_for_e.setdefault(e, set()).add(m)
 
     # entity__lifetime_method (Python, solve_data/).
-    elm = _read_pairs(solve_data_dir / "entity__lifetime_method.csv")
+    elm = _read_pairs(solve_data_dir / "entity__lifetime_method.csv", provider=provider)
     lm_for_e: dict[str, set[str]] = {}
     for e, m in elm:
         lm_for_e.setdefault(e, set()).add(m)
 
-    p_years_d = _read_keyed_value_kv(solve_data_dir / "p_years_d.csv")
-    edEntity_lifetime = _read_pdv(solve_data_dir / "edEntity_lifetime.csv")
+    p_years_d = _read_keyed_value_kv(solve_data_dir / "p_years_d.csv", provider=provider)
+    edEntity_lifetime = _read_pdv(solve_data_dir / "edEntity_lifetime.csv", provider=provider)
 
-    group_invest = _read_singles(solve_data_dir / "group_invest.csv")
-    group_divest = _read_singles(solve_data_dir / "group_divest.csv")
+    group_invest = _read_singles(solve_data_dir / "group_invest.csv", provider=provider)
+    group_divest = _read_singles(solve_data_dir / "group_divest.csv", provider=provider)
     del group_divest  # consumed by gd_divest below via identity rule, kept for clarity
-    group_entity = _read_pairs(solve_data_dir / "group_entity.csv")
+    group_entity = _read_pairs(solve_data_dir / "group_entity.csv", provider=provider)
     entities_for_g: dict[str, list[str]] = {}
     for g, e in group_entity:
         entities_for_g.setdefault(g, []).append(e)
-    gim = _read_pairs(input_dir / "group__invest_method.csv")
+    gim = _read_pairs(input_dir / "group__invest_method.csv", provider=provider)
     methods_for_g: dict[str, set[str]] = {}
     for g, m in gim:
         methods_for_g.setdefault(g, set()).add(m)
@@ -910,6 +923,7 @@ def write_invest_divest_sets(input_dir: Path, solve_data_dir: Path) -> None:
 
 def write_ed_invest_forbidden_no_investment(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Native port of
     ``invest_divest_sets.write_ed_invest_forbidden_no_investment``.
@@ -920,13 +934,13 @@ def write_ed_invest_forbidden_no_investment(
     (summed across ``period_first``) has expired by year *d*.
     """
     del input_dir  # legacy signature parity; no input/ reads here.
-    ed_invest_pairs = _read_pairs(solve_data_dir / "ed_invest.csv")
-    elm = _read_pairs(solve_data_dir / "entity__lifetime_method.csv")
+    ed_invest_pairs = _read_pairs(solve_data_dir / "ed_invest.csv", provider=provider)
+    elm = _read_pairs(solve_data_dir / "entity__lifetime_method.csv", provider=provider)
     no_invest_set = frozenset(e for e, m in elm if m == "no_investment")
 
     p_years_d: dict[str, float] = {}
     pyd_df = _read_csv(solve_data_dir / "p_years_d.csv",
-                       ["period", "value"])
+                       ["period", "value"], provider=provider)
     for d, v in zip(pyd_df["period"].to_list(), pyd_df["value"].to_list()):
         if not d:
             continue
@@ -935,8 +949,8 @@ def write_ed_invest_forbidden_no_investment(
         except (ValueError, TypeError):
             continue
 
-    ed_lifetime = _read_pdv(solve_data_dir / "edEntity_lifetime.csv")
-    period_first = _read_singles(solve_data_dir / "period_first.csv")
+    ed_lifetime = _read_pdv(solve_data_dir / "edEntity_lifetime.csv", provider=provider)
+    period_first = _read_singles(solve_data_dir / "period_first.csv", provider=provider)
 
     def _life_sum(e: str) -> float:
         return sum(
