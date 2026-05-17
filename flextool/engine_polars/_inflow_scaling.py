@@ -79,7 +79,19 @@ import polars as pl
 from polar_high import Param
 
 from ._axis_enums import cast_dim, schema_dtype
-from ._input_source import _read_csv_file
+from ._writer_provider_io import _provider_key
+
+
+def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
+    """Provider-only fetch.  Returns ``None`` when the Provider is
+    missing or doesn't carry *path*'s canonical key.
+    """
+    if provider is None:
+        return None
+    key = _provider_key(path)
+    if not provider.has(key):
+        return None
+    return provider.get(key)
 
 # Inflow-scaling helpers run during ``_load_node`` (before
 # ``build_axis_enums`` can populate FlexData with the full vocabulary)
@@ -631,69 +643,72 @@ def _pbt_node_inflow_frame(source: "InputSource") -> "pl.DataFrame | None":
     )
 
 
-def _read_csv_pairs_dict(path: Path, key_col: int) -> dict[str, list[str]]:
+def _read_csv_pairs_dict(provider, path: Path, key_col: int,
+                          ) -> dict[str, list[str]]:
     """Read a 2-col CSV (with header) into ``{col[key_col]: [col[1-key_col]]}``.
 
-    Mirrors :func:`_writer_period_params._read_pairs_to_dict` semantics
-    (we don't import it to avoid a writer-side dependency in the
-    derived-param helper).
+    Provider-only — the disk-fallback arm was removed in Step 2.5.
     """
-    import csv
     out: dict[str, list[str]] = {}
-    if not path.exists():
+    if provider is None:
+        return out
+    key = _provider_key(path)
+    if not provider.has(key):
+        return out
+    df = provider.get(key)
+    if df is None or df.height == 0 or df.width < 2:
         return out
     other_col = 1 - key_col
-    try:
-        with path.open() as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2 and row[0] and row[1]:
-                    out.setdefault(row[key_col], []).append(row[other_col])
-    except Exception:
-        return {}
+    cols = df.columns
+    for row in df.iter_rows():
+        if len(row) >= 2 and row[0] and row[1]:
+            out.setdefault(str(row[key_col]),
+                            []).append(str(row[other_col]))
     return out
 
 
-def _read_singles_set(path: Path) -> set[str]:
-    """Read first column of a CSV (with header) into a set."""
-    import csv
+def _read_singles_set(provider, path: Path) -> set[str]:
+    """Read first column of a frame from the Provider into a set."""
     out: set[str] = set()
-    if not path.exists():
+    if provider is None:
         return out
-    try:
-        with path.open() as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if row and row[0]:
-                    out.add(row[0])
-    except Exception:
-        return set()
+    key = _provider_key(path)
+    if not provider.has(key):
+        return out
+    df = provider.get(key)
+    if df is None or df.height == 0 or df.width < 1:
+        return out
+    for v in df[df.columns[0]].to_list():
+        if v:
+            out.add(str(v))
     return out
 
 
-def _stoch_nodes_from_workdir(workdir: Path) -> set[str]:
+def _stoch_nodes_from_workdir(workdir: Path,
+                                *, provider=None) -> set[str]:
     """``stoch_node = { n : exists g ∈ groupIncludeStochastics with (g, n)
     ∈ group__node }`` — mirrors
     :func:`_writer_period_params._read_stochastic_entities`.
+
+    Provider-only; disk arms removed in Step 2.5.
     """
-    import csv
     inp = Path(workdir) / "input"
-    groups_stoch = _read_singles_set(inp / "groupIncludeStochastics.csv")
+    groups_stoch = _read_singles_set(provider, inp / "groupIncludeStochastics.csv")
     out: set[str] = set()
-    p = inp / "group__node.csv"
-    if not p.exists() or not groups_stoch:
+    if not groups_stoch:
         return out
-    try:
-        with p.open() as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2 and row[0] in groups_stoch and row[1]:
-                    out.add(row[1])
-    except Exception:
-        return set()
+    p = inp / "group__node.csv"
+    if provider is None:
+        return out
+    key = _provider_key(p)
+    if not provider.has(key):
+        return out
+    df = provider.get(key)
+    if df is None or df.height == 0 or df.width < 2:
+        return out
+    for row in df.iter_rows():
+        if len(row) >= 2 and row[0] in groups_stoch and row[1]:
+            out.add(str(row[1]))
     return out
 
 
@@ -701,6 +716,8 @@ def _pbt_node_inflow_fold_lf(
     source: "InputSource",
     workdir: Path | None,
     dt_lf: pl.LazyFrame,
+    *,
+    provider: "object | None" = None,
 ) -> "pl.LazyFrame | None":
     """Branch 1 + Branch 2 fold-in of ``write_pdtNodeInflow``.
 
@@ -736,17 +753,19 @@ def _pbt_node_inflow_fold_lf(
         return None
     workdir = Path(workdir)
     sd = workdir / "solve_data"
-    ts_for_d = _read_csv_pairs_dict(sd / "first_timesteps.csv", key_col=0)
+    ts_for_d = _read_csv_pairs_dict(provider, sd / "first_timesteps.csv",
+                                       key_col=0)
     tb_for_d = _read_csv_pairs_dict(
-        sd / "solve_branch__time_branch.csv", key_col=0,
+        provider, sd / "solve_branch__time_branch.csv", key_col=0,
     )
     # period__branch.csv stores (db, d) — child period is column 1.
-    pe_for_d = _read_csv_pairs_dict(sd / "period__branch.csv", key_col=1)
+    pe_for_d = _read_csv_pairs_dict(provider, sd / "period__branch.csv",
+                                       key_col=1)
     if not ts_for_d:
         # No scaffolding; can't fold.
         return None
 
-    stoch_nodes = _stoch_nodes_from_workdir(workdir)
+    stoch_nodes = _stoch_nodes_from_workdir(workdir, provider=provider)
 
     pbt_lf = pbt.lazy()
     d_lf = dt_lf.select("d").unique()
@@ -824,6 +843,8 @@ def _pbt_node_inflow_fold_lf(
 def _balance_nodes_lf(
     workdir: Path | None,
     balance_set: pl.DataFrame | None,
+    *,
+    provider: "object | None" = None,
 ) -> pl.LazyFrame | None:
     """Return the ``nodeBalance ∪ nodeBalancePeriod`` set as a lazy
     ``[n]`` frame, or ``None`` when the set can't be determined.
@@ -842,13 +863,8 @@ def _balance_nodes_lf(
     if workdir is not None:
         for fname in ("nodeBalance.csv", "nodeBalancePeriod.csv"):
             p = Path(workdir) / "solve_data" / fname
-            if not p.exists():
-                continue
-            try:
-                df = _read_csv_file(p)
-            except Exception:
-                continue
-            if df.height == 0:
+            df = _provider_get(provider, p)
+            if df is None or df.height == 0:
                 continue
             col = next((c for c in ("node", "n", "name")
                          if c in df.columns), None)
@@ -868,6 +884,7 @@ def p_inflow_with_scaling_from_source(
     workdir: Path | None = None,
     balance_set: pl.DataFrame | None = None,
     per_solve_aggs: "PerSolveAggregates | None" = None,
+    provider: "object | None" = None,
 ) -> Param | None:
     """Compute the per-(n, d, t) scaled inflow Param.
 
@@ -910,7 +927,8 @@ def p_inflow_with_scaling_from_source(
     # Branch 1+2 over the top before returning the final Param.
     pbt_fold_lf: "pl.LazyFrame | None" = None
     if _has_pbt_node_inflow(source):
-        pbt_fold_lf = _pbt_node_inflow_fold_lf(source, workdir, dt.lazy())
+        pbt_fold_lf = _pbt_node_inflow_fold_lf(source, workdir, dt.lazy(),
+                                                  provider=provider)
 
     method_lf = _inflow_method_lf(source)
     method_eager = method_lf.collect()
@@ -944,7 +962,7 @@ def p_inflow_with_scaling_from_source(
     if per_solve_aggs is not None and per_solve_aggs.dt_complete.height > 0:
         dt_complete_lf = per_solve_aggs.dt_complete.lazy()
     else:
-        dt_complete_lf = _dt_complete_lf(workdir, dt_lf)
+        dt_complete_lf = _dt_complete_lf(workdir, dt_lf, provider=provider)
     # time_lf must cover the FULL timeline so ``ptNode_inflow`` is
     # computed over every t (not just active dt).  flextool's
     # preprocessing iterates over ``time`` set (== union of timeline
@@ -979,7 +997,7 @@ def p_inflow_with_scaling_from_source(
         period_timeline_lf = per_solve_aggs.period_timeline.lazy()
     else:
         cpsoy_lf, p_tdy_lf, period_timeline_lf = _timeline_aggregates(
-            source, workdir, dt_lf,
+            source, workdir, dt_lf, provider=provider,
         )
 
     # ── Per-(n, d) scaling parameters ─────────────────────────────────
@@ -1002,7 +1020,7 @@ def p_inflow_with_scaling_from_source(
     # Domain: (n, d, t) ∈ eligible_nodes × dt.  Non-balance-union nodes
     # get pti=0 (mirrors flextool's ``write_pdtNodeInflow`` branch 3
     # gate: ``value = 0.0; if in_balance: value += ...``).
-    balance_lf = _balance_nodes_lf(workdir, balance_set)
+    balance_lf = _balance_nodes_lf(workdir, balance_set, provider=provider)
     base = nodes_lf.join(dt_lf, how="cross") \
                     .join(pti_lf, on=["n", "t"], how="left") \
                     .with_columns(value=pl.col("value").fill_null(0.0)) \
@@ -1085,18 +1103,17 @@ def p_inflow_with_scaling_from_source(
 # ---------------------------------------------------------------------------
 
 
-def _read_csv_eager(path: Path) -> pl.DataFrame | None:
-    if not path.exists():
+def _read_csv_eager(provider, path: Path) -> pl.DataFrame | None:
+    """Provider-only eager read.  Returns the frame or ``None``."""
+    df = _provider_get(provider, path)
+    if df is None or df.height == 0:
         return None
-    try:
-        df = _read_csv_file(path)
-    except Exception:
-        return None
-    return df if df.height > 0 else None
+    return df
 
 
 def _dt_complete_lf(workdir: Path | None,
-                     dt_lf: pl.LazyFrame) -> pl.LazyFrame:
+                     dt_lf: pl.LazyFrame,
+                     *, provider: "object | None" = None) -> pl.LazyFrame:
     """``dt_complete = [(d, t)]`` — complete-time-in-use pairs.
 
     Reads ``solve_data/steps_complete_solve.csv`` when available;
@@ -1105,7 +1122,7 @@ def _dt_complete_lf(workdir: Path | None,
     """
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "steps_complete_solve.csv"
-        df = _read_csv_eager(p)
+        df = _read_csv_eager(provider, p)
         if df is not None:
             cols = df.columns
             if "period" in cols and "step" in cols:
@@ -1121,7 +1138,9 @@ def _dt_complete_lf(workdir: Path | None,
 
 def _timeline_aggregates(source: "InputSource",
                            workdir: Path | None,
-                           dt_lf: pl.LazyFrame
+                           dt_lf: pl.LazyFrame,
+                           *,
+                           provider: "object | None" = None,
                            ) -> tuple[pl.LazyFrame, pl.LazyFrame, pl.LazyFrame]:
     """Return (cpsoy_lf [d, value], p_tdy_lf [timeline, value],
     period_timeline_lf [d, timeline]) — all lazy.
@@ -1154,7 +1173,7 @@ def _timeline_aggregates(source: "InputSource",
     if workdir is not None:
         # complete_period_share_of_year_calc.csv (per_solve_sets.py output).
         cp_path = Path(workdir) / "solve_data" / "complete_period_share_of_year_calc.csv"
-        cp_df = _read_csv_eager(cp_path)
+        cp_df = _read_csv_eager(provider, cp_path)
         if cp_df is not None:
             cols = cp_df.columns
             period_col = next((c for c in ("period", "d") if c in cols), None)
@@ -1164,7 +1183,7 @@ def _timeline_aggregates(source: "InputSource",
                     pl.col("value").cast(pl.Float64))
         # p_timeline_duration_in_years.csv
         tdy_path = Path(workdir) / "solve_data" / "p_timeline_duration_in_years.csv"
-        tdy_df = _read_csv_eager(tdy_path)
+        tdy_df = _read_csv_eager(provider, tdy_path)
         if tdy_df is not None:
             cols = tdy_df.columns
             tl_col = next((c for c in ("timeline", "name") if c in cols),
@@ -1175,7 +1194,7 @@ def _timeline_aggregates(source: "InputSource",
                     pl.col("value").cast(pl.Float64))
         # period__timeline_set.csv (per_solve_sets.py output).
         pt_path = Path(workdir) / "solve_data" / "period__timeline_set.csv"
-        pt_df = _read_csv_eager(pt_path)
+        pt_df = _read_csv_eager(provider, pt_path)
         if pt_df is not None:
             cols = pt_df.columns
             if "period" in cols and "timeline" in cols:
@@ -1283,6 +1302,7 @@ def apply_p_inflow_with_scaling(
     dt: pl.DataFrame,
     *,
     per_solve_aggs: "PerSolveAggregates | None" = None,
+    provider: "object | None" = None,
 ) -> bool:
     """Compute and assign ``flex_data.p_inflow`` via the scaling cascade.
 
@@ -1314,7 +1334,8 @@ def apply_p_inflow_with_scaling(
     nb = getattr(flex_data, "nodeBalance", None)
     p = p_inflow_with_scaling_from_source(source, dt, workdir=workdir,
                                             balance_set=nb,
-                                            per_solve_aggs=per_solve_aggs)
+                                            per_solve_aggs=per_solve_aggs,
+                                            provider=provider)
     if p is None:
         return False
 

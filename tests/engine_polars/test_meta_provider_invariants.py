@@ -122,11 +122,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Provider.  Provider-first via _provider_open; disk arm "
         "serves raw inputs."
     ),
-    "_inflow_scaling.py": (
-        "Reads raw input/groupIncludeStochastics.csv, group__node.csv "
-        "and other input/* fixtures during inflow-scaling derivation. "
-        "Not yet carried by the Provider."
-    ),
     "_block_layout.py": (
         "Reads raw input/timeblocks.csv during block-layout "
         "construction (pre-Provider)."
