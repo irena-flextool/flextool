@@ -155,6 +155,40 @@ class FlexDataProvider:
         return self.get(name) is not None
 
     # ------------------------------------------------------------------
+    # Step 1-f — seed-funnel adapter
+    # ------------------------------------------------------------------
+    #
+    # Until Step 2 deletes the seed funnel, the Provider doubles as the
+    # ``_active_seed`` object so the few writer-side reads that have not
+    # yet been threaded with an explicit ``provider`` kwarg (Step 1-g
+    # work) still resolve from in-memory frames.  ``_seed_lookup`` only
+    # calls ``.lookup(path)`` on the active seed; expose a method with
+    # the same signature as :meth:`FlexDataAccumulator.lookup`.
+
+    def lookup(self, target: "Path | str") -> "pl.DataFrame | None":
+        """Return the stored frame for *target*, or ``None``.
+
+        ``target`` may be a full ``Path`` (``<work>/solve_data/foo.csv``)
+        or a bare basename (``"foo.csv"`` or ``"foo"``).  When *target*
+        is a qualified path with a parent dir, the parent-qualified key
+        is consulted first (``"<parent>/<stem>"``); the bare stem is
+        the fallback.  Mirrors :meth:`FlexDataAccumulator.lookup`'s
+        dual-key semantics so the seed funnel returns identical frames
+        across the migration window.
+        """
+        p = Path(target)
+        stem = p.name
+        if stem.endswith(".csv"):
+            stem = stem[:-4]
+        parent = p.parent.name if str(p.parent) != "." else ""
+        if parent:
+            # Qualified caller — return ONLY the parent-qualified frame
+            # to disambiguate basename collisions across input/ vs
+            # solve_data/.
+            return self._frames.get(f"{parent}/{stem}")
+        return self._frames.get(stem)
+
+    # ------------------------------------------------------------------
     # Iteration helpers (handy for tests + future snapshot impls).
     # ------------------------------------------------------------------
 

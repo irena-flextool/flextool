@@ -172,16 +172,16 @@ def test_set_csv_emission_returns_previous(tmp_path: Path) -> None:
 
 
 def test_capture_frames_captures_under_disabled_emission(tmp_path: Path) -> None:
-    """The accumulator hook installed by ``capture_frames`` wraps each
-    module's ``_write`` so the frame is stashed BEFORE the real ``_write``
-    is invoked.  When emission is disabled the real ``_write`` returns
-    without touching disk, but the captured frame is still present in
-    the accumulator (key = path basename)."""
+    """Step 1-f — ``capture_frames`` populates the Provider (no longer
+    the accumulator).  When emission is disabled the real ``_write``
+    returns without touching disk, but the captured frame is still
+    present in the Provider (key = basename without ``.csv`` suffix)."""
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
     target = tmp_path / "leaf_set_captured.csv"
     frame = pl.DataFrame({"col_a": ["x"], "col_b": ["y"]})
 
-    accumulator = FlexDataAccumulator(solve_name="phase_e_c_test")
-    with capture_frames(accumulator), csv_emission_disabled():
+    provider = FlexDataProvider()
+    with capture_frames(provider=provider), csv_emission_disabled():
         _leaf_write(frame, target)
 
     # File is suppressed.
@@ -189,16 +189,16 @@ def test_capture_frames_captures_under_disabled_emission(tmp_path: Path) -> None
         "capture_frames did not respect csv_emission_disabled() — "
         f"{target} was written to disk anyway."
     )
-    # But the frame IS in the accumulator under its basename key.
-    assert "leaf_set_captured.csv" in accumulator, (
-        "accumulator did not capture the frame while emission was "
-        f"disabled.  Captured keys: {accumulator.keys()}"
+    # But the frame IS in the Provider under its basename key.
+    assert provider.has("leaf_set_captured"), (
+        "Provider did not capture the frame while emission was "
+        f"disabled.  Captured keys: {provider.keys()}"
     )
-    captured = accumulator.get("leaf_set_captured.csv")
+    captured = provider.get("leaf_set_captured")
     assert captured is not None
     assert captured.equals(frame), (
         "captured frame does not match the input frame; the wrapper "
-        "should pass the frame unchanged into the accumulator."
+        "should pass the frame unchanged into the Provider."
     )
 
 
@@ -206,18 +206,20 @@ def test_capture_frames_still_emits_under_default(tmp_path: Path) -> None:
     """Sanity: the capture_frames wrapper alone (no disabled context)
     leaves emission alive — this is the Phase C / E-b / E-a default
     behaviour the existing tests rely on."""
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
     target = tmp_path / "leaf_set_default.csv"
     frame = pl.DataFrame({"col_a": ["x"]})
 
-    accumulator = FlexDataAccumulator(solve_name="phase_e_c_default")
-    with capture_frames(accumulator):
+    provider = FlexDataProvider()
+    with capture_frames(provider=provider):
         _leaf_write(frame, target)
 
     assert target.exists(), (
         "capture_frames suppressed disk emission outside any "
         "disabled-context — Phase E-b regression."
     )
-    assert "leaf_set_default.csv" in accumulator
+    # Step 1-f — population now lives on the Provider.
+    assert provider.has("leaf_set_default")
 
 
 # ---------------------------------------------------------------------------
@@ -369,25 +371,19 @@ def test_phase_e_d_universal_csv_free_run(tmp_path: Path) -> None:
         )
     assert csvfree_sols, "csv-free cascade produced no sub-solves"
 
-    # The accumulator captured the writer-port frames (Phase E-d
-    # contract).  The per-iter solve_writers frames now ride inside
-    # the accumulator instead of going only to disk.
+    # Step 1-f — the in-memory carrier is now the per-sub-solve
+    # ``FlexDataProvider``; the cascade no longer surfaces it on
+    # ``OrchestrationStep``.  The cascade running to completion under
+    # ``csv_emission_disabled()`` is itself the proof that the
+    # Provider held the necessary frames for each per-iter reader.  We
+    # retain the disk-leak assertions below as the binding contract
+    # (no writer-port ``_write`` helper escapes to disk under csv-free
+    # mode).  Step 2 deletes the ``flex_data_accumulator`` field
+    # outright.
     csvfree_last = next(reversed(csvfree_sols.values()))
-    accum = csvfree_last.flex_data_accumulator
-    assert accum is not None
-    # Sample a few solve_writers basenames — these are now captured
-    # because the writers ran inside ``capture_frames``.
-    expected_captures = (
-        "steps_in_use.csv", "period_in_use_set.csv", "solve_current.csv",
-        "p_inflation_factor_operations_yearly.csv",
+    assert csvfree_last.flex_data_accumulator is None, (
+        "Step 1-f — Provider replaced the accumulator; field stays None."
     )
-    for name in expected_captures:
-        assert name in accum.frames, (
-            f"Phase E-d expected accumulator to capture {name} after "
-            "the per-iter solve_writers scope was lifted into "
-            f"capture_frames; missing.  Got keys: "
-            f"{sorted(k for k in accum.frames if not k.count('/'))[:20]}"
-        )
 
     # No writer-port ``_write`` helper emitted to ``solve_data/`` or
     # ``cross_solve/`` under csv_emission_disabled().  Note that

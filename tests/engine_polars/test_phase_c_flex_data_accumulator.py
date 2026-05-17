@@ -34,7 +34,17 @@ from flextool.engine_polars._flex_data_accumulator import (
 )
 
 
-pytestmark = pytest.mark.solver
+# Step 1-f — the in-memory ``FlexDataAccumulator`` is no longer
+# populated by the cascade (the per-sub-solve ``FlexDataProvider``
+# replaced it as the data carrier).  The assertions below verify
+# accumulator population which is now intentionally absent; Step 2
+# deletes this entire module together with the accumulator class.
+pytestmark = [
+    pytest.mark.solver,
+    pytest.mark.skip(
+        reason="Step 1-f — accumulator no longer populated; Step 2 deletes the class.",
+    ),
+]
 
 
 HERE = Path(__file__).resolve().parent

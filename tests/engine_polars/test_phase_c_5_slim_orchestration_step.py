@@ -101,8 +101,11 @@ def test_slim_default_releases_per_step_state(tmp_path: Path) -> None:
         "last step must retain flex_data under slim default "
         "(cmd_run_flextool depends on this)"
     )
-    assert last.flex_data_accumulator is not None, (
-        "last step must retain flex_data_accumulator under slim default"
+    # Step 1-f — ``flex_data_accumulator`` is no longer populated by the
+    # cascade (the per-sub-solve Provider replaced it).  Step 2 deletes
+    # the field outright; for now it stays ``None`` on every step.
+    assert last.flex_data_accumulator is None, (
+        "Step 1-f — flex_data_accumulator must be None (replaced by Provider)"
     )
 
 
@@ -128,7 +131,9 @@ def test_keep_solutions_true_retains_every_step(tmp_path: Path) -> None:
             f"keep_solutions=True must retain step.flex_data on every "
             f"step; missing on {k!r}"
         )
-        assert step.flex_data_accumulator is not None, (
-            f"keep_solutions=True must retain step.flex_data_accumulator "
-            f"on every step; missing on {k!r}"
+        # Step 1-f — Provider replaced the accumulator; the field is
+        # always None pending Step 2 deletion.
+        assert step.flex_data_accumulator is None, (
+            f"Step 1-f — flex_data_accumulator must be None (Provider "
+            f"replaced it); got non-None on {k!r}"
         )

@@ -38,7 +38,16 @@ from flextool.engine_polars._flex_data_accumulator import (
 )
 
 
-pytestmark = pytest.mark.solver
+# Step 1-f — the per-sub-solve accumulator is no longer populated, so
+# ``last_step.flex_data_accumulator`` is always ``None`` and the
+# ``seed=`` kwarg goes via the Provider instead.  These tests document
+# the legacy seed-kwarg pathway which Step 2 deletes outright.
+pytestmark = [
+    pytest.mark.solver,
+    pytest.mark.skip(
+        reason="Step 1-f — seed kwarg fed via Provider; Step 2 deletes the seed kwarg.",
+    ),
+]
 
 
 HERE = Path(__file__).resolve().parent
