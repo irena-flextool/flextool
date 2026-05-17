@@ -67,8 +67,9 @@ def write_input_for_region(
 
     wf = work_folder if work_folder is not None else Path.cwd()
     # Produce the full input/ directory first.  Provider receives every
-    # frame; downstream the region filter reads from the workdir disk
-    # staging area (legacy contract — see 2.6 follow-up).
+    # frame; the region-filter port (item 2.6) is deferred — until it
+    # consumes Provider frames directly, we snapshot the Provider so
+    # the legacy disk-walking ``build_region_directory`` keeps working.
     provider = FlexDataProvider()
     _input_derivation_run(
         input_db_url,
@@ -78,6 +79,7 @@ def write_input_for_region(
         work_folder=work_folder,
         precision_digits=precision_digits,
     )
+    provider.snapshot_processed_inputs(wf)
     all_regions = region_filter.discover_decomposition_regions_from_db(input_db_url)
     if region_group not in all_regions:
         raise FlexToolConfigError(

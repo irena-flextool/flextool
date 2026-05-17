@@ -116,9 +116,6 @@ PROVIDER_IMPL_ALLOWLIST: dict[str, str] = {
 # removed and the corresponding files retro-migrated.
 RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
     # --- Raw input fixture readers (input/*.csv not in Provider) ---
-    "_region_filter.py": (
-        "Reads input/regionSwitch.csv at region-filter setup."
-    ),
     "_solve_handoff.py": (
         "Reads workdir solve-data CSV at Provider-less handoff "
         "boundary (post-Step-2 the Provider is threaded through, "

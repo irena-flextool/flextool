@@ -45,7 +45,6 @@ from polar_high import Param
 
 from flextool.engine_polars.input import FlexData
 from flextool.engine_polars._axis_enums import schema_dtype
-from flextool.engine_polars._input_source import _read_csv_file
 
 
 __all__ = [
@@ -106,21 +105,53 @@ class RegionSplit:
 # ---------------------------------------------------------------------------
 
 
-def load_decomposition_method(work_dir: Path | str) -> dict[str, str]:
-    """Read ``input/p_group_decomposition.csv`` (if present) and return
-    ``{group: method}``.  Returns ``{}`` when the file is absent or
-    empty.
+def load_decomposition_method(
+    work_dir: "Path | str | None" = None,
+    *,
+    provider: "object | None" = None,
+) -> dict[str, str]:
+    """Return ``{group: method}`` from
+    ``input/p_group_decomposition.csv`` (Step 2.6 Provider-first).
 
-    The flexpy whole-system loader doesn't surface the
-    decomposition_method param in :class:`FlexData` because it's only
-    used by the decomposition driver itself; we read it directly from
-    disk here.
+    Resolution order:
+
+    1. *provider* carries ``input/p_group_decomposition`` →
+       read from memory.
+    2. *provider* is ``None`` AND *work_dir* points at a workdir with
+       the file on disk → seed an ephemeral Provider from that
+       directory and serve from memory.
+    3. Otherwise → ``{}``.
+
+    The whole-system loader doesn't surface the decomposition_method
+    parameter in :class:`FlexData` because it's only used by the
+    decomposition driver itself; this helper plus the Provider keep
+    it out of cascade memory until the driver needs it.
     """
-    path = Path(work_dir) / "input" / "p_group_decomposition.csv"
-    if not path.exists():
-        return {}
-    df = _read_csv_file(path)
-    if df.height == 0:
+    key = "input/p_group_decomposition"
+    df: pl.DataFrame | None = None
+    if provider is not None and provider.has(key):
+        df = provider.get(key)
+    elif provider is None and work_dir is not None:
+        # Off-cascade test bridge: seed from disk via the centralised
+        # helper so Rule 1 of test_meta_provider_invariants stays clean
+        # (no bare ``pl.read_csv`` / ``_read_csv_file`` in this module).
+        path = Path(work_dir) / "input" / "p_group_decomposition.csv"
+        if not path.exists():
+            return {}
+        from flextool.engine_polars._flex_data_provider import (
+            FlexDataProvider,
+        )
+        from flextool.engine_polars._input_source import (
+            seed_provider_from_dir,
+        )
+        local = FlexDataProvider()
+        seed_provider_from_dir(
+            local, Path(work_dir) / "input", "input",
+            names=("p_group_decomposition",),
+        )
+        if local.has(key):
+            df = local.get(key)
+    if df is None or df.height == 0:
         return {}
     cols = df.columns
     # Expected columns: group, groupParam, p_group
@@ -129,15 +160,21 @@ def load_decomposition_method(work_dir: Path | str) -> dict[str, str]:
     val_col = next((c for c in ("p_group", "value") if c in cols), None)
     if val_col is None:
         return {}
-    rows = df.filter(pl.col("groupParam") == "decomposition_method") \
-             if "groupParam" in cols else df
+    rows = (
+        df.filter(pl.col("groupParam") == "decomposition_method")
+        if "groupParam" in cols else df
+    )
     return {r["group"]: r[val_col] for r in rows.iter_rows(named=True)}
 
 
-def discover_regions(work_dir: Path | str) -> list[str]:
+def discover_regions(
+    work_dir: "Path | str | None" = None,
+    *,
+    provider: "object | None" = None,
+) -> list[str]:
     """Return the list of group names with
     ``decomposition_method=lagrangian_region``."""
-    methods = load_decomposition_method(work_dir)
+    methods = load_decomposition_method(work_dir, provider=provider)
     return sorted(g for g, m in methods.items() if m == "lagrangian_region")
 
 

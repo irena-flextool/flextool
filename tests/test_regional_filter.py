@@ -74,25 +74,31 @@ def lh2_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 def staged_input(
     lh2_db_url: str, tmp_path_factory: pytest.TempPathFactory
 ) -> Path:
-    """Produce the monolithic ``input/`` staging directory once per module."""
+    """Produce the monolithic ``input/`` staging directory once per module.
+
+    Step 2.5 — input_derivation populates a Provider only; no disk
+    artefacts.  The legacy ``flextoolrunner/region_filter.py`` (item
+    2.6) still walks the on-disk ``input/`` tree, so this fixture
+    explicitly snapshots the Provider before returning the workdir.
+    When item 2.6 ports the region filter to operate on Provider
+    frames the snapshot becomes unnecessary.
+    """
     workdir = tmp_path_factory.mktemp("lh2_stage")
     prev_cwd = os.getcwd()
     try:
         os.chdir(workdir)
-        # Step 2.5 — write_input requires a FlexDataProvider.  This
-        # off-cascade fixture only needs the staged ``input/`` directory
-        # for the region-filter walk; an ephemeral Provider satisfies
-        # the contract and is discarded afterwards.
         from flextool.engine_polars._flex_data_provider import (
             FlexDataProvider,
         )
+        provider = FlexDataProvider()
         _input_derivation_run(
             lh2_db_url,
-            FlexDataProvider(),
+            provider,
             logging.getLogger("test_regional_filter"),
             scenario_name=SCENARIO,
             work_folder=workdir,
         )
+        provider.snapshot_processed_inputs(workdir)
     finally:
         os.chdir(prev_cwd)
     assert (workdir / "input" / "node.csv").exists()
