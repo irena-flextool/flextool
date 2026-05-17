@@ -19,6 +19,16 @@ from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
 from ._mps_parser import parse_mps_row_families
 
 
+@pytest.mark.skip(
+    reason=(
+        "Δ.22: this Tier-7 emission test parses ``flextool.mps`` written "
+        "by glpsol --wfreemps in the legacy MathProg pipeline.  The "
+        "native cascade builds the LP directly via polar_high and never "
+        "emits an MPS file, so the parser cannot run.  Row-count "
+        "invariants are now structural to the cascade's LP build and "
+        "are exercised by the per-family unit tests in tests/engine_polars/."
+    )
+)
 @pytest.mark.emission
 def test_nodeBalance_emits_one_row_per_n_dt(
     test_db_url: str,
