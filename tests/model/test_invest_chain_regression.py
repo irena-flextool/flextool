@@ -42,17 +42,28 @@ lived.
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 
 import polars as pl
 import pytest
 
+from polar_high import Problem
+
 _TESTS_DIR = Path(__file__).resolve().parent.parent
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402
+from flextool.engine_polars import (  # noqa: E402
+    build_flextool,
+    run_chain_from_db,
+)
+from flextool.engine_polars.scaling import (  # noqa: E402
+    USER_BOUND_SCALE_MAX,
+    USER_BOUND_SCALE_MIN,
+    recommend_user_bound_scale_from_lp,
+)
 
 
 SCENARIO = "5weeks_invest_fullYear_dispatch_coal_wind"
@@ -189,4 +200,174 @@ def test_invest_chain_pae_frame_equality(invest_chain_steps, sub_solve):
         f"sub-solve {sub_solve!r}: p_entity_all_existing frame drift\n"
         f"--- actual ---\n{actual_sorted}\n"
         f"--- expected ---\n{expected_sorted}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# R7 — LP-bound-range smoke
+# ---------------------------------------------------------------------------
+#
+# Phase E-h's bug surfaced as a -10 → -19 shift in ``user_bound_scale``;
+# the underlying cause was that the recommendation heuristic anchored to
+# ``abs_max`` and collapsed the bottom end of the bound range below
+# HiGHS' practical precision (~1e-8).  Current heuristic uses
+# geometric-midpoint centering with a clamp at
+# ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX] = [-10, 0]`` — see
+# ``flextool/engine_polars/scaling.py::recommend_user_bound_scale_from_lp``.
+#
+# This smoke asserts:
+#
+# 1. The post-build LP bound spread (decades of |bound|) stays under a
+#    generous ceiling.  A real regression that pushed Rivendell into
+#    presolve-infeasible territory would manifest here as a sudden jump
+#    from ~3 decades to ~10+ decades.
+# 2. The recommended ``user_bound_scale`` lands in the legitimate
+#    post-clamp range ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]``.
+#    The pre-fix bug recommended ``-19`` (5 decades past the floor);
+#    this assertion pins that failure mode at the LP-formulation layer
+#    rather than waiting for HiGHS to declare the model infeasible.
+#
+# The post-mortem text suggests requiring ``[-12, -8]`` for invest
+# fixtures, but that range presumes a Rivendell-sized LP whose
+# bound-spread exceeds the 6-decade threshold the recommender treats
+# as "no scaling needed".  This test's fixture has a 3.4-decade
+# spread, so the recommender legitimately returns 0.  The relevant
+# invariant is the clamp range, not a particular non-zero value;
+# Rivendell-shape coverage is deferred to R6 (see post-mortem).
+
+# Generous ceiling: keep some headroom over the fixture's observed
+# 3.4-decade spread.  10 decades would still be well below the
+# pathological Rivendell case (the bug shifted the spread to 13+
+# decades).  Re-run this test locally before tightening.
+_LP_BOUND_SPREAD_DECADES_MAX = 10.0
+
+
+def _finite_positive(rng) -> list[float]:
+    """Return finite, strictly-positive endpoints of a ``(lo, hi)``."""
+    if rng is None:
+        return []
+    try:
+        lo, hi = rng
+    except (TypeError, ValueError):
+        return []
+    out: list[float] = []
+    for x in (lo, hi):
+        if x is None:
+            continue
+        try:
+            xf = float(x)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(xf) and xf > 0.0:
+            out.append(xf)
+    return out
+
+
+@pytest.mark.parametrize("sub_solve", SUB_SOLVES)
+def test_invest_chain_lp_bound_range_smoke(invest_chain_steps, sub_solve):
+    """R7 — LP bound range fits in <= 10 decades and recommended
+    ``user_bound_scale`` is within the post-clamp range.
+
+    Rebuilds the LP in a fresh ``polar_high.Problem`` from the
+    step's ``flex_data`` so we can call ``peek_lp_ranges`` post-build
+    (the recommendation API the cascade itself uses at
+    ``_orchestration.py:873``).
+    """
+    step = invest_chain_steps[sub_solve]
+    assert step.flex_data is not None, (
+        f"sub-solve {sub_solve!r}: flex_data unexpectedly None "
+        f"(keep_solutions=True should retain it)"
+    )
+
+    pb = Problem()
+    build_flextool(pb, step.flex_data)
+    lp_ranges = pb.peek_lp_ranges()
+
+    positive_bounds: list[float] = []
+    for key in ("row_bound", "col_bound"):
+        positive_bounds.extend(_finite_positive(lp_ranges.get(key)))
+    assert positive_bounds, (
+        f"sub-solve {sub_solve!r}: peek_lp_ranges returned no finite "
+        f"positive bounds — LP appears unbounded or malformed: "
+        f"{lp_ranges!r}"
+    )
+
+    spread = math.log10(max(positive_bounds)) - math.log10(min(positive_bounds))
+    assert spread <= _LP_BOUND_SPREAD_DECADES_MAX, (
+        f"sub-solve {sub_solve!r}: LP bound spread blew up to "
+        f"{spread:.2f} decades (ceiling {_LP_BOUND_SPREAD_DECADES_MAX}). "
+        f"Phase E-h's pre-fix Rivendell case had spread ~13 decades and "
+        f"shifted user_bound_scale to -19 → presolve-infeasible. "
+        f"row_bound={lp_ranges.get('row_bound')!r} "
+        f"col_bound={lp_ranges.get('col_bound')!r}"
+    )
+
+    scale = recommend_user_bound_scale_from_lp(lp_ranges)
+    assert USER_BOUND_SCALE_MIN <= scale <= USER_BOUND_SCALE_MAX, (
+        f"sub-solve {sub_solve!r}: recommend_user_bound_scale_from_lp "
+        f"returned {scale}, outside the post-clamp range "
+        f"[{USER_BOUND_SCALE_MIN}, {USER_BOUND_SCALE_MAX}]. "
+        f"The geometric-midpoint heuristic in scaling.py is supposed "
+        f"to enforce this clamp — a breach here means either the "
+        f"clamp regressed or the recommender bypassed it."
+    )
+
+
+# ---------------------------------------------------------------------------
+# R7 — also smoke ``work_base`` (the trivial-shape anchor)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def base_steps(test_db_url, tmp_path_factory):  # noqa: ANN001
+    """Run the ``base`` scenario once per module for the work_base smoke."""
+    work = tmp_path_factory.mktemp("invest_chain_regression_base_work")
+    steps = run_chain_from_db(
+        test_db_url,
+        "base",
+        work_folder=work,
+        keep_solutions=True,
+    )
+    assert steps, "run_chain_from_db returned no steps for 'base'"
+    return steps
+
+
+def test_work_base_lp_bound_range_smoke(base_steps):
+    """R7 (work_base anchor) — LP bound range stays sane on the
+    trivial-shape canary fixture.
+
+    The post-mortem flags ``work_base`` as the universal default-mode
+    canary; the LP-bound smoke applies here too so any future
+    seed-funnel-style regression that distorts even the simplest LP
+    surfaces at the formulation layer instead of HiGHS-presolve.
+    """
+    last = next(reversed(base_steps.values()))
+    assert last.flex_data is not None, (
+        "work_base last step has flex_data=None (keep_solutions=True "
+        "should retain it)"
+    )
+    pb = Problem()
+    build_flextool(pb, last.flex_data)
+    lp_ranges = pb.peek_lp_ranges()
+
+    positive_bounds: list[float] = []
+    for key in ("row_bound", "col_bound"):
+        positive_bounds.extend(_finite_positive(lp_ranges.get(key)))
+    assert positive_bounds, (
+        f"work_base: peek_lp_ranges returned no finite positive "
+        f"bounds: {lp_ranges!r}"
+    )
+    spread = math.log10(max(positive_bounds)) - math.log10(min(positive_bounds))
+    assert spread <= _LP_BOUND_SPREAD_DECADES_MAX, (
+        f"work_base LP bound spread blew up to {spread:.2f} decades "
+        f"(ceiling {_LP_BOUND_SPREAD_DECADES_MAX}). "
+        f"row_bound={lp_ranges.get('row_bound')!r} "
+        f"col_bound={lp_ranges.get('col_bound')!r}"
+    )
+
+    scale = recommend_user_bound_scale_from_lp(lp_ranges)
+    assert USER_BOUND_SCALE_MIN <= scale <= USER_BOUND_SCALE_MAX, (
+        f"work_base: recommend_user_bound_scale_from_lp returned "
+        f"{scale}, outside the post-clamp range "
+        f"[{USER_BOUND_SCALE_MIN}, {USER_BOUND_SCALE_MAX}]"
     )
