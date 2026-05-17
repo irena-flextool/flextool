@@ -34,7 +34,7 @@ from test_scenarios import (  # noqa: E402
     SCENARIOS,
 )
 
-from flextool.flextoolrunner.flextoolrunner import FlexToolRunner  # noqa: E402
+from flextool.engine_polars import run_chain_from_db  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402
 
 from tests.decomposition._helpers import (  # noqa: E402
@@ -64,15 +64,22 @@ def test_obj_decomposition(
     test_bin_dir: Path,
     workdir: Path,
 ) -> None:
-    runner = FlexToolRunner(
-        input_db_url=scenario_db_url,
-        scenario_name=scenario,
-        root_dir=workdir,
-        bin_dir=test_bin_dir,
+    # Δ.22: SolverRunner.run is gone; run via the native cascade.
+    # keep_solutions=True so the solve_steps bundle below carries
+    # per-sub-solve flex_data + solution; csv_dump=True snapshots
+    # solve_data/ so costs_discounted.csv etc. land on disk.
+    steps = run_chain_from_db(
+        scenario_db_url,
+        scenario,
+        work_folder=workdir,
+        csv_dump=True,
+        keep_solutions=True,
     )
-    runner.write_input(scenario_db_url, scenario)
-    return_code = runner.run_model()
-    assert return_code == 0, f"Model run failed for scenario '{scenario}'"
+    assert steps, f"run_chain_from_db returned no steps for scenario '{scenario}'"
+    last_step = next(reversed(steps.values()))
+    assert last_step.solution is not None and last_step.solution.optimal, (
+        f"Model run failed for scenario '{scenario}'"
+    )
 
     write_outputs(
         scenario_name=scenario,
@@ -81,6 +88,13 @@ def test_obj_decomposition(
         output_config_path=OUTPUT_CONFIG,
         write_methods=["csv"],
         fallback_output_location=str(workdir),
+        raw_output_dir=str(workdir / "output_raw"),
+        solution=last_step.solution,
+        solve_name=last_step.solve_name,
+        solve_steps=[
+            (s.solve_name, s.flex_data, s.solution)
+            for s in steps.values()
+        ],
     )
 
     out_dir = workdir / "output_csv" / scenario
