@@ -3868,7 +3868,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
             if db_reader is not None and workdir_for_db is not None:
                 from flextool.engine_polars import _derived_existing as _ex
                 _ex.apply_existing_chain(flex_data, db_reader, workdir_for_db,
-                                              handoff=handoff, ctx=ctx)
+                                              handoff=handoff, ctx=ctx,
+                                              provider=provider)
 
         # End-of-load FlexData → Enum sweep is DISABLED.  The cast ran
         # after every allocator had already materialised String-typed

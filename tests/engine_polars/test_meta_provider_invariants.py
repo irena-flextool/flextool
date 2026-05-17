@@ -138,11 +138,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Reads raw input/timeblocks.csv during block-layout "
         "construction (pre-Provider)."
     ),
-    # --- Derived-cascade modules with Provider-first + disk fallback ---
-    "_derived_existing.py": (
-        "Reads input/ppec.csv and entity/decommission history "
-        "fixtures during existing-capacity derivation (pre-Provider)."
-    ),
     "_region_filter.py": (
         "Reads input/regionSwitch.csv at region-filter setup."
     ),

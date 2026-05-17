@@ -1161,7 +1161,8 @@ def apply_existing_chain(flex_data: object,
                               workdir: Path,
                               *,
                               handoff: object | None = None,
-                              ctx: "SolveContext | None" = None) -> None:
+                              ctx: "SolveContext | None" = None,
+                              provider: "object | None" = None) -> None:
     """Apply Cluster B helpers to ``flex_data`` (mutates in place).
 
     Wired-in fields:
@@ -1192,8 +1193,16 @@ def apply_existing_chain(flex_data: object,
         _read_period_with_history,
     )
     from .input import _read_solve_first
-    from ._input_source import _read_csv_file
+    from ._writer_provider_io import _provider_key
     from polar_high import Param as _Param
+
+    def _provider_get(p):
+        if provider is None:
+            return None
+        key = _provider_key(p)
+        if not provider.has(key):
+            return None
+        return provider.get(key)
 
     # Δ.12a — prefer the typed SolveContext fields (zero physical IO)
     # when the caller supplied one; fall back to direct workdir reads
@@ -1204,12 +1213,13 @@ def apply_existing_chain(flex_data: object,
         ppec_csv_df = ctx.p_entity_period_existing_capacity
         edd_hist_df_raw = ctx.edd_history
     else:
-        active_solve = _read_active_solve(workdir)
-        solve_first = _read_solve_first(workdir)
+        active_solve = _read_active_solve(workdir, provider=provider)
+        solve_first = _read_solve_first(workdir, provider=provider)
         ppec_csv_df = None
         edd_hist_df_raw = None
-    period_in_use = _period_in_use_set(source, active_solve, workdir, ctx=ctx)
-    period_with_history = (_read_period_with_history(workdir)
+    period_in_use = _period_in_use_set(source, active_solve, workdir,
+                                         ctx=ctx, provider=provider)
+    period_with_history = (_read_period_with_history(workdir, provider=provider)
                               or list(period_in_use))
 
     ppic = getattr(flex_data, "p_entity_previously_invested_capacity", None)
@@ -1229,19 +1239,13 @@ def apply_existing_chain(flex_data: object,
                                                        "period": "d"})
                                           .select("e", "d", "value"))
     if ppec_param is None:
-        # Δ.12a — prefer the typed SolveContext field; the cached
-        # active-CSV-cache funnels the read either way.
+        # Δ.12a — prefer the typed SolveContext field; otherwise consult
+        # the Provider (no disk fallback — Step 2.5).
         if ctx is not None and ppec_csv_df is not None and ppec_csv_df.height > 0:
             df = ppec_csv_df
         else:
             ppec_path = workdir / "solve_data" / "p_entity_period_existing_capacity.csv"
-            if ppec_path.exists():
-                try:
-                    df = _read_csv_file(ppec_path)
-                except Exception:
-                    df = None
-            else:
-                df = None
+            df = _provider_get(ppec_path)
         if (df is not None and df.height > 0
                 and "p_entity_period_existing_capacity" in df.columns):
             ppec_param = _Param(("e", "d"),
@@ -1259,13 +1263,9 @@ def apply_existing_chain(flex_data: object,
             edd_hist_df = edd_hist_df_raw
     else:
         edd_path = workdir / "solve_data" / "edd_history.csv"
-        if edd_path.exists():
-            try:
-                edd_hist_df = _read_csv_file(edd_path)
-            except Exception:
-                edd_hist_df = None
-            if edd_hist_df is not None and edd_hist_df.height == 0:
-                edd_hist_df = None
+        edd_hist_df = _provider_get(edd_path)
+        if edd_hist_df is not None and edd_hist_df.height == 0:
+            edd_hist_df = None
 
     # Δ.12b — assign unconditionally.  The helper returns ``None`` only
     # when there's no entity_invest_method-eligible row in the source,
