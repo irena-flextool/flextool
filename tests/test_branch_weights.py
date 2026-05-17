@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.flextoolrunner.preprocessing.period_calculated_params import (
+from flextool.engine_polars._writer_period_calc import (
     write_branch_weights,
 )
 

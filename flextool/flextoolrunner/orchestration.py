@@ -11,7 +11,9 @@ import time
 from collections import defaultdict
 
 from flextool.flextoolrunner.blocks import write_block_data_for_solve
-from flextool.flextoolrunner.preprocessing import solve_time as preprocessing_solve_time
+# Step 2.5 — preprocessing package deleted; per-solve orchestrator
+# moved into engine_polars natively.
+from flextool.engine_polars import _writer_solve_time as preprocessing_solve_time
 from flextool.flextoolrunner.solve_handoff import capture_post_solve
 from flextool.flextoolrunner.minimum_time import write_minimum_time_data
 from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigError, FlexToolSolveError, SolveResult

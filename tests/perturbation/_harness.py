@@ -78,30 +78,31 @@ from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402
 
 _PATCH_SPEC: dict[str, tuple[str, str]] = {
     # Test 1 — operational inflation factor (per-period long file).
+    # Step 2.5 — moved to engine_polars after preprocessing/ deletion.
     "solve_data/p_inflation_factor_operations_yearly.csv": (
-        "flextool.flextoolrunner.preprocessing.period_calculated_params",
+        "flextool.engine_polars._writer_period_calc",
         "write_period_calculated_params",
     ),
     # Test 2 — co2 price lives in pdtGroup (long-format with `value` col).
     "solve_data/pdtGroup.csv": (
-        "flextool.flextoolrunner.preprocessing.entity_period_calc_params",
+        "flextool.engine_polars._writer_period_params",
         "write_pdtGroup",
     ),
     # Test 3 — startup_cost lives in pdProcess (long-format with `value` col).
     "solve_data/pdProcess.csv": (
-        "flextool.flextoolrunner.preprocessing.entity_period_calc_params",
+        "flextool.engine_polars._writer_dispatchers",
         "write_entity_period_calc_params",
     ),
     # Test 4 — penalty_up lives in pdtNode (long-format with `value` col).
     "solve_data/pdtNode.csv": (
-        "flextool.flextoolrunner.preprocessing.entity_period_calc_params",
+        "flextool.engine_polars._writer_pdt_params",
         "write_pdtNode",
     ),
     # Test 5 — step duration lives in steps_in_use (period,step,step_duration).
     # Written by orchestration via solve_writers.write_active_timelines
     # BEFORE preprocessing. Patching it before run_model() suffices.
     "solve_data/steps_in_use.csv": (
-        "flextool.flextoolrunner.solve_writers",
+        "flextool.engine_polars._writer_solve_writers",
         "write_active_timelines",
     ),
 }
