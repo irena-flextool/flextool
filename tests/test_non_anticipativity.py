@@ -28,7 +28,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
+from flextool.engine_polars import run_chain_from_db
 from flextool.lean_parquet import read_lean_parquet
 
 
@@ -50,15 +50,27 @@ def stochastic_run_workdir(
     """Run the 2_day_stochastic_dispatch scenario once for the module."""
     workdir = tmp_path_factory.mktemp("non_anticipativity_run")
     os.chdir(workdir)
-    runner = FlexToolRunner(
-        input_db_url=stochastic_db_url,
-        scenario_name="2_day_stochastic_dispatch",
-        root_dir=workdir,
-        bin_dir=test_bin_dir,
+    # Δ.22: SolverRunner.run was deleted; the native cascade
+    # (run_chain_from_db) is the in-process replacement.
+    # csv_dump=True snapshots solve_data/ (period__branch.csv,
+    # pdtProfile.csv, etc.) so the assertions read unchanged.
+    # keep_solutions=True retains flex_data_provider so we can dump
+    # the derived input/ frames (pbt_profile.csv) to disk.
+    steps = run_chain_from_db(
+        stochastic_db_url,
+        "2_day_stochastic_dispatch",
+        work_folder=workdir,
+        csv_dump=True,
+        keep_solutions=True,
     )
-    runner.write_input(stochastic_db_url, "2_day_stochastic_dispatch")
-    rc = runner.run_model()
-    assert rc == 0, "Stochastic dispatch model failed to solve"
+    assert steps, "run_chain_from_db returned no steps"
+    last_step = next(reversed(steps.values()))
+    assert last_step.solution is not None and last_step.solution.optimal, (
+        "Stochastic dispatch model failed to solve"
+    )
+    provider = getattr(last_step, "flex_data_provider", None)
+    if provider is not None:
+        provider.snapshot_processed_inputs(workdir)
     return workdir
 
 
