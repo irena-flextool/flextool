@@ -131,7 +131,6 @@ def _provider_open(provider: "object | None", name: str,
         return p.open()
     return None
 from ._axis_enums import (  # substrate retained for Path B — see handoff
-    build_axis_enums,
     cast_frame_axes,
     cast_value_axes,
     cast_flexdata_axes,

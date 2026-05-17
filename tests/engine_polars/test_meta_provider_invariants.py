@@ -122,11 +122,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Provider.  Provider-first via _provider_open; disk arm "
         "serves raw inputs."
     ),
-    "_axis_enums.py": (
-        "Reads raw input/*.csv enum-vocabulary columns "
-        "(entity, process, node, commodity, group, profile) at "
-        "axis-enum build time, before the Provider is populated."
-    ),
     "_invest_seeds.py": (
         "Synthetic per-sub-solve workdir-CSV seed readers "
         "(documented at module top).  When _apply_db_overrides "
