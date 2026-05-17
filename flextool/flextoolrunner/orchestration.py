@@ -173,7 +173,25 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                                      t_start=time.perf_counter() - timing)
     timer = timer + timing
 
-    separate_period_and_timeseries_data(state.timeline.timelines, state.solve.timesets_used_by_solves, work_folder=wf)
+    # Step 2.5-G Phase A — Provider-aware pdt → {pd, pt} split.  The
+    # cascade-input Provider on ``state`` carries the seeded
+    # ``input/pdt_commodity`` / ``input/pdt_group`` frames (Phase 2.5-E
+    # migrated ``_PARAMETER_SPECS`` off disk).  ``write_input`` populates
+    # the slot before ``run_model`` fires; we bootstrap a fresh empty
+    # Provider for the corner case where the caller invokes ``run_model``
+    # standalone (no ``write_input`` first), in which case
+    # ``_provider_open`` falls back to disk for the source frame.
+    cascade_input_provider = getattr(state, "cascade_input_provider", None)
+    if cascade_input_provider is None:
+        from flextool.engine_polars._flex_data_provider import FlexDataProvider
+        cascade_input_provider = FlexDataProvider()
+        state.cascade_input_provider = cascade_input_provider
+    separate_period_and_timeseries_data(
+        state.timeline.timelines,
+        state.solve.timesets_used_by_solves,
+        provider=cascade_input_provider,
+        work_folder=wf,
+    )
 
     # Load minimum time data from input/ CSVs for precomputation
     process_min_uptime: dict[str, float] = {}

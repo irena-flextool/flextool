@@ -20,7 +20,10 @@ from flextool.flextoolrunner.db_reader import DictMode, get_single_entities, par
 from flextool.flextoolrunner.runner_state import ActiveTimeEntry, FlexToolConfigError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from spinedb_api import DatabaseMapping
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
     from flextool.flextoolrunner.solve_config import SolveConfig
 
 
@@ -623,20 +626,49 @@ def make_timeset_timeline(steplist: list, start: str, length: float) -> list:
 
 
 def separate_period_and_timeseries_data(
-    timelines: dict, solve__period__timeset: dict, work_folder: "Path | None" = None
+    timelines: dict,
+    solve__period__timeset: dict,
+    *,
+    provider: "FlexDataProvider",
+    work_folder: "Path | None" = None,
 ) -> None:
     """Separate period data from timeseries data in pdt_*.csv input files.
 
-    Writes pd_*.csv (period rows) and pt_*.csv (timeseries rows) into input/.
+    Reads the source ``pdt_<class>.csv`` frame from the cascade-input
+    Provider (Step 2.5-G Phase A) — falling back to disk for off-cascade
+    callers via :func:`_provider_open` — and writes the resulting
+    ``pd_<class>.csv`` (period rows) and ``pt_<class>.csv`` (timeseries
+    rows) into ``input/`` for the legacy downstream consumers that still
+    read those CSVs from disk (e.g.
+    :mod:`flextool.flextoolrunner.preprocessing.entity_period_calc_params`).
+
+    The frame splits land on *provider* too, mirroring the engine_polars
+    twin at :func:`flextool.engine_polars._timeline.separate_period_and_timeseries_data`,
+    so engine_polars-side readers can pick them up via the Provider.
 
     Args:
         timelines: Dict of timeline data.
         solve__period__timeset: Dict mapping solves to period/timeset pairs.
+        provider: Required cascade-input Provider — supplies the
+            ``input/pdt_<class>`` source frame and receives the derived
+            ``input/pd_<class>`` / ``input/pt_<class>`` shards.
         work_folder: Optional working directory.  When provided, all
             ``input/`` paths are resolved relative to this folder instead of
             the current working directory.
     """
     from pathlib import Path
+
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_key,
+        _provider_open,
+    )
+
+    if provider is None:  # pragma: no cover — explicit guard
+        raise TypeError(
+            "separate_period_and_timeseries_data requires a FlexDataProvider; "
+            "the cascade-input Provider is the canonical source for the "
+            "input/pdt_<class> frames (Step 2.5-G Phase A)."
+        )
 
     wf = Path(work_folder) if work_folder is not None else Path.cwd()
 
@@ -644,6 +676,8 @@ def separate_period_and_timeseries_data(
     for inputfile in inputfiles:
         output_period = str(wf / f'input/pd_{inputfile[4:]}')
         output_timeseries = str(wf / f'input/pt_{inputfile[4:]}')
+        in_path = wf / 'input' / inputfile
+        in_key = _provider_key(in_path)
         timesteps: list[str] = []
         for timeline in list(timelines.values()):
             for step in timeline:
@@ -653,11 +687,19 @@ def separate_period_and_timeseries_data(
             for period__timeset in period__timesets:
                 periods.append(period__timeset[0])
 
+        handle = _provider_open(provider, in_key, in_path)
+        if handle is None:
+            # No source — neither Provider nor disk carries the frame.
+            # Skip the split; downstream consumers tolerate missing pd_/pt_
+            # CSVs.  Keep the empty CSVs absent to mirror the historical
+            # behaviour where this function would have raised; the explicit
+            # ``continue`` makes the new memory-only contract observable.
+            continue
         with open(output_period, 'w', newline='') as blk_p:
             period_writer = csv.writer(blk_p, delimiter=',')
             with open(output_timeseries, 'w', newline='') as blk_t:
                 timeseries_writer = csv.writer(blk_t, delimiter=',')
-                with open(str(wf / f'input/{inputfile}'), 'r', encoding='utf-8') as blk:
+                with handle as blk:
                     filereader = csv.reader(blk, delimiter=',')
                     headers = next(filereader)
                     timeseries_writer.writerow(headers)
