@@ -127,13 +127,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "and other input/* fixtures during inflow-scaling derivation. "
         "Not yet carried by the Provider."
     ),
-    "_timeline.py": (
-        "TimelineConfig.create_averaged_timeseries and "
-        "separate_period_and_timeseries_data route via _provider_open / "
-        "provider.put.  pl.read_csv sites are the off-cascade disk "
-        "fallback only; in-cascade the Provider always carries the "
-        "frame after Step 2.5-E Phase E."
-    ),
     "_block_layout.py": (
         "Reads raw input/timeblocks.csv during block-layout "
         "construction (pre-Provider)."

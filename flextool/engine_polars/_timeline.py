@@ -855,24 +855,20 @@ class TimelineConfig:
 def _provider_get_or_read(
     provider: "FlexDataProvider | None",
     key: str,
-    path: "Path",
+    path: "Path",  # noqa: ARG001 — kept for symmetry with call sites
 ) -> "pl.DataFrame | None":
-    """Return the frame for *key* from the Provider, with disk fallback.
+    """Return the frame for *key* from the Provider.
 
-    In-cascade the Provider always carries the input frame; the disk
-    arm is reserved for the off-cascade test harness that seeds
-    inputs to disk and invokes :meth:`TimelineConfig.create_averaged_timeseries`
-    without populating the Provider first.  Returns ``None`` when
-    neither source has the file.
+    Provider-only — the disk fallback was deleted in Step 2.5.
+    Returns ``None`` when the Provider is missing or doesn't carry
+    *key*.  Callers that previously seeded inputs to disk without
+    populating the Provider must now seed the Provider directly.
     """
-    if provider is not None and provider.has(key):
-        return provider.get(key)
-    if path.exists():
-        # ``infer_schema_length=0`` keeps every column Utf8 so the
-        # row iteration in ``create_averaged_timeseries`` reads
-        # legacy text values verbatim (mirrors ``csv.reader``).
-        return pl.read_csv(path, infer_schema_length=0)
-    return None
+    if provider is None:
+        return None
+    if not provider.has(key):
+        return None
+    return provider.get(key)
 
 
 def _build_frame_with_headers(
@@ -1355,20 +1351,11 @@ def separate_period_and_timeseries_data(
         pd_key = _provider_key(wf / "input" / f"pd_{suffix}.csv")
         pt_key = _provider_key(wf / "input" / f"pt_{suffix}.csv")
 
-        if provider.has(in_key):
-            df = provider.get(in_key)
-        else:
-            # Off-cascade test harness disk fallback — until Phase E
-            # migrates ``_PARAMETER_SPECS`` to the Provider, in-cascade
-            # the pdt_* frame still arrives via the disk-fallback arm
-            # of ``_provider_open``.  Either way we end up with a frame.
-            handle = _provider_open(provider, in_key, in_path)
-            if handle is None:
-                # No source — skip the split.  Downstream consumers
-                # tolerate missing keys.
-                continue
-            with handle as fh:
-                df = pl.read_csv(fh, infer_schema_length=0)
+        if not provider.has(in_key):
+            # No source — skip the split.  Downstream consumers tolerate
+            # missing keys.  Step 2.5: Provider-only — no disk fallback.
+            continue
+        df = provider.get(in_key)
         key_col = df.columns[2]
         pt_frame = df.filter(pl.col(key_col).is_in(timesteps))
         pd_frame = _rename_pdt_to_pd(
