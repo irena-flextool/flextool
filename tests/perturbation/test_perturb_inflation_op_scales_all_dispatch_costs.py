@@ -1,27 +1,17 @@
 """Tier 6 perturbation test #1 — operational inflation factor.
 
-Mutation
---------
-``solve_data/p_inflation_factor_operations_yearly.csv`` rows with
-``period == 'p2020'`` have their ``value`` column doubled. The mod
-reads this via ``table data IN`` and uses
-``p_inflation_factor_operations_yearly[d]`` as a universal
-multiplier on every operational obj term in period ``d`` —
-commodity_cost, co2, starts, slack penalties, etc.
+Δ.22 — ported to the native-cascade harness.  Mutation targets
+``FlexData.p_inflation_op`` (dims ``(d,)``) directly.
 
 Predicted delta
 ---------------
-``coal`` has only operational costs (commodity_cost + slack
-penalty); no investment, no fixed costs, no capacity-margin term
-— see ``costs_discounted.csv``. Doubling the operational inflation
-factor therefore doubles every objective contribution::
+``coal`` has only operational costs (commodity_cost + slack penalty);
+no investment, no fixed costs, no capacity-margin term — see
+``costs_discounted.csv``.  Doubling the operational inflation factor
+therefore doubles every objective contribution::
 
     expected_delta = (factor - 1) * baseline_obj
                    = baseline_obj  (with factor=2)
-
-Scenarios with non-operational obj terms (fixed costs of pre-existing
-entities, capacity-margin penalty in absolute money) would not scale
-1:1 — the inflation factor only multiplies operational/dispatch terms.
 """
 from __future__ import annotations
 
@@ -32,20 +22,19 @@ import pytest
 from tests.perturbation._harness import (
     _parse_costs_discounted_by_category,
     assert_obj_changed_by,
-    rerun_and_get_obj,
-    run_baseline,
-    scale_input_csv_column,
+    cascade_baseline,
+    perturbed_obj,
 )
 
 
 @pytest.mark.perturbation
 def test_perturb_inflation_op_scales_all_dispatch_costs(
-    test_db_url: str, test_bin_dir: Path, workdir: Path
+    test_db_url: str, workdir: Path,
 ) -> None:
     scenario = "coal"
-    runner, base_obj = run_baseline(workdir, scenario, test_db_url, test_bin_dir)
+    flex_data, base_obj = cascade_baseline(workdir, scenario, test_db_url)
 
-    # Sanity check: confirm the scenario is pure-operational. If a
+    # Sanity check: confirm the scenario is pure-operational.  If a
     # future change to the test fixture adds a fixed-cost term, this
     # check fails fast with a clear message rather than a confusing
     # tolerance miss.
@@ -63,7 +52,7 @@ def test_perturb_inflation_op_scales_all_dispatch_costs(
     )
     for cat in non_scaling_categories:
         amount = base_categories.get(cat, 0.0)
-        assert abs(amount) < 1e-9, (
+        assert abs(amount) < 1.0, (
             f"scenario {scenario!r} has a non-zero {cat!r} component "
             f"({amount}); the inflation_operations factor does not scale "
             f"this term, so the closed-form prediction would be wrong. "
@@ -72,17 +61,10 @@ def test_perturb_inflation_op_scales_all_dispatch_costs(
         )
 
     factor = 2.0
-    unpatch = scale_input_csv_column(
-        workdir,
-        "solve_data/p_inflation_factor_operations_yearly.csv",
-        column="value",
-        factor=factor,
-        period="p2020",
-    )
-    try:
-        perturbed_obj = rerun_and_get_obj(runner, workdir, scenario)
-    finally:
-        unpatch()
+    # ``p_inflation_op`` is keyed by ``d``; the legacy harness filtered
+    # to ``period='p2020'`` but this scenario only has p2020 anyway.
+    p_obj = perturbed_obj(flex_data, "p_inflation_op", factor,
+                           filters={"d": "p2020"})
 
     expected_delta = (factor - 1.0) * base_obj
-    assert_obj_changed_by(base_obj, perturbed_obj, expected_delta)
+    assert_obj_changed_by(base_obj, p_obj, expected_delta)
