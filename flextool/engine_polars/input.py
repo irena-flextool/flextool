@@ -3654,7 +3654,10 @@ def load_flextool(source: "Path | str | FlexInputSource",
         delay_data = _delay.load_data(inp_dir=inp, sd_dir=sd)
 
         # ─── DC power flow data ──────────────────────────────────────────────
-        dc_pf_data = _dc_power_flow.load_data(inp_dir=inp)
+        # Step 2.5-F Phase B: Provider holds the four DC PF frames
+        # under input/<key>; disk arm is reserved for off-cascade
+        # fixture loaders without a Provider.
+        dc_pf_data = _dc_power_flow.load_data(inp_dir=inp, provider=provider)
 
         # ─── Commodity price ladder data ─────────────────────────────────────
         ladder_data = _commodity_ladder.load_data(inp_dir=inp, sd_dir=sd)

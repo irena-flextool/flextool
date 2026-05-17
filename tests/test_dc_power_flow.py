@@ -1,35 +1,84 @@
-"""Tests for DC power flow data pipeline in input_writer.
+"""Tests for the DC power flow input-derivation pipeline.
 
-These tests verify:
+Post-Step-2.5-F Phase B the legacy
+``flextool.flextoolrunner.input_writer._write_dc_power_flow_data`` no
+longer exists — the BFS reference-node selection + susceptance
+computation lives in
+:mod:`flextool.input_derivation._dc_power_flow` and emits its four
+frames to a :class:`FlexDataProvider` (no disk writes).
+
+These tests exercise the derivation through the Provider directly:
+
 - Group-level transfer_method override logic
 - DC power flow connection/node identification
 - Susceptance computation (base_MVA / reactance)
 - Reference bus auto-detection (BFS + largest existing capacity)
-- CSV file output (node_dc_power_flow, connection_dc_power_flow,
-  node_reference_angle, p_connection_susceptance)
-- Process method override via ct_method_overrides
+- ``input/{node,connection}_dc_power_flow``,
+  ``input/node_reference_angle``,
+  ``input/p_connection_susceptance`` Provider frames
+- Process method override via ``derived/ct_method_overrides``
 - Integration test: full FlexTool run on PGLib case14 IEEE (DC-OPF)
 """
 
 import csv
 import logging
-import os
-import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
-from spinedb_api import DatabaseMapping, import_data, to_database
+from spinedb_api import DatabaseMapping, import_data
 
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
 from flextool.flextoolrunner.input_writer import (
     METHODS_MAPPING,
-    _write_dc_power_flow_data,
     _write_process_method,
 )
+from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
+from flextool.spinedb_backend import SpineDBBackend
+
 
 logger = logging.getLogger("test_dc_power_flow")
+
+
+# ---------------------------------------------------------------------------
+# Backend / Provider helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_dc_pf(db) -> tuple[FlexDataProvider, dict[str, str]]:
+    """Run :func:`derive_dc_power_flow` against an opened
+    :class:`DatabaseMapping`.
+
+    Returns ``(provider, ct_method_overrides)`` where *provider* holds
+    the four DC PF frames under their canonical ``input/<name>`` keys.
+    """
+    backend = SpineDBBackend.__new__(SpineDBBackend)
+    backend._db = db  # type: ignore[attr-defined]
+    import spinedb_api as _api
+    backend._api = _api  # type: ignore[attr-defined]
+    backend._precision_digits = 0  # type: ignore[attr-defined]
+    provider = FlexDataProvider()
+    overrides = derive_dc_power_flow(backend, provider, logger)
+    return provider, overrides
+
+
+def _column(provider: FlexDataProvider, key: str, column: str) -> list[str]:
+    """Return one column of a Provider frame as a list of strings."""
+    df = provider.get(key)
+    if df is None:
+        return []
+    return df.get_column(column).to_list()
+
+
+def _susceptance_map(provider: FlexDataProvider) -> dict[str, float]:
+    """Materialise ``input/p_connection_susceptance`` as ``{process: float}``."""
+    df = provider.get("input/p_connection_susceptance")
+    if df is None or df.height == 0:
+        return {}
+    procs = df.get_column("process").to_list()
+    vals = df.get_column("p_connection_susceptance").to_list()
+    return {p: float(v) for p, v in zip(procs, vals)}
 
 
 # ---------------------------------------------------------------------------
@@ -87,18 +136,14 @@ def _add_data(url: str, **kwargs) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Helper: read CSV produced by _write_dc_power_flow_data / _write_process_method
+# Legacy CSV helpers — used only by tests that still call
+# _write_process_method (Phase C will port this; until then the
+# process_method assertions still read its on-disk CSV output).
 # ---------------------------------------------------------------------------
 
 def _read_csv(filepath: Path) -> list[dict[str, str]]:
-    """Read a CSV file and return list of row-dicts."""
     with open(filepath) as f:
         return list(csv.DictReader(f))
-
-
-def _read_csv_column(filepath: Path, col: str) -> list[str]:
-    """Read one column from a CSV file."""
-    return [row[col] for row in _read_csv(filepath)]
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +152,11 @@ def _read_csv_column(filepath: Path, col: str) -> list[str]:
 
 @pytest.fixture()
 def work_dir(tmp_path: Path) -> Path:
-    """Create work directory with input/ subdirectory."""
+    """Create work directory with input/ subdirectory.
+
+    Used only by ``_write_process_method`` tests below (the DC PF
+    derivation itself takes no work dir — frames land on the Provider).
+    """
     (tmp_path / "input").mkdir()
     return tmp_path
 
@@ -138,18 +187,15 @@ def triangle_db(tmp_path: Path) -> str:
         ("connection", "conn_BC"),
         ("connection", "conn_AC"),
         ("group", "ac_network"),
-        # group__node memberships
         ("group__node", ("ac_network", "bus_A")),
         ("group__node", ("ac_network", "bus_B")),
         ("group__node", ("ac_network", "bus_C")),
-        # connection topology: connection__node__node (conn, from, to)
         ("connection__node__node", ("conn_AB", "bus_A", "bus_B")),
         ("connection__node__node", ("conn_BC", "bus_B", "bus_C")),
         ("connection__node__node", ("conn_AC", "bus_A", "bus_C")),
     ]
 
     parameter_values = [
-        # Connection parameters
         ("connection", "conn_AB", "transfer_method", "regular"),
         ("connection", "conn_BC", "transfer_method", "regular"),
         ("connection", "conn_AC", "transfer_method", "regular"),
@@ -159,10 +205,8 @@ def triangle_db(tmp_path: Path) -> str:
         ("connection", "conn_AB", "existing", 100.0),
         ("connection", "conn_BC", "existing", 100.0),
         ("connection", "conn_AC", "existing", 100.0),
-        # Group parameters
         ("group", "ac_network", "transfer_method", "dc_power_flow_with_angles"),
         ("group", "ac_network", "base_MVA", 100.0),
-        # Node existing capacity (for reference bus auto-detection)
         ("node", "bus_A", "existing", 200.0),
         ("node", "bus_B", "existing", 0.0),
         ("node", "bus_C", "existing", 50.0),
@@ -177,57 +221,59 @@ def triangle_db(tmp_path: Path) -> str:
 # ===================================================================
 
 class TestDCPowerFlowDataPipeline:
-    """Tests for _write_dc_power_flow_data using the triangle fixture."""
+    """Tests for derive_dc_power_flow using the triangle fixture."""
 
-    def test_dc_pf_nodes_csv(self, triangle_db: str, work_dir: Path) -> None:
-        """All 3 nodes in the DC PF group appear in node_dc_power_flow.csv."""
+    def test_dc_pf_nodes_frame(self, triangle_db: str) -> None:
+        """All 3 nodes in the DC PF group appear on the Provider's
+        input/node_dc_power_flow frame.
+        """
         with DatabaseMapping(triangle_db) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_dc_power_flow_data(db, work_dir, logger)
+            provider, _ = _run_dc_pf(db)
 
-        nodes = _read_csv_column(work_dir / "input" / "node_dc_power_flow.csv", "node")
+        nodes = _column(provider, "input/node_dc_power_flow", "node")
         assert sorted(nodes) == ["bus_A", "bus_B", "bus_C"]
 
-    def test_dc_pf_connections_csv(self, triangle_db: str, work_dir: Path) -> None:
-        """All 3 connections appear in connection_dc_power_flow.csv."""
+    def test_dc_pf_connections_frame(self, triangle_db: str) -> None:
+        """All 3 connections appear on the Provider's
+        input/connection_dc_power_flow frame.
+        """
         with DatabaseMapping(triangle_db) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_dc_power_flow_data(db, work_dir, logger)
+            provider, _ = _run_dc_pf(db)
 
-        conns = _read_csv_column(work_dir / "input" / "connection_dc_power_flow.csv", "process")
+        conns = _column(provider, "input/connection_dc_power_flow", "process")
         assert sorted(conns) == ["conn_AB", "conn_AC", "conn_BC"]
 
-    def test_susceptance_computation(self, triangle_db: str, work_dir: Path) -> None:
+    def test_susceptance_computation(self, triangle_db: str) -> None:
         """Susceptance = base_MVA / reactance = 100 / 0.1 = 1000 for each line."""
         with DatabaseMapping(triangle_db) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_dc_power_flow_data(db, work_dir, logger)
+            provider, _ = _run_dc_pf(db)
 
-        rows = _read_csv(work_dir / "input" / "p_connection_susceptance.csv")
-        susceptances = {r["process"]: float(r["p_connection_susceptance"]) for r in rows}
-        assert susceptances == pytest.approx(
+        assert _susceptance_map(provider) == pytest.approx(
             {"conn_AB": 1000.0, "conn_AC": 1000.0, "conn_BC": 1000.0}
         )
 
-    def test_reference_node_auto_detection(self, triangle_db: str, work_dir: Path) -> None:
+    def test_reference_node_auto_detection(self, triangle_db: str) -> None:
         """Auto-selected reference node is bus_A (largest existing=200)."""
         with DatabaseMapping(triangle_db) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_dc_power_flow_data(db, work_dir, logger)
+            provider, _ = _run_dc_pf(db)
 
-        ref_nodes = _read_csv_column(work_dir / "input" / "node_reference_angle.csv", "node")
+        ref_nodes = _column(provider, "input/node_reference_angle", "node")
         assert ref_nodes == ["bus_A"]
 
-    def test_ct_method_overrides_returned(self, triangle_db: str, work_dir: Path) -> None:
+    def test_ct_method_overrides_returned(self, triangle_db: str) -> None:
         """DC PF connections get ct_method override to no_losses_no_variable_cost."""
         with DatabaseMapping(triangle_db) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            overrides = _write_dc_power_flow_data(db, work_dir, logger)
+            _, overrides = _run_dc_pf(db)
 
         assert overrides == {
             "conn_AB": "no_losses_no_variable_cost",
@@ -246,8 +292,6 @@ class TestReferenceNodeSelection:
         """When reference_node is set on the group, it should be used."""
         db_path = str(tmp_path / "ref_explicit.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -274,17 +318,14 @@ class TestReferenceNodeSelection:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_dc_power_flow_data(db, wf, logger)
+            provider, _ = _run_dc_pf(db)
 
-        ref_nodes = _read_csv_column(wf / "input" / "node_reference_angle.csv", "node")
-        assert ref_nodes == ["n2"]
+        assert _column(provider, "input/node_reference_angle", "node") == ["n2"]
 
     def test_auto_select_largest_capacity(self, tmp_path: Path) -> None:
         """Without reference_node, the node with largest existing capacity is chosen."""
         db_path = str(tmp_path / "ref_auto.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -314,10 +355,9 @@ class TestReferenceNodeSelection:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_dc_power_flow_data(db, wf, logger)
+            provider, _ = _run_dc_pf(db)
 
-        ref_nodes = _read_csv_column(wf / "input" / "node_reference_angle.csv", "node")
-        assert ref_nodes == ["beta"]
+        assert _column(provider, "input/node_reference_angle", "node") == ["beta"]
 
 
 # ===================================================================
@@ -330,8 +370,6 @@ class TestSusceptanceComputation:
         """Susceptance = base_MVA / reactance with non-default base_MVA."""
         db_path = str(tmp_path / "susc.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -354,19 +392,15 @@ class TestSusceptanceComputation:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_dc_power_flow_data(db, wf, logger)
+            provider, _ = _run_dc_pf(db)
 
-        rows = _read_csv(wf / "input" / "p_connection_susceptance.csv")
-        assert len(rows) == 1
-        assert rows[0]["process"] == "line"
-        assert float(rows[0]["p_connection_susceptance"]) == pytest.approx(4000.0)  # 200/0.05
+        susc = _susceptance_map(provider)
+        assert susc == pytest.approx({"line": 4000.0})  # 200/0.05
 
     def test_zero_reactance_skipped(self, tmp_path: Path) -> None:
         """Connection with zero reactance is skipped (no susceptance row)."""
         db_path = str(tmp_path / "zero_react.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -389,17 +423,14 @@ class TestSusceptanceComputation:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_dc_power_flow_data(db, wf, logger)
+            provider, _ = _run_dc_pf(db)
 
-        rows = _read_csv(wf / "input" / "p_connection_susceptance.csv")
-        assert len(rows) == 0  # zero reactance -> no susceptance
+        assert _susceptance_map(provider) == {}
 
     def test_missing_reactance_skipped(self, tmp_path: Path) -> None:
         """Connection without reactance parameter has no susceptance row."""
         db_path = str(tmp_path / "no_react.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -422,10 +453,9 @@ class TestSusceptanceComputation:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            _write_dc_power_flow_data(db, wf, logger)
+            provider, _ = _run_dc_pf(db)
 
-        rows = _read_csv(wf / "input" / "p_connection_susceptance.csv")
-        assert len(rows) == 0
+        assert _susceptance_map(provider) == {}
 
 
 # ===================================================================
@@ -438,8 +468,6 @@ class TestIsDCExclusion:
         """Connection with is_DC=yes is not included in DC PF sets."""
         db_path = str(tmp_path / "is_dc.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -466,10 +494,10 @@ class TestIsDCExclusion:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            overrides = _write_dc_power_flow_data(db, wf, logger)
+            provider, overrides = _run_dc_pf(db)
 
         # Only ac_line should be in DC PF
-        conns = _read_csv_column(wf / "input" / "connection_dc_power_flow.csv", "process")
+        conns = _column(provider, "input/connection_dc_power_flow", "process")
         assert conns == ["ac_line"]
 
         # dc_link should NOT have a ct_method override
@@ -487,8 +515,6 @@ class TestGroupTransferMethodOverride:
         """Group with transfer_method=regular overrides connection methods."""
         db_path = str(tmp_path / "reg_override.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -509,23 +535,19 @@ class TestGroupTransferMethodOverride:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            overrides = _write_dc_power_flow_data(db, wf, logger)
+            provider, overrides = _run_dc_pf(db)
 
         # Override should be 'regular' (from group), not DC PF
         assert overrides == {"c12": "regular"}
 
         # No DC PF nodes or connections (since method is 'regular', not DC PF)
-        nodes = _read_csv_column(wf / "input" / "node_dc_power_flow.csv", "node")
-        assert nodes == []
-        conns = _read_csv_column(wf / "input" / "connection_dc_power_flow.csv", "process")
-        assert conns == []
+        assert _column(provider, "input/node_dc_power_flow", "node") == []
+        assert _column(provider, "input/connection_dc_power_flow", "process") == []
 
     def test_use_connection_transfer_methods_no_override(self, tmp_path: Path) -> None:
         """Group with use_connection_transfer_methods does not override anything."""
         db_path = str(tmp_path / "no_override.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -538,7 +560,7 @@ class TestGroupTransferMethodOverride:
                 ("connection__node__node", ("c12", "n1", "n2")),
             ],
             parameter_values=[
-                ("connection", "c12", "transfer_method", "regular"),
+                ("connection", "c12", "transfer_method", "exact"),
                 ("group", "g", "transfer_method", "use_connection_transfer_methods"),
             ],
         )
@@ -546,13 +568,15 @@ class TestGroupTransferMethodOverride:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            overrides = _write_dc_power_flow_data(db, wf, logger)
+            _, overrides = _run_dc_pf(db)
 
+        # No override applied
         assert overrides == {}
 
 
 # ===================================================================
 # Test 6: _write_process_method with DC PF overrides
+# (Phase C will port this; until then process_method still emits CSV.)
 # ===================================================================
 
 class TestProcessMethodWithOverrides:
@@ -689,8 +713,6 @@ class TestConnectionOutsideGroup:
         """Connection with only one endpoint in the group is NOT overridden."""
         db_path = str(tmp_path / "partial.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -713,10 +735,10 @@ class TestConnectionOutsideGroup:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            overrides = _write_dc_power_flow_data(db, wf, logger)
+            provider, overrides = _run_dc_pf(db)
 
         assert overrides == {}
-        conns = _read_csv_column(wf / "input" / "connection_dc_power_flow.csv", "process")
+        conns = _column(provider, "input/connection_dc_power_flow", "process")
         assert conns == []
 
 
@@ -727,11 +749,9 @@ class TestConnectionOutsideGroup:
 class TestNoDCPowerFlow:
 
     def test_no_dc_pf_groups(self, tmp_path: Path) -> None:
-        """When no DC PF groups exist, CSV files are empty (header only)."""
+        """When no DC PF groups exist, Provider frames are empty."""
         db_path = str(tmp_path / "empty_dc.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -748,17 +768,13 @@ class TestNoDCPowerFlow:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            overrides = _write_dc_power_flow_data(db, wf, logger)
+            provider, overrides = _run_dc_pf(db)
 
         assert overrides == {}
-        nodes = _read_csv_column(wf / "input" / "node_dc_power_flow.csv", "node")
-        assert nodes == []
-        conns = _read_csv_column(wf / "input" / "connection_dc_power_flow.csv", "process")
-        assert conns == []
-        refs = _read_csv_column(wf / "input" / "node_reference_angle.csv", "node")
-        assert refs == []
-        susc = _read_csv(wf / "input" / "p_connection_susceptance.csv")
-        assert susc == []
+        assert _column(provider, "input/node_dc_power_flow", "node") == []
+        assert _column(provider, "input/connection_dc_power_flow", "process") == []
+        assert _column(provider, "input/node_reference_angle", "node") == []
+        assert _susceptance_map(provider) == {}
 
 
 # ===================================================================
@@ -793,8 +809,6 @@ class TestMultipleDCPFGroups:
         """Two separate DC PF groups produce correct combined outputs."""
         db_path = str(tmp_path / "multi_grp.sqlite")
         url = _create_test_db(db_path)
-        wf = tmp_path / "work"
-        (wf / "input").mkdir(parents=True)
 
         _add_data(
             url,
@@ -830,23 +844,23 @@ class TestMultipleDCPFGroups:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            overrides = _write_dc_power_flow_data(db, wf, logger)
+            provider, overrides = _run_dc_pf(db)
 
         # All 4 nodes present
-        nodes = sorted(_read_csv_column(wf / "input" / "node_dc_power_flow.csv", "node"))
+        nodes = sorted(_column(provider, "input/node_dc_power_flow", "node"))
         assert nodes == ["a1", "a2", "b1", "b2"]
 
         # Both connections present
-        conns = sorted(_read_csv_column(wf / "input" / "connection_dc_power_flow.csv", "process"))
+        conns = sorted(_column(provider, "input/connection_dc_power_flow", "process"))
         assert conns == ["line_a", "line_b"]
 
         # Susceptance: line_a = 100/0.1 = 1000, line_b = 200/0.2 = 1000
-        rows = _read_csv(wf / "input" / "p_connection_susceptance.csv")
-        susc = {r["process"]: float(r["p_connection_susceptance"]) for r in rows}
-        assert susc == pytest.approx({"line_a": 1000.0, "line_b": 1000.0})
+        assert _susceptance_map(provider) == pytest.approx(
+            {"line_a": 1000.0, "line_b": 1000.0}
+        )
 
         # Reference nodes: a2 (existing=100 > 50) and b1 (existing=300 > 10)
-        ref_nodes = sorted(_read_csv_column(wf / "input" / "node_reference_angle.csv", "node"))
+        ref_nodes = sorted(_column(provider, "input/node_reference_angle", "node"))
         assert ref_nodes == sorted(["a2", "b1"])
 
         # Both connections overridden

@@ -205,6 +205,57 @@ class SpineDBBackend:
             f"scenario_name={self._scenario_name!r})"
         )
 
+    # ------------------------------------------------------------------
+    # Raw EAV accessors — for input_derivation consumers
+    # ------------------------------------------------------------------
+
+    def find_entities(self, *, entity_class_name: str) -> list:
+        """Return all entity rows of *entity_class_name*.
+
+        Thin passthrough over the underlying
+        :meth:`spinedb_api.DatabaseMapping.find_entities`, exposed so
+        consumers in :mod:`flextool.input_derivation` (DC power flow,
+        process method, commodity ladder) can perform DB-driven
+        derivations without reaching past the Backend boundary.
+        """
+        if self._db is None:
+            raise RuntimeError("SpineDBBackend is closed")
+        return self._db.find_entities(entity_class_name=entity_class_name)
+
+    def find_parameter_values(
+        self,
+        *,
+        entity_class_name: str,
+        parameter_definition_name: str,
+    ) -> list:
+        """Return all parameter-value rows for *(entity_class_name,
+        parameter_definition_name)*.
+
+        Same role as :meth:`find_entities`: a Backend-owned passthrough
+        so :mod:`flextool.input_derivation` derivations don't have to
+        re-implement the DB access layer.
+        """
+        if self._db is None:
+            raise RuntimeError("SpineDBBackend is closed")
+        return self._db.find_parameter_values(
+            entity_class_name=entity_class_name,
+            parameter_definition_name=parameter_definition_name,
+        )
+
+    @property
+    def api(self):
+        """Expose the underlying :mod:`spinedb_api` module.
+
+        Several derivations need ``api.convert_map_to_table`` /
+        ``api.parameter_value.from_database_to_dimension_count`` to
+        flatten nested Spine maps.  Re-exposing the same module the
+        Backend imported avoids a duplicate import in every derivation
+        site (and keeps that import path single-sourced).
+        """
+        if self._db is None:
+            raise RuntimeError("SpineDBBackend is closed")
+        return self._api
+
     # ==================================================================
     # Materialiser methods — fully filled in by Items 2-4 of the work
     # plan.  Each method returns a polars DataFrame; the caller is

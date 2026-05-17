@@ -85,8 +85,13 @@ def has_feature(d) -> bool:
 # ---------------------------------------------------------------------------
 # Data loading
 
-def load_data(inp_dir: str | Path) -> dict:
-    """Read DC power flow CSVs from ``input/``.
+def load_data(
+    inp_dir: str | Path,
+    *,
+    provider: "object | None" = None,
+) -> dict:
+    """Read DC power flow frames via the Provider (disk-fallback for
+    off-cascade test harnesses).
 
     Returns a dict with keys matching the FlexData field names:
 
@@ -96,8 +101,21 @@ def load_data(inp_dir: str | Path) -> dict:
         p_connection_susceptance   Param | None         # dims: (p,)
 
     All values are ``None`` (or empty) when the feature is inactive
-    (header-only CSV files, which is what the flextool preprocessor
-    writes for non-DC-PF scenarios).
+    (header-only frames, which is what the
+    :func:`flextool.input_derivation._dc_power_flow.derive_dc_power_flow`
+    pass writes for non-DC-PF scenarios).
+
+    Step 2.5-F Phase B
+    ------------------
+
+    The four frames are now produced by
+    :mod:`flextool.input_derivation._dc_power_flow` and placed on the
+    cascade-input :class:`FlexDataProvider` under
+    ``input/node_dc_power_flow``, ``input/connection_dc_power_flow``,
+    ``input/node_reference_angle``, ``input/p_connection_susceptance``.
+    In-cascade the Provider is the authoritative source; the disk-read
+    arm is preserved exclusively for off-cascade fixture loaders that
+    seed inputs to ``input/`` and invoke the loader without a Provider.
     """
     inp = Path(inp_dir)
 
@@ -108,32 +126,52 @@ def load_data(inp_dir: str | Path) -> dict:
         p_connection_susceptance = None,
     )
 
-    def _read_singles(path: Path, col_in: str, col_out: str) -> pl.DataFrame | None:
+    def _frame_for(key: str, path: Path) -> "pl.DataFrame | None":
+        if provider is not None and provider.has(key):
+            df = provider.get(key)
+            if df is None or df.height == 0:
+                return None
+            return df
         if not path.exists():
             return None
         df = _read_csv_file(path)
-        if df.height == 0:
+        return df if df.height > 0 else None
+
+    def _project_single(df: "pl.DataFrame | None", col_in: str,
+                        col_out: str) -> "pl.DataFrame | None":
+        if df is None:
             return None
         if col_in in df.columns and col_in != col_out:
             df = df.rename({col_in: col_out})
         return df.select(col_out)
 
-    nd = _read_singles(inp / "node_dc_power_flow.csv", "node", "n")
-    cd = _read_singles(inp / "connection_dc_power_flow.csv", "process", "p")
-    rd = _read_singles(inp / "node_reference_angle.csv", "node", "n")
+    nd_raw = _frame_for("input/node_dc_power_flow",
+                        inp / "node_dc_power_flow.csv")
+    cd_raw = _frame_for("input/connection_dc_power_flow",
+                        inp / "connection_dc_power_flow.csv")
+    rd_raw = _frame_for("input/node_reference_angle",
+                        inp / "node_reference_angle.csv")
 
-    pcs_path = inp / "p_connection_susceptance.csv"
+    nd = _project_single(nd_raw, "node", "n")
+    cd = _project_single(cd_raw, "process", "p")
+    rd = _project_single(rd_raw, "node", "n")
+
+    pcs_raw = _frame_for("input/p_connection_susceptance",
+                         inp / "p_connection_susceptance.csv")
     pcs_param = None
-    if pcs_path.exists():
-        df = _read_csv_file(pcs_path)
-        if df.height > 0:
-            df = df.rename(
-                {c: r for c, r in [
-                    ("process", "p"),
-                    ("p_connection_susceptance", "value"),
-                ] if c in df.columns}
-            ).select("p", "value")
-            pcs_param = Param(("p",), df)
+    if pcs_raw is not None:
+        df = pcs_raw.rename(
+            {c: r for c, r in [
+                ("process", "p"),
+                ("p_connection_susceptance", "value"),
+            ] if c in pcs_raw.columns}
+        ).select("p", "value")
+        # The Provider may carry the value as Utf8 (mirroring the legacy
+        # CSV emission); cast to Float64 so Param's downstream consumers
+        # see numeric values regardless of source.
+        if df["value"].dtype == pl.Utf8:
+            df = df.with_columns(pl.col("value").cast(pl.Float64))
+        pcs_param = Param(("p",), df)
 
     if nd is None and cd is None and rd is None and pcs_param is None:
         return blank
