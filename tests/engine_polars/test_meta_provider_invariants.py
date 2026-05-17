@@ -139,11 +139,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "construction (pre-Provider)."
     ),
     # --- Derived-cascade modules with Provider-first + disk fallback ---
-    "_derived_profile.py": (
-        "Provider-first via _provider_or_read_csv; disk arm reads "
-        "raw input/profile/*.csv fixtures not in the Provider. "
-        "csv.reader site at L575 reads input/profile_long.csv format."
-    ),
     "_derived_branch.py": (
         "Provider-first via _provider_read pattern; disk arm reads "
         "raw input/profile branch fixtures not in the Provider."

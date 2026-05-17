@@ -73,34 +73,30 @@ import polars as pl
 
 from polar_high import Param
 
-from ._input_source import _read_csv_file
 from ._writer_provider_io import _provider_key
 
 
-def _provider_has_or_exists(provider, path: "Path") -> bool:  # CASCADE INVARIANT EXEMPT: raw input/profile/*.csv fixtures not yet carried by the Provider — disk arm retained until input layer migration completes.
-    """Provider-first existence check used by the profile cascade.
-
-    Returns ``True`` iff the Provider carries the canonical name for
-    *path* OR the file exists on disk.  Disk arm retained for raw
-    profile fixtures (``input/profile/*``) not captured by writers in
-    ``_PATCH_MODULES``.
-
-    CASCADE INVARIANT EXEMPT: see tests/engine_polars/test_meta_provider_invariants.py
+def _provider_has_key(provider, path: "Path") -> bool:
+    """Provider-only existence check used by the profile cascade.
+    Returns ``False`` when *provider* is ``None`` or the key is
+    missing.  The disk-fallback arm was removed in Step 2.5.
     """
-    if provider is not None and provider.has(_provider_key(path)):
-        return True
-    return path.exists()
+    if provider is None:
+        return False
+    return provider.has(_provider_key(path))
 
 
-def _provider_or_read_csv(provider, path: "Path") -> "pl.DataFrame":  # CASCADE INVARIANT EXEMPT: raw input/profile/*.csv fixtures not yet carried by the Provider — disk arm retained until input layer migration completes.
-    """Provider-first read used by the profile cascade; falls back to
-    disk for raw inputs not in the Provider.
-
-    CASCADE INVARIANT EXEMPT: see tests/engine_polars/test_meta_provider_invariants.py
+def _provider_read(provider, path: "Path") -> "pl.DataFrame":
+    """Provider-only read used by the profile cascade.  Guard with
+    :func:`_provider_has_key` first; calling without a provider
+    raises :class:`ValueError`.
     """
-    if provider is not None and provider.has(_provider_key(path)):
-        return provider.get(_provider_key(path))
-    return _read_csv_file(path)
+    if provider is None:
+        raise ValueError(
+            "_provider_read requires a FlexDataProvider; guard with "
+            "_provider_has_key first."
+        )
+    return provider.get(_provider_key(path))
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -254,9 +250,9 @@ def _profile_time_lf(source: "InputSource",
     # Prefer per-solve averaged CSV when the runner has produced it.
     if workdir is not None:
         csv_path = Path(workdir) / "solve_data" / "pt_profile.csv"
-        if _provider_has_or_exists(provider, csv_path):
+        if _provider_has_key(provider, csv_path):
             try:
-                csv_df = _provider_or_read_csv(provider, csv_path)
+                csv_df = _provider_read(provider, csv_path)
                 csv_lf = (csv_df.lazy()
                           .filter(pl.col("profile").is_in(time_profiles))
                           .select(
@@ -460,12 +456,12 @@ def _profile_stochastic_lf(workdir: Path | None,
 
     # Read pbt_profile.csv: (profile, branch, time_start, time, pbt_profile).
     pbt_path = inp / "pbt_profile.csv"
-    if not _provider_has_or_exists(provider, pbt_path):
+    if not _provider_has_key(provider, pbt_path):
         return pl.LazyFrame(schema={
             "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
         })
     try:
-        pbt = _provider_or_read_csv(provider, pbt_path)
+        pbt = _provider_read(provider, pbt_path)
     except Exception:
         return pl.LazyFrame(schema={
             "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
@@ -567,7 +563,7 @@ def _read_pairs(path: Path, key_col: str, val_col: str,
     """Read a 2-col CSV into ``{key: [val, …]}``.  Empty / missing →
     ``{}``.
     """
-    if not _provider_has_or_exists(provider, path):
+    if not _provider_has_key(provider, path):
         return {}
     out: dict[str, list[str]] = {}
     try:
@@ -606,9 +602,9 @@ def _read_stoch_profiles(inp: Path,
     """
     groups_stoch: set[str] = set()
     p = inp / "groupIncludeStochastics.csv"
-    if _provider_has_or_exists(provider, p):
+    if _provider_has_key(provider, p):
         try:
-            df = _provider_or_read_csv(provider, p)
+            df = _provider_read(provider, p)
             col = df.columns[0] if df.columns else None
             if col is not None and df.height > 0:
                 groups_stoch = set(df[col].cast(pl.Utf8).to_list())
@@ -619,9 +615,9 @@ def _read_stoch_profiles(inp: Path,
 
     stoch_processes: set[str] = set()
     p = inp / "group__process.csv"
-    if _provider_has_or_exists(provider, p):
+    if _provider_has_key(provider, p):
         try:
-            df = _provider_or_read_csv(provider, p)
+            df = _provider_read(provider, p)
             for row in df.iter_rows(named=True):
                 if row.get(df.columns[0]) in groups_stoch and row.get(df.columns[1]):
                     stoch_processes.add(row[df.columns[1]])
@@ -629,9 +625,9 @@ def _read_stoch_profiles(inp: Path,
             pass
     stoch_nodes: set[str] = set()
     p = inp / "group__node.csv"
-    if _provider_has_or_exists(provider, p):
+    if _provider_has_key(provider, p):
         try:
-            df = _provider_or_read_csv(provider, p)
+            df = _provider_read(provider, p)
             for row in df.iter_rows(named=True):
                 if row.get(df.columns[0]) in groups_stoch and row.get(df.columns[1]):
                     stoch_nodes.add(row[df.columns[1]])
@@ -640,9 +636,9 @@ def _read_stoch_profiles(inp: Path,
 
     stoch_profile: set[str] = set()
     p = inp / "process__profile__profile_method.csv"
-    if _provider_has_or_exists(provider, p):
+    if _provider_has_key(provider, p):
         try:
-            df = _provider_or_read_csv(provider, p)
+            df = _provider_read(provider, p)
             for row in df.iter_rows(named=True):
                 process = row.get("process")
                 profile = row.get("profile")
@@ -651,9 +647,9 @@ def _read_stoch_profiles(inp: Path,
         except Exception:
             pass
     p = inp / "node__profile__profile_method.csv"
-    if _provider_has_or_exists(provider, p):
+    if _provider_has_key(provider, p):
         try:
-            df = _provider_or_read_csv(provider, p)
+            df = _provider_read(provider, p)
             for row in df.iter_rows(named=True):
                 node = row.get("node")
                 profile = row.get("profile")
@@ -662,9 +658,9 @@ def _read_stoch_profiles(inp: Path,
         except Exception:
             pass
     p = inp / "process__node__profile__profile_method.csv"
-    if _provider_has_or_exists(provider, p):
+    if _provider_has_key(provider, p):
         try:
-            df = _provider_or_read_csv(provider, p)
+            df = _provider_read(provider, p)
             for row in df.iter_rows(named=True):
                 process = row.get("process")
                 profile = row.get("profile")
