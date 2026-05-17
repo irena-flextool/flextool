@@ -172,13 +172,17 @@ def _to_frame(rows, header: tuple[str, ...]) -> pl.DataFrame:
     return pl.DataFrame(cols, schema={h: pl.Utf8 for h in header})
 
 
-def _arc_unions_inputs(input_dir: Path, solve_data_dir: Path) -> dict:
+def _arc_unions_inputs(input_dir: Path, solve_data_dir: Path,
+                        *, provider: "object | None" = None) -> dict:
     """Shared input bundle for the 14 derive_* in this monolith."""
     METHOD_INDIRECT = _METHOD_INDIRECT
     METHOD_DIRECT = _METHOD_DIRECT
-    process_method = _read_pairs(input_dir / "process_method.csv")
-    sources = _read_pairs(input_dir / "process__source.csv")
-    sinks = _read_pairs(input_dir / "process__sink.csv")
+    process_method = _read_pairs(input_dir / "process_method.csv",
+                                  provider=provider)
+    sources = _read_pairs(input_dir / "process__source.csv",
+                          provider=provider)
+    sinks = _read_pairs(input_dir / "process__sink.csv",
+                        provider=provider)
     return {
         "process_method": process_method,
         "sources": sources,
@@ -189,16 +193,19 @@ def _arc_unions_inputs(input_dir: Path, solve_data_dir: Path) -> dict:
             p for p, m in process_method if m in METHOD_DIRECT),
         "has_sink": frozenset(p for p, _ in sinks),
         "has_source": frozenset(p for p, _ in sources),
-        "processes": _read_singles(input_dir / "process.csv"),
+        "processes": _read_singles(input_dir / "process.csv",
+                                    provider=provider),
         "five_tuple_to_sink": _read_n_col(
             solve_data_dir
             / "process__profileProcess__toSink__profile__profile_method.csv",
             5,
+            provider=provider,
         ),
         "five_tuple_to_source": _read_n_col(
             solve_data_dir
             / "process__source__toProfileProcess__profile__profile_method.csv",
             5,
+            provider=provider,
         ),
         "input_dir": input_dir,
         "solve_data_dir": solve_data_dir,
@@ -340,9 +347,12 @@ def derive_process_process_toSink(
 
 def _compute_process_source_sink_eff(
     solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    sst = _read_n_col(solve_data_dir / "process_source_toSink.csv", 3)
-    sts = _read_n_col(solve_data_dir / "process_sink_toSource.csv", 3)
+    sst = _read_n_col(solve_data_dir / "process_source_toSink.csv", 3,
+                       provider=provider)
+    sts = _read_n_col(solve_data_dir / "process_sink_toSource.csv", 3,
+                       provider=provider)
     union: dict[tuple[str, ...], None] = {}
     for r in sst:
         union.setdefault(r, None)
@@ -361,18 +371,25 @@ def derive_process_source_sink_eff(
 
 # ---- Helper: shared 6-list bundle for 7/12/13 -------------------------------
 
-def _disk_arc_lists(solve_data_dir: Path) -> dict:
+def _disk_arc_lists(solve_data_dir: Path,
+                     *, provider: "object | None" = None) -> dict:
     return {
-        "sst": _read_n_col(solve_data_dir / "process_source_toSink.csv", 3),
-        "sts": _read_n_col(solve_data_dir / "process_sink_toSource.csv", 3),
+        "sst": _read_n_col(solve_data_dir / "process_source_toSink.csv", 3,
+                            provider=provider),
+        "sts": _read_n_col(solve_data_dir / "process_sink_toSource.csv", 3,
+                            provider=provider),
         "snk_to_proc": _read_n_col(
-            solve_data_dir / "process_sink_toProcess.csv", 3),
+            solve_data_dir / "process_sink_toProcess.csv", 3,
+            provider=provider),
         "proc_to_src": _read_n_col(
-            solve_data_dir / "process_process_toSource.csv", 3),
+            solve_data_dir / "process_process_toSource.csv", 3,
+            provider=provider),
         "proc_to_snk_noConv": _read_n_col(
-            solve_data_dir / "process_process_toSink_noConversion.csv", 3),
+            solve_data_dir / "process_process_toSink_noConversion.csv", 3,
+            provider=provider),
         "src_to_proc_noConv": _read_n_col(
-            solve_data_dir / "process_source_toProcess_noConversion.csv", 3),
+            solve_data_dir / "process_source_toProcess_noConversion.csv", 3,
+            provider=provider),
     }
 
 
@@ -406,9 +423,12 @@ def derive_process_source_sink_noEff(
 
 # ---- (8) process_online ----------------------------------------------------
 
-def _compute_process_online(solve_data_dir: Path) -> pl.DataFrame:
-    a = _read_singles(solve_data_dir / "process_online_linear.csv")
-    b = _read_singles(solve_data_dir / "process_online_integer.csv")
+def _compute_process_online(solve_data_dir: Path,
+                             *, provider: "object | None" = None) -> pl.DataFrame:
+    a = _read_singles(solve_data_dir / "process_online_linear.csv",
+                       provider=provider)
+    b = _read_singles(solve_data_dir / "process_online_integer.csv",
+                       provider=provider)
     seen: dict[str, None] = {}
     for p in a + b:
         seen.setdefault(p, None)
@@ -424,8 +444,10 @@ def derive_process_online(
 
 # ---- (9) process_minload ---------------------------------------------------
 
-def _compute_process_minload(inp: dict, solve_data_dir: Path) -> pl.DataFrame:
-    ctm = _read_pairs(solve_data_dir / "process__ct_method.csv")
+def _compute_process_minload(inp: dict, solve_data_dir: Path,
+                              *, provider: "object | None" = None) -> pl.DataFrame:
+    ctm = _read_pairs(solve_data_dir / "process__ct_method.csv",
+                       provider=provider)
     p_with_min_load = frozenset(
         p for p, m in ctm if m == "min_load_efficiency"
     )
@@ -445,8 +467,10 @@ def derive_process_minload(
 
 # ---- (10) process__commodity__node_co2 + (11) process_co2 ------------------
 
-def _rows_pcn_co2(inp: dict, solve_data_dir: Path) -> list[tuple[str, str, str]]:
-    cn_co2 = _read_pairs(solve_data_dir / "commodity_node_co2.csv")
+def _rows_pcn_co2(inp: dict, solve_data_dir: Path,
+                   *, provider: "object | None" = None) -> list[tuple[str, str, str]]:
+    cn_co2 = _read_pairs(solve_data_dir / "commodity_node_co2.csv",
+                          provider=provider)
     arc_endpoints_acc: dict[str, dict[str, None]] = {}
     for p, n in inp["sources"] + inp["sinks"]:
         arc_endpoints_acc.setdefault(p, {})[n] = None
@@ -464,16 +488,18 @@ def _rows_pcn_co2(inp: dict, solve_data_dir: Path) -> list[tuple[str, str, str]]
 
 def _compute_process__commodity__node_co2(
     inp: dict, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     return _to_frame(
-        _rows_pcn_co2(inp, solve_data_dir),
+        _rows_pcn_co2(inp, solve_data_dir, provider=provider),
         ("process", "commodity", "node"),
     )
 
 
-def _compute_process_co2(inp: dict, solve_data_dir: Path) -> pl.DataFrame:
+def _compute_process_co2(inp: dict, solve_data_dir: Path,
+                          *, provider: "object | None" = None) -> pl.DataFrame:
     seen: dict[str, None] = {}
-    for p, _, _ in _rows_pcn_co2(inp, solve_data_dir):
+    for p, _, _ in _rows_pcn_co2(inp, solve_data_dir, provider=provider):
         seen.setdefault(p, None)
     return _to_frame([(p,) for p in seen.keys()], ("process",))
 
@@ -531,6 +557,7 @@ def derive_process_source_sink(
 
 def _compute_process_source_sink_alwaysProcess(
     inp: dict, disk: dict, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     src_to_proc = _rows_source_toProcess(inp)
     proc_to_snk = _rows_process_toSink(inp)
@@ -538,15 +565,19 @@ def _compute_process_source_sink_alwaysProcess(
     source_to_profile_3 = _source_to_profile_3(inp)
     src_to_proc_d = _read_n_col(
         solve_data_dir / "process_source_toProcess_direct.csv", 3,
+        provider=provider,
     )
     proc_to_snk_d = _read_n_col(
         solve_data_dir / "process_process_toSink_direct.csv", 3,
+        provider=provider,
     )
     snk_to_proc_d = _read_n_col(
         solve_data_dir / "process_sink_toProcess_direct.csv", 3,
+        provider=provider,
     )
     proc_to_src_d = _read_n_col(
         solve_data_dir / "process_process_toSource_direct.csv", 3,
+        provider=provider,
     )
     pssa: dict[tuple[str, ...], None] = {}
     for r in (src_to_proc_d + proc_to_snk_d + snk_to_proc_d + proc_to_src_d
@@ -574,10 +605,13 @@ def derive_process_source_sink_alwaysProcess(
 
 def _compute_process__source__sink__profile__profile_method_direct(
     inp: dict, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    sst = _read_n_col(solve_data_dir / "process_source_toSink.csv", 3)
+    sst = _read_n_col(solve_data_dir / "process_source_toSink.csv", 3,
+                       provider=provider)
     profiles = _read_n_col(
         inp["input_dir"] / "process__node__profile__profile_method.csv", 4,
+        provider=provider,
     )
     p_n_to_fm: dict[tuple[str, str], list[tuple[str, str]]] = {}
     for p, n, f, fm in profiles:
@@ -613,14 +647,20 @@ def derive_process__source__sink__profile__profile_method_direct(
 # ---- Wrapper ---------------------------------------------------------------
 
 
-def write_process_arc_unions(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process_arc_unions(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None) -> None:
     """Migrate the 14-set L1 arc-union batch in dependency order.
 
     Byte-for-byte mirror of the legacy emitter.  Each output flows through
     ``_write(_compute_X(inp, ...), path)`` so the Phase E-b accumulator
     captures every emitted frame.
+
+    Step 1-g — *provider* threads the per-sub-solve Provider through
+    every ``_arc_unions_inputs`` / ``_disk_arc_lists`` / ``_compute_*``
+    call so internal ``_read_*`` helpers resolve their frames in-memory
+    before falling back to disk.
     """
-    inp = _arc_unions_inputs(input_dir, solve_data_dir)
+    inp = _arc_unions_inputs(input_dir, solve_data_dir, provider=provider)
 
     # 1
     _write(_compute_process__profileProcess__toSink(inp),
@@ -638,34 +678,36 @@ def write_process_arc_unions(input_dir: Path, solve_data_dir: Path) -> None:
     _write(_compute_process_process_toSink(inp),
            solve_data_dir / "process_process_toSink.csv")
     # 6
-    _write(_compute_process_source_sink_eff(solve_data_dir),
+    _write(_compute_process_source_sink_eff(solve_data_dir, provider=provider),
            solve_data_dir / "process_source_sink_eff.csv")
     # 7
-    disk = _disk_arc_lists(solve_data_dir)
+    disk = _disk_arc_lists(solve_data_dir, provider=provider)
     _write(_compute_process_source_sink_noEff(inp, disk),
            solve_data_dir / "process_source_sink_noEff.csv")
     # 8
-    _write(_compute_process_online(solve_data_dir),
+    _write(_compute_process_online(solve_data_dir, provider=provider),
            solve_data_dir / "process_online.csv")
     # 9
-    _write(_compute_process_minload(inp, solve_data_dir),
+    _write(_compute_process_minload(inp, solve_data_dir, provider=provider),
            solve_data_dir / "process_minload.csv")
     # 10
-    _write(_compute_process__commodity__node_co2(inp, solve_data_dir),
+    _write(_compute_process__commodity__node_co2(inp, solve_data_dir,
+                                                   provider=provider),
            solve_data_dir / "process__commodity__node_co2.csv")
     # 11
-    _write(_compute_process_co2(inp, solve_data_dir),
+    _write(_compute_process_co2(inp, solve_data_dir, provider=provider),
            solve_data_dir / "process_co2.csv")
     # 12
     _write(_compute_process_source_sink(inp, disk),
            solve_data_dir / "process_source_sink.csv")
     # 13
-    _write(_compute_process_source_sink_alwaysProcess(inp, disk, solve_data_dir),
+    _write(_compute_process_source_sink_alwaysProcess(
+               inp, disk, solve_data_dir, provider=provider),
            solve_data_dir / "process_source_sink_alwaysProcess.csv")
     # 14
     _write(
         _compute_process__source__sink__profile__profile_method_direct(
-            inp, solve_data_dir),
+            inp, solve_data_dir, provider=provider),
         solve_data_dir
         / "process__source__sink__profile__profile_method_direct.csv",
     )
