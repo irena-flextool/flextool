@@ -1715,10 +1715,16 @@ def _scan_pd_startup(solve_data_dir: Path) -> set[tuple[str, str]]:
 
 def _derive_pdt_online(
     solve_data_dir: Path, processes_csv: str,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     pd_startup = _scan_pd_startup(solve_data_dir)
-    dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
-    procs = _read_singles_csv(solve_data_dir / processes_csv)
+    dt_pairs = _read_n_col_csv(
+        solve_data_dir / "steps_in_use.csv", 2, provider=provider,
+    )
+    procs = _read_singles_csv(
+        solve_data_dir / processes_csv, provider=provider,
+    )
     rows: list[tuple[str, str, str]] = []
     for p in procs:
         for d, t in dt_pairs:
@@ -1727,17 +1733,27 @@ def _derive_pdt_online(
     return _rows_to_frame(rows, ("process", "period", "time"))
 
 
-def derive_pdt_online_linear(solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdt_online_linear(solve_data_dir: Path,
+                              *,
+                              provider: "object | None" = None) -> pl.DataFrame:
     """``pdt_online_linear`` — process_online_linear × dt gated by startup_cost!=0."""
-    return _derive_pdt_online(solve_data_dir, "process_online_linear.csv")
+    return _derive_pdt_online(
+        solve_data_dir, "process_online_linear.csv", provider=provider,
+    )
 
 
-def derive_pdt_online_integer(solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdt_online_integer(solve_data_dir: Path,
+                               *,
+                               provider: "object | None" = None) -> pl.DataFrame:
     """``pdt_online_integer`` — process_online_integer × dt gated by startup_cost!=0."""
-    return _derive_pdt_online(solve_data_dir, "process_online_integer.csv")
+    return _derive_pdt_online(
+        solve_data_dir, "process_online_integer.csv", provider=provider,
+    )
 
 
-def write_small_set_derivations(input_dir: Path, solve_data_dir: Path) -> None:
+def write_small_set_derivations(input_dir: Path, solve_data_dir: Path,
+                                  *,
+                                  provider: "object | None" = None) -> None:
     """flextool.mod L999, L1061, L1132, L1174, L1222-3 — 6 small derived sets.
 
     Emits ``ed_history_realized``,
@@ -1764,11 +1780,11 @@ def write_small_set_derivations(input_dir: Path, solve_data_dir: Path) -> None:
         solve_data_dir / "nodeSelfDischarge.csv",
     )
     _write(
-        derive_pdt_online_linear(solve_data_dir),
+        derive_pdt_online_linear(solve_data_dir, provider=provider),
         solve_data_dir / "pdt_online_linear.csv",
     )
     _write(
-        derive_pdt_online_integer(solve_data_dir),
+        derive_pdt_online_integer(solve_data_dir, provider=provider),
         solve_data_dir / "pdt_online_integer.csv",
     )
 
@@ -1980,16 +1996,24 @@ def write_p_process_delay_weight(
 
 def derive_gcndt_co2_price(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``gcndt_co2_price`` 5-col frame; see writer docstring."""
     import csv
     g_co2_price = frozenset(
-        _read_singles_csv(solve_data_dir / "group_co2_price.csv")
+        _read_singles_csv(
+            solve_data_dir / "group_co2_price.csv", provider=provider,
+        )
     )
-    cn = _read_pairs_csv(input_dir / "commodity__node.csv")
+    cn = _read_pairs_csv(
+        input_dir / "commodity__node.csv", provider=provider,
+    )
 
     gn_acc: dict[str, set[str]] = {}
-    for g, n in _read_pairs_csv(input_dir / "group__node.csv"):
+    for g, n in _read_pairs_csv(
+        input_dir / "group__node.csv", provider=provider,
+    ):
         gn_acc.setdefault(g, set()).add(n)
 
     p_commodity_co2: dict[str, float] = {}
@@ -2020,7 +2044,9 @@ def derive_gcndt_co2_price(
                     except ValueError:
                         continue
 
-    dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
+    dt_pairs = _read_n_col_csv(
+        solve_data_dir / "steps_in_use.csv", 2, provider=provider,
+    )
 
     rows: list[tuple[str, str, str, str, str]] = []
     for g in g_co2_price:
@@ -2040,10 +2066,12 @@ def derive_gcndt_co2_price(
     )
 
 
-def write_gcndt_co2_price(input_dir: Path, solve_data_dir: Path) -> None:
+def write_gcndt_co2_price(input_dir: Path, solve_data_dir: Path,
+                            *,
+                            provider: "object | None" = None) -> None:
     """flextool.mod L1542-1548 — gcndt_co2_price 5-tuple set."""
     _write(
-        derive_gcndt_co2_price(input_dir, solve_data_dir),
+        derive_gcndt_co2_price(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "gcndt_co2_price.csv",
     )
 
@@ -2109,13 +2137,19 @@ def write_group_commodity_node_period_co2_period(
 
 # ---- write_peedt (mod L1084) ----------------------------------------------
 
-def derive_peedt(solve_data_dir: Path) -> pl.DataFrame:
+def derive_peedt(solve_data_dir: Path,
+                  *,
+                  provider: "object | None" = None) -> pl.DataFrame:
     """``peedt = process_source_sink × steps_in_use`` (5-col frame).
 
     Hot-path for full-year fixtures — up to ~280k rows.
     """
-    triples = _read_n_col_csv(solve_data_dir / "process_source_sink.csv", 3)
-    dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
+    triples = _read_n_col_csv(
+        solve_data_dir / "process_source_sink.csv", 3, provider=provider,
+    )
+    dt_pairs = _read_n_col_csv(
+        solve_data_dir / "steps_in_use.csv", 2, provider=provider,
+    )
     procs: list[str] = []
     srcs: list[str] = []
     snks: list[str] = []
@@ -2143,12 +2177,17 @@ def derive_peedt(solve_data_dir: Path) -> pl.DataFrame:
     )
 
 
-def write_peedt(input_dir: Path, solve_data_dir: Path) -> None:
+def write_peedt(input_dir: Path, solve_data_dir: Path,
+                 *,
+                 provider: "object | None" = None) -> None:
     """flextool.mod L1084 — peedt = process_source_sink × dt.
 
     280k-row hot path for full-year fixtures.
     """
-    _write(derive_peedt(solve_data_dir), solve_data_dir / "peedt.csv")
+    _write(
+        derive_peedt(solve_data_dir, provider=provider),
+        solve_data_dir / "peedt.csv",
+    )
 
 
 # ===========================================================================
@@ -2406,17 +2445,25 @@ def write_p_flow_max(input_dir: Path, solve_data_dir: Path,
 
 def derive_p_state_slack_share(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``p_state_slack_share`` 5-col frame; see writer docstring."""
     import csv
     g_loss = frozenset(
-        _read_singles_csv(solve_data_dir / "group_loss_share.csv")
+        _read_singles_csv(
+            solve_data_dir / "group_loss_share.csv", provider=provider,
+        )
     )
     g_type: dict[str, str] = {}
-    for g, ty in _read_pairs_csv(input_dir / "group__loss_share_type.csv"):
+    for g, ty in _read_pairs_csv(
+        input_dir / "group__loss_share_type.csv", provider=provider,
+    ):
         g_type[g] = ty
     nodes_in_g: dict[str, list[str]] = {}
-    for g, n in _read_pairs_csv(input_dir / "group__node.csv"):
+    for g, n in _read_pairs_csv(
+        input_dir / "group__node.csv", provider=provider,
+    ):
         nodes_in_g.setdefault(g, []).append(n)
     inflow: dict[tuple[str, str, str], float] = {}
     pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
@@ -2430,7 +2477,9 @@ def derive_p_state_slack_share(
                         inflow[(r[0], r[1], r[2])] = float(r[3])
                     except ValueError:
                         continue
-    dt_pairs = _read_n_col_csv(solve_data_dir / "steps_in_use.csv", 2)
+    dt_pairs = _read_n_col_csv(
+        solve_data_dir / "steps_in_use.csv", 2, provider=provider,
+    )
 
     rows: list[tuple[str, str, str, str, str]] = []
     for g in g_loss:
@@ -2455,14 +2504,16 @@ def derive_p_state_slack_share(
     )
 
 
-def write_p_state_slack_share(input_dir: Path, solve_data_dir: Path) -> None:
+def write_p_state_slack_share(input_dir: Path, solve_data_dir: Path,
+                                *,
+                                provider: "object | None" = None) -> None:
     """flextool.mod L1689-1691 — ``p_state_slack_share[g, n, d, t]``.
 
     Inflow-weighted or equal share over the nodes of group ``g`` for
     each ``(d, t) ∈ dt``, restricted to ``g ∈ group_loss_share``.
     """
     _write(
-        derive_p_state_slack_share(input_dir, solve_data_dir),
+        derive_p_state_slack_share(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "p_state_slack_share.csv",
     )
 

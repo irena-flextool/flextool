@@ -49,7 +49,10 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars._input_source import _seed_open
+from flextool.engine_polars._writer_provider_io import (
+    _provider_key,
+    _provider_open,
+)
 from flextool.engine_polars._pdt_lookup import (
     NODE_PARAM_DEF1,
     PROCESS_PARAM_DEF1,
@@ -76,12 +79,14 @@ def _write(df: pl.DataFrame, path: Path) -> None:
     df.write_csv(path)
 
 
-def _read_pairs(path: Path) -> list[tuple[str, str]]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_pairs(path: Path,
+                *,
+                provider: "object | None" = None) -> list[tuple[str, str]]:
+    fh = _provider_open(provider, _provider_key(path), path)
+    if fh is None:
         return []
     out: list[tuple[str, str]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -90,12 +95,14 @@ def _read_pairs(path: Path) -> list[tuple[str, str]]:
     return out
 
 
-def _read_triples(path: Path) -> list[tuple[str, str, str]]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_triples(path: Path,
+                  *,
+                  provider: "object | None" = None) -> list[tuple[str, str, str]]:
+    fh = _provider_open(provider, _provider_key(path), path)
+    if fh is None:
         return []
     out: list[tuple[str, str, str]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -108,7 +115,9 @@ def _read_triples(path: Path) -> list[tuple[str, str, str]]:
 # Family — pdtProcess (mod L1227).
 # ---------------------------------------------------------------------------
 
-def derive_pdtProcess(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdtProcess(input_dir: Path, solve_data_dir: Path,
+                       *,
+                       provider: "object | None" = None) -> pl.DataFrame:
     """Materialise the ``pdtProcess`` frame.
 
     Columns: ``process, param, period, time, value`` — all ``Utf8``
@@ -133,8 +142,10 @@ def derive_pdtProcess(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
         param_def1=PROCESS_PARAM_DEF1,
     )
-    domain = _read_pairs(solve_data_dir / "process_TimeParam_in_use.csv")
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    domain = _read_pairs(
+        solve_data_dir / "process_TimeParam_in_use.csv", provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     n = len(domain) * len(dt)
     processes: list[str] = [""] * n
@@ -170,10 +181,12 @@ def derive_pdtProcess(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     )
 
 
-def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdtProcess(input_dir: Path, solve_data_dir: Path,
+                      *,
+                      provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdtProcess.csv`` (see derive docstring)."""
     _write(
-        derive_pdtProcess(input_dir, solve_data_dir),
+        derive_pdtProcess(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtProcess.csv",
     )
 
@@ -182,7 +195,9 @@ def write_pdtProcess(input_dir: Path, solve_data_dir: Path) -> None:
 # Family — pdtNode (mod L1176; time-first + class default).
 # ---------------------------------------------------------------------------
 
-def derive_pdtNode(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
+def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
+                    *,
+                    provider: "object | None" = None) -> pl.DataFrame:
     """Materialise the ``pdtNode`` frame.
 
     Columns: ``node, param, period, time, value`` — all ``Utf8``.
@@ -204,8 +219,10 @@ def derive_pdtNode(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
             input_dir / "default_values.csv", "node"
         ),
     )
-    domain = _read_pairs(solve_data_dir / "node__TimeParam_in_use.csv")
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv")
+    domain = _read_pairs(
+        solve_data_dir / "node__TimeParam_in_use.csv", provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     n = len(domain) * len(dt)
     nodes: list[str] = [""] * n
@@ -241,10 +258,12 @@ def derive_pdtNode(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
     )
 
 
-def write_pdtNode(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdtNode(input_dir: Path, solve_data_dir: Path,
+                   *,
+                   provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdtNode.csv`` (see derive docstring)."""
     _write(
-        derive_pdtNode(input_dir, solve_data_dir),
+        derive_pdtNode(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtNode.csv",
     )
 
@@ -267,6 +286,7 @@ def _derive_pdtProcess_side(
     domain_csv: Path,
     dt_csv: Path,
     side_col: str,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     lookup = PdtLookupPerSide(
         pbt_csv=pbt_csv,
@@ -279,8 +299,8 @@ def _derive_pdtProcess_side(
         group_process_csv=group_process_csv,
         group_stochastic_csv=group_stochastic_csv,
     )
-    domain = _read_triples(domain_csv)
-    dt = _read_pairs(dt_csv)
+    domain = _read_triples(domain_csv, provider=provider)
+    dt = _read_pairs(dt_csv, provider=provider)
 
     n = len(domain) * len(dt)
     processes: list[str] = [""] * n
@@ -322,6 +342,8 @@ def _derive_pdtProcess_side(
 
 def derive_pdtProcess_source(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise ``pdtProcess_source`` (mod L1265, 6-branch per-side).
 
@@ -341,19 +363,24 @@ def derive_pdtProcess_source(
         domain_csv=solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv",
         dt_csv=solve_data_dir / "steps_in_use.csv",
         side_col="source",
+        provider=provider,
     )
 
 
-def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path,
+                              *,
+                              provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdtProcess_source.csv`` (see derive docstring)."""
     _write(
-        derive_pdtProcess_source(input_dir, solve_data_dir),
+        derive_pdtProcess_source(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtProcess_source.csv",
     )
 
 
 def derive_pdtProcess_sink(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Materialise ``pdtProcess_sink`` (mod L1279, 6-branch per-side).
 
@@ -373,12 +400,15 @@ def derive_pdtProcess_sink(
         domain_csv=solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv",
         dt_csv=solve_data_dir / "steps_in_use.csv",
         side_col="sink",
+        provider=provider,
     )
 
 
-def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path,
+                           *,
+                           provider: "object | None" = None) -> None:
     """Emit ``solve_data/pdtProcess_sink.csv`` (see derive docstring)."""
     _write(
-        derive_pdtProcess_sink(input_dir, solve_data_dir),
+        derive_pdtProcess_sink(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtProcess_sink.csv",
     )
