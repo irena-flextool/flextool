@@ -142,17 +142,22 @@ def _provider_key(path: "Path | str") -> str:
     return stem
 
 
-def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
+def _read_csv(path: Path, columns: list[str],
+              *,
+              provider: "object | None" = None) -> pl.DataFrame:
     """Read a tiny flextool CSV with positional column rename.
 
-    Phase E-d — when an in-memory seed (``FlexDataAccumulator``) is
-    active and contains a frame for this path's basename, return the
-    seeded frame after the same positional rename.  This lets the
-    cascade run with CSV emission disabled while preprocessing still
-    finds its inputs.
+    Step 1-g-6 — Provider-first.  When ``provider`` is non-None and
+    carries the named artefact, return the in-memory frame after the
+    same positional rename.  Falls through to the legacy seed lookup
+    (during the Step 1-g dual-write window) and finally to disk.
     """
-    from flextool.engine_polars._input_source import _seed_lookup_positional
-    seeded = _seed_lookup_positional(path, columns)
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_lookup_positional,
+    )
+    seeded = _provider_lookup_positional(
+        provider, _provider_key(path), path, columns,
+    )
     if seeded is not None:
         return seeded
     if not path.exists() or path.stat().st_size == 0:
@@ -185,14 +190,16 @@ def _drop_blank_rows(df: pl.DataFrame, required_cols: list[str]) -> pl.DataFrame
     return df.filter(expr)
 
 
-def _read_n_col_rows(path: Path, columns: list[str]) -> list[tuple[str, ...]]:
+def _read_n_col_rows(path: Path, columns: list[str],
+                      *,
+                      provider: "object | None" = None) -> list[tuple[str, ...]]:
     """Read a CSV as a list of tuples preserving CSV row order.
 
     Mirrors the legacy ``_read_n_col`` helper — used where the legacy
     code iterates a list (not a set) to drive deterministic dedupe via
     ``dict.fromkeys``.
     """
-    df = _read_csv(path, columns)
+    df = _read_csv(path, columns, provider=provider)
     df = _drop_blank_rows(df, columns)
     return list(df.iter_rows())
 
@@ -268,15 +275,22 @@ _METHOD_2WAY_2VAR: frozenset[str] = frozenset((
 
 # ---- process_source_sink_param_t (mod L1197) ------------------------------
 
-def derive_process_source_sink_param_t(solve_data_dir: Path) -> pl.DataFrame:
+def derive_process_source_sink_param_t(solve_data_dir: Path,
+                                         *,
+                                         provider: "object | None" = None,
+                                         ) -> pl.DataFrame:
     """``process_source_sink_eff`` × ``processTimeParam`` filtered by
     ``(p, param) in process__param_t`` (loaded from ``pt_process.csv``).
     """
     pss_eff = _read_n_col_rows(
         solve_data_dir / "process_source_sink_eff.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
-    pt_pairs = _read_csv(solve_data_dir / "pt_process.csv", ["process", "param"])
+    pt_pairs = _read_csv(
+        solve_data_dir / "pt_process.csv", ["process", "param"],
+        provider=provider,
+    )
     pt_pairs = _drop_blank_rows(pt_pairs, ["process", "param"])
     pt_set: set[tuple[str, str]] = set(pt_pairs.iter_rows())
 
@@ -297,9 +311,12 @@ def derive_process_source_sink_param_t(solve_data_dir: Path) -> pl.DataFrame:
     )
 
 
-def write_process_source_sink_param_t(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process_source_sink_param_t(input_dir: Path, solve_data_dir: Path,
+                                        *,
+                                        provider: "object | None" = None,
+                                        ) -> None:
     _write(
-        derive_process_source_sink_param_t(solve_data_dir),
+        derive_process_source_sink_param_t(solve_data_dir, provider=provider),
         solve_data_dir / "process_source_sink_param_t.csv",
     )
 
@@ -308,31 +325,45 @@ def write_process_source_sink_param_t(input_dir: Path, solve_data_dir: Path) -> 
 
 def derive_node_time_param_in_use(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """node × nodeTimeParam filtered by per-node membership in
     nodeBalance / nodeBalancePeriod / nodeState
     or by ``(n, 'use_reference_value') in node__storage_solve_horizon_method``.
     """
     nodes = (
-        _drop_blank_rows(_read_csv(input_dir / "node.csv", ["node"]), ["node"])
-        .get_column("node").to_list()
+        _drop_blank_rows(
+            _read_csv(input_dir / "node.csv", ["node"], provider=provider),
+            ["node"],
+        ).get_column("node").to_list()
     )
     n_balance = frozenset(
-        _drop_blank_rows(_read_csv(solve_data_dir / "nodeBalance.csv", ["node"]), ["node"])
-        .get_column("node").to_list()
+        _drop_blank_rows(
+            _read_csv(solve_data_dir / "nodeBalance.csv", ["node"],
+                      provider=provider),
+            ["node"],
+        ).get_column("node").to_list()
     )
     n_balance_period = frozenset(
-        _drop_blank_rows(_read_csv(solve_data_dir / "nodeBalancePeriod.csv", ["node"]), ["node"])
-        .get_column("node").to_list()
+        _drop_blank_rows(
+            _read_csv(solve_data_dir / "nodeBalancePeriod.csv", ["node"],
+                      provider=provider),
+            ["node"],
+        ).get_column("node").to_list()
     )
     n_state = frozenset(
-        _drop_blank_rows(_read_csv(solve_data_dir / "nodeState.csv", ["node"]), ["node"])
-        .get_column("node").to_list()
+        _drop_blank_rows(
+            _read_csv(solve_data_dir / "nodeState.csv", ["node"],
+                      provider=provider),
+            ["node"],
+        ).get_column("node").to_list()
     )
     storage_method = _drop_blank_rows(
         _read_csv(
             input_dir / "node__storage_solve_horizon_method.csv",
             ["node", "method"],
+            provider=provider,
         ),
         ["node", "method"],
     )
@@ -361,9 +392,14 @@ def derive_node_time_param_in_use(
     )
 
 
-def write_node_time_param_in_use(input_dir: Path, solve_data_dir: Path) -> None:
+def write_node_time_param_in_use(input_dir: Path, solve_data_dir: Path,
+                                   *,
+                                   provider: "object | None" = None,
+                                   ) -> None:
     _write(
-        derive_node_time_param_in_use(input_dir, solve_data_dir),
+        derive_node_time_param_in_use(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "node__TimeParam_in_use.csv",
     )
 
@@ -372,16 +408,24 @@ def write_node_time_param_in_use(input_dir: Path, solve_data_dir: Path) -> None:
 
 def derive_process_source_delayed_partition(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Partition ``process__source`` by membership in ``process_delayed``.
 
     Returns (delayed, undelayed) frames, each with columns (process, source).
     """
-    pairs = _read_csv(input_dir / "process__source.csv", ["process", "source"])
+    pairs = _read_csv(
+        input_dir / "process__source.csv", ["process", "source"],
+        provider=provider,
+    )
     pairs = _drop_blank_rows(pairs, ["process", "source"])
     delayed_set = frozenset(
         _drop_blank_rows(
-            _read_csv(solve_data_dir / "process_delayed.csv", ["process"]),
+            _read_csv(
+                solve_data_dir / "process_delayed.csv", ["process"],
+                provider=provider,
+            ),
             ["process"],
         ).get_column("process").to_list()
     )
@@ -392,8 +436,12 @@ def derive_process_source_delayed_partition(
 
 def write_process_source_delayed_partition(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
-    delayed, undelayed = derive_process_source_delayed_partition(input_dir, solve_data_dir)
+    delayed, undelayed = derive_process_source_delayed_partition(
+        input_dir, solve_data_dir, provider=provider,
+    )
     _write(delayed, solve_data_dir / "process_source_delayed.csv")
     _write(undelayed, solve_data_dir / "process_source_undelayed.csv")
 
@@ -402,6 +450,8 @@ def write_process_source_delayed_partition(
 
 def derive_process_source_sink_param(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``process_source_sink × SOURCE_SINK_PARAM`` admitted if param row
     exists on EITHER side, OR via connection-process ``p_process``.
@@ -409,12 +459,14 @@ def derive_process_source_sink_param(
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
 
     src_param = _drop_blank_rows(
         _read_csv(
             input_dir / "p_process_source.csv",
             ["process", "source", "param"],
+            provider=provider,
         ),
         ["process", "source", "param"],
     )
@@ -422,16 +474,23 @@ def derive_process_source_sink_param(
         _read_csv(
             input_dir / "p_process_sink.csv",
             ["process", "sink", "param"],
+            provider=provider,
         ),
         ["process", "sink", "param"],
     )
     proc_param = _drop_blank_rows(
-        _read_csv(input_dir / "p_process.csv", ["process", "param"]),
+        _read_csv(
+            input_dir / "p_process.csv", ["process", "param"],
+            provider=provider,
+        ),
         ["process", "param"],
     )
     proc_conn = frozenset(
         _drop_blank_rows(
-            _read_csv(input_dir / "process_connection.csv", ["process"]),
+            _read_csv(
+                input_dir / "process_connection.csv", ["process"],
+                provider=provider,
+            ),
             ["process"],
         ).get_column("process").to_list()
     )
@@ -458,9 +517,14 @@ def derive_process_source_sink_param(
     )
 
 
-def write_process_source_sink_param(input_dir: Path, solve_data_dir: Path) -> None:
+def write_process_source_sink_param(input_dir: Path, solve_data_dir: Path,
+                                      *,
+                                      provider: "object | None" = None,
+                                      ) -> None:
     _write(
-        derive_process_source_sink_param(input_dir, solve_data_dir),
+        derive_process_source_sink_param(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "process__source__sink__param.csv",
     )
 
@@ -470,6 +534,8 @@ def write_process_source_sink_param(input_dir: Path, solve_data_dir: Path) -> No
 
 def derive_process_source_sink_profile_method_connection(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``process_source_sink × profile × profile_method`` filtered by
     ``(p, profile, method) in process__profile__profile_method``.
@@ -477,10 +543,12 @@ def derive_process_source_sink_profile_method_connection(
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
     pp_pm = _read_n_col_rows(
         input_dir / "process__profile__profile_method.csv",
         ["process", "profile", "profile_method"],
+        provider=provider,
     )
     fm_for_p: dict[str, list[tuple[str, str]]] = {}
     for p, f, m in pp_pm:
@@ -507,9 +575,13 @@ def derive_process_source_sink_profile_method_connection(
 
 def write_process_source_sink_profile_method_connection(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     _write(
-        derive_process_source_sink_profile_method_connection(input_dir, solve_data_dir),
+        derive_process_source_sink_profile_method_connection(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "process__source__sink__profile__profile_method_connection.csv",
     )
 
@@ -518,6 +590,8 @@ def write_process_source_sink_profile_method_connection(
 
 def derive_process_method_sources_sinks(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """3-way join over process_source_sink_alwaysProcess, process_source_sink
     and process_method, aliasing-gated.
@@ -528,14 +602,17 @@ def derive_process_method_sources_sinks(
     always = _read_n_col_rows(
         solve_data_dir / "process_source_sink_alwaysProcess.csv",
         ["process", "always_source", "always_sink"],
+        provider=provider,
     )
     pss = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "orig_source", "orig_sink"],
+        provider=provider,
     )
     pm = _read_n_col_rows(
         input_dir / "process_method.csv",
         ["process", "method"],
+        provider=provider,
     )
 
     always_for_p: dict[str, list[tuple[str, str]]] = {}
@@ -584,9 +661,13 @@ def derive_process_method_sources_sinks(
 
 def write_process_method_sources_sinks(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     _write(
-        derive_process_method_sources_sinks(input_dir, solve_data_dir),
+        derive_process_method_sources_sinks(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "process_method_sources_sinks.csv",
     )
 
@@ -595,6 +676,8 @@ def write_process_method_sources_sinks(
 
 def derive_ed_history_realized_first(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """entity × realized periods, but only on the first solve.
 
@@ -603,7 +686,9 @@ def derive_ed_history_realized_first(
     """
     # solveFirst gate: short-circuit to empty.
     solve_first = False
-    pm = _read_csv(solve_data_dir / "p_model.csv", ["key", "value"])
+    pm = _read_csv(
+        solve_data_dir / "p_model.csv", ["key", "value"], provider=provider,
+    )
     if pm.height > 0:
         row = pm.filter(pl.col("key") == "solveFirst")
         if row.height > 0:
@@ -618,34 +703,46 @@ def derive_ed_history_realized_first(
         )
 
     entities = (
-        _drop_blank_rows(_read_csv(input_dir / "entity.csv", ["entity"]), ["entity"])
-        .get_column("entity").to_list()
+        _drop_blank_rows(
+            _read_csv(input_dir / "entity.csv", ["entity"], provider=provider),
+            ["entity"],
+        ).get_column("entity").to_list()
     )
     d_realize_invest = frozenset(
         _drop_blank_rows(
             _read_csv(
                 solve_data_dir / "realized_invest_periods_of_current_solve.csv",
                 ["period"],
+                provider=provider,
             ),
             ["period"],
         ).get_column("period").to_list()
     )
     d_fix_storage = frozenset(
         _drop_blank_rows(
-            _read_csv(solve_data_dir / "d_fix_storage_period_set.csv", ["period"]),
+            _read_csv(
+                solve_data_dir / "d_fix_storage_period_set.csv", ["period"],
+                provider=provider,
+            ),
             ["period"],
         ).get_column("period").to_list()
     )
     d_realized = frozenset(
         _drop_blank_rows(
-            _read_csv(solve_data_dir / "d_realized_period_set.csv", ["period"]),
+            _read_csv(
+                solve_data_dir / "d_realized_period_set.csv", ["period"],
+                provider=provider,
+            ),
             ["period"],
         ).get_column("period").to_list()
     )
     realized_periods = d_realize_invest | d_fix_storage | d_realized
 
     pb = _drop_blank_rows(
-        _read_csv(solve_data_dir / "period__branch.csv", ["period", "branch"]),
+        _read_csv(
+            solve_data_dir / "period__branch.csv", ["period", "branch"],
+            provider=provider,
+        ),
         ["period", "branch"],
     )
     diag_periods = frozenset(
@@ -664,9 +761,13 @@ def derive_ed_history_realized_first(
 
 def write_ed_history_realized_first(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     _write(
-        derive_ed_history_realized_first(input_dir, solve_data_dir),
+        derive_ed_history_realized_first(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "ed_history_realized_first.csv",
     )
 
@@ -676,6 +777,8 @@ def write_ed_history_realized_first(
 
 def derive_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``process_source_sink`` filtered for 1-way processes whose source
     is a real node-side endpoint, with no sink OR ≥2 sources.
@@ -683,8 +786,12 @@ def derive_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
-    pm = _read_n_col_rows(input_dir / "process_method.csv", ["process", "method"])
+    pm = _read_n_col_rows(
+        input_dir / "process_method.csv", ["process", "method"],
+        provider=provider,
+    )
     methods_of_p: dict[str, set[str]] = {}
     for p, m in pm:
         methods_of_p.setdefault(p, set()).add(m)
@@ -692,12 +799,16 @@ def derive_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
 
     proc_source_pairs = frozenset(_read_n_col_rows(
         input_dir / "process__source.csv", ["process", "source"],
+        provider=provider,
     ))
     sources_of_p: dict[str, int] = {}
     for p, _ in proc_source_pairs:
         sources_of_p[p] = sources_of_p.get(p, 0) + 1
     sinks_of_p: dict[str, int] = {}
-    for p, _ in _read_n_col_rows(input_dir / "process__sink.csv", ["process", "sink"]):
+    for p, _ in _read_n_col_rows(
+        input_dir / "process__sink.csv", ["process", "sink"],
+        provider=provider,
+    ):
         sinks_of_p[p] = sinks_of_p.get(p, 0) + 1
 
     rows: list[tuple[str, str, str]] = []
@@ -720,10 +831,12 @@ def derive_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
 
 def write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     _write(
         derive_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
-            input_dir, solve_data_dir,
+            input_dir, solve_data_dir, provider=provider,
         ),
         solve_data_dir
         / "process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.csv",
@@ -734,15 +847,19 @@ def write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
 
 def derive_process_source_sink_ramp_method(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``process_source_sink × ramp_method`` filtered by per-side membership."""
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
     pnrm = _read_n_col_rows(
         input_dir / "process__node__ramp_method.csv",
         ["process", "node", "ramp_method"],
+        provider=provider,
     )
     pnrm_set: set[tuple[str, str, str]] = set(pnrm)
 
@@ -767,9 +884,13 @@ def derive_process_source_sink_ramp_method(
 
 def write_process_source_sink_ramp_method(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     _write(
-        derive_process_source_sink_ramp_method(input_dir, solve_data_dir),
+        derive_process_source_sink_ramp_method(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "process__source__sink__ramp_method.csv",
     )
 
@@ -778,19 +899,24 @@ def write_process_source_sink_ramp_method(
 
 def derive_process_source_sink_coeff_zero(
     solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``process_source_sink`` filtered by zero flow coefficient on EITHER side."""
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
     src_zero = frozenset(_read_n_col_rows(
         solve_data_dir / "process_source_coeff_zero.csv",
         ["process", "source"],
+        provider=provider,
     ))
     sink_zero = frozenset(_read_n_col_rows(
         solve_data_dir / "process_sink_coeff_zero.csv",
         ["process", "sink"],
+        provider=provider,
     ))
     rows = [
         (p, src, sink) for p, src, sink in triples
@@ -808,9 +934,11 @@ def derive_process_source_sink_coeff_zero(
 
 def write_process_source_sink_coeff_zero(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     _write(
-        derive_process_source_sink_coeff_zero(solve_data_dir),
+        derive_process_source_sink_coeff_zero(solve_data_dir, provider=provider),
         solve_data_dir / "process_source_sink_coeff_zero.csv",
     )
 
@@ -819,6 +947,8 @@ def write_process_source_sink_coeff_zero(
 
 def derive_process_source_sink_is_node_family(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Emit the 4-frame ``process__source__sinkIsNode*`` family.
 
@@ -827,11 +957,16 @@ def derive_process_source_sink_is_node_family(
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
     sinks = frozenset(_read_n_col_rows(
         input_dir / "process__sink.csv", ["process", "sink"],
+        provider=provider,
     ))
-    pm = _read_n_col_rows(input_dir / "process_method.csv", ["process", "method"])
+    pm = _read_n_col_rows(
+        input_dir / "process_method.csv", ["process", "method"],
+        provider=provider,
+    )
     methods_of_p: dict[str, set[str]] = {}
     for p, m in pm:
         methods_of_p.setdefault(p, set()).add(m)
@@ -861,9 +996,11 @@ def derive_process_source_sink_is_node_family(
 
 def write_process_source_sink_is_node_family(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     base, two1, not21, two2 = derive_process_source_sink_is_node_family(
-        input_dir, solve_data_dir,
+        input_dir, solve_data_dir, provider=provider,
     )
     _write(base, solve_data_dir / "process__source__sinkIsNode.csv")
     _write(two1, solve_data_dir / "process__source__sinkIsNode_2way1var.csv")
@@ -875,15 +1012,21 @@ def write_process_source_sink_is_node_family(
 
 def derive_process_source_sink_delayed_partition(
     solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Partition ``process_source_sink`` by membership in ``process_delayed``."""
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
     delayed_set = frozenset(
         _drop_blank_rows(
-            _read_csv(solve_data_dir / "process_delayed.csv", ["process"]),
+            _read_csv(
+                solve_data_dir / "process_delayed.csv", ["process"],
+                provider=provider,
+            ),
             ["process"],
         ).get_column("process").to_list()
     )
@@ -905,8 +1048,12 @@ def derive_process_source_sink_delayed_partition(
 
 def write_process_source_sink_delayed_partition(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
-    delayed, undelayed = derive_process_source_sink_delayed_partition(solve_data_dir)
+    delayed, undelayed = derive_process_source_sink_delayed_partition(
+        solve_data_dir, provider=provider,
+    )
     _write(delayed, solve_data_dir / "process_source_sink_delayed.csv")
     _write(undelayed, solve_data_dir / "process_source_sink_undelayed.csv")
 
@@ -916,12 +1063,15 @@ def write_process_source_sink_delayed_partition(
 # ===========================================================================
 
 
-def _read_value_lookup_3(path: Path) -> dict[tuple[str, str, str], float]:
+def _read_value_lookup_3(path: Path,
+                          *,
+                          provider: "object | None" = None,
+                          ) -> dict[tuple[str, str, str], float]:
     """Load a 4-col CSV (k1, k2, k3, value) as a dict keyed on the
     first 3 columns and floated on the 4th.  Silently skip rows whose
     value can't be parsed.
     """
-    df = _read_csv(path, ["k1", "k2", "k3", "value"])
+    df = _read_csv(path, ["k1", "k2", "k3", "value"], provider=provider)
     out: dict[tuple[str, str, str], float] = {}
     for k1, k2, k3, v in df.iter_rows():
         if not k1 or not k2 or not k3:
@@ -935,6 +1085,8 @@ def _read_value_lookup_3(path: Path) -> dict[tuple[str, str, str], float]:
 
 def derive_p_process_source_sink(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``pProcess_source_sink``: prefer p_process_source, fall back to
     p_process_sink, then 0.  Domain = ``process__source__sink__param``.
@@ -943,12 +1095,17 @@ def derive_p_process_source_sink(
     ``repr(float(v))`` to preserve bit-exact precision parity with
     legacy code (see :mod:`._writer_calc_params` module docstring).
     """
-    p_src = _read_value_lookup_3(input_dir / "p_process_source.csv")
-    p_snk = _read_value_lookup_3(input_dir / "p_process_sink.csv")
+    p_src = _read_value_lookup_3(
+        input_dir / "p_process_source.csv", provider=provider,
+    )
+    p_snk = _read_value_lookup_3(
+        input_dir / "p_process_sink.csv", provider=provider,
+    )
 
     domain = _read_n_col_rows(
         solve_data_dir / "process__source__sink__param.csv",
         ["process", "source", "sink", "param"],
+        provider=provider,
     )
 
     processes: list[str] = []
@@ -980,9 +1137,14 @@ def derive_p_process_source_sink(
     )
 
 
-def write_pProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
+def write_pProcess_source_sink(input_dir: Path, solve_data_dir: Path,
+                                 *,
+                                 provider: "object | None" = None,
+                                 ) -> None:
     _write(
-        derive_p_process_source_sink(input_dir, solve_data_dir),
+        derive_p_process_source_sink(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "pProcess_source_sink.csv",
     )
 
@@ -991,12 +1153,17 @@ def write_pProcess_source_sink(input_dir: Path, solve_data_dir: Path) -> None:
 # process_source_sink_ramp_family (mod L1660-1688)
 # ---------------------------------------------------------------------------
 
-def _read_p_proc_side_lookup(path: Path) -> dict[tuple[str, str, str], float]:
+def _read_p_proc_side_lookup(path: Path,
+                              *,
+                              provider: "object | None" = None,
+                              ) -> dict[tuple[str, str, str], float]:
     """Read p_process_source / p_process_sink: (process, side, param) → value."""
     out: dict[tuple[str, str, str], float] = {}
-    if not path.exists() or path.stat().st_size == 0:
+    # Provider-first; fall through to disk only if not in memory.
+    if (provider is None or not provider.has(_provider_key(path))) \
+            and (not path.exists() or path.stat().st_size == 0):
         return out
-    df = _read_csv(path, ["process", "side", "param", "value"])
+    df = _read_csv(path, ["process", "side", "param", "value"], provider=provider)
     df = _drop_blank_rows(df, ["process", "side", "param"])
     for p, s, param, v in df.iter_rows():
         try:
@@ -1008,6 +1175,8 @@ def _read_p_proc_side_lookup(path: Path) -> dict[tuple[str, str, str], float]:
 
 def _compute_ramp_family(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> dict[str, list[tuple[str, str, str]]]:
     """Emit the 5 ramp-family triple sets.
 
@@ -1017,17 +1186,23 @@ def _compute_ramp_family(
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
     pnrm_rows = _read_n_col_rows(
         input_dir / "process__node__ramp_method.csv",
         ["process", "node", "ramp_method"],
+        provider=provider,
     )
     pnrm: dict[tuple[str, str], set[str]] = {}
     for p, n, m in pnrm_rows:
         pnrm.setdefault((p, n), set()).add(m)
 
-    p_proc_source = _read_p_proc_side_lookup(input_dir / "p_process_source.csv")
-    p_proc_sink = _read_p_proc_side_lookup(input_dir / "p_process_sink.csv")
+    p_proc_source = _read_p_proc_side_lookup(
+        input_dir / "p_process_source.csv", provider=provider,
+    )
+    p_proc_sink = _read_p_proc_side_lookup(
+        input_dir / "p_process_sink.csv", provider=provider,
+    )
 
     def _has_method(p: str, n: str, methods: frozenset[str]) -> bool:
         return bool(pnrm.get((p, n), set()) & methods)
@@ -1079,9 +1254,11 @@ def _triples_frame(rows: list[tuple[str, str, str]]) -> pl.DataFrame:
 
 def write_process_source_sink_ramp_family(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """5 per-arc ramp sets gated by method and (for limit variants) speed > 0."""
-    by_file = _compute_ramp_family(input_dir, solve_data_dir)
+    by_file = _compute_ramp_family(input_dir, solve_data_dir, provider=provider)
     for fname, rows in by_file.items():
         _write(_triples_frame(rows), solve_data_dir / fname)
 
@@ -1092,6 +1269,8 @@ def write_process_source_sink_ramp_family(
 
 def derive_process_source_sink_ramp_unions(
     solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Order-preserving union of the 5 ramp-family triple sets."""
     ramp_files = (
@@ -1105,6 +1284,7 @@ def derive_process_source_sink_ramp_unions(
     for fname in ramp_files:
         for r in _read_n_col_rows(
             solve_data_dir / fname, ["process", "source", "sink"],
+            provider=provider,
         ):
             seen.setdefault(r, None)
     return _triples_frame(list(seen.keys()))
@@ -1112,10 +1292,12 @@ def derive_process_source_sink_ramp_unions(
 
 def write_process_source_sink_ramp_unions(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """Order-preserving union of the 5 ramp-family triple sets."""
     _write(
-        derive_process_source_sink_ramp_unions(solve_data_dir),
+        derive_process_source_sink_ramp_unions(solve_data_dir, provider=provider),
         solve_data_dir / "process_source_sink_ramp.csv",
     )
 
@@ -1126,13 +1308,17 @@ def write_process_source_sink_ramp_unions(
 
 def derive_group_commodity_node_period_co2_total(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``group_commodity_node_period_co2_total`` 3-col frame; see writer."""
     cn = _read_n_col_rows(
         input_dir / "commodity__node.csv", ["commodity", "node"],
+        provider=provider,
     )
     gn = _read_n_col_rows(
         input_dir / "group__node.csv", ["group", "node"],
+        provider=provider,
     )
     g_with_n: dict[str, set[str]] = {}
     for g, n in gn:
@@ -1140,8 +1326,12 @@ def derive_group_commodity_node_period_co2_total(
 
     p_commodity: dict[tuple[str, str], float] = {}
     pc_path = input_dir / "p_commodity.csv"
-    if pc_path.exists() and pc_path.stat().st_size > 0:
-        pc_df = _read_csv(pc_path, ["commodity", "param", "value"])
+    _pc_has = (provider is not None and provider.has(_provider_key(pc_path))) \
+        or (pc_path.exists() and pc_path.stat().st_size > 0)
+    if _pc_has:
+        pc_df = _read_csv(
+            pc_path, ["commodity", "param", "value"], provider=provider,
+        )
         pc_df = _drop_blank_rows(pc_df, ["commodity", "param"])
         for c, param, v in pc_df.iter_rows():
             try:
@@ -1151,6 +1341,7 @@ def derive_group_commodity_node_period_co2_total(
     co2_max_total = frozenset(
         _read_n_col_rows(
             solve_data_dir / "group_co2_max_total.csv", ["group"],
+            provider=provider,
         )
     )
     # NB: frozenset entries are 1-tuples — flatten.
@@ -1178,6 +1369,8 @@ def derive_group_commodity_node_period_co2_total(
 
 def write_group_commodity_node_period_co2_total(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """Join group_co2_max_total × group__node × commodity__node × p_commodity.
 
@@ -1188,7 +1381,7 @@ def write_group_commodity_node_period_co2_total(
     """
     _write(
         derive_group_commodity_node_period_co2_total(
-            input_dir, solve_data_dir,
+            input_dir, solve_data_dir, provider=provider,
         ),
         solve_data_dir / "group_commodity_node_period_co2_total.csv",
     )
@@ -1272,10 +1465,12 @@ _NODE_PERIOD_PARAM_INVEST: frozenset[str] = frozenset((
 # the inputs are tiny enum cross-products.  We mirror the legacy loops
 # directly inside ``derive_*`` for code-shape parity.
 
-def _read_singles_list(path: Path) -> list[str]:
+def _read_singles_list(path: Path,
+                        *,
+                        provider: "object | None" = None) -> list[str]:
     """Read column 0 of a small CSV into a list (preserves CSV order)."""
     return [
-        r[0] for r in _read_n_col_rows(path, ["c0"])
+        r[0] for r in _read_n_col_rows(path, ["c0"], provider=provider)
     ]
 
 
@@ -1360,7 +1555,10 @@ def _rows_to_frame_3(rows: list[tuple[str, str, str]],
     )
 
 
-def write_param_in_use_sets(input_dir: Path, solve_data_dir: Path) -> None:
+def write_param_in_use_sets(input_dir: Path, solve_data_dir: Path,
+                              *,
+                              provider: "object | None" = None,
+                              ) -> None:
     """Emit the seven ``*_in_use`` CSVs that filter (entity, param) by
     Required/Invest enum membership.
 
@@ -1373,31 +1571,40 @@ def write_param_in_use_sets(input_dir: Path, solve_data_dir: Path) -> None:
       * ``process_source_sourceSinkPeriodParam_in_use.csv``
       * ``process_sink_sourceSinkPeriodParam_in_use.csv``
     """
-    nodes = _read_singles_list(input_dir / "node.csv")
-    processes = _read_singles_list(input_dir / "process.csv")
+    nodes = _read_singles_list(input_dir / "node.csv", provider=provider)
+    processes = _read_singles_list(input_dir / "process.csv", provider=provider)
     invest_set = frozenset(
-        _read_singles_list(solve_data_dir / "entityInvest.csv")
+        _read_singles_list(
+            solve_data_dir / "entityInvest.csv", provider=provider,
+        )
     )
     divest_set = frozenset(
-        _read_singles_list(solve_data_dir / "entityDivest.csv")
+        _read_singles_list(
+            solve_data_dir / "entityDivest.csv", provider=provider,
+        )
     )
     ctm = _read_n_col_rows(
         solve_data_dir / "process__ct_method.csv", ["process", "method"],
+        provider=provider,
     )
     p_with_min_load = frozenset(
         p for p, m in ctm if m == "min_load_efficiency"
     )
     process_online = frozenset(
-        _read_singles_list(solve_data_dir / "process_online.csv")
+        _read_singles_list(
+            solve_data_dir / "process_online.csv", provider=provider,
+        )
     )
     sources = [
         (p, src) for p, src in _read_n_col_rows(
             input_dir / "process__source.csv", ["process", "source"],
+            provider=provider,
         )
     ]
     sinks = [
         (p, snk) for p, snk in _read_n_col_rows(
             input_dir / "process__sink.csv", ["process", "sink"],
+            provider=provider,
         )
     ]
 
@@ -1475,23 +1682,34 @@ def write_param_in_use_sets(input_dir: Path, solve_data_dir: Path) -> None:
 
 def derive_node_group_dispatch_process_fully_inside(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """For each ``g ∈ nodeGroupDispatch`` × ``p ∈ process``, include if
     BOTH some source and some sink of ``p`` are in ``group__node[g]``
     AND ``p`` is not a self-loop (no ``(p, n, n)`` in ``process_source_sink``).
     """
-    ngd = _read_singles_list(input_dir / "nodeGroupDispatch.csv")
-    procs = _read_singles_list(input_dir / "process.csv")
+    ngd = _read_singles_list(
+        input_dir / "nodeGroupDispatch.csv", provider=provider,
+    )
+    procs = _read_singles_list(
+        input_dir / "process.csv", provider=provider,
+    )
     process_source_pairs = _read_n_col_rows(
         input_dir / "process__source.csv", ["process", "source"],
+        provider=provider,
     )
     process_sink_pairs = _read_n_col_rows(
         input_dir / "process__sink.csv", ["process", "sink"],
+        provider=provider,
     )
-    gn = _read_n_col_rows(input_dir / "group__node.csv", ["group", "node"])
+    gn = _read_n_col_rows(
+        input_dir / "group__node.csv", ["group", "node"], provider=provider,
+    )
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
+        provider=provider,
     )
 
     nodes_in_g: dict[str, set[str]] = {}
@@ -1524,9 +1742,13 @@ def derive_node_group_dispatch_process_fully_inside(
 
 def write_node_group_dispatch_process_fully_inside(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     _write(
-        derive_node_group_dispatch_process_fully_inside(input_dir, solve_data_dir),
+        derive_node_group_dispatch_process_fully_inside(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv",
     )
 
@@ -1616,15 +1838,21 @@ def _rows_to_frame(rows, header: tuple[str, ...]) -> pl.DataFrame:
 
 # ---- write_small_set_derivations (mod L999, L1061, L1132, L1174, L1222-3) --
 
-def derive_ed_history_realized(solve_data_dir: Path) -> pl.DataFrame:
+def derive_ed_history_realized(solve_data_dir: Path,
+                                 *,
+                                 provider: "object | None" = None,
+                                 ) -> pl.DataFrame:
     """Order-preserving union of
     ``p_entity_period_existing_capacity`` + ``ed_history_realized_first``,
     projected to (entity, period).
     """
     ed_read = _read_pairs_csv(
-        solve_data_dir / "p_entity_period_existing_capacity.csv"
+        solve_data_dir / "p_entity_period_existing_capacity.csv",
+        provider=provider,
     )
-    ed_first = _read_pairs_csv(solve_data_dir / "ed_history_realized_first.csv")
+    ed_first = _read_pairs_csv(
+        solve_data_dir / "ed_history_realized_first.csv", provider=provider,
+    )
     seen_ed: dict[tuple[str, str], None] = {}
     for r in ed_read:
         seen_ed.setdefault(r, None)
@@ -1635,6 +1863,8 @@ def derive_ed_history_realized(solve_data_dir: Path) -> pl.DataFrame:
 
 def derive_process_source_sink_profile_method(
     solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """4-way union of the *profile_method* sub-CSVs (5-col frame)."""
     seen_pf: dict[tuple[str, ...], None] = {}
@@ -1644,7 +1874,9 @@ def derive_process_source_sink_profile_method(
         "process__source__sink__profile__profile_method_connection.csv",
         "process__source__sink__profile__profile_method_direct.csv",
     ):
-        for r in _read_n_col_csv(solve_data_dir / fname, 5):
+        for r in _read_n_col_csv(
+            solve_data_dir / fname, 5, provider=provider,
+        ):
             seen_pf.setdefault(r, None)
     return _rows_to_frame(
         list(seen_pf.keys()),
@@ -1654,11 +1886,14 @@ def derive_process_source_sink_profile_method(
 
 def derive_process_sinkIsNode_2way1var(
     solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Projection of column 0 of
     ``process__source__sinkIsNode_2way1var.csv``."""
     triples = _read_n_col_csv(
-        solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3
+        solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3,
+        provider=provider,
     )
     seen_p: dict[str, None] = {}
     for p, _, _ in triples:
@@ -1666,16 +1901,22 @@ def derive_process_sinkIsNode_2way1var(
     return _rows_to_frame([(p,) for p in seen_p.keys()], ("process",))
 
 
-def derive_nodeSelfDischarge(solve_data_dir: Path) -> pl.DataFrame:
+def derive_nodeSelfDischarge(solve_data_dir: Path,
+                              *,
+                              provider: "object | None" = None,
+                              ) -> pl.DataFrame:
     """Subset of nodeState whose ``pdtNode[n, 'self_discharge_loss', d, t]``
     is non-zero for at least one (d, t).
     """
     import csv
-    nodeState = frozenset(_read_singles_csv(solve_data_dir / "nodeState.csv"))
+    nodeState = frozenset(_read_singles_csv(
+        solve_data_dir / "nodeState.csv", provider=provider,
+    ))
     nodes_with_selfdischarge: set[str] = set()
     pdtn_path = solve_data_dir / "pdtNode.csv"
-    if pdtn_path.exists():
-        with pdtn_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(pdtn_path), pdtn_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -1688,19 +1929,25 @@ def derive_nodeSelfDischarge(solve_data_dir: Path) -> pl.DataFrame:
                         continue
     rows = [
         (n,)
-        for n in _read_singles_csv(solve_data_dir / "nodeState.csv")
+        for n in _read_singles_csv(
+            solve_data_dir / "nodeState.csv", provider=provider,
+        )
         if n in nodes_with_selfdischarge
     ]
     return _rows_to_frame(rows, ("node",))
 
 
-def _scan_pd_startup(solve_data_dir: Path) -> set[tuple[str, str]]:
+def _scan_pd_startup(solve_data_dir: Path,
+                      *,
+                      provider: "object | None" = None,
+                      ) -> set[tuple[str, str]]:
     """(process, period) pairs where ``pdProcess[p, 'startup_cost', d]`` != 0."""
     import csv
     pd_startup: set[tuple[str, str]] = set()
     pdp_path = solve_data_dir / "pdProcess.csv"
-    if pdp_path.exists():
-        with pdp_path.open() as fh:
+    fh = _provider_open(provider, _provider_key(pdp_path), pdp_path)
+    if fh is not None:
+        with fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -1718,7 +1965,7 @@ def _derive_pdt_online(
     *,
     provider: "object | None" = None,
 ) -> pl.DataFrame:
-    pd_startup = _scan_pd_startup(solve_data_dir)
+    pd_startup = _scan_pd_startup(solve_data_dir, provider=provider)
     dt_pairs = _read_n_col_csv(
         solve_data_dir / "steps_in_use.csv", 2, provider=provider,
     )
@@ -1764,19 +2011,21 @@ def write_small_set_derivations(input_dir: Path, solve_data_dir: Path,
     See the legacy docstring for the full set of math-prog derivations.
     """
     _write(
-        derive_ed_history_realized(solve_data_dir),
+        derive_ed_history_realized(solve_data_dir, provider=provider),
         solve_data_dir / "ed_history_realized.csv",
     )
     _write(
-        derive_process_source_sink_profile_method(solve_data_dir),
+        derive_process_source_sink_profile_method(
+            solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "process__source__sink__profile__profile_method.csv",
     )
     _write(
-        derive_process_sinkIsNode_2way1var(solve_data_dir),
+        derive_process_sinkIsNode_2way1var(solve_data_dir, provider=provider),
         solve_data_dir / "process_sinkIsNode_2way1var.csv",
     )
     _write(
-        derive_nodeSelfDischarge(solve_data_dir),
+        derive_nodeSelfDischarge(solve_data_dir, provider=provider),
         solve_data_dir / "nodeSelfDischarge.csv",
     )
     _write(
@@ -1889,14 +2138,17 @@ def write_process_source_sink_param_with_time(
 
 def _scan_gdt_instant_flow_rows(
     solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
     """One scan over pdtGroup.csv, splitting max/min_instant_flow rows."""
     import csv
     max_rows: list[tuple[str, str, str]] = []
     min_rows: list[tuple[str, str, str]] = []
     pdtg_path = solve_data_dir / "pdtGroup.csv"
-    if pdtg_path.exists():
-        with pdtg_path.open() as fh:
+    fh = _provider_open(provider, _provider_key(pdtg_path), pdtg_path)
+    if fh is not None:
+        with fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -1914,27 +2166,37 @@ def _scan_gdt_instant_flow_rows(
     return max_rows, min_rows
 
 
-def derive_gdt_max_instant_flow(solve_data_dir: Path) -> pl.DataFrame:
+def derive_gdt_max_instant_flow(solve_data_dir: Path,
+                                  *,
+                                  provider: "object | None" = None,
+                                  ) -> pl.DataFrame:
     """``gdt_maxInstantFlow`` — pdtGroup rows with param=max_instant_flow."""
-    max_rows, _ = _scan_gdt_instant_flow_rows(solve_data_dir)
+    max_rows, _ = _scan_gdt_instant_flow_rows(solve_data_dir, provider=provider)
     return _rows_to_frame(max_rows, ("group", "period", "time"))
 
 
-def derive_gdt_min_instant_flow(solve_data_dir: Path) -> pl.DataFrame:
+def derive_gdt_min_instant_flow(solve_data_dir: Path,
+                                  *,
+                                  provider: "object | None" = None,
+                                  ) -> pl.DataFrame:
     """``gdt_minInstantFlow`` — pdtGroup rows with param=min_instant_flow."""
-    _, min_rows = _scan_gdt_instant_flow_rows(solve_data_dir)
+    _, min_rows = _scan_gdt_instant_flow_rows(solve_data_dir, provider=provider)
     return _rows_to_frame(min_rows, ("group", "period", "time"))
 
 
 def write_gdt_instant_flow_sets(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """flextool.mod L1131-1132 — gdt_maxInstantFlow + gdt_minInstantFlow.
 
     Each row is included iff the corresponding ``pdtGroup[g, P, d, t]``
     value is non-zero.  Both frames come from one scan of pdtGroup.csv.
     """
-    max_rows, min_rows = _scan_gdt_instant_flow_rows(solve_data_dir)
+    max_rows, min_rows = _scan_gdt_instant_flow_rows(
+        solve_data_dir, provider=provider,
+    )
     _write(
         _rows_to_frame(max_rows, ("group", "period", "time")),
         solve_data_dir / "gdt_maxInstantFlow.csv",
@@ -1949,19 +2211,24 @@ def write_gdt_instant_flow_sets(
 
 def derive_p_process_delay_weight(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``p_process_delay_weight`` 3-col frame; see writer docstring."""
     import csv
     delayed_duration = _read_pairs_csv(
-        solve_data_dir / "process_delayed__duration.csv"
+        solve_data_dir / "process_delayed__duration.csv", provider=provider,
     )
     delay_single = frozenset(
-        _read_pairs_csv(input_dir / "process_delay_single.csv")
+        _read_pairs_csv(
+            input_dir / "process_delay_single.csv", provider=provider,
+        )
     )
     weighted: dict[tuple[str, str], float] = {}
     pdw_path = input_dir / "p_process_delay_weighted.csv"
-    if pdw_path.exists():
-        with pdw_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(pdw_path), pdw_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -1979,6 +2246,8 @@ def derive_p_process_delay_weight(
 
 def write_p_process_delay_weight(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """flextool.mod L1096-1099 — ``p_process_delay_weight``.
 
@@ -1987,7 +2256,9 @@ def write_p_process_delay_weight(
     (default 0).
     """
     _write(
-        derive_p_process_delay_weight(input_dir, solve_data_dir),
+        derive_p_process_delay_weight(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "p_process_delay_weight.csv",
     )
 
@@ -2018,8 +2289,9 @@ def derive_gcndt_co2_price(
 
     p_commodity_co2: dict[str, float] = {}
     pc_path = input_dir / "p_commodity.csv"
-    if pc_path.exists():
-        with pc_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(pc_path), pc_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -2031,8 +2303,9 @@ def derive_gcndt_co2_price(
 
     co2_price_dt: set[tuple[str, str, str]] = set()
     pdtg_path = solve_data_dir / "pdtGroup.csv"
-    if pdtg_path.exists():
-        with pdtg_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(pdtg_path), pdtg_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -2080,6 +2353,8 @@ def write_gcndt_co2_price(input_dir: Path, solve_data_dir: Path,
 
 def derive_group_commodity_node_period_co2_period(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``group_commodity_node_period_co2_period`` 4-col frame.
 
@@ -2087,18 +2362,25 @@ def derive_group_commodity_node_period_co2_period(
     """
     import csv
     g_co2_max_period = frozenset(
-        _read_singles_csv(solve_data_dir / "group_co2_max_period.csv")
+        _read_singles_csv(
+            solve_data_dir / "group_co2_max_period.csv", provider=provider,
+        )
     )
-    cn = _read_pairs_csv(input_dir / "commodity__node.csv")
+    cn = _read_pairs_csv(
+        input_dir / "commodity__node.csv", provider=provider,
+    )
 
     gn_acc: dict[str, set[str]] = {}
-    for g, n in _read_pairs_csv(input_dir / "group__node.csv"):
+    for g, n in _read_pairs_csv(
+        input_dir / "group__node.csv", provider=provider,
+    ):
         gn_acc.setdefault(g, set()).add(n)
 
     p_commodity_co2: dict[str, float] = {}
     pc_path = input_dir / "p_commodity.csv"
-    if pc_path.exists():
-        with pc_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(pc_path), pc_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -2108,7 +2390,9 @@ def derive_group_commodity_node_period_co2_period(
                     except ValueError:
                         continue
 
-    period_in_use = _read_singles_csv(solve_data_dir / "period_in_use_set.csv")
+    period_in_use = _read_singles_csv(
+        solve_data_dir / "period_in_use_set.csv", provider=provider,
+    )
 
     rows: list[tuple[str, str, str, str]] = []
     for g in g_co2_max_period:
@@ -2127,10 +2411,14 @@ def derive_group_commodity_node_period_co2_period(
 
 def write_group_commodity_node_period_co2_period(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """flextool.mod L1550-1555 — group_commodity_node_period_co2_period."""
     _write(
-        derive_group_commodity_node_period_co2_period(input_dir, solve_data_dir),
+        derive_group_commodity_node_period_co2_period(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "group_commodity_node_period_co2_period.csv",
     )
 
@@ -2207,11 +2495,14 @@ def write_peedt(input_dir: Path, solve_data_dir: Path,
 
 def derive_p_flow_min(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``p_flow_min`` 6-col frame; see writer docstring."""
     import csv
     sinkIsNode = frozenset(_read_n_col_csv(
-        solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3
+        solve_data_dir / "process__source__sinkIsNode_2way1var.csv", 3,
+        provider=provider,
     ))
     cols = ("process", "source", "sink", "period", "time", "value")
     if not sinkIsNode:
@@ -2219,8 +2510,9 @@ def derive_p_flow_min(
 
     dcm: dict[tuple[str, str], float] = {}
     pdcm_path = solve_data_dir / "p_entity_dispatch_capacity_max.csv"
-    if pdcm_path.exists():
-        with pdcm_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(pdcm_path), pdcm_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -2231,8 +2523,9 @@ def derive_p_flow_min(
                         continue
     unitsize: dict[str, float] = {}
     pus_path = solve_data_dir / "p_entity_unitsize.csv"
-    if pus_path.exists():
-        with pus_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(pus_path), pus_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -2242,7 +2535,9 @@ def derive_p_flow_min(
                     except ValueError:
                         continue
 
-    peedt = _read_n_col_csv(solve_data_dir / "peedt.csv", 5)
+    peedt = _read_n_col_csv(
+        solve_data_dir / "peedt.csv", 5, provider=provider,
+    )
     rows: list[tuple[str, ...]] = []
     for p, src, sink, d, t in peedt:
         if (p, src, sink) not in sinkIsNode:
@@ -2255,7 +2550,10 @@ def derive_p_flow_min(
     return _rows_to_frame(rows, cols)
 
 
-def write_p_flow_min(input_dir: Path, solve_data_dir: Path) -> None:
+def write_p_flow_min(input_dir: Path, solve_data_dir: Path,
+                      *,
+                      provider: "object | None" = None,
+                      ) -> None:
     """flextool.mod L1680-1684 — ``p_flow_min{(p,source,sink,d,t) in peedt}``.
 
     Emits only the non-zero rows.  The value is
@@ -2264,7 +2562,7 @@ def write_p_flow_min(input_dir: Path, solve_data_dir: Path) -> None:
     else 0 (skipped — mod's bare-decl provides ``default 0``).
     """
     _write(
-        derive_p_flow_min(input_dir, solve_data_dir),
+        derive_p_flow_min(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "p_flow_min.csv",
     )
 
@@ -2467,8 +2765,9 @@ def derive_p_state_slack_share(
         nodes_in_g.setdefault(g, []).append(n)
     inflow: dict[tuple[str, str, str], float] = {}
     pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
-    if pdtni_path.exists():
-        with pdtni_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(pdtni_path), pdtni_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -2523,14 +2822,17 @@ def write_p_state_slack_share(input_dir: Path, solve_data_dir: Path,
 
 def derive_p_storage_state_reference_price(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """``p_storage_state_reference_price`` 3-col frame; see writer docstring."""
     import csv
     # (n, d2, t2) → value, keyed by (node, period, step) from fix_storage_price.
     fix_price: dict[tuple[str, str, str], float] = {}
     fsp_path = solve_data_dir / "fix_storage_price.csv"
-    if fsp_path.exists():
-        with fsp_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(fsp_path), fsp_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -2540,29 +2842,35 @@ def derive_p_storage_state_reference_price(
                     except ValueError:
                         continue
 
-    ptl = _read_pairs_csv(solve_data_dir / "last_timesteps.csv")
+    ptl = _read_pairs_csv(
+        solve_data_dir / "last_timesteps.csv", provider=provider,
+    )
     ptl_for_d: dict[str, list[str]] = {}
     for d, t in ptl:
         ptl_for_d.setdefault(d, []).append(t)
     pb_d2_for_d: dict[str, list[str]] = {}
-    for d2, d in _read_pairs_csv(solve_data_dir / "period__branch.csv"):
+    for d2, d in _read_pairs_csv(
+        solve_data_dir / "period__branch.csv", provider=provider,
+    ):
         pb_d2_for_d.setdefault(d, []).append(d2)
     dtt_for_dt: dict[tuple[str, str], list[str]] = {}
     for d, t, t2 in _read_n_col_csv(
-        solve_data_dir / "timeline_matching_map.csv", 3
+        solve_data_dir / "timeline_matching_map.csv", 3, provider=provider,
     ):
         dtt_for_dt.setdefault((d, t), []).append(t2)
 
     use_ref = frozenset(
         n for n, m in _read_pairs_csv(
-            input_dir / "node__storage_solve_horizon_method.csv"
+            input_dir / "node__storage_solve_horizon_method.csv",
+            provider=provider,
         ) if m == "use_reference_price"
     )
 
     pd_ref_price: dict[tuple[str, str], float] = {}
     pdn_path = solve_data_dir / "pdNode.csv"
-    if pdn_path.exists():
-        with pdn_path.open() as fh:
+    _fh = _provider_open(provider, _provider_key(pdn_path), pdn_path)
+    if _fh is not None:
+        with _fh as fh:
             reader = csv.reader(fh)
             next(reader, None)
             for r in reader:
@@ -2574,9 +2882,11 @@ def derive_p_storage_state_reference_price(
                     except ValueError:
                         continue
 
-    nodes_state = _read_singles_csv(solve_data_dir / "nodeState.csv")
+    nodes_state = _read_singles_csv(
+        solve_data_dir / "nodeState.csv", provider=provider,
+    )
     period_in_use = _read_singles_csv(
-        solve_data_dir / "period_in_use_set.csv"
+        solve_data_dir / "period_in_use_set.csv", provider=provider,
     )
 
     rows: list[tuple[str, str, str]] = []
@@ -2603,6 +2913,8 @@ def derive_p_storage_state_reference_price(
 
 def write_p_storage_state_reference_price(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """flextool.mod L1693-1698 — ``p_storage_state_reference_price[n, d]``.
 
@@ -2614,7 +2926,9 @@ def write_p_storage_state_reference_price(
     else 0.
     """
     _write(
-        derive_p_storage_state_reference_price(input_dir, solve_data_dir),
+        derive_p_storage_state_reference_price(
+            input_dir, solve_data_dir, provider=provider,
+        ),
         solve_data_dir / "p_storage_state_reference_price.csv",
     )
 
@@ -2624,17 +2938,29 @@ def write_p_storage_state_reference_price(
 
 def _compute_node_group_dispatch_sets(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> dict[str, tuple[tuple[str, ...], list[tuple[str, ...]]]]:
     """One shared scan; returns ``{filename → (header, rows)}`` for the
     12 nodeGroupDispatch CSVs.
     """
-    ngd = _read_singles_csv(input_dir / "nodeGroupDispatch.csv")
-    fag = frozenset(_read_singles_csv(input_dir / "flowAggregator.csv"))
-    p_unit = frozenset(_read_singles_csv(input_dir / "process_unit.csv"))
-    p_conn = frozenset(_read_singles_csv(input_dir / "process_connection.csv"))
+    ngd = _read_singles_csv(
+        input_dir / "nodeGroupDispatch.csv", provider=provider,
+    )
+    fag = frozenset(_read_singles_csv(
+        input_dir / "flowAggregator.csv", provider=provider,
+    ))
+    p_unit = frozenset(_read_singles_csv(
+        input_dir / "process_unit.csv", provider=provider,
+    ))
+    p_conn = frozenset(_read_singles_csv(
+        input_dir / "process_connection.csv", provider=provider,
+    ))
 
     g_nodes_acc: dict[str, dict[str, None]] = {}
-    for g, n in _read_pairs_csv(input_dir / "group__node.csv"):
+    for g, n in _read_pairs_csv(
+        input_dir / "group__node.csv", provider=provider,
+    ):
         g_nodes_acc.setdefault(g, {})[n] = None
     g_nodes: dict[str, frozenset[str]] = {
         g: frozenset(d.keys()) for g, d in g_nodes_acc.items()
@@ -2642,15 +2968,19 @@ def _compute_node_group_dispatch_sets(
 
     # group_process_node restricted to flowAggregator groups: (p, n) → [ga, ...]
     pn_to_aggregators: dict[tuple[str, str], list[str]] = {}
-    for g, p, n in _read_n_col_csv(input_dir / "group__process__node.csv", 3):
+    for g, p, n in _read_n_col_csv(
+        input_dir / "group__process__node.csv", 3, provider=provider,
+    ):
         if g in fag:
             pn_to_aggregators.setdefault((p, n), []).append(g)
 
     pss_always = _read_n_col_csv(
-        solve_data_dir / "process_source_sink_alwaysProcess.csv", 3
+        solve_data_dir / "process_source_sink_alwaysProcess.csv", 3,
+        provider=provider,
     )
     fully_inside = frozenset(_read_pairs_csv(
-        solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv"
+        solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv",
+        provider=provider,
     ))
 
     def _emit_4tuple(*, kind: frozenset[str], side: str,
@@ -2764,6 +3094,8 @@ def _compute_node_group_dispatch_sets(
 
 def write_node_group_dispatch_sets(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """flextool.mod L1596-1657 — 12 nodeGroupDispatch sets.
 
@@ -2776,7 +3108,9 @@ def write_node_group_dispatch_sets(
     the relevant base sets.  All sets share the prefilter
     ``(g, p) ∉ nodeGroupDispatch__process_fully_inside``.
     """
-    by_file = _compute_node_group_dispatch_sets(input_dir, solve_data_dir)
+    by_file = _compute_node_group_dispatch_sets(
+        input_dir, solve_data_dir, provider=provider,
+    )
     for fname, (header, rows) in by_file.items():
         _write(_rows_to_frame(rows, header), solve_data_dir / fname)
 
@@ -2894,6 +3228,8 @@ def _read_param_static_2(path: Path,
 
 def write_param_t_projections_and_time_params(
     input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """Native port of
     :func:`flextool.flextoolrunner.preprocessing.process_arc_unions.write_param_t_projections_and_time_params`
@@ -2917,11 +3253,13 @@ def write_param_t_projections_and_time_params(
     ``input/p_process{,_source,_sink}.csv``,
     ``input/process{,_connection,__source,__sink}.csv``.
     """
-    proc_conn = frozenset(_read_singles_list(input_dir / "process_connection.csv"))
+    proc_conn = frozenset(_read_singles_list(
+        input_dir / "process_connection.csv", provider=provider,
+    ))
 
     # process__param__time → projection (process, param) [drop time]
     pp_t_seen, conn_pt_rows, conn_pt_seen = _read_pt_pp_t_seen(
-        solve_data_dir / "pt_process.csv", proc_conn,
+        solve_data_dir / "pt_process.csv", proc_conn, provider=provider,
     )
     _write(
         _rows_to_frame(list(pp_t_seen.keys()), ("process", "param")),
@@ -2937,7 +3275,9 @@ def write_param_t_projections_and_time_params(
     )
 
     # process__source__param_t (drop time)
-    pps_t_seen = _read_pps_t_seen(solve_data_dir / "pt_process_source.csv")
+    pps_t_seen = _read_pps_t_seen(
+        solve_data_dir / "pt_process_source.csv", provider=provider,
+    )
     _write(
         _rows_to_frame(
             list(pps_t_seen.keys()), ("process", "source", "param"),
@@ -2946,7 +3286,9 @@ def write_param_t_projections_and_time_params(
     )
 
     # process__sink__param_t
-    ppk_t_seen = _read_pps_t_seen(solve_data_dir / "pt_process_sink.csv")
+    ppk_t_seen = _read_pps_t_seen(
+        solve_data_dir / "pt_process_sink.csv", provider=provider,
+    )
     _write(
         _rows_to_frame(
             list(ppk_t_seen.keys()), ("process", "sink", "param"),
@@ -2956,16 +3298,24 @@ def write_param_t_projections_and_time_params(
 
     # Static parameter sets from input/p_process_source.csv, p_process_sink.csv,
     # p_process.csv.
-    src_param = _read_param_static_3(input_dir / "p_process_source.csv")
-    sink_param = _read_param_static_3(input_dir / "p_process_sink.csv")
-    proc_param = _read_param_static_2(input_dir / "p_process.csv")
+    src_param = _read_param_static_3(
+        input_dir / "p_process_source.csv", provider=provider,
+    )
+    sink_param = _read_param_static_3(
+        input_dir / "p_process_sink.csv", provider=provider,
+    )
+    proc_param = _read_param_static_2(
+        input_dir / "p_process.csv", provider=provider,
+    )
 
     # process__source__timeParam
     proc_sources = _read_n_col_rows(
         input_dir / "process__source.csv", ["process", "source"],
+        provider=provider,
     )
     proc_sinks = _read_n_col_rows(
         input_dir / "process__sink.csv", ["process", "sink"],
+        provider=provider,
     )
     pps_t_set = frozenset(pps_t_seen.keys())
     ppk_t_set = frozenset(ppk_t_seen.keys())
@@ -2994,7 +3344,9 @@ def write_param_t_projections_and_time_params(
     )
 
     # process__timeParam — only for processes that are connections.
-    processes = _read_singles_list(input_dir / "process.csv")
+    processes = _read_singles_list(
+        input_dir / "process.csv", provider=provider,
+    )
     rows_p_tp: list[tuple[str, str]] = []
     for p in processes:
         if p not in proc_conn:

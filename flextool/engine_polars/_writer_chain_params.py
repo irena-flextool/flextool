@@ -511,34 +511,46 @@ def _compute_p_entity_existing_chain(
     funnels each row-stream through :func:`_write` so the per-sub-solve
     :mod:`._flex_data_accumulator` captures the resulting frames.
     """
-    solve_first = _read_solve_first_flag(solve_data_dir)
-    entities = _read_singles(input_dir / "entity.csv")
-    periods_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+    solve_first = _read_solve_first_flag(solve_data_dir, provider=provider)
+    entities = _read_singles(input_dir / "entity.csv", provider=provider)
+    periods_in_use = _read_singles(
+        solve_data_dir / "period_in_use_set.csv", provider=provider,
+    )
 
     pre_existing = _load_ed_value_csv(
-        solve_data_dir / "p_entity_pre_existing.csv"
+        solve_data_dir / "p_entity_pre_existing.csv", provider=provider,
     )
-    unitsize = _load_e_value_csv(solve_data_dir / "p_entity_unitsize.csv")
+    unitsize = _load_e_value_csv(
+        solve_data_dir / "p_entity_unitsize.csv", provider=provider,
+    )
 
     edd_by_ed: dict[tuple[str, str], list[str]] = {}
-    for (e, d_h, d) in _read_triples(solve_data_dir / "edd_history.csv"):
+    for (e, d_h, d) in _read_triples(
+        solve_data_dir / "edd_history.csv", provider=provider,
+    ):
         edd_by_ed.setdefault((e, d), []).append(d_h)
 
     ppec, ppic, _ = _load_handoff_or_csv_realized(
-        solve_data_dir, prior_handoff,
+        solve_data_dir, prior_handoff, provider=provider,
     )
 
     ed_history_realized: set[tuple[str, str]] = set(ppec.keys())
-    for e_, d_ in _read_pairs(solve_data_dir / "ed_history_realized_first.csv"):
+    for e_, d_ in _read_pairs(
+        solve_data_dir / "ed_history_realized_first.csv", provider=provider,
+    ):
         ed_history_realized.add((e_, d_))
 
-    entity_divest = frozenset(_read_singles(solve_data_dir / "entityDivest.csv"))
+    entity_divest = frozenset(_read_singles(
+        solve_data_dir / "entityDivest.csv", provider=provider,
+    ))
     p_divested: dict[str, float] = {}
     if prior_handoff is not None and prior_handoff.divest_cumulative is not None:
         for r in prior_handoff.divest_cumulative.iter_rows(named=True):
             p_divested[str(r["entity"])] = float(r["value"])
     else:
-        p_divested = _load_e_value_csv(solve_data_dir / "p_entity_divested.csv")
+        p_divested = _load_e_value_csv(
+            solve_data_dir / "p_entity_divested.csv", provider=provider,
+        )
 
     later_existing: dict[tuple[str, str], float] = {}
     later_invested: dict[tuple[str, str], float] = {}
@@ -635,6 +647,7 @@ def derive_p_entity_previously_invested_capacity(
 def write_p_entity_existing_chain(
     input_dir: Path, solve_data_dir: Path,
     *, prior_handoff: "SolveHandoff | None" = None,
+    provider: "object | None" = None,
 ) -> None:
     """Five cascading entity-capacity params (mod L1680-1697):
 
@@ -659,7 +672,7 @@ def write_p_entity_existing_chain(
     """
     later_rows, all_rows, count_rows, int_rows, prev_rows = (
         _compute_p_entity_existing_chain(
-            input_dir, solve_data_dir, prior_handoff,
+            input_dir, solve_data_dir, prior_handoff, provider=provider,
         )
     )
     _write(
