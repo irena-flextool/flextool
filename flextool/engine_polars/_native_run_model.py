@@ -54,8 +54,11 @@ from collections import defaultdict
 
 from flextool.flextoolrunner.blocks import write_block_data_for_solve
 from flextool.flextoolrunner.minimum_time import write_minimum_time_data
-from flextool.flextoolrunner.preprocessing import (
-    solve_time as preprocessing_solve_time,
+# Step 2.5 — legacy preprocessing package deleted (item 15).  The per-
+# solve orchestrator now lives natively at
+# :mod:`flextool.engine_polars._writer_solve_time`.
+from flextool.engine_polars import (
+    _writer_solve_time as preprocessing_solve_time,
 )
 from flextool.flextoolrunner.runner_state import (
     FlexToolConfigError,
@@ -67,7 +70,10 @@ from flextool.flextoolrunner.scaling import (
     write_scaling_analysis_json,
 )
 from flextool.flextoolrunner.scaling_report import write_scaling_report
-from flextool.flextoolrunner import solve_writers
+# Step 2.5 — solve_writers calls now resolve to the native polars
+# implementations.  The legacy disk-writing module remains in the tree
+# but is no longer called from the cascade.
+from flextool.engine_polars import _writer_solve_writers as solve_writers
 
 from flextool.engine_polars._flex_data_accumulator import capture_frames
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
@@ -651,6 +657,7 @@ def native_run_model(state, solver) -> int:
             solve_branch__time_branch_lists[solve],
             state.logger,
             work_folder=wf,
+            provider=sub_solve_provider,
         )
         solve_writers.write_branch_weights_and_map(
             complete_solve[solve],

@@ -131,13 +131,12 @@ def _write_csv(path: Path, header: tuple[str, ...], rows) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Method-constant frozensets — re-exported from the canonical legacy
-# module ``flextool.flextoolrunner.preprocessing._method_constants`` to
-# avoid drift.  These are model invariants from flextool_base.dat:60-95
-# and are not user-editable.
+# Method-constant frozensets — re-exported from
+# :mod:`flextool.input_derivation._method_constants`.  These are model
+# invariants from flextool_base.dat:60-95 and are not user-editable.
 # ---------------------------------------------------------------------------
 
-from flextool.flextoolrunner.preprocessing._method_constants import (  # noqa: E402
+from flextool.input_derivation._method_constants import (  # noqa: E402
     METHOD_INDIRECT as _METHOD_INDIRECT,
     METHOD_DIRECT as _METHOD_DIRECT,
 )

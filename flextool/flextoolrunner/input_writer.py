@@ -1015,6 +1015,46 @@ def _validate_timeline_timestep_duration(db) -> None:
         )
 
 
+def _validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
+    """Storage nodes are excluded from the capacity-margin constraint.
+    Raise if any has_capacity_margin group contains *only* storage
+    nodes (constraint would have no valid members); warn if a mix is
+    present.
+    """
+    capacity_margin_groups: dict[str, list[str]] = {}
+    for pv in db.find_parameter_values(
+        entity_class_name="group", parameter_definition_name="has_capacity_margin",
+    ):
+        if pv["parsed_value"] == "yes":
+            capacity_margin_groups[pv["entity_byname"][0]] = []
+    if not capacity_margin_groups:
+        return
+    for ent in db.find_entities(entity_class_name="group__node"):
+        g, n = ent["entity_byname"][0], ent["entity_byname"][1]
+        if g in capacity_margin_groups:
+            capacity_margin_groups[g].append(n)
+    storage_nodes: set[str] = set()
+    for pv in db.find_parameter_values(
+        entity_class_name="node", parameter_definition_name="node_type",
+    ):
+        if pv["parsed_value"] == "storage":
+            storage_nodes.add(pv["entity_byname"][0])
+    for g, nodes in capacity_margin_groups.items():
+        storage_in_group = [n for n in nodes if n in storage_nodes]
+        if storage_in_group and len(storage_in_group) == len(nodes):
+            raise FlexToolConfigError(
+                f"Capacity margin group '{g}' contains only storage nodes "
+                f"({', '.join(storage_in_group)}). The capacity margin constraint "
+                f"excludes storage nodes, so this group has no valid nodes."
+            )
+        elif storage_in_group:
+            logger.warning(
+                "Capacity margin group '%s' contains storage nodes (%s) which will "
+                "be excluded from the capacity margin constraint.",
+                g, ', '.join(storage_in_group),
+            )
+
+
 def _validate_ladder_methods(db, logger: logging.Logger) -> None:
     """Raise FlexToolConfigError if any commodity declares a ladder
     ``price_method`` but does not have the corresponding ladder parameter
@@ -1076,269 +1116,30 @@ def write_input(
     *,
     provider: "FlexDataProvider",
 ) -> None:
-    """Populate ``work_folder/input/`` + ``work_folder/solve_data/`` CSVs
-    from *input_db_url*.
+    """Thin shim around :func:`flextool.input_derivation.run` — see item 18.
 
-    Step 2.5 thread-through
-    -----------------------
-
-    *provider* is the cascade-input
-    :class:`flextool.engine_polars._flex_data_provider.FlexDataProvider`.
-    Phases 2-4 of Step 2.5 progressively replace the disk-emitting spec
-    loops (``_DEFAULT_VALUES_SPECS`` / ``_ENTITY_SPECS`` /
-    ``_PARAMETER_SPECS``) with
-    :class:`flextool.spinedb_backend.SpineDBBackend` materialisers whose
-    frames land in *provider* — without any CSV touching ``input/``.
-
-    Until those phases complete, this Phase 1 wiring simply accepts the
-    parameter (it is required, not optional — there is no disk
-    fallback).  Callers that don't have a Provider must construct an
-    ephemeral one; ``None`` is rejected.
+    Pre-Step-2.5 this function was the 1000-LOC entry point for the
+    EAV-to-tabular emission + write_input-time preprocessing.  Step 2.5
+    items 13-15 ported every piece into :mod:`flextool.input_derivation`
+    (SpineDBBackend spec loops + DB-driven derivations + native writer
+    dispatch) and into :mod:`flextool.engine_polars._writer_*` (the
+    native polars writers).  This shim survives until item 18 deletes
+    :mod:`flextool.flextoolrunner.input_writer` entirely.
     """
     if provider is None:  # pragma: no cover — explicit guard
         raise TypeError(
             "write_input requires a FlexDataProvider; pass an ephemeral "
             "provider for one-shot CSV-only callers (Step 2.5 contract).",
         )
-    wf = work_folder if work_folder is not None else Path.cwd()
-    if scenario_name:
-        scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
-    with DatabaseMapping(input_db_url) as db:
-        #it is faster to fetch all now than fetching multiple times
-        db.fetch_all("entity")
-        db.fetch_all("parameter_value")
-        if scenario_name:
-            api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
-        os.makedirs(wf / "input", exist_ok=True)
-
-        # Step 2.5 Phase 2 — _DEFAULT_VALUES_SPECS materialised by the
-        # SpineDBBackend; frames land in the cascade-input Provider
-        # under their canonical input/<stem> key, replacing the legacy
-        # ``input/<stem>.csv`` disk write (deleted at this site).
-        from flextool.spinedb_backend import SpineDBBackend
-        _backend_default = SpineDBBackend.__new__(SpineDBBackend)
-        _backend_default._db = db                              # type: ignore[attr-defined]
-        _backend_default._api = api                            # type: ignore[attr-defined]
-        _backend_default._precision_digits = precision_digits  # type: ignore[attr-defined]
-        for spec in _DEFAULT_VALUES_SPECS:
-            _frame = _backend_default.parameter_defaults(
-                cl_pars=spec["cl_pars"],
-                header=spec["header"],
-                filter_in_type=spec.get("filter_in_type"),
-                only_value=spec.get("only_value", False),
-            )
-            # Canonical Provider key — matches ``_provider_key`` in
-            # :mod:`flextool.engine_polars._writer_provider_io`:
-            # ``"<parent_dir_name>/<stem>"``.  E.g. ``input/default_values``.
-            _spec_path = Path(spec["filename"])
-            _key = (
-                f"{_spec_path.parent.name}/{_spec_path.stem}"
-                if _spec_path.parent.name else _spec_path.stem
-            )
-            provider.put(_key, _frame)
-
-        # Step 2.5 Phase 3 — _ENTITY_SPECS migrated to SpineDBBackend.entities.
-        # The 16 entity-class frames now flow through the cascade-input
-        # Provider under the canonical input/<stem> key.  No disk writes
-        # at this site; write_entity has been deleted.
-        for spec in _ENTITY_SPECS:
-            _entity_frame = _backend_default.entities(
-                classes=spec.classes,
-                header=spec.header,
-                entity_dimens=spec.entity_dimens,
-            )
-            _spec_path = Path(spec.filename)
-            _key = (
-                f"{_spec_path.parent.name}/{_spec_path.stem}"
-                if _spec_path.parent.name else _spec_path.stem
-            )
-            provider.put(_key, _entity_frame)
-
-        _validate_timeline_timestep_duration(db)
-
-        # Step 2.5-E Phase E — _PARAMETER_SPECS materialised by the
-        # SpineDBBackend.  Each spec's frame lands in the cascade-input
-        # Provider under the canonical ``input/<stem>`` key; the legacy
-        # ``write_parameter`` disk write is deleted at this site.
-        for spec in _PARAMETER_SPECS:
-            _spec_kwargs = {
-                k: v for k, v in spec.items() if k != "filename"
-            }
-            _frame = _backend_default.parameter_values(**_spec_kwargs)
-            _spec_path = Path(spec["filename"])
-            _key = (
-                f"{_spec_path.parent.name}/{_spec_path.stem}"
-                if _spec_path.parent.name else _spec_path.stem
-            )
-            provider.put(_key, _frame)
-
-        # Step 2.5-F Phase B — DC power flow derivation moved to
-        # ``flextool.input_derivation._dc_power_flow``.  The derivation
-        # reads via the SpineDBBackend, populates the cascade-input
-        # Provider with the four DC PF frames, and returns the
-        # ``ct_method_overrides`` dict for the immediate-caller
-        # convenience (also stored on the Provider under
-        # ``derived/ct_method_overrides`` for cross-derivation use).
-        from flextool.input_derivation._dc_power_flow import (
-            derive_dc_power_flow,
-        )
-        ct_method_overrides = derive_dc_power_flow(
-            _backend_default, provider, logger,
-        )
-        # Step 2.5-F Phase C — process_method derivation moved to
-        # ``flextool.input_derivation._process_method``.  Emits the
-        # three input/process_method* frames into the Provider; no
-        # disk write at this site.
-        from flextool.input_derivation._process_method import (
-            derive_process_method,
-        )
-        derive_process_method(
-            _backend_default, provider, logger,
-            ct_method_overrides=ct_method_overrides,
-        )
-        _validate_ladder_methods(db, logger)
-        # Step 2.5-F Phase D + Phase E — commodity ladder derivations
-        # moved to ``flextool.input_derivation._commodity_ladder``.
-        # Both emit their frames to the cascade-input Provider; no
-        # disk write at this site.
-        from flextool.input_derivation._commodity_ladder import (
-            derive_commodity_ladder_cumulative,
-            derive_commodity_ladder_annual,
-        )
-        derive_commodity_ladder_cumulative(_backend_default, provider, logger)
-        derive_commodity_ladder_annual(_backend_default, provider, logger)
-        # Migrated from flextool.mod:468-470 — commodity_with_ladder*
-        # filtered subsets used to be derived inside MathProg via setof
-        # filters on p_commodity_price_method. Computed in Python for
-        # cheaper matrix generation.
-        #
-        # Step 2.5-F Phase F: derivation moved to
-        # ``flextool.input_derivation._commodity_ladder_sets``; the
-        # three frames land on the cascade-input Provider under
-        # ``solve_data/commodity_with_ladder*``.  No disk write here.
-        from flextool.flextoolrunner.preprocessing import (
-            period_param_sets,
-            invest_method_sets,
-            co2_method_sets,
-            simple_projections,
-            node_type_sets,
-            method_with_fallback_sets,
-            nonsync_sets,
-        )
-        from flextool.input_derivation._commodity_ladder_sets import (
-            derive_commodity_ladder_sets,
-        )
-        input_dir = wf / "input"
-        solve_data_dir = wf / "solve_data"
-        derive_commodity_ladder_sets(_backend_default, provider)
-        # L0 Batch 1: simple projections / filters of already-written
-        # input/*.csv tables. Each function reads a CSV that the spec-
-        # driven write_parameter loop above produced and writes a
-        # solve_data/*.csv that flextool.mod loads via table data IN.
-        period_param_sets.write_period_param_sets(input_dir, solve_data_dir)
-        invest_method_sets.write_invest_method_sets(input_dir, solve_data_dir)
-        co2_method_sets.write_co2_method_sets(input_dir, solve_data_dir)
-        simple_projections.write_optional_yes(input_dir, solve_data_dir)
-        simple_projections.write_reserve_upDown_group(input_dir, solve_data_dir)
-        simple_projections.write_group_loss_share(input_dir, solve_data_dir)
-        # L0 Batch 2: harder operation types — defaults flow, joining
-        # with global-empty fallback, quadratic-style joining.
-        node_type_sets.write_node_type_sets(input_dir, solve_data_dir)
-        method_with_fallback_sets.write_entity_lifetime_method(input_dir, solve_data_dir)
-        method_with_fallback_sets.write_process_ct_method(input_dir, solve_data_dir)
-        method_with_fallback_sets.write_process_startup_method(input_dir, solve_data_dir)
-        method_with_fallback_sets.write_node_inflow_method(input_dir, solve_data_dir)
-        method_with_fallback_sets.write_node_storage_binding_method(input_dir, solve_data_dir)
-        nonsync_sets.write_process_group_inside_group_nonsync(input_dir, solve_data_dir)
-        nonsync_sets.write_process__sink_nonSync(input_dir, solve_data_dir)
-        # L0 Batch 3: union sets + first calculated-param migration.
-        from flextool.flextoolrunner.preprocessing import (
-            union_sets, entity_total_caps,
-        )
-        union_sets.write_group_entity(input_dir, solve_data_dir)
-        union_sets.write_process_delayed__duration(input_dir, solve_data_dir)
-        entity_total_caps.write_entity_total_caps(input_dir, solve_data_dir)
-        # L0 Batch 4: bulk simple/method-driven sets — process_*_to_*
-        # family, profile-method joins, reserve-method partitions,
-        # structural filters, and the remaining trivial setof projections.
-        # All upstream sources live in input/ so these run at write_input
-        # time alongside the earlier batches.
-        from flextool.flextoolrunner.preprocessing import (
-            process_method_sets,
-            reserve_method_partitions,
-            structural_filters,
-        )
-        process_method_sets.write_process_method_projections(input_dir, solve_data_dir)
-        process_method_sets.write_process_VRE(input_dir, solve_data_dir)
-        process_method_sets.write_process_arc_method_joins(input_dir, solve_data_dir)
-        process_method_sets.write_process_profile_method_joins(input_dir, solve_data_dir)
-        reserve_method_partitions.write_reserve_partitions(input_dir, solve_data_dir)
-        structural_filters.write_connection_param(input_dir, solve_data_dir)
-        structural_filters.write_nodegroup_dispatch_node(input_dir, solve_data_dir)
-        structural_filters.write_commodity_node_co2(input_dir, solve_data_dir)
-        structural_filters.write_process__commodity__node(input_dir, solve_data_dir)
-        structural_filters.write_process_coeff_zero_sets(input_dir, solve_data_dir)
-        simple_projections.write_def_optional_yes(input_dir, solve_data_dir)
-        simple_projections.write_process_delayed(input_dir, solve_data_dir)
-        simple_projections.write_process_side(solve_data_dir)
-        simple_projections.write_simple_setof_projections(input_dir, solve_data_dir)
-        # L0 batch 6: late projections that depend on already-Python-driven
-        # solve_data CSVs (must run AFTER the calls above).
-        simple_projections.write_period_solve(solve_data_dir)
-        simple_projections.write_time_set(input_dir, solve_data_dir)
-        simple_projections.write_enable_optional_outputs(solve_data_dir)
-        simple_projections.write_node_state_subsets(solve_data_dir)
-        simple_projections.write_commodity_tier_sets(input_dir, solve_data_dir)
-        # L0 batch 9: DC angle bounds (calculated per-DC-node param).
-        from flextool.flextoolrunner.preprocessing import dc_angle_bounds, invest_total_sets
-        dc_angle_bounds.write_dc_angle_bounds(input_dir, solve_data_dir)
-        # L1 batch 10: invest/divest *_total filters + cumulative ladder index.
-        invest_total_sets.write_invest_total_sets(input_dir, solve_data_dir)
-        invest_total_sets.write_ci_ladder_cumulative(input_dir, solve_data_dir)
-        # L1 batch 11: process arc unions + co2/group set.
-        from flextool.flextoolrunner.preprocessing import process_arc_unions
-        process_arc_unions.write_process_arc_unions(input_dir, solve_data_dir)
-        process_arc_unions.write_group_commodity_node_period_co2_total(input_dir, solve_data_dir)
-        # L1 batch 12: *_in_use sets driven by per-class param taxonomy.
-        process_arc_unions.write_param_in_use_sets(input_dir, solve_data_dir)
-
-        # Validate capacity margin groups: storage nodes are excluded from capacity margin
-        capacity_margin_groups: dict[str, list[str]] = {}
-        for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name="has_capacity_margin"):
-            if pv["parsed_value"] == "yes":
-                capacity_margin_groups[pv["entity_byname"][0]] = []
-
-        if capacity_margin_groups:
-            # Get nodes in each group
-            for ent in db.find_entities(entity_class_name="group__node"):
-                group_name = ent["entity_byname"][0]
-                node_name = ent["entity_byname"][1]
-                if group_name in capacity_margin_groups:
-                    capacity_margin_groups[group_name].append(node_name)
-
-            # Get storage nodes
-            storage_nodes: set[str] = set()
-            for pv in db.find_parameter_values(entity_class_name="node", parameter_definition_name="node_type"):
-                if pv["parsed_value"] == "storage":
-                    storage_nodes.add(pv["entity_byname"][0])
-
-            # Check each capacity margin group
-            for group_name, nodes in capacity_margin_groups.items():
-                storage_in_group = [n for n in nodes if n in storage_nodes]
-                if storage_in_group and len(storage_in_group) == len(nodes):
-                    raise FlexToolConfigError(
-                        f"Capacity margin group '{group_name}' contains only storage nodes "
-                        f"({', '.join(storage_in_group)}). The capacity margin constraint "
-                        f"excludes storage nodes, so this group has no valid nodes."
-                    )
-                elif storage_in_group:
-                    logger.warning(
-                        "Capacity margin group '%s' contains storage nodes (%s) which will "
-                        "be excluded from the capacity margin constraint.",
-                        group_name, ', '.join(storage_in_group),
-                    )
-
-        _validate_group_output_memberships(db, logger)
+    from flextool.input_derivation import run as _input_derivation_run
+    _input_derivation_run(
+        input_db_url,
+        provider,
+        logger,
+        scenario_name=scenario_name,
+        work_folder=work_folder,
+        precision_digits=precision_digits,
+    )
 
 
 def write_input_for_region(

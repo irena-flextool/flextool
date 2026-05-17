@@ -22,26 +22,6 @@ schema :class:`polars.DataFrame` objects to the Provider via
 emission is the Provider's job (``snapshot_processed_inputs`` /
 ``--csv-dump``).
 
-Step 2.5-F scope
-----------------
-
-Phase A: package skeleton (this commit).
-
-Phase B: :func:`flextool.input_derivation._dc_power_flow.derive_dc_power_flow`
-— replaces :func:`flextool.flextoolrunner.input_writer._write_dc_power_flow_data`.
-
-Phase C: ``_process_method.derive_process_method`` — replaces
-``_write_process_method`` (consumes the ``derived/ct_method_overrides``
-frame from Phase B).
-
-Phase D-E: ``_commodity_ladder_cumulative.derive_commodity_ladder_cumulative``
-and ``_commodity_ladder_annual.derive_commodity_ladder_annual``.
-
-Phase F: ``_commodity_ladder_sets.derive_commodity_ladder_sets`` —
-absorbs :mod:`flextool.flextoolrunner.preprocessing.commodity_ladder_sets`.
-
-See ``specs/step_2_5_audit.md`` Section 7 (items 8-12) for full scope.
-
 Hard rules
 ----------
 
@@ -55,4 +35,239 @@ Hard rules
 """
 from __future__ import annotations
 
-__all__: list[str] = []
+import logging
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import spinedb_api as api
+from spinedb_api import DatabaseMapping
+
+if TYPE_CHECKING:
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+
+
+__all__ = ["run"]
+
+
+def _provider_key(filename: str) -> str:
+    """Canonical Provider key for ``input/<stem>.csv`` style paths.
+
+    Matches the convention in :mod:`flextool.engine_polars._writer_provider_io`:
+    ``"<parent_dir_name>/<stem>"``.
+    """
+    p = Path(filename)
+    return f"{p.parent.name}/{p.stem}" if p.parent.name else p.stem
+
+
+def run(
+    backend_or_db_url,
+    provider: "FlexDataProvider",
+    logger: "logging.Logger | None" = None,
+    *,
+    scenario_name: "str | None" = None,
+    work_folder: "Path | None" = None,
+    precision_digits: int = 0,
+) -> None:
+    """Populate *provider* with the canonical ``input/`` + derivation
+    frames produced from the Spine database.
+
+    Pipeline
+    --------
+
+    1. **SpineDBBackend spec loops** — three loops over the canonical
+       spec lists (``_DEFAULT_VALUES_SPECS``, ``_ENTITY_SPECS``,
+       ``_PARAMETER_SPECS``) materialise ~120 EAV frames into the
+       Provider under their canonical ``input/<stem>`` key.
+    2. **Validators** (timeline timestep duration, ladder methods,
+       capacity margin storage exclusion, group output memberships).
+    3. **DB-driven derivations** (DC power flow, process method,
+       commodity ladder cumulative + annual + sets).
+    4. **Native per-write_input preprocessing writers** — the dozen
+       writer-port modules under
+       :mod:`flextool.engine_polars._writer_*` that produce the
+       ``solve_data/*.csv`` artefacts the cascade consumes pre-solve.
+       Each is invoked directly with ``provider=`` so its frames flow
+       into the Provider and disk emission is skipped (the
+       ``_flex_data_accumulator`` monkey-patches ``_write`` to call
+       ``provider.put(...)``).
+
+    Parameters
+    ----------
+    backend_or_db_url
+        Either a Spine DB URL string (``sqlite:///...``) or a
+        pre-constructed :class:`SpineDBBackend`.  The URL form opens an
+        ephemeral DatabaseMapping for the duration of the call.
+    provider
+        Cascade-input :class:`FlexDataProvider`.  All frames land here.
+    logger
+        Optional logger.  Defaults to ``logging.getLogger(__name__)``.
+    scenario_name
+        Scenario filter applied to the DB mapping.  ``None`` runs
+        without a filter.
+    work_folder
+        Workdir for the (still-disk) batches that have not yet been
+        ported to Provider-only operation.  When ``None`` defaults to
+        :func:`pathlib.Path.cwd`.  Becomes optional in a later step
+        once every writer is Provider-only.
+    precision_digits
+        Float precision forwarded to ``SpineDBBackend.parameter_values``.
+    """
+    from flextool.spinedb_backend import SpineDBBackend
+    from flextool.flextoolrunner.input_writer import (  # noqa: E402 — local import to break circulars
+        _ENTITY_SPECS,
+        _PARAMETER_SPECS,
+        _DEFAULT_VALUES_SPECS,
+        _validate_timeline_timestep_duration,
+        _validate_ladder_methods,
+        _validate_group_output_memberships,
+        _validate_capacity_margin_groups,
+    )
+    from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
+    from flextool.input_derivation._process_method import derive_process_method
+    from flextool.input_derivation._commodity_ladder import (
+        derive_commodity_ladder_cumulative,
+        derive_commodity_ladder_annual,
+    )
+    from flextool.input_derivation._commodity_ladder_sets import (
+        derive_commodity_ladder_sets,
+    )
+
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    if provider is None:
+        raise TypeError("input_derivation.run requires a FlexDataProvider")
+
+    wf = work_folder if work_folder is not None else Path.cwd()
+
+    def _do(db) -> None:
+        # Step 1 — SpineDBBackend spec loops.
+        backend = SpineDBBackend.__new__(SpineDBBackend)
+        backend._db = db                              # type: ignore[attr-defined]
+        backend._api = api                            # type: ignore[attr-defined]
+        backend._precision_digits = precision_digits  # type: ignore[attr-defined]
+
+        for spec in _DEFAULT_VALUES_SPECS:
+            frame = backend.parameter_defaults(
+                cl_pars=spec["cl_pars"],
+                header=spec["header"],
+                filter_in_type=spec.get("filter_in_type"),
+                only_value=spec.get("only_value", False),
+            )
+            provider.put(_provider_key(spec["filename"]), frame)
+
+        for spec in _ENTITY_SPECS:
+            frame = backend.entities(
+                classes=spec.classes,
+                header=spec.header,
+                entity_dimens=spec.entity_dimens,
+            )
+            provider.put(_provider_key(spec.filename), frame)
+
+        _validate_timeline_timestep_duration(db)
+
+        for spec in _PARAMETER_SPECS:
+            kwargs = {k: v for k, v in spec.items() if k != "filename"}
+            frame = backend.parameter_values(**kwargs)
+            provider.put(_provider_key(spec["filename"]), frame)
+
+        # Step 2 — DB-driven derivations.
+        ct_method_overrides = derive_dc_power_flow(backend, provider, logger)
+        derive_process_method(
+            backend, provider, logger,
+            ct_method_overrides=ct_method_overrides,
+        )
+        _validate_ladder_methods(db, logger)
+        derive_commodity_ladder_cumulative(backend, provider, logger)
+        derive_commodity_ladder_annual(backend, provider, logger)
+        derive_commodity_ladder_sets(backend, provider)
+
+        # Step 3 — write_input-time native preprocessing writers.
+        #
+        # Pre-Step-2.5 these helpers lived in ``flextoolrunner/preprocessing/*``
+        # and were monkey-patched into native polars implementations.
+        # Step 2.5 deleted the legacy package; we now call the native
+        # writers directly.  ``capture_frames(provider=...)`` (entered by
+        # the cascade caller in :mod:`flextool.engine_polars._native_input_writer`)
+        # monkey-patches each ``_write(df, path)`` so frames land in
+        # *provider* under their canonical key without touching disk.
+        from flextool.engine_polars import (
+            _writer_leaf_sets as _leaf,
+            _writer_mid_sets as _mid,
+            _writer_calc_params as _calc,
+            _writer_arc_unions as _arc,
+            _writer_dispatchers as _disp,
+        )
+        input_dir = wf / "input"
+        solve_data_dir = wf / "solve_data"
+        os.makedirs(solve_data_dir, exist_ok=True)
+        _leaf.write_period_param_sets(input_dir, solve_data_dir, provider=provider)
+        _leaf.write_invest_method_sets(input_dir, solve_data_dir, provider=provider)
+        _leaf.write_co2_method_sets(input_dir, solve_data_dir, provider=provider)
+        _leaf.write_optional_yes(input_dir, solve_data_dir, provider=provider)
+        _leaf.write_reserve_upDown_group(input_dir, solve_data_dir, provider=provider)
+        _leaf.write_group_loss_share(input_dir, solve_data_dir, provider=provider)
+        _mid.write_node_type_sets(input_dir, solve_data_dir, provider=provider)
+        _mid.write_entity_lifetime_method(input_dir, solve_data_dir, provider=provider)
+        _mid.write_process_ct_method(input_dir, solve_data_dir, provider=provider)
+        _mid.write_process_startup_method(input_dir, solve_data_dir, provider=provider)
+        _mid.write_node_inflow_method(input_dir, solve_data_dir, provider=provider)
+        _mid.write_node_storage_binding_method(input_dir, solve_data_dir, provider=provider)
+        _mid.write_process_group_inside_group_nonsync(input_dir, solve_data_dir, provider=provider)
+        _mid.write_process__sink_nonSync(input_dir, solve_data_dir, provider=provider)
+        _mid.write_group_entity(input_dir, solve_data_dir, provider=provider)
+        _mid.write_process_delayed__duration(input_dir, solve_data_dir, provider=provider)
+        _calc.write_entity_total_caps(input_dir, solve_data_dir, provider=provider)
+        _calc.write_process_method_projections(input_dir, solve_data_dir, provider=provider)
+        _calc.write_process_VRE(input_dir, solve_data_dir, provider=provider)
+        _calc.write_process_arc_method_joins(input_dir, solve_data_dir, provider=provider)
+        _calc.write_process_profile_method_joins(input_dir, solve_data_dir, provider=provider)
+        _mid.write_reserve_partitions(input_dir, solve_data_dir, provider=provider)
+        _mid.write_connection_param(input_dir, solve_data_dir, provider=provider)
+        _mid.write_nodegroup_dispatch_node(input_dir, solve_data_dir, provider=provider)
+        _mid.write_commodity_node_co2(input_dir, solve_data_dir, provider=provider)
+        _mid.write_process__commodity__node(input_dir, solve_data_dir, provider=provider)
+        _mid.write_process_coeff_zero_sets(input_dir, solve_data_dir, provider=provider)
+        _leaf.write_def_optional_yes(input_dir, solve_data_dir, provider=provider)
+        _leaf.write_process_delayed(input_dir, solve_data_dir, provider=provider)
+        _leaf.write_process_side(solve_data_dir, provider=provider)
+        _leaf.write_simple_setof_projections(input_dir, solve_data_dir, provider=provider)
+        # write_period_solve depends on solve_data outputs from
+        # write_simple_setof_projections, so must run after.
+        _leaf.write_period_solve(solve_data_dir, provider=provider)
+        _leaf.write_time_set(input_dir, solve_data_dir, provider=provider)
+        _leaf.write_enable_optional_outputs(solve_data_dir, provider=provider)
+        _leaf.write_node_state_subsets(solve_data_dir, provider=provider)
+        _leaf.write_commodity_tier_sets(input_dir, solve_data_dir, provider=provider)
+        _mid.write_dc_angle_bounds(input_dir, solve_data_dir, provider=provider)
+        _mid.write_invest_total_sets(input_dir, solve_data_dir, provider=provider)
+        _mid.write_ci_ladder_cumulative(input_dir, solve_data_dir, provider=provider)
+        _disp.write_process_arc_unions(input_dir, solve_data_dir, provider=provider)
+        _arc.write_group_commodity_node_period_co2_total(input_dir, solve_data_dir, provider=provider)
+        _arc.write_param_in_use_sets(input_dir, solve_data_dir, provider=provider)
+
+        # Step 4 — validators that need DB access.
+        _validate_capacity_margin_groups(db, logger)
+        _validate_group_output_memberships(db, logger)
+
+    # Accept either a backend, a DatabaseMapping or a URL string.
+    if isinstance(backend_or_db_url, str):
+        scen_config = (
+            api.filters.scenario_filter.scenario_filter_config(scenario_name)
+            if scenario_name else None
+        )
+        with DatabaseMapping(backend_or_db_url) as db:
+            # Hot-load the DB: fetching upfront is faster than repeated
+            # parameter_value lookups.
+            db.fetch_all("entity")
+            db.fetch_all("parameter_value")
+            if scen_config is not None:
+                api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
+            os.makedirs(wf / "input", exist_ok=True)
+            _do(db)
+    else:
+        # Accept a SpineDBBackend (with ._db) or a DatabaseMapping
+        # directly; both expose the find_* API we need.
+        db = getattr(backend_or_db_url, "_db", backend_or_db_url)
+        os.makedirs(wf / "input", exist_ok=True)
+        _do(db)
