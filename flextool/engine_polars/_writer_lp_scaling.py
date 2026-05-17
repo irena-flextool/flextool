@@ -57,19 +57,22 @@ def _read_csv(path: Path, columns: list[str],
     return df
 
 
-def _read_singles(path: Path) -> list[str]:
-    df = _read_csv(path, ["v"])
+def _read_singles(path: Path,
+                  *, provider: "object | None" = None) -> list[str]:
+    df = _read_csv(path, ["v"], provider=provider)
     return [v for v in df["v"].to_list() if v]
 
 
-def _read_pairs(path: Path) -> list[tuple[str, str]]:
-    df = _read_csv(path, ["a", "b"])
+def _read_pairs(path: Path,
+                *, provider: "object | None" = None) -> list[tuple[str, str]]:
+    df = _read_csv(path, ["a", "b"], provider=provider)
     return [(a, b) for a, b in zip(df["a"].to_list(), df["b"].to_list())
             if a and b]
 
 
-def _read_keyed_value(path: Path) -> dict[str, float]:
-    df = _read_csv(path, ["key", "value"])
+def _read_keyed_value(path: Path,
+                      *, provider: "object | None" = None) -> dict[str, float]:
+    df = _read_csv(path, ["key", "value"], provider=provider)
     out: dict[str, float] = {}
     for k, v in zip(df["key"].to_list(), df["value"].to_list()):
         if not k or v is None or v == "":
@@ -81,16 +84,19 @@ def _read_keyed_value(path: Path) -> dict[str, float]:
     return out
 
 
-def _read_triples(path: Path) -> list[tuple[str, str, str]]:
-    df = _read_csv(path, ["a", "b", "c"])
+def _read_triples(path: Path,
+                  *, provider: "object | None" = None) -> list[tuple[str, str, str]]:
+    df = _read_csv(path, ["a", "b", "c"], provider=provider)
     return [(a, b, c) for a, b, c in zip(df["a"].to_list(),
                                           df["b"].to_list(),
                                           df["c"].to_list())
             if a and b and c]
 
 
-def _read_node_period_value(path: Path) -> dict[tuple[str, str], float]:
-    df = _read_csv(path, ["node", "period", "value"])
+def _read_node_period_value(path: Path,
+                             *, provider: "object | None" = None,
+                             ) -> dict[tuple[str, str], float]:
+    df = _read_csv(path, ["node", "period", "value"], provider=provider)
     out: dict[tuple[str, str], float] = {}
     for n, d, v in zip(df["node"].to_list(),
                        df["period"].to_list(),
@@ -180,6 +186,7 @@ def _pow10_round_clamped(v: float) -> float:
 
 def _compute_lp_scaling_frames(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> dict[str, pl.DataFrame]:
     """Compute every LP-scaling CSV in one pass, returning a dict keyed
     by output basename.
@@ -193,29 +200,36 @@ def _compute_lp_scaling_frames(
     """
     out: dict[str, pl.DataFrame] = {}
 
-    nodes = _read_singles(input_dir / "node.csv")
-    groups = _read_singles(input_dir / "group.csv")
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    groups = _read_singles(input_dir / "group.csv", provider=provider)
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
 
     # solve_current → scaling_active.  Mod-faithful test:
     #     sum_{c in solve_current} p_use_row_scaling[c] >= 0.5
     p_use_row_scaling = _read_keyed_value(
-        solve_data_dir / "p_use_row_scaling.csv"
+        solve_data_dir / "p_use_row_scaling.csv",
+        provider=provider,
     )
-    solve_current = _read_singles(solve_data_dir / "solve_current.csv")
+    solve_current = _read_singles(solve_data_dir / "solve_current.csv",
+                                   provider=provider)
     scaling_active = sum(
         p_use_row_scaling.get(c, 0.0) for c in solve_current
     ) >= 0.5
 
     # process_source_sink + p_entity_unitsize → _node_cap_unitsize_sum.
-    pss = _read_triples(solve_data_dir / "process_source_sink.csv")
+    pss = _read_triples(solve_data_dir / "process_source_sink.csv",
+                         provider=provider)
     p_entity_unitsize = _read_keyed_value(
-        solve_data_dir / "p_entity_unitsize.csv"
+        solve_data_dir / "p_entity_unitsize.csv",
+        provider=provider,
     )
     inflow_fallback = _read_node_period_value(
-        solve_data_dir / "_node_cap_inflow_fallback.csv"
+        solve_data_dir / "_node_cap_inflow_fallback.csv",
+        provider=provider,
     )
-    group_node = _read_pairs(input_dir / "group__node.csv")
+    group_node = _read_pairs(input_dir / "group__node.csv",
+                              provider=provider)
     nodes_for_group: dict[str, list[str]] = {}
     for g, n in group_node:
         nodes_for_group.setdefault(g, []).append(n)
@@ -417,6 +431,7 @@ def derive_inv_group_cap(
 
 def write_lp_scaling_params(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Native port of ``lp_scaling_params.write_lp_scaling_params``.
 
@@ -431,6 +446,7 @@ def write_lp_scaling_params(
     ``_write(frame, path)`` so the Phase E-b accumulator captures every
     emitted frame.
     """
-    frames = _compute_lp_scaling_frames(input_dir, solve_data_dir)
+    frames = _compute_lp_scaling_frames(input_dir, solve_data_dir,
+                                          provider=provider)
     for basename, df in frames.items():
         _write(df, solve_data_dir / basename)
