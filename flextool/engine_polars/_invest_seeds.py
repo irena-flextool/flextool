@@ -9,10 +9,12 @@ the per-solve override chain ``apply_derived_a..g`` is skipped — its
 empty and wipe out the legitimate invest activity captured in the
 workdir snapshot.
 
-For these synthetic-solve fixtures the canonical
-``<workdir>/solve_data/*.csv`` files are the authoritative source.
-This module owns the CSV-shape parsers so ``input.py::_load_invest``
-stays free of the synthetic-fallback CSV reads.
+Post-Step-2.5 these helpers consume the canonical
+``solve_data/*.csv`` frames exclusively through the
+:class:`FlexDataProvider`.  The disk-fallback arms that previously
+re-read ``<workdir>/solve_data/<name>.csv`` from disk are gone — the
+writer cascade (``_writer_per_solve.write_invest_csvs`` and friends)
+seeds every required key in the Provider before this loader runs.
 
 When the active solve **is** in Spine, the override chain
 (``apply_derived_c``) overlays its own values on top of these seeds,
@@ -26,7 +28,7 @@ from pathlib import Path
 import polars as pl
 
 from ._axis_enums import cast_dim, schema_dtype
-from ._input_source import _read_csv_file
+from ._writer_provider_io import _provider_key
 
 # These helpers run at the workdir-CSV seed phase — before FlexData is
 # materialised — so ``_enums`` is always ``None`` here.  Using
@@ -37,13 +39,25 @@ from ._input_source import _read_csv_file
 _enums: dict | None = None
 
 
+def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
+    """Provider-only fetch.  Returns ``None`` when the Provider is
+    missing or doesn't carry *path*'s canonical key.
+    """
+    if provider is None:
+        return None
+    key = _provider_key(path)
+    if not provider.has(key):
+        return None
+    return provider.get(key)
+
+
 # ---------------------------------------------------------------------------
 # (e, d) / (p, d) / (n, d) set frames
 # ---------------------------------------------------------------------------
 
 
 def read_invest_set(workdir_solve_data: Path, name: str,
-                       kind_col: str) -> pl.DataFrame:
+                       kind_col: str, *, provider=None) -> pl.DataFrame:
     """Read ``ed_invest.csv`` / ``ed_divest.csv`` and rename the
     entity-axis column to *kind_col* (``e``).
 
@@ -57,10 +71,8 @@ def read_invest_set(workdir_solve_data: Path, name: str,
     empty = pl.DataFrame(schema={kind_col: schema_dtype(_enums, kind_col),
                                   "d": schema_dtype(_enums, "d")})
     path = workdir_solve_data / f"{name}.csv"
-    if not path.exists():
-        return empty
-    df = _read_csv_file(path)
-    if df.height == 0:
+    df = _provider_get(provider, path)
+    if df is None or df.height == 0:
         return empty
     rename_src = ("entity" if "entity" in df.columns
                   else "node" if "node" in df.columns
@@ -71,7 +83,8 @@ def read_invest_set(workdir_solve_data: Path, name: str,
     )
 
 
-def read_forbidden_no_investment(workdir_solve_data: Path) -> pl.DataFrame:
+def read_forbidden_no_investment(workdir_solve_data: Path,
+                                  *, provider=None) -> pl.DataFrame:
     """Read ``ed_invest_forbidden_no_investment.csv``.
 
     Entities that may NOT invest in specified periods
@@ -82,15 +95,14 @@ def read_forbidden_no_investment(workdir_solve_data: Path) -> pl.DataFrame:
     achieve the same effect by removing the (entity, period) tuple
     from every invest set so the variable is never created.
 
-    Returns an empty (e, d) frame when the CSV is absent or empty.
+    Returns an empty (e, d) frame when the Provider doesn't carry the
+    key or it's empty.
     """
     empty = pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                   "d": schema_dtype(_enums, "d")})
     path = workdir_solve_data / "ed_invest_forbidden_no_investment.csv"
-    if not path.exists():
-        return empty
-    df = _read_csv_file(path)
-    if df.height == 0:
+    df = _provider_get(provider, path)
+    if df is None or df.height == 0:
         return empty
     return df.rename({"entity": "e", "period": "d"}).select(
         cast_dim(pl.col("e"), _enums, "e"),
@@ -99,17 +111,15 @@ def read_forbidden_no_investment(workdir_solve_data: Path) -> pl.DataFrame:
 
 
 def read_set_seed(workdir_solve_data: Path, name: str,
-                     kind_col: str) -> pl.DataFrame:
+                     kind_col: str, *, provider=None) -> pl.DataFrame:
     """Read ``pd_invest.csv`` / ``pd_divest.csv`` / ``nd_invest.csv``
     / ``nd_divest.csv``.  Each is a per-(entity, period) seed frame.
     """
     empty = pl.DataFrame(schema={kind_col: schema_dtype(_enums, kind_col),
                                   "d": schema_dtype(_enums, "d")})
     path = workdir_solve_data / f"{name}.csv"
-    if not path.exists():
-        return empty
-    df = _read_csv_file(path)
-    if df.height == 0:
+    df = _provider_get(provider, path)
+    if df is None or df.height == 0:
         return empty
     rename_src = ("entity" if "entity" in df.columns
                   else "node" if "node" in df.columns
@@ -123,7 +133,8 @@ def read_set_seed(workdir_solve_data: Path, name: str,
     )
 
 
-def read_edd_invest(workdir_solve_data: Path) -> pl.DataFrame:
+def read_edd_invest(workdir_solve_data: Path,
+                     *, provider=None) -> pl.DataFrame:
     """Read ``edd_invest.csv`` — (entity, d_invest, period) triple set.
 
     Canonical CSV uses ``period_history`` for d_invest; tolerate both
@@ -134,10 +145,8 @@ def read_edd_invest(workdir_solve_data: Path) -> pl.DataFrame:
         "d_invest": schema_dtype(_enums, "d_invest"),
         "d": schema_dtype(_enums, "d")})
     path = workdir_solve_data / "edd_invest.csv"
-    if not path.exists():
-        return empty
-    df = _read_csv_file(path)
-    if df.height == 0:
+    df = _provider_get(provider, path)
+    if df is None or df.height == 0:
         return empty
     ren = {}
     if "entity" in df.columns:
@@ -156,20 +165,19 @@ def read_edd_invest(workdir_solve_data: Path) -> pl.DataFrame:
     )
 
 
-def read_period_set(workdir_solve_data: Path, name: str) -> pl.DataFrame | None:
+def read_period_set(workdir_solve_data: Path, name: str,
+                       *, provider=None) -> pl.DataFrame | None:
     """Read ``ed_invest_period.csv`` / ``ed_divest_period.csv`` — the
     (entity, period) tuples with per-period invest / divest caps.
 
-    Returns None (not empty) when the CSV is absent or empty so the
-    seed assignment in ``_load_invest`` mirrors the original
-    ``None``-or-non-empty contract that downstream consumers
-    (``model.py:1517``) gate on.
+    Returns None (not empty) when the Provider doesn't carry the key
+    or it's empty so the seed assignment in ``_load_invest`` mirrors
+    the original ``None``-or-non-empty contract that downstream
+    consumers (``model.py:1517``) gate on.
     """
     path = workdir_solve_data / f"{name}.csv"
-    if not path.exists():
-        return None
-    df = _read_csv_file(path)
-    if df.height == 0:
+    df = _provider_get(provider, path)
+    if df is None or df.height == 0:
         return None
     return df.rename({"entity": "e", "period": "d"}).select(
         cast_dim(pl.col("e"), _enums, "e"),

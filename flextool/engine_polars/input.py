@@ -1708,12 +1708,12 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         nd_div = None  # type: ignore[assignment]
         edd_inv = None  # type: ignore[assignment]
     else:
-        ed_inv = _seed_invest_set(sd, "ed_invest", "e")
-        ed_div = _seed_invest_set(sd, "ed_divest", "e")
+        ed_inv = _seed_invest_set(sd, "ed_invest", "e", provider=provider)
+        ed_div = _seed_invest_set(sd, "ed_divest", "e", provider=provider)
         if ed_inv.height == 0 and ed_div.height == 0:
             return blank
 
-        forbid = _seed_forbidden_ni(sd)
+        forbid = _seed_forbidden_ni(sd, provider=provider)
         if forbid.height > 0:
             ed_inv = ed_inv.join(forbid, on=["e", "d"], how="anti")
 
@@ -1722,12 +1722,12 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         # lazy LFs in ``_derived_existing.py``) overlays these when active.
         # For synthetic per-sub-solve fixtures the snapshot CSV is the only
         # source.
-        pd_inv = _seed_set(sd, "pd_invest", "p")
-        pd_div = _seed_set(sd, "pd_divest", "p")
-        nd_inv = _seed_set(sd, "nd_invest", "n")
-        nd_div = _seed_set(sd, "nd_divest", "n")
+        pd_inv = _seed_set(sd, "pd_invest", "p", provider=provider)
+        pd_div = _seed_set(sd, "pd_divest", "p", provider=provider)
+        nd_inv = _seed_set(sd, "nd_invest", "n", provider=provider)
+        nd_div = _seed_set(sd, "nd_divest", "n", provider=provider)
 
-        edd_inv = _seed_edd_invest(sd)
+        edd_inv = _seed_edd_invest(sd, provider=provider)
 
     edd_div = pl.DataFrame(
         schema={"p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
@@ -1852,8 +1852,10 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         e_divest_total=None,
         e_invest_max_total=e_invest_max_total_seed,
         e_divest_max_total=e_divest_max_total_seed,
-        ed_invest_period_set=_seed_period_set(sd, "ed_invest_period"),
-        ed_divest_period_set=_seed_period_set(sd, "ed_divest_period"),
+        ed_invest_period_set=_seed_period_set(sd, "ed_invest_period",
+                                                provider=provider),
+        ed_divest_period_set=_seed_period_set(sd, "ed_divest_period",
+                                                provider=provider),
         ed_invest_max_period=ed_invest_max_period_seed,
         ed_divest_max_period=ed_divest_max_period_seed,
         p_entity_previously_invested_capacity=None,

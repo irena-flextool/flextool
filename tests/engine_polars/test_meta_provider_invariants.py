@@ -122,13 +122,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Provider.  Provider-first via _provider_open; disk arm "
         "serves raw inputs."
     ),
-    "_invest_seeds.py": (
-        "Synthetic per-sub-solve workdir-CSV seed readers "
-        "(documented at module top).  When _apply_db_overrides "
-        "synthesises per-period sub-solves, the workdir CSV slice "
-        "is the authoritative source; the Provider is not yet "
-        "populated at this seed phase."
-    ),
     "_inflow_scaling.py": (
         "Reads raw input/groupIncludeStochastics.csv, group__node.csv "
         "and other input/* fixtures during inflow-scaling derivation. "
