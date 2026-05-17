@@ -798,6 +798,8 @@ def derive_time_branch_all(
     solve_branch__time_branch_list: list[tuple[str, str]],
     logger: logging.Logger,
     work_folder: Path,
+    *,
+    provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Build the ``time_branch_all`` frame from the seven ``pbt_*`` input
     CSVs (under ``<work>/input/``) plus any extra time-branches from
@@ -805,28 +807,35 @@ def derive_time_branch_all(
 
     Aborts with ``sys.exit(-1)`` if any ``pbt_*`` row has an empty
     branch name (matches legacy fatal behaviour).
+
+    Reads pbt_* frames via :func:`_provider_open`: the cascade-input
+    Provider supplies the seven frames in-cascade; the disk-fallback
+    arm serves the off-cascade test harness only.
     """
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_key, _provider_open,
+    )
     time_branches: list[str] = []
     for filename in _TIME_BRANCH_TIMESERIES_NAMES:
-        with open(
-            work_folder / "input" / filename, "r", encoding="utf-8",
-        ) as blk:
+        in_path = work_folder / "input" / filename
+        handle = _provider_open(provider, _provider_key(in_path), in_path)
+        if handle is None:
+            continue
+        with handle as blk:
             filereader = csv.reader(blk, delimiter=",")
-            next(filereader)  # header
-            while True:
-                try:
-                    datain = next(filereader)
-                    if datain[1] not in time_branches:
-                        time_branches.append(datain[1])
-                    if datain[1] == "":
-                        logger.error(
-                            "Empty branch name in timeseries: " + filename
-                            + " , check that there is no empty row at the"
-                              " end of the array"
-                        )
-                        sys.exit(-1)
-                except StopIteration:
-                    break
+            next(filereader, None)  # header
+            for datain in filereader:
+                if len(datain) < 2:
+                    continue
+                if datain[1] == "":
+                    logger.error(
+                        "Empty branch name in timeseries: " + filename
+                        + " , check that there is no empty row at the"
+                          " end of the array"
+                    )
+                    sys.exit(-1)
+                if datain[1] not in time_branches:
+                    time_branches.append(datain[1])
 
     for solve__branch in solve_branch__time_branch_list:
         if solve__branch[1] not in time_branches:
@@ -839,6 +848,8 @@ def write_all_branches(
     solve_branch__time_branch_list: list[tuple[str, str]],
     logger: logging.Logger,
     work_folder: Path | None = None,
+    *,
+    provider: "object | None" = None,
 ) -> None:
     """Emit ``branch_all.csv`` (union of all branches across solves)
     and ``time_branch_all.csv`` (union of branches from the seven
@@ -856,6 +867,7 @@ def write_all_branches(
     _write(
         derive_time_branch_all(
             solve_branch__time_branch_list, logger, wf,
+            provider=provider,
         ),
         wf / "solve_data/time_branch_all.csv",
     )

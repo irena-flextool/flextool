@@ -62,11 +62,11 @@ from __future__ import annotations
 import csv
 import logging
 import math
-import shutil
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import polars as pl
 import spinedb_api as api
 
 from flextool.engine_polars._solve_config import (
@@ -78,10 +78,15 @@ from flextool.engine_polars._solve_state import (
     ActiveTimeEntry,
     FlexToolConfigError,
 )
+from flextool.engine_polars._writer_provider_io import (
+    _provider_key,
+    _provider_open,
+)
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
 
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
     from flextool.engine_polars._solve_config import SolveConfig
 
 
@@ -591,14 +596,18 @@ class TimelineConfig:
         solve: str,
         solve_config: "SolveConfig",
         logger: logging.Logger,
+        *,
+        provider: "FlexDataProvider",
         work_folder: "Path | None" = None,
     ) -> None:
         """Average or sum input timeseries to match a coarsened timeline.
 
         If ``solve`` does not set ``new_stepduration`` (solve-scoped as
-        of DB v50), copy ``input/pt_*.csv`` files unchanged into
-        ``solve_data/``.  Otherwise re-aggregate each timeseries file
-        to match the new step size.
+        of DB v50), pass ``input/pt_*`` frames through verbatim under
+        the ``solve_data/pt_*`` Provider key.  Otherwise re-aggregate
+        each timeseries row-by-row to match the new step size and
+        ``provider.put`` the aggregated frame under the canonical
+        ``solve_data/<basename>`` key.
 
         Aggregation rules (lines 405-422 of the flextool source):
 
@@ -609,8 +618,8 @@ class TimelineConfig:
           ALWAYS bypassed (line 474) — they're per-step state targets
           rather than time-integrated quantities.
 
-        After file aggregation, ``input/p_node.csv``'s ``inflow`` rows
-        are appended to ``solve_data/pt_node_inflow.csv`` as one entry
+        After file aggregation, ``input/p_node``'s ``inflow`` rows
+        are appended to ``solve_data/pt_node_inflow`` as one entry
         per new timestep, scaled by the new step's duration (lines
         522-543 of the source).
 
@@ -621,9 +630,13 @@ class TimelineConfig:
             solve_config: SolveConfig containing the
                 ``timesets_used_by_solves`` map.
             logger: Logger for error reporting.
-            work_folder: Working directory.  When provided, ``input/``
-                and ``solve_data/`` are resolved under it; defaults to
-                the current working directory.
+            provider: Active cascade-input :class:`FlexDataProvider`.
+                Required — supplies the ``input/pt_*`` frames and
+                receives the derived ``solve_data/pt_*`` frames.
+            work_folder: Working directory.  When provided,
+                ``solve_data/`` is resolved under it (used only to
+                build canonical Provider keys); defaults to the
+                current working directory.
         """
         wf = Path(work_folder) if work_folder is not None else Path.cwd()
         timeseries_map: dict[str, str] = {
@@ -653,10 +666,14 @@ class TimelineConfig:
         )
         if not create:
             for timeseries in timeseries_map:
-                shutil.copy(
-                    str(wf / "input" / timeseries),
-                    str(wf / "solve_data" / timeseries),
-                )
+                src_path = wf / "input" / timeseries
+                dst_path = wf / "solve_data" / timeseries
+                src_key = _provider_key(src_path)
+                dst_key = _provider_key(dst_path)
+                frame = _provider_get_or_read(provider, src_key, src_path)
+                if frame is None:
+                    continue
+                provider.put(dst_key, frame)
             return
 
         # All timesets used by *solve* must resolve to the same
@@ -684,124 +701,207 @@ class TimelineConfig:
                 timeline_duration_lookup[timeline_row[0]] = int(
                     float(timeline_row[1])
                 )
-        for timeseries in timeseries_map:
-            input_path = wf / "input" / timeseries
-            output_path = wf / "solve_data" / timeseries
-            with open(input_path, "r", encoding="utf-8") as blk:
-                filereader = csv.reader(blk, delimiter=",")
-                with open(output_path, "w", newline="") as solve_file:
-                    filewriter = csv.writer(solve_file, delimiter=",")
-                    headers = next(filereader)
-                    filewriter.writerow(headers)
-                    time_index = headers.index("time")
-                    while True:
-                        try:
-                            datain = next(filereader)
-                        except StopIteration:
-                            break
-                        timeline_step_duration = (
-                            timeline_duration_lookup.get(datain[time_index])
-                        )
-                        if timeline_step_duration is not None:
-                            values: list[float] = []
-                            params = datain[0:time_index]
-                            row = datain[0 : time_index + 1]
-                            values.append(float(datain[time_index + 1]))
-                            if datain[1] != "storage_state_reference_value":
-                                for _i in range(timeline_step_duration - 1):
-                                    try:
-                                        datain = next(filereader)
-                                    except StopIteration:
-                                        break
-                                    if datain[0:time_index] != params:
-                                        message = (
-                                            "Cannot find the same "
-                                            "timesteps in input data as "
-                                            "in timeline for file  "
-                                            + timeseries
-                                            + " after "
-                                            + row[-1]
-                                        )
-                                        logger.error(message)
-                                        raise FlexToolConfigError(message)
-                                    values.append(
-                                        float(datain[time_index + 1])
-                                    )
 
-                            if timeseries_map[timeseries] == "average":
-                                out_value = round(
-                                    sum(values) / len(values), 6
+        # node-name → constant-inflow value (used to append per-step
+        # contributions to pt_node_inflow below).
+        node__inflow: list[list[str]] = []
+        p_node_path = wf / "input" / "p_node.csv"
+        p_node_key = _provider_key(p_node_path)
+        p_node_frame = _provider_get_or_read(
+            provider, p_node_key, p_node_path,
+        )
+        if p_node_frame is not None and p_node_frame.height > 0:
+            cols = p_node_frame.columns
+            # Expected (node, nodeParam, p_node); the 'inflow' rows
+            # have value in column index 2.
+            for row in p_node_frame.iter_rows():
+                if len(row) >= 3 and row[1] == "inflow":
+                    node__inflow.append([row[0], row[2]])
+
+        for timeseries in timeseries_map:
+            src_path = wf / "input" / timeseries
+            dst_path = wf / "solve_data" / timeseries
+            src_key = _provider_key(src_path)
+            dst_key = _provider_key(dst_path)
+            src_frame = _provider_get_or_read(provider, src_key, src_path)
+            if src_frame is None:
+                continue
+            headers = src_frame.columns
+            try:
+                time_index = headers.index("time")
+            except ValueError:
+                # No time column — pass through verbatim.
+                provider.put(dst_key, src_frame)
+                continue
+            # Row-by-row state machine port of the legacy CSV loop.
+            rows_iter = iter(src_frame.iter_rows())
+            out_rows: list[list[Any]] = []
+            timeline_for_bypass = (
+                timelines_list[0] if timelines_list else None
+            )
+            try:
+                while True:
+                    datain = next(rows_iter)
+                    timeline_step_duration = (
+                        timeline_duration_lookup.get(datain[time_index])
+                    )
+                    if timeline_step_duration is not None:
+                        values: list[float] = []
+                        params = list(datain[0:time_index])
+                        row = list(datain[0 : time_index + 1])
+                        values.append(float(datain[time_index + 1]))
+                        if (
+                            time_index >= 2
+                            and datain[1] != "storage_state_reference_value"
+                        ) or time_index < 2:
+                            for _i in range(timeline_step_duration - 1):
+                                try:
+                                    datain = next(rows_iter)
+                                except StopIteration:
+                                    break
+                                if list(datain[0:time_index]) != params:
+                                    message = (
+                                        "Cannot find the same "
+                                        "timesteps in input data as "
+                                        "in timeline for file  "
+                                        + timeseries
+                                        + " after "
+                                        + str(row[-1])
+                                    )
+                                    logger.error(message)
+                                    raise FlexToolConfigError(message)
+                                values.append(
+                                    float(datain[time_index + 1])
                                 )
-                            else:
-                                out_value = sum(values)
-                            row.append(out_value)
-                            filewriter.writerow(row)
+
+                        if timeseries_map[timeseries] == "average":
+                            out_value = round(
+                                sum(values) / len(values), 6
+                            )
                         else:
-                            # Bypass aggregation for storage_state_reference_value
-                            # rows — pin to the new timeline's nearest step
-                            # at-or-before the original target step.
-                            if datain[1] == "storage_state_reference_value":
-                                counter = 0
-                                current_index = 0
-                                for timestep in self.timelines[
-                                    self.original_timeline[timeline]
-                                ]:
-                                    if datain[2] == timestep[0]:
-                                        current_index = counter
-                                    counter += 1
-                                found = False
-                                new_index = None
-                                for timestep in reversed(
-                                    self.timelines[
-                                        self.original_timeline[timeline]
-                                    ][0 : current_index + 1]
-                                ):
-                                    for timeline_row in new_timeline:
-                                        if timeline_row[0] == timestep[0]:
-                                            new_index = timeline_row[0]
-                                            found = True
-                                            break
-                                    if found:
+                            out_value = sum(values)
+                        row.append(out_value)
+                        out_rows.append(row)
+                    else:
+                        # Bypass aggregation for
+                        # storage_state_reference_value rows — pin to
+                        # the new timeline's nearest step at-or-before
+                        # the original target step.
+                        if (
+                            time_index >= 2
+                            and datain[1] == "storage_state_reference_value"
+                            and timeline_for_bypass is not None
+                        ):
+                            original_tl = self.original_timeline[
+                                timeline_for_bypass
+                            ]
+                            new_timeline = self.timelines[
+                                timeline_for_bypass
+                            ]
+                            counter = 0
+                            current_index = 0
+                            for timestep in self.timelines[original_tl]:
+                                if datain[2] == timestep[0]:
+                                    current_index = counter
+                                counter += 1
+                            found = False
+                            new_index = None
+                            for timestep in reversed(
+                                self.timelines[original_tl][
+                                    0 : current_index + 1
+                                ]
+                            ):
+                                for timeline_row in new_timeline:
+                                    if timeline_row[0] == timestep[0]:
+                                        new_index = timeline_row[0]
+                                        found = True
                                         break
                                 if found:
-                                    row = datain[0:time_index]
-                                    row.append(new_index)
-                                    row.append(datain[time_index + 1])
-                                    filewriter.writerow(row)
+                                    break
+                            if found:
+                                row = list(datain[0:time_index])
+                                row.append(new_index)
+                                row.append(datain[time_index + 1])
+                                out_rows.append(row)
+            except StopIteration:
+                pass
 
-        # Append per-step inflow contributions from p_node (the
-        # constant-inflow Param) to pt_node_inflow.csv, scaled by each
-        # new step's duration.
-        node__inflow: list[list[str]] = []
-        with open(wf / "input/p_node.csv", "r", encoding="utf-8") as blk:
-            filereader = csv.reader(blk, delimiter=",")
-            _read_header = next(filereader)
-            while True:
-                try:
-                    datain = next(filereader)
-                except StopIteration:
-                    break
-                if datain[1] == "inflow":
-                    node__inflow.append([datain[0], datain[2]])
-        with open(
-            wf / "solve_data/pt_node_inflow.csv", "a", newline=""
-        ) as blk:
-            filewriter = csv.writer(blk, delimiter=",")
-            for timeline in timelines_list:
-                new_timeline = self.timelines[timeline]
-                for node__value in node__inflow:
-                    for timeline_row in new_timeline:
-                        timeline_step_duration = int(float(timeline_row[1]))
-                        value = (
-                            float(node__value[1]) * timeline_step_duration
-                        )
-                        row_out = [node__value[0], timeline_row[0], value]
-                        filewriter.writerow(row_out)
+            # Append per-step inflow contributions from p_node to
+            # pt_node_inflow only; scaled by each new step's duration.
+            if timeseries == "pt_node_inflow.csv" and node__inflow:
+                for timeline in timelines_list:
+                    new_timeline = self.timelines[timeline]
+                    for node__value in node__inflow:
+                        for timeline_row in new_timeline:
+                            tl_step_duration = int(float(timeline_row[1]))
+                            value = (
+                                float(node__value[1]) * tl_step_duration
+                            )
+                            out_rows.append(
+                                [node__value[0], timeline_row[0], value]
+                            )
+
+            provider.put(
+                dst_key,
+                _build_frame_with_headers(headers, out_rows),
+            )
 
 
 # ---------------------------------------------------------------------------
 # Helpers (private)
 # ---------------------------------------------------------------------------
+
+
+def _provider_get_or_read(
+    provider: "FlexDataProvider | None",
+    key: str,
+    path: "Path",
+) -> "pl.DataFrame | None":
+    """Return the frame for *key* from the Provider, with disk fallback.
+
+    In-cascade the Provider always carries the input frame; the disk
+    arm is reserved for the off-cascade test harness that seeds
+    inputs to disk and invokes :meth:`TimelineConfig.create_averaged_timeseries`
+    without populating the Provider first.  Returns ``None`` when
+    neither source has the file.
+    """
+    if provider is not None and provider.has(key):
+        return provider.get(key)
+    if path.exists():
+        # ``infer_schema_length=0`` keeps every column Utf8 so the
+        # row iteration in ``create_averaged_timeseries`` reads
+        # legacy text values verbatim (mirrors ``csv.reader``).
+        return pl.read_csv(path, infer_schema_length=0)
+    return None
+
+
+def _build_frame_with_headers(
+    headers: list[str], rows: list[list],
+) -> "pl.DataFrame":
+    """Build an all-Utf8 polars frame matching *headers* with *rows*.
+
+    Each row's values are stringified verbatim (``str(v)``) so the
+    frame round-trips through :meth:`polars.DataFrame.write_csv`
+    byte-identical to the legacy ``csv.writer.writerow`` output.
+    Rows shorter than ``headers`` are padded with empty strings;
+    rows longer are truncated.
+    """
+    n = len(headers)
+    cols: list[list[str]] = [[] for _ in range(n)]
+    for row in rows:
+        for i in range(n):
+            if i < len(row):
+                v = row[i]
+                cols[i].append("" if v is None else str(v))
+            else:
+                cols[i].append("")
+    schema = {h: pl.Utf8 for h in headers}
+    if not rows:
+        return pl.DataFrame(schema=schema)
+    return pl.DataFrame(
+        {headers[i]: cols[i] for i in range(n)},
+        schema=schema,
+    )
 
 
 def _decode_rp_weights(rp_weights_raw: dict) -> dict:
@@ -1211,60 +1311,90 @@ def make_timeset_timeline(
 def separate_period_and_timeseries_data(
     timelines: dict,
     solve__period__timeset: dict,
+    *,
+    provider: "FlexDataProvider",
     work_folder: "Path | None" = None,
 ) -> None:
     """Split ``input/pdt_*.csv`` into per-period and per-timeseries shards.
 
     For each ``pdt_<X>.csv`` (currently ``pdt_commodity.csv`` and
-    ``pdt_group.csv``), write:
+    ``pdt_group.csv``), put two derived frames back onto the Provider:
 
-    * ``pd_<X>.csv`` — rows whose third column is a period identifier.
-    * ``pt_<X>.csv`` — rows whose third column is a timestep identifier.
+    * ``input/pd_<X>`` — rows whose third column is a period identifier.
+    * ``input/pt_<X>`` — rows whose third column is a timestep identifier.
 
     The discriminator is column-2 membership in the union of all
     timesteps (across all timelines) vs. all periods (from the
     ``solve__period__timeset`` map).
+
+    *provider* is required: the cascade's Provider supplies the
+    ``input/pdt_<X>`` frames and receives the two derived shards
+    keyed under the same canonical ``<parent>/<stem>`` convention
+    other writer-port modules use.  The Provider is consulted first
+    for the source frame; ``_provider_open`` falls back to disk for
+    the off-cascade test harness only.
 
     Mirrors :func:`flextool.flextoolrunner.timeline_config.separate_period_and_timeseries_data`.
     """
     wf = Path(work_folder) if work_folder is not None else Path.cwd()
 
     inputfiles = ["pdt_commodity.csv", "pdt_group.csv"]
-    for inputfile in inputfiles:
-        output_period = wf / f"input/pd_{inputfile[4:]}"
-        output_timeseries = wf / f"input/pt_{inputfile[4:]}"
-        timesteps: list[str] = []
-        for timeline in list(timelines.values()):
-            for step in timeline:
-                timesteps.append(step[0])
-        periods: list[str] = []
-        for period__timesets in solve__period__timeset.values():
-            for period__timeset in period__timesets:
-                periods.append(period__timeset[0])
+    timesteps: set[str] = set()
+    for timeline in timelines.values():
+        for step in timeline:
+            timesteps.add(step[0])
+    periods: set[str] = set()
+    for period__timesets in solve__period__timeset.values():
+        for period__timeset in period__timesets:
+            periods.add(period__timeset[0])
 
-        with open(output_period, "w", newline="") as blk_p:
-            period_writer = csv.writer(blk_p, delimiter=",")
-            with open(output_timeseries, "w", newline="") as blk_t:
-                timeseries_writer = csv.writer(blk_t, delimiter=",")
-                with open(
-                    wf / f"input/{inputfile}", "r", encoding="utf-8"
-                ) as blk:
-                    filereader = csv.reader(blk, delimiter=",")
-                    headers = next(filereader)
-                    timeseries_writer.writerow(headers)
-                    period_writer.writerow(
-                        headers[:-2]
-                        + ["period", f"pd_{headers[-1][3:]}"]
-                    )
-                    while True:
-                        try:
-                            datain = next(filereader)
-                        except StopIteration:
-                            break
-                        if datain[2] in periods:
-                            period_writer.writerow(datain)
-                        elif datain[2] in timesteps:
-                            timeseries_writer.writerow(datain)
+    for inputfile in inputfiles:
+        suffix = inputfile[4:-4]  # e.g. "commodity"
+        in_path = wf / "input" / inputfile
+        in_key = _provider_key(in_path)
+        pd_key = _provider_key(wf / "input" / f"pd_{suffix}.csv")
+        pt_key = _provider_key(wf / "input" / f"pt_{suffix}.csv")
+
+        if provider.has(in_key):
+            df = provider.get(in_key)
+        else:
+            # Off-cascade test harness disk fallback — until Phase E
+            # migrates ``_PARAMETER_SPECS`` to the Provider, in-cascade
+            # the pdt_* frame still arrives via the disk-fallback arm
+            # of ``_provider_open``.  Either way we end up with a frame.
+            handle = _provider_open(provider, in_key, in_path)
+            if handle is None:
+                # No source — skip the split.  Downstream consumers
+                # tolerate missing keys.
+                continue
+            with handle as fh:
+                df = pl.read_csv(fh, infer_schema_length=0)
+        key_col = df.columns[2]
+        pt_frame = df.filter(pl.col(key_col).is_in(timesteps))
+        pd_frame = _rename_pdt_to_pd(
+            df.filter(pl.col(key_col).is_in(periods))
+        )
+        provider.put(pt_key, pt_frame)
+        provider.put(pd_key, pd_frame)
+
+
+def _rename_pdt_to_pd(df: "pl.DataFrame") -> "pl.DataFrame":
+    """Rename a ``pdt_<X>`` frame's last-two columns to the ``pd_<X>``
+    convention: ``[..., 'period', 'pd_<X>_value']``.
+
+    Legacy ``write_csv`` emitted ``headers[:-2] + ['period',
+    f'pd_{headers[-1][3:]}']``; reproduce the same column-name
+    transform on the frame so downstream readers (which key by
+    position) see byte-identical column orderings.
+    """
+    cols = df.columns
+    if len(cols) < 2:
+        return df
+    new_names = list(cols)
+    new_names[-2] = "period"
+    last = cols[-1]
+    new_names[-1] = f"pd_{last[3:]}" if len(last) > 3 else last
+    return df.rename(dict(zip(cols, new_names)))
 
 
 __all__ = [

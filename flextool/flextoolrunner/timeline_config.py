@@ -383,164 +383,31 @@ class TimelineConfig:
 
     def create_averaged_timeseries(
         self, solve: str, solve_config: SolveConfig, logger: logging.Logger,
+        *,
+        provider: "object",
         work_folder: "Path | None" = None,
     ) -> None:
         """Average or sum timeseries data when step durations have been changed.
 
-        If *solve* does not set ``new_stepduration`` (solve-scoped as of
-        DB v50), simply copies files.  Otherwise re-aggregates each
-        timeseries file to match the new step size.
-
-        Args:
-            solve: Name of the current solve.
-            solve_config: Solve configuration.
-            logger: Logger instance.
-            work_folder: Optional working directory.  When provided, all
-                ``input/`` and ``solve_data/`` paths are resolved relative to
-                this folder instead of the current working directory.
+        Delegates to :func:`flextool.engine_polars._timeline.TimelineConfig.create_averaged_timeseries`
+        — Step 2.5-E Phase C routes all reads / writes through the
+        active :class:`FlexDataProvider`.  *provider* is required; the
+        cascade's per-sub-solve Provider supplies ``input/pt_*`` and
+        receives the derived ``solve_data/pt_*`` frames.
         """
-        from pathlib import Path
-
-        wf = Path(work_folder) if work_folder is not None else Path.cwd()
-        timeseries_map: dict[str, str] = {
-            'pt_node_inflow.csv': "sum",
-            'pt_commodity.csv': "average",
-            'pt_group.csv': "average",
-            'pt_node.csv': "average",
-            'pt_process.csv': "average",
-            'pt_profile.csv': "average",
-            'pt_process_source.csv': "average",
-            'pt_process_sink.csv': "average",
-            'pt_reserve__upDown__group.csv': "average",
-            'pbt_node_inflow.csv': "sum",
-            'pbt_node.csv': "average",
-            'pbt_process.csv': "average",
-            'pbt_profile.csv': "average",
-            'pbt_process_source.csv': "average",
-            'pbt_process_sink.csv': "average",
-            'pbt_reserve__upDown__group.csv': "average",
-        }
-        # As of DB v50 new_stepduration is keyed by solve.  A value of
-        # ``None`` (the parameter_definition default in the master
-        # template) counts as "not set" so we skip aggregation in that
-        # case too.
-        create = (
-            solve in self.new_step_durations
-            and self.new_step_durations[solve] is not None
+        from flextool.engine_polars._timeline import (
+            TimelineConfig as _NativeTimelineConfig,
         )
-        if not create:
-            for timeseries in timeseries_map:
-                shutil.copy(str(wf / 'input' / timeseries), str(wf / 'solve_data' / timeseries))
-        else:
-            # All timesets used by *solve* must resolve to the same
-            # timeline — new_stepduration rewrites that timeline once
-            # per solve and we re-aggregate every timeseries row by it.
-            timelines_list: list[str] = []
-            for period, timeset in solve_config.timesets_used_by_solves[solve]:
-                timeline = self.timesets__timeline[timeset]
-                if timeline not in timelines_list:
-                    if len(timelines_list) != 0:
-                        message = (
-                            f"solve '{solve}' sets new_stepduration but its timesets "
-                            f"resolve to more than one timeline; new_stepduration "
-                            f"requires a single shared timeline per solve."
-                        )
-                        logger.error(message)
-                        raise FlexToolConfigError(message)
-                    timelines_list.append(timeline)
-            # Pre-build timeline duration lookup for O(1) access per row
-            timeline_duration_lookup: dict[str, int] = {}
-            for timeline in timelines_list:
-                new_timeline = self.timelines[timeline]
-                for timeline_row in new_timeline:
-                    timeline_duration_lookup[timeline_row[0]] = int(float(timeline_row[1]))
-            for timeseries in timeseries_map:
-                with open(str(wf / 'input' / timeseries), 'r', encoding='utf-8') as blk:
-                    filereader = csv.reader(blk, delimiter=',')
-                    with open(str(wf / 'solve_data' / timeseries), 'w', newline='') as solve_file:
-                        filewriter = csv.writer(solve_file, delimiter=',')
-                        headers = next(filereader)
-                        filewriter.writerow(headers)
-                        time_index = headers.index('time')
-                        while True:
-                            try:
-                                datain = next(filereader)
-                                timeline_step_duration = timeline_duration_lookup.get(datain[time_index])
-                                if timeline_step_duration is not None:
-                                    values: list[float] = []
-                                    params = datain[0:time_index]
-                                    row = datain[0:time_index + 1]
-                                    values.append(float(datain[time_index + 1]))
-                                    if datain[1] != 'storage_state_reference_value':
-                                        for i in range(timeline_step_duration - 1):
-                                            datain = next(filereader)
-                                            if datain[0:time_index] != params:
-                                                message = (
-                                                    "Cannot find the same timesteps in input "
-                                                    "data as in timeline for file  "
-                                                    + timeseries + " after " + row[-1]
-                                                )
-                                                logger.error(message)
-                                                raise FlexToolConfigError(message)
-                                            values.append(float(datain[time_index + 1]))
-
-                                    if timeseries_map[timeseries] == "average":
-                                        out_value = round(sum(values) / len(values), 6)
-                                    else:
-                                        out_value = sum(values)
-                                    row.append(out_value)
-                                    filewriter.writerow(row)
-                                else:
-                                    if datain[1] == 'storage_state_reference_value':
-                                        counter = 0
-                                        for timestep in self.timelines[
-                                            self.original_timeline[timeline]
-                                        ]:
-                                            if datain[2] == timestep[0]:
-                                                current_index = counter
-                                            counter += 1
-                                        found = False
-                                        for timestep in reversed(
-                                            self.timelines[self.original_timeline[timeline]][
-                                                0 : current_index + 1
-                                            ]
-                                        ):
-                                            for timeline_row in new_timeline:
-                                                if timeline_row[0] == timestep[0]:
-                                                    new_index = timeline_row[0]
-                                                    found = True
-                                                    break
-                                            if found:
-                                                break
-                                        if found:
-                                            row = datain[0:time_index]
-                                            row.append(new_index)
-                                            row.append(datain[time_index + 1])
-                                            filewriter.writerow(row)
-                            except StopIteration:
-                                break
-            # Constrain inflow to a longer step size
-            node__inflow: list[list[str]] = []
-            with open(str(wf / 'input/p_node.csv'), 'r', encoding='utf-8') as blk:
-                filereader = csv.reader(blk, delimiter=',')
-                _read_header = next(filereader)
-                while True:
-                    try:
-                        datain = next(filereader)
-                        if datain[1] == 'inflow':
-                            node__inflow.append([datain[0], datain[2]])
-                    except StopIteration:
-                        break
-            with open(str(wf / 'solve_data/pt_node_inflow.csv'), 'a', newline='') as blk:
-                filewriter = csv.writer(blk, delimiter=',')
-                for timeline in timelines_list:
-                    new_timeline = self.timelines[timeline]
-                    for node__value in node__inflow:
-                        for timeline_row in new_timeline:
-                            timeline_step_duration = int(float(timeline_row[1]))
-                            value = float(node__value[1]) * timeline_step_duration
-                            row_out = [node__value[0], timeline_row[0], value]
-                            filewriter.writerow(row_out)
+        # The native ``create_averaged_timeseries`` is a method on the
+        # native TimelineConfig but only consults the same attributes
+        # this legacy class carries (``timelines``, ``new_step_durations``,
+        # ``timesets__timeline``, ``original_timeline``).  Bind it to
+        # ``self`` directly to avoid duplicating state.
+        _NativeTimelineConfig.create_averaged_timeseries(
+            self, solve, solve_config, logger,
+            provider=provider,
+            work_folder=work_folder,
+        )
 
 
 # ------------------------------------------------------------------

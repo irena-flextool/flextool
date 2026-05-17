@@ -306,9 +306,21 @@ def native_run_model(state, solver) -> int:
         )
     timer = timer + timing
 
+    # Step 2.5-E Phase A — Provider-routed pdt -> {pd, pt} split.  The
+    # cascade-input Provider on ``state`` already carries the seeded
+    # ``input/pdt_commodity`` / ``input/pdt_group`` frames; the two
+    # derived shards land back on the Provider under the same parent-
+    # qualified keys (``input/pd_*``, ``input/pt_*``).
+    cascade_input_provider_seed: "FlexDataProvider | None" = getattr(
+        state, "cascade_input_provider", None,
+    )
+    if cascade_input_provider_seed is None:
+        cascade_input_provider_seed = FlexDataProvider()
+        state.cascade_input_provider = cascade_input_provider_seed
     separate_period_and_timeseries_data(
         state.timeline.timelines,
         state.solve.timesets_used_by_solves,
+        provider=cascade_input_provider_seed,
         work_folder=wf,
     )
 
@@ -690,9 +702,28 @@ def native_run_model(state, solver) -> int:
             state.logger.debug(
                 "Aggregating timeline and parameters for the new step size"
             )
+            # Step 2.5-E Phase C — route averaged-timeseries reads /
+            # writes through the cascade-input Provider so the
+            # ``solve_data/pt_*`` frames persist across every sub-solve
+            # belonging to the same ``complete_solve``.  Legacy code
+            # relied on the on-disk ``solve_data/pt_*.csv`` files
+            # remaining valid for all rolls of one ``complete_solve``;
+            # in Provider-land the equivalent is keeping the frames on
+            # the cascade-input Provider so each fresh sub-solve
+            # Provider seeds them at the top of its iter (line 444).
             state.timeline.create_averaged_timeseries(
-                complete_solve[solve], state.solve, state.logger, work_folder=wf,
+                complete_solve[solve], state.solve, state.logger,
+                provider=cascade_input_provider,
+                work_folder=wf,
             )
+            # Mirror the freshly aggregated frames onto the current
+            # sub-solve Provider too — this iter's readers must find
+            # them without waiting for the next seed pass.
+            for _key, _frame in cascade_input_provider.items():
+                if _key.startswith("solve_data/pt_") or _key.startswith(
+                    "solve_data/pbt_",
+                ):
+                    sub_solve_provider.put(_key, _frame)
         previous_complete_solve = complete_solve[solve]
 
         # ---- Block data (Agent 1.1) ----

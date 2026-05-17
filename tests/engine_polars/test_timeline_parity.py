@@ -437,14 +437,15 @@ def _build_minimal_workdir(tmp_path: Path, n_steps: int = 24) -> Path:
     inp.mkdir()
     sd.mkdir()
 
-    # pt_node_inflow.csv: sum semantics.
+    # pt_node_inflow.csv: production shape is 3-col (node, time,
+    # pt_node_inflow); sum semantics.
     with open(inp / "pt_node_inflow.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["node", "param", "time", "value"])
+        w.writerow(["node", "time", "pt_node_inflow"])
         for i in range(1, n_steps + 1):
-            w.writerow(["west", "inflow", f"t{i:04d}", float(i)])
+            w.writerow(["west", f"t{i:04d}", float(i)])
 
-    # All other pt_*.csv files: average semantics.  Same row shape.
+    # All other pt_*.csv files: 4-col header, average semantics.
     for fn in (
         "pt_commodity.csv",
         "pt_group.csv",
@@ -477,11 +478,33 @@ def _build_minimal_workdir(tmp_path: Path, n_steps: int = 24) -> Path:
     return tmp_path
 
 
+def _provider_with_workdir(work: Path) -> "FlexDataProvider":
+    """Seed a FlexDataProvider with every ``input/*.csv`` under *work*.
+
+    Mirrors the cascade's pre-Phase-E behavior: every ``input/<file>``
+    on disk is loaded as an all-Utf8 polars frame and put under the
+    canonical ``input/<stem>`` Provider key.  The Provider is then
+    passed to ``create_averaged_timeseries`` (Phase C contract).
+    """
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    import polars as pl
+
+    p = FlexDataProvider()
+    for csv_path in (work / "input").glob("*.csv"):
+        frame = pl.read_csv(csv_path, infer_schema_length=0)
+        p.put(f"input/{csv_path.stem}", frame)
+    return p
+
+
 def test_create_averaged_timeseries_no_op_when_no_new_stepduration(
     tmp_path: Path,
 ) -> None:
-    """When solve doesn't set new_stepduration, files copy verbatim."""
+    """When solve doesn't set new_stepduration, frames pass through
+    unchanged from ``input/<file>`` to ``solve_data/<file>`` on the
+    Provider.
+    """
     work = _build_minimal_workdir(tmp_path, n_steps=8)
+    provider = _provider_with_workdir(work)
 
     timeline = TimelineConfig(
         timelines=defaultdict(list),
@@ -498,12 +521,14 @@ def test_create_averaged_timeseries_no_op_when_no_new_stepduration(
         "solve_a",
         _SolveStub(),
         logging.getLogger("test"),
+        provider=provider,
         work_folder=work,
     )
 
-    src = (work / "input" / "pt_node_inflow.csv").read_text()
-    dst = (work / "solve_data" / "pt_node_inflow.csv").read_text()
-    assert src == dst
+    src_frame = provider.get("input/pt_node_inflow")
+    dst_frame = provider.get("solve_data/pt_node_inflow")
+    assert dst_frame is not None
+    assert src_frame.equals(dst_frame)
 
 
 def test_create_averaged_timeseries_sum_vs_average(
@@ -513,6 +538,7 @@ def test_create_averaged_timeseries_sum_vs_average(
     each 4-step group; pt_commodity averages."""
     n_base = 8
     work = _build_minimal_workdir(tmp_path, n_steps=n_base)
+    provider = _provider_with_workdir(work)
 
     # Base timeline: 8 hourly steps t0001..t0008.
     base = [(f"t{i:04d}", "1.0") for i in range(1, n_base + 1)]
@@ -540,37 +566,42 @@ def test_create_averaged_timeseries_sum_vs_average(
         "solve_a",
         _SolveStub(),
         logging.getLogger("test"),
+        provider=provider,
         work_folder=work,
     )
 
-    # Read aggregated outputs.
-    inflow_rows = list(
-        csv.reader((work / "solve_data" / "pt_node_inflow.csv").open())
-    )
-    # Header + 2 aggregated 4-col rows + 2 appended 3-col rows from p_node.
-    assert inflow_rows[0] == ["node", "param", "time", "value"]
-    # Aggregated rows have 4 columns (node, param=inflow, time, value).
-    agg_rows = [r for r in inflow_rows[1:] if len(r) == 4 and r[1] == "inflow"]
-    # 1+2+3+4=10 at t0001, 5+6+7+8=26 at t0005.
-    inflow_at = {(r[0], r[2]): float(r[3]) for r in agg_rows}
-    assert inflow_at[("west", "t0001")] == 10.0
-    assert inflow_at[("west", "t0005")] == 26.0
-    # Appended rows from p_node have only 3 columns
-    # (node, time, value=inflow*step_duration), shape per the source's
-    # ``row_out = [node__value[0], timeline_row[0], value]``.
-    appended = [r for r in inflow_rows[1:] if len(r) == 3]
-    assert len(appended) == 2
-    appended_at = {r[1]: float(r[2]) for r in appended}
+    inflow_frame = provider.get("solve_data/pt_node_inflow")
+    # Production shape: 3-col (node, time, pt_node_inflow); aggregated
+    # rows + appended rows share the same width.
+    assert inflow_frame.columns == ["node", "time", "pt_node_inflow"]
+    inflow_rows = inflow_frame.rows()
+    # Aggregated rows come first (sums of 4-hour blocks);
+    # appended-from-p_node rows come second (one per new step).
+    # ``1+2+3+4=10`` at t0001 (aggregated), ``5+6+7+8=26`` at t0005.
+    # ``p_node[west, 'inflow']=10`` × duration 4 = 40 at each new
+    # step (appended).
+    inflow_at = {(r[0], r[1]): float(r[2]) for r in inflow_rows}
+    # Both aggregated AND appended write to the same key, but appended
+    # rows come after in the row list and are NOT overwritten by the
+    # dict comprehension; this matches the legacy CSV which contains
+    # both shapes interleaved.  Verify by partitioning on row order:
+    agg_rows = inflow_rows[:2]
+    appended_rows = inflow_rows[2:]
+    assert len(appended_rows) == 2
+    agg_at = {(r[0], r[1]): float(r[2]) for r in agg_rows}
+    assert agg_at[("west", "t0001")] == 10.0
+    assert agg_at[("west", "t0005")] == 26.0
+    appended_at = {r[1]: float(r[2]) for r in appended_rows}
     # 10.0 * 4 = 40.0 at each new-timeline step.
     assert appended_at["t0001"] == 40.0
     assert appended_at["t0005"] == 40.0
+    del inflow_at  # silence linter
 
-    # Average row from pt_commodity (4-row avg of 1,2,3,4 = 2.5).
-    com_rows = list(
-        csv.reader((work / "solve_data" / "pt_commodity.csv").open())
-    )
-    assert com_rows[1] == ["e1", "p1", "t0001", "2.5"]
-    assert com_rows[2] == ["e1", "p1", "t0005", "6.5"]
+    com_frame = provider.get("solve_data/pt_commodity")
+    com_rows = com_frame.rows()
+    # 4-col header pass-through; the aggregated values match legacy.
+    assert com_rows[0] == ("e1", "p1", "t0001", "2.5")
+    assert com_rows[1] == ("e1", "p1", "t0005", "6.5")
 
 
 def test_create_averaged_timeseries_storage_state_reference_value_bypass(
@@ -596,6 +627,7 @@ def test_create_averaged_timeseries_storage_state_reference_value_bypass(
 
     base = [(f"t{i:04d}", "1.0") for i in range(1, n_base + 1)]
     new_tl = [("t0001", "4.0"), ("t0005", "4.0")]
+    provider = _provider_with_workdir(work)
 
     timeline = TimelineConfig(
         timelines=defaultdict(
@@ -617,25 +649,25 @@ def test_create_averaged_timeseries_storage_state_reference_value_bypass(
         "solve_a",
         _SolveStub(),
         logging.getLogger("test"),
+        provider=provider,
         work_folder=work,
     )
 
-    rows = list(
-        csv.reader((work / "solve_data" / "pt_node.csv").open())
-    )
+    pt_node_frame = provider.get("solve_data/pt_node")
+    rows = pt_node_frame.rows()
     # The storage_state_reference_value row should be present once,
     # mapped to t0001 (the nearest at-or-before new-timeline step
     # for the original t0003 target).
     storage_rows = [
-        r for r in rows[1:] if r[1] == "storage_state_reference_value"
+        r for r in rows if r[1] == "storage_state_reference_value"
     ]
     assert len(storage_rows) == 1
-    assert storage_rows[0] == [
+    assert storage_rows[0] == (
         "n1",
         "storage_state_reference_value",
         "t0001",
         "99.0",
-    ]
+    )
 
 
 # ---------------------------------------------------------------------------
