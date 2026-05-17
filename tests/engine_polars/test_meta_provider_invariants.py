@@ -147,11 +147,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Reads input/ppec.csv and entity/decommission history "
         "fixtures during existing-capacity derivation (pre-Provider)."
     ),
-    "_group_slack.py": (
-        "Reads group-slack input fixtures (process__sink_nonSync, "
-        "process__group_inside_group_nonSync, group_capacity_share, "
-        "p_inv etc.) — input-derived, not yet in the Provider."
-    ),
     "_region_filter.py": (
         "Reads input/regionSwitch.csv at region-filter setup."
     ),

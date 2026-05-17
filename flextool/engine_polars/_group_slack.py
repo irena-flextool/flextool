@@ -119,7 +119,19 @@ import polars as pl
 from polar_high import Sum, Where, Param
 from polar_high.engine import Var, Expr
 
-from ._input_source import _read_csv_file
+from ._writer_provider_io import _provider_key
+
+
+def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
+    """Provider-only fetch.  Returns ``None`` when the Provider is
+    missing or doesn't carry *path*'s canonical key.
+    """
+    if provider is None:
+        return None
+    key = _provider_key(path)
+    if not provider.has(key):
+        return None
+    return provider.get(key)
 
 
 # ---------------------------------------------------------------------------
@@ -181,24 +193,23 @@ def _has_non_sync(d) -> bool:
 # ---------------------------------------------------------------------------
 # Data loading helpers
 
-def _read_csv_or_none(p: Path) -> pl.DataFrame | None:
-    if not p.exists(): return None
-    df = _read_csv_file(p)
-    if df.height == 0:    return None
+def _read_csv_or_none(p: Path, *, provider=None) -> pl.DataFrame | None:
+    df = _provider_get(provider, p)
+    if df is None or df.height == 0:
+        return None
     return df
 
 
-def _slice_pdgroup(sd: Path, param: str) -> pl.DataFrame | None:
+def _slice_pdgroup(sd: Path, param: str, *, provider=None) -> pl.DataFrame | None:
     """Slice ``solve_data/pdGroup.csv`` (canonical long format
     ``group, param, period, value``) by literal ``param`` string —
     same operation .mod does inline via ``pdGroup[g, '<param>', d]``.
 
-    Returns ``(g, d, value)`` or ``None`` if the file is missing /
-    the slice is empty / the slice contains only zeros."""
+    Returns ``(g, d, value)`` or ``None`` if the Provider doesn't
+    carry the key / the slice is empty / the slice contains only zeros."""
     p = sd / "pdGroup.csv"
-    if not p.exists(): return None
-    df = _read_csv_file(p)
-    if df.height == 0: return None
+    df = _provider_get(provider, p)
+    if df is None or df.height == 0: return None
     sliced = (df.filter(pl.col("param") == param)
                 .rename({"group": "g", "period": "d"})
                 .select("g", "d", "value")
@@ -210,15 +221,15 @@ def _slice_pdgroup(sd: Path, param: str) -> pl.DataFrame | None:
     return sliced
 
 
-def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str) -> pl.DataFrame | None:
+def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str,
+                             *, provider=None) -> pl.DataFrame | None:
     """Some pdGroup_*.csv files are written by flextool preprocessing as
     standalone wide-by-group files keyed on ``solve, period, <group1, …>``
     (e.g. ``pdGroup_inertia_limit.csv``).  Read either format and return
     a long ``(g, d, value)`` frame with zero rows dropped."""
     p = sd / fname
-    if not p.exists(): return None
-    df = _read_csv_file(p)
-    if df.height == 0: return None
+    df = _provider_get(provider, p)
+    if df is None or df.height == 0: return None
     if "solve" in df.columns:
         df = df.drop("solve")
     if {"period", value_col}.issubset(df.columns) and df.columns[0] == "group":
@@ -246,7 +257,8 @@ def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str) -> pl.DataFrame
     return out
 
 
-def _read_inertia_constants(inp: Path) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
+def _read_inertia_constants(inp: Path, *,
+                              provider=None) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
     """Parse ``p_process_sink.csv`` and ``p_process_source.csv`` for the
     ``inertia_constant`` parameter.
 
@@ -256,9 +268,8 @@ def _read_inertia_constants(inp: Path) -> tuple[pl.DataFrame | None, pl.DataFram
     ``[process, sink|source, sourceSinkParam, p_process_sink|source]``.
     See ``_read_p_process_side`` in input.py for the canonical shape."""
     def _read(path: Path, side: str) -> pl.DataFrame | None:
-        if not path.exists(): return None
-        df = _read_csv_file(path)
-        if df.height == 0: return None
+        df = _provider_get(provider, path)
+        if df is None or df.height == 0: return None
         if not {"process", "sourceSinkParam"}.issubset(df.columns):
             return None
         value_col = df.columns[-1]
@@ -281,6 +292,7 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
               pss_eff: pl.DataFrame | None,
               pss_noEff: pl.DataFrame | None,
               p_unitsize: Param | None,
+              *, provider=None,
               **_unused) -> dict:
     """Read group-level slack data from ``input/`` + ``solve_data/``.
 
@@ -297,14 +309,16 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     # rows of pdGroup.csv).  groupNonSync is hand-curated in
     # input/groupNonSync.csv.
     cap_pd = _slice_pdgroup_topfile(sd, "pdGroup_capacity_margin.csv",
-                                     "capacity_margin")
+                                     "capacity_margin", provider=provider)
     if cap_pd is None:
-        cap_pd = _slice_pdgroup(sd, "capacity_margin")
+        cap_pd = _slice_pdgroup(sd, "capacity_margin", provider=provider)
     iner_pd = _slice_pdgroup_topfile(sd, "pdGroup_inertia_limit.csv",
-                                      "electricity")  # value col is the group name
+                                      "electricity",  # value col is group name
+                                      provider=provider)
     if iner_pd is None:
-        iner_pd = _slice_pdgroup(sd, "inertia_limit")
-    nsync_pd = _slice_pdgroup(sd, "non_synchronous_limit")  # only via pdGroup.csv
+        iner_pd = _slice_pdgroup(sd, "inertia_limit", provider=provider)
+    nsync_pd = _slice_pdgroup(sd, "non_synchronous_limit",
+                                provider=provider)  # only via pdGroup.csv
 
     # Set frames keyed by group name.  Δ.12-drop: the corresponding
     # ``pdGroup_capacity_margin`` / ``pdGroup_inertia_limit`` /
@@ -318,13 +332,12 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     # groupNonSync: prefer the explicit input file (canonical), fallback to
     # pd_group's non_synchronous_limit slice.
     g_ns_path = inp / "groupNonSync.csv"
-    if g_ns_path.exists():
-        df = _read_csv_file(g_ns_path)
-        if df.height > 0:
-            # Header column might be "groupNonSync" (legacy) or "group".
-            col = df.columns[0]
-            out["groupNonSync"] = (df.rename({col: "g"})
-                                     .select("g").unique())
+    df = _provider_get(provider, g_ns_path)
+    if df is not None and df.height > 0:
+        # Header column might be "groupNonSync" (legacy) or "group".
+        col = df.columns[0]
+        out["groupNonSync"] = (df.rename({col: "g"})
+                                 .select("g").unique())
     if out["groupNonSync"] is None and nsync_pd is not None:
         out["groupNonSync"] = nsync_pd.select("g").unique()
 
@@ -339,12 +352,13 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     # Fallback: input/group__node.csv (raw user input).
     gn = None
     for path in (sd / "group_node.csv", inp / "group__node.csv"):
-        if path.exists():
-            df = _read_csv_file(path)
-            if df.height > 0:
-                # both shapes are (group, node)
-                gn = df.rename({"group": "g", "node": "n"}).select("g", "n").unique()
-                break
+        df = _provider_get(provider, path)
+        if df is None:
+            continue
+        if df.height > 0:
+            # both shapes are (group, node)
+            gn = df.rename({"group": "g", "node": "n"}).select("g", "n").unique()
+            break
     out["group_node"] = gn
 
     # ── process_unit ──────────────────────────────────────────────────────
@@ -355,34 +369,31 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     # Canonical solve_data file has header `process_unit`; some legacy
     # files use `process`.  Either works here.
     pu_path = sd / "process_unit.csv"
-    if pu_path.exists():
-        df = _read_csv_file(pu_path)
-        if df.height > 0:
-            col = df.columns[0]
-            out["process_unit"] = (df.rename({col: "p"})
-                                     .select("p").unique())
+    df = _provider_get(provider, pu_path)
+    if df is not None and df.height > 0:
+        col = df.columns[0]
+        out["process_unit"] = (df.rename({col: "p"})
+                                 .select("p").unique())
 
     # ── group_capacity_for_scaling + inv_group_cap ───────────────────────
     p_gcs = sd / "group_capacity_for_scaling.csv"
     p_inv = sd / "inv_group_cap.csv"
-    if p_gcs.exists():
-        df = _read_csv_file(p_gcs)
+    df = _provider_get(provider, p_gcs)
+    if df is not None and df.height > 0:
+        df = (df.rename({"group": "g", "period": "d"})
+                .with_columns(pl.col("value").cast(pl.Float64, strict=False))
+                .select("g", "d", "value")
+                .filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0)))
         if df.height > 0:
-            df = (df.rename({"group": "g", "period": "d"})
-                    .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                    .select("g", "d", "value")
-                    .filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0)))
-            if df.height > 0:
-                out["p_group_capacity_for_scaling"] = Param(("g", "d"), df)
-    if p_inv.exists():
-        df = _read_csv_file(p_inv)
+            out["p_group_capacity_for_scaling"] = Param(("g", "d"), df)
+    df = _provider_get(provider, p_inv)
+    if df is not None and df.height > 0:
+        df = (df.rename({"group": "g", "period": "d"})
+                .with_columns(pl.col("value").cast(pl.Float64, strict=False))
+                .select("g", "d", "value")
+                .filter(pl.col("value").is_not_null()))
         if df.height > 0:
-            df = (df.rename({"group": "g", "period": "d"})
-                    .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                    .select("g", "d", "value")
-                    .filter(pl.col("value").is_not_null()))
-            if df.height > 0:
-                out["p_inv_group_cap"] = Param(("g", "d"), df)
+            out["p_inv_group_cap"] = Param(("g", "d"), df)
     # Derive inv_group_cap from group_capacity_for_scaling if missing.
     if (out["p_inv_group_cap"] is None
             and out["p_group_capacity_for_scaling"] is not None):
@@ -404,19 +415,21 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     # authoritatively by ``apply_direct_params`` (Δ.4b).  The set frames
     # ``process_sink_inertia`` / ``process_source_inertia`` are kept on
     # the seed path for SIMPLE_PROJECTIONS' fall-through semantics.
-    sink_df, src_df = _read_inertia_constants(inp)
+    sink_df, src_df = _read_inertia_constants(inp, provider=provider)
     if sink_df is not None:
         out["process_sink_inertia"]                 = sink_df.select("p", "sink").unique()
     if src_df is not None:
         out["process_source_inertia"]               = src_df.select("p", "source").unique()
 
     # ── non-sync supporting sets ─────────────────────────────────────────
-    p_sink_ns = _read_csv_or_none(sd / "process__sink_nonSync.csv")
+    p_sink_ns = _read_csv_or_none(sd / "process__sink_nonSync.csv",
+                                     provider=provider)
     if p_sink_ns is not None:
         out["process_sink_nonSync"] = (p_sink_ns
             .rename({"process": "p"})
             .select("p", "sink").unique())
-    p_grp_inside = _read_csv_or_none(sd / "process__group_inside_group_nonSync.csv")
+    p_grp_inside = _read_csv_or_none(sd / "process__group_inside_group_nonSync.csv",
+                                       provider=provider)
     if p_grp_inside is not None:
         cols = p_grp_inside.columns
         rn = {}

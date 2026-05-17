@@ -3632,6 +3632,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             pss_eff=proc["pss_eff"],
             pss_noEff=proc["pss_noEff"],
             p_unitsize=proc["unitsize"],
+            provider=provider,
         )
 
         # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
