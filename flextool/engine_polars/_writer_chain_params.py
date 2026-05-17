@@ -231,6 +231,7 @@ def _read_solve_first_flag(solve_data_dir: Path,
 
 def derive_p_entity_pre_existing(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Pre-existing capacity per (entity, period) — 12-branch sum where
     exactly one branch fires per (e, d) given the method/kind/unitsize
@@ -257,19 +258,26 @@ def derive_p_entity_pre_existing(
     pdNode / edEntity_lifetime CSVs that ``write_entity_period_calc_params``
     has emitted earlier in the same per-solve pass.
     """
-    process_set = frozenset(_read_singles(input_dir / "process.csv"))
-    node_set = frozenset(_read_singles(input_dir / "node.csv"))
-    entities = _read_singles(input_dir / "entity.csv")
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
-    period_first = _read_singles(solve_data_dir / "period_first.csv")
+    process_set = frozenset(_read_singles(input_dir / "process.csv",
+                                            provider=provider))
+    node_set = frozenset(_read_singles(input_dir / "node.csv",
+                                        provider=provider))
+    entities = _read_singles(input_dir / "entity.csv", provider=provider)
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
+    period_first = _read_singles(solve_data_dir / "period_first.csv",
+                                  provider=provider)
 
     lifetime_method: dict[str, str] = {
-        e_: m for e_, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv")
+        e_: m for e_, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv",
+                                         provider=provider)
     }
-    p_years_d = _load_e_value_csv(solve_data_dir / "p_years_d.csv")
+    p_years_d = _load_e_value_csv(solve_data_dir / "p_years_d.csv",
+                                    provider=provider)
 
     ed_lifetime: dict[tuple[str, str], float] = {}
-    for e_, d_, v_ in _read_triples(solve_data_dir / "edEntity_lifetime.csv"):
+    for e_, d_, v_ in _read_triples(solve_data_dir / "edEntity_lifetime.csv",
+                                      provider=provider):
         try:
             ed_lifetime[(e_, d_)] = float(v_)
         except ValueError:
@@ -281,11 +289,13 @@ def derive_p_entity_pre_existing(
         solve_data_dir / "pdProcess.csv",
         param_col=1, param_value="existing",
         key_cols=(0, 2), value_col=3,
+        provider=provider,
     )
     pd_existing_node = _load_param_value_at(
         solve_data_dir / "pdNode.csv",
         param_col=1, param_value="existing",
         key_cols=(0, 2), value_col=3,
+        provider=provider,
     )
 
     # p_process.csv / p_node.csv: [entity, param, value]; filter to
@@ -294,11 +304,13 @@ def derive_p_entity_pre_existing(
         input_dir / "p_process.csv",
         param_col=1, param_value="virtual_unitsize",
         key_cols=(0,), value_col=2,
+        provider=provider,
     )
     p_node_vu = _load_param_value_at(
         input_dir / "p_node.csv",
         param_col=1, param_value="virtual_unitsize",
         key_cols=(0,), value_col=2,
+        provider=provider,
     )
 
     # Per-entity lifetime gate sum:
@@ -347,10 +359,11 @@ def derive_p_entity_pre_existing(
 
 def write_p_entity_pre_existing(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Emit ``solve_data/p_entity_pre_existing.csv`` (see derive docstring)."""
     _write(
-        derive_p_entity_pre_existing(input_dir, solve_data_dir),
+        derive_p_entity_pre_existing(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "p_entity_pre_existing.csv",
     )
 
@@ -363,6 +376,7 @@ def write_p_entity_pre_existing(
 
 def derive_p_entity_divest_cumulative_max(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Cumulative ceiling on ``v_divest`` summed by dispatch period ``d``.
 
@@ -381,23 +395,29 @@ def derive_p_entity_divest_cumulative_max(
 
     Domain: ``entityDivest × period_in_use``.
     """
-    entityDivest = _read_singles(solve_data_dir / "entityDivest.csv")
+    entityDivest = _read_singles(solve_data_dir / "entityDivest.csv",
+                                   provider=provider)
     e_divest_total = frozenset(
-        _read_singles(solve_data_dir / "e_divest_total.csv")
+        _read_singles(solve_data_dir / "e_divest_total.csv", provider=provider)
     )
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv")
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
 
-    ed_divest_period = _read_pairs(solve_data_dir / "ed_divest_period.csv")
+    ed_divest_period = _read_pairs(solve_data_dir / "ed_divest_period.csv",
+                                     provider=provider)
     div_periods_for_e: dict[str, list[str]] = {}
     for e_, d_ in ed_divest_period:
         div_periods_for_e.setdefault(e_, []).append(d_)
 
-    p_years_d = _load_e_value_csv(solve_data_dir / "p_years_d.csv")
+    p_years_d = _load_e_value_csv(solve_data_dir / "p_years_d.csv",
+                                    provider=provider)
     ed_divest_max = _load_ed_value_csv(
-        solve_data_dir / "ed_divest_max_period.csv"
+        solve_data_dir / "ed_divest_max_period.csv",
+        provider=provider,
     )
     e_divest_max_total = _load_e_value_csv(
-        solve_data_dir / "e_divest_max_total.csv"
+        solve_data_dir / "e_divest_max_total.csv",
+        provider=provider,
     )
 
     rows: list[tuple[str, str, float]] = []
@@ -425,10 +445,12 @@ def derive_p_entity_divest_cumulative_max(
 
 def write_p_entity_divest_cumulative_max(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Emit ``solve_data/p_entity_divest_cumulative_max.csv`` (see derive)."""
     _write(
-        derive_p_entity_divest_cumulative_max(input_dir, solve_data_dir),
+        derive_p_entity_divest_cumulative_max(input_dir, solve_data_dir,
+                                                provider=provider),
         solve_data_dir / "p_entity_divest_cumulative_max.csv",
     )
 
@@ -719,36 +741,44 @@ def _compute_p_entity_capacity_max_chain(
     the orchestrator funnels each stream through :func:`_write` for
     accumulator capture.
     """
-    entities = _read_singles(input_dir / "entity.csv")
-    periods = _read_singles(solve_data_dir / "period_set.csv")
+    entities = _read_singles(input_dir / "entity.csv", provider=provider)
+    periods = _read_singles(solve_data_dir / "period_set.csv", provider=provider)
     period_in_use = frozenset(
-        _read_singles(solve_data_dir / "period_in_use_set.csv")
+        _read_singles(solve_data_dir / "period_in_use_set.csv", provider=provider)
     )
 
-    all_existing = _load_ed_value_csv(solve_data_dir / "p_entity_all_existing.csv")
-    cum_max_cap = _load_ed_value_csv(solve_data_dir / "ed_cumulative_max_capacity.csv")
+    all_existing = _load_ed_value_csv(solve_data_dir / "p_entity_all_existing.csv",
+                                       provider=provider)
+    cum_max_cap = _load_ed_value_csv(solve_data_dir / "ed_cumulative_max_capacity.csv",
+                                      provider=provider)
     invest_max_period = _load_ed_value_csv(
-        solve_data_dir / "ed_invest_max_period.csv"
+        solve_data_dir / "ed_invest_max_period.csv",
+        provider=provider,
     )
-    unitsize = _load_e_value_csv(solve_data_dir / "p_entity_unitsize.csv")
+    unitsize = _load_e_value_csv(solve_data_dir / "p_entity_unitsize.csv",
+                                  provider=provider)
     e_invest_max_total = _load_e_value_csv(
-        solve_data_dir / "e_invest_max_total.csv"
+        solve_data_dir / "e_invest_max_total.csv",
+        provider=provider,
     )
 
     invest_cumulative = frozenset(
-        _read_pairs(solve_data_dir / "ed_invest_cumulative.csv")
+        _read_pairs(solve_data_dir / "ed_invest_cumulative.csv", provider=provider)
     )
     invest_period = frozenset(
-        _read_pairs(solve_data_dir / "ed_invest_period.csv")
+        _read_pairs(solve_data_dir / "ed_invest_period.csv", provider=provider)
     )
-    invest_total = frozenset(_read_singles(solve_data_dir / "e_invest_total.csv"))
+    invest_total = frozenset(_read_singles(solve_data_dir / "e_invest_total.csv",
+                                            provider=provider))
     invest_forbidden = frozenset(
-        _read_pairs(solve_data_dir / "ed_invest_forbidden_no_investment.csv")
+        _read_pairs(solve_data_dir / "ed_invest_forbidden_no_investment.csv",
+                    provider=provider)
     )
-    entity_invest = frozenset(_read_singles(solve_data_dir / "entityInvest.csv"))
+    entity_invest = frozenset(_read_singles(solve_data_dir / "entityInvest.csv",
+                                             provider=provider))
 
     invest_method_pairs = frozenset(
-        _read_pairs(input_dir / "entity__invest_method.csv")
+        _read_pairs(input_dir / "entity__invest_method.csv", provider=provider)
     )
 
     p_unc = 1000000.0
@@ -771,7 +801,8 @@ def _compute_p_entity_capacity_max_chain(
             p_unc = max_v
 
     edd_invest_by_ed: dict[tuple[str, str], list[str]] = {}
-    for (e, d_inv, d) in _read_triples(solve_data_dir / "edd_invest.csv"):
+    for (e, d_inv, d) in _read_triples(solve_data_dir / "edd_invest.csv",
+                                         provider=provider):
         edd_invest_by_ed.setdefault((e, d), []).append(d_inv)
 
     max_capacity: dict[tuple[str, str], float] = {}
@@ -897,6 +928,7 @@ def derive_p_entity_dispatch_capacity_max(
 
 def write_p_entity_capacity_max_chain(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> None:
     """Four cascading entity-capacity ceiling params (mod L1699-1764):
 
@@ -924,7 +956,7 @@ def write_p_entity_capacity_max_chain(
     is retargeted to ``solve__p_entity_max_units.csv``.
     """
     mc_rows, mu_rows, icm_rows, dcm_rows = _compute_p_entity_capacity_max_chain(
-        input_dir, solve_data_dir,
+        input_dir, solve_data_dir, provider=provider,
     )
     _write(
         _ed_value_frame(mc_rows),
