@@ -3653,7 +3653,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         ci_data = _load_cumulative_invest(inp=inp, sd=sd, dt=dt, provider=provider)
 
         # ─── Delayed processes / DR data ─────────────────────────────────────
-        delay_data = _delay.load_data(inp_dir=inp, sd_dir=sd)
+        delay_data = _delay.load_data(inp_dir=inp, sd_dir=sd,
+                                         provider=provider)
 
         # ─── DC power flow data ──────────────────────────────────────────────
         # Step 2.5-F Phase B: Provider holds the four DC PF frames

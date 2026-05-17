@@ -97,7 +97,19 @@ import polars as pl
 from polar_high import Sum, Where, Param
 # Engine imports kept light — we don't introduce new variable types.
 
-from ._input_source import _read_csv_file
+from ._writer_provider_io import _provider_key
+
+
+def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
+    """Provider-only fetch.  Returns ``None`` when the Provider is
+    missing or doesn't carry *path*'s canonical key.
+    """
+    if provider is None:
+        return None
+    key = _provider_key(path)
+    if not provider.has(key):
+        return None
+    return provider.get(key)
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +124,8 @@ def has_feature(d) -> bool:
 # ---------------------------------------------------------------------------
 # Data loading
 
-def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
+def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
+               provider=None) -> dict:
     """Read the delay-related solve_data CSVs.
 
     Reads from ``solve_data/`` (where flextool.mod's preprocessing emits
@@ -120,6 +133,10 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     other ``_load_*`` helpers in ``input.py`` but is not currently used —
     the canonical sources are all in ``solve_data/`` (see flextool.mod
     lines 525-527).
+
+    Post-Step-2.5 the loader consumes the live
+    :class:`FlexDataProvider`; the disk-fallback arms that previously
+    re-read the eight delay CSVs from disk are gone.
 
     Returns a dict whose keys correspond to (proposed) ``FlexData`` field
     names.  When the feature is inactive (every scenario with no delayed
@@ -150,13 +167,10 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     )
 
     pd_path = sd / "process_delayed.csv"
-    if not pd_path.exists():
-        return blank
-    pd_df = _read_csv_file(pd_path)
-    if pd_df.height == 0:
-        # Header-only file — flextool emits these even when no process is
-        # delayed (e.g. on DR scenarios that don't use the delay feature).
-        # Treat as inactive.
+    pd_df = _provider_get(provider, pd_path)
+    if pd_df is None or pd_df.height == 0:
+        # Header-only / missing — flextool emits these even when no
+        # process is delayed (DR scenarios without the delay feature).
         return blank
 
     pd_df = pd_df.rename({"process": "p"}) if "process" in pd_df.columns else pd_df
@@ -170,9 +184,8 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     # process_source_(un)delayed: (process, source) frames
     def _read_pse(name: str) -> pl.DataFrame | None:
         p = sd / f"{name}.csv"
-        if not p.exists(): return None
-        df = _read_csv_file(p)
-        if df.height == 0: return None
+        df = _provider_get(provider, p)
+        if df is None or df.height == 0: return None
         if "process" in df.columns: df = df.rename({"process": "p"})
         return df.select("p", "source")
 
@@ -182,9 +195,8 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     # process_source_sink_(un)delayed: (process, source, sink) frames
     def _read_psse(name: str) -> pl.DataFrame | None:
         p = sd / f"{name}.csv"
-        if not p.exists(): return None
-        df = _read_csv_file(p)
-        if df.height == 0: return None
+        df = _provider_get(provider, p)
+        if df is None or df.height == 0: return None
         if "process" in df.columns: df = df.rename({"process": "p"})
         return df.select("p", "source", "sink")
 
@@ -201,22 +213,21 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     # as a ~0.099% gap on test_a_lot's multi-period parity).
     inp = Path(inp_dir)
     src_path = inp / "p_process_source_flow_coefficient.csv"
-    if src_path.exists():
-        srcdf = _read_csv_file(src_path)
-        if srcdf.height > 0 and "p_process_source_flow_coefficient" in srcdf.columns:
-            zero_src = (srcdf
-                .rename({"process": "p",
-                         "p_process_source_flow_coefficient": "coef"})
-                .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
-                .filter(pl.col("coef") == 0.0)
-                .select("p", "source"))
-            if zero_src.height > 0:
-                if pse_delayed is not None:
-                    pse_delayed = pse_delayed.join(
-                        zero_src, on=["p", "source"], how="anti")
-                if psse_delayed is not None:
-                    psse_delayed = psse_delayed.join(
-                        zero_src, on=["p", "source"], how="anti")
+    srcdf = _provider_get(provider, src_path)
+    if srcdf is not None and srcdf.height > 0 and "p_process_source_flow_coefficient" in srcdf.columns:
+        zero_src = (srcdf
+            .rename({"process": "p",
+                     "p_process_source_flow_coefficient": "coef"})
+            .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
+            .filter(pl.col("coef") == 0.0)
+            .select("p", "source"))
+        if zero_src.height > 0:
+            if pse_delayed is not None:
+                pse_delayed = pse_delayed.join(
+                    zero_src, on=["p", "source"], how="anti")
+            if psse_delayed is not None:
+                psse_delayed = psse_delayed.join(
+                    zero_src, on=["p", "source"], how="anti")
 
     # ``dtt__delay_duration`` / ``p_process_delay_weight`` are produced
     # by ``apply_derived_g`` BUT the mismatch fixture
@@ -226,26 +237,24 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path) -> dict:
     # fixtures.
     dtt_path = sd / "dtt__delay_duration.csv"
     dtt_df = None
-    if dtt_path.exists():
-        raw = _read_csv_file(dtt_path)
-        if raw.height > 0:
-            rename_map = {}
-            if "period" in raw.columns:      rename_map["period"] = "d"
-            if "time_source" in raw.columns: rename_map["time_source"] = "t_source"
-            if "time_sink" in raw.columns:   rename_map["time_sink"] = "t_sink"
-            if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
-            dtt_df = raw.rename(rename_map).select("d", "t_source", "t_sink", "td")
+    raw = _provider_get(provider, dtt_path)
+    if raw is not None and raw.height > 0:
+        rename_map = {}
+        if "period" in raw.columns:      rename_map["period"] = "d"
+        if "time_source" in raw.columns: rename_map["time_source"] = "t_source"
+        if "time_sink" in raw.columns:   rename_map["time_sink"] = "t_sink"
+        if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
+        dtt_df = raw.rename(rename_map).select("d", "t_source", "t_sink", "td")
 
     pw_path = sd / "p_process_delay_weight.csv"
     pw_param = None
-    if pw_path.exists():
-        raw = _read_csv_file(pw_path)
-        if raw.height > 0:
-            rename_map = {}
-            if "process" in raw.columns: rename_map["process"] = "p"
-            if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
-            pw_long = raw.rename(rename_map).select("p", "td", "value")
-            pw_param = Param(("p", "td"), pw_long)
+    raw = _provider_get(provider, pw_path)
+    if raw is not None and raw.height > 0:
+        rename_map = {}
+        if "process" in raw.columns: rename_map["process"] = "p"
+        if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
+        pw_long = raw.rename(rename_map).select("p", "td", "value")
+        pw_param = Param(("p", "td"), pw_long)
 
     return dict(
         process_delayed              = pd_df.select("p"),

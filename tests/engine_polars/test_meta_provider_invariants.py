@@ -147,10 +147,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Reads input/ppec.csv and entity/decommission history "
         "fixtures during existing-capacity derivation (pre-Provider)."
     ),
-    "_delay.py": (
-        "Reads delay-chain raw input fixtures (pd, pw, dtt, src) "
-        "not yet in the Provider."
-    ),
     "_group_slack.py": (
         "Reads group-slack input fixtures (process__sink_nonSync, "
         "process__group_inside_group_nonSync, group_capacity_share, "
