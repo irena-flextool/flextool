@@ -96,7 +96,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    pass
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
 
 
 __all__ = ["write_workdir_inputs", "write_output_support_csvs"]
@@ -214,11 +214,12 @@ def write_workdir_inputs(
     scenario_name: str | None,
     work_folder: Path,
     *,
+    provider: "FlexDataProvider",
     logger: logging.Logger | None = None,
     precision_digits: int = 0,
 ) -> None:
     """Populate *work_folder* with the ``input/`` + ``solve_data/`` CSVs
-    the cascade needs.
+    the cascade needs, and seed *provider* with the spec-driven frames.
 
     This is the engine_polars-owned replacement for the cascade's call
     to :meth:`flextool.flextoolrunner.flextoolrunner.FlexToolRunner.write_input`.
@@ -233,6 +234,12 @@ def write_workdir_inputs(
         scenario in the DB (matches FlexToolRunner's default).
     work_folder : Path
         Workdir under which ``input/`` + ``solve_data/`` will be created.
+    provider : FlexDataProvider
+        Required cascade-input Provider.  The SpineDBBackend-driven spec
+        loops (Step 2.5 Phases 2-4) ``put`` their materialised frames
+        here; downstream cascade readers resolve them via
+        :meth:`flextool.engine_polars._flex_data_provider.FlexDataProvider.get`
+        rather than re-reading the workdir CSVs.
     logger : logging.Logger, optional
         Logger to use during emission.  ``None`` builds a default named
         logger.
@@ -243,12 +250,9 @@ def write_workdir_inputs(
     -----
     Δ.20 delegates the actual emission to
     :func:`flextool.flextoolrunner.input_writer.write_input`, which is a
-    pure function (no FlexToolRunner state needed).  This places the
-    ownership of workdir population inside ``engine_polars`` — the
-    cascade no longer calls ``FlexToolRunner.write_input``.  Future
-    phases retire this delegation by porting the underlying writers to
-    consume :class:`flextool.engine_polars._input_source.InputSource`
-    directly.
+    pure function (no FlexToolRunner state needed).  Step 2.5 threads
+    the cascade-input *provider* through so the spec loops can
+    progressively migrate from disk-writing to Provider-population.
     """
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -272,6 +276,7 @@ def write_workdir_inputs(
             logger,
             work_folder=work_folder,
             precision_digits=precision_digits,
+            provider=provider,
         )
 
 

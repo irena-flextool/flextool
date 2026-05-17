@@ -641,6 +641,14 @@ def _drive_cascade(
     # consume hooks (preprocessing_solve_time + capture_post_solve) read
     # from the same dict.
     runner.state.handoffs = state.handoffs
+    # Step 2.5 — forward the cascade-input Provider seeded in
+    # ``run_chain_from_db`` onto runner.state so the per-sub-solve hook
+    # at :mod:`flextool.engine_polars._native_run_model` (line 365-370)
+    # picks it up.  ``None`` is allowed for entry points that bypass
+    # ``run_chain_from_db`` — the hook then builds an empty Provider.
+    _cip = getattr(state, "cascade_input_provider", None)
+    if _cip is not None:
+        runner.state.cascade_input_provider = _cip
     runner.state.logger.setLevel(logger_level := logging.ERROR)
     # Forward the opt-in memory recorder (no-op when env var unset) so
     # ``_FlexpyCascadeSolver.run`` can fire the first-iter checkpoints.
@@ -1365,11 +1373,22 @@ def run_chain_from_db(
         _memrec = _NoopMemoryRecorder()
     _memrec.checkpoint("cascade_start", logger)
 
+    # Step 2.5 — construct the cascade-input Provider BEFORE
+    # ``write_workdir_inputs`` runs.  The SpineDBBackend-driven spec
+    # loops (Phases 2-4) ``put`` their materialised frames here; this
+    # Provider is then attached to the cascade ``RunnerState`` below so
+    # the existing ``state.cascade_input_provider`` hook in
+    # :func:`flextool.engine_polars._native_run_model._native_run_model`
+    # (lines 365-370) picks it up at per-sub-solve provider seed time.
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    cascade_input_provider = FlexDataProvider()
+
     write_workdir_inputs(
         db_url,
         scenario_name,
         work_folder,
         logger=logger,
+        provider=cascade_input_provider,
     )
     # The legacy CSV writer (2.4 kLOC pure-Python loops) allocates and
     # frees a lot of pandas/dict scratch state; glibc's heap retains the
@@ -1419,6 +1438,11 @@ def run_chain_from_db(
     # checkpoints (load / build / solve) without having to plumb it
     # through additional keyword arguments.
     state._memory_recorder = _memrec  # type: ignore[attr-defined]
+    # Step 2.5 — seed the cascade-input Provider onto the state so
+    # ``_drive_cascade`` can forward it onto ``runner.state`` (which the
+    # per-sub-solve Provider hook in
+    # :mod:`flextool.engine_polars._native_run_model` consults).
+    state.cascade_input_provider = cascade_input_provider  # type: ignore[attr-defined]
 
     return run_orchestration(
         state, work_folder, runner_factory=_runner_factory,

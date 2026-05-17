@@ -137,13 +137,37 @@ class FlexToolRunner:
         except FlexToolError:
             sys.exit(-1)
 
-    def write_input(self, input_db_url, scenario_name=None, precision_digits: int = 0) -> None:
+    def write_input(
+        self,
+        input_db_url,
+        scenario_name=None,
+        precision_digits: int = 0,
+        *,
+        provider=None,
+    ) -> None:
+        """Write input/ CSVs to the runner's workdir.
+
+        Δ.22 deprecation note: the legacy ``runner.run_model()`` (glpsol
+        pipeline) was removed.  This method survives because the
+        regional-decomposition wrapper and a handful of debug callers
+        still want a freshly-staged ``input/`` directory.  As of Step
+        2.5, an ephemeral
+        :class:`flextool.engine_polars._flex_data_provider.FlexDataProvider`
+        is constructed when *provider* is None, so existing call sites
+        keep working without forming a disk-fallback workaround at any
+        cascade-read site (the cascade itself constructs its own
+        Provider in ``_drive_cascade``).
+        """
+        if provider is None:
+            from flextool.engine_polars._flex_data_provider import FlexDataProvider
+            provider = FlexDataProvider()
         input_writer.write_input(
             input_db_url,
             scenario_name,
             self.state.logger,
             work_folder=self.state.paths.work_folder,
             precision_digits=precision_digits,
+            provider=provider,
         )
 
 

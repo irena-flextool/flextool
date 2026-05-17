@@ -76,11 +76,19 @@ def staged_input(
     prev_cwd = os.getcwd()
     try:
         os.chdir(workdir)
+        # Step 2.5 — write_input requires a FlexDataProvider.  This
+        # off-cascade fixture only needs the staged ``input/`` directory
+        # for the region-filter walk; an ephemeral Provider satisfies
+        # the contract and is discarded afterwards.
+        from flextool.engine_polars._flex_data_provider import (
+            FlexDataProvider,
+        )
         input_writer.write_input(
             lh2_db_url,
             SCENARIO,
             logging.getLogger("test_regional_filter"),
             work_folder=workdir,
+            provider=FlexDataProvider(),
         )
     finally:
         os.chdir(prev_cwd)

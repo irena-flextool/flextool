@@ -1,17 +1,22 @@
 """
 input_writer.py — Write input/ CSV files from the database.
 
-Entry point: write_input(input_db_url, scenario_name, logger)
+Entry point: write_input(input_db_url, scenario_name, logger, *, provider, ...)
 All write_entity / write_parameter / write_default_values calls are internal helpers.
 """
+from __future__ import annotations
+
 import csv
 import logging
 import os
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, TYPE_CHECKING
 
 import spinedb_api as api
 from spinedb_api import DatabaseMapping
+
+if TYPE_CHECKING:
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
 
 from flextool.flextoolrunner.runner_state import FlexToolConfigError
 from flextool.flextoolrunner.precision import format_scalar_for_csv
@@ -1827,7 +1832,33 @@ def write_input(
     logger: logging.Logger,
     work_folder: Path | None = None,
     precision_digits: int = 0,
+    *,
+    provider: "FlexDataProvider",
 ) -> None:
+    """Populate ``work_folder/input/`` + ``work_folder/solve_data/`` CSVs
+    from *input_db_url*.
+
+    Step 2.5 thread-through
+    -----------------------
+
+    *provider* is the cascade-input
+    :class:`flextool.engine_polars._flex_data_provider.FlexDataProvider`.
+    Phases 2-4 of Step 2.5 progressively replace the disk-emitting spec
+    loops (``_DEFAULT_VALUES_SPECS`` / ``_ENTITY_SPECS`` /
+    ``_PARAMETER_SPECS``) with
+    :class:`flextool.spinedb_backend.SpineDBBackend` materialisers whose
+    frames land in *provider* — without any CSV touching ``input/``.
+
+    Until those phases complete, this Phase 1 wiring simply accepts the
+    parameter (it is required, not optional — there is no disk
+    fallback).  Callers that don't have a Provider must construct an
+    ephemeral one; ``None`` is rejected.
+    """
+    if provider is None:  # pragma: no cover — explicit guard
+        raise TypeError(
+            "write_input requires a FlexDataProvider; pass an ephemeral "
+            "provider for one-shot CSV-only callers (Step 2.5 contract).",
+        )
     wf = work_folder if work_folder is not None else Path.cwd()
     if scenario_name:
         scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
@@ -2026,12 +2057,19 @@ def write_input_for_region(
 
     wf = work_folder if work_folder is not None else Path.cwd()
     # Produce the full input/ directory first — this is the staging area.
+    # Construct an ephemeral cascade-input Provider; the region wrapper
+    # only consumes the on-disk staging area, so the Provider goes
+    # unused here.  Step 2.5 contract requires the Provider be present
+    # even when the caller doesn't consume it.
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    _ephemeral_provider = FlexDataProvider()
     write_input(
         input_db_url,
         scenario_name,
         logger,
         work_folder=work_folder,
         precision_digits=precision_digits,
+        provider=_ephemeral_provider,
     )
     all_regions = region_filter.discover_decomposition_regions_from_db(input_db_url)
     if region_group not in all_regions:
