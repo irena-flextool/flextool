@@ -39,6 +39,7 @@ if str(TEST_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
+from flextool.engine_polars import run_chain_from_db  # noqa: E402
 from flextool.flextoolrunner.flextoolrunner import FlexToolRunner  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
@@ -153,16 +154,35 @@ def binding_ladder_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 # ---------------------------------------------------------------------------
 
 def _run(scenario: str, db_url: str, bin_dir: Path, workdir: Path) -> Path:
-    """Run the given scenario in an isolated workdir."""
-    runner = FlexToolRunner(
-        input_db_url=db_url,
-        scenario_name=scenario,
-        root_dir=workdir,
-        bin_dir=bin_dir,
+    """Run the given scenario in an isolated workdir via the native cascade.
+
+    Δ.22 migration: ``SolverRunner.run`` was deleted, so the legacy
+    ``runner.run_model()`` path raises :class:`NotImplementedError`.
+    The native cascade replacement is
+    :func:`flextool.engine_polars.run_chain_from_db`.  ``csv_dump=True``
+    enables the cascade's per-solve snapshot to ``solve_data/`` (for
+    ladder accumulators, etc.); ``keep_solutions=True`` retains
+    ``flex_data_provider`` on every step (needed to call
+    ``snapshot_processed_inputs`` for the ``input/`` derived frames the
+    legacy preprocessing left on disk).
+    """
+    steps = run_chain_from_db(
+        db_url, scenario, work_folder=workdir,
+        csv_dump=True, keep_solutions=True,
     )
-    runner.write_input(db_url, scenario)
-    return_code = runner.run_model()
-    assert return_code == 0, f"Model run failed for scenario '{scenario}'"
+    last_step = next(reversed(list(steps.values())))
+    assert last_step.optimal, (
+        f"Model run failed for scenario '{scenario}': "
+        f"last step not optimal"
+    )
+    # Materialise the cascade's derived input/ frames to disk so the
+    # downstream CSV-based assertions (e.g. reading
+    # ``workdir/input/commodity_ladder_annual.csv``) keep working
+    # unchanged.  ``dump_csvs`` doesn't write these; the Provider's
+    # ``snapshot_processed_inputs`` is the documented one-way dump.
+    provider = getattr(last_step, "flex_data_provider", None)
+    if provider is not None:
+        provider.snapshot_processed_inputs(workdir)
     return workdir
 
 
