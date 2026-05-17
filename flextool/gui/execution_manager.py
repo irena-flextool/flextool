@@ -910,6 +910,11 @@ class ExecutionManager:
 
         cmd.extend(["--highs-threads", str(self.execution_limits.max_cores_per_job)])
 
+        # "Debug" checkbox in the main window enables both engine flags.
+        if settings.debug:
+            cmd.append("--debug")
+            cmd.append("--csv-dump")
+
         return cmd
 
     # ------------------------------------------------------------------

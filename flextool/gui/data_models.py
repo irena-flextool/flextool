@@ -57,6 +57,10 @@ class ProjectSettings:
     auto_generate_comp_plots: bool = True
     auto_generate_comp_excel: bool = False
 
+    # When True, scenario execution runs with --debug and --csv-dump.
+    # Controlled by the "Debug" checkbox in the main window.
+    debug: bool = False
+
     # Plot settings
     single_plot_settings: PlotSettings = field(default_factory=PlotSettings)
     comparison_plot_settings: PlotSettings = field(default_factory=PlotSettings)

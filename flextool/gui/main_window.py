@@ -267,6 +267,23 @@ class MainWindow(tk.Tk):
         )
         self.project_menu_btn.grid(row=row, column=1, sticky="w", padx=5)
 
+        # Debug checkbox (above the Auto-generate column). When on, scenario
+        # runs add --debug and --csv-dump to the CLI invocation.
+        from flextool.gui.hover_tooltip import attach_tooltip as _attach_tip
+        self.debug_var = tk.BooleanVar(value=False)
+        self.debug_cb = ttk.Checkbutton(
+            outer, text="Debug", variable=self.debug_var,
+        )
+        self.debug_cb.grid(row=row, column=2, sticky="w", padx=(20, 0))
+        _attach_tip(self.debug_cb, (
+            "Run scenarios with --debug and --csv-dump.\n"
+            "\n"
+            "  • --debug enables verbose engine logging.\n"
+            "  • --csv-dump writes the cascade's processed inputs\n"
+            "    to disk after the last sub-solve for inspection."
+        ))
+        self.debug_var.trace_add("write", self._on_auto_gen_toggled)
+
         # ── Theme radio buttons (far right of row 0) ─────────────
         theme_frame = ttk.Frame(outer)
         theme_frame.grid(row=row, column=3, columnspan=3, sticky="e", padx=(20, 0))
@@ -1184,6 +1201,7 @@ class MainWindow(tk.Tk):
                 self.project_settings.auto_generate_scen_csvs = self.auto_scen_csvs_var.get()
                 self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
                 self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
+                self.project_settings.debug = self.debug_var.get()
 
                 # Persist scenario order
                 if self.avail_scenario_mgr:
@@ -3768,6 +3786,7 @@ class MainWindow(tk.Tk):
         self.auto_scen_csvs_var.set(s.auto_generate_scen_csvs)
         self.auto_comp_plots_var.set(s.auto_generate_comp_plots)
         self.auto_comp_excel_var.set(s.auto_generate_comp_excel)
+        self.debug_var.set(s.debug)
 
     def _on_auto_gen_toggled(self, *_args: object) -> None:
         """Save auto-generate settings when any checkbox is toggled."""
@@ -3776,6 +3795,7 @@ class MainWindow(tk.Tk):
         self.project_settings.auto_generate_scen_csvs = self.auto_scen_csvs_var.get()
         self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
         self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
+        self.project_settings.debug = self.debug_var.get()
 
         if self.current_project:
             project_path = get_projects_dir() / self.current_project

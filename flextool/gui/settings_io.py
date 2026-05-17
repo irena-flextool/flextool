@@ -52,6 +52,7 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     settings.auto_generate_comp_excel = data.get(
         "auto_generate_comp_excel", settings.auto_generate_comp_excel
     )
+    settings.debug = data.get("debug", settings.debug)
     settings.input_source_numbers = data.get(
         "input_source_numbers", settings.input_source_numbers
     )
