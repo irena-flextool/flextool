@@ -1,14 +1,17 @@
 """Shared Provider-aware I/O helpers for the writer-port modules.
 
-These helpers let writer modules read upstream artefacts uniformly: the
-live :class:`FlexDataProvider` is consulted first, and a disk-fallback
-serves the byte-parity test gate (``test_writer_port_phase1``) which
-exercises writer modules outside any cascade Provider context.
+These helpers let writer modules read upstream artefacts uniformly:
+the live :class:`FlexDataProvider` is consulted first, and a
+disk-fallback survives for callers that haven't yet plumbed a Provider
+(e.g. the legacy single-solve flextoolrunner.orchestration path called
+from :mod:`flextool.engine_polars._spinedb_source` for one-shot DB
+loads).
 
 In a real cascade run the Provider always carries the frame the writer
 needs (Step 2 invariant); the disk arm is therefore unreachable
-in-cascade and is preserved exclusively for the off-cascade test
-harness that seeds inputs to disk and runs writers without a Provider.
+in-cascade.  The byte-parity test that previously exercised the disk
+arm (``tests/engine_polars/test_writer_port_phase1.py``) was deleted in
+Step 2.5 item 15.
 """
 from __future__ import annotations
 

@@ -210,61 +210,62 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "the Provider."
     ),
     # --- Writer-port modules: _provider_open + csv.reader pattern ---
-    # These writers consult the Provider FIRST via _provider_open; the
-    # csv.reader operates on the returned StringIO (Provider) or file
-    # handle (disk fallback for the off-cascade test harness).  Listed
-    # here so a NEW writer that bypasses _provider_open is flagged.
+    # Step 2.5: these writers are now the CANONICAL implementations
+    # (legacy preprocessing/* deleted in item 15).  The disk-read code
+    # path within each writer is unreachable in cascade — the cascade
+    # always supplies a Provider via input_derivation.run /
+    # _writer_solve_time.run, and capture_frames thereafter.  The disk
+    # arm survives as a safety net for the legacy single-solve
+    # flextoolrunner.orchestration code path that
+    # engine_polars/_spinedb_source.py still drives without populating
+    # a Provider for every writer.  Per the audit Section 9: this is
+    # OFF-CASCADE; the meta-test forbids new disk reads in cascade
+    # modules so adding NEW disk-fallback paths is still blocked.
     "_writer_arc_unions.py": (
-        "Writer-port: csv.reader sites operate on _provider_open "
-        "results (Provider StringIO or disk fallback for the "
-        "off-cascade byte-parity harness)."
+        "OFF-CASCADE-FIXTURES: csv.reader sites operate on "
+        "_provider_open() results.  In-cascade always Provider-first; "
+        "disk arm only reached by the legacy single-solve path."
     ),
     "_writer_calc_params.py": (
-        "Writer-port: pl.read_csv site is a Provider-first read "
-        "(provider.get fallback)."
+        "OFF-CASCADE-FIXTURES: pl.read_csv site is Provider-first "
+        "with disk fallback for the legacy single-solve path."
     ),
     "_writer_chain_params.py": (
-        "Writer-port: csv.reader sites operate on _provider_open "
-        "results — see _writer_provider_io."
+        "OFF-CASCADE-FIXTURES: csv.reader sites via _provider_open."
     ),
     "_writer_co2_accumulators.py": (
-        "Writer-port: _read_csv_file fallback after Provider miss."
+        "OFF-CASCADE-FIXTURES: _read_csv_file fallback after "
+        "Provider miss; reached only by legacy single-solve."
     ),
     "_writer_dispatchers.py": (
-        "Writer-port: csv.reader sites operate on _provider_open "
-        "results."
+        "OFF-CASCADE-FIXTURES: csv.reader sites via _provider_open."
     ),
     "_writer_entity_annual.py": (
-        "Writer-port: Provider-first pl.read_csv fallback for "
-        "raw inputs."
+        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
     ),
     "_writer_leaf_sets.py": (
-        "Writer-port: Provider-first pl.read_csv fallback for "
-        "raw inputs."
+        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
     ),
     "_writer_lp_scaling.py": (
-        "Writer-port: Provider-first pl.read_csv fallback."
+        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
     ),
     "_writer_mid_sets.py": (
-        "Writer-port: Provider-first pl.read_csv fallback."
+        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
     ),
     "_writer_pdt_params.py": (
-        "Writer-port: csv.reader sites operate on _provider_open "
-        "results."
+        "OFF-CASCADE-FIXTURES: csv.reader sites via _provider_open."
     ),
     "_writer_per_solve.py": (
-        "Writer-port: Provider-first pl.read_csv fallback."
+        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
     ),
     "_writer_period_calc.py": (
-        "Writer-port: Provider-first pl.read_csv fallback."
+        "OFF-CASCADE-FIXTURES: Provider-first pl.read_csv fallback."
     ),
     "_writer_period_params.py": (
-        "Writer-port: csv.reader sites operate on _provider_open "
-        "results — the largest writer-port module."
+        "OFF-CASCADE-FIXTURES: csv.reader sites via _provider_open."
     ),
     "_writer_solve_writers.py": (
-        "Writer-port: csv.reader site operates on _provider_open "
-        "result."
+        "OFF-CASCADE-FIXTURES: csv.reader site via _provider_open."
     ),
 }
 
