@@ -118,10 +118,12 @@ def run(
         _ENTITY_SPECS,
         _PARAMETER_SPECS,
         _DEFAULT_VALUES_SPECS,
-        _validate_timeline_timestep_duration,
-        _validate_ladder_methods,
-        _validate_group_output_memberships,
-        _validate_capacity_margin_groups,
+    )
+    from flextool.input_derivation._validators import (
+        validate_timeline_timestep_duration,
+        validate_ladder_methods,
+        validate_group_output_memberships,
+        validate_capacity_margin_groups,
     )
     from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
     from flextool.input_derivation._process_method import derive_process_method
@@ -164,7 +166,7 @@ def run(
             )
             provider.put(_provider_key(spec.filename), frame)
 
-        _validate_timeline_timestep_duration(db)
+        validate_timeline_timestep_duration(db)
 
         for spec in _PARAMETER_SPECS:
             kwargs = {k: v for k, v in spec.items() if k != "filename"}
@@ -177,7 +179,7 @@ def run(
             backend, provider, logger,
             ct_method_overrides=ct_method_overrides,
         )
-        _validate_ladder_methods(db, logger)
+        validate_ladder_methods(db, logger)
         derive_commodity_ladder_cumulative(backend, provider, logger)
         derive_commodity_ladder_annual(backend, provider, logger)
         derive_commodity_ladder_sets(backend, provider)
@@ -247,8 +249,8 @@ def run(
         _arc.write_param_in_use_sets(input_dir, solve_data_dir, provider=provider)
 
         # Step 4 — validators that need DB access.
-        _validate_capacity_margin_groups(db, logger)
-        _validate_group_output_memberships(db, logger)
+        validate_capacity_margin_groups(db, logger)
+        validate_group_output_memberships(db, logger)
 
     # Accept either a backend, a DatabaseMapping or a URL string.
     if isinstance(backend_or_db_url, str):

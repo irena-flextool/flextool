@@ -3,7 +3,7 @@ flag is ``yes`` but the group has no members of the required entity
 class.
 
 The warnings are emitted by
-``flextool.flextoolrunner.input_writer._validate_group_output_memberships``
+``flextool.input_derivation._validators.validate_group_output_memberships``
 and cover four silent-no-op cases:
 
 * ``output_nodeGroup_dispatch: yes`` with no ``group__node`` row
@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from spinedb_api import DatabaseMapping
 
-from flextool.input_derivation._specs import _validate_group_output_memberships
+from flextool.input_derivation._validators import validate_group_output_memberships
 
 
 def _build_db(tmp_path: Path, parameter_values: list[tuple[str, str]],
@@ -116,7 +116,7 @@ def _run_validation(url: str, caplog) -> list[logging.LogRecord]:
     with DatabaseMapping(url) as db:
         db.fetch_all("entity")
         db.fetch_all("parameter_value")
-        _validate_group_output_memberships(db, logger)
+        validate_group_output_memberships(db, logger)
     return [r for r in caplog.records if r.name == logger.name]
 
 
