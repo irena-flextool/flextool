@@ -60,7 +60,8 @@ _CO2_MAX_TOTAL_METHOD: frozenset[str] = frozenset((
 # means "empty set" — flextool's legacy code returns ``[]`` in that case.
 # ---------------------------------------------------------------------------
 
-def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
+def _read_csv(path: Path, columns: list[str],
+              *, provider: "object | None" = None) -> pl.DataFrame:
     """Read a flextool CSV with the named header columns.
 
     Returns an empty DataFrame of the requested schema if the file is
@@ -68,11 +69,16 @@ def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
     file are dropped to match the legacy behaviour (which only indexes
     ``row[0:N]``).
 
-    Phase E-d — seed-aware: prefer in-memory accumulator frame when
-    active.  See ``_input_source._seed_lookup_positional``.
+    Step 1-g — Provider-first.  Falls back to the legacy seed lookup
+    (still installed during the migration window) and then to disk.
     """
-    from flextool.engine_polars._input_source import _seed_lookup_positional
-    seeded = _seed_lookup_positional(path, columns)
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_key,
+        _provider_lookup_positional,
+    )
+    seeded = _provider_lookup_positional(
+        provider, _provider_key(path), path, columns,
+    )
     if seeded is not None:
         return seeded
     if not path.exists() or path.stat().st_size == 0:

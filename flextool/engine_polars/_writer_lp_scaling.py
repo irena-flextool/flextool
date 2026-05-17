@@ -27,10 +27,17 @@ import polars as pl
 # ---------------------------------------------------------------------------
 
 
-def _read_csv(path: Path, columns: list[str]) -> pl.DataFrame:
-    # Phase E-d — seed-aware: prefer in-memory accumulator frame.
-    from flextool.engine_polars._input_source import _seed_lookup_positional
-    seeded = _seed_lookup_positional(path, columns)
+def _read_csv(path: Path, columns: list[str],
+              *, provider: "object | None" = None) -> pl.DataFrame:
+    # Step 1-g — Provider-first; falls back to legacy seed lookup (still
+    # installed during the migration window) then to disk.
+    from flextool.engine_polars._writer_provider_io import (
+        _provider_key,
+        _provider_lookup_positional,
+    )
+    seeded = _provider_lookup_positional(
+        provider, _provider_key(path), path, columns,
+    )
     if seeded is not None:
         return seeded
     if not path.exists() or path.stat().st_size == 0:

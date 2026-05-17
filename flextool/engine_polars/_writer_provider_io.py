@@ -78,4 +78,36 @@ def _provider_open(provider: "object | None", name: str,
     return None
 
 
-__all__ = ["_provider_key", "_provider_open"]
+def _provider_lookup_positional(
+    provider: "object | None",
+    name: str,
+    path: "Path | str",
+    columns: list[str],
+):
+    """Provider-first counterpart to
+    :func:`._input_source._seed_lookup_positional`.
+
+    Resolution order:
+
+    1. If *provider* has *name*, slice its frame to the first
+       ``len(columns)`` columns and rename them by position to
+       *columns*.
+    2. Otherwise fall through to the legacy seed lookup so unplumbed
+       sites still resolve frames during the Step 1-g migration window.
+
+    Returns ``None`` when neither the Provider nor the seed carries the
+    frame; the caller then falls back to its on-disk
+    ``polars.read_csv(path)`` branch — identical contract to
+    ``_seed_lookup_positional``.
+    """
+    if provider is not None and provider.has(name):
+        df = provider.get(name)
+        keep = df.columns[: len(columns)]
+        out = df.select(keep)
+        out.columns = columns
+        return out
+    from flextool.engine_polars._input_source import _seed_lookup_positional
+    return _seed_lookup_positional(path, columns)
+
+
+__all__ = ["_provider_key", "_provider_open", "_provider_lookup_positional"]

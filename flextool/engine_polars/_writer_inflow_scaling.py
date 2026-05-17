@@ -49,7 +49,10 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars._input_source import _seed_open
+from flextool.engine_polars._writer_provider_io import (
+    _provider_key,
+    _provider_open,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -61,13 +64,14 @@ from flextool.engine_polars._input_source import _seed_open
 # ---------------------------------------------------------------------------
 
 
-def _read_singles(path: Path) -> list[str]:
+def _read_singles(path: Path,
+                  *, provider: "object | None" = None) -> list[str]:
     """First-column header-less reader (skip header row)."""
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[str] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -76,13 +80,14 @@ def _read_singles(path: Path) -> list[str]:
     return out
 
 
-def _read_pairs(path: Path) -> list[tuple[str, str]]:
+def _read_pairs(path: Path,
+                *, provider: "object | None" = None) -> list[tuple[str, str]]:
     """First-two-column header-less reader (skip header row)."""
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[tuple[str, str]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -91,17 +96,19 @@ def _read_pairs(path: Path) -> list[tuple[str, str]]:
     return out
 
 
-def _read_keyed2_float(path: Path) -> dict[tuple[str, str], float]:
+def _read_keyed2_float(path: Path,
+                       *, provider: "object | None" = None,
+                       ) -> dict[tuple[str, str], float]:
     """Three-col CSV (key1, key2, value) → {(k1, k2): float}.
 
     Mirrors legacy ``_read_p`` / ``_read_pt_node_inflow``: malformed
     or non-numeric rows silently skipped.
     """
     out: dict[tuple[str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -113,13 +120,15 @@ def _read_keyed2_float(path: Path) -> dict[tuple[str, str], float]:
     return out
 
 
-def _read_keyed3_float(path: Path) -> dict[tuple[str, str, str], float]:
+def _read_keyed3_float(path: Path,
+                       *, provider: "object | None" = None,
+                       ) -> dict[tuple[str, str, str], float]:
     """Four-col CSV (k1, k2, k3, value) → {(k1, k2, k3): float}."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -131,13 +140,15 @@ def _read_keyed3_float(path: Path) -> dict[tuple[str, str, str], float]:
     return out
 
 
-def _read_keyed_float(path: Path) -> dict[str, float]:
+def _read_keyed_float(path: Path,
+                      *, provider: "object | None" = None,
+                      ) -> dict[str, float]:
     """Two-col CSV (key, value) → {key: float}."""
     out: dict[str, float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")

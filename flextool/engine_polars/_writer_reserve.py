@@ -50,7 +50,10 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars._input_source import _seed_open
+from flextool.engine_polars._writer_provider_io import (
+    _provider_key,
+    _provider_open,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -102,13 +105,14 @@ def _to_utf8_frame(
 # ---------------------------------------------------------------------------
 
 
-def _read_singles(path: Path) -> list[str]:
+def _read_singles(path: Path,
+                  *, provider: "object | None" = None) -> list[str]:
     """First-column header-less reader (skip header row)."""
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[str] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -117,13 +121,14 @@ def _read_singles(path: Path) -> list[str]:
     return out
 
 
-def _read_pairs(path: Path) -> list[tuple[str, str]]:
+def _read_pairs(path: Path,
+                *, provider: "object | None" = None) -> list[tuple[str, str]]:
     """First-two-column header-less reader (skip header row)."""
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[tuple[str, str]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -132,13 +137,14 @@ def _read_pairs(path: Path) -> list[tuple[str, str]]:
     return out
 
 
-def _read_n_col(path: Path, n: int) -> list[tuple[str, ...]]:
+def _read_n_col(path: Path, n: int,
+                *, provider: "object | None" = None) -> list[tuple[str, ...]]:
     """First-n-column header-less reader; rows with any empty key skipped."""
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[tuple[str, ...]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -147,14 +153,16 @@ def _read_n_col(path: Path, n: int) -> list[tuple[str, ...]]:
     return out
 
 
-def _read_pairs_to_dict(path: Path, key_col: int) -> dict[str, list[str]]:
+def _read_pairs_to_dict(path: Path, key_col: int,
+                        *, provider: "object | None" = None,
+                        ) -> dict[str, list[str]]:
     """Two-col CSV → {row[key_col]: [row[other_col], ...]} preserving order."""
     out: dict[str, list[str]] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
     other_col = 1 - key_col
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -165,15 +173,16 @@ def _read_pairs_to_dict(path: Path, key_col: int) -> dict[str, list[str]]:
 
 def _read_pbt_reserve(
     path: Path,
+    *, provider: "object | None" = None,
 ) -> dict[tuple[str, str, str, str, str, str, str], float]:
     """``pbt_reserve__upDown__group.csv`` →
     {(r, ud, g, param, branch, ts, t): float}.  Malformed / non-numeric
     rows silently skipped (matches legacy)."""
     out: dict[tuple[str, str, str, str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -188,14 +197,15 @@ def _read_pbt_reserve(
 
 def _read_pt_reserve(
     path: Path,
+    *, provider: "object | None" = None,
 ) -> dict[tuple[str, str, str, str, str], float]:
     """``pt_reserve__upDown__group.csv`` →
     {(r, ud, g, param, t): float}."""
     out: dict[tuple[str, str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -210,13 +220,14 @@ def _read_pt_reserve(
 
 def _read_p_reserve(
     path: Path,
+    *, provider: "object | None" = None,
 ) -> dict[tuple[str, str, str, str], float]:
     """``p_reserve__upDown__group.csv`` → {(r, ud, g, param): float}."""
     out: dict[tuple[str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")
@@ -368,14 +379,15 @@ def write_pdtReserve_upDown_group(
 
 def _compute_process_reserve_active(
     input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
 ) -> tuple[list[tuple[str, str, str, str]], list[tuple[str, str]]]:
     """Shared computation for the active/prundt pair — returns the
     active ``(p, r, ud, n)`` list and the ``dt`` pair list."""
     pdt_reserve: dict[tuple[str, str, str, str, str, str], float] = {}
     pdt_path = solve_data_dir / "pdtReserve_upDown_group.csv"
-    pdt_seeded = _seed_open(pdt_path)
-    if pdt_seeded is not None or pdt_path.exists():
-        with (pdt_seeded if pdt_seeded is not None else pdt_path.open()) as fh:
+    pdt_seeded = _provider_open(provider, _provider_key(pdt_path), pdt_path)
+    if pdt_seeded is not None:
+        with pdt_seeded as fh:
             next(fh, None)
             for line in fh:
                 parts = line.rstrip("\n").split(",")
@@ -489,14 +501,15 @@ def write_process_reserve_upDown_node_active_and_prundt(
 
 def _read_p_process_reserve(
     path: Path,
+    *, provider: "object | None" = None,
 ) -> dict[tuple[str, str, str, str, str], float]:
     """``p_process__reserve__upDown__node.csv`` →
     {(process, reserve, upDown, node, param): float}."""
     out: dict[tuple[str, str, str, str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         next(fh, None)
         for line in fh:
             parts = line.rstrip("\n").split(",")

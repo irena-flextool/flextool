@@ -58,7 +58,10 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars._input_source import _seed_open
+from flextool.engine_polars._writer_provider_io import (
+    _provider_key,
+    _provider_open,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -85,12 +88,13 @@ def _write(df: pl.DataFrame, path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _read_pairs(path: Path) -> list[tuple[str, str]]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_pairs(path: Path,
+                *, provider: "object | None" = None) -> list[tuple[str, str]]:
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[tuple[str, str]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -99,12 +103,13 @@ def _read_pairs(path: Path) -> list[tuple[str, str]]:
     return out
 
 
-def _read_n_col(path: Path, n: int) -> list[tuple[str, ...]]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_n_col(path: Path, n: int,
+                *, provider: "object | None" = None) -> list[tuple[str, ...]]:
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
     out: list[tuple[str, ...]] = []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
@@ -113,11 +118,12 @@ def _read_n_col(path: Path, n: int) -> list[tuple[str, ...]]:
     return out
 
 
-def _read_singles(path: Path) -> list[str]:
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+def _read_singles(path: Path,
+                  *, provider: "object | None" = None) -> list[str]:
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return []
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         return [r[0] for r in reader if r and r[0]]
@@ -712,15 +718,17 @@ def _entity_period_inputs(input_dir: Path, solve_data_dir: Path) -> dict:
     }
 
 
-def _read_p_table(path: Path) -> dict[tuple[str, str], float]:
+def _read_p_table(path: Path,
+                  *, provider: "object | None" = None,
+                  ) -> dict[tuple[str, str], float]:
     """Read a 3-col (entity, paramName, value) table, silently skipping
     rows whose value isn't a float.  Mirrors the legacy local-loop in
     :func:`write_entity_period_calc_params`."""
     out: dict[tuple[str, str], float] = {}
-    seeded = _seed_open(path)
-    if seeded is None and not path.exists():
+    seeded = _provider_open(provider, _provider_key(path), path)
+    if seeded is None:
         return out
-    with (seeded if seeded is not None else path.open()) as fh:
+    with seeded as fh:
         reader = csv.reader(fh)
         next(reader, None)
         for row in reader:
