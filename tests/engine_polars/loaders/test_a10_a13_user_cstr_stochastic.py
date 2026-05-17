@@ -128,6 +128,52 @@ def test_flow_cstr_idx_source_plus_sink_dedup(tmp_path: Path):
     assert out[1] is None  # flow_cstr_coef
 
 
+def test_flow_cstr_idx_via_provider_utf8_coef_column(tmp_path: Path):
+    """Regression: A2 / Rivendell-2 — ``p_process_node_constraint_flow_coefficient``
+    arrives from the Provider with an all-Utf8 schema (the canonical
+    ``_rows_to_frame`` output of :class:`SpineDBBackend`).  The loader
+    must cast ``coef`` to Float64 before ``group_by(...).agg(coef.sum())``
+    or polars raises ``InvalidOperationError: 'sum' operation not supported
+    for dtype 'str'`` (input.py:1574).
+
+    Reproduces the cascade-path schema by seeding a ``FlexDataProvider``
+    directly — disk CSV via ``read_csv_fallback`` parses ``"2.0"`` as
+    Float64 and masks the bug.
+    """
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+
+    inp, _ = _make_dirs(tmp_path)
+    dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})
+    pss = pl.DataFrame({"p": ["p1"], "source": ["n_x"], "sink": ["n_y"]})
+    _write(inp / "constraint__sense.csv", "constraint,sense\nc1,equal\n")
+
+    # All-Utf8 schema as the SpineDBBackend / _rows_to_frame produces.
+    coef_frame = pl.DataFrame(
+        {
+            "process": ["p1", "p1"],
+            "node": ["n_x", "n_y"],
+            "constraint": ["c1", "c1"],
+            "p_process_node_constraint_flow_coefficient": ["2.0", "3.0"],
+        },
+        schema={
+            "process": pl.Utf8,
+            "node": pl.Utf8,
+            "constraint": pl.Utf8,
+            "p_process_node_constraint_flow_coefficient": pl.Utf8,
+        },
+    )
+    provider = FlexDataProvider()
+    provider.put("input/p_process_node_constraint_flow_coefficient", coef_frame)
+
+    out = _load_user_constraints(inp, pss=pss, dt=dt, provider=provider)
+    # Hand-calc: with the cast in place, group_by on (p,source,sink,c)
+    # collapses src_match + sink_match to a single index row.
+    fci = out[0]
+    assert fci is not None and fci.height == 1
+    assert fci.columns == ["p", "source", "sink", "c"]
+    assert fci.row(0) == ("p1", "n_x", "n_y", "c1")
+
+
 def test_flow_cstr_idx_none_when_no_match(tmp_path: Path):
     """Covers A10-flow_cstr_idx_none_when_no_match.
 

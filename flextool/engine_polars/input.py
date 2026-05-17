@@ -1563,6 +1563,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
                 coef_path)
             .rename({"process":"p","node":"n","constraint":"c",
                      "p_process_node_constraint_flow_coefficient":"coef"})
+            .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
             .select("p","n","c","coef"))
         src_match = (pss.join(coef_long, left_on=["p","source"], right_on=["p","n"],
                               how="inner").select("p","source","sink","c","coef"))
