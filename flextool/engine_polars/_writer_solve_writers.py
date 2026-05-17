@@ -157,11 +157,7 @@ def _write(df: pl.DataFrame, path: Path) -> None:
     (:mod:`._flex_data_accumulator`) monkey-patches this name so every
     CSV emission also stashes ``(path.name → df)`` for the sub-solve.
 
-    Phase E-c — disk emission gated behind ``emit_csvs_enabled()``.
     """
-    from flextool.engine_polars._flex_data_accumulator import emit_csvs_enabled
-    if not emit_csvs_enabled():
-        return
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     df.write_csv(Path(path), line_terminator="\r\n")
 

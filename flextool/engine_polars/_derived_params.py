@@ -61,6 +61,18 @@ def _provider_or_exists(
         return True
     return Path(path).exists()
 
+
+def _provider_read(
+    provider: "object | None", path: "Path | str",
+) -> "pl.DataFrame":
+    """Provider-first read; falls back to disk via :func:`_read_csv_file`.
+
+    Pair with :func:`_provider_or_exists` for the existence guard.
+    """
+    if provider is not None and provider.has(_provider_key(path)):
+        return provider.get(_provider_key(path))
+    return _read_csv_file(path)
+
 # Derived-param helpers operate on a ``source`` (InputSource); FlexData
 # is not yet built when the broadcast cascade runs.  ``_enums = None``
 # keeps every empty-scratch frame allocated as ``pl.Utf8`` (matching
@@ -221,12 +233,12 @@ def _ctx_read(
     # Phase E-h — seed-aware existence check.  Bare ``path.exists()``
     # short-circuits to None when the cascade runs with CSV emission
     # disabled (Phase E-c default), even though the active in-memory
-    # accumulator holds the frame.  ``_seed_or_exists`` consults the
+    # accumulator holds the frame.  the Provider consults the
     # seed first, so the subsequent ``_read_csv_file`` finds the data.
     if not _provider_or_exists(provider, path):
         return None
     try:
-        return _read_csv_file(path)
+        return _provider_read(provider, path)
     except pl.exceptions.NoDataError:
         return pl.DataFrame()
 
@@ -870,7 +882,7 @@ def _read_p_entity_all_existing_csv(workdir: Path | None,
     back to the raw-existing source path — producing the wrong
     ``p_flow_upper_existing`` / ``p_process_existing_count`` (no
     lifetime-cumulative chain, no handoff state).  Using
-    ``_seed_or_exists`` keeps the chained-CSV path live when the seed
+    the Provider keeps the chained-CSV path live when the seed
     has the frame, and ``_read_csv_file`` then reads from the seed.
     """
     if workdir is None:
@@ -879,7 +891,7 @@ def _read_p_entity_all_existing_csv(workdir: Path | None,
     if not _provider_or_exists(provider, p):
         return None
     try:
-        df = _read_csv_file(p)
+        df = _provider_read(provider, p)
     except Exception:
         return None
     if (df.height == 0 or "entity" not in df.columns
@@ -1222,7 +1234,7 @@ def apply_derived_a(
     # ``p_years_represented_d_calc.csv`` writer; consumed by
     # ``process_outputs.read_parameters`` to scale annualised
     # per-period costs / CO2 to absolute totals.
-    pad = _periodAll_from_source(source, active_solve, workdir, provider=provider)
+    pad = _periodAll_from_source(source, active_solve, workdir=workdir, provider=provider)
     flex_data.p_years_represented_d = p_years_represented_d_from_source(
         source, active_solve, pad)
 
@@ -2027,7 +2039,7 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
     if workdir is not None:
         piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if _provider_or_exists(provider, piu_path):  # Step 1-g-5 — Provider-first
-            piu_df = _read_csv_file(piu_path)
+            piu_df = _provider_read(provider, piu_path)
             if piu_df.height > 0 and "period" in piu_df.columns:
                 pd_lf = (piu_df.lazy()
                             .select(pl.col("period").alias("d"))
@@ -2989,7 +3001,7 @@ def _read_period_first(source: "InputSource",
         p = Path(workdir) / "solve_data" / "period_first.csv"
         if _provider_or_exists(provider, p):  # Phase E-j — seed-aware
             try:
-                df = _read_csv_file(p)
+                df = _provider_read(provider, p)
                 if df.height > 0 and "period" in df.columns:
                     return df["period"].cast(pl.Utf8, strict=False).to_list()
             except Exception:
@@ -3278,7 +3290,7 @@ def _p_years_d_lf(source: "InputSource",
         p = Path(workdir) / "solve_data" / "p_years_d.csv"
         if _provider_or_exists(provider, p):  # Phase E-j — seed-aware
             try:
-                df = _read_csv_file(p)
+                df = _provider_read(provider, p)
                 if df.height > 0 and "period" in df.columns:
                     val_col = ("value" if "value" in df.columns
                                 else df.columns[-1])
@@ -3292,7 +3304,7 @@ def _p_years_d_lf(source: "InputSource",
         p2 = Path(workdir) / "solve_data" / "period_with_history.csv"
         if _provider_or_exists(provider, p2):  # Phase E-j — seed-aware
             try:
-                df = _read_csv_file(p2)
+                df = _provider_read(provider, p2)
                 if df.height > 0 and "period" in df.columns:
                     val_col = ("param" if "param" in df.columns
                                 else df.columns[-1])
@@ -3402,7 +3414,7 @@ def _period_in_use_set(source: "InputSource",
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if _provider_or_exists(provider, p):  # Phase E-j — seed-aware
-            df = _read_csv_file(p)
+            df = _provider_read(provider, p)
             if df.height > 0 and "period" in df.columns:
                 return df["period"].cast(pl.Utf8, strict=False).to_list()
     if active_solve is None:
@@ -5118,7 +5130,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
         pae_path = Path(workdir) / "solve_data" / "p_entity_all_existing.csv"
         if _provider_or_exists(provider, pae_path):  # Phase E-j — seed-aware
             try:
-                df = _read_csv_file(pae_path)
+                df = _provider_read(provider, pae_path)
                 if df.height > 0 and "entity" in df.columns \
                         and "period" in df.columns and "value" in df.columns:
                     df2 = (df.rename({"entity": "e", "period": "d"})
@@ -5577,7 +5589,7 @@ def _expand_branch_periods(period_order: list[str],
         if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
             return list(period_order)
         try:
-            df = _read_csv_file(p)
+            df = _provider_read(provider, p)
         except Exception:
             return list(period_order)
         if df.height == 0:
@@ -5586,7 +5598,7 @@ def _expand_branch_periods(period_order: list[str],
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
             if _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
                 try:
-                    piu = _read_csv_file(piu_path)
+                    piu = _provider_read(provider, piu_path)
                     if piu.height > 0:
                         in_use = set(piu["period"].to_list())
                 except Exception:
@@ -5652,7 +5664,7 @@ def _dt_period_active_steps_from_workdir(
         if not _provider_or_exists(provider, siu_path):  # Phase E-j — seed-aware
             return None
         try:
-            siu_raw = _read_csv_file(siu_path)
+            siu_raw = _provider_read(provider, siu_path)
         except Exception:
             return None
         if siu_raw.height == 0:
@@ -5683,7 +5695,7 @@ def _dt_period_active_steps_from_workdir(
         piu_path = sd / "period_in_use_set.csv"
         if _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
             try:
-                piu_df = _read_csv_file(piu_path)
+                piu_df = _provider_read(provider, piu_path)
                 if piu_df.height > 0 and "period" in piu_df.columns:
                     for d in piu_df["period"].to_list():
                         if d and d not in seen:
@@ -5871,7 +5883,7 @@ def _dt_period_active_steps(source: "InputSource",
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
             if _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
                 try:
-                    piu_df = _read_csv_file(piu_path)
+                    piu_df = _provider_read(provider, piu_path)
                     if piu_df.height > 0:
                         in_use = set(piu_df["period"].to_list())
                 except Exception:
@@ -5880,7 +5892,7 @@ def _dt_period_active_steps(source: "InputSource",
             pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
             if _provider_or_exists(provider, pb_path):  # Phase E-j — seed-aware
                 try:
-                    pbf = _read_csv_file(pb_path)
+                    pbf = _provider_read(provider, pb_path)
                 except Exception:
                     pbf = None
     if pbf is not None and pbf.height > 0:
@@ -5964,7 +5976,7 @@ def _dt_period_active_steps(source: "InputSource",
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
             if _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
                 try:
-                    piu_df = _read_csv_file(piu_path)
+                    piu_df = _provider_read(provider, piu_path)
                     if piu_df.height > 0:
                         canonical = piu_df["period"].to_list()
                 except Exception:
@@ -6089,7 +6101,7 @@ def dtttdt_from_source(source: "InputSource",
         pb_path = Path(workdir) / "solve_data" / "period__branch.csv"
         if _provider_or_exists(provider, pb_path):  # Phase E-j — seed-aware
             try:
-                pbf = _read_csv_file(pb_path)
+                pbf = _provider_read(provider, pb_path)
             except Exception:
                 pbf = None
     if pbf is not None and pbf.height > 0:
@@ -6712,7 +6724,7 @@ def _branch_anchor(branch: str, workdir: Path | None,
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
     try:
-        df = _read_csv_file(p)
+        df = _provider_read(provider, p)
     except Exception:
         return None
     if df.height == 0:
@@ -6889,7 +6901,7 @@ def p_roll_continue_state_from_workdir(workdir: Path | None,
     p = Path(workdir) / "solve_data" / "p_roll_continue_state.csv"
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
-    df = _read_csv_file(p)
+    df = _provider_read(provider, p)
     df.columns = [c.strip() for c in df.columns]
     if df.height == 0:
         return None
@@ -6911,7 +6923,7 @@ def p_fix_storage_quantity_from_workdir(workdir: Path | None,
     p = Path(workdir) / "solve_data" / "fix_storage_quantity.csv"
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
-    df = _read_csv_file(p)
+    df = _provider_read(provider, p)
     if df.height == 0:
         return None
     df = (df.rename({"period": "d", "step": "t", "node": "n",
@@ -6939,7 +6951,7 @@ def dtt_timeline_matching_from_workdir(workdir: Path | None,
     p = Path(workdir) / "solve_data" / "timeline_matching_map.csv"
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
-    df = _read_csv_file(p)
+    df = _provider_read(provider, p)
     if df.height == 0:
         return None
     return (df
@@ -6980,7 +6992,7 @@ def period_branch_from_source(source: "InputSource",
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period__branch.csv"
         if _provider_or_exists(provider, p):  # Phase E-h — seed-aware
-            df = _read_csv_file(p)
+            df = _provider_read(provider, p)
             if df.height > 0:
                 return (df
                         .rename({"period": "d", "branch": "d_upper"})
@@ -7466,10 +7478,13 @@ def _periodAll_from_source(source: "InputSource",
     """
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "periodAll_set.csv"
-        if _provider_or_exists(provider, p):  # Phase E-j — seed-aware
+        df = None
+        if provider is not None and provider.has(_provider_key(p)):
+            df = provider.get(_provider_key(p))
+        elif p.exists():
             df = _read_csv_file(p)
-            if df.height > 0 and "period" in df.columns:
-                return df["period"].cast(pl.Utf8, strict=False).to_list()
+        if df is not None and df.height > 0 and "period" in df.columns:
+            return df["period"].cast(pl.Utf8, strict=False).to_list()
     seen: dict[str, None] = {}
     if active_solve is None:
         return []
@@ -7512,7 +7527,7 @@ def _inflation_yearly_from_source(source: "InputSource",
             ``ops_factor[d] = sum_y pyr[d, y] * (1 + rate)^(-until_ops)``
             When ``sum_y pyr[d, y] == 0`` → factor = 1.0.
     """
-    period_universe = _periodAll_from_source(source, active_solve, workdir, provider=provider)
+    period_universe = _periodAll_from_source(source, active_solve, workdir=workdir, provider=provider)
     if not period_universe:
         return None
     rate, off_inv, off_ops = _solve_inflation_inputs(source)
@@ -7619,7 +7634,7 @@ def _read_handoff_e_d_from_workdir(workdir: Path,
     p = Path(workdir) / "solve_data" / f"{name}.csv"
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
-    df = _read_csv_file(p)
+    df = _provider_read(provider, p)
     if df.height == 0:
         return None
     df = (df.rename({"entity": "e", "period": "d"})
@@ -7642,7 +7657,7 @@ def _read_handoff_e_from_workdir(workdir: Path, name: str,
     p = Path(workdir) / "solve_data" / f"{name}.csv"
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return None
-    df = _read_csv_file(p)
+    df = _provider_read(provider, p)
     if df.height == 0:
         return None
     if value_col is None:
@@ -7999,7 +8014,7 @@ def _read_period_with_history(workdir: Path | None, *, provider: "object | None"
     p = Path(workdir) / "solve_data" / "period_with_history.csv"
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return []
-    df = _read_csv_file(p)
+    df = _provider_read(provider, p)
     if df.height == 0 or "period" not in df.columns:
         return []
     return df["period"].cast(pl.Utf8, strict=False).to_list()
@@ -8341,7 +8356,7 @@ def p_f_d_k_from_source(
     sd = Path(workdir) / "solve_data"
     cwl_path = sd / "commodity_with_ladder.csv"
     if _provider_or_exists(provider, cwl_path):  # Phase E-j — seed-aware (no-op: writer not in expected_basenames)
-        cwl = _read_csv_file(cwl_path)
+        cwl = _provider_read(provider, cwl_path)
         if cwl.height == 0:
             return None
     else:
@@ -8369,7 +8384,7 @@ def p_f_d_k_from_source(
         siu = sd / "steps_in_use.csv"
         if not _provider_or_exists(provider, siu):  # Phase E-j — seed-aware
             return None
-        df = _read_csv_file(siu)
+        df = _provider_read(provider, siu)
         if df.height == 0 or "period" not in df.columns:
             return None
         sum_step = (df.lazy()
@@ -8389,14 +8404,14 @@ def p_f_d_k_from_source(
             csy_path = sd / "complete_period_share_of_year.csv"
         if not _provider_or_exists(provider, csy_path):  # Phase E-j — seed-aware (no-op for non-_calc variant)
             return None
-        csy = (_read_csv_file(csy_path).lazy()
+        csy = (_provider_read(provider, csy_path).lazy()
                   .rename({"period": "d"})
                   .with_columns(pl.col("value").cast(pl.Float64, strict=False)
                                       .alias("share")))
     # ladder_cum_sim_hours — default 0.0 when absent.
     cum_path = sd / "ladder_cum_sim_hours.csv"
     if _provider_or_exists(provider, cum_path):  # Phase E-j — seed-aware
-        cum_raw = _read_csv_file(cum_path)
+        cum_raw = _provider_read(provider, cum_path)
         if cum_raw.height > 0 and "p_ladder_cum_sim_hours" in cum_raw.columns:
             cum_lf = (cum_raw.lazy()
                        .rename({"period": "d",
@@ -8415,7 +8430,7 @@ def p_f_d_k_from_source(
         piu_path = sd / "period_in_use_set.csv"
         if not _provider_or_exists(provider, piu_path):  # Phase E-j — seed-aware
             return None
-        piu_lf = (_read_csv_file(piu_path).lazy()
+        piu_lf = (_provider_read(provider, piu_path).lazy()
                     .rename({"period": "d"})
                     .select("d"))
     out_lf = (piu_lf
@@ -8455,7 +8470,7 @@ def p_ladder_cum_realized_mwh_from_workdir(
     rel_path = Path(workdir) / "solve_data" / "ladder_cum_realized_mwh.csv"
     if not _provider_or_exists(provider, rel_path):  # Phase E-j — seed-aware
         return None
-    raw = _read_csv_file(rel_path)
+    raw = _provider_read(provider, rel_path)
     if raw.height == 0:
         return None
     value_col = ("p_ladder_cum_realized_mwh"
@@ -8779,7 +8794,7 @@ def _read_period_branch_pairs(workdir: Path | None,
     p = Path(workdir) / "solve_data" / "period__branch.csv"
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return []
-    df = _read_csv_file(p)
+    df = _provider_read(provider, p)
     if df.height == 0:
         return []
     cols = df.columns
@@ -8803,7 +8818,7 @@ def _read_solve_branch_weights(workdir: Path | None,
     p = Path(workdir) / "solve_data" / "solve_branch_weight.csv"
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return out
-    df = _read_csv_file(p)
+    df = _provider_read(provider, p)
     if df.height == 0:
         return out
     cols = df.columns
@@ -8832,7 +8847,7 @@ def _read_first_timesteps(workdir: Path | None,
     p = Path(workdir) / "solve_data" / "first_timesteps.csv"
     if not _provider_or_exists(provider, p):  # Phase E-h — seed-aware
         return out
-    df = _read_csv_file(p)
+    df = _provider_read(provider, p)
     if df.height == 0:
         return out
     cols = df.columns

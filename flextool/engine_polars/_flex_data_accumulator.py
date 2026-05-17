@@ -1,125 +1,27 @@
-"""Phase C — per-sub-solve FlexData accumulator.
+"""Per-sub-solve frame capture into :class:`FlexDataProvider`.
 
-This module owns the in-memory carrier that collects the writer-port
-``_write_*`` derived frames during one sub-solve's preprocessing pass.
-Phase D will consume the accumulator as a ``seed`` to ``load_flextool``
-to skip the disk-read path; Phase C only builds the accumulator and
-plumbs it forward — CSV emission is unchanged.
-
-Memory discipline (handoff decision #11)
-----------------------------------------
-
-The accumulator is **per sub-solve only**.  It is built fresh at the
-start of each per-sub-solve preprocessing pass and replaced when the
-next sub-solve runs.  The cascade must NOT accumulate Solution +
-FlexData across sub-solves; the same applies here — there is no
-cascade-wide accumulator dict, only the latest sub-solve's frames.
-
-Design — wrapper-side capture (approach (a) per Phase C handoff)
-----------------------------------------------------------------
+This module owns :func:`capture_frames`, the context manager the cascade
+wraps around its preprocessing pass to monkey-patch every participating
+writer's ``_write(df, path)`` helper so the emitted frame flows into the
+caller-supplied :class:`FlexDataProvider` instead of being written to
+disk.  Outside the context, ``_write`` falls back to its direct-to-disk
+behaviour — that is the path the ``test_writer_port_phase1.py`` byte-
+parity tests exercise.
 
 The 37 ``OK_thin_wrapper`` writers identified in
 ``specs/phase_b_writer_audit.md`` all funnel their derived frames
-through their module's private ``_write(df, path)`` helper before
-emitting the CSV.  We monkey-patch that helper for the duration of
-:class:`FlexDataAccumulator` (and its context-manager partner
-:func:`capture_frames`) so every CSV emission also stashes
-``frames[path.name] = df`` for the sub-solve.
-
-The 103 "special-handling" writers (multi-CSV streamed monoliths and
-``fh.write()`` row-by-row emitters identified in the same audit) are
-left untouched in this phase — Phase C explicitly defers their
-adapters.  Downstream consumers in Phase D will read the missing
-fields from ``load_flextool``'s disk path.
+through their module's private ``_write(df, path)`` helper.  Subsequent
+phases promoted the streamed-writer family into the same canonical
+shape, expanding the set patched by :func:`capture_frames` (see
+:data:`_PATCH_MODULES`).
 """
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
 import polars as pl
-
-
-# ---------------------------------------------------------------------------
-# Phase E-c — CSV-emission gate
-# ---------------------------------------------------------------------------
-#
-# Module-level boolean flag that the 17 writer-port ``_write`` helpers (and
-# their sibling ``path.write_text`` / direct-disk sites) consult before
-# touching disk.  When ``False``, the helpers return early without
-# materialising the CSV; the accumulator hook (the monkey-patch on
-# ``_write`` installed by :func:`capture_frames`) still captures the frame
-# in-memory, because capture happens BEFORE the wrapped real ``_write`` is
-# invoked.
-#
-# Default is ``True`` so legacy / test paths that import a writer
-# directly (the 388-test ``test_writer_port_phase1.py`` byte-parity gate)
-# behave exactly as before.  The cascade flips the flag to ``False`` for
-# the duration of its run (via :func:`csv_emission_disabled`) unless the
-# user passes ``--csv-dump`` on the CLI.
-#
-# Mechanism choice: a plain module-level boolean (not threadlocal, not
-# contextvar).  The cascade is single-threaded and runs synchronously; the
-# context manager save/restore pattern is sufficient.  Tests that
-# need to flip the flag for one assertion use the context manager.
-
-_EMIT_CSVS: bool = True
-
-
-def emit_csvs_enabled() -> bool:
-    """Return ``True`` iff writer ``_write`` helpers should emit CSVs to
-    disk.  Consulted by every writer module's ``_write`` (and any direct
-    ``path.write_text`` site that the cascade routes through).
-    """
-    return _EMIT_CSVS
-
-
-def set_csv_emission(enabled: bool) -> bool:
-    """Set the module-level CSV-emission flag.  Returns the previous value.
-
-    Test fixtures that want to force emission on/off without using the
-    context manager can call this directly (e.g. a pytest fixture's
-    setup/teardown).
-    """
-    global _EMIT_CSVS
-    previous = _EMIT_CSVS
-    _EMIT_CSVS = bool(enabled)
-    return previous
-
-
-@contextlib.contextmanager
-def csv_emission_disabled() -> "Iterator[None]":
-    """Context manager that disables CSV emission for the scope of the
-    block.  Restores the previous value on exit (even on exception).
-
-    The cascade default-mode wraps its preprocessing + post-solve
-    ``dump_csvs`` calls in this context.  When the CLI passes
-    ``--csv-dump``, the cascade skips the wrap and emission stays on.
-    """
-    global _EMIT_CSVS
-    previous = _EMIT_CSVS
-    _EMIT_CSVS = False
-    try:
-        yield
-    finally:
-        _EMIT_CSVS = previous
-
-
-@contextlib.contextmanager
-def csv_emission_enabled() -> "Iterator[None]":
-    """Context manager that forces CSV emission on for the scope of the
-    block.  Used by test fixtures that need byte-parity emission even
-    when the surrounding code disabled it.
-    """
-    global _EMIT_CSVS
-    previous = _EMIT_CSVS
-    _EMIT_CSVS = True
-    try:
-        yield
-    finally:
-        _EMIT_CSVS = previous
 
 
 # ---------------------------------------------------------------------------
@@ -150,129 +52,30 @@ _PATCH_MODULES = (
 
 
 # ---------------------------------------------------------------------------
-# Public dataclass.
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class FlexDataAccumulator:
-    """Per-sub-solve carrier of derived frames keyed by target CSV name.
-
-    Keys are the basename of the path each writer's ``_write`` helper
-    receives (e.g. ``"period_group.csv"`` or
-    ``"entity_lifetime_method.csv"``) — the canonical name the CSV
-    writes to under ``<work>/solve_data/``.  Phase D will map these
-    keys into the equivalent ``FlexData`` fields when wiring the
-    cascade to consume the accumulator instead of re-reading from
-    disk.
-
-    The accumulator is NOT cascade-wide.  It is built fresh at the
-    start of each sub-solve's preprocessing pass and replaced when the
-    next sub-solve runs.  Only the latest sub-solve's frames are
-    retained.
-    """
-
-    solve_name: str | None = None
-    frames: dict[str, pl.DataFrame] = field(default_factory=dict)
-
-    def capture(self, path: Path | str, df: pl.DataFrame) -> None:
-        """Stash a (path.name → frame) pair AND a parent-qualified pair.
-
-        Phase E-d — store TWO keys per capture: the bare basename (for
-        Phase D backward-compatible lookups) and a parent-qualified
-        ``"<parent>/<basename>"`` key (so callers reading the same
-        basename from ``input/`` vs ``solve_data/`` get distinct
-        frames; see ``timeline.csv`` basename collision).  ``lookup``
-        prefers the parent-qualified key when the caller passes a full
-        path; falls back to basename otherwise.
-        """
-        p = Path(path)
-        key = p.name
-        # Clone to insulate accumulated state from any in-place mutation
-        # the writer might do post-_write (none of the 37 thin writers do,
-        # but the clone is cheap insurance — polars clone is a view alias).
-        self.frames[key] = df
-        parent = p.parent.name
-        if parent:
-            self.frames[f"{parent}/{key}"] = df
-
-    # Convenience for tests / Phase-D consumers.
-    def __contains__(self, key: str) -> bool:
-        return key in self.frames
-
-    def get(self, key: str) -> pl.DataFrame | None:
-        return self.frames.get(key)
-
-    def keys(self) -> list[str]:
-        return list(self.frames.keys())
-
-    # ------------------------------------------------------------------
-    # Phase D — seed lookup
-    # ------------------------------------------------------------------
-    def lookup(self, target: "Path | str") -> "pl.DataFrame | None":
-        """Return the captured frame for *target*.
-
-        Phase E-d — prefer the parent-qualified key (``"<parent>/<csv>"``)
-        when *target* is a full ``Path`` so callers reading the same
-        basename from different directories (``input/timeline.csv`` vs
-        ``solve_data/timeline.csv``) get the correct frame.  Falls
-        back to the bare-basename key (Phase D backward compat).
-
-        ``target`` may be a full ``Path`` (``<work>/solve_data/foo.csv``)
-        or a bare basename (``"foo.csv"`` or ``"foo"`` — the ``.csv``
-        suffix is added when missing, to mirror :meth:`CsvSource.get`).
-        """
-        p = Path(target)
-        name = p.name
-        if not name.endswith(".csv"):
-            name = f"{name}.csv"
-        parent = p.parent.name if str(p.parent) != "." else ""
-        if parent:
-            # Caller provided a qualified path — return ONLY the
-            # parent-qualified frame.  Falling back to the bare basename
-            # would silently return the wrong frame when the same
-            # basename lives in two different parents (e.g.
-            # ``input/timeline.csv`` vs ``solve_data/timeline.csv``).
-            return self.frames.get(f"{parent}/{name}")
-        # Bare basename — Phase D backward-compat path.
-        return self.frames.get(name)
-
-
-# ---------------------------------------------------------------------------
-# Context manager — monkey-patches the four writer modules' ``_write``
+# Context manager — monkey-patches the writer modules' ``_write``
 # helper to capture frames into the supplied accumulator.
 # ---------------------------------------------------------------------------
 
 
 @contextlib.contextmanager
 def capture_frames(
-    accumulator: "FlexDataAccumulator | None" = None,
     provider: "object | None" = None,
-) -> Iterator["FlexDataAccumulator | None"]:
-    """Patch the participating writers' ``_write`` helper to mirror every
-    emitted frame into *provider* for the duration of the block.
+) -> Iterator[None]:
+    """Patch the participating writers' ``_write`` helper to push every
+    emitted frame into *provider* for the duration of the block, and
+    SKIP the underlying disk write.
 
-    The 37 ``OK_thin_wrapper`` writers from the Phase B audit each call
-    their module's ``_write(df, path)`` exactly once per emitted CSV.
-    By rebinding that name on each module for the lifetime of this
-    context, every emission also pushes the frame into the Provider
-    under both the bare-basename key and the parent-qualified key
-    (matching the legacy accumulator's dual-key semantics).  Names
-    are stored without the ``.csv`` suffix per the Provider's contract.
+    The wrapped writers populate the Provider exclusively while this
+    context is active — disk emission is the responsibility of
+    :meth:`FlexDataProvider.snapshot_processed_inputs` (the
+    ``--csv-dump`` debug path).  Frames are stored under both the bare
+    basename and the parent-qualified key (``"<parent>/<stem>"``) so
+    callers can disambiguate ``input/`` vs ``solve_data/`` collisions.
 
-    Step 1-f — the in-memory ``FlexDataAccumulator`` carrier is no
-    longer populated by this helper; all downstream readers now consume
-    the Provider (S1-c / S1-d / S1-e migrations).  The *accumulator*
-    argument is retained for call-site stability (callers still pass an
-    accumulator instance during the seed-funnel deprecation window) but
-    is otherwise unused — Step 2 deletes both the argument and the
-    accumulator class.
-
-    The patched ``_write`` still emits the CSV — capture is parallel
-    to disk emission.  CSV byte-identical parity tests stay green; the
-    Provider population is purely additive.
+    Outside this context every writer's ``_write`` falls back to its
+    direct-to-disk behaviour — that is the path the
+    ``test_writer_port_phase1.py`` byte-parity gate exercises.
     """
-    del accumulator  # Step 1-f — argument retained for call-site stability.
     import importlib
 
     modules = [importlib.import_module(name) for name in _PATCH_MODULES]
@@ -280,22 +83,16 @@ def capture_frames(
         (mod, getattr(mod, "_write")) for mod in modules
     ]
     try:
-        for mod, original in saved:
-            def _make_wrapped(_orig=original):  # late-bind per module
+        for mod, _original in saved:
+            def _make_wrapped():
                 def _wrapped(df: pl.DataFrame, path: Path) -> None:
                     if provider is not None:
-                        # Mirror the legacy accumulator's dual-key
-                        # semantics: store the bare basename (without
-                        # ``.csv``) and, when the writer emitted under a
-                        # parent dir, the parent-qualified variant as
-                        # well.  The Provider strips the ``.csv`` suffix
-                        # in ``put``.
                         p = Path(path)
                         provider.put(p.name, df)
                         parent = p.parent.name
                         if parent:
                             provider.put(f"{parent}/{p.name}", df)
-                    _orig(df, path)
+                    # Provider-only — no disk write while capture is active.
                 return _wrapped
             setattr(mod, "_write", _make_wrapped())
         yield None
@@ -305,13 +102,8 @@ def capture_frames(
 
 
 __all__ = [
-    "FlexDataAccumulator",
     "capture_frames",
-    "csv_emission_disabled",
-    "csv_emission_enabled",
-    "emit_csvs_enabled",
     "expected_basenames",
-    "set_csv_emission",
 ]
 
 

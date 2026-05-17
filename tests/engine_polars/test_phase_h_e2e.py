@@ -18,7 +18,7 @@ For each of two representative fixtures (``work_base`` single-solve and
 ``work_5weeks_invest_fullYear_dispatch_coal_wind`` two-solve cascade) we
 exercise the cascade THREE ways and inspect the on-disk bundle:
 
-* **default mode** — ``csv_emission_disabled()`` wraps the cascade
+* **default mode** — ``the in-memory cascade`` wraps the cascade
   exactly the way ``cmd_run_flextool.py:_run_native_solve`` does when
   the user does NOT pass ``--csv-dump``.
 
@@ -39,7 +39,7 @@ exercise the cascade THREE ways and inspect the on-disk bundle:
       the bundle root.
     - Cascade's final objective is captured (used for parity check).
 
-* **--csv-dump mode** — no ``csv_emission_disabled()`` wrap (CSV
+* **--csv-dump mode** — no ``the in-memory cascade`` wrap (CSV
   emission on, the legacy behaviour).  Asserts ``solve_data/`` contains
   the legacy CSV set (sample a handful of basenames), confirms manifest
   + raw parquets, and asserts objective matches the default-mode run
@@ -50,7 +50,7 @@ exercise the cascade THREE ways and inspect the on-disk bundle:
   longer a separate ``run_disk_only`` orchestration.  The test
   documents this with a ``pytest.skip``.
 
-The multi-roll fixture under ``csv_emission_disabled()`` is currently
+The multi-roll fixture under ``the in-memory cascade`` is currently
 broken (Phase H surfaced the regression: ``input.py::_load_process_topology``
 calls ``_read_p_flow_max``, ``_read_unitsize``, and ~30 other helpers
 that use ``if not path.exists(): return None`` — these are NOT
@@ -83,9 +83,6 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars import run_chain_from_db
-from flextool.engine_polars._flex_data_accumulator import (
-    csv_emission_disabled,
-)
 from flextool.engine_polars._parquet_bundle import (
     REGISTRY,
     write_manifest,
@@ -101,7 +98,7 @@ DATA = HERE / "data"
 
 # ---------------------------------------------------------------------------
 # Documented out-of-scope writers — basenames that still emit to
-# ``solve_data/`` under ``csv_emission_disabled()`` because their writer
+# ``solve_data/`` under ``the in-memory cascade`` because their writer
 # path was deliberately NOT gated by Phase E-c / E-d (out-of-scope or
 # post-solve-overwritten basenames).
 # ---------------------------------------------------------------------------
@@ -211,17 +208,29 @@ def _db_or_skip(work_name: str) -> Path:
 
 
 def _run_cascade(db: Path, scen: str, work: Path,
-                 *, csv_disabled: bool):
-    """Helper: drive ``run_chain_from_db`` with or without the gate."""
+                 *, csv_disabled: bool = False, csv_dump: bool | None = None):
+    """Helper: drive ``run_chain_from_db``.
+
+    ``csv_disabled`` is the legacy parameter name retained for source
+    compatibility — when ``True``, csv_dump defaults to False (the new
+    default mode); when ``False``, csv_dump defaults to True (legacy
+    csv-dump mode).  Callers can override via ``csv_dump=``.
+    """
     work.mkdir(parents=True, exist_ok=True)
-    if csv_disabled:
-        with csv_emission_disabled():
-            return run_chain_from_db(
-                db, scenario_name=scen, work_folder=work,
-            )
-    return run_chain_from_db(
-        db, scenario_name=scen, work_folder=work,
+    if csv_dump is None:
+        csv_dump = not csv_disabled
+    sols = run_chain_from_db(
+        db, scenario_name=scen, work_folder=work, csv_dump=csv_dump,
     )
+    # Mirror the ``--csv-dump`` cmd_run_flextool path: snapshot the
+    # last sub-solve's Provider so the on-disk surface mirrors what the
+    # CLI produces.
+    if csv_dump and sols:
+        last = next(reversed(list(sols.values())))
+        provider = getattr(last, "flex_data_provider", None)
+        if provider is not None:
+            provider.snapshot_processed_inputs(work)
+    return sols
 
 
 def _final_objective(sols) -> float:
@@ -327,7 +336,7 @@ def _assert_no_cross_solve_csvs(work: Path) -> None:
     csvs = sorted(p.name for p in cs.glob("*.csv"))
     assert not csvs, (
         f"Phase H default-mode regression: cross_solve/ contains CSVs "
-        f"under csv_emission_disabled() — Phase E-d migrated the cross-"
+        f"under the in-memory cascade — Phase E-d migrated the cross-"
         f"solve carriers to in-memory state.cross_solve_carriers.  "
         f"Unexpected files: {csvs}"
     )
@@ -341,7 +350,7 @@ def _output_raw_parquets(work: Path) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
-# Default-mode invariants (csv_emission_disabled).
+# Default-mode invariants (in-memory cascade).
 # ---------------------------------------------------------------------------
 
 

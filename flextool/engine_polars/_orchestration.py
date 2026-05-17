@@ -329,12 +329,13 @@ class OrchestrationStep:
         same ``keep_solutions`` gating as ``solution`` (Phase C.5):
         only the LAST step retains ``flex_data`` by default.  ``None``
         on the failed-load path.
-    flex_data_accumulator : FlexDataAccumulator | None
-        Phase C — the per-sub-solve writer-frame accumulator captured
-        during this iteration's preprocessing.  Subject to the same
-        ``keep_solutions`` gating as ``solution`` / ``flex_data``
-        (Phase C.5): only the LAST step retains it by default.
-        Phase D wires this as the ``seed=`` arg to ``load_flextool``.
+    flex_data_provider : FlexDataProvider | None
+        The per-sub-solve :class:`FlexDataProvider` populated by the
+        cascade's writers.  Subject to the same ``keep_solutions``
+        gating as ``solution`` / ``flex_data`` (Phase C.5): only the
+        LAST step retains it by default.  Consumed by ``--csv-dump``
+        in ``cmd_run_flextool`` to snapshot the cascade's derived
+        frames to disk.
     """
 
     solve_name: str
@@ -344,7 +345,7 @@ class OrchestrationStep:
     optimal: bool | None = None
     warm_used: bool = False
     flex_data: "FlexData | None" = None
-    flex_data_accumulator: "object | None" = None
+    flex_data_provider: "object | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +469,7 @@ def run_orchestration(
     scenario_name: str | None = None,
     warm: bool = False,
     keep_solutions: bool = False,
+    csv_dump: bool = False,
 ) -> dict[str, OrchestrationStep]:
     """Drive the master loop natively.
 
@@ -543,6 +545,10 @@ def run_orchestration(
     # Always enable in-memory handoff for the native path.
     if state.handoffs is None:
         state.handoffs = {}
+
+    # Stash the ``csv_dump`` flag on the state so per-iter sites in
+    # ``_drive_cascade`` can consult it (gates ``data.dump_csvs``).
+    state.csv_dump = bool(csv_dump)  # type: ignore[attr-defined]
 
     # The cascade solver runs flexpy on each solve and captures the
     # handoff.  We use flextool's orchestration loop driver because it
@@ -1012,36 +1018,13 @@ def _drive_cascade(
                 return 1
 
             prior = prior_for_load
-            # Δ.30 — materialise FlexData to flextool's CSV layout so
-            # handoff_writers + downstream wide-format CSV/parquet
-            # writers find their inputs.  Idempotent / overwrites; the
-            # legacy preprocessing already wrote most of these but
-            # dump_csvs ensures the in-memory canonical wins, keeping
-            # FlexData → CSV in sync per solve.
-            #
-            # The seven largest CSVs (``p_flow_max.csv``,
-            # ``pdtProcess__source__sink__dt_varCost.csv``,
-            # ``pdtProcess_slope.csv``, ``pdtProcess.csv``,
-            # ``pdtNode.csv``, ``pdtNodeInflow.csv``, ``ptNode_inflow.csv``)
-            # are SKIPPED by default — they're not consumed by
-            # ``process_outputs/`` or ``plot_outputs/`` post-processing,
-            # only by legacy CSV-roundtrip readers.  Set
-            # ``FLEXTOOL_DUMP_CSVS=1`` to restore the full debug-oracle
-            # dump (all ~50 files) for diff-ing.
+            # ``--csv-dump``: gate ``data.dump_csvs`` behind the
+            # orchestrator-level ``csv_dump`` flag.  In default mode the
+            # cascade stays in-memory; ``--csv-dump`` materialises the
+            # full FlexData → CSV snapshot for debug.
             _t_dump_start = time.perf_counter() if _phase_timing else 0.0
-            # Phase E-c — gate post-solve ``dump_csvs`` behind the same
-            # emit_csvs_enabled() flag the writer ``_write`` helpers
-            # consult.  When the cascade runs in default (in-memory) mode
-            # this short-circuits: FlexData is the canonical handoff
-            # carrier in-memory, so re-materialising it to disk would
-            # only re-create the very CSVs we suppressed in the
-            # preprocessing pass.  ``--csv-dump`` flips the flag on and
-            # restores the legacy debug-oracle dump.
-            from flextool.engine_polars._flex_data_accumulator import (
-                emit_csvs_enabled as _emit_csvs_enabled,
-            )
             try:
-                if _emit_csvs_enabled():
+                if getattr(self.state, "csv_dump", False):
                     data.dump_csvs(self.state.paths.work_folder)
             except Exception as exc:  # noqa: BLE001
                 self.state.logger.warning(
@@ -1173,12 +1156,6 @@ def _drive_cascade(
                 self.state.paths.work_folder, complete_solve_name,
                 provider=getattr(self.state, "current_provider", None),
             )
-            # Step 1-f — the in-memory accumulator is no longer
-            # populated; the per-sub-solve Provider replaced it as the
-            # cascade's data carrier.  ``OrchestrationStep`` retains
-            # ``flex_data_accumulator`` as a transitional field until
-            # Step 2 deletes the accumulator class entirely; for now we
-            # leave it None on every step.
             self._all_steps[step_key] = OrchestrationStep(
                 solve_name=step_key,
                 solution=sol,
@@ -1187,7 +1164,9 @@ def _drive_cascade(
                 optimal=bool(getattr(sol, "optimal", False)) if sol is not None else None,
                 warm_used=warm_used,
                 flex_data=data,
-                flex_data_accumulator=None,
+                flex_data_provider=getattr(
+                    self.state, "current_provider", None,
+                ),
             )
             if _phase_timing:
                 _tr.record(
@@ -1227,18 +1206,10 @@ def _drive_cascade(
     state.handoffs = runner.state.handoffs
 
     # Phase C.5 — slim every step except the LAST, releasing the heaviest
-    # per-step state (Solution + FlexData + FlexDataAccumulator) once
+    # per-step state (Solution + FlexData + FlexDataProvider) once
     # downstream consumers (handoff extraction, raw-output write) have
     # run for that sub-solve.  ``keep_solutions=True`` opts out — used
-    # by tests that need per-step ``solution`` / ``flex_data`` access
-    # (e.g. ``tests/engine_polars/test_orchestration_parity.py`` parity
-    # sweeps, ``tests/engine_polars/test_warm_chain_runner.py``).
-    # Iteration order is the dict's insertion order: flextool's master
-    # loop appends one sub-solve at a time, so the last inserted key is
-    # the last cascade step — except for nested-cascade scenarios where
-    # an outer solve may close after its inner rolls, but the *retained*
-    # full-state step is still the last one consumers care about.  See
-    # cmd_run_flextool.py:540 (last_step.flex_data + last_step.solution).
+    # by tests that need per-step ``solution`` / ``flex_data`` access.
     if not keep_solutions and results:
         last_key = next(reversed(results))
         for k, step in results.items():
@@ -1246,7 +1217,7 @@ def _drive_cascade(
                 continue
             step.solution = None
             step.flex_data = None
-            step.flex_data_accumulator = None
+            step.flex_data_provider = None
         # Free the HiGHS heap once the per-step references are gone.
         # Cheap and a no-op on non-glibc.
         _try_malloc_trim()
@@ -1268,6 +1239,7 @@ def run_chain_from_db(
     logger: logging.Logger | None = None,
     warm: bool = False,
     keep_solutions: bool = False,
+    csv_dump: bool = False,
 ) -> dict[str, OrchestrationStep]:
     """Run a flextool multi-solve scenario end-to-end natively.
 
@@ -1309,7 +1281,7 @@ def run_chain_from_db(
     keep_solutions : bool, default False
         Phase C.5 — when False (default), only the LAST step in the
         returned dict retains ``solution`` / ``flex_data`` /
-        ``flex_data_accumulator``; earlier steps clear those slots to
+        ``flex_data_provider``; earlier steps clear those slots to
         release the HiGHS instance + variable arrays + writer-frame
         snapshot for that sub-solve.  All slim fields (``solve_name``,
         ``obj``, ``optimal``, ``warm_used``, ``handoff``) remain
@@ -1451,7 +1423,7 @@ def run_chain_from_db(
     return run_orchestration(
         state, work_folder, runner_factory=_runner_factory,
         db_url=db_url, scenario_name=scenario_name, warm=warm,
-        keep_solutions=keep_solutions,
+        keep_solutions=keep_solutions, csv_dump=csv_dump,
     )
 
 
@@ -1641,18 +1613,12 @@ def run_single_solve_from_db(
         # p_commodity.csv, …) find their inputs.  Without this only
         # output_raw is produced; output_csv / output_parquet / etc. fail.
         #
-        # Phase E-c — gate behind the same ``emit_csvs_enabled`` flag the
-        # writer ``_write`` helpers respect.  ``run_single_solve_from_db``
-        # is invoked only by the ``--fast-single-solve`` CLI path, which
-        # never combines with ``--csv-dump=off`` in production (output
-        # writers downstream of this still read from disk).  The check is
-        # defensive so a future caller that suppresses emission and
-        # consumes only ``output_raw/*.parquet`` doesn't trip a write.
-        from flextool.engine_polars._flex_data_accumulator import (
-            emit_csvs_enabled as _emit_csvs_enabled,
-        )
-        if _emit_csvs_enabled():
-            flex_data.dump_csvs(work_folder)
+        # ``run_single_solve_from_db`` always dumps ``flex_data`` to disk
+        # — the downstream output writers in this path read CSVs back
+        # from ``solve_data/``.  This is independent of ``--csv-dump``;
+        # the fast single-solve path does not use the streaming
+        # in-memory cascade.
+        flex_data.dump_csvs(work_folder)
         write_output_support_csvs(
             flex_data, work_folder, solve_name=scenario_name,
         )

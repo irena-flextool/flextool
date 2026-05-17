@@ -129,57 +129,72 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
     if scenario_name:
         timing_recorder.set_scenario(scenario_name)
 
-    # Phase E-c — by default, run the cascade with CSV emission disabled.
-    # The ``--csv-dump`` CLI flag flips it back on for debug visibility.
-    # The context manager is a no-op (yields immediately) when emission
-    # stays on, so this wrap is unconditional.
-    import contextlib as _ctxlib
-    from flextool.engine_polars._flex_data_accumulator import (
-        csv_emission_disabled,
-    )
+    # ``--csv-dump`` is a one-way debug snapshot from the live
+    # FlexDataProvider: when on, the cascade dumps both
+    # ``flex_data.dump_csvs(work_folder)`` (per-solve) and the Provider's
+    # captured derived frames (post-cascade snapshot below).  When off
+    # the cascade runs purely in-memory — no CSVs hit
+    # ``solve_data/`` from the writer-port modules.
     csv_dump_on = bool(getattr(args, 'csv_dump', False))
-    _emit_ctx = _ctxlib.nullcontext() if csv_dump_on else csv_emission_disabled()
-    with _emit_ctx:
 
-        # Δ.25 fast single-solve dispatch.
-        if getattr(args, 'fast_single_solve', False):
-            from flextool.engine_polars import run_single_solve_from_db
-            if not scenario_name:
-                logging.error(
-                    "--fast-single-solve requires --scenario-name "
-                    "(the fast path doesn't auto-pick scenarios)."
-                )
-                return 1, None
-            t_solve_start = time.perf_counter()
-            step = run_single_solve_from_db(
-                args.input_db_url,
-                scenario_name,
-                work_folder=work_folder,
+    # Δ.25 fast single-solve dispatch.
+    if getattr(args, 'fast_single_solve', False):
+        from flextool.engine_polars import run_single_solve_from_db
+        if not scenario_name:
+            logging.error(
+                "--fast-single-solve requires --scenario-name "
+                "(the fast path doesn't auto-pick scenarios)."
             )
-            all_solves_seconds = time.perf_counter() - t_solve_start
-            print("--- Fast single-solve time %.4s seconds ---" % all_solves_seconds)
-            timing_recorder.record('all_solves', seconds=all_solves_seconds,
-                                   t_start=t_solve_start)
-            if not step.optimal:
-                logging.error(
-                    "Fast single-solve: non-optimal (status=%r).",
-                    getattr(step.solution, "status", None)
-                    if step.solution else None,
-                )
-                return 1, step
-            return 0, step
-
-        from flextool.engine_polars import run_chain_from_db
-
-        # Drive the native cascade end-to-end.  ``run_chain_from_db``
-        # handles flextool's preprocessing (write_input) AND the per-solve
-        # LP build+solve+handoff loop in-process.
+            return 1, None
         t_solve_start = time.perf_counter()
-        steps = run_chain_from_db(
+        step = run_single_solve_from_db(
             args.input_db_url,
             scenario_name,
             work_folder=work_folder,
         )
+        all_solves_seconds = time.perf_counter() - t_solve_start
+        print("--- Fast single-solve time %.4s seconds ---" % all_solves_seconds)
+        timing_recorder.record('all_solves', seconds=all_solves_seconds,
+                               t_start=t_solve_start)
+        if not step.optimal:
+            logging.error(
+                "Fast single-solve: non-optimal (status=%r).",
+                getattr(step.solution, "status", None)
+                if step.solution else None,
+            )
+            return 1, step
+        return 0, step
+
+    from flextool.engine_polars import run_chain_from_db
+
+    # Drive the native cascade end-to-end.  ``run_chain_from_db``
+    # handles flextool's preprocessing (write_input) AND the per-solve
+    # LP build+solve+handoff loop in-process.
+    t_solve_start = time.perf_counter()
+    steps = run_chain_from_db(
+        args.input_db_url,
+        scenario_name,
+        work_folder=work_folder,
+        csv_dump=csv_dump_on,
+    )
+
+    # ``--csv-dump``: snapshot the last sub-solve's Provider to disk.
+    # The Provider holds every derived frame the cascade's writers
+    # produced; ``snapshot_processed_inputs`` writes them under
+    # ``work_folder`` mirroring the cascade's parent-qualified key
+    # layout.  This is a debug oracle; the cascade itself reads only
+    # from the in-memory Provider.
+    if csv_dump_on and steps:
+        last_step = next(reversed(list(steps.values())))
+        provider = getattr(last_step, "flex_data_provider", None)
+        if provider is not None:
+            try:
+                provider.snapshot_processed_inputs(work_folder)
+            except Exception as exc:  # noqa: BLE001
+                logging.warning(
+                    "--csv-dump: snapshot_processed_inputs failed: %s", exc,
+                )
+
     all_solves_seconds = time.perf_counter() - t_solve_start
     print("--- All Flextool solves time %.4s seconds ---" % all_solves_seconds)
     timing_recorder.record('all_solves', seconds=all_solves_seconds,

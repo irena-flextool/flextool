@@ -147,28 +147,33 @@ class FlexDataProvider:
         return self._frames.items()
 
     # ------------------------------------------------------------------
-    # Snapshot stubs — implemented in Step 2 when ``--csv-dump`` is
-    # rewired to dump from the live Provider rather than from the seed
-    # funnel / direct writer emission.
+    # Snapshot — one-way disk dumps for ``--csv-dump`` debug runs.
     # ------------------------------------------------------------------
 
-    # TODO Step 2: dump raw input frames the Provider received from
-    # the source DB (pre-preprocessing).
     def snapshot_raw_inputs(self, work_folder: Path) -> None:
         """Write raw input frames to *work_folder*.
 
-        Step 1 stub — implemented in Step 2.  See the handoff doc.
+        Currently a no-op — the Provider populates with *derived* /
+        processed frames during the cascade; "raw inputs" don't have a
+        well-defined separate carrier in the current pipeline.  Left as
+        a deliberate stub so the contract surface stays stable; revisit
+        if a real raw-input snapshot becomes useful.
         """
         pass
 
-    # TODO Step 2: dump derived / processed frames the writers populated
-    # into the Provider during the cascade.
     def snapshot_processed_inputs(self, work_folder: Path) -> None:
-        """Write processed (derived) frames to *work_folder*.
+        """Write every stored frame to ``work_folder/{name}.csv``.
 
-        Step 1 stub — implemented in Step 2.  See the handoff doc.
+        Bare-keyed frames go directly under *work_folder*; parent-qualified
+        keys (``"solve_data/foo"``) materialise into subdirectories
+        (``work_folder/solve_data/foo.csv``).
         """
-        pass
+        work_folder = Path(work_folder)
+        work_folder.mkdir(parents=True, exist_ok=True)
+        for name, frame in self._frames.items():
+            target = work_folder / f"{name}.csv"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            frame.write_csv(target)
 
 
 __all__ = ["FlexDataProvider"]

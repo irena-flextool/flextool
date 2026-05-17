@@ -404,7 +404,7 @@ def _load_realized_set(
     if realized_dispatch_csv is None:
         return None
     path = Path(realized_dispatch_csv)
-    # Step 1-e — Provider-aware: under csv_emission_disabled() the file
+    # Step 1-e — Provider-aware: under the in-memory cascade the file
     # isn't on disk but the per-sub-solve Provider has the frame.  The
     # transitional seed-funnel fallback in :func:`_provider_lookup`
     # keeps unplumbed callers working during the dual-write window.
@@ -1695,7 +1695,7 @@ def _actual_solve_name(work_folder: Path, fallback: str,
     with phase 3's.
     """
     path = work_folder / "solve_data" / "solve_current.csv"
-    # Step 1-e — Provider-aware: under csv_emission_disabled() the file
+    # Step 1-e — Provider-aware: under the in-memory cascade the file
     # isn't on disk, but the per-sub-solve Provider has the frame.  The
     # transitional seed-funnel fallback in :func:`_provider_lookup`
     # keeps unplumbed callers working during the dual-write window.

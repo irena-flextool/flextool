@@ -808,7 +808,7 @@ def write_p_entity_period_existing_capacity(
         provider=provider,
     ) or set()
     if first_solve:
-        # Step 1-e — Provider-aware: under csv_emission_disabled() the
+        # Step 1-e — Provider-aware: under the in-memory cascade the
         # files aren't on disk but the per-sub-solve Provider has the
         # frames.  Transitional seed-funnel fallback for unplumbed
         # callsites lives in :func:`_provider_lookup_df` below.

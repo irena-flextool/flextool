@@ -5028,7 +5028,7 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
     # solve_data/edd_history.csv ∩ ed_history_realized.
     # Mirrors flextool/preprocessing/entity_period_calc_params.py:1525-1543.
     # Phase E-g — seed-aware existence check so the overlay still fires
-    # when the cascade runs under ``csv_emission_disabled()`` (the per-
+    # when the cascade runs under ``the in-memory cascade`` (the per-
     # sub-solve accumulator carries ``edd_history.csv`` in memory even
     # when the disk file is suppressed).
     if (handoff.realized_invest is not None

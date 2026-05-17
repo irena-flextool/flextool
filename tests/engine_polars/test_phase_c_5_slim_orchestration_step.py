@@ -1,7 +1,7 @@
 """Phase C.5 — slim ``OrchestrationStep`` memory-discipline contract.
 
 The cascade default (``keep_solutions=False``) holds full per-step
-state — ``solution`` + ``flex_data`` + ``flex_data_accumulator`` —
+state — ``solution`` + ``flex_data`` + ``flex_data_provider`` —
 ONLY on the LAST step.  Earlier steps store slim summary fields
 (``solve_name``, ``obj``, ``optimal``, ``warm_used``, ``handoff``)
 and clear the heavy slots to release the per-sub-solve HiGHS
@@ -56,7 +56,7 @@ def _common_slim_fields_populated(step) -> None:
 
 def test_slim_default_releases_per_step_state(tmp_path: Path) -> None:
     """Default ``keep_solutions=False`` keeps ``solution`` / ``flex_data``
-    / ``flex_data_accumulator`` ONLY on the LAST step; clears them on
+    / ``flex_data_provider`` ONLY on the LAST step; clears them on
     earlier steps to release memory.
     """
     db = _db_or_skip()
@@ -85,13 +85,14 @@ def test_slim_default_releases_per_step_state(tmp_path: Path) -> None:
             f"slim cascade must release step.flex_data on non-last step "
             f"{k!r}"
         )
-        assert step.flex_data_accumulator is None, (
-            f"slim cascade must release step.flex_data_accumulator on "
+        assert step.flex_data_provider is None, (
+            f"slim cascade must release step.flex_data_provider on "
             f"non-last step {k!r}"
         )
 
     # The last step keeps the heavy slots — cmd_run_flextool reads
-    # last_step.flex_data + last_step.solution for write_outputs.
+    # last_step.flex_data + last_step.solution for write_outputs and
+    # last_step.flex_data_provider for ``--csv-dump`` snapshot.
     last = sols[last_key]
     assert last.solution is not None, (
         "last step must retain solution under slim default "
@@ -101,17 +102,15 @@ def test_slim_default_releases_per_step_state(tmp_path: Path) -> None:
         "last step must retain flex_data under slim default "
         "(cmd_run_flextool depends on this)"
     )
-    # Step 1-f — ``flex_data_accumulator`` is no longer populated by the
-    # cascade (the per-sub-solve Provider replaced it).  Step 2 deletes
-    # the field outright; for now it stays ``None`` on every step.
-    assert last.flex_data_accumulator is None, (
-        "Step 1-f — flex_data_accumulator must be None (replaced by Provider)"
+    assert last.flex_data_provider is not None, (
+        "last step must retain flex_data_provider for the "
+        "``--csv-dump`` debug snapshot path"
     )
 
 
 def test_keep_solutions_true_retains_every_step(tmp_path: Path) -> None:
     """``keep_solutions=True`` retains ``solution`` / ``flex_data`` /
-    ``flex_data_accumulator`` on EVERY step — used by tests that need
+    ``flex_data_provider`` on EVERY step — used by tests that need
     per-step parity / debug access.
     """
     db = _db_or_skip()
@@ -131,9 +130,7 @@ def test_keep_solutions_true_retains_every_step(tmp_path: Path) -> None:
             f"keep_solutions=True must retain step.flex_data on every "
             f"step; missing on {k!r}"
         )
-        # Step 1-f — Provider replaced the accumulator; the field is
-        # always None pending Step 2 deletion.
-        assert step.flex_data_accumulator is None, (
-            f"Step 1-f — flex_data_accumulator must be None (Provider "
-            f"replaced it); got non-None on {k!r}"
+        assert step.flex_data_provider is not None, (
+            f"keep_solutions=True must retain step.flex_data_provider "
+            f"on every step; missing on {k!r}"
         )

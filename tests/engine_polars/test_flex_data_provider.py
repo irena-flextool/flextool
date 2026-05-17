@@ -84,7 +84,7 @@ def test_keys_lists_stored_names_without_csv_suffix():
 def test_bare_put_resolves_qualified_get():
     """``put('p_flow_max', df)`` then ``get('solve_data/p_flow_max')``
     returns the same frame.  Mirrors the seed funnel's
-    ``_seed_or_pick``-style behaviour: callers that pass a qualified
+    the Provider-style behaviour: callers that pass a qualified
     path fall back to the bare basename when only that was stashed.
     """
     p = FlexDataProvider()
@@ -138,7 +138,7 @@ def test_two_qualified_puts_keep_distinct_frames():
 def test_bare_get_finds_first_qualified_match():
     """When only qualified puts exist, a bare ``get`` returns the
     first stored match (insertion order).  This is the
-    ``_seed_or_pick``-flavoured permissive fallback used by callers
+    the Provider-flavoured permissive fallback used by callers
     that haven't been migrated to qualified lookups yet.
     """
     p = FlexDataProvider()
@@ -161,20 +161,26 @@ def test_snapshot_raw_inputs_callable_noop(tmp_path: Path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_snapshot_processed_inputs_callable_noop(tmp_path: Path):
+def test_snapshot_processed_inputs_dumps_every_frame(tmp_path: Path):
     p = FlexDataProvider()
     p.put("p_flow_max", _df())
+    p.put("solve_data/realized_invest", _df())
     p.snapshot_processed_inputs(tmp_path)
-    assert list(tmp_path.iterdir()) == []
+    # Bare-keyed frames land at the top level; parent-qualified keys go
+    # into the matching subdirectory.
+    assert (tmp_path / "p_flow_max.csv").exists()
+    assert (tmp_path / "solve_data" / "realized_invest.csv").exists()
 
 
 def test_snapshot_methods_accept_nonexistent_path_without_raising(
     tmp_path: Path,
 ):
-    """Stubs should not blow up on a path that does not yet exist —
-    Step 2 will materialise the directory inside the snapshot impls.
-    """
+    """Snapshots create the destination directory as needed."""
     p = FlexDataProvider()
     target = tmp_path / "does_not_exist_yet"
+    # raw_inputs is a deliberate stub; processed_inputs writes the
+    # frames + materialises the directory.
     p.snapshot_raw_inputs(target)
+    p.put("p_flow_max", _df())
     p.snapshot_processed_inputs(target)
+    assert (target / "p_flow_max.csv").exists()

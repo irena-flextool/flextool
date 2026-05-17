@@ -69,16 +69,7 @@ from flextool.flextoolrunner.scaling import (
 from flextool.flextoolrunner.scaling_report import write_scaling_report
 from flextool.flextoolrunner import solve_writers
 
-# Step 1-f — :class:`FlexDataAccumulator` is no longer populated by the
-# cascade; the per-sub-solve :class:`FlexDataProvider` is the sole
-# in-memory carrier.  The accumulator class survives transitionally so
-# the seed-funnel install/restore boilerplate in :mod:`_orchestration`
-# has a typed inert object to install (Step 2 deletes the accumulator
-# class and the seed funnel together).
-from flextool.engine_polars._flex_data_accumulator import (
-    FlexDataAccumulator,
-    capture_frames,
-)
+from flextool.engine_polars._flex_data_accumulator import capture_frames
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
 
 # Native solve-tree expansion + stochastic branching + timeline helpers.
@@ -428,15 +419,13 @@ def native_run_model(state, solver) -> int:
                     )
                     current_periods.add(history_period)
 
-        # Step 1-f — per-sub-solve Provider.  Writers populate this via
-        # ``capture_frames(..., provider=...)``; the Provider is the sole
-        # in-memory carrier across the cascade (the legacy
-        # :class:`FlexDataAccumulator` is no longer populated — Step 2
-        # deletes the class outright).  The Provider is pre-seeded from
-        # the cascade-input frames, the cross-sub-solve carriers
-        # (rolling-cascade fix_storage_* propagation), and the
-        # nesting-parent archive so the data-flow surface is identical
-        # to the legacy disk-based handoff.
+        # Per-sub-solve Provider.  Writers populate this via
+        # ``capture_frames(provider=...)``; the Provider is the sole
+        # in-memory carrier across the cascade.  Pre-seeded from the
+        # cascade-input frames, the cross-sub-solve carriers (rolling-
+        # cascade fix_storage_* propagation), and the nesting-parent
+        # archive so the data-flow surface is identical to the legacy
+        # disk-based handoff.
         sub_solve_provider = FlexDataProvider()
         # Seed cascade-wide ``input/*.csv`` frames so per-iter readers
         # find them via ``provider.get`` (e.g. ``input/timesets_in_use.csv``).

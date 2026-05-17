@@ -247,7 +247,7 @@ def write_outputs_for_solve(
     realized_dispatch_csv = sd / "realized_dispatch.csv"
     realized_periods_csv = sd / "realized_invest_periods_of_current_solve.csv"
 
-    # Step 1-d — Provider-aware existence: under csv_emission_disabled() the
+    # Step 1-d — Provider-aware existence: under the in-memory cascade the
     # file isn't on disk but the per-sub-solve Provider has the frame.  Falls
     # back to a plain disk check when no Provider is supplied (e.g. tests
     # that synthesize a Solution without a cascade Provider).
