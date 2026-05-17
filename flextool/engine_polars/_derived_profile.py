@@ -74,6 +74,27 @@ import polars as pl
 from polar_high import Param
 
 from ._input_source import _read_csv_file
+from ._writer_provider_io import _provider_key
+
+
+def _provider_has_or_exists(provider, path: "Path") -> bool:
+    """Step 1-g-5 — Provider-first existence check used by the
+    profile cascade's CSV-fallback branches."""
+    if provider is not None and provider.has(_provider_key(path)):
+        return True
+    return path.exists()
+
+
+def _provider_or_read_csv(provider, path: "Path") -> "pl.DataFrame":
+    """Step 1-g-5 — Provider-first read used by the profile cascade.
+
+    Returns the Provider frame when present, otherwise falls back to a
+    plain disk read.  Mirrors :func:`._writer_provider_io._provider_open`
+    semantics in DataFrame form.
+    """
+    if provider is not None and provider.has(_provider_key(path)):
+        return provider.get(_provider_key(path))
+    return _read_csv_file(path)
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -198,6 +219,8 @@ def _profile_time_lf(source: "InputSource",
                           dt_lf: pl.LazyFrame,
                           time_profiles: list[str],
                           workdir: Path | None = None,
+                          *,
+                          provider: "object | None" = None,
                           ) -> pl.LazyFrame:
     """Lazy ``[f, d, t, value]`` for time-axis profiles.
 
@@ -225,9 +248,10 @@ def _profile_time_lf(source: "InputSource",
     # Prefer per-solve averaged CSV when the runner has produced it.
     if workdir is not None:
         csv_path = Path(workdir) / "solve_data" / "pt_profile.csv"
-        if csv_path.exists():
+        if _provider_has_or_exists(provider, csv_path):
             try:
-                csv_lf = (pl.scan_csv(csv_path)
+                csv_df = _provider_or_read_csv(provider, csv_path)
+                csv_lf = (csv_df.lazy()
                           .filter(pl.col("profile").is_in(time_profiles))
                           .select(
                               pl.col("profile").cast(pl.Utf8).alias("f"),
@@ -397,6 +421,8 @@ def _profile_scalar_lf(source: "InputSource",
 
 def _profile_stochastic_lf(workdir: Path | None,
                                 stoch_profiles: list[str],
+                                *,
+                                provider: "object | None" = None,
                                 ) -> pl.LazyFrame:
     """Lazy ``[f, d, t, value]`` for stochastic 3d_map profiles.
 
@@ -428,12 +454,12 @@ def _profile_stochastic_lf(workdir: Path | None,
 
     # Read pbt_profile.csv: (profile, branch, time_start, time, pbt_profile).
     pbt_path = inp / "pbt_profile.csv"
-    if not pbt_path.exists():
+    if not _provider_has_or_exists(provider, pbt_path):
         return pl.LazyFrame(schema={
             "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
         })
     try:
-        pbt = _read_csv_file(pbt_path)
+        pbt = _provider_or_read_csv(provider, pbt_path)
     except Exception:
         return pl.LazyFrame(schema={
             "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
@@ -453,13 +479,15 @@ def _profile_stochastic_lf(workdir: Path | None,
     )
 
     # Read per-solve scaffolding.
-    pe_for_d = _read_pairs(sd / "period__branch.csv", "branch", "period")
+    pe_for_d = _read_pairs(sd / "period__branch.csv", "branch", "period",
+                             provider=provider)
     tb_for_d = _read_pairs(sd / "solve_branch__time_branch.csv",
-                                    "period", "branch")
-    ts_for_d = _read_pairs(sd / "first_timesteps.csv", "period", "step")
+                                    "period", "branch", provider=provider)
+    ts_for_d = _read_pairs(sd / "first_timesteps.csv", "period", "step",
+                             provider=provider)
 
     # Stochastic UNION gate per profile.
-    stoch_set = _read_stoch_profiles(inp)
+    stoch_set = _read_stoch_profiles(inp, provider=provider)
     stoch_active = [p for p in stoch_profiles if p in stoch_set]
 
     # Branch 1: stochastic UNION fold.
@@ -527,16 +555,21 @@ def _profile_stochastic_lf(workdir: Path | None,
               .select("f", "d", "t", "value"))
 
 
-def _read_pairs(path: Path, key_col: str, val_col: str
+def _read_pairs(path: Path, key_col: str, val_col: str,
+                  *, provider: "object | None" = None,
                   ) -> dict[str, list[str]]:
     """Read a 2-col CSV into ``{key: [val, …]}``.  Empty / missing →
     ``{}``.
     """
-    if not path.exists():
+    if not _provider_has_or_exists(provider, path):
         return {}
     out: dict[str, list[str]] = {}
     try:
-        with path.open() as fh:
+        from ._writer_provider_io import _provider_open
+        fh_ctx = _provider_open(provider, _provider_key(path), path)
+        if fh_ctx is None:
+            return {}
+        with fh_ctx as fh:
             reader = csv.reader(fh)
             header = next(reader, None)
             if header is None:
@@ -558,16 +591,18 @@ def _read_pairs(path: Path, key_col: str, val_col: str
     return out
 
 
-def _read_stoch_profiles(inp: Path) -> set[str]:
+def _read_stoch_profiles(inp: Path,
+                            *,
+                            provider: "object | None" = None) -> set[str]:
     """Return the set of profile names referenced by stochastic
     relationships.  Mirrors
     ``entity_period_calc_params.py:852-899``.
     """
     groups_stoch: set[str] = set()
     p = inp / "groupIncludeStochastics.csv"
-    if p.exists():
+    if _provider_has_or_exists(provider, p):
         try:
-            df = _read_csv_file(p)
+            df = _provider_or_read_csv(provider, p)
             col = df.columns[0] if df.columns else None
             if col is not None and df.height > 0:
                 groups_stoch = set(df[col].cast(pl.Utf8).to_list())
@@ -578,9 +613,9 @@ def _read_stoch_profiles(inp: Path) -> set[str]:
 
     stoch_processes: set[str] = set()
     p = inp / "group__process.csv"
-    if p.exists():
+    if _provider_has_or_exists(provider, p):
         try:
-            df = _read_csv_file(p)
+            df = _provider_or_read_csv(provider, p)
             for row in df.iter_rows(named=True):
                 if row.get(df.columns[0]) in groups_stoch and row.get(df.columns[1]):
                     stoch_processes.add(row[df.columns[1]])
@@ -588,9 +623,9 @@ def _read_stoch_profiles(inp: Path) -> set[str]:
             pass
     stoch_nodes: set[str] = set()
     p = inp / "group__node.csv"
-    if p.exists():
+    if _provider_has_or_exists(provider, p):
         try:
-            df = _read_csv_file(p)
+            df = _provider_or_read_csv(provider, p)
             for row in df.iter_rows(named=True):
                 if row.get(df.columns[0]) in groups_stoch and row.get(df.columns[1]):
                     stoch_nodes.add(row[df.columns[1]])
@@ -599,9 +634,9 @@ def _read_stoch_profiles(inp: Path) -> set[str]:
 
     stoch_profile: set[str] = set()
     p = inp / "process__profile__profile_method.csv"
-    if p.exists():
+    if _provider_has_or_exists(provider, p):
         try:
-            df = _read_csv_file(p)
+            df = _provider_or_read_csv(provider, p)
             for row in df.iter_rows(named=True):
                 process = row.get("process")
                 profile = row.get("profile")
@@ -610,9 +645,9 @@ def _read_stoch_profiles(inp: Path) -> set[str]:
         except Exception:
             pass
     p = inp / "node__profile__profile_method.csv"
-    if p.exists():
+    if _provider_has_or_exists(provider, p):
         try:
-            df = _read_csv_file(p)
+            df = _provider_or_read_csv(provider, p)
             for row in df.iter_rows(named=True):
                 node = row.get("node")
                 profile = row.get("profile")
@@ -621,9 +656,9 @@ def _read_stoch_profiles(inp: Path) -> set[str]:
         except Exception:
             pass
     p = inp / "process__node__profile__profile_method.csv"
-    if p.exists():
+    if _provider_has_or_exists(provider, p):
         try:
-            df = _read_csv_file(p)
+            df = _provider_or_read_csv(provider, p)
             for row in df.iter_rows(named=True):
                 process = row.get("process")
                 profile = row.get("profile")
@@ -642,6 +677,8 @@ def _read_stoch_profiles(inp: Path) -> set[str]:
 def p_profile_value_lf(source: "InputSource",
                             dt: pl.DataFrame,
                             workdir: Path | None = None,
+                            *,
+                            provider: "object | None" = None,
                             ) -> pl.LazyFrame:
     """Lazy ``[f, d, t, value]`` for the canonical ``p_profile_value``.
 
@@ -698,7 +735,7 @@ def p_profile_value_lf(source: "InputSource",
     parts: list[pl.LazyFrame] = []
 
     if stoch_profiles and workdir is not None:
-        st = _profile_stochastic_lf(workdir, stoch_profiles)
+        st = _profile_stochastic_lf(workdir, stoch_profiles, provider=provider)
         parts.append(st.with_columns(prio=pl.lit(1, dtype=pl.Int8)))
 
     if pt_profiles:
@@ -706,7 +743,8 @@ def p_profile_value_lf(source: "InputSource",
         parts.append(pt.with_columns(prio=pl.lit(2, dtype=pl.Int8)))
 
     if time_profiles:
-        tt = _profile_time_lf(source, dt_lf, time_profiles, workdir=workdir)
+        tt = _profile_time_lf(source, dt_lf, time_profiles, workdir=workdir,
+                               provider=provider)
         parts.append(tt.with_columns(prio=pl.lit(3, dtype=pl.Int8)))
 
     if period_profiles:
@@ -753,6 +791,8 @@ def p_profile_value_lf(source: "InputSource",
 def p_profile_value_from_source_v2(source: "InputSource",
                                           dt: pl.DataFrame,
                                           workdir: Path | None = None,
+                                          *,
+                                          provider: "object | None" = None,
                                           ) -> Param | None:
     """Δ.7 lazy port replacement for
     ``_derived_params.p_profile_value_from_source``.
@@ -763,7 +803,7 @@ def p_profile_value_from_source_v2(source: "InputSource",
     """
     if dt is None:
         return None
-    lf = p_profile_value_lf(source, dt, workdir=workdir)
+    lf = p_profile_value_lf(source, dt, workdir=workdir, provider=provider)
     out = lf.collect()
     if out.height == 0:
         return None
@@ -772,7 +812,9 @@ def p_profile_value_from_source_v2(source: "InputSource",
 
 def apply_profile_cascade(flex_data: object,
                               source: "InputSource",
-                              workdir: Path | None) -> None:
+                              workdir: Path | None,
+                              *,
+                              provider: "object | None" = None) -> None:
     """Public entry: write ``flex_data.p_profile_value`` from cluster C.
 
     Invoked after :func:`apply_derived_a` so ``flex_data.dt`` is
@@ -789,7 +831,7 @@ def apply_profile_cascade(flex_data: object,
     if dt is None:
         return
     flex_data.p_profile_value = p_profile_value_from_source_v2(
-        source, dt, workdir=workdir)
+        source, dt, workdir=workdir, provider=provider)
 
 
 __all__ = [

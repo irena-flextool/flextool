@@ -1292,7 +1292,7 @@ def apply_derived_a(
     # Δ.12b: defensive try/except removed — apply_profile_cascade is
     # parity-bound (cluster C tests gate it).
     from ._derived_profile import apply_profile_cascade
-    apply_profile_cascade(flex_data, source, workdir)
+    apply_profile_cascade(flex_data, source, workdir, provider=provider)
 
     # 9. p_penalty_up / p_penalty_down (Δ.10 cluster F) ----------------
     # Sentinel-default scalar broadcast over (n, d, t) restricted to
