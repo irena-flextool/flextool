@@ -69,7 +69,7 @@ OUTPUT_CONFIG = str(REPO_ROOT / "templates" / "default_plots.yaml")
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
-from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
+from flextool.engine_polars import run_chain_from_db
 from flextool.process_outputs.write_outputs import write_outputs
 
 
@@ -85,19 +85,40 @@ def _run_scenario(
 ) -> Path:
     """Run the FlexTool pipeline end-to-end for a scenario. Returns the
     ``output_csv/<scenario>`` directory produced by ``write_outputs``.
+
+    Δ.22 migration: ``SolverRunner.run`` was deleted, so the legacy
+    ``runner.run_model()`` path raises :class:`NotImplementedError`.
+    The native cascade replacement is
+    :func:`flextool.engine_polars.run_chain_from_db`.  ``csv_dump=True``
+    triggers the per-solve snapshot to ``solve_data/`` so the
+    cost-aggregation hand-derivations below can read
+    ``p_step_duration.csv`` / ``p_rp_cost_weight.csv`` /
+    ``pdProcess_*.csv``.  ``keep_solutions=True`` retains the
+    flex_data_provider on every step so we can snapshot the derived
+    ``input/`` frames to disk (``p_entity_unitsize.csv`` etc.).
     """
     import os
     os.chdir(workdir)
 
-    runner = FlexToolRunner(
-        input_db_url=test_db_url,
-        scenario_name=scenario,
-        root_dir=workdir,
-        bin_dir=test_bin_dir,
+    steps = run_chain_from_db(
+        test_db_url,
+        scenario,
+        work_folder=workdir,
+        csv_dump=True,
+        keep_solutions=True,
     )
-    runner.write_input(test_db_url, scenario)
-    return_code = runner.run_model()
-    assert return_code == 0, f"Model run failed for scenario '{scenario}'"
+    assert steps, f"run_chain_from_db returned no steps for scenario '{scenario}'"
+    last_step = next(reversed(steps.values()))
+    assert last_step.solution is not None and last_step.solution.optimal, (
+        f"Last sub-solve for scenario '{scenario}' did not produce an "
+        f"optimal solution"
+    )
+    # Materialise the cascade's derived input/ frames to disk so
+    # downstream pandas reads (e.g. ``p_entity_unitsize.csv``) work
+    # unchanged.
+    provider = getattr(last_step, "flex_data_provider", None)
+    if provider is not None:
+        provider.snapshot_processed_inputs(workdir)
 
     write_outputs(
         scenario_name=scenario,
@@ -106,6 +127,13 @@ def _run_scenario(
         output_config_path=OUTPUT_CONFIG,
         write_methods=["csv"],
         fallback_output_location=str(workdir),
+        raw_output_dir=str(workdir / "output_raw"),
+        solution=last_step.solution,
+        solve_name=last_step.solve_name,
+        solve_steps=[
+            (s.solve_name, s.flex_data, s.solution)
+            for s in steps.values()
+        ],
     )
     return workdir / "output_csv" / scenario
 
