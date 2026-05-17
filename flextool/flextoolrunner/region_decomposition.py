@@ -1,23 +1,20 @@
-"""Lagrangian region decomposition wrapper (Agent 3.1).
+"""Lagrangian region decomposition wrapper.
 
 Builds a self-contained ``input_region_<region>/`` directory for one
-decomposition region's standalone GMPL solve.
+decomposition region's standalone solve.
 
-Step 2.5 status
----------------
+Step 2.6 (this commit)
+----------------------
 
-This is the LEGACY disk-based region-build path.  It calls
-:func:`flextool.input_derivation.run` to populate a cascade-input
-:class:`FlexDataProvider`, then expects the on-disk ``input/`` staging
-area to be available for :mod:`flextool.flextoolrunner.region_filter`.
-Provider-based projection is out of Step 2.6 scope; tracked separately
-as "2.6 region decomposition full port" in the audit.
-
-Until item 2.6 ports the region filter onto the Provider, this wrapper
-ALSO needs the cascade workdir to contain real ``input/*.csv`` files.
-With Step 2.5 the in-memory path no longer drops bytes to disk; this
-function therefore explicitly snapshot-dumps the Provider before
-delegating to the region filter.
+The cascade-input :class:`FlexDataProvider` is the single source of
+truth: :func:`flextool.input_derivation.run` populates it with every
+``input/<name>`` frame, and the region filter
+(:func:`flextool.flextoolrunner.region_filter.build_region_provider`)
+derives a region-scoped Provider from it entirely in-memory.  The CLI
+deliverable — the on-disk ``input_region_<region>/`` directory — is
+produced by one call to ``region_provider.snapshot_processed_inputs``
+on the filtered Provider; no monolithic ``input/`` is ever written to
+disk by this driver.
 """
 from __future__ import annotations
 
@@ -38,15 +35,22 @@ def write_input_for_region(
     precision_digits: int = 0,
 ) -> dict:
     """Write a self-contained ``input_region_<region>/`` directory for one
-    decomposition region's standalone GMPL solve.
+    decomposition region's standalone solve.
 
-    Pre-Step-2.5 this was a thin wrapper around
-    ``flextool.flextoolrunner.input_writer.write_input`` + the regional
-    filter in :mod:`flextool.flextoolrunner.region_filter`.  Item 18
-    deleted the input_writer module; we now drive
-    :func:`flextool.input_derivation.run` to populate the Provider and
-    rely on the on-disk staging area produced as a side effect (the
-    workdir ``input/`` directory).
+    Step 2.6: the pipeline is fully in-memory.
+
+    1. :func:`flextool.input_derivation.run` populates the cascade-input
+       :class:`FlexDataProvider`.
+    2. :func:`region_filter.build_region_provider` derives a region-
+       scoped Provider with rows filtered to the region's entities and
+       virtual half-flow rows injected for cross-region pipelines.
+    3. ``region_provider.snapshot_processed_inputs(output_dir)``
+       materialises the CLI deliverable.
+    4. The coupling manifest is stored in the cascade Provider as
+       ``solve_data/region_coupling`` and snapshotted to
+       ``work_folder/solve_data/region_coupling.csv``.
+
+    No bridge: the cascade-input Provider is NOT snapshotted to disk.
 
     Parameters
     ----------
@@ -66,10 +70,8 @@ def write_input_for_region(
     from flextool.input_derivation import run as _input_derivation_run
 
     wf = work_folder if work_folder is not None else Path.cwd()
-    # Produce the full input/ directory first.  Provider receives every
-    # frame; the region-filter port (item 2.6) is deferred — until it
-    # consumes Provider frames directly, we snapshot the Provider so
-    # the legacy disk-walking ``build_region_directory`` keeps working.
+
+    # 1. Populate the cascade-input Provider in-memory.  No disk staging.
     provider = FlexDataProvider()
     _input_derivation_run(
         input_db_url,
@@ -79,7 +81,9 @@ def write_input_for_region(
         work_folder=work_folder,
         precision_digits=precision_digits,
     )
-    provider.snapshot_processed_inputs(wf)
+
+    # 2. Validate region membership BEFORE filtering — surface a clear
+    # error with the available regions if the caller picked a wrong one.
     all_regions = region_filter.discover_decomposition_regions_from_db(input_db_url)
     if region_group not in all_regions:
         raise FlexToolConfigError(
@@ -87,14 +91,38 @@ def write_input_for_region(
             f"decomposition_method='lagrangian_region' in the database. "
             f"Available regions: {sorted(all_regions) or '(none)'}"
         )
-    result = region_filter.build_region_directory(
-        input_dir=wf / "input",
-        output_dir=Path(output_dir),
+
+    # 3. Derive the region-scoped Provider in-memory.
+    region_provider, result = region_filter.build_region_provider(
+        provider,
         region=region_group,
         all_regions=all_regions,
     )
-    region_filter.write_region_coupling_manifest(
-        work_folder=wf,
+
+    # 4. Snapshot the filtered Provider to the CLI-facing output dir.
+    # ``snapshot_processed_inputs`` writes every ``input/<name>`` frame
+    # under ``<output_dir>/input/<name>.csv``.  The region directory's
+    # contract is the legacy "input/" subfolder, so we snapshot under
+    # output_dir directly (the input/ prefix is already part of the key).
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    # Strip the leading ``input/`` from every key so the output lands as
+    # ``output_dir/<file>.csv`` (matching the historical layout).
+    flat_provider = FlexDataProvider()
+    for key, frame in region_provider.items():
+        if key.startswith("input/"):
+            flat_provider.put(key.split("/", 1)[1], frame)
+        else:
+            # Non-input frames stay under their qualified parent.
+            flat_provider.put(key, frame)
+    flat_provider.snapshot_processed_inputs(output_dir)
+
+    # 5. Write the coupling manifest.  Routes through the Provider for
+    # symmetry with the rest of the pipeline; the snapshot lands at
+    # ``work_folder/solve_data/region_coupling.csv``.
+    manifest_provider = FlexDataProvider()
+    region_filter.write_region_coupling_manifest_to_provider(
+        manifest_provider,
         results=[result],
     )
+    manifest_provider.snapshot_processed_inputs(wf)
     return result

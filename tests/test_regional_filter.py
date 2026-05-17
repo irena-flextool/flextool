@@ -52,10 +52,10 @@ from flextool.flextoolrunner.region_decomposition import (  # noqa: E402
 )
 from flextool.flextoolrunner.region_filter import (  # noqa: E402
     HalfFlow,
-    build_region_directory,
-    classify_half_flows,
+    build_region_provider,
+    classify_half_flows_from_provider,
     discover_decomposition_regions_from_db,
-    discover_region_membership,
+    discover_region_membership_from_provider,
 )
 
 
@@ -71,17 +71,15 @@ def lh2_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="module")
-def staged_input(
+def staged_provider(
     lh2_db_url: str, tmp_path_factory: pytest.TempPathFactory
-) -> Path:
-    """Produce the monolithic ``input/`` staging directory once per module.
+):
+    """Produce the cascade-input :class:`FlexDataProvider` once per module.
 
-    Step 2.5 — input_derivation populates a Provider only; no disk
-    artefacts.  The legacy ``flextoolrunner/region_filter.py`` (item
-    2.6) still walks the on-disk ``input/`` tree, so this fixture
-    explicitly snapshots the Provider before returning the workdir.
-    When item 2.6 ports the region filter to operate on Provider
-    frames the snapshot becomes unnecessary.
+    Step 2.6 — region decomposition is fully in-memory.  The Provider
+    carries every ``input/<name>`` frame; per-region derivations are
+    Provider-in / Provider-out via
+    :func:`region_filter.build_region_provider`.  No disk staging.
     """
     workdir = tmp_path_factory.mktemp("lh2_stage")
     prev_cwd = os.getcwd()
@@ -98,47 +96,60 @@ def staged_input(
             scenario_name=SCENARIO,
             work_folder=workdir,
         )
-        provider.snapshot_processed_inputs(workdir)
     finally:
         os.chdir(prev_cwd)
-    assert (workdir / "input" / "node.csv").exists()
-    return workdir
+    assert provider.has("input/node"), (
+        "cascade-input provider missing input/node — input_derivation regression"
+    )
+    return provider
 
 
-@pytest.fixture(scope="module")
-def region_a_dir(staged_input: Path) -> tuple[Path, dict]:
-    out = staged_input / "input_region_region_A"
-    result = build_region_directory(
-        input_dir=staged_input / "input",
-        output_dir=out,
-        region="region_A",
+def _region_dir_from_provider(
+    staged_provider, region: str, tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, dict]:
+    """Build the region-scoped Provider in-memory, then snapshot it to a
+    temp dir so the assertions below can read ``<region>/<file>.csv``
+    unchanged.  This mirrors the CLI deliverable contract enforced by
+    :func:`write_input_for_region`.
+    """
+    region_provider, result = build_region_provider(
+        staged_provider,
+        region=region,
         all_regions=["region_A", "region_B", "region_C"],
     )
+    out = tmp_path_factory.mktemp(f"input_region_{region}")
+    # Strip ``input/`` prefix so the snapshot lays files at <out>/<f>.csv
+    # to match the historical disk layout.
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    flat = FlexDataProvider()
+    for key, frame in region_provider.items():
+        if key.startswith("input/"):
+            flat.put(key.split("/", 1)[1], frame)
+        else:
+            flat.put(key, frame)
+    flat.snapshot_processed_inputs(out)
     return out, result
 
 
 @pytest.fixture(scope="module")
-def region_b_dir(staged_input: Path) -> tuple[Path, dict]:
-    out = staged_input / "input_region_region_B"
-    result = build_region_directory(
-        input_dir=staged_input / "input",
-        output_dir=out,
-        region="region_B",
-        all_regions=["region_A", "region_B", "region_C"],
-    )
-    return out, result
+def region_a_dir(
+    staged_provider, tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, dict]:
+    return _region_dir_from_provider(staged_provider, "region_A", tmp_path_factory)
 
 
 @pytest.fixture(scope="module")
-def region_c_dir(staged_input: Path) -> tuple[Path, dict]:
-    out = staged_input / "input_region_region_C"
-    result = build_region_directory(
-        input_dir=staged_input / "input",
-        output_dir=out,
-        region="region_C",
-        all_regions=["region_A", "region_B", "region_C"],
-    )
-    return out, result
+def region_b_dir(
+    staged_provider, tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, dict]:
+    return _region_dir_from_provider(staged_provider, "region_B", tmp_path_factory)
+
+
+@pytest.fixture(scope="module")
+def region_c_dir(
+    staged_provider, tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, dict]:
+    return _region_dir_from_provider(staged_provider, "region_C", tmp_path_factory)
 
 
 # ---------------------------------------------------------------------------
@@ -171,14 +182,25 @@ class TestRegionDiscovery:
         regions = set(discover_decomposition_regions_from_db(lh2_db_url))
         assert regions == {"region_A", "region_B", "region_C"}
 
-    def test_region_membership_parses(self, staged_input: Path) -> None:
-        mem = discover_region_membership(
-            staged_input / "input", "region_A",
+    def test_region_membership_parses(self, staged_provider) -> None:
+        mem = discover_region_membership_from_provider(
+            staged_provider, "region_A",
         )
         assert {"elec_A", "h2_A", "lh2_A", "battery_A"} <= mem.nodes
         # Other regions' nodes should not be in region_A's set.
         assert "elec_B" not in mem.nodes
         assert "elec_C" not in mem.nodes
+
+    def test_region_provider_has_input_node(self, staged_provider) -> None:
+        """Provider-level assertion (replaces the legacy
+        ``(workdir/"input"/"node.csv").exists()`` disk check): the
+        cascade-input Provider must carry ``input/node`` after
+        :func:`input_derivation.run`."""
+        assert staged_provider.has("input/node")
+        df = staged_provider.get("input/node")
+        assert df is not None and df.height > 0, (
+            "input/node frame is empty — fixture build regression"
+        )
 
 
 class TestRegionAMembership:

@@ -35,7 +35,12 @@ import csv
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
+
+import polars as pl
+
+if TYPE_CHECKING:  # pragma: no cover
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
 
 
 # ---------------------------------------------------------------------------
@@ -845,3 +850,409 @@ def write_region_coupling_manifest(
             rows.append([hf.region, hf.original_connection, hf.side, hf.virtual_node])
     _write_csv_rows(path, ["region", "process", "side", "virtual_node"], rows)
     return path
+
+
+# ---------------------------------------------------------------------------
+# Step 2.6 — Provider-based port
+# ---------------------------------------------------------------------------
+#
+# Below: an in-memory parallel of the disk-walking machinery above.  Both
+# share the same filter rules (``_EXPLICIT_SPECS`` /
+# ``_infer_column_spec_from_header`` / ``_virtual_rows``); the difference
+# is the data carrier.  Disk walkers read CSV bytes through ``csv.reader``
+# and write CSVs via ``csv.writer``; the Provider port consumes
+# :class:`polars.DataFrame` frames out of a :class:`FlexDataProvider` and
+# emits filtered frames into a new region-scoped Provider.
+#
+# The CLI deliverable contract (``--region GROUP`` writes
+# ``input_region_<GROUP>/<file>.csv``) still terminates in a disk
+# directory — but the materialisation is one downward
+# ``snapshot_processed_inputs`` from the region-Provider in
+# ``region_decomposition.write_input_for_region``, NOT a snapshot of the
+# full monolithic input/ followed by a disk-walk filter.  No bridge.
+
+
+def _frame_to_csv_rows(
+    df: pl.DataFrame,
+) -> tuple[list[str], list[list[str]]]:
+    """Return ``(header, rows_as_strings)`` for a Polars frame.
+
+    Mirrors :func:`_read_csv_rows`'s "list of strings" representation so
+    the rest of the filter machinery (which is string-equality-based)
+    operates identically on disk and Provider data.
+
+    Numeric values are stringified with ``str(v)``; ``None`` becomes an
+    empty string (mirroring how empty CSV cells round-trip through
+    ``csv.reader``).
+    """
+    if df.height == 0:
+        return list(df.columns), []
+    header = list(df.columns)
+    rows: list[list[str]] = []
+    for row in df.iter_rows():
+        rows.append(["" if v is None else str(v) for v in row])
+    return header, rows
+
+
+def _rows_to_frame(
+    header: list[str], rows: Iterable[list[str]],
+) -> pl.DataFrame:
+    """Inverse of :func:`_frame_to_csv_rows` — assemble a Polars frame.
+
+    Every column is typed as ``Utf8``; downstream loaders coerce to
+    numeric where required.  This matches the round-trip a CSV would
+    take through ``pl.read_csv`` with default settings on these
+    string-keyed entity tables — column types are inferred lazily by
+    consumers.
+    """
+    if not header:
+        return pl.DataFrame()
+    rows_list = list(rows)
+    if not rows_list:
+        # Empty body with explicit columns.
+        return pl.DataFrame({col: pl.Series(col, [], dtype=pl.Utf8) for col in header})
+    # Pad/truncate to header width so polars accepts uniform rows.
+    width = len(header)
+    padded = [
+        row[:width] + [""] * (width - len(row)) if len(row) < width else row[:width]
+        for row in rows_list
+    ]
+    cols = {h: [r[i] for r in padded] for i, h in enumerate(header)}
+    return pl.DataFrame({h: pl.Series(h, vals, dtype=pl.Utf8) for h, vals in cols.items()})
+
+
+def _provider_csv_rows(
+    provider: "FlexDataProvider", name: str,
+) -> tuple[list[str], list[list[str]]]:
+    """Provider-side analogue of :func:`_read_csv_rows`.
+
+    Looks up ``input/<name>`` first, falls back to bare ``<name>``.
+    Returns ``([], [])`` for missing frames (matches the disk helper's
+    "absent file → empty" semantics).
+    """
+    df = provider.get(f"input/{name}")
+    if df is None:
+        df = provider.get(name)
+    if df is None:
+        return [], []
+    return _frame_to_csv_rows(df)
+
+
+def _provider_single_col(provider: "FlexDataProvider", name: str) -> list[str]:
+    _, rows = _provider_csv_rows(provider, name)
+    return [r[0] for r in rows if r and r[0] != ""]
+
+
+def _provider_two_col_dict(
+    provider: "FlexDataProvider", name: str,
+) -> dict[str, list[str]]:
+    _, rows = _provider_csv_rows(provider, name)
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        if len(r) < 2:
+            continue
+        out.setdefault(r[0], []).append(r[1])
+    return out
+
+
+def _provider_connection_endpoints(
+    provider: "FlexDataProvider",
+) -> dict[str, tuple[str, str]]:
+    """Provider-side analogue of :func:`_read_connection_endpoints`."""
+    connections = set(_provider_single_col(provider, "process_connection.csv"))
+    src_of: dict[str, str] = {}
+    _, src_rows = _provider_csv_rows(provider, "process__source.csv")
+    for r in src_rows:
+        if len(r) >= 2 and r[0] in connections:
+            src_of[r[0]] = r[1]
+    snk_of: dict[str, str] = {}
+    _, snk_rows = _provider_csv_rows(provider, "process__sink.csv")
+    for r in snk_rows:
+        if len(r) >= 2 and r[0] in connections:
+            snk_of[r[0]] = r[1]
+    return {
+        conn: (src_of[conn], snk_of[conn])
+        for conn in connections
+        if conn in src_of and conn in snk_of
+    }
+
+
+def discover_region_membership_from_provider(
+    provider: "FlexDataProvider", region: str,
+) -> RegionMembership:
+    """Provider-side analogue of :func:`discover_region_membership`."""
+    group_nodes = _provider_two_col_dict(provider, "group__node.csv")
+    group_processes = _provider_two_col_dict(provider, "group__process.csv")
+
+    all_groups = set(_provider_single_col(provider, "group.csv"))
+    region_like = {g for g in all_groups if g.startswith("region_")}
+    if region not in region_like:
+        region_like.add(region)
+
+    mem = RegionMembership(region=region, all_regions=region_like)
+    mem.nodes = set(group_nodes.get(region, []))
+    in_region_processes = set(group_processes.get(region, []))
+
+    units = set(_provider_single_col(provider, "process_unit.csv"))
+    connections = set(_provider_single_col(provider, "process_connection.csv"))
+    mem.units = in_region_processes & units
+    mem.connections = in_region_processes & connections
+
+    for other in region_like:
+        if other == region:
+            continue
+        mem.other_region_nodes.update(group_nodes.get(other, []))
+        other_procs = set(group_processes.get(other, []))
+        mem.other_region_units.update(other_procs & units)
+        mem.other_region_connections.update(other_procs & connections)
+    return mem
+
+
+def classify_half_flows_from_provider(
+    provider: "FlexDataProvider", mem: RegionMembership,
+) -> list[HalfFlow]:
+    """Provider-side analogue of :func:`classify_half_flows`."""
+    endpoints = _provider_connection_endpoints(provider)
+    half_flows: list[HalfFlow] = []
+    for conn, (src, snk) in endpoints.items():
+        src_in = src in mem.nodes
+        snk_in = snk in mem.nodes
+        src_out = src in mem.other_region_nodes
+        snk_out = snk in mem.other_region_nodes
+        if src_in and snk_out:
+            virtual = f"{conn}__export__{mem.region}"
+            half_flows.append(HalfFlow(
+                original_connection=conn,
+                region=mem.region,
+                side="export",
+                in_region_node=src,
+                virtual_node=virtual,
+                virtual_connection=f"hf_{conn}__export__{mem.region}",
+            ))
+        elif snk_in and src_out:
+            virtual = f"{conn}__import__{mem.region}"
+            half_flows.append(HalfFlow(
+                original_connection=conn,
+                region=mem.region,
+                side="import",
+                in_region_node=snk,
+                virtual_node=virtual,
+                virtual_connection=f"hf_{conn}__import__{mem.region}",
+            ))
+    return half_flows
+
+
+def _resolve_keep_sets_from_provider(
+    provider: "FlexDataProvider",
+    mem: RegionMembership,
+    half_flows: list[HalfFlow],
+) -> _KeepSets:
+    """Provider-side analogue of :func:`_resolve_keep_sets`."""
+    all_nodes = set(_provider_single_col(provider, "node.csv"))
+    all_units = set(_provider_single_col(provider, "process_unit.csv"))
+    all_connections = set(_provider_single_col(provider, "process_connection.csv"))
+
+    shared_nodes = all_nodes - mem.nodes - mem.other_region_nodes
+    shared_units = all_units - mem.units - mem.other_region_units
+    shared_connections = (
+        all_connections - mem.connections - mem.other_region_connections
+    )
+
+    kept_nodes = mem.nodes | shared_nodes
+    kept_units = mem.units | shared_units
+    kept_connections = mem.connections | shared_connections
+
+    cross_region_conns = {hf.original_connection for hf in half_flows}
+    kept_connections -= cross_region_conns
+
+    virtual_nodes = {hf.virtual_node for hf in half_flows}
+    virtual_conns = {hf.virtual_connection for hf in half_flows}
+    kept_nodes |= virtual_nodes
+    kept_connections |= virtual_conns
+
+    kept_processes = kept_units | kept_connections
+    kept_entities = kept_nodes | kept_processes
+
+    return _KeepSets(
+        nodes=kept_nodes,
+        units=kept_units,
+        connections=kept_connections,
+        processes=kept_processes,
+        entities=kept_entities,
+    )
+
+
+def build_region_provider(
+    provider: "FlexDataProvider",
+    region: str,
+    *,
+    all_regions: list[str] | None = None,
+) -> tuple["FlexDataProvider", dict]:
+    """Provider-in/Provider-out analogue of :func:`build_region_directory`.
+
+    Operates entirely in-memory: consumes the cascade-input *provider*
+    (every ``input/<name>`` frame populated by
+    :func:`flextool.input_derivation.run`) and returns
+    ``(region_provider, result)``:
+
+    * ``region_provider`` carries the same set of keys filtered to the
+      region's members, with virtual half-flow rows injected where
+      needed.  CLI mode materialises this with one call to
+      ``region_provider.snapshot_processed_inputs(output_dir)``.
+    * ``result`` is the same metadata dict shape returned by the disk
+      port (``region``, ``half_flows``, ``kept_nodes``,
+      ``kept_units``, ``kept_connections``) so downstream code is
+      drop-in.
+
+    Filter rules are shared with :func:`build_region_directory`
+    (``_EXPLICIT_SPECS`` / ``_infer_column_spec_from_header`` /
+    ``_virtual_rows``); only the data carrier changes.
+    """
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+
+    mem = discover_region_membership_from_provider(provider, region)
+    if all_regions is not None:
+        mem.all_regions = set(all_regions) | {region}
+        group_nodes = _provider_two_col_dict(provider, "group__node.csv")
+        group_processes = _provider_two_col_dict(provider, "group__process.csv")
+        units = set(_provider_single_col(provider, "process_unit.csv"))
+        connections = set(_provider_single_col(provider, "process_connection.csv"))
+        mem.other_region_nodes = set()
+        mem.other_region_units = set()
+        mem.other_region_connections = set()
+        for other in mem.all_regions:
+            if other == region:
+                continue
+            mem.other_region_nodes.update(group_nodes.get(other, []))
+            other_procs = set(group_processes.get(other, []))
+            mem.other_region_units.update(other_procs & units)
+            mem.other_region_connections.update(other_procs & connections)
+
+    half_flows = classify_half_flows_from_provider(provider, mem)
+    keep = _resolve_keep_sets_from_provider(provider, mem, half_flows)
+
+    cross_region_conns = {hf.original_connection for hf in half_flows}
+
+    # Same per-pipe capacity override as the disk path: walk p_process to
+    # find each cross-region connection's ``existing`` value so the
+    # virtual half-flow inherits a non-zero p_flow_max.
+    _virtual_capacity_override.clear()
+    try:
+        _, p_process_rows = _provider_csv_rows(provider, "p_process.csv")
+        for row in p_process_rows:
+            if len(row) >= 3 and row[0] in cross_region_conns and row[1] == "existing":
+                try:
+                    _virtual_capacity_override[row[0]] = float(row[2])
+                except ValueError:
+                    continue
+    except Exception:  # noqa: BLE001 — defensive; fall back to defaults.
+        pass
+
+    region_provider = FlexDataProvider()
+
+    # Iterate every ``input/<name>`` frame in the source Provider and
+    # produce a filtered/virtual-augmented frame in the region Provider.
+    # Frames stored under other parents (e.g. ``solve_data/*``) are
+    # passed through unchanged — region filtering only applies to the
+    # entity-set + parameter CSVs under ``input/``.
+    seen_filenames: set[str] = set()
+    for key, frame in provider.items():
+        parent = key.split("/", 1)[0] if "/" in key else ""
+        if parent != "input":
+            # Non-input frames are copied verbatim.
+            region_provider.put(key, frame)
+            continue
+
+        stem = key.split("/", 1)[1] if "/" in key else key
+        filename = f"{stem}.csv"
+        seen_filenames.add(filename)
+        header, rows = _frame_to_csv_rows(frame)
+        if not header:
+            region_provider.put(key, frame)
+            continue
+        spec = _infer_column_spec_from_header(header, filename)
+        if not spec:
+            virtuals = _virtual_rows(half_flows, filename, header)
+            if virtuals:
+                region_provider.put(
+                    key, _rows_to_frame(header, rows + virtuals),
+                )
+            else:
+                region_provider.put(key, frame)
+            continue
+        kept_rows: list[list[str]] = []
+        for row in rows:
+            keep_row = True
+            for col_idx, kind in spec:
+                if col_idx >= len(row):
+                    continue
+                val = row[col_idx]
+                if kind == "process":
+                    if val in cross_region_conns or val not in keep.processes:
+                        keep_row = False
+                        break
+                elif kind == "connection":
+                    if val in cross_region_conns or val not in keep.connections:
+                        keep_row = False
+                        break
+                elif kind == "unit":
+                    if val not in keep.units:
+                        keep_row = False
+                        break
+                elif kind == "node":
+                    if val not in keep.nodes:
+                        keep_row = False
+                        break
+                elif kind == "entity":
+                    if val in cross_region_conns or val not in keep.entities:
+                        keep_row = False
+                        break
+            if keep_row:
+                kept_rows.append(row)
+        virtuals = _virtual_rows(half_flows, filename, header)
+        region_provider.put(key, _rows_to_frame(header, kept_rows + virtuals))
+
+    # Some files referenced by ``_virtual_rows`` (e.g. ``process_method``
+    # or ``p_process``) might not be in the source Provider at all (the
+    # fixture didn't populate them).  ``_virtual_rows`` skips those; we
+    # already passed through every key we saw, so nothing to do here.
+    _ = seen_filenames  # diagnostic hook — kept for future debugging.
+
+    return region_provider, {
+        "region": region,
+        "half_flows": half_flows,
+        "kept_nodes": keep.nodes,
+        "kept_units": keep.units,
+        "kept_connections": keep.connections,
+    }
+
+
+def write_region_coupling_manifest_to_provider(
+    provider: "FlexDataProvider",
+    results: Iterable[dict],
+) -> None:
+    """Provider-side analogue of :func:`write_region_coupling_manifest`.
+
+    Stores ``solve_data/region_coupling`` into *provider* with the same
+    four-column layout (``region, process, side, virtual_node``).  The
+    CLI driver materialises it via ``snapshot_processed_inputs``.
+    """
+    rows: list[tuple[str, str, str, str]] = []
+    for res in results:
+        for hf in res.get("half_flows", []):
+            rows.append((hf.region, hf.original_connection, hf.side, hf.virtual_node))
+    if rows:
+        df = pl.DataFrame({
+            "region": [r[0] for r in rows],
+            "process": [r[1] for r in rows],
+            "side": [r[2] for r in rows],
+            "virtual_node": [r[3] for r in rows],
+        })
+    else:
+        df = pl.DataFrame({
+            "region": pl.Series("region", [], dtype=pl.Utf8),
+            "process": pl.Series("process", [], dtype=pl.Utf8),
+            "side": pl.Series("side", [], dtype=pl.Utf8),
+            "virtual_node": pl.Series("virtual_node", [], dtype=pl.Utf8),
+        })
+    provider.put("solve_data/region_coupling", df)
