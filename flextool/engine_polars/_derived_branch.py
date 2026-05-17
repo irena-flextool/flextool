@@ -60,7 +60,19 @@ import polars as pl
 from polar_high import Param
 
 from ._axis_enums import cast_dim, schema_dtype
-from ._input_source import _read_csv_file
+from ._writer_provider_io import _provider_key
+
+
+def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
+    """Provider-only fetch.  Returns ``None`` when the Provider is
+    missing or doesn't carry *path*'s canonical key.
+    """
+    if provider is None:
+        return None
+    key = _provider_key(path)
+    if not provider.has(key):
+        return None
+    return provider.get(key)
 
 # Branch-cluster helpers take ``workdir`` only — no FlexData in scope.
 # ``schema_dtype(None, ...)`` returns ``pl.Utf8`` so default schemas
@@ -81,18 +93,16 @@ def _empty_lf(schema: dict[str, pl.DataType]) -> pl.LazyFrame:
     return pl.DataFrame(schema=schema).lazy()
 
 
-def _maybe_csv_lf(path: Path,
-                  rename: dict[str, str] | None = None,
-                  schema: dict[str, pl.DataType] | None = None,
-                  ) -> pl.LazyFrame | None:
-    """Return ``_read_csv_file(path).lazy()`` rename-and-cast helper.
+def _maybe_provider_lf(provider, path: Path,
+                       rename: dict[str, str] | None = None,
+                       ) -> pl.LazyFrame | None:
+    """Return a lazy frame from the Provider with optional rename.
 
-    Returns ``None`` when the file is absent or empty.
+    Returns ``None`` when the Provider is missing or doesn't carry the
+    canonical key for *path*.
     """
-    if not path.exists():
-        return None
-    df = _read_csv_file(path)
-    if df.height == 0:
+    df = _provider_get(provider, path)
+    if df is None or df.height == 0:
         return None
     lf = df.lazy()
     if rename:
@@ -109,6 +119,7 @@ def period_branch_pairs_lf(
     workdir: Path | None,
     *,
     ctx: "object | None" = None,
+    provider: "object | None" = None,
 ) -> pl.LazyFrame:
     """Read ``solve_data/period__branch.csv`` as a lazy ``(d, b)`` frame.
 
@@ -136,7 +147,7 @@ def period_branch_pairs_lf(
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "period__branch.csv"
-    lf = _maybe_csv_lf(p, rename={"period": "d", "branch": "b"})
+    lf = _maybe_provider_lf(provider, p, rename={"period": "d", "branch": "b"})
     if lf is None:
         return _empty_lf(schema)
     return lf.select(
@@ -149,6 +160,7 @@ def solve_branch_weights_lf(
     workdir: Path | None,
     *,
     ctx: "object | None" = None,
+    provider: "object | None" = None,
 ) -> pl.LazyFrame:
     """Read ``solve_data/solve_branch_weight.csv`` as ``(b, w)`` lazy.
 
@@ -172,10 +184,8 @@ def solve_branch_weights_lf(
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "solve_branch_weight.csv"
-    if not p.exists():
-        return _empty_lf(schema)
-    df = _read_csv_file(p)
-    if df.height == 0:
+    df = _provider_get(provider, p)
+    if df is None or df.height == 0:
         return _empty_lf(schema)
     cols = df.columns
     b_col = "branch" if "branch" in cols else cols[0]
@@ -192,7 +202,8 @@ def solve_branch_weights_lf(
                       pl.col(v_col).cast(pl.Float64, strict=False).alias("w")))
 
 
-def first_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
+def first_timesteps_lf(workdir: Path | None,
+                       *, provider: "object | None" = None) -> pl.LazyFrame:
     """Read ``solve_data/first_timesteps.csv`` as ``(d, ts)`` lazy.
 
     Maps each period (or branch period) to its first timestep — the
@@ -203,10 +214,8 @@ def first_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "first_timesteps.csv"
-    if not p.exists():
-        return _empty_lf(schema)
-    df = _read_csv_file(p)
-    if df.height == 0:
+    df = _provider_get(provider, p)
+    if df is None or df.height == 0:
         return _empty_lf(schema)
     cols = df.columns
     d_col = "period" if "period" in cols else cols[0]
@@ -222,6 +231,7 @@ def period_in_use_set_lf(workdir: Path | None,
                           active_solve: str | None = None,
                           *,
                           ctx: "object | None" = None,
+                          provider: "object | None" = None,
                           ) -> pl.LazyFrame:
     """Read ``solve_data/period_in_use_set.csv`` as ``(d,)`` lazy.
 
@@ -240,14 +250,13 @@ def period_in_use_set_lf(workdir: Path | None,
             return piu_df.lazy().select("d").unique()
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_in_use_set.csv"
-        if p.exists():
-            df = _read_csv_file(p)
-            if df.height > 0 and df.columns:
-                col = df.columns[0]
-                return (df.lazy()
-                          .select(cast_dim(pl.col(col).alias("d"),
-                                            _enums, "d"))
-                          .unique())
+        df = _provider_get(provider, p)
+        if df is not None and df.height > 0 and df.columns:
+            col = df.columns[0]
+            return (df.lazy()
+                      .select(cast_dim(pl.col(col).alias("d"),
+                                        _enums, "d"))
+                      .unique())
     # Fall back to source-derived realized + invest.
     if source is None or active_solve is None:
         return _empty_lf(schema)
@@ -269,17 +278,16 @@ def period_in_use_set_lf(workdir: Path | None,
     return pl.concat(parts).unique()
 
 
-def realized_dispatch_lf(workdir: Path | None) -> pl.LazyFrame:
+def realized_dispatch_lf(workdir: Path | None,
+                          *, provider: "object | None" = None) -> pl.LazyFrame:
     """Read ``solve_data/realized_dispatch.csv`` as ``(d, t)`` lazy."""
     schema = {"d": schema_dtype(_enums, "d"),
               "t": schema_dtype(_enums, "t")}
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "realized_dispatch.csv"
-    if not p.exists():
-        return _empty_lf(schema)
-    df = _read_csv_file(p)
-    if df.height == 0:
+    df = _provider_get(provider, p)
+    if df is None or df.height == 0:
         return _empty_lf(schema)
     cols = df.columns
     d_col = "period" if "period" in cols else cols[0]
@@ -291,17 +299,16 @@ def realized_dispatch_lf(workdir: Path | None) -> pl.LazyFrame:
               .unique())
 
 
-def fix_storage_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
+def fix_storage_timesteps_lf(workdir: Path | None,
+                              *, provider: "object | None" = None) -> pl.LazyFrame:
     """Read ``solve_data/fix_storage_timesteps.csv`` as ``(d, t)`` lazy."""
     schema = {"d": schema_dtype(_enums, "d"),
               "t": schema_dtype(_enums, "t")}
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "fix_storage_timesteps.csv"
-    if not p.exists():
-        return _empty_lf(schema)
-    df = _read_csv_file(p)
-    if df.height == 0:
+    df = _provider_get(provider, p)
+    if df is None or df.height == 0:
         return _empty_lf(schema)
     cols = df.columns
     d_col = "period" if "period" in cols else cols[0]
@@ -313,17 +320,16 @@ def fix_storage_timesteps_lf(workdir: Path | None) -> pl.LazyFrame:
               .unique())
 
 
-def steps_in_use_lf(workdir: Path | None) -> pl.LazyFrame:
+def steps_in_use_lf(workdir: Path | None,
+                     *, provider: "object | None" = None) -> pl.LazyFrame:
     """Read ``solve_data/steps_in_use.csv`` as ``(d, t)`` lazy."""
     schema = {"d": schema_dtype(_enums, "d"),
               "t": schema_dtype(_enums, "t")}
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "steps_in_use.csv"
-    if not p.exists():
-        return _empty_lf(schema)
-    df = _read_csv_file(p)
-    if df.height == 0:
+    df = _provider_get(provider, p)
+    if df is None or df.height == 0:
         return _empty_lf(schema)
     cols = df.columns
     d_col = "period" if "period" in cols else cols[0]
@@ -346,6 +352,7 @@ def pd_branch_weight_lf(
     active_solve: str | None = None,
     *,
     ctx: "object | None" = None,
+    provider: "object | None" = None,
 ) -> pl.LazyFrame:
     """Per-period branch weight (lazy) — full multi-branch cascade.
 
@@ -370,8 +377,9 @@ def pd_branch_weight_lf(
     Returns a lazy ``(d, value)`` frame.  Empty frame when no
     ``period_in_use`` rows exist.
     """
-    pb = period_branch_pairs_lf(workdir, ctx=ctx).collect()
-    piu = period_in_use_set_lf(workdir, source, active_solve, ctx=ctx).collect()
+    pb = period_branch_pairs_lf(workdir, ctx=ctx, provider=provider).collect()
+    piu = period_in_use_set_lf(workdir, source, active_solve, ctx=ctx,
+                               provider=provider).collect()
     if piu.height == 0:
         return _empty_lf({"d": pl.Utf8, "value": pl.Float64})
     if pb.height == 0:
@@ -380,8 +388,8 @@ def pd_branch_weight_lf(
                   .select(pl.col("d"))
                   .with_columns(value=pl.lit(1.0))
                   .sort("d"))
-    bw = solve_branch_weights_lf(workdir, ctx=ctx).collect()
-    ft = first_timesteps_lf(workdir).collect()
+    bw = solve_branch_weights_lf(workdir, ctx=ctx, provider=provider).collect()
+    ft = first_timesteps_lf(workdir, provider=provider).collect()
     # weights mapping with fallback 1.0 (mirrors flextool's
     # ``branch_weight.get(b, 1.0)``).
     w_lookup = {row["b"]: float(row["w"]) for row in bw.iter_rows(named=True)
@@ -432,6 +440,7 @@ def pdt_branch_weight_lf(
     dt: pl.DataFrame | None = None,
     *,
     ctx: "object | None" = None,
+    provider: "object | None" = None,
 ) -> pl.LazyFrame:
     """Per-(d, t) branch weight (lazy) — full multi-branch cascade.
 
@@ -459,13 +468,13 @@ def pdt_branch_weight_lf(
               "value": pl.Float64}
     if dt is None or dt.height == 0:
         # Fall back to steps_in_use as the dense domain.
-        dt_lf = steps_in_use_lf(workdir).collect()
+        dt_lf = steps_in_use_lf(workdir, provider=provider).collect()
         if dt_lf.height == 0:
             return _empty_lf(schema)
         dt_pairs_df = dt_lf
     else:
         dt_pairs_df = dt.select("d", "t").unique()
-    pb = period_branch_pairs_lf(workdir, ctx=ctx).collect()
+    pb = period_branch_pairs_lf(workdir, ctx=ctx, provider=provider).collect()
     if pb.height == 0:
         # Default 1.0 per (d, t).
         return (dt_pairs_df.lazy()
@@ -473,7 +482,7 @@ def pdt_branch_weight_lf(
                           cast_dim(pl.col("t"), _enums, "t"))
                   .with_columns(value=pl.lit(1.0))
                   .sort("d", "t"))
-    bw = solve_branch_weights_lf(workdir, ctx=ctx).collect()
+    bw = solve_branch_weights_lf(workdir, ctx=ctx, provider=provider).collect()
     w_lookup = {row["b"]: float(row["w"]) for row in bw.iter_rows(named=True)
                 if row["w"] is not None}
     pb_set = {(row["d"], row["b"]) for row in pb.iter_rows(named=True)}
@@ -517,7 +526,8 @@ def pdt_branch_weight_lf(
 # ---------------------------------------------------------------------------
 
 
-def dt_non_anticipativity_lf(workdir: Path | None) -> pl.LazyFrame:
+def dt_non_anticipativity_lf(workdir: Path | None,
+                              *, provider: "object | None" = None) -> pl.LazyFrame:
     """Compute ``dt_non_anticipativity`` lazily as ``(d, t)``.
 
     Mirrors flextool's
@@ -534,8 +544,8 @@ def dt_non_anticipativity_lf(workdir: Path | None) -> pl.LazyFrame:
     """
     schema = {"d": schema_dtype(_enums, "d"),
               "t": schema_dtype(_enums, "t")}
-    rd = realized_dispatch_lf(workdir).collect()
-    fs = fix_storage_timesteps_lf(workdir).collect()
+    rd = realized_dispatch_lf(workdir, provider=provider).collect()
+    fs = fix_storage_timesteps_lf(workdir, provider=provider).collect()
     if rd.height == 0 and fs.height == 0:
         return _empty_lf(schema)
     parts: list[pl.LazyFrame] = []
@@ -551,7 +561,8 @@ def dt_non_anticipativity_lf(workdir: Path | None) -> pl.LazyFrame:
 # ---------------------------------------------------------------------------
 
 
-def period_branch_full_lf(workdir: Path | None) -> pl.LazyFrame:
+def period_branch_full_lf(workdir: Path | None,
+                           *, provider: "object | None" = None) -> pl.LazyFrame:
     """The unfiltered ``period__branch.csv`` as ``(d, b)`` lazy.
 
     Distinct from the existing ``period_branch`` rolling-handoff field
@@ -559,7 +570,7 @@ def period_branch_full_lf(workdir: Path | None) -> pl.LazyFrame:
     anchor → sibling map consumed by the model layer's
     non-anticipativity constraints.
     """
-    return period_branch_pairs_lf(workdir).select("d", "b")
+    return period_branch_pairs_lf(workdir, provider=provider).select("d", "b")
 
 
 # ---------------------------------------------------------------------------
@@ -573,13 +584,15 @@ def pd_branch_weight_param(
     active_solve: str | None = None,
     *,
     ctx: "object | None" = None,
+    provider: "object | None" = None,
 ) -> Param | None:
     """Public ``pd_branch_weight`` :class:`Param` builder.
 
     Returns ``None`` when no realised periods are available (matches
     the ``apply_derived_g`` skip-on-None contract).
     """
-    df = pd_branch_weight_lf(workdir, source, active_solve, ctx=ctx).collect()
+    df = pd_branch_weight_lf(workdir, source, active_solve,
+                              ctx=ctx, provider=provider).collect()
     if df.height == 0:
         return None
     return Param(("d",), df)
@@ -592,25 +605,31 @@ def pdt_branch_weight_param(
     dt: pl.DataFrame | None = None,
     *,
     ctx: "object | None" = None,
+    provider: "object | None" = None,
 ) -> Param | None:
     """Public ``pdt_branch_weight`` :class:`Param` builder."""
-    df = pdt_branch_weight_lf(workdir, source, active_solve, dt, ctx=ctx).collect()
+    df = pdt_branch_weight_lf(workdir, source, active_solve, dt,
+                                ctx=ctx, provider=provider).collect()
     if df.height == 0:
         return None
     return Param(("d", "t"), df)
 
 
-def dt_non_anticipativity_df(workdir: Path | None) -> pl.DataFrame | None:
+def dt_non_anticipativity_df(workdir: Path | None,
+                              *, provider: "object | None" = None,
+                              ) -> pl.DataFrame | None:
     """Public ``dt_non_anticipativity`` plain-DataFrame builder."""
-    df = dt_non_anticipativity_lf(workdir).collect()
+    df = dt_non_anticipativity_lf(workdir, provider=provider).collect()
     if df.height == 0:
         return None
     return df
 
 
-def period_branch_full_df(workdir: Path | None) -> pl.DataFrame | None:
+def period_branch_full_df(workdir: Path | None,
+                           *, provider: "object | None" = None,
+                           ) -> pl.DataFrame | None:
     """Public ``period_branch_full`` plain-DataFrame builder."""
-    df = period_branch_full_lf(workdir).collect()
+    df = period_branch_full_lf(workdir, provider=provider).collect()
     if df.height == 0:
         return None
     return df
@@ -622,9 +641,11 @@ def period_in_use_set_df(
     active_solve: str | None = None,
     *,
     ctx: "object | None" = None,
+    provider: "object | None" = None,
 ) -> pl.DataFrame | None:
     """Public ``period_in_use_set`` plain-DataFrame builder."""
-    df = period_in_use_set_lf(workdir, source, active_solve, ctx=ctx).collect()
+    df = period_in_use_set_lf(workdir, source, active_solve,
+                                ctx=ctx, provider=provider).collect()
     if df.height == 0:
         return None
     return df
@@ -643,6 +664,7 @@ def apply_branch_cluster(
     active_solve: str | None = None,
     *,
     ctx: "object | None" = None,
+    provider: "object | None" = None,
 ) -> None:
     """Apply Cluster D Params to ``flex_data``.
 
@@ -669,18 +691,19 @@ def apply_branch_cluster(
 
     # 1-2. Set frames — None == "no branches / no realized periods" is
     # the legitimate inactive-feature signal.
-    flex_data.period_branch_full = period_branch_full_df(workdir)
+    flex_data.period_branch_full = period_branch_full_df(workdir, provider=provider)
     flex_data.period_in_use_set = period_in_use_set_df(
-        workdir, source, active_solve, ctx=ctx)
-    flex_data.dt_non_anticipativity = dt_non_anticipativity_df(workdir)
+        workdir, source, active_solve, ctx=ctx, provider=provider)
+    flex_data.dt_non_anticipativity = dt_non_anticipativity_df(workdir,
+                                                                 provider=provider)
 
     # 3-4. Branch-weight Params (lazy ports of the previous eager
     # helpers in ``_derived_params.py``).
     flex_data.pd_branch_weight = pd_branch_weight_param(
-        workdir, source, active_solve, ctx=ctx)
+        workdir, source, active_solve, ctx=ctx, provider=provider)
 
     pdt_bw = pdt_branch_weight_param(workdir, source, active_solve, dt,
-                                          ctx=ctx)
+                                          ctx=ctx, provider=provider)
     if pdt_bw is not None and dt is not None and dt.height > 0:
         # Match input.py's dense-dt semantics: when dt is supplied,
         # build a (d, t)-dense Param via left-join + coalesce default

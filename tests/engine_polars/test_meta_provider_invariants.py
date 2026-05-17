@@ -139,10 +139,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "construction (pre-Provider)."
     ),
     # --- Derived-cascade modules with Provider-first + disk fallback ---
-    "_derived_branch.py": (
-        "Provider-first via _provider_read pattern; disk arm reads "
-        "raw input/profile branch fixtures not in the Provider."
-    ),
     "_derived_existing.py": (
         "Reads input/ppec.csv and entity/decommission history "
         "fixtures during existing-capacity derivation (pre-Provider)."

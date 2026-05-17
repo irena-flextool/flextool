@@ -9079,6 +9079,7 @@ def apply_derived_g(
     # Δ.12b: defensive try/except removed; apply_branch_cluster is
     # parity-bound (cluster D tests gate it).
     from flextool.engine_polars._derived_branch import apply_branch_cluster
-    apply_branch_cluster(flex_data, source, workdir, active_solve, ctx=ctx)
+    apply_branch_cluster(flex_data, source, workdir, active_solve,
+                          ctx=ctx, provider=provider)
 
 
