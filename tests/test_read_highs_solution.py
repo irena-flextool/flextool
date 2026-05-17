@@ -462,6 +462,21 @@ def _read_csv_like_legacy(
         return pd.read_csv(path, header=header, index_col=index_col)
 
 
+@pytest.mark.skip(reason=(
+    "The test's whole purpose was to diff parquet outputs against the "
+    "legacy ``output_raw/*.csv`` files written by the GMPL-mod phase-3 "
+    "post-processing.  ``SolverRunner.run`` was deleted in Δ.22 along "
+    "with the GMPL pipeline, so neither the CSVs nor the GMPL-side "
+    "values are produced anymore; there's nothing left on the legacy "
+    "side to diff against.  The parquet output path is independently "
+    "covered by the unit tests in this file (extract_variable / "
+    "write_variable_parquet / write_v_obj round-trips) and by every "
+    "scenario in ``tests/test_scenarios.py``, which compares cascade "
+    "parquets against the v3.32.0 frozen goldens.  Re-enabling this "
+    "diff would require either restoring the GMPL pipeline (rejected) "
+    "or switching the right-hand-side to the v3.32.0 goldens (would "
+    "duplicate test_scenarios.py)."
+))
 def test_integration_parquet_matches_csv_on_base_scenario(
     test_db_url: str, test_bin_dir: Path, workdir: Path,
 ) -> None:
