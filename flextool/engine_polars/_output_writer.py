@@ -247,14 +247,10 @@ def write_outputs_for_solve(
     realized_dispatch_csv = sd / "realized_dispatch.csv"
     realized_periods_csv = sd / "realized_invest_periods_of_current_solve.csv"
 
-    # Step 1-d — Provider-aware existence: under the in-memory cascade the
-    # file isn't on disk but the per-sub-solve Provider has the frame.  Falls
-    # back to a plain disk check when no Provider is supplied (e.g. tests
-    # that synthesize a Solution without a cascade Provider).
-    def _provider_has_or_disk(name: str, path: Path) -> bool:
-        if provider is not None and provider.has(name):
-            return True
-        return path.exists()
+    # Provider-only existence check.  Post-Step-2 the cascade has one
+    # data pathway; the on-disk CSVs are debug dumps, never an input.
+    def _provider_has_frame(name: str) -> bool:
+        return provider is not None and provider.has(name)
     try:
         write_all_variables(
             h,
@@ -262,15 +258,14 @@ def write_outputs_for_solve(
             output_dir=output_dir,
             realized_dispatch_csv=(
                 realized_dispatch_csv
-                if _provider_has_or_disk(
-                    "solve_data/realized_dispatch", realized_dispatch_csv,
+                if _provider_has_frame(
+                    "solve_data/realized_dispatch",
                 ) else None
             ),
             realized_periods_csv=(
                 realized_periods_csv
-                if _provider_has_or_disk(
+                if _provider_has_frame(
                     "solve_data/realized_invest_periods_of_current_solve",
-                    realized_periods_csv,
                 ) else None
             ),
             # Phase G — route in-memory carriers through to the

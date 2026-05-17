@@ -1,9 +1,14 @@
 """Shared Provider-aware I/O helpers for the writer-port modules.
 
-These helpers wrap a :class:`FlexDataProvider` so writer modules can read
-their upstream artefacts uniformly: ask the Provider first, fall back to
-the on-disk CSV when the Provider doesn't carry the frame.  Returns
-``None`` only when neither the Provider nor disk has the file.
+These helpers let writer modules read upstream artefacts uniformly: the
+live :class:`FlexDataProvider` is consulted first, and a disk-fallback
+serves the byte-parity test gate (``test_writer_port_phase1``) which
+exercises writer modules outside any cascade Provider context.
+
+In a real cascade run the Provider always carries the frame the writer
+needs (Step 2 invariant); the disk arm is therefore unreachable
+in-cascade and is preserved exclusively for the off-cascade test
+harness that seeds inputs to disk and runs writers without a Provider.
 """
 from __future__ import annotations
 
@@ -30,7 +35,10 @@ def _provider_open(provider: "object | None", name: str,
                    path: "Path | str"):
     """Open a file-like handle for *name* via the Provider or disk.
 
-    Returns ``None`` when neither has the file.
+    In-cascade the Provider always supplies the frame; the disk arm is
+    reserved for the off-cascade byte-parity test harness that seeds
+    inputs to disk and invokes writers without a Provider.  Returns
+    ``None`` when neither source has the file.
     """
     if provider is not None and provider.has(name):
         df = provider.get(name)
@@ -55,13 +63,12 @@ def _provider_lookup_positional(
     Resolution: if *provider* has *name*, slice its frame to the first
     ``len(columns)`` columns and rename them by position to *columns*.
     Otherwise return ``None`` so the caller falls back to its own
-    on-disk ``polars.read_csv(path)`` branch.
+    on-disk ``polars.read_csv(path)`` branch.  The disk arm is
+    off-cascade only (writer-port byte-parity tests); in-cascade the
+    Provider always carries the frame.
     """
     if provider is not None and provider.has(name):
         df = provider.get(name)
-        # Guard against a width mismatch between the Provider's stored
-        # frame and the caller's expected schema.  When widths diverge,
-        # treat as a miss so the caller's disk fallback wins.
         if df.width >= len(columns):
             keep = df.columns[: len(columns)]
             out = df.select(keep)

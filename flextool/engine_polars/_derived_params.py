@@ -54,8 +54,11 @@ def _provider_or_exists(
     """Provider-first existence check.
 
     Returns ``True`` iff the live :class:`FlexDataProvider` carries the
-    artefact for *path* (under its canonical name) OR the file exists on
-    disk.
+    artefact for *path* (under its canonical name) OR the file exists
+    on disk.  Post-Step-2 the in-cascade arm is Provider-only for
+    artefacts emitted by writers in ``_PATCH_MODULES``; the disk arm is
+    retained for raw fixture inputs (``input/*.csv``) not carried by
+    the Provider.
     """
     if provider is not None and provider.has(_provider_key(path)):
         return True
@@ -65,7 +68,8 @@ def _provider_or_exists(
 def _provider_read(
     provider: "object | None", path: "Path | str",
 ) -> "pl.DataFrame":
-    """Provider-first read; falls back to disk via :func:`_read_csv_file`.
+    """Provider-first read; falls back to disk via :func:`_read_csv_file`
+    for raw fixture inputs not carried by the Provider.
 
     Pair with :func:`_provider_or_exists` for the existence guard.
     """
@@ -152,10 +156,8 @@ def _read_active_solve(workdir: Path,
     """Read ``solve_data/solve_current.csv`` and return the active solve
     name, or ``None`` when the file is absent / empty.
 
-    Step 1-g-5 — Provider-first read.  When the live
-    :class:`FlexDataProvider` carries the frame, the in-memory copy is
-    consulted; otherwise the legacy seed-lookup / disk read runs (the
-    funnel is dropped wholesale in Step 2).
+    Provider-first; falls back to disk for off-cascade callers (tests,
+    standalone helpers) that don't construct a Provider.
     """
     p = Path(workdir) / "solve_data" / "solve_current.csv"
     if provider is not None and provider.has(_provider_key(p)):

@@ -78,19 +78,21 @@ from ._writer_provider_io import _provider_key
 
 
 def _provider_has_or_exists(provider, path: "Path") -> bool:
-    """Step 1-g-5 — Provider-first existence check used by the
-    profile cascade's CSV-fallback branches."""
+    """Provider-first existence check used by the profile cascade.
+
+    Returns ``True`` iff the Provider carries the canonical name for
+    *path* OR the file exists on disk.  Disk arm retained for raw
+    profile fixtures (``input/profile/*``) not captured by writers in
+    ``_PATCH_MODULES``.
+    """
     if provider is not None and provider.has(_provider_key(path)):
         return True
     return path.exists()
 
 
 def _provider_or_read_csv(provider, path: "Path") -> "pl.DataFrame":
-    """Step 1-g-5 — Provider-first read used by the profile cascade.
-
-    Returns the Provider frame when present, otherwise falls back to a
-    plain disk read.  Mirrors :func:`._writer_provider_io._provider_open`
-    semantics in DataFrame form.
+    """Provider-first read used by the profile cascade; falls back to
+    disk for raw inputs not in the Provider.
     """
     if provider is not None and provider.has(_provider_key(path)):
         return provider.get(_provider_key(path))

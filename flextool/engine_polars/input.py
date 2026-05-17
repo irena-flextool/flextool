@@ -72,13 +72,18 @@ from ._writer_provider_io import _provider_key
 
 
 # ---------------------------------------------------------------------------
-# Provider-aware existence / read / open helpers.
+# Provider-aware access helpers.
 #
-# Each helper consults the live :class:`FlexDataProvider` first and falls
-# back to the on-disk CSV at *path* when the Provider does not carry the
-# named artefact.  ``provider=None`` collapses to a plain disk check —
-# this preserves behaviour for test paths that don't construct a
-# Provider.
+# Post-Step-2 the cascade prefers the live :class:`FlexDataProvider` as
+# the single source of truth for preprocessing artefacts.  The Provider
+# carries every frame emitted by writers in ``_PATCH_MODULES`` (and any
+# downstream Step 1-g writer that wired ``put(name, frame)`` into its
+# emit path).  A disk arm is retained for the *raw* fixture inputs under
+# ``input/`` which are produced by the legacy ``flexpy/input_writer``
+# preprocessing pass and are NOT captured into the Provider — they live
+# on disk for the cascade to consume.  Once that legacy preprocessing
+# is folded into the Provider (a separate, larger refactor), the disk
+# arm can collapse to ``None``.
 
 def _provider_has(provider: "object | None", name: str,
                    path: "Path | str") -> bool:
@@ -90,8 +95,8 @@ def _provider_has(provider: "object | None", name: str,
 
 def _provider_read(provider: "object | None", name: str,
                     path: "Path | str") -> pl.DataFrame:
-    """Return the frame for *name* from *provider*, or fall back to a
-    disk read at *path*.
+    """Return the frame for *name* from *provider*, falling back to
+    disk for raw fixture inputs not carried by the Provider.
     """
     if provider is not None and provider.has(name):
         return provider.get(name)
@@ -102,11 +107,6 @@ def _provider_pick(provider: "object | None",
                     *candidates: "tuple[str, Path]") -> "Path | None":
     """Return the first ``Path`` for which the Provider has the matching
     *name* OR the disk file exists; ``None`` if none.
-
-    Each candidate is a ``(name, path)`` pair — the *name* is the
-    Provider key (parent-qualified, suffix-stripped); the *path* is the
-    disk fallback consulted when the Provider is absent or doesn't carry
-    the frame.
     """
     for name, path in candidates:
         if (provider is not None and provider.has(name)) or Path(path).exists():
@@ -118,9 +118,6 @@ def _provider_open(provider: "object | None", name: str,
                     path: "Path | str"):
     """Open a file-like handle for *name* sourced from the Provider or
     from disk; return ``None`` when neither has the file.
-
-    When the Provider carries the frame, the helper serialises it to a
-    ``StringIO`` so the caller's ``csv.reader`` chain is unchanged.
     """
     if provider is not None and provider.has(name):
         import io
