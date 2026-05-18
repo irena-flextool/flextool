@@ -665,27 +665,37 @@ def recommend_user_bound_scale_from_lp(
     mirrors the Agent-18e policy in :func:`flextool.flextoolrunner.scaling.
     decide_user_bound_scale`):
 
-    1. If the post-build bound spread (``log10(abs_max) − log10(abs_min)``
-       across finite, non-zero row + column bounds) is ≤ 6 decades, the LP
-       bounds are already tight enough — return ``0`` and let HiGHS' own
-       scaling handle it.
+    1. If the post-build *column* bound spread (``log10(abs_max) −
+       log10(abs_min)`` across finite, non-zero column bounds) is ≤ 6
+       decades, the LP bounds are already tight enough — return ``0``
+       and let HiGHS' own scaling handle it.
 
-    2. Otherwise pick ``N`` so the *geometric midpoint* of the bound
-       range lands at ``2^N × geo_mid ≈ 1``, i.e.
+    2. Otherwise pick ``N`` so the *geometric midpoint* of the column
+       bound range lands at ``2^N × geo_mid ≈ 1``, i.e.
        ``N = -round(log2(sqrt(abs_max × abs_min)))``.  This centers the
-       bound range around ``O(1)`` rather than collapsing its upper end
-       (the older anchored-to-max heuristic).
+       column bound range around ``O(1)`` rather than collapsing its
+       upper end (the older anchored-to-max heuristic).
 
     3. Clamp to ``[USER_BOUND_SCALE_MIN, 0]`` (= ``[-10, 0]``).
 
-    The geometric-midpoint formula is much gentler on the bottom end of
-    the range than anchoring to ``abs_max``.  A typical Rivendell-shaped
-    LP has bounds in roughly ``[1, 6e5]`` (slack-variable upper bound 1
-    paired with annual-flow RHS ~6e5); geometric midpoint ≈ 760 picks
-    ``N ≈ -10`` instead of ``N = -19`` from anchored-to-max.  Post-scale
-    bounds become ``[1e-3, 600]`` rather than ``[2e-6, 1.1]`` — HiGHS no
-    longer flags "excessively small bounds" and presolve no longer
-    spuriously declares the model infeasible.
+    **IMPORTANT — column bounds only.**  HiGHS' ``user_bound_scale``
+    option multiplies BOTH column bounds AND the RHS (row bounds) by
+    ``2^N``, but the matrix coefficients are NOT scaled.  Because the
+    matrix is unchanged, scaling a Rivendell-shaped LP where column
+    bounds already sit at ``[1, 1]`` (slack indicators) by ``2^-10``
+    drives column bounds to ``~1e-3`` while the matrix still has
+    coefficients up to ``1e+3``; presolve then declares the model
+    infeasible because every constrained column variable, with upper
+    bound ``1e-3``, cannot carry the unscaled-magnitude flows the
+    constraints expect.  Pooling row bounds into the spread calculation
+    (an earlier mistake fixed by Rivendell bug 1+5+6) inflates the
+    spread on every realistic energy model — RHS values for annual
+    flows or cumulative resource limits routinely reach ``1e+6`` —
+    producing a spurious ``N=-10`` recommendation that breaks presolve.
+    The flextoolrunner counterpart (:func:`flextool.flextoolrunner.
+    scaling.decide_user_bound_scale`) is fed column bounds only via
+    :func:`compute_bound_stats(col_lower, col_upper)`; this function
+    matches that contract.
 
     Agent 18e rationale (from python-preprocessing's
     ``decide_user_bound_scale``): the anchored-to-max heuristic picks
@@ -701,28 +711,23 @@ def recommend_user_bound_scale_from_lp(
     """
     if not lp_ranges:
         return 0
-    max_bounds: list[float] = []
-    min_bounds: list[float] = []
-    for key in ("row_bound", "col_bound"):
-        rng = lp_ranges.get(key)
-        if rng is None:
-            continue
-        try:
-            lo, hi = rng
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(hi) and hi > 0.0:
-            max_bounds.append(float(hi))
-        if math.isfinite(lo) and lo > 0.0:
-            min_bounds.append(float(lo))
-    if not max_bounds:
+    # Column bounds only — see "IMPORTANT" note in the docstring.  HiGHS
+    # scales col + row bounds by 2^N while leaving the matrix alone, so
+    # including row bounds in the spread inflates the recommendation on
+    # any model with large cumulative-resource or annual-flow RHS values
+    # and causes presolve-time infeasibility (Rivendell bug 1+5+6).
+    rng = lp_ranges.get("col_bound")
+    if rng is None:
         return 0
-    abs_max = max(max_bounds)
-    # Spread-threshold gate: don't bother scaling when the bound range
-    # already fits in ≤ 6 decades.  Matches BOUND_SPREAD_THRESHOLD in
-    # :mod:`flextool.flextoolrunner.scaling`.
-    if min_bounds:
-        abs_min = min(min_bounds)
+    try:
+        lo, hi = rng
+    except (TypeError, ValueError):
+        return 0
+    if not (math.isfinite(hi) and hi > 0.0):
+        return 0
+    abs_max = float(hi)
+    if math.isfinite(lo) and lo > 0.0:
+        abs_min = float(lo)
     else:
         abs_min = abs_max * BOUND_ABS_MIN_FLOOR_RATIO
     try:
