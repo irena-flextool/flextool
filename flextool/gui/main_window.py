@@ -247,15 +247,18 @@ class MainWindow(tk.Tk):
         #   col 0  input sources tree           (stretch)
         #   col 1  input source buttons         (narrow)
         #   col 2  side menu: Debug / themes / Png / Exec / Results
-        #   col 3-5 unified Outputs table       (3-col span)
-        # The lower section reuses the same columns; only col 0 and col 5
-        # carry weight so the scenario trees stretch with the window.
+        #   col 3  spacer
+        #   col 4  spacer (weight=1, eats slack so col 5 is pushed right)
+        #   col 5  File outputs box             (fixed width, sticky="ne")
+        # The lower section reuses the same columns: executed_tree
+        # spans cols 2-5 with sticky="nsew" and stretches via col 4's
+        # weight; available_tree at cols 0-1 stretches via col 0.
         outer.columnconfigure(0, weight=1)   # input / available scenarios
         outer.columnconfigure(1, weight=0)   # source buttons
-        outer.columnconfigure(2, weight=0)   # side menu column
-        outer.columnconfigure(3, weight=0)   # Outputs table
-        outer.columnconfigure(4, weight=0)   # Outputs table
-        outer.columnconfigure(5, weight=1)   # executed scenarios (lower)
+        outer.columnconfigure(2, weight=0)   # side menu
+        outer.columnconfigure(3, weight=0)   # spacer
+        outer.columnconfigure(4, weight=1)   # spacer (push col 5 right)
+        outer.columnconfigure(5, weight=0)   # File outputs (right-aligned)
 
         # ── Row 0: Project selector ──────────────────────────────────
         row = 0
@@ -296,9 +299,12 @@ class MainWindow(tk.Tk):
             "  \u2022 Click column headers to sort"
         ))
 
-        outputs_lbl = ttk.Label(outer, text="Outputs", font=self._bold_font)
+        # "File outputs" header sits above the bordered LabelFrame
+        # below — placed in col 5 to align with the right edge of the
+        # bordered box.
+        outputs_lbl = ttk.Label(outer, text="File outputs", font=self._bold_font)
         outputs_lbl.grid(
-            row=row, column=3, columnspan=3, sticky="sw", padx=(20, 0), pady=(10, 2)
+            row=row, column=5, sticky="se", padx=(0, 0), pady=(10, 2)
         )
         attach_tooltip(outputs_lbl, (
             "Per-checked-executed-scenario output artefacts on disk.\n"
@@ -406,31 +412,28 @@ class MainWindow(tk.Tk):
         self.auto_comp_plots_var = tk.BooleanVar(value=True)
         self.auto_comp_excel_var = tk.BooleanVar(value=False)
 
-        # Use tk.Frame (not ttk) so we can tint it green when at least
-        # one executed scenario is checked \u2014 same affordance as the
-        # legacy output_frame.
-        theme_bg = style.lookup("TFrame", "background") or self.cget("background")
-        theme_fg = style.lookup("TLabel", "foreground") or "white"
-        self.output_frame = tk.Frame(outer, bg=theme_bg, padx=5, pady=5)
+        # ttk.LabelFrame gives a themed border that matches the rest of
+        # the UI in both light and dark sv_ttk themes \u2014 no manual bg
+        # juggling. The legacy green-tint affordance is dropped (it
+        # didn't survive the move to ttk and the table makes the
+        # row-by-row state visible anyway).
+        self.output_frame = ttk.LabelFrame(outer, padding=8)
         self.output_frame.grid(
-            row=2, column=3, rowspan=7, columnspan=3,
-            sticky="nw", padx=(20, 0), pady=2,
+            row=2, column=5, rowspan=7,
+            sticky="ne", padx=(20, 0), pady=2,
         )
-        self._output_frame_default_bg = theme_bg
 
-        # Column header row
-        _hdr_fg = theme_fg
-        _hdr_args = dict(bg=theme_bg, fg=_hdr_fg, font="TkDefaultFont")
-        tk.Label(self.output_frame, text="Output", anchor="w", **_hdr_args).grid(
+        # Column header row uses ttk.Label so it inherits the theme.
+        ttk.Label(self.output_frame, text="Output", anchor="w").grid(
             row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 4),
         )
-        tk.Label(self.output_frame, text="Auto-gen", **_hdr_args).grid(
+        ttk.Label(self.output_frame, text="Auto-gen").grid(
             row=0, column=1, padx=(0, 8), pady=(0, 4),
         )
-        tk.Label(self.output_frame, text="Status", **_hdr_args).grid(
+        ttk.Label(self.output_frame, text="Status").grid(
             row=0, column=2, padx=(0, 8), pady=(0, 4),
         )
-        tk.Label(self.output_frame, text="Action", **_hdr_args).grid(
+        ttk.Label(self.output_frame, text="Action").grid(
             row=0, column=3, padx=(0, 0), pady=(0, 4),
         )
 
@@ -476,9 +479,8 @@ class MainWindow(tk.Tk):
 
         for i, (display_name, key, auto_var, show_label) in enumerate(output_info):
             row_i = i + 1  # header is row 0
-            tk.Label(
+            ttk.Label(
                 self.output_frame, text=display_name, anchor="w",
-                bg=theme_bg, fg=theme_fg, font="TkDefaultFont",
             ).grid(row=row_i, column=0, sticky="w", padx=(0, 8), pady=2)
 
             cb = ttk.Checkbutton(self.output_frame, variable=auto_var)
@@ -508,16 +510,18 @@ class MainWindow(tk.Tk):
         self.auto_comp_plots_var.trace_add("write", self._on_auto_gen_toggled)
         self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
 
-        # --- Side menu column (col 2): Debug / themes / Png / Exec / Results ---
-        # Lives to the left of the Outputs table. Was previously split
-        # between row 0 (Debug + themes) and a row below the Outputs
-        # table (Png / Exec / Results); consolidated into one vertical
-        # stack so the section is shorter.
+        # --- Side menu column (col 2): two vertical groups -------------
+        # Top:    Debug · themes · Png settings
+        # Bottom: Execution jobs · Results viewer (anchored to the
+        #         bottom of the section, touching the divider)
+        # A weighted-1 spacer row in the middle absorbs the slack so the
+        # two groups separate cleanly.
         from flextool.gui.hover_tooltip import attach_tooltip as _attach_tip
         side_menu = ttk.Frame(outer)
         side_menu.grid(
-            row=2, column=2, rowspan=7, sticky="nw", padx=(20, 0), pady=2,
+            row=2, column=2, rowspan=7, sticky="nsew", padx=(20, 0), pady=2,
         )
+        side_menu.rowconfigure(3, weight=1)  # stretch spacer
 
         self.debug_cb = ttk.Checkbutton(
             side_menu, text="Debug", variable=self.debug_var,
@@ -545,11 +549,12 @@ class MainWindow(tk.Tk):
         )
         self.plot_menu_btn.grid(row=2, column=0, sticky="w", pady=2)
 
+        # Row 3 is the stretch spacer; bottom group lives in rows 4-5.
         self.execution_menu_btn = ttk.Button(
             side_menu, text="Execution jobs", width=22,
             command=self._on_execution_menu,
         )
-        self.execution_menu_btn.grid(row=3, column=0, sticky="w", pady=2)
+        self.execution_menu_btn.grid(row=4, column=0, sticky="sw", pady=2)
 
         # Width 22 to fit the alternate label "Update view scenarios"
         # when the viewer is already open.
@@ -557,7 +562,7 @@ class MainWindow(tk.Tk):
             side_menu, text="Results viewer", width=22,
             command=self._on_view_results,
         )
-        self.view_results_btn.grid(row=4, column=0, sticky="w", pady=2)
+        self.view_results_btn.grid(row=5, column=0, sticky="sw", pady=(2, 0))
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -1870,17 +1875,12 @@ class MainWindow(tk.Tk):
             self.execution_menu_btn.configure(style="TButton")
 
     def _update_output_frame_style(self) -> None:
-        """Tint the output actions LabelFrame when executed scenarios are checked."""
-        has_checked = False
-        for item in self.executed_tree.get_children():
-            values = self.executed_tree.item(item, "values")
-            if values and values[0] == CHECK_ON:
-                has_checked = True
-                break
-        if has_checked:
-            self.output_frame.configure(bg="#2E7D32")
-        else:
-            self.output_frame.configure(bg=self._output_frame_default_bg)
+        """No-op: the legacy tint of the Output actions LabelFrame is
+        gone since the File outputs box uses ttk.LabelFrame and inherits
+        the theme. Per-row ✓/⊘ status icons make the "ready to act"
+        affordance visible without an extra colour cue.
+        """
+        return
 
     def _refresh_and_autocheck_scenario(
         self, scenario_name: str, finish_timestamp: str = "",
