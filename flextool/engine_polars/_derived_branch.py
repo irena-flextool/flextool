@@ -75,9 +75,11 @@ def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
     return provider.get(key)
 
 # Branch-cluster helpers take ``workdir`` only — no FlexData in scope.
-# ``schema_dtype(None, ...)`` returns ``pl.Utf8`` so default schemas
-# stay String-typed.  Pattern is uniform across the cascade.
-_enums: dict | None = None
+# Phase 4 binds ``_enums`` to the live cascade-wide vocabulary proxy so
+# default schemas pick up Enum allocation as soon as ``load_flextool``
+# fires ``set_global_axis_enums``.  Falsy / pl.Utf8 fallback when no
+# cascade is active.
+from flextool.engine_polars._axis_enums import _LIVE_AXIS_ENUMS as _enums  # noqa: E402
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

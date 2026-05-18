@@ -77,6 +77,14 @@ class FlexDataProvider:
 
     def __init__(self) -> None:
         self._frames: dict[str, pl.DataFrame] = {}
+        # Phase 4 — axis enum vocabulary + axis contract.  Populated by
+        # ``input_derivation.run`` once per write_input invocation and
+        # consumed by ``load_flextool`` (which threads them into
+        # SpineDbReader / Backend constructions on the override-chain
+        # path).  Left as ``None`` on the bare workdir-only test path;
+        # ``load_flextool`` builds them on the fly when missing.
+        self.axis_enums: "dict[str, pl.Enum] | None" = None
+        self.contract: "object | None" = None
 
     # ------------------------------------------------------------------
     # Mutation
@@ -109,6 +117,12 @@ class FlexDataProvider:
            tail.
 
         Returns ``None`` if no candidate matches.
+
+        Frames are returned exactly as stored — Phase 4 activates the
+        cascade-wide Enum vocabulary via
+        :func:`flextool.engine_polars._axis_enums.set_global_axis_enums`,
+        so a frame put as Enum-typed comes back Enum-typed and joins
+        cleanly against the substrate's Enum scratch frames.
         """
         key = _strip_csv(name)
         if key in self._frames:

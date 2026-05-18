@@ -59,12 +59,10 @@ def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
     return provider.get(key)
 
 # Reserve loader runs at workdir-CSV seed phase — no FlexData in scope.
-# ``schema_dtype(None, ...)`` returns ``pl.Utf8`` so the empty/default
-# frames here keep String dtype (same as before).  Sites are written in
-# the flexible-lookup form so a future dispatch that threads
-# ``axis_enums`` through ``load_data`` can activate Enum allocation
-# without touching this file again.
-_enums: dict | None = None
+# Phase 4 binds ``_enums`` to the live cascade-wide vocabulary proxy
+# so ``schema_dtype(_enums, axis)`` activates Enum allocation under
+# ``load_flextool``.  Falsy / pl.Utf8 fallback outside an active cascade.
+from flextool.engine_polars._axis_enums import _LIVE_AXIS_ENUMS as _enums  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

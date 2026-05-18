@@ -667,6 +667,13 @@ def _drive_cascade(
     cascade_db_reader = None
     if db_url is not None and scenario_name is not None:
         from flextool.engine_polars._spinedb_reader import SpineDbReader
+        # Phase 4 redo — the cascade-wide SpineDbReader is constructed
+        # WITHOUT ``axis_enums`` here for cascade compat.  The override-
+        # chain reads stay Utf8 so they don't clash with the cascade's
+        # Utf8 scratch frames; ``cast_flexdata_axes`` at end of
+        # ``load_flextool`` casts the resulting FlexData fields to
+        # Enum.  The Backend cast in ``input_derivation.run`` still
+        # validates tokens at the canonical emit boundary.
         try:
             cascade_db_reader = SpineDbReader(db_url, scenario=scenario_name)
         except Exception:  # noqa: BLE001
@@ -1528,7 +1535,9 @@ def run_single_solve_from_db(
     work_folder = Path(work_folder)
     work_folder.mkdir(parents=True, exist_ok=True)
 
-    # 1. Construct the SpineDbReader once.
+    # 1. Construct the SpineDbReader once.  Phase 4 redo — kept Utf8
+    # (no ``axis_enums``) for cascade compat; the final cast happens at
+    # end of ``load_flextool`` via ``cast_flexdata_axes``.
     from flextool.engine_polars._spinedb_reader import SpineDbReader
     _t0 = _time.perf_counter()
     reader = SpineDbReader(db_url, scenario=scenario_name)

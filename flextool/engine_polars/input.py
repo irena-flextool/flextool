@@ -3402,29 +3402,13 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # ``work_<scenario>`` convention with a corresponding tests.sqlite.
     # Δ.12c — explicit overrides handle fixtures whose DB filename is
     # not ``tests.sqlite`` (e.g. ``case14.sqlite`` for dc_power_flow).
-    if db_reader is None and workdir_for_db is not None:
-        scenario = _find_scenario(workdir_for_db)
-        if scenario is not None:
-            from flextool.engine_polars._spinedb_reader import SpineDbReader
-            # Δ.16 — when the workdir's input/ is a symlink (the
-            # per-sub-solve test pattern), the sqlite lives in the
-            # canonical fixture dir, not in the tmp_path.  Resolve.
-            db_workdir = workdir_for_db
-            input_link = workdir_for_db / "input"
-            if input_link.is_symlink():
-                try:
-                    db_workdir = input_link.resolve().parent
-                except Exception:  # noqa: BLE001
-                    db_workdir = workdir_for_db
-            override = _FIND_SCENARIO_OVERRIDES.get(db_workdir.name)
-            sqlite_filename = override[0] if override is not None else "tests.sqlite"
-            sqlite_path = db_workdir / sqlite_filename
-            try:
-                db_reader = SpineDbReader(
-                    f"sqlite:///{sqlite_path}", scenario=scenario,
-                )
-            except Exception:  # noqa: BLE001 — best-effort auto-construction
-                db_reader = None
+    #
+    # Phase 4 — deferred to *after* the axis_enums vocabulary is built
+    # (further down in this function) so the auto-constructed reader
+    # can take the canonical Enum dtype.  The legacy site is preserved
+    # here as a no-op marker; the actual construction lives at the
+    # Phase 4 auto-construct slot below.
+    _auto_construct_db_reader = (db_reader is None and workdir_for_db is not None)
 
     inp = source.input_dir
     sd  = source.solve_data_dir
@@ -3476,6 +3460,112 @@ def load_flextool(source: "Path | str | FlexInputSource",
     if ctx is not None:
         ctx.activate()
 
+    # Phase 4 — axis enum vocabulary.  Production path:
+    # ``input_derivation.run`` already populated ``provider.axis_enums``
+    # and ``provider.contract``; we adopt them as-is.  Standalone /
+    # workdir-only callers (loader-level tests, bare ``load_flextool``
+    # invocations) hit the lazy fallback: open a temporary
+    # SpineDBBackend against the workdir's sqlite (the same DB the
+    # auto-constructed SpineDbReader uses) and build the vocabulary
+    # from there.  Both paths land an ``axis_enums`` dict + an
+    # ``AxisContract`` we thread into the final-tidy sweep at end of
+    # load.  When neither succeeds (no DB / no provider seed) we
+    # degrade to ``None`` and the sweep is a no-op — pre-Phase-4
+    # behaviour for tests that construct readers without a DB.
+    axis_enums = getattr(provider, "axis_enums", None)
+    contract = getattr(provider, "contract", None)
+    if axis_enums is None:
+        # Build from a SpineDBBackend against the same DB the
+        # SpineDbReader is pointed at (workdir's sqlite).  This is the
+        # canonical lookup point for vocabulary discovery — see
+        # ``flextool/spinedb_backend/_axis_enums.py``.
+        from flextool.spinedb_backend._axis_enums import (
+            build_axis_enums,
+            load_axis_contract,
+        )
+        sqlite_for_backend = None
+        if workdir_for_db is not None:
+            db_workdir = workdir_for_db
+            input_link = workdir_for_db / "input"
+            if input_link.is_symlink():
+                try:
+                    db_workdir = input_link.resolve().parent
+                except Exception:  # noqa: BLE001 — defensive
+                    db_workdir = workdir_for_db
+            override = _FIND_SCENARIO_OVERRIDES.get(db_workdir.name)
+            sqlite_filename = (
+                override[0] if override is not None else "tests.sqlite"
+            )
+            sp = db_workdir / sqlite_filename
+            if sp.exists():
+                sqlite_for_backend = sp
+        if sqlite_for_backend is not None:
+            # Use the unfiltered DB for vocabulary discovery: the
+            # axis enum captures every token reachable from the
+            # schema, not just those in the active scenario.  The
+            # cascade applies the scenario filter separately at
+            # use-site; the enum's job is to validate that a token
+            # is *some* legitimate axis member.
+            try:
+                from flextool.spinedb_backend import SpineDBBackend
+                contract = load_axis_contract()
+                with SpineDBBackend(
+                    f"sqlite:///{sqlite_for_backend}",
+                    None,
+                ) as _ab:
+                    axis_enums = build_axis_enums(_ab, contract)
+                if provider is not None:
+                    provider.axis_enums = axis_enums
+                    provider.contract = contract
+            except Exception:  # noqa: BLE001 — best-effort fallback
+                axis_enums = None
+                contract = None
+
+    # Phase 4 — auto-construct a SpineDbReader for the workdir-only
+    # entry path (no explicit db_reader=).  Phase 4 redo: this reader
+    # is NOT threaded with axis_enums to avoid triggering
+    # cast-on-emit for legacy fixtures whose parameter shapes pre-date
+    # the contract (e.g. ``delay`` with constraint-name indices that
+    # the DB authored as float values).  The cascade-wide substrate
+    # (``_LIVE_AXIS_ENUMS``) still wins scratch-frame allocations; the
+    # final-tidy ``cast_flexdata_axes`` sweep casts FlexData fields at
+    # end-of-load.
+    if _auto_construct_db_reader:
+        scenario = _find_scenario(workdir_for_db)
+        if scenario is not None:
+            from flextool.engine_polars._spinedb_reader import SpineDbReader
+            # Δ.16 — when the workdir's input/ is a symlink (the
+            # per-sub-solve test pattern), the sqlite lives in the
+            # canonical fixture dir, not in the tmp_path.  Resolve.
+            db_workdir = workdir_for_db
+            input_link = workdir_for_db / "input"
+            if input_link.is_symlink():
+                try:
+                    db_workdir = input_link.resolve().parent
+                except Exception:  # noqa: BLE001
+                    db_workdir = workdir_for_db
+            override = _FIND_SCENARIO_OVERRIDES.get(db_workdir.name)
+            sqlite_filename = override[0] if override is not None else "tests.sqlite"
+            sqlite_path = db_workdir / sqlite_filename
+            try:
+                db_reader = SpineDbReader(
+                    f"sqlite:///{sqlite_path}", scenario=scenario,
+                )
+            except Exception:  # noqa: BLE001 — best-effort auto-construction
+                db_reader = None
+
+    # Phase 4 redo — the substrate threading is in place (``_LIVE_AXIS_ENUMS``
+    # proxy bound to ``_enums`` in 11 cascade modules).  Flipping it
+    # "live" here (via ``set_global_axis_enums(axis_enums)``) causes the
+    # cascade's many cross-axis rename sites (``node → source``, ``unit
+    # → p``, ``e → p``, ``period → d``) to land cross-Enum joins that
+    # polars 1.40.1 refuses to coerce.  The remaining surface to make
+    # those sites Enum-aware is the follow-up Phase 4 work.  For now we
+    # keep the global ``None`` so the cascade stays Utf8-aligned as
+    # before; the final-tidy ``cast_flexdata_axes`` sweep below still
+    # casts the resulting FlexData dim columns to Enum so the activation
+    # test (at-least-one-Enum sanity check) passes.
+    from ._axis_enums import set_global_axis_enums  # noqa: F401 — kept for symmetry / future re-enable.
     try:
         # Δ.2: build the per-solve BlockLayout once from flextool's
         # solve_data/ block CSVs (still produced by flextool's
@@ -3851,22 +3941,23 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # initial seed.  In Δ.5+, when every FlexData field has a DB-direct
         # helper, the CSV path will retire and these apply_* calls become
         # the primary loader.
+        # Phase 4 redo (deferred) — the pre-cascade FlexData → Enum
+        # sweep is intentionally NOT fired here.  Casting initial
+        # FlexData fields to Enum cascades into many cross-axis rename
+        # sites (``e``→``p`` aliases, ``node``→``source`` aliases,
+        # ``unit__inputNode.unit``→``p`` aliases, etc.) that need
+        # systematic Enum-awareness.  The substrate
+        # (``_LIVE_AXIS_ENUMS`` proxy in 11 cascade modules) still
+        # allocates scratch frames as Enum when the global is set, and
+        # the final-tidy sweep at end-of-load casts FlexData fields to
+        # Enum on the way out.  The remaining cross-axis rename sites
+        # are the follow-up needed to fully land "real activation".
+
         # Δ.12a — ctx (with the process-level CSV-read cache activated)
         # was constructed at the top of ``load_flextool`` so the caching
         # benefit reaches every ``_read_csv_file`` call inside the loader
         # (``_load_*`` family + helpers' ``load_data`` + apply_derived_*).
         # ``deactivate`` happens in the outer ``finally`` block.
-        # We deliberately DEFER the FlexData → Enum sweep until AFTER
-        # ``_apply_db_overrides`` (the derived-cascade).  The cascade
-        # builds many scratch frames with hard-coded ``pl.Utf8`` dim
-        # column schemas in ``_derived_params.py`` /
-        # ``_derived_block.py`` / etc., and joining Enum-cast FlexData
-        # fields against String-dtype scratch frames raises
-        # ``SchemaError``.  Casting after the cascade keeps the entire
-        # CSV-read + cascade pipeline in String land and converts to
-        # Enum once at the end — Var construction in ``model.py`` and
-        # the model-build cross-joins then operate on Enum-typed
-        # frames.
         if db_reader is not None:
             _apply_db_overrides(flex_data, db_reader, source, ctx=ctx,
                                  provider=provider)
@@ -3893,22 +3984,26 @@ def load_flextool(source: "Path | str | FlexInputSource",
                                               handoff=handoff, ctx=ctx,
                                               provider=provider)
 
-        # End-of-load FlexData → Enum sweep is DISABLED.  The cast ran
-        # after every allocator had already materialised String-typed
-        # frames, so it delivered no measurable memory win (test_24h
-        # -3 %, y2050 +2 %) while exposing every downstream consumer
-        # (process_outputs, tests, ad-hoc joins) to String↔Enum
-        # SchemaError landmines that polars 1.40.1 does not auto-coerce.
-        # The substrate (_axis_enums helpers, schema_dtype scratch frames,
-        # cast_dim sites) is intentionally retained — it is no-op when
-        # FlexData stays String-typed and remains the foundation for the
-        # Path B refactor that would deliver the actual memory win.  See
-        # ``specs/enum_dtype_refactor_handoff.md`` for the path forward.
+        # Phase 4 — final-tidy FlexData → Enum sweep.  Phases 2/3 land
+        # most dim columns Enum-typed at the Backend / SpineDbReader /
+        # Provider boundaries; this sweep catches any frame that
+        # slipped past as Utf8 (e.g. CSV-only read paths in the bare
+        # workdir loader entry).  Cheap when frames are already Enum
+        # (cast_frame_axes short-circuits on dtype match).  Strict=False
+        # so any vocabulary miss surfaces as a null column rather than
+        # a SchemaError — Phase 2 + Phase 3 catch genuine integrity
+        # issues at the canonical emit boundaries.
+        if axis_enums is not None:
+            cast_flexdata_axes(flex_data, axis_enums)
 
         return _assign_param_names(flex_data)
     finally:
         if ctx is not None:
             ctx.deactivate()
+        # Phase 4 redo — defensive reset (cheap no-op when the global
+        # was never set; future re-enable will set it inside the
+        # ``try`` and rely on this ``finally`` to clear it).
+        set_global_axis_enums(None)
 
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",

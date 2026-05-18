@@ -93,13 +93,12 @@ def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
         return None
     return provider.get(key)
 
-# Inflow-scaling helpers run during ``_load_node`` (before
-# ``build_axis_enums`` can populate FlexData with the full vocabulary)
-# and operate on a source/workdir, not FlexData.  ``_enums`` is always
-# ``None`` here; the flexible-lookup form is kept so a follow-up
-# dispatch can thread an explicit ``axis_enums`` kwarg if these scratch
-# frames need to participate in Enum joins.
-_enums: dict | None = None
+# Inflow-scaling helpers run during ``_load_node`` and operate on a
+# source/workdir, not FlexData.  Phase 4 binds ``_enums`` to the live
+# cascade-wide vocabulary proxy so scratch-frame schema declarations
+# pick up Enum dtypes when ``load_flextool`` is active.  Falsy /
+# pl.Utf8 fallback outside an active cascade.
+from flextool.engine_polars._axis_enums import _LIVE_AXIS_ENUMS as _enums  # noqa: E402
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

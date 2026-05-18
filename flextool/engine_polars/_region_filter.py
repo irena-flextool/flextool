@@ -44,7 +44,10 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine_polars.input import FlexData
-from flextool.engine_polars._axis_enums import schema_dtype
+from flextool.engine_polars._axis_enums import (
+    get_global_axis_enums,
+    schema_dtype,
+)
 
 
 __all__ = [
@@ -365,7 +368,7 @@ def _build_region_data(
         if not cross_arcs_by_pss:
             return df
         # Build a 3-col anti-join key.
-        _enums = getattr(src, "_axis_enums", None)
+        _enums = get_global_axis_enums()
         key_df = pl.DataFrame({
             "p":      [t[0] for t in cross_arcs_by_pss],
             "source": [t[1] for t in cross_arcs_by_pss],
@@ -390,7 +393,7 @@ def _build_region_data(
         f = p.frame
         if cross_arcs_by_pss and all(c in f.columns
                                      for c in ("p", "source", "sink")):
-            _enums = getattr(src, "_axis_enums", None)
+            _enums = get_global_axis_enums()
             key_df = pl.DataFrame({
                 "p":      [t[0] for t in cross_arcs_by_pss],
                 "source": [t[1] for t in cross_arcs_by_pss],
@@ -547,7 +550,7 @@ def _inject_half_flows(
                 & (pl.col("sink") == hf.original_sink)
             ).select("d", "t")
         else:
-            _enums = getattr(src, "_axis_enums", None)
+            _enums = get_global_axis_enums()
             arc_dt = pl.DataFrame({"d": [], "t": []},
                                   schema={"d": schema_dtype(_enums, "d"),
                                           "t": schema_dtype(_enums, "t")})
@@ -759,7 +762,7 @@ def _inject_half_flows(
                           new_df.select(list(schema.keys()))],
                          how="vertical")
 
-    _enums_loc = getattr(src, "_axis_enums", None)
+    _enums_loc = get_global_axis_enums()
     _pss_schema = {"p": schema_dtype(_enums_loc, "p"),
                     "source": schema_dtype(_enums_loc, "source"),
                     "sink": schema_dtype(_enums_loc, "sink")}
@@ -792,7 +795,7 @@ def _inject_half_flows(
 
     # Append unitsize Param.
     if rd.p_unitsize is not None and new_unitsize_rows:
-        _enums = getattr(src, "_axis_enums", None)
+        _enums = get_global_axis_enums()
         new_us = pl.DataFrame(new_unitsize_rows,
                               schema={"p": schema_dtype(_enums, "p"),
                                       "value": pl.Float64})
@@ -802,7 +805,7 @@ def _inject_half_flows(
 
     # Append p_slope rows for half-flows that are eff-classified.
     if rd.p_slope is not None and new_p_slope_rows:
-        _enums = getattr(src, "_axis_enums", None)
+        _enums = get_global_axis_enums()
         new_sl = pl.DataFrame(new_p_slope_rows,
                               schema={"p": schema_dtype(_enums, "p"),
                                       "d": schema_dtype(_enums, "d"),
@@ -814,7 +817,7 @@ def _inject_half_flows(
 
     # Append flow_upper Param rows.
     if rd.p_flow_upper is not None and new_flow_upper_rows:
-        _enums = getattr(src, "_axis_enums", None)
+        _enums = get_global_axis_enums()
         new_fu = pl.DataFrame(new_flow_upper_rows,
                               schema={"p": schema_dtype(_enums, "p"),
                                       "source": schema_dtype(_enums, "source"),
@@ -828,7 +831,7 @@ def _inject_half_flows(
         rd.p_flow_upper = Param(("p", "source", "sink", "d", "t"),
                                 merged_fu, name=rd.p_flow_upper.name)
     if rd.p_flow_upper_existing is not None and new_flow_upper_existing_rows:
-        _enums = getattr(src, "_axis_enums", None)
+        _enums = get_global_axis_enums()
         new_fue = pl.DataFrame(new_flow_upper_existing_rows,
                                schema={"p": schema_dtype(_enums, "p"),
                                        "source": schema_dtype(_enums, "source"),
@@ -883,7 +886,7 @@ def _inject_half_flows(
     src_w_rows = [r for r in new_p_arc_sink_weight_rows if r["_side"] == "source"]
     snk_w_rows = [r for r in new_p_arc_sink_weight_rows if r["_side"] == "sink"]
 
-    _enums = getattr(src, "_axis_enums", None)
+    _enums = get_global_axis_enums()
     if rd.arc_source_block_dt is not None and src_block_rows:
         new_df = pl.DataFrame(
             [{k: r[k] for k in ("p", "source", "sink", "d", "b_first", "t", "weight")}

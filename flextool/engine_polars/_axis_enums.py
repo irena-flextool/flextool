@@ -50,6 +50,7 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "d_previous": "d",
     "d_upper": "d",
     "d_back": "d",
+    "period": "d",
     # Time-step synonyms
     "t_previous": "t",
     "t_previous_within_block": "t",
@@ -65,6 +66,14 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "commodity": "c",
     "group": "g",
     "entity": "e",
+    # Constraint axis — Phase 1 renamed the column from 'c' to 'cn' to
+    # avoid collision with the commodity 'c' axis.  See
+    # ``flextool_axis_contract.json`` axis ``constraint``.
+    "cn": "constraint",
+    # Block synonyms
+    "bk": "block",
+    # Branch synonyms
+    "b": "branch",
 }
 
 
@@ -106,7 +115,16 @@ def cast_frame_axes(
 
     exprs = []
     for col in columns:
+        # Direct match first; otherwise resolve through ``_AXIS_SYNONYMS``
+        # so columns like ``d_previous`` / ``period`` pick up the ``d``
+        # axis dtype.  This is critical for the final-tidy sweep: many
+        # FlexData fields carry synonym column names that the substrate
+        # ``schema_dtype`` calls also expand via ``_AXIS_SYNONYMS``.
         target = enums.get(col)
+        if target is None:
+            canon = _AXIS_SYNONYMS.get(col)
+            if canon is not None:
+                target = enums.get(canon)
         if target is None:
             continue
         if schema[col] == target:
@@ -222,6 +240,10 @@ def cast_dim(col_expr: "pl.Expr",
         return col_expr
     dt = enums.get(axis)
     if dt is None:
+        canon = _AXIS_SYNONYMS.get(axis)
+        if canon is not None:
+            dt = enums.get(canon)
+    if dt is None:
         return col_expr
     return col_expr.cast(dt, strict=False)
 
@@ -250,7 +272,15 @@ def schema_dtype(enums: "dict[str, pl.Enum] | None",
     """
     if enums is None:
         return pl.Utf8
-    return enums.get(axis, pl.Utf8)
+    # Direct match first; otherwise resolve through ``_AXIS_SYNONYMS``
+    # so callers asking for ``schema_dtype(_enums, "d_previous")`` get
+    # the ``d`` axis enum dtype.
+    dt = enums.get(axis)
+    if dt is None:
+        canon = _AXIS_SYNONYMS.get(axis)
+        if canon is not None:
+            dt = enums.get(canon)
+    return dt if dt is not None else pl.Utf8
 
 
 def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False):
@@ -324,6 +354,123 @@ def cast_flexdata_axes(flex_data: "FlexData",
     return flex_data
 
 
+# ---------------------------------------------------------------------------
+# Phase 4 — cascade-wide axis enum vocabulary global.
+#
+# ``load_flextool`` populates this once per invocation (right after
+# ``build_axis_enums``) and resets it to ``None`` at end of load via the
+# try/finally guard at :func:`flextool.engine_polars.input.load_flextool`.
+# The substrate consumer modules
+# (``_derived_params``, ``_region_filter``, ``_derived_block``, …) read
+# this through the :class:`_LiveAxisEnums` proxy bound to their
+# module-level ``_enums`` name — so ``schema_dtype(_enums, axis)`` and
+# ``cast_dim(expr, _enums, axis)`` automatically pick up the active
+# vocabulary whenever the cascade runs under load_flextool.
+#
+# When unset (legacy loader-level tests that import substrate modules
+# without invoking load_flextool), the proxy reads ``None`` from the
+# global and ``schema_dtype`` / ``cast_dim`` short-circuit to ``pl.Utf8``
+# / no-op, preserving pre-activation behaviour.
+
+_GLOBAL_AXIS_ENUMS: "dict[str, pl.Enum] | None" = None
+
+
+def set_global_axis_enums(enums: "dict[str, pl.Enum] | None") -> None:
+    """Set the cascade-wide axis enum vocabulary.
+
+    Called from :func:`flextool.engine_polars.input.load_flextool` after
+    :func:`flextool.spinedb_backend._axis_enums.build_axis_enums` and
+    again with ``None`` at end-of-load to reset for the next invocation.
+
+    Idempotent.  Thread-safe under the GIL — the global is a single
+    pointer rebind.  Not designed for concurrent ``load_flextool``
+    invocations (none exist in the supported pipeline).
+    """
+    global _GLOBAL_AXIS_ENUMS
+    _GLOBAL_AXIS_ENUMS = enums
+
+
+def get_global_axis_enums() -> "dict[str, pl.Enum] | None":
+    """Read the current cascade-wide axis enum vocabulary, or ``None``.
+
+    Convenience accessor; the substrate consumers go through the
+    :class:`_LiveAxisEnums` proxy bound at module load time.
+    """
+    return _GLOBAL_AXIS_ENUMS
+
+
+class _LiveAxisEnums:
+    """Live proxy over :data:`_GLOBAL_AXIS_ENUMS`.
+
+    Bound at module-load time as the ``_enums`` global on each substrate
+    consumer.  Implements the minimal protocol the substrate uses:
+
+    * ``__bool__`` — falsy when the live global is ``None`` (so legacy
+      ``if _enums:`` checks behave identically to the pre-Phase-4
+      ``_enums = None`` default).
+    * ``.get(axis, default=None)`` — delegated to the live dict; returns
+      ``default`` (the schema_dtype callers' ``pl.Utf8``) when the
+      global is unset.  ``cast_dim`` requests bare ``.get(axis)`` which
+      returns ``None`` and triggers its no-op fallback.
+
+    Critically, the proxy is **never** ``None``.  The ``if enums is
+    None`` guards in :func:`schema_dtype` and :func:`cast_dim` see a
+    non-None proxy and proceed to ``.get(axis)``; the proxy then
+    consults the live global on each call.  This is what makes the
+    cascade pick up vocabulary changes the moment
+    :func:`set_global_axis_enums` fires, with zero substrate-site edits.
+    """
+
+    __slots__ = ()
+
+    def _live(self) -> "dict[str, pl.Enum] | None":
+        return _GLOBAL_AXIS_ENUMS
+
+    def __bool__(self) -> bool:
+        return self._live() is not None
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        live = self._live()
+        if live is None:
+            return "_LiveAxisEnums(<unset>)"
+        return f"_LiveAxisEnums(<{len(live)} axes>)"
+
+    def get(self, key, default=None):
+        live = self._live()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __contains__(self, key) -> bool:  # pragma: no cover - defensive
+        live = self._live()
+        return live is not None and key in live
+
+    def __iter__(self):  # pragma: no cover - defensive
+        live = self._live()
+        return iter(live) if live is not None else iter(())
+
+    def __len__(self) -> int:  # pragma: no cover - defensive
+        live = self._live()
+        return 0 if live is None else len(live)
+
+    def items(self):  # pragma: no cover - defensive
+        live = self._live()
+        return live.items() if live is not None else ()
+
+    def keys(self):  # pragma: no cover - defensive
+        live = self._live()
+        return live.keys() if live is not None else ()
+
+    def values(self):  # pragma: no cover - defensive
+        live = self._live()
+        return live.values() if live is not None else ()
+
+
+# A single shared instance is enough — the proxy is stateless beyond the
+# module-level global it reads.
+_LIVE_AXIS_ENUMS: "_LiveAxisEnums" = _LiveAxisEnums()
+
+
 __all__ = [
     "cast_dim",
     "cast_frame_axes",
@@ -332,4 +479,6 @@ __all__ = [
     "empty_like",
     "align_join_dtypes",
     "schema_dtype",
+    "set_global_axis_enums",
+    "get_global_axis_enums",
 ]

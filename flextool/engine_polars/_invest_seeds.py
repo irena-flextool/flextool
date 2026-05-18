@@ -31,12 +31,11 @@ from ._axis_enums import cast_dim, schema_dtype
 from ._writer_provider_io import _provider_key
 
 # These helpers run at the workdir-CSV seed phase — before FlexData is
-# materialised — so ``_enums`` is always ``None`` here.  Using
-# :func:`schema_dtype` (returning ``pl.Utf8`` when ``_enums is None``)
-# keeps the schema declarations consistent with the rest of the cascade
-# while preserving String dtype as the default.  A follow-up dispatch
-# may thread an explicit ``axis_enums`` kwarg through these readers.
-_enums: dict | None = None
+# materialised.  Phase 4 binds ``_enums`` to the live cascade-wide
+# vocabulary proxy so ``schema_dtype(_enums, axis)`` and ``cast_dim(expr,
+# _enums, axis)`` activate Enum allocation under ``load_flextool``.
+# Falsy / pl.Utf8 fallback outside an active cascade.
+from flextool.engine_polars._axis_enums import _LIVE_AXIS_ENUMS as _enums  # noqa: E402
 
 
 def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":

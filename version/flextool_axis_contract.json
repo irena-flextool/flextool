@@ -59,11 +59,21 @@
         "entity_class": "solve",
         "parameters": ["years_represented", "realized_periods", "invest_periods", "realized_invest_periods"],
         "depth": 1,
-        "key_kind": "union_keys_and_array_values"
+        "key_kind": "union_keys_and_array_values",
+        "additional_sources": [
+          {"entity_class": "unit",       "parameter": "invest_max_period"},
+          {"entity_class": "unit",       "parameter": "invest_min_period"},
+          {"entity_class": "connection", "parameter": "invest_max_period"},
+          {"entity_class": "connection", "parameter": "invest_min_period"},
+          {"entity_class": "node",       "parameter": "invest_max_period"},
+          {"entity_class": "node",       "parameter": "invest_min_period"},
+          {"entity_class": "group",      "parameter": "invest_max_period"},
+          {"entity_class": "group",      "parameter": "invest_min_period"}
+        ]
       },
       "filter": "∩ realized_periods of the active model instance",
       "column_synonyms": ["period", "d_invest", "d_divest", "d_previous", "d_upper", "d_back"],
-      "note": "FlexTool 'period' axis. Sources: keys of solve.years_represented (Map), values of solve.realized_periods (Array), keys of solve.invest_periods (Map), keys of solve.realized_invest_periods (Map). NOT 'timeline' — the earlier audit reported source=timeline but the cascade renames period→d at every reader (e.g. _derived_block.py:169/180, _derived_branch.py:150, _invest_seeds.py:80/107). The 'period' is a logical year/horizon label, distinct from the timeline (timestep grid)."
+      "note": "FlexTool 'period' axis. Primary sources: keys of solve.years_represented (Map), values of solve.realized_periods (Array), keys of solve.invest_periods (Map), keys of solve.realized_invest_periods (Map). Phase 4 — also unions keys from entity-level invest_max_period / invest_min_period maps (unit / connection / node / group) because scenario filters can narrow solve.invest_periods to a subset while leaving entity-level period maps untouched; the cast at the Backend emit boundary needs the full vocabulary so cross-scenario period references don't raise FlexDataIntegrityError on a legitimate inactive-this-solve token. NOT 'timeline' — the earlier audit reported source=timeline but the cascade renames period→d at every reader (e.g. _derived_block.py:169/180, _derived_branch.py:150, _invest_seeds.py:80/107). The 'period' is a logical year/horizon label, distinct from the timeline (timestep grid)."
     },
     {
       "name": "e",
