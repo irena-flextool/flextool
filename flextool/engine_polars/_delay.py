@@ -317,7 +317,10 @@ def delayed_input_expr(d, v_flow):
     if psse_delayed is None or psse_delayed.height == 0:
         return None
     indirect_inputs_delayed = psse_delayed.filter(
-        pl.col("sink") == pl.col("p")
+        # Cross-axis value compare: "sink" is the entity-union (e) axis
+        # and "p" is the process axis (different Enums under Phase 4
+        # activation).  Cast both to Utf8 for the equality test.
+        pl.col("sink").cast(pl.Utf8) == pl.col("p").cast(pl.Utf8)
     ).select("p", "source", "sink")
     if indirect_inputs_delayed.height == 0:
         return None

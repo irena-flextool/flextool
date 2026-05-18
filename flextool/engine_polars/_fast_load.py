@@ -55,14 +55,31 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from ._axis_enums import alias_to_axis, rename_to_axis, schema_dtype
+from ._axis_enums import (
+    alias_to_axis,
+    get_global_axis_enums,
+    rename_to_axis,
+    schema_dtype,
+)
 
-# ``_empty_flex_data`` runs before any FlexData is materialised — the
-# returned sentinel frames are immediately overwritten by the override
-# chain.  ``_enums`` is always ``None`` here, so ``schema_dtype`` falls
-# back to ``pl.Utf8`` (same dtype as before).  Pattern is uniform with
-# the rest of the cascade for the dtype-flexible refactor.
-_enums: dict | None = None
+
+# Phase 4.6 — proxy over the live cascade-wide axis enum dict.
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 if TYPE_CHECKING:
     from flextool.engine_polars._spinedb_reader import SpineDbReader

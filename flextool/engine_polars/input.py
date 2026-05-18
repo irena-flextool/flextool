@@ -1473,8 +1473,12 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
     raw = _provider_read(provider, "solve_data/process__method_indirect", p).pipe(rename_to_axis, {"process":"p"})
     if raw.height == 0: return (None, None, None, None, None, None)
     indirect = raw.select("p").unique()
-    inputs  = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("sink")==pl.col("p")))
-    outputs = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("source")==pl.col("p")))
+    # Cross-axis compares: sink/source (e-axis) vs p (p-axis) — cast to
+    # Utf8 so the equality test is on the token string, not the Enum
+    # ordinal (which would SchemaError between different vocabularies
+    # under Phase 4 activation).
+    inputs  = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("sink").cast(pl.Utf8) == pl.col("p").cast(pl.Utf8)))
+    outputs = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("source").cast(pl.Utf8) == pl.col("p").cast(pl.Utf8)))
 
     # The .mod's conversion_indirect LHS multiplies each source-side
     # v_flow by ``p_process_source_flow_coefficient[p, source]`` and the
@@ -1500,7 +1504,7 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
                                      src_path)
             if srcdf.height > 0 and "p_process_source_flow_coefficient" in srcdf.columns:
                 src_long = (srcdf
-                    .pipe(rename_to_axis, {"process": "p",
+                    .pipe(rename_to_axis, {"process": "p", "source": "source",
                              "p_process_source_flow_coefficient": "coef"})
                     .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
                     .select("p", "source", "coef"))
@@ -1530,7 +1534,7 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
                                       sink_path)
             if sinkdf.height > 0 and "p_process_sink_flow_coefficient" in sinkdf.columns:
                 sink_long = (sinkdf
-                    .pipe(rename_to_axis, {"process": "p",
+                    .pipe(rename_to_axis, {"process": "p", "sink": "sink",
                              "p_process_sink_flow_coefficient": "coef"})
                     .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
                     .select("p", "sink", "coef"))
@@ -1593,10 +1597,42 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
                      "p_process_node_constraint_flow_coefficient":"coef"})
             .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
             .select("p","n","cn","coef"))
-        src_match = (pss.join(coef_long, left_on=["p","source"], right_on=["p","n"],
-                              how="inner").select("p","source","sink","cn","coef"))
-        sink_match = (pss.join(coef_long, left_on=["p","sink"], right_on=["p","n"],
-                               how="inner").select("p","source","sink","cn","coef"))
+        # Cross-axis join: pss carries ``source``/``sink`` (e-axis) joined
+        # against ``coef_long.n`` (n-axis).  Under Phase 4 activation
+        # both are Enum but with different vocabularies; cast both sides
+        # of the join keys to Utf8 so polars compares by token string,
+        # then cast the surviving e-axis columns back to the canonical
+        # ``e`` Enum for downstream consumers.
+        from flextool.engine_polars._axis_enums import (
+            get_global_axis_enums as _g_enums,
+        )
+        _live_enums = _g_enums()
+        _e_dt = (_live_enums.get("e") if _live_enums is not None
+                 else pl.Utf8)
+        pss_utf = pss.with_columns(
+            pl.col("source").cast(pl.Utf8),
+            pl.col("sink").cast(pl.Utf8),
+        )
+        coef_long_utf = coef_long.with_columns(
+            pl.col("n").cast(pl.Utf8))
+        src_match = (pss_utf.join(
+                            coef_long_utf,
+                            left_on=["p","source"], right_on=["p","n"],
+                            how="inner")
+                       .select(
+                           "p",
+                           pl.col("source").cast(_e_dt, strict=False),
+                           pl.col("sink").cast(_e_dt, strict=False),
+                           "cn", "coef"))
+        sink_match = (pss_utf.join(
+                            coef_long_utf,
+                            left_on=["p","sink"], right_on=["p","n"],
+                            how="inner")
+                        .select(
+                            "p",
+                            pl.col("source").cast(_e_dt, strict=False),
+                            pl.col("sink").cast(_e_dt, strict=False),
+                            "cn", "coef"))
         if src_match.height + sink_match.height > 0:
             joined = (pl.concat([src_match, sink_match], how="vertical")
                         .group_by(["p","source","sink","cn"])
@@ -3537,14 +3573,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 contract = None
 
     # Auto-construct a SpineDbReader for the workdir-only entry path
-    # (no explicit ``db_reader=``).  Phase 4 BLOCKER: threading
-    # ``axis_enums`` + ``contract`` here would trigger cast-on-emit at
-    # the SpineDbReader boundary — but the cascade has many
-    # ``pl.col(X).alias(Y)`` cross-axis aliases (not converted by
-    # clusters 4.0–4.3) which then compose into SchemaError on
-    # downstream joins / concats.  Leave the reader unthreaded for
-    # now — the end-of-load ``cast_flexdata_axes`` sweep still
-    # delivers Enum-typed FlexData fields to the consumer.
+    # (no explicit ``db_reader=``).  Phase 4.6: thread ``axis_enums`` +
+    # ``contract`` so cast-on-emit at the SpineDbReader boundary
+    # delivers Enum-typed frames to the cascade — paired with the
+    # alias sweep + cross-Enum compare fixes, downstream joins compose
+    # without SchemaError.
     if _auto_construct_db_reader:
         scenario = _find_scenario(workdir_for_db)
         if scenario is not None:
@@ -3564,38 +3597,24 @@ def load_flextool(source: "Path | str | FlexInputSource",
             try:
                 db_reader = SpineDbReader(
                     f"sqlite:///{sqlite_path}", scenario=scenario,
+                    axis_enums=axis_enums, contract=contract,
                 )
             except Exception:  # noqa: BLE001 — best-effort auto-construction
                 db_reader = None
 
-    # Phase 4 — flip the cascade-wide global on.  Every cascade module
-    # that uses ``rename_to_axis`` / ``lit_axis`` / ``schema_dtype`` /
-    # ``cast_dim`` picks up the Enum dtypes for the duration of this
-    # load.  The ``finally`` resets to ``None`` so concurrent / nested
-    # loads see a clean slate.
+    # Phase 4.6 — flip the cascade-wide global on.  Every cascade module
+    # that uses ``rename_to_axis`` / ``alias_to_axis`` / ``lit_axis`` /
+    # ``schema_dtype`` / ``cast_dim`` picks up the Enum dtypes for the
+    # duration of this load.  The ``finally`` block at the end of the
+    # try below resets to ``None`` so concurrent / nested loads see a
+    # clean slate.
     #
-    # BLOCKER SURFACED: with the global flipped on, the cascade exposes
-    # ~100s of ``pl.col(X).alias(Y)`` cross-axis aliases that were never
-    # converted to ``rename_to_axis`` in clusters 4.0–4.3 (the sweep
-    # converted explicit ``.rename()`` calls only, not aliases inside
-    # ``select()`` expressions).  These manifest as SchemaError on join /
-    # concat between two Enum-typed columns with different vocabularies.
-    # Fixing them requires walking every cascade module — well beyond
-    # the scope of one dispatch.  See specs/enum_dtype_refactor_plan.md
-    # for the follow-up plan.
-    #
-    # For now we keep the cascade-wide global UNSET; the end-of-load
-    # ``cast_flexdata_axes`` sweep below converts FlexData dim columns
-    # to Enum once at the boundary so downstream model.py + var
-    # construction get Enum-typed inputs.  This delivers the public
-    # Phase 4 contract (FlexData fields are Enum-typed on return) while
-    # leaving the cascade interior in Utf8 land for the follow-up.
-    #
-    # When the follow-up dispatch lands the cross-axis alias conversion,
-    # uncomment the next two lines to enable the cascade-wide flip.
-    #
-    # if axis_enums is not None:
-    #     set_global_axis_enums(axis_enums)
+    # The cross-axis alias sweep landed in clusters 4.0-4.5b + the
+    # 4.6 fix-up commit (canonical self-references + ``time``/``d_h``
+    # synonyms); the cross-Enum value comparisons that the activation
+    # would otherwise expose were fixed in this dispatch's Step 2.
+    if axis_enums is not None:
+        set_global_axis_enums(axis_enums)
 
     try:
         # Δ.2: build the per-solve BlockLayout once from flextool's
@@ -4004,23 +4023,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
                                               handoff=handoff, ctx=ctx,
                                               provider=provider)
 
-        # Phase 4 — end-of-load FlexData → Enum sweep DISABLED.
-        # Casting FlexData dim columns to Enum at this boundary creates
-        # cross-Enum comparison hazards downstream (e.g. ``model.py``
-        # builds ``period_branch_full`` cohorts via
-        # ``pl.col("d") != pl.col("b")`` — polars rejects ``!=`` between
-        # different Enum vocabularies).
-        #
-        # The substrate IS active (provider.axis_enums populated,
-        # SpineDbReader threading available, _axis_for_entity_class
-        # helper, _AXIS_SYNONYMS extended).  The remaining work — full
-        # cross-axis alias audit + ``cast/compare`` strategy for mixed-
-        # vocabulary operations — is tracked as a Phase 4 follow-up.
-        # See specs/enum_dtype_refactor_plan.md §Phase 4 BLOCKERS.
-        #
-        # Note: ``cast_flexdata_axes`` is still imported and exposed; a
-        # follow-up dispatch can call it once every consumer is
-        # Enum-aware.
+        # Phase 4.6 — end-of-load FlexData → Enum sweep.  With the global
+        # flipped on above, the cascade emits Enum-typed dim columns
+        # throughout, but ad-hoc CSV-fallback paths inside the cascade
+        # can still produce Utf8 dim columns.  Sweep the FlexData
+        # container once before return so every Param / DataFrame /
+        # LazyFrame field has its dim columns cast against the canonical
+        # axis enums.  Idempotent: columns already in the correct Enum
+        # dtype are skipped by ``cast_frame_axes``.
+        if axis_enums is not None:
+            cast_flexdata_axes(flex_data, axis_enums)
 
         return _assign_param_names(flex_data)
     finally:
@@ -4998,7 +5010,7 @@ def build_handoff_from_flexpy(
                         .select(
                             alias_to_axis("n", "node"),
                             alias_to_axis("d", "period"),
-                            pl.col("t").alias("time"),
+                            alias_to_axis("t", "time"),
                             pl.col("quantity"),
                             pl.lit(None).cast(pl.Float64).alias("price"),
                             pl.lit(None).cast(pl.Float64).alias("usage"),

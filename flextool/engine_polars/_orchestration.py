@@ -667,8 +667,19 @@ def _drive_cascade(
     cascade_db_reader = None
     if db_url is not None and scenario_name is not None:
         from flextool.engine_polars._spinedb_reader import SpineDbReader
+        # Phase 4.6 — thread axis_enums + contract from the cascade
+        # provider if available so the reader casts on emit.
+        _cip_for_reader = getattr(state, "cascade_input_provider", None)
+        _cascade_axis_enums = getattr(_cip_for_reader, "axis_enums", None) \
+            if _cip_for_reader is not None else None
+        _cascade_contract = getattr(_cip_for_reader, "contract", None) \
+            if _cip_for_reader is not None else None
         try:
-            cascade_db_reader = SpineDbReader(db_url, scenario=scenario_name)
+            cascade_db_reader = SpineDbReader(
+                db_url, scenario=scenario_name,
+                axis_enums=_cascade_axis_enums,
+                contract=_cascade_contract,
+            )
         except Exception:  # noqa: BLE001
             cascade_db_reader = None
 
@@ -1528,10 +1539,29 @@ def run_single_solve_from_db(
     work_folder = Path(work_folder)
     work_folder.mkdir(parents=True, exist_ok=True)
 
-    # 1. Construct the SpineDbReader once.
+    # 1. Construct the SpineDbReader once.  Phase 4.6: build axis enums
+    # against the SpineDBBackend and thread them so the reader casts on
+    # emit — matching the activation path in ``load_flextool``.
     from flextool.engine_polars._spinedb_reader import SpineDbReader
+    from flextool.spinedb_backend._axis_enums import (
+        build_axis_enums,
+        load_axis_contract,
+    )
+    from flextool.spinedb_backend import SpineDBBackend
     _t0 = _time.perf_counter()
-    reader = SpineDbReader(db_url, scenario=scenario_name)
+    _se_axis_enums = None
+    _se_contract = None
+    try:
+        _se_contract = load_axis_contract()
+        with SpineDBBackend(db_url, None) as _se_ab:
+            _se_axis_enums = build_axis_enums(_se_ab, _se_contract)
+    except Exception:  # noqa: BLE001
+        _se_axis_enums = None
+        _se_contract = None
+    reader = SpineDbReader(
+        db_url, scenario=scenario_name,
+        axis_enums=_se_axis_enums, contract=_se_contract,
+    )
     print(f"Input: DB reader open: {_time.perf_counter() - _t0:.3f}s")
 
     # 2. Load SolveConfig + TimelineConfig (Γ.8.A / Γ.8.B).  These

@@ -701,20 +701,46 @@ def _load_period_in_use(path: Path,
     that consume the frame as an ordered list of periods (e.g. the
     canonical-order reorder in ``_dt_period_active_steps``) get the
     same active_time_list ordering the workdir CSV exposes.
+
+    Phase 4.6 — cast the renamed ``d`` column to the canonical axis
+    Enum when activation is on so downstream joins against cascade
+    frames (which are Enum-typed) match dtypes.
     """
-    empty = pl.DataFrame(schema={"d": pl.Utf8})
+    from flextool.engine_polars._axis_enums import (
+        get_global_axis_enums,
+        cast_frame_axes,
+    )
+    _live = get_global_axis_enums()
+    _empty_d_dtype = (
+        _live.get("d", pl.Utf8) if _live is not None else pl.Utf8
+    )
+    empty = pl.DataFrame(schema={"d": _empty_d_dtype})
     df = _read_frame(path, provider=provider,
                       consumer="SolveContext.period_in_use")
     if df is None:
         return empty
     df = df.rename({df.columns[0]: "d"})
-    return df.select("d").unique(maintain_order=True)
+    df = df.select("d").unique(maintain_order=True)
+    if _live is not None:
+        df = cast_frame_axes(df, _live)
+    return df
 
 
 def _load_period_branch(path: Path,
                          *, provider: "object | None" = None) -> pl.DataFrame:
-    """Load ``period__branch.csv`` as ``[d_anchor, b]``."""
-    empty = pl.DataFrame(schema={"d_anchor": pl.Utf8, "b": pl.Utf8})
+    """Load ``period__branch.csv`` as ``[d_anchor, b]``.
+
+    Phase 4.6 — under activation cast the dim columns to the canonical
+    axis enums so downstream joins see Enum dtypes consistently.
+    """
+    from flextool.engine_polars._axis_enums import (
+        get_global_axis_enums,
+        cast_frame_axes,
+    )
+    _live = get_global_axis_enums()
+    _d_anchor = _live.get("d_anchor", pl.Utf8) if _live is not None else pl.Utf8
+    _b = _live.get("branch", pl.Utf8) if _live is not None else pl.Utf8
+    empty = pl.DataFrame(schema={"d_anchor": _d_anchor, "b": _b})
     df = _read_frame(path, provider=provider,
                       consumer="SolveContext.period_branch")
     if df is None:
@@ -726,7 +752,10 @@ def _load_period_branch(path: Path,
         rename["branch"] = "b"
     df = df.rename(rename)
     cols = [c for c in ("d_anchor", "b") if c in df.columns]
-    return df.select(cols).unique(maintain_order=True) if cols else empty
+    df = df.select(cols).unique(maintain_order=True) if cols else empty
+    if _live is not None:
+        df = cast_frame_axes(df, _live)
+    return df
 
 
 def _load_edd_history(path: Path,
@@ -748,9 +777,20 @@ def _load_steps_in_use(path: Path,
     consume this frame after renaming ``period`` → ``d`` and
     ``step`` / ``time`` → ``t``; this helper centralises that rename
     so the cascade sees the canonical form directly.
+
+    Phase 4.6 — cast ``d``/``t`` to canonical axis enums when
+    activation is on so downstream joins (against cascade frames that
+    are Enum-typed) match dtypes.
     """
+    from flextool.engine_polars._axis_enums import (
+        get_global_axis_enums,
+        cast_frame_axes,
+    )
+    _live = get_global_axis_enums()
+    _d_dt = _live.get("d", pl.Utf8) if _live is not None else pl.Utf8
+    _t_dt = _live.get("t", pl.Utf8) if _live is not None else pl.Utf8
     empty = pl.DataFrame(
-        schema={"d": pl.Utf8, "t": pl.Utf8, "step_duration": pl.Float64}
+        schema={"d": _d_dt, "t": _t_dt, "step_duration": pl.Float64}
     )
     df = _read_frame(path, provider=provider,
                       consumer="SolveContext.steps_in_use")
@@ -768,7 +808,10 @@ def _load_steps_in_use(path: Path,
             pl.col("step_duration").cast(pl.Float64, strict=False)
         )
     cols = [c for c in ("d", "t", "step_duration") if c in out.columns]
-    return out.select(cols)
+    out = out.select(cols)
+    if _live is not None:
+        out = cast_frame_axes(out, _live)
+    return out
 
 
 def _load_period_share(solve_data_dir: Path,

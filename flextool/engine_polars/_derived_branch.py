@@ -59,7 +59,13 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import alias_to_axis, cast_dim, rename_to_axis, schema_dtype
+from ._axis_enums import (
+    alias_to_axis,
+    cast_dim,
+    get_global_axis_enums,
+    rename_to_axis,
+    schema_dtype,
+)
 from ._writer_provider_io import _provider_key
 
 
@@ -74,10 +80,24 @@ def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
         return None
     return provider.get(key)
 
-# Branch-cluster helpers take ``workdir`` only — no FlexData in scope.
-# ``schema_dtype(None, ...)`` returns ``pl.Utf8`` so default schemas
-# stay String-typed.  Pattern is uniform across the cascade.
-_enums: dict | None = None
+# Phase 4.6 — proxy over the live cascade-wide axis enum dict (see the
+# matching pattern in ``_derived_npv`` / ``_derived_block``).
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

@@ -48,16 +48,34 @@ from typing import TYPE_CHECKING, Iterable
 
 import polars as pl
 
-from flextool.engine_polars._axis_enums import rename_to_axis, schema_dtype
+from flextool.engine_polars._axis_enums import (
+    get_global_axis_enums,
+    rename_to_axis,
+    schema_dtype,
+)
 from flextool.engine_polars._solve_state import FlexToolConfigError
 
-# BlockLayout's emit_frames runs before the broadcast cascade and has no
-# FlexData in scope — ``_enums`` is always ``None`` here, so
-# :func:`schema_dtype` returns ``pl.Utf8`` and the schemas remain
-# String-typed as today.  The flexible-lookup form keeps the audit
-# pattern uniform across files; a follow-up dispatch can thread an
-# explicit ``axis_enums`` kwarg if these frames become a join target.
-_enums: dict | None = None
+
+# Phase 4.6 — proxy over the live cascade-wide axis enum dict so every
+# ``schema_dtype(_enums, axis)`` site in this module picks up activation
+# state on the fly.  Same pattern as in the ``_derived_*`` cascade
+# modules.
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
     from flextool.engine_polars._solve_config import SolveConfig
@@ -1438,8 +1456,10 @@ class BlockLayout:
         is small (≤ |blocks|² ≈ tens of rows).
         """
         if self.overlap_set_frame.height == 0:
-            return pl.DataFrame(schema={"bk": schema_dtype(_enums, "bk"),
-                                         "b_f": pl.Utf8})
+            return pl.DataFrame(schema={
+                "bk": schema_dtype(_enums, "bk"),
+                "b_f": schema_dtype(_enums, "b_f"),
+            })
         return (
             self.overlap_set_frame
             .pipe(rename_to_axis, {"block_coarse": "bk", "block_fine": "b_f"})

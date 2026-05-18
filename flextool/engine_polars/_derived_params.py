@@ -45,6 +45,7 @@ from polar_high import Param
 
 from ._axis_enums import (
     alias_to_axis,
+    axis_lazyframe,
     cast_dim,
     cast_frame_axes,
     get_global_axis_enums,
@@ -107,12 +108,29 @@ def _provider_read(provider, path: "Path | str") -> "pl.DataFrame":
     return provider.get(_provider_key(path))
 
 # Derived-param helpers operate on a ``source`` (InputSource); FlexData
-# is not yet built when the broadcast cascade runs.  ``_enums = None``
-# keeps every empty-scratch frame allocated as ``pl.Utf8`` (matching
-# today's behaviour); the flexible-lookup form is in place so a
-# follow-up dispatch can thread an explicit ``axis_enums`` and have
-# every site allocate as Enum without further file changes.
-_enums: dict | None = None
+# Phase 4.6 — replace the module-level ``_enums = None`` sentinel with
+# a proxy that defers every lookup to the live cascade-wide axis enum
+# dict (set by ``load_flextool`` via :func:`set_global_axis_enums`).
+# Pre-activation ``get_global_axis_enums()`` returns ``None`` and
+# ``schema_dtype`` falls back to ``pl.Utf8`` — same dtype the cascade
+# emitted before activation.  Same pattern as in ``_derived_npv`` /
+# ``_derived_block`` / ``_derived_branch``.
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -391,12 +409,37 @@ def dt_and_step_duration_from_source(
     if pb_raw is not None and pb_raw.height > 0:
         pb_lf = (pb_raw.lazy()
                     .pipe(rename_to_axis, {"period": "anchor", "branch": "d"})
-                    .filter(pl.col("anchor") != pl.col("d")))
-        # Map branch d → anchor's timeset.
+                    # Cross-axis-by-value compare: "anchor" and "d"
+                    # both resolve to the canonical d (period) enum, so
+                    # the Enum vocabularies match.  Cast to Utf8 here
+                    # explicitly so the equality test stays robust if
+                    # the vocabularies ever diverge (e.g. branch axis
+                    # gains a stochastic vocabulary distinct from d).
+                    .filter(pl.col("anchor").cast(pl.Utf8)
+                            != pl.col("d").cast(pl.Utf8)))
+        # Map branch d → anchor's timeset.  Pre-snap both branches'
+        # dim-column dtypes to the canonical Enum so the concat below
+        # sees identical schemas (Polars's UNION schema-resolution
+        # otherwise drops one side to Utf8, triggering a SchemaError
+        # at the downstream join).
         anchor_ts = (pt.rename({"d": "anchor"})
                         .join(pb_lf, on="anchor", how="inner")
                         .select("d", "ts"))
-        pt = pl.concat([pt, anchor_ts]).unique()
+        _live = get_global_axis_enums()
+        # Materialise both halves eagerly before concat so Polars's
+        # lazy union schema-resolver doesn't see two large optimiser
+        # contexts at once — that path triggers an internal
+        # str-vs-Enum mis-resolution on the ``d`` column when both
+        # halves transitively reference ``period_timeset`` with cast
+        # nodes.  Eager concat + re-cast yields the canonical Enum
+        # dtype reliably; the upstream cost is negligible (pt + anchor
+        # are O(num_periods) rows).
+        pt_e = pt.collect()
+        at_e = anchor_ts.collect()
+        if _live is not None:
+            pt_e = cast_frame_axes(pt_e, _live)
+            at_e = cast_frame_axes(at_e, _live)
+        pt = pl.concat([pt_e, at_e]).unique().lazy()
 
     ts_timeline = _try_param(source, "timeset", "timeline")
     if ts_timeline is None:
@@ -414,9 +457,15 @@ def dt_and_step_duration_from_source(
                      None)
     if step_col is None:
         return None
+    # ``start_step`` joins against ``tl.t`` which is t-Enum under
+    # activation.  Source columns named "x" / "step" / "timestep" are
+    # not axis-aware synonyms, so we cast explicitly to t-Enum and
+    # alias to "start_step".
+    _live_enums = get_global_axis_enums()
     blocks = (ts_dur.lazy()
                     .select(pl.col("name").alias("ts"),
-                            pl.col(step_col).alias("start_step"),
+                            cast_dim(pl.col(step_col), _live_enums, "t")
+                                .alias("start_step"),
                             pl.col("value").cast(pl.Float64).alias("count")))
 
     tl_dur = _try_param(source, "timeline", "timestep_duration")
@@ -1150,7 +1199,7 @@ def p_profile_value_from_source(
     if has_period and has_t:
         # 2d_map: direct (f, d, t, value).
         out = (raw.lazy()
-                  .select(pl.col("name").alias("f"),
+                  .select(alias_to_axis("name", "f"),
                           alias_to_axis("period", "d"),
                           pl.col("t"),
                           pl.col("value").cast(pl.Float64))
@@ -1160,7 +1209,7 @@ def p_profile_value_from_source(
     elif has_period:
         # 1d_map(period): broadcast over t of dt for matching periods.
         out = (raw.lazy()
-                  .select(pl.col("name").alias("f"),
+                  .select(alias_to_axis("name", "f"),
                           alias_to_axis("period", "d"),
                           pl.col("value").cast(pl.Float64))
                   .join(dt_lf, on="d", how="inner")
@@ -1170,7 +1219,7 @@ def p_profile_value_from_source(
     elif has_t:
         # time_series: broadcast over d for matching t.
         out = (raw.lazy()
-                  .select(pl.col("name").alias("f"),
+                  .select(alias_to_axis("name", "f"),
                           pl.col("t"),
                           pl.col("value").cast(pl.Float64))
                   .join(dt_lf, on="t", how="inner")
@@ -1180,7 +1229,7 @@ def p_profile_value_from_source(
     else:
         # Scalar — broadcast over the full dt × profiles grid.
         out = (raw.lazy()
-                  .select(pl.col("name").alias("f"),
+                  .select(alias_to_axis("name", "f"),
                           pl.col("value").cast(pl.Float64))
                   .join(dt_lf, how="cross")
                   .select("f", "d", "t", "value")
@@ -1804,8 +1853,10 @@ def process_input_flows(source: "InputSource",
         return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
                                       "source": schema_dtype(_enums, "source"),
                                       "sink": schema_dtype(_enums, "sink")})
+    # Cross-axis compare: sink (e) vs p (p) — cast to Utf8.
     out_lf = (pss.lazy()
-                .filter(pl.col("sink") == pl.col("p"))
+                .filter(pl.col("sink").cast(pl.Utf8)
+                        == pl.col("p").cast(pl.Utf8))
                 .join(pi.lazy(), on="p", how="inner"))
     zero_src = _zero_flow_coef_pairs(source, "source")
     if zero_src.height > 0:
@@ -1827,8 +1878,10 @@ def process_output_flows(source: "InputSource",
         return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
                                       "source": schema_dtype(_enums, "source"),
                                       "sink": schema_dtype(_enums, "sink")})
+    # Cross-axis compare: source (e) vs p (p) — cast to Utf8.
     out_lf = (pss.lazy()
-                .filter(pl.col("source") == pl.col("p"))
+                .filter(pl.col("source").cast(pl.Utf8)
+                        == pl.col("p").cast(pl.Utf8))
                 .join(pi.lazy(), on="p", how="inner"))
     zero_sink = _zero_flow_coef_pairs(source, "sink")
     if zero_sink.height > 0:
@@ -3038,7 +3091,7 @@ def _per_entity_period_cost(source: "InputSource",
             ))
         else:
             # Broadcast scalar across period_invest.
-            pi_lf = pl.LazyFrame({"d": period_invest})
+            pi_lf = axis_lazyframe({"d": period_invest})
             parts.append(df.lazy().select(
                 alias_to_axis("name", "e"),
                 pl.col("value").cast(pl.Float64).alias("v"),
@@ -3279,7 +3332,7 @@ def ed_invest_set_from_source(source: "InputSource",
     eea_pred = _eea_pairs(source, ei_lf, period_invest)
 
     # Cross ei × period_invest, then keep where (eea != 0) OR (e in has_cc).
-    pi_lf = pl.LazyFrame({"d": period_invest})
+    pi_lf = axis_lazyframe({"d": period_invest})
     cross = ei_lf.join(pi_lf, how="cross")
     has_cc_marked = (cross.join(has_cc, on="e", how="inner")
                             .select("e", "d"))
@@ -3320,7 +3373,7 @@ def ed_divest_set_from_source(source: "InputSource",
     has_cc = _has_capacity_constraint_invest_set(source)
     eead_pred = _eead_pairs(source, ed_lf, period_invest)
 
-    pi_lf = pl.LazyFrame({"d": period_invest})
+    pi_lf = axis_lazyframe({"d": period_invest})
     cross = ed_lf.join(pi_lf, how="cross")
     has_cc_marked = (cross.join(has_cc, on="e", how="inner")
                             .select("e", "d"))
@@ -3420,14 +3473,19 @@ def _p_years_d_lf(source: "InputSource",
                 return pl.LazyFrame({
                     "d": [r[0] for r in rows],
                     "yr": [r[1] for r in rows],
-                }).lazy()
+                }).with_columns(
+                    pl.col("d").cast(schema_dtype(_enums, "d"),
+                                       strict=False),
+                ).lazy()
     # 4 — fallback to integer-indexed period_in_use.
     periods = _period_in_use_set(source, active_solve, provider=provider)
     if periods:
         return pl.LazyFrame({
             "d": periods,
             "yr": [float(i) for i in range(len(periods))],
-        }).lazy()
+        }).with_columns(
+            pl.col("d").cast(schema_dtype(_enums, "d"), strict=False),
+        ).lazy()
     return None
 
 
@@ -3582,7 +3640,7 @@ def edd_divest_active_from_source(source: "InputSource",
             "d_divest": schema_dtype(_enums, "d_divest"),
             "d": schema_dtype(_enums, "d"),
         })
-    period_lf = pl.LazyFrame({"d": periods})
+    period_lf = axis_lazyframe({"d": periods})
     pdd_lf = pd_divest.lazy().pipe(rename_to_axis, {"d": "d_divest"})
     yr_div = pyd_lf.pipe(rename_to_axis, {"d": "d_divest", "yr": "yr_divest"})
     yr_d = pyd_lf.rename({"yr": "yr"})
@@ -4665,7 +4723,7 @@ def p_group_capacity_for_scaling_from_source(source: "InputSource",
     if scaling_active:
         return None  # defer; CSV path handles pow10 cascade
     out = (groups_df.lazy().select(alias_to_axis("name", "g"))
-              .join(pl.LazyFrame({"d": period_in_use}), how="cross")
+              .join(axis_lazyframe({"d": period_in_use}), how="cross")
               .with_columns(value=pl.lit(1.0))
               .sort("g", "d")
               .collect())
@@ -4747,7 +4805,7 @@ def p_node_capacity_for_scaling_from_source(source: "InputSource",
     if nb is None or nb.height == 0:
         return None
     out = (nb.lazy()
-              .join(pl.LazyFrame({"d": period_in_use}), how="cross")
+              .join(axis_lazyframe({"d": period_in_use}), how="cross")
               .with_columns(value=pl.lit(1.0))
               .sort("n", "d")
               .collect())
@@ -5243,8 +5301,8 @@ def p_entity_all_existing_from_source(source: "InputSource",
     if not ent_names:
         return None
     # Build the (e, d) grid with default 0.0.
-    grid = (pl.LazyFrame({"e": ent_names})
-              .join(pl.LazyFrame({"d": piu}), how="cross")
+    grid = (axis_lazyframe({"e": ent_names})
+              .join(axis_lazyframe({"d": piu}), how="cross")
               .with_columns(value=pl.lit(0.0)))
     # Read explicit existing rows.  Period-dim detection mirrors
     # ``_derived_existing._per_entity_param_lf``: the period column may
@@ -5270,7 +5328,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
                 alias_to_axis("name", "e"),
                 pl.col("value").cast(pl.Float64).alias("ex"),
             )
-            parts.append(base.join(pl.LazyFrame({"d": piu}), how="cross")
+            parts.append(base.join(axis_lazyframe({"d": piu}), how="cross")
                               .select("e", "d", "ex"))
     if parts:
         explicit = pl.concat(parts).unique(subset=["e", "d"], keep="last")
@@ -6081,7 +6139,7 @@ def _dt_period_active_steps(source: "InputSource",
             period_order = in_canonical + extras
     if not period_order:
         return None
-    realized_clean = pl.LazyFrame({"d": period_order})
+    realized_clean = axis_lazyframe({"d": period_order})
     # Tie everything together to find each (d, t, rank).
     realized_with_ts = realized_clean.join(pt_lf, on="d", how="inner")
     pst = (realized_with_ts
@@ -6776,7 +6834,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
                 .pipe(rename_to_axis, {"name": "n"})
                 .filter(pl.col("n").is_in(list(state_n)))
                 .select("n", pl.col("value").cast(pl.Float64))
-                .join(pl.LazyFrame({"d": full_periods}), how="cross")
+                .join(axis_lazyframe({"d": full_periods}), how="cross")
                 .select("n", "d", "value")
                 .sort("n", "d")
                 .collect())

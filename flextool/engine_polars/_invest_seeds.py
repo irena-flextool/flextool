@@ -27,16 +27,32 @@ from pathlib import Path
 
 import polars as pl
 
-from ._axis_enums import cast_dim, rename_to_axis, schema_dtype
+from ._axis_enums import (
+    cast_dim,
+    get_global_axis_enums,
+    rename_to_axis,
+    schema_dtype,
+)
 from ._writer_provider_io import _provider_key
 
-# These helpers run at the workdir-CSV seed phase — before FlexData is
-# materialised — so ``_enums`` is always ``None`` here.  Using
-# :func:`schema_dtype` (returning ``pl.Utf8`` when ``_enums is None``)
-# keeps the schema declarations consistent with the rest of the cascade
-# while preserving String dtype as the default.  A follow-up dispatch
-# may thread an explicit ``axis_enums`` kwarg through these readers.
-_enums: dict | None = None
+
+# Phase 4.6 — proxy over the live cascade-wide axis enum dict.
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 
 def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":

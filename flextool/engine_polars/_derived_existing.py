@@ -70,7 +70,33 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine_polars._axis_enums import alias_to_axis, rename_to_axis
+from flextool.engine_polars._axis_enums import (
+    alias_to_axis,
+    get_global_axis_enums,
+    rename_to_axis,
+    schema_dtype,
+)
+
+
+# Phase 4.6 — proxy over the live cascade-wide axis enum dict.  Same
+# pattern as in ``_derived_npv`` / ``_derived_block`` / ``_derived_branch`` /
+# ``_derived_params``.
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 from ._derived_walks import period_walk_iterator, WindowMethod
 
@@ -140,7 +166,10 @@ def _entity_class_lf(source: "InputSource") -> pl.LazyFrame:
             pl.lit(ec).alias("ec"),
         ))
     if not parts:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "ec": pl.Utf8})
+        return pl.LazyFrame(schema={
+            "e": schema_dtype(_enums, "e"),
+            "ec": pl.Utf8,
+        })
     return pl.concat(parts, how="vertical")
 
 
@@ -170,7 +199,10 @@ def _entity_method_lf(source: "InputSource",
             pl.col("value").cast(pl.Utf8, strict=False).alias("method"),
         ))
     if not parts:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "method": pl.Utf8})
+        return pl.LazyFrame(schema={
+            "e": schema_dtype(_enums, "e"),
+            "method": pl.Utf8,
+        })
     return pl.concat(parts, how="vertical")
 
 
@@ -234,13 +266,14 @@ def _per_entity_param_lf(source: "InputSource",
         else:
             parts.append(df.lazy().select(
                 alias_to_axis("name", "e"),
-                pl.lit(None, dtype=pl.Utf8).alias("d"),
+                pl.lit(None, dtype=schema_dtype(_enums, "d")).alias("d"),
                 pl.col("value").cast(pl.Float64, strict=False),
                 pl.lit(True).alias("is_scalar"),
             ))
     if not parts:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d": pl.Utf8,
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
             "value": pl.Float64, "is_scalar": pl.Boolean,
         })
     return pl.concat(parts, how="vertical")
@@ -422,18 +455,24 @@ def _edd_history_lf_for(source: "InputSource",
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d_history": pl.Utf8, "d": pl.Utf8,
+            "e": schema_dtype(_enums, "e"),
+            "d_history": schema_dtype(_enums, "d"),
+            "d": schema_dtype(_enums, "d"),
         })
     all_e_lf = _all_entities_lf(source)
     elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
     cohort_e = (elm_lf
                    .filter(pl.col("method") == method)
                    .select("e").unique())
-    pwh_lf = pl.LazyFrame({"d": period_with_history})
+    pwh_lf = (pl.LazyFrame({"d": period_with_history})
+                .with_columns(pl.col("d").cast(schema_dtype(_enums, "d"),
+                                                  strict=False)))
     anchor = cohort_e.join(pwh_lf, how="cross")
     if anchor.collect().height == 0:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d_history": pl.Utf8, "d": pl.Utf8,
+            "e": schema_dtype(_enums, "e"),
+            "d_history": schema_dtype(_enums, "d"),
+            "d": schema_dtype(_enums, "d"),
         })
 
     if bounded:
@@ -473,7 +512,9 @@ def edd_history_lf(source: "InputSource",
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d_history": pl.Utf8, "d": pl.Utf8,
+            "e": schema_dtype(_enums, "e"),
+            "d_history": schema_dtype(_enums, "d"),
+            "d": schema_dtype(_enums, "d"),
         })
     parts = [
         edd_history_choice_lf(source, active_solve,
@@ -515,7 +556,10 @@ def _entity_class_partition_lf(source: "InputSource") -> pl.LazyFrame:
             pl.lit(kind).alias("kind"),
         ))
     if not parts:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "kind": pl.Utf8})
+        return pl.LazyFrame(schema={
+            "e": schema_dtype(_enums, "e"),
+            "kind": pl.Utf8,
+        })
     return pl.concat(parts, how="vertical").unique()
 
 
@@ -842,7 +886,9 @@ def p_entity_all_existing_from_handoff(
     if all_e_collected.height == 0:
         return None
     all_e_lf = _all_entities_lf(source)
-    piu_lf = pl.LazyFrame({"d": period_in_use})
+    piu_lf = (pl.LazyFrame({"d": period_in_use})
+                .with_columns(pl.col("d").cast(schema_dtype(_enums, "d"),
+                                                  strict=False)))
     grid_lf = all_e_lf.join(piu_lf, how="cross")
 
     pre_existing_lf = p_entity_pre_existing_lf(
@@ -857,7 +903,10 @@ def p_entity_all_existing_from_handoff(
         ped_lf = (p_entity_divested.frame.lazy()
                      .select("e", pl.col("value").alias("divested")))
     else:
-        ped_lf = pl.LazyFrame(schema={"e": pl.Utf8, "divested": pl.Float64})
+        ped_lf = pl.LazyFrame(schema={
+            "e": schema_dtype(_enums, "e"),
+            "divested": pl.Float64,
+        })
 
     # ---------------------------------------------------------------
     # Δ.11 — chain-summation branch: later_existing[e, d] from
@@ -872,8 +921,8 @@ def p_entity_all_existing_from_handoff(
             and p_entity_period_existing_capacity.frame.height > 0
             and edd_history is not None and edd_history.height > 0):
         ppec_lf = (p_entity_period_existing_capacity.frame.lazy()
-                       .select(pl.col("e").alias("e"),
-                                pl.col("d").alias("d_h"),
+                       .select(alias_to_axis("e", "e"),
+                                alias_to_axis("d", "d_h"),
                                 pl.col("value").alias("ppec")))
         edd_lf = edd_history.lazy()
         if {"entity", "period_history", "period"}.issubset(set(edd_history.columns)):
@@ -1009,10 +1058,14 @@ def p_entity_pre_existing_lf(source: "InputSource",
     """
     if not period_in_use:
         return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64,
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
+            "value": pl.Float64,
         })
     all_e_lf = _all_entities_lf(source)
-    piu_lf = pl.LazyFrame({"d": period_in_use})
+    piu_lf = (pl.LazyFrame({"d": period_in_use})
+                .with_columns(pl.col("d").cast(schema_dtype(_enums, "d"),
+                                                  strict=False)))
     grid_lf = all_e_lf.join(piu_lf, how="cross")
 
     # Resolve existing per (e, d) via _resolve_pdX cascade.
@@ -1094,7 +1147,10 @@ def _lifetime_expired_pairs_lf(source: "InputSource",
     from ._derived_params import _read_period_first, _p_years_d_lf
     period_first = _read_period_first(source, active_solve, None)
     if not period_first:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+        return pl.LazyFrame(schema={
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
+        })
     all_e_lf = _all_entities_lf(source)
     elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
     in_methods = (elm_lf
@@ -1112,11 +1168,20 @@ def _lifetime_expired_pairs_lf(source: "InputSource",
 
     pyd_lf = _p_years_d_lf(source, active_solve)
     if pyd_lf is None:
-        return pl.LazyFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+        return pl.LazyFrame(schema={
+            "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
+        })
 
     # life_sum: per-entity scalar.  Compute per d_first then sum:
     # life_sum(e) = Σ_{d_first} (pdy[d_first] + lifetime[e, d_first]).
-    pf_lf = pl.LazyFrame({"d_first": period_first})
+    # Phase 4.6: ``d_first`` is a column holding period tokens; cast the
+    # literal-list LazyFrame to the ``d`` (period) Enum so downstream
+    # joins against Enum-typed ``pyd_first`` don't SchemaError.
+    pf_lf = (pl.LazyFrame({"d_first": period_first})
+                .with_columns(pl.col("d_first")
+                                .cast(schema_dtype(_enums, "d_first"),
+                                       strict=False)))
     pyd_first = pyd_lf.rename({"d": "d_first", "yr": "yr_first"})
     e_dfirst = (in_methods.join(pf_lf, how="cross")
                           .pipe(rename_to_axis, {"d_first": "d"})
@@ -1144,7 +1209,9 @@ def _lifetime_expired_pairs_lf(source: "InputSource",
                                        .otherwise(0.0))
                     .select("e", "life_sum"))
 
-    piu_lf = pl.LazyFrame({"d": period_in_use})
+    piu_lf = (pl.LazyFrame({"d": period_in_use})
+                .with_columns(pl.col("d").cast(schema_dtype(_enums, "d"),
+                                                  strict=False)))
     pyd_at_d = pyd_lf
     return (summed_lf
               .join(piu_lf, how="cross")

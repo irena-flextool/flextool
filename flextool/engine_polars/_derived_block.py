@@ -59,16 +59,40 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine_polars._axis_enums import alias_to_axis, cast_dim, rename_to_axis, schema_dtype
+from flextool.engine_polars._axis_enums import (
+    alias_to_axis,
+    cast_dim,
+    get_global_axis_enums,
+    rename_to_axis,
+    schema_dtype,
+)
 from flextool.engine_polars._block_layout import (
     DEFAULT_BLOCK,
     BlockLayout,
 )
 
-# BlockBundle helpers operate on a ``BlockLayout`` (block-flavoured
-# CSVs); there is no FlexData in scope here, so ``_enums`` is ``None``
-# and ``schema_dtype`` returns ``pl.Utf8`` — same dtype as before.
-_enums: dict | None = None
+
+# Phase 4.6 — proxy over the live cascade-wide axis enum dict so every
+# ``schema_dtype(_enums, axis)`` / ``cast_dim(expr, _enums, axis)`` site
+# in this module picks up the activation state on the fly.  Pre-
+# activation ``get_global_axis_enums()`` returns ``None`` and
+# ``schema_dtype`` falls back to ``pl.Utf8``.
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from flextool.engine_polars._input_source import InputSource
@@ -126,7 +150,7 @@ class BlockBundle:
             return pl.LazyFrame(schema={
                 "p": schema_dtype(_enums, "p"),
                 "side": pl.Utf8,
-                "b_f": pl.Utf8,
+                "b_f": schema_dtype(_enums, "b_f"),
             })
         return f.lazy().pipe(rename_to_axis, {"process": "p", "block": "b_f"})
 
@@ -337,10 +361,17 @@ def filter_flow_n_by_block(
     )
     eb_lf = bundle.entity_block_lf
 
+    # Align ``n`` dtype across both sides.  Under Phase 4 activation
+    # the entity-block frame carries n-Enum on ``n``; ``flow_n.n`` is
+    # Utf8 (mix of node + process tokens after the sink/source
+    # cross-axis projection in :func:`flow_to_n_block_filtered`).
+    # Cast both sides to Utf8 for the join — token-string equality is
+    # the right semantics here.
+    eb_lf_utf = eb_lf.with_columns(pl.col("n").cast(pl.Utf8))
     with_blocks = (
         flow_n.lazy()
         .join(psb_side, on="p", how="left")
-        .join(eb_lf, on="n", how="left")
+        .join(eb_lf_utf, on="n", how="left")
         .with_columns(
             b_f=pl.col("b_f").fill_null(DEFAULT_BLOCK),
             bk=pl.col("bk").fill_null(DEFAULT_BLOCK),
@@ -379,9 +410,14 @@ def flow_to_n_block_filtered(
             "sink": schema_dtype(_enums, "sink"),
             "n": schema_dtype(_enums, "n"),
         })
+    # Cross-axis projection: ``sink`` carries e-axis tokens (mix of
+    # node + process names).  Cast to Utf8 so the downstream block
+    # filter (which joins on ``n``) compares by token string — the
+    # narrower n-Enum would null-out process tokens that legitimately
+    # appear here (indirect units' ``flow_to_n`` arcs).
     base = (
         pss.lazy()
-        .with_columns(n=pl.col("sink"))
+        .with_columns(n=pl.col("sink").cast(pl.Utf8))
         .select("p", "source", "sink", "n")
         .sort("p", "source", "sink", "n")
         .collect()
@@ -403,7 +439,10 @@ def flow_from_n_block_filtered(
         })
     base = (
         pss.lazy()
-        .with_columns(n=pl.col("source"))
+        # Cross-axis projection: ``source`` is e-axis (node + process
+        # union); cast to Utf8 so the downstream block-filter join on
+        # ``n`` compares by token string without nulling process names.
+        .with_columns(n=pl.col("source").cast(pl.Utf8))
         .select("p", "source", "sink", "n")
         .sort("p", "source", "sink", "n")
         .collect()
@@ -496,11 +535,15 @@ def flow_from_nodeBalance_seed(
         return None
     if "n" not in nodeBalance.columns:
         return None
-    nb_nodes = nodeBalance["n"]
+    # Cross-axis is_in: nodeBalance.n is n-Enum, pss.source is e-Enum.
+    # Cast both to Utf8 for token-string membership; project ``n`` as
+    # Utf8 to match the downstream block-filter join (see
+    # :func:`filter_flow_n_by_block`).
+    nb_nodes_utf = nodeBalance["n"].cast(pl.Utf8)
     seed = (
         pss_partition.lazy()
-        .filter(pl.col("source").is_in(nb_nodes))
-        .with_columns(n=pl.col("source"))
+        .filter(pl.col("source").cast(pl.Utf8).is_in(nb_nodes_utf))
+        .with_columns(n=pl.col("source").cast(pl.Utf8))
         .select("p", "source", "sink", "n")
         .unique()
         .sort("p", "source", "sink", "n")

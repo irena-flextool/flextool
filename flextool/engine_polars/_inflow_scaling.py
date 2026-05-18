@@ -78,7 +78,12 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import alias_to_axis, cast_dim, schema_dtype
+from ._axis_enums import (
+    alias_to_axis,
+    cast_dim,
+    get_global_axis_enums,
+    schema_dtype,
+)
 from ._writer_provider_io import _provider_key
 
 
@@ -93,13 +98,23 @@ def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
         return None
     return provider.get(key)
 
-# Inflow-scaling helpers run during ``_load_node`` (before
-# ``build_axis_enums`` can populate FlexData with the full vocabulary)
-# and operate on a source/workdir, not FlexData.  ``_enums`` is always
-# ``None`` here; the flexible-lookup form is kept so a follow-up
-# dispatch can thread an explicit ``axis_enums`` kwarg if these scratch
-# frames need to participate in Enum joins.
-_enums: dict | None = None
+# Phase 4.6 — proxy over the live cascade-wide axis enum dict.
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

@@ -725,7 +725,12 @@ class SpineDbReader:
                 cols.append("t")
                 break
             if isinstance(cur, Array):
-                cols.append("i")
+                # Use a non-axis name so cast_against_contract leaves
+                # this column alone.  "i" collides with the canonical
+                # tier_index axis ("i") whose vocabulary comes from
+                # commodity.price_ladder_*; Array indices are
+                # position-only and have no semantic axis.
+                cols.append("_array_index")
                 break
             break
         return cols

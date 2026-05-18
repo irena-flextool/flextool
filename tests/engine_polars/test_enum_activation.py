@@ -124,18 +124,15 @@ def test_load_flextool_threads_axis_enums(tmp_path: Path) -> None:
     reason="work_base fixture missing",
 )
 def test_load_flextool_emits_enum_typed_dim_columns(tmp_path: Path) -> None:
-    """Sanity check the FlexData dim-column dtypes.
+    """Phase 4.6 activation contract: every FlexData dim column is Enum.
 
-    Phase 4.4 keeps the cascade-wide flip disabled.  As a result, the
-    dim columns on FlexData fields are Utf8 (pre-Phase-4 default).
-    This test documents that state and provides the inversion point
-    for the follow-up dispatch:
-
-    * When the follow-up flips the global on, the assertion below
-      should fail (Utf8 columns present).  At that point, the test
-      should be strengthened to ``utf8_count == 0`` as the
-      contract — see the dispatch ``Strengthen the activation test``
-      section.
+    With ``set_global_axis_enums`` flipped on in ``load_flextool`` and
+    the cascade-wide alias / scratch-frame sweep complete, every
+    Param / DataFrame / LazyFrame field on the returned FlexData should
+    expose its dim columns as ``pl.Enum``.  Any remaining ``pl.Utf8``
+    dim column is a missed cast site — surface it loudly so the next
+    sweep can target it directly instead of letting the contract
+    silently regress.
     """
     import shutil
 
@@ -156,14 +153,15 @@ def test_load_flextool_emits_enum_typed_dim_columns(tmp_path: Path) -> None:
         if dt == pl.Utf8
     ]
 
-    # Pre-flip state: most dim columns remain Utf8.  Either we have
-    # an active cascade-flip (then enum_columns > 0 and utf8_count
-    # should be 0) OR we're still in pre-flip mode (utf8_count > 0,
-    # enum_columns may also be > 0 due to ad-hoc casts inside the
-    # cascade).  Just record both counts as a smoke check.
-    assert len(dim_dtypes) > 0
-    # NB: when the follow-up dispatch flips ``set_global_axis_enums``
-    # on AND completes the alias audit, replace this loose assertion
-    # with ``assert len(utf8_columns) == 0`` per the dispatch.
-    print(f"[enum_activation] dim columns: {len(dim_dtypes)}, "
-          f"Enum: {len(enum_columns)}, Utf8: {len(utf8_columns)}")
+    utf8_count = len(utf8_columns)
+    assert utf8_count == 0, (
+        f"Phase 4 activation incomplete: {utf8_count} dim columns are "
+        f"still Utf8.\n"
+        f"First Utf8 site: "
+        f"{utf8_columns[0] if utf8_columns else '<none>'}\n"
+        f"All Utf8 sites: {utf8_columns}"
+    )
+    assert len(enum_columns) > 0, (
+        "Activation produced no Enum dim columns at all — substrate is "
+        "wired but no field's dims got cast."
+    )

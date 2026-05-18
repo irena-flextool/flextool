@@ -104,6 +104,38 @@ _AXIS_SYNONYMS: dict[str, str] = {
     # "block" in the contract (with "bk" already listed as a synonym
     # above).
     "b_f": "block",
+    # Period history column — holds period tokens (subset of d).
+    "d_h": "d",
+    # ``d_first`` — column holding period tokens of "first" periods
+    # (e.g. in ``_lifetime_expired_pairs_lf`` cascade).  Subset of d.
+    "d_first": "d",
+    # Output-side timestep column — same vocabulary as cascade "t".
+    "time": "t",
+    # ----------------------------------------------------------------
+    # Canonical axis self-references.  Allow callers checking
+    # ``target in _AXIS_SYNONYMS`` (e.g. when deciding whether a
+    # rename/alias target is axis-aware) to see every canonical axis
+    # uniformly without having to maintain a separate canonical-set
+    # constant.  Self-mapping is a no-op for ``_resolve_axis`` (which
+    # already falls through with ``dict.get(name, name)``); the
+    # entries exist purely so membership tests are exhaustive.
+    "n": "n",
+    "p": "p",
+    "c": "c",
+    "g": "g",
+    "f": "f",
+    "d": "d",
+    "e": "e",
+    "t": "t",
+    "i": "i",
+    "branch": "branch",
+    "block": "block",
+    "constraint": "constraint",
+    "side": "side",
+    "klass": "klass",
+    "ud": "ud",
+    "r": "r",
+    "d_anchor": "d_anchor",
 }
 
 
@@ -522,20 +554,14 @@ def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False):
         # Operate on the lazy form to avoid forcing a collect() — every
         # Param keeps an internal ``lazy`` LazyFrame regardless of whether
         # ``.frame`` has been materialised yet.
-        try:
-            cast_lazy = cast_frame_axes(value.lazy, enums, strict=strict)
-        except Exception:
-            return value
+        cast_lazy = cast_frame_axes(value.lazy, enums, strict=strict)
         if cast_lazy is value.lazy:
             return value
         return Param(value.dims, cast_lazy,
                       name=getattr(value, "name", None),
                       _sources=getattr(value, "_sources", None))
     if isinstance(value, (pl.DataFrame, pl.LazyFrame)):
-        try:
-            return cast_frame_axes(value, enums, strict=strict)
-        except Exception:
-            return value
+        return cast_frame_axes(value, enums, strict=strict)
     if isinstance(value, dict):
         return {k: cast_value_axes(v, enums, strict=strict)
                 for k, v in value.items()}
@@ -569,7 +595,58 @@ def cast_flexdata_axes(flex_data: "FlexData",
     return flex_data
 
 
+def axis_lazyframe(
+    data: "dict[str, list]",
+    axis_for_column: "dict[str, str] | None" = None,
+) -> "pl.LazyFrame":
+    """Build a :class:`pl.LazyFrame` from a ``{column: list}`` mapping with
+    axis-aware dtype casts.
+
+    Each ``column`` whose name resolves (via :data:`_AXIS_SYNONYMS`) to an
+    axis present in the live cascade-wide enum dict is cast to that
+    canonical Enum.  When :func:`get_global_axis_enums` returns ``None``
+    (pre-activation) the cast is a no-op and the columns stay as polars'
+    default-inferred dtypes — same behaviour as a raw
+    :class:`pl.LazyFrame` constructor.
+
+    Parameters
+    ----------
+    data
+        ``{column_name: list_of_values}``.  Lists may be Python strings
+        (typical for period / entity tokens) or any polars-coercible
+        Python scalar; the cast is non-strict so unknown values become
+        null.
+    axis_for_column
+        Optional override map ``{column_name: axis_name}`` for columns
+        whose name is not itself an axis synonym (e.g. ``"d_first"`` may
+        be omitted from :data:`_AXIS_SYNONYMS` but here you want it cast
+        against ``"d"``).  Per-column entry overrides the default
+        synonym-table lookup.
+
+    Returns
+    -------
+    pl.LazyFrame
+        Lazy frame with the requested data and axis-cast schema.
+    """
+    lf = pl.LazyFrame(data)
+    enums = _LIVE_AXIS_ENUMS
+    if enums is None:
+        return lf
+    casts: list[pl.Expr] = []
+    for col in data.keys():
+        ax = (axis_for_column or {}).get(col, col)
+        canonical = _resolve_axis(ax)
+        dt = enums.get(canonical)
+        if dt is None:
+            continue
+        casts.append(pl.col(col).cast(dt, strict=False))
+    if not casts:
+        return lf
+    return lf.with_columns(*casts)
+
+
 __all__ = [
+    "axis_lazyframe",
     "cast_dim",
     "cast_frame_axes",
     "cast_value_axes",

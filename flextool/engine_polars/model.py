@@ -2793,7 +2793,12 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             and d.period_branch_full is not None
             and d.period_branch_full.height > 0):
         # Build (d, b) cohort: d ≠ b AND b ∈ period_in_use.
-        db_pairs = d.period_branch_full.filter(pl.col("d") != pl.col("b"))
+        # Cross-axis value compare: "d" is the period axis and "b" is the
+        # branch axis (two different Enum vocabularies under Phase 4
+        # activation).  Polars 1.40+ refuses ``!=`` between different
+        # Enums; cast both to Utf8 so the comparison is by token string.
+        db_pairs = d.period_branch_full.filter(
+            pl.col("d").cast(pl.Utf8) != pl.col("b").cast(pl.Utf8))
         if d.period_in_use_set is not None:
             piu = d.period_in_use_set.rename({"d": "b"})
             db_pairs = db_pairs.join(piu, on="b", how="inner")

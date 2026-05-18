@@ -43,7 +43,7 @@ import polars as pl
 from polar_high import Sum, Where, Param
 from polar_high.engine import Var
 
-from ._axis_enums import rename_to_axis, schema_dtype
+from ._axis_enums import get_global_axis_enums, rename_to_axis, schema_dtype
 from ._writer_provider_io import _provider_key
 
 
@@ -58,13 +58,23 @@ def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
         return None
     return provider.get(key)
 
-# Reserve loader runs at workdir-CSV seed phase — no FlexData in scope.
-# ``schema_dtype(None, ...)`` returns ``pl.Utf8`` so the empty/default
-# frames here keep String dtype (same as before).  Sites are written in
-# the flexible-lookup form so a future dispatch that threads
-# ``axis_enums`` through ``load_data`` can activate Enum allocation
-# without touching this file again.
-_enums: dict | None = None
+# Phase 4.6 — proxy over the live cascade-wide axis enum dict.
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 
 # ---------------------------------------------------------------------------

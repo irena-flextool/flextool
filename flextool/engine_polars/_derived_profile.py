@@ -257,7 +257,8 @@ def _profile_time_lf(source: "InputSource",
                 csv_lf = (csv_df.lazy()
                           .filter(pl.col("profile").is_in(time_profiles))
                           .select(
-                              pl.col("profile").cast(pl.Utf8).alias("f"),
+                              alias_to_axis(
+                                  pl.col("profile").cast(pl.Utf8), "f"),
                               alias_to_axis(pl.col("time").cast(pl.Utf8), "t"),
                               pl.col("pt_profile")
                                   .cast(pl.Float64, strict=False)
@@ -289,7 +290,7 @@ def _profile_time_lf(source: "InputSource",
         return pl.LazyFrame(schema=empty_schema)
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(time_profiles))
-                  .select(pl.col("name").alias("f"),
+                  .select(alias_to_axis("name", "f"),
                           alias_to_axis(pl.col(t_col).cast(pl.Utf8), "t"),
                           pl.col("value").cast(pl.Float64, strict=False)))
     return (raw_lf
@@ -335,7 +336,7 @@ def _profile_period_time_lf(source: "InputSource",
         })
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(pt_profiles))
-                  .select(pl.col("name").alias("f"),
+                  .select(alias_to_axis("name", "f"),
                           alias_to_axis(pl.col("period").cast(pl.Utf8), "d"),
                           alias_to_axis(pl.col(t_col).cast(pl.Utf8), "t"),
                           pl.col("value").cast(pl.Float64, strict=False)))
@@ -377,7 +378,7 @@ def _profile_period_only_lf(source: "InputSource",
         })
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(period_profiles))
-                  .select(pl.col("name").alias("f"),
+                  .select(alias_to_axis("name", "f"),
                           alias_to_axis(pl.col("period").cast(pl.Utf8), "d"),
                           pl.col("value").cast(pl.Float64, strict=False)))
     return (raw_lf
@@ -409,7 +410,7 @@ def _profile_scalar_lf(source: "InputSource",
         })
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(scalar_profiles))
-                  .select(pl.col("name").alias("f"),
+                  .select(alias_to_axis("name", "f"),
                           pl.col("value").cast(pl.Float64, strict=False))
                   .unique(subset=["f"]))
     return (raw_lf
@@ -474,7 +475,7 @@ def _profile_stochastic_lf(workdir: Path | None,
     pbt = pbt.rename({"pbt_profile": "value"})
     pbt = pbt.filter(pl.col("profile").is_in(stoch_profiles))
     pbt_lf = pbt.lazy().select(
-        pl.col("profile").cast(pl.Utf8).alias("f"),
+        alias_to_axis(pl.col("profile").cast(pl.Utf8), "f"),
         pl.col("branch").cast(pl.Utf8).alias("tb"),
         pl.col("time_start").cast(pl.Utf8).alias("ts"),
         alias_to_axis(pl.col("time").cast(pl.Utf8), "t"),
@@ -767,7 +768,7 @@ def p_profile_value_lf(source: "InputSource",
         ents = source.entities("profile")
         if ents.height > 0:
             ent_lf = (ents.lazy()
-                          .select(pl.col("name").alias("f"))
+                          .select(alias_to_axis("name", "f"))
                           .unique())
             zero_lf = (ent_lf
                           .join(dt_lf, how="cross")

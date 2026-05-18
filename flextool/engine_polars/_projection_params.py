@@ -54,6 +54,7 @@ from flextool.engine_polars._axis_enums import (
     get_global_axis_enums,
     lit_axis,
     rename_to_axis,
+    schema_dtype,
 )
 
 
@@ -431,9 +432,18 @@ def process_source_sink_canonical(source: "InputSource",
                     pl.lit("noEff").alias("method")))
         parts.append(no_source_arcs)
 
+    # Phase 4.6: when activation is on, the empty fallback must use the
+    # canonical Enum dtypes so downstream joins against Enum-typed
+    # frames don't SchemaError on the empty branch.
+    _enums = get_global_axis_enums()
+    _empty_schema = {
+        "p": schema_dtype(_enums, "p"),
+        "source": schema_dtype(_enums, "source"),
+        "sink": schema_dtype(_enums, "sink"),
+        "method": pl.Utf8,
+    }
     if not parts:
-        return _empty({"p": pl.Utf8, "source": pl.Utf8,
-                       "sink": pl.Utf8, "method": pl.Utf8})
+        return _empty(_empty_schema)
 
     # Final dedup: arcs may appear in multiple partitions due to method
     # categories; flextool's union takes a set-union (dedup).  Tie-break:
@@ -444,8 +454,7 @@ def process_source_sink_canonical(source: "InputSource",
               .sort("p", "source", "sink", "method")
               .collect())
     if out.height == 0:
-        return _empty({"p": pl.Utf8, "source": pl.Utf8,
-                       "sink": pl.Utf8, "method": pl.Utf8})
+        return _empty(_empty_schema)
     # Cast dim columns to canonical axis enums.  Many partitions emit
     # ``source``/``sink`` via ``pl.col("p").alias(...)`` (cross-axis from
     # the ``p`` enum into the ``source``/``sink`` slot whose contract
@@ -796,7 +805,9 @@ def process_input_flows(source: "InputSource",
     if pss.height == 0 or process_indirect_set.height == 0:
         return _empty({"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
     return (pss.lazy()
-              .filter(pl.col("sink") == pl.col("p"))
+              # Cross-axis compare: sink (e) vs p (p) — cast to Utf8.
+              .filter(pl.col("sink").cast(pl.Utf8)
+                      == pl.col("p").cast(pl.Utf8))
               .join(process_indirect_set.lazy(), on="p", how="inner")
               .sort("p", "source", "sink")
               .collect())
@@ -817,7 +828,9 @@ def process_output_flows(source: "InputSource",
     if pss.height == 0 or process_indirect_set.height == 0:
         return _empty({"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
     return (pss.lazy()
-              .filter(pl.col("source") == pl.col("p"))
+              # Cross-axis compare: source (e) vs p (p) — cast to Utf8.
+              .filter(pl.col("source").cast(pl.Utf8)
+                      == pl.col("p").cast(pl.Utf8))
               .join(process_indirect_set.lazy(), on="p", how="inner")
               .sort("p", "source", "sink")
               .collect())
@@ -938,7 +951,7 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
         unp_lz = (unp.lazy()
                     .filter(pl.col("value") == method)
                     .select("unit", "node",
-                             pl.col("profile").alias("f")))
+                             alias_to_axis("profile", "f")))
         # Input side (node=source, sink=unit).
         uin = _try_entities(source, "unit__inputNode")
         if uin is not None:
@@ -969,7 +982,7 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
         cnp_lz = (cnp.lazy()
                     .filter(pl.col("value") == method)
                     .select("connection", "node",
-                             pl.col("profile").alias("f")))
+                             alias_to_axis("profile", "f")))
         cnn = _try_entities(source, "connection__node__node")
         if cnn is not None:
             cnn_lz = cnn.lazy()
@@ -1012,7 +1025,7 @@ def node_profile_filter(source: "InputSource", method: str) -> pl.DataFrame:
     return (df.lazy()
               .filter(pl.col("value") == method)
               .select(alias_to_axis("node", "n"),
-                       pl.col("profile").alias("f"))
+                       alias_to_axis("profile", "f"))
               .sort("n", "f")
               .collect())
 
@@ -1321,16 +1334,16 @@ def process_reserve_upDown_node_active(source: "InputSource") -> pl.DataFrame:
     if u is not None:
         parts.append(u.lazy().select(
             alias_to_axis("unit", "p"),
-            pl.col("reserve").alias("r"),
-            pl.col("upDown").alias("ud"),
+            alias_to_axis("reserve", "r"),
+            alias_to_axis("upDown", "ud"),
             alias_to_axis("node", "n"),
         ))
     c = _try_entities(source, "reserve__upDown__connection__node")
     if c is not None:
         parts.append(c.lazy().select(
             alias_to_axis("connection", "p"),
-            pl.col("reserve").alias("r"),
-            pl.col("upDown").alias("ud"),
+            alias_to_axis("reserve", "r"),
+            alias_to_axis("upDown", "ud"),
             alias_to_axis("node", "n"),
         ))
     if not parts:
@@ -1350,8 +1363,8 @@ def _process_reserve_upDown_node_filter(source: "InputSource",
                        .filter(pl.col("value") != 0)
                        .select(
                            alias_to_axis("unit", "p"),
-                           pl.col("reserve").alias("r"),
-                           pl.col("upDown").alias("ud"),
+                           alias_to_axis("reserve", "r"),
+                           alias_to_axis("upDown", "ud"),
                            alias_to_axis("node", "n"),
                        ))
     c = _try_param(source, "reserve__upDown__connection__node", parameter_name)
@@ -1360,8 +1373,8 @@ def _process_reserve_upDown_node_filter(source: "InputSource",
                        .filter(pl.col("value") != 0)
                        .select(
                            alias_to_axis("connection", "p"),
-                           pl.col("reserve").alias("r"),
-                           pl.col("upDown").alias("ud"),
+                           alias_to_axis("reserve", "r"),
+                           alias_to_axis("upDown", "ud"),
                            alias_to_axis("node", "n"),
                        ))
     if not parts:
