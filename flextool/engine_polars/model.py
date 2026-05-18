@@ -2797,10 +2797,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # branch axis (two different Enum vocabularies under Phase 4
         # activation).  Polars 1.40+ refuses ``!=`` between different
         # Enums; cast both to Utf8 so the comparison is by token string.
-        db_pairs = d.period_branch_full.filter(
-            pl.col("d").cast(pl.Utf8) != pl.col("b").cast(pl.Utf8))
+        db_pairs = d.period_branch_full.with_columns(
+            pl.col("d").cast(pl.Utf8),
+            pl.col("b").cast(pl.Utf8),
+        ).filter(pl.col("d") != pl.col("b"))
         if d.period_in_use_set is not None:
-            piu = d.period_in_use_set.rename({"d": "b"})
+            # Cross-axis join: piu.b carries period tokens (d-Enum
+            # vocab) but db_pairs.b is branch-Enum.  Cast both to Utf8.
+            piu = (d.period_in_use_set
+                       .rename({"d": "b"})
+                       .with_columns(pl.col("b").cast(pl.Utf8)))
             db_pairs = db_pairs.join(piu, on="b", how="inner")
         if db_pairs.height > 0:
             _add_non_anticipativity_constraints(

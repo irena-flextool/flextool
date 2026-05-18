@@ -2244,14 +2244,33 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
         return None
     coef = pl.concat(parts)
 
-    src_match = (pss.lazy()
-        .join(coef, left_on=["p", "source"], right_on=["p", "n"],
+    # Cross-axis joins: pss carries ``source``/``sink`` (e-axis) joined
+    # against ``coef.n`` (n-axis).  Under Phase 4 activation the
+    # vocabularies differ; cast both sides to Utf8 for the join, then
+    # re-cast surviving e-axis columns back to e-Enum.
+    _live_enums = get_global_axis_enums()
+    _e_dt = (_live_enums.get("e") if _live_enums is not None else pl.Utf8)
+    pss_utf = pss.lazy().with_columns(
+        pl.col("source").cast(pl.Utf8),
+        pl.col("sink").cast(pl.Utf8),
+    )
+    coef_utf = coef.with_columns(pl.col("n").cast(pl.Utf8))
+    src_match = (pss_utf
+        .join(coef_utf, left_on=["p", "source"], right_on=["p", "n"],
                 how="inner")
-        .select("p", "source", "sink", "cn", "coef"))
-    sink_match = (pss.lazy()
-        .join(coef, left_on=["p", "sink"], right_on=["p", "n"],
+        .select(
+            "p",
+            pl.col("source").cast(_e_dt, strict=False),
+            pl.col("sink").cast(_e_dt, strict=False),
+            "cn", "coef"))
+    sink_match = (pss_utf
+        .join(coef_utf, left_on=["p", "sink"], right_on=["p", "n"],
                 how="inner")
-        .select("p", "source", "sink", "cn", "coef"))
+        .select(
+            "p",
+            pl.col("source").cast(_e_dt, strict=False),
+            pl.col("sink").cast(_e_dt, strict=False),
+            "cn", "coef"))
     joined = (pl.concat([src_match, sink_match], how="vertical")
                 .group_by(["p", "source", "sink", "cn"])
                 .agg(pl.col("coef").sum().alias("value"))
@@ -6527,11 +6546,15 @@ def _node_storage_binding_method_with_fallback(source: "InputSource"
             .select("n", "method"))
     explicit_n = set(explicit_rows["n"].to_list())
     fallback_n = [n for n in nodes["name"].to_list() if n not in explicit_n]
-    fb = pl.DataFrame({"n": fallback_n,
-                         "method": ["bind_forward_only"] * len(fallback_n)}) \
-            if fallback_n else pl.DataFrame(
-                schema={"n": schema_dtype(_enums, "n"),
-                        "method": pl.Utf8})
+    if fallback_n:
+        fb = (pl.DataFrame({"n": fallback_n,
+                              "method": ["bind_forward_only"] * len(fallback_n)})
+                .with_columns(pl.col("n").cast(schema_dtype(_enums, "n"),
+                                                  strict=False)))
+    else:
+        fb = pl.DataFrame(
+            schema={"n": schema_dtype(_enums, "n"),
+                    "method": pl.Utf8})
     out = pl.concat([explicit_rows, fb]).unique().sort("n", "method")
     return out
 

@@ -74,7 +74,30 @@ import polars as pl
 from polar_high import Param
 
 from ._writer_provider_io import _provider_key
-from ._axis_enums import alias_to_axis
+from ._axis_enums import (
+    alias_to_axis,
+    get_global_axis_enums,
+    schema_dtype,
+)
+
+
+# Phase 4.6 — proxy over the live cascade-wide axis enum dict.
+class _EnumsProxy:
+    def __bool__(self) -> bool:
+        return get_global_axis_enums() is not None
+
+    def get(self, key, default=None):
+        live = get_global_axis_enums()
+        if live is None:
+            return default
+        return live.get(key, default)
+
+    def __iter__(self):
+        live = get_global_axis_enums()
+        return iter(live) if live is not None else iter(())
+
+
+_enums = _EnumsProxy()
 
 
 def _provider_has_key(provider, path: "Path") -> bool:
@@ -243,7 +266,7 @@ def _profile_time_lf(source: "InputSource",
     sources averaged values from ``solve_data/pt_node_inflow.csv``.
     """
     empty_schema = {
-        "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+        "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
     }
     if not time_profiles:
         return pl.LazyFrame(schema=empty_schema)
@@ -309,22 +332,22 @@ def _profile_period_time_lf(source: "InputSource",
     """
     if not pt_profiles:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     try:
         raw = source.parameter("profile", "profile")
     except KeyError:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     if raw.height == 0:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     cols = raw.columns
     if "period" not in cols:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     if "t" in cols:
         t_col = "t"
@@ -332,7 +355,7 @@ def _profile_period_time_lf(source: "InputSource",
         t_col = "i"
     else:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(pt_profiles))
@@ -359,22 +382,22 @@ def _profile_period_only_lf(source: "InputSource",
     """
     if not period_profiles:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     try:
         raw = source.parameter("profile", "profile")
     except KeyError:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     if raw.height == 0:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     cols = raw.columns
     if "period" not in cols:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(period_profiles))
@@ -396,17 +419,17 @@ def _profile_scalar_lf(source: "InputSource",
     """
     if not scalar_profiles:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     try:
         raw = source.parameter("profile", "profile")
     except KeyError:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     if raw.height == 0:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(scalar_profiles))
@@ -450,7 +473,7 @@ def _profile_stochastic_lf(workdir: Path | None,
     """
     if workdir is None or not stoch_profiles:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     workdir = Path(workdir)
     inp = workdir / "input"
@@ -460,17 +483,17 @@ def _profile_stochastic_lf(workdir: Path | None,
     pbt_path = inp / "pbt_profile.csv"
     if not _provider_has_key(provider, pbt_path):
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     try:
         pbt = _provider_read(provider, pbt_path)
     except Exception:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     if pbt.height == 0:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     pbt = pbt.rename({"pbt_profile": "value"})
     pbt = pbt.filter(pl.col("profile").is_in(stoch_profiles))
@@ -548,7 +571,7 @@ def _profile_stochastic_lf(workdir: Path | None,
 
     if not parts:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     # Combine and resolve priority: lower priority wins.
     union = pl.concat(parts, how="vertical")
@@ -721,12 +744,13 @@ def p_profile_value_lf(source: "InputSource",
     """
     if dt is None:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
-    dt_lf = dt.lazy().select(
-        pl.col("d").cast(pl.Utf8),
-        pl.col("t").cast(pl.Utf8),
-    ).unique()
+    # Phase 4.6: keep ``dt``'s dim dtypes as-is — under activation
+    # they're d-Enum / t-Enum and downstream joins compose cleanly.
+    # Previously cast to Utf8 to defend against a mixed dtype, but that
+    # strip-to-Utf8 now breaks the downstream Enum joins.
+    dt_lf = dt.lazy().select("d", "t").unique()
 
     tiers = _classify_profile_rows(source)
     scalar_profiles = sorted(p for p, t in tiers.items() if t == "scalar")
@@ -780,7 +804,7 @@ def p_profile_value_lf(source: "InputSource",
 
     if not parts:
         return pl.LazyFrame(schema={
-            "f": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64,
+            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
 
     union = pl.concat(parts, how="vertical")

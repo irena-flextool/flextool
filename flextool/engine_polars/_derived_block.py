@@ -373,13 +373,22 @@ def filter_flow_n_by_block(
         .join(psb_side, on="p", how="left")
         .join(eb_lf_utf, on="n", how="left")
         .with_columns(
-            b_f=pl.col("b_f").fill_null(DEFAULT_BLOCK),
-            bk=pl.col("bk").fill_null(DEFAULT_BLOCK),
+            # Force the block join keys to Utf8 here so the downstream
+            # join with ``compat`` (which carries block-Enum bk/b_f)
+            # has matching dtypes regardless of which branch of
+            # ``process_side_block_lf`` / ``entity_block_lf`` produced
+            # the columns.
+            b_f=pl.col("b_f").cast(pl.Utf8).fill_null(DEFAULT_BLOCK),
+            bk=pl.col("bk").cast(pl.Utf8).fill_null(DEFAULT_BLOCK),
         )
+    )
+    compat_utf = compat.lazy().with_columns(
+        pl.col("bk").cast(pl.Utf8),
+        pl.col("b_f").cast(pl.Utf8),
     )
     filtered = (
         with_blocks
-        .join(compat.lazy(), on=["bk", "b_f"], how="inner")
+        .join(compat_utf, on=["bk", "b_f"], how="inner")
         .select("p", "source", "sink", "n")
         .unique()
         .collect()
