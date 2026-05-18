@@ -63,7 +63,7 @@ class OutputActionManager:
     def run_scenario_plots(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "scen_plots"
         gen = self._mark_running(action)
-        job = self._create_aux_job(action, "Re-plot scenarios")
+        job = self._create_aux_job(action, "Scenario pngs")
 
         def _work() -> bool:
             ok = True
@@ -78,7 +78,7 @@ class OutputActionManager:
     def run_scenario_excel(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "scen_excel"
         gen = self._mark_running(action)
-        job = self._create_aux_job(action, "Scenarios to Excel")
+        job = self._create_aux_job(action, "Scenario Excels")
 
         def _work() -> bool:
             ok = True
@@ -93,7 +93,7 @@ class OutputActionManager:
     def run_scenario_csvs(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "scen_csvs"
         gen = self._mark_running(action)
-        job = self._create_aux_job(action, "Scenarios to CSVs")
+        job = self._create_aux_job(action, "Scenario csvs")
 
         def _work() -> bool:
             ok = True
@@ -112,7 +112,7 @@ class OutputActionManager:
     def run_comparison_plots(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "comp_plots"
         gen = self._mark_running(action)
-        job = self._create_aux_job(action, "Comparison plots")
+        job = self._create_aux_job(action, "Comparison pngs")
 
         def _work() -> bool:
             cmd = self._build_comparison_cmd(scenario_ids, plots=True, excel=False)
@@ -132,7 +132,7 @@ class OutputActionManager:
     def run_comparison_excel(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "comp_excel"
         gen = self._mark_running(action)
-        job = self._create_aux_job(action, "Comparison to Excel")
+        job = self._create_aux_job(action, "Comparison Excel")
 
         def _work() -> bool:
             cmd = self._build_comparison_cmd(scenario_ids, plots=False, excel=True)

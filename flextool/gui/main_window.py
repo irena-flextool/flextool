@@ -309,18 +309,24 @@ class MainWindow(tk.Tk):
             "  \u2022 Click column headers to sort"
         ))
 
-        autogen_lbl = ttk.Label(outer, text="Auto-generate", font=self._bold_font)
-        autogen_lbl.grid(
-            row=row, column=2, columnspan=2, sticky="sw", padx=(20, 0), pady=(10, 2)
+        outputs_lbl = ttk.Label(outer, text="Outputs", font=self._bold_font)
+        outputs_lbl.grid(
+            row=row, column=2, columnspan=3, sticky="sw", padx=(20, 0), pady=(10, 2)
         )
-        attach_tooltip(autogen_lbl, (
-            "Select which outputs to generate\n"
-            "automatically after scenario execution.\n\n"
-            "All different results can be generated also\n"
-            "afterwards from 'Output actions', since full\n"
-            "results are always stored as parquet files.\n\n"
-            "Png settings control only what is plotted to files -\n"
-            "result viewer is not limited by png settings."
+        attach_tooltip(outputs_lbl, (
+            "Per-checked-executed-scenario output artefacts on disk.\n"
+            "\n"
+            "  • Auto-gen: produce this output automatically after\n"
+            "    every scenario run.\n"
+            "  • Status: ✓ = exists, ⊘ = last run failed,\n"
+            "    blank = not produced yet. Click to (re-)generate.\n"
+            "  • Show: open the folder (or file for Comparison\n"
+            "    Excel) in the system file manager.\n"
+            "\n"
+            "Full results are always stored as parquet files; these\n"
+            "exports are derived artefacts. The result viewer does\n"
+            "not depend on any of them — it reads the parquets\n"
+            "directly."
         ))
 
         # ── Rows 2-8: Input sources tree + buttons + auto-gen + output status ──
@@ -402,147 +408,139 @@ class MainWindow(tk.Tk):
         )
         self.refresh_btn.grid(row=8, column=btn_col, sticky="nw", padx=5, pady=2)
 
-        # --- Auto-generate checkboxes (col 2-3, rows 2-6) ---
+        # --- Unified Outputs table (col 2-4, rows 2-7) ----------------
+        # Columns: Output name | Auto-gen | Status | Show
+        # Auto-gen is the same boolean that previously lived in the
+        # separate "Auto-generate" checkbox group; the status column
+        # doubles as the manual generate trigger (click to regenerate).
         self.auto_scen_plots_var = tk.BooleanVar(value=True)
         self.auto_scen_excels_var = tk.BooleanVar(value=False)
         self.auto_scen_csvs_var = tk.BooleanVar(value=True)
         self.auto_comp_plots_var = tk.BooleanVar(value=True)
         self.auto_comp_excel_var = tk.BooleanVar(value=False)
 
-        auto_frame = ttk.Frame(outer)
-        auto_frame.grid(row=2, column=2, rowspan=5, columnspan=2, sticky="nw", padx=(20, 10))
-
-        self.auto_scen_plots_cb = ttk.Checkbutton(
-            auto_frame, text="Scenario plots", variable=self.auto_scen_plots_var
-        )
-        self.auto_scen_plots_cb.grid(row=0, column=0, sticky="w", pady=2)
-
-        self.auto_scen_excels_cb = ttk.Checkbutton(
-            auto_frame, text="Scenario Excels", variable=self.auto_scen_excels_var
-        )
-        self.auto_scen_excels_cb.grid(row=1, column=0, sticky="w", pady=2)
-
-        self.auto_scen_csvs_cb = ttk.Checkbutton(
-            auto_frame, text="Scenario csvs", variable=self.auto_scen_csvs_var
-        )
-        self.auto_scen_csvs_cb.grid(row=2, column=0, sticky="w", pady=2)
-
-        self.auto_comp_plots_cb = ttk.Checkbutton(
-            auto_frame, text="Comparison plots", variable=self.auto_comp_plots_var
-        )
-        self.auto_comp_plots_cb.grid(row=3, column=0, sticky="w", pady=2)
-
-        self.auto_comp_excel_cb = ttk.Checkbutton(
-            auto_frame, text="Comparison Excel", variable=self.auto_comp_excel_var
-        )
-        self.auto_comp_excel_cb.grid(row=4, column=0, sticky="w", pady=2)
-
-        # Trace auto-generate vars to save settings on toggle
-        self.auto_scen_plots_var.trace_add("write", self._on_auto_gen_toggled)
-        self.auto_scen_excels_var.trace_add("write", self._on_auto_gen_toggled)
-        self.auto_scen_csvs_var.trace_add("write", self._on_auto_gen_toggled)
-        self.auto_comp_plots_var.trace_add("write", self._on_auto_gen_toggled)
-        self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
-
-        # --- Png settings and Execution jobs buttons (col 2-3, rows 7-8) ---
-        self.plot_menu_btn = ttk.Button(
-            outer, text="Png settings", width=14,
-            command=self._on_plot_menu,
-        )
-        self.plot_menu_btn.grid(row=6, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
-
-        self.execution_menu_btn = ttk.Button(
-            outer, text="Execution jobs", width=14,
-            command=self._on_execution_menu,
-        )
-        self.execution_menu_btn.grid(row=8, column=2, columnspan=3, sticky="s", padx=10, pady=2)
-
-        # --- Output actions LabelFrame (col 5, rows 2-8, right-aligned, above executed scenarios) ---
-        # Use tk.LabelFrame (not ttk) so that background color changes apply
-        # uniformly to the entire frame interior, not just the label row.
-        # Pull the background color from the ttk theme so it matches dark/light mode.
+        # Use tk.Frame (not ttk) so we can tint it green when at least
+        # one executed scenario is checked \u2014 same affordance as the
+        # legacy output_frame.
         theme_bg = style.lookup("TFrame", "background") or self.cget("background")
         theme_fg = style.lookup("TLabel", "foreground") or "white"
-        output_label = tk.Label(
-            outer, text=" Output actions ", bg=theme_bg, fg=theme_fg,
-            font="TkDefaultFont",
-        )
-        self.output_frame = tk.LabelFrame(
-            outer, labelwidget=output_label, padx=5, pady=5,
-            bg=theme_bg, fg=theme_fg,
-        )
+        self.output_frame = tk.Frame(outer, bg=theme_bg, padx=5, pady=5)
         self.output_frame.grid(
-            row=2, column=5, rowspan=7, sticky="se", padx=(10, 0), pady=2,
+            row=2, column=2, rowspan=6, columnspan=3,
+            sticky="nw", padx=(20, 0), pady=2,
         )
-        # Store default bg so we can revert the green tint later
         self._output_frame_default_bg = theme_bg
 
-        attach_tooltip(output_label, (
-            "Generate and view outputs for checked executed scenarios.\n"
-            "\n"
-            "  \u2022 Click a button to (re-)generate that output\n"
-            "  \u2022 Show opens the output folder\n"
-            "  \u2022 \u2713 = outputs exist, spinner = running"
-        ))
+        # Column header row
+        _hdr_fg = theme_fg
+        _hdr_args = dict(bg=theme_bg, fg=_hdr_fg, font="TkDefaultFont")
+        tk.Label(self.output_frame, text="Output", anchor="w", **_hdr_args).grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 4),
+        )
+        tk.Label(self.output_frame, text="Auto-gen", **_hdr_args).grid(
+            row=0, column=1, padx=(0, 8), pady=(0, 4),
+        )
+        tk.Label(self.output_frame, text="Status", **_hdr_args).grid(
+            row=0, column=2, padx=(0, 8), pady=(0, 4),
+        )
+        tk.Label(self.output_frame, text="Action", **_hdr_args).grid(
+            row=0, column=3, padx=(0, 0), pady=(0, 4),
+        )
 
-        output_info: list[tuple[str, str, str | None]] = [
-            ("Re-plot scenarios", "scen_plots", "Show"),
-            ("Scenarios to Excel", "scen_excel", "Show"),
-            ("Scenarios to csvs", "scen_csvs", "Show"),
-            ("Comparison pngs", "comp_plots", "Show"),
-            ("Comparison to Excel", "comp_excel", "Open"),
+        # (display_name, key, auto_var, show_label) for each row.
+        # ``show_label`` is "Show" for folder targets, "Open" for the
+        # single-file Comparison Excel.
+        output_info: list[tuple[str, str, tk.BooleanVar, str]] = [
+            ("Scenario pngs",    "scen_plots", self.auto_scen_plots_var,  "Show"),
+            ("Scenario Excels",  "scen_excel", self.auto_scen_excels_var, "Show"),
+            ("Scenario csvs",    "scen_csvs",  self.auto_scen_csvs_var,   "Show"),
+            ("Comparison pngs",  "comp_plots", self.auto_comp_plots_var,  "Show"),
+            ("Comparison Excel", "comp_excel", self.auto_comp_excel_var,  "Open"),
         ]
 
         self.output_status_labels: dict[str, ttk.Button] = {}
         self.output_action_btns: dict[str, ttk.Button] = {}
-        self._output_spinners: dict[str, ttk.Label] = {}
+        # _output_spinners is kept as an alias to output_status_labels
+        # so the existing spinner animation code keeps working without
+        # changes \u2014 the status cell now plays both roles.
+        self._output_spinners: dict[str, ttk.Button | tk.Label] = {}
         self._spinner_timer_ids: dict[str, str] = {}
 
-        # Map keys to their generation handler method names
+        # Display names used by status updaters; kept in sync with the
+        # output_info table so renames only need to happen in one place.
+        self._output_display_names: dict[str, str] = {
+            key: name for name, key, _v, _s in output_info
+        }
+
         _gen_commands: dict[str, str] = {
             "scen_plots": "_on_gen_scen_plots",
             "scen_excel": "_on_gen_scen_excel",
-            "scen_csvs": "_on_gen_scen_csvs",
+            "scen_csvs":  "_on_gen_scen_csvs",
             "comp_plots": "_on_gen_comp_plots",
             "comp_excel": "_on_gen_comp_excel",
         }
         _show_commands: dict[str, str] = {
             "scen_plots": "_on_show_scen_plots",
             "scen_excel": "_on_show_scen_excel",
-            "scen_csvs": "_on_show_scen_csvs",
+            "scen_csvs":  "_on_show_scen_csvs",
             "comp_plots": "_on_show_comp_plots",
             "comp_excel": "_on_show_comp_excel",
         }
 
-        for i, (label_text, key, action_text) in enumerate(output_info):
+        for i, (display_name, key, auto_var, show_label) in enumerate(output_info):
+            row_i = i + 1  # header is row 0
+            tk.Label(
+                self.output_frame, text=display_name, anchor="w",
+                bg=theme_bg, fg=theme_fg, font="TkDefaultFont",
+            ).grid(row=row_i, column=0, sticky="w", padx=(0, 8), pady=2)
+
+            cb = ttk.Checkbutton(self.output_frame, variable=auto_var)
+            cb.grid(row=row_i, column=1, padx=(0, 8), pady=2)
+
+            # Status / generate button: text shows the icon, click
+            # triggers (re-)generation.
             status_btn = ttk.Button(
-                self.output_frame, text=label_text, width=20,
+                self.output_frame, text="  ", width=3,
                 command=getattr(self, _gen_commands[key]),
             )
-            status_btn.grid(row=i, column=0, sticky="w", padx=(0, 2), pady=2)
+            status_btn.grid(row=row_i, column=2, padx=(0, 8), pady=2)
             self.output_status_labels[key] = status_btn
+            self._output_spinners[key] = status_btn  # alias
 
-            spinner_label = ttk.Label(self.output_frame, text="  ", width=2, anchor="center")
-            spinner_label.grid(row=i, column=1, padx=2, pady=2)
-            self._output_spinners[key] = spinner_label
+            action_btn = ttk.Button(
+                self.output_frame, text=show_label, width=5,
+                command=getattr(self, _show_commands[key]),
+            )
+            action_btn.grid(row=row_i, column=3, sticky="w", padx=(0, 0), pady=2)
+            self.output_action_btns[key] = action_btn
 
-            if action_text is not None:
-                action_btn = ttk.Button(
-                    self.output_frame, text=action_text, width=5,
-                    command=getattr(self, _show_commands[key]),
-                )
-                action_btn.grid(row=i, column=2, sticky="w", padx=(2, 0), pady=2)
-                self.output_action_btns[key] = action_btn
+        # Trace auto-generate vars to save settings on toggle.
+        self.auto_scen_plots_var.trace_add("write", self._on_auto_gen_toggled)
+        self.auto_scen_excels_var.trace_add("write", self._on_auto_gen_toggled)
+        self.auto_scen_csvs_var.trace_add("write", self._on_auto_gen_toggled)
+        self.auto_comp_plots_var.trace_add("write", self._on_auto_gen_toggled)
+        self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
 
-        # Results viewer button (opens the ResultViewer window)
-        next_row = len(output_info)
+        # --- Below the table: Png settings | Execution jobs | Results viewer ---
+        self.plot_menu_btn = ttk.Button(
+            outer, text="Png settings", width=14,
+            command=self._on_plot_menu,
+        )
+        self.plot_menu_btn.grid(row=8, column=2, sticky="w", padx=(20, 8), pady=(10, 2))
+
+        self.execution_menu_btn = ttk.Button(
+            outer, text="Execution jobs", width=14,
+            command=self._on_execution_menu,
+        )
+        self.execution_menu_btn.grid(row=8, column=3, sticky="w", padx=(0, 8), pady=(10, 2))
+
+        # Width 22 to fit the alternate label "Update view scenarios"
+        # when the viewer is already open.
         self.view_results_btn = ttk.Button(
-            self.output_frame, text="Results viewer", width=20,
+            outer, text="Results viewer", width=22,
             command=self._on_view_results,
         )
-        self.view_results_btn.grid(
-            row=next_row, column=0, columnspan=3, sticky="w", padx=(0, 2), pady=(18, 2),
-        )
+        self.view_results_btn.grid(row=8, column=4, sticky="w", padx=(0, 0), pady=(10, 2))
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -3736,15 +3734,17 @@ class MainWindow(tk.Tk):
         )
 
         status_map = {
-            "scen_plots": ("Re-plot scenarios", all_have_plots),
-            "scen_excel": ("Scenarios to Excel", all_have_excel),
-            "scen_csvs": ("Scenarios to csvs", all_have_csvs),
-            "comp_plots": ("Comparison pngs", comp_plots_match),
-            "comp_excel": ("Comparison to Excel", comp_excel_match),
+            "scen_plots": all_have_plots,
+            "scen_excel": all_have_excel,
+            "scen_csvs":  all_have_csvs,
+            "comp_plots": comp_plots_match,
+            "comp_excel": comp_excel_match,
         }
 
-        for key, (full_name, has_output) in status_map.items():
-            self.output_status_labels[key].configure(text=full_name)
+        # Status text on the button doubles as the indicator: \u2713 when the
+        # output exists, \u2298 on a recorded failure, blank otherwise. The
+        # button itself is clickable to (re-)generate.
+        for key, has_output in status_map.items():
             if has_output:
                 self._output_spinners[key].configure(text="\u2713")
                 if key in self.output_action_btns:
@@ -3762,16 +3762,8 @@ class MainWindow(tk.Tk):
         self._update_view_results_btn()
 
     def _reset_output_status(self) -> None:
-        """Reset all output status labels to the default (no output) state."""
-        default_names = {
-            "scen_plots": "Re-plot scenarios",
-            "scen_excel": "Scenarios to Excel",
-            "scen_csvs": "Scenarios to csvs",
-            "comp_plots": "Comparison pngs",
-            "comp_excel": "Comparison to Excel",
-        }
-        for key, full_name in default_names.items():
-            self.output_status_labels[key].configure(text=full_name)
+        """Reset all output status indicators to the default blank state."""
+        for key in self._output_display_names:
             self._output_spinners[key].configure(text="  ")
             if key in self.output_action_btns:
                 self.output_action_btns[key].configure(style="Grey.TButton")
