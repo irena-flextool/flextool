@@ -532,9 +532,48 @@ class SpineDbReader:
         :class:`FlexDataIntegrityError` with
         ``(parameter, entity_class, scenario)`` threaded as the
         origin breadcrumb.
+
+        Phase 4 — for 0-dim entity frames whose single column is
+        ``name``, cast that column against the axis whose source class
+        is ``entity_class`` (looked up in the contract).  Without this
+        hook the ``name`` column remains Utf8 and every downstream
+        ``pl.col("name").alias("p")`` produces a Utf8 ``p`` that mixes
+        SchemaError-fully with the Enum-typed cascade.
         """
         if self._axis_enums is None:
             return frame
+        # Pre-cast: handle entity-class element columns.  For 0-dim
+        # classes the single column is ``name``; for n-dim relationships
+        # the columns are the dim-class names (``unit``, ``node``,
+        # ``node_1``, ``node_2``, ``connection`` …).  Each such column
+        # carries entities of its dim class, so we cast against the
+        # axis whose source claims that class.
+        if self._contract is not None:
+            element_casts: list[pl.Expr] = []
+            for col in frame.columns:
+                if col == "name":
+                    axis = self._axis_for_entity_class(entity_class)
+                elif col == "value":
+                    # ``value`` is data, never a dim column.
+                    axis = None
+                else:
+                    # ``unit``, ``node``, ``connection``, … — element of
+                    # a relationship class.  Strip a trailing ``_N``
+                    # disambiguator (``node_1`` / ``node_2`` → ``node``).
+                    base = col.rsplit("_", 1)[0] if (
+                        "_" in col and col.rsplit("_", 1)[1].isdigit()
+                    ) else col
+                    axis = self._axis_for_entity_class(base)
+                if axis is None:
+                    continue
+                target = self._axis_enums.get(axis.name)
+                if target is None or frame.schema[col] == target:
+                    continue
+                element_casts.append(
+                    pl.col(col).cast(target, strict=False)
+                )
+            if element_casts:
+                frame = frame.with_columns(element_casts)
         origin = {
             "parameter": parameter_name,
             "entity": entity_class,
@@ -546,6 +585,34 @@ class SpineDbReader:
             axis_enums=self._axis_enums,
             origin=origin,
         )
+
+    def _axis_for_entity_class(self, entity_class: str):
+        """Return the contract axis whose source includes *entity_class*.
+
+        Walks the contract's axes for ``source_type == "entity_class"``
+        matching ``entity_class`` directly, or ``source_type ==
+        "entity_class_union"`` whose list includes ``entity_class``.
+        Returns the first matching :class:`AxisSpec`; ``None`` when no
+        axis claims this class (synthetic classes, methods, etc.).
+
+        When two axes claim the same class (e.g. ``node`` is sourced
+        by both ``n`` directly AND by ``e`` (the entity union)), the
+        single-class axis wins — its enum is narrower and more
+        precise than the union.
+        """
+        if self._contract is None:
+            return None
+        single: object | None = None
+        union: object | None = None
+        for axis in self._contract.axes:
+            if axis.source_type == "entity_class":
+                if axis.source == entity_class:
+                    single = axis
+            elif axis.source_type == "entity_class_union":
+                if entity_class in (axis.source or []):
+                    if union is None:
+                        union = axis
+        return single if single is not None else union
 
     # ------------------------------------------------------------------
     # Unrolling the per-row blob into rectangular rows

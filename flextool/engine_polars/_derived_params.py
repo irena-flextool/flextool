@@ -43,7 +43,14 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import lit_axis, rename_to_axis, schema_dtype
+from ._axis_enums import (
+    cast_dim,
+    cast_frame_axes,
+    get_global_axis_enums,
+    lit_axis,
+    rename_to_axis,
+    schema_dtype,
+)
 from ._writer_provider_io import _provider_key
 
 
@@ -347,6 +354,7 @@ def dt_and_step_duration_from_source(
                             .unique())
     if realized_p is None:
         parts: list[pl.LazyFrame] = []
+        _live = get_global_axis_enums()
         for ec, par in (("solve", "realized_periods"),
                          ("solve", "invest_periods")):
             df = _try_param(source, ec, par)
@@ -354,7 +362,9 @@ def dt_and_step_duration_from_source(
                 continue
             parts.append(df.lazy()
                            .filter(pl.col("name") == active_solve)
-                           .select(pl.col("value").alias("d")))
+                           .select(
+                               cast_dim(pl.col("value"), _live,
+                                          "d").alias("d")))
         if not parts:
             return None
         realized_p = pl.concat(parts).unique()
@@ -1555,15 +1565,19 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     conns = _try_entities(source, "connection")
     parts: list[pl.LazyFrame] = []
     if units is not None:
-        parts.append(units.lazy().select(
-            pl.col("name").alias("p"),
-            lit_axis("unit", "klass").alias("klass"),
-        ))
+        parts.append(
+            units.lazy()
+                 .pipe(rename_to_axis, {"name": "p"})
+                 .with_columns(klass=lit_axis("unit", "klass"))
+                 .select("p", "klass"),
+        )
     if conns is not None:
-        parts.append(conns.lazy().select(
-            pl.col("name").alias("p"),
-            lit_axis("connection", "klass").alias("klass"),
-        ))
+        parts.append(
+            conns.lazy()
+                 .pipe(rename_to_axis, {"name": "p"})
+                 .with_columns(klass=lit_axis("connection", "klass"))
+                 .select("p", "klass"),
+        )
     if not parts:
         return pl.DataFrame(schema={
             "p": schema_dtype(_enums, "p"),

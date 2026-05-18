@@ -51,6 +51,10 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "d_previous": "d",
     "d_upper": "d",
     "d_back": "d",
+    # ``anchor`` is the cascade column name used in _derived_params.py
+    # during the period__branch overlay (period→anchor rename).  The
+    # values are period labels, so the column belongs to the ``d`` axis.
+    "anchor": "d",
     # Time-step synonyms
     "step": "t",
     "t_previous": "t",
@@ -67,6 +71,13 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "commodity": "c",
     "group": "g",
     "entity": "e",
+    # Multi-dim entity-class element columns (Spine emits ``node_1`` /
+    # ``node_2`` for the two ends of a connection, ``unit`` / ``connection``
+    # for the process role).  Each is a single-axis token.
+    "unit": "p",
+    "connection": "p",
+    "node_1": "n",
+    "node_2": "n",
     # Mixed-vocab columns (per axis contract).  source/sink columns
     # carry a union of node + process names and must be cast against
     # the 'e' (entity) union axis, not against a same-named single-class
@@ -78,6 +89,21 @@ _AXIS_SYNONYMS: dict[str, str] = {
     # _review_notes.c_collision / b_collision).
     "cn": "constraint",
     "bk": "block",
+    # Branch column synonym (per contract: branch.column_synonyms = ["b"]).
+    "b": "branch",
+    # Cascade timestep synonyms used in coarse-block successor frames.
+    # Per the contract, t.column_synonyms includes "b_first" and "b_next"
+    # — these are timestep labels, NOT block names (see _derived_block.py
+    # period_block_succ derivation: bsd "step" column is renamed to
+    # "b_first" / "b_next" via successor walk).
+    "b_first": "t",
+    "b_next": "t",
+    # Block-fine column — per _derived_block.py BlockBundle, b_f is the
+    # process-side block column (renamed from the layout's "block"
+    # column). It holds block-axis tokens; the canonical block axis is
+    # "block" in the contract (with "bk" already listed as a synonym
+    # above).
+    "b_f": "block",
 }
 
 
@@ -181,7 +207,10 @@ def cast_frame_axes(
 
     exprs = []
     for col in columns:
-        target = enums.get(col)
+        # Resolve synonyms before enum lookup so ``source``/``sink`` /
+        # ``node``/``period`` etc. all find their canonical axis enum.
+        canonical = _resolve_axis(col)
+        target = enums.get(canonical)
         if target is None:
             continue
         if schema[col] == target:

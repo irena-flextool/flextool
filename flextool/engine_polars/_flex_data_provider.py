@@ -77,6 +77,13 @@ class FlexDataProvider:
 
     def __init__(self) -> None:
         self._frames: dict[str, pl.DataFrame] = {}
+        # Phase 4 — axis enum vocabulary + contract.  Populated by
+        # ``input_derivation.run`` against the active SpineDBBackend, or
+        # lazy-built by ``load_flextool`` against the workdir sqlite when
+        # the cascade entry point bypasses input_derivation.  ``None``
+        # means activation is off (legacy behaviour).
+        self.axis_enums: "dict[str, pl.Enum] | None" = None
+        self.contract: "object | None" = None
 
     # ------------------------------------------------------------------
     # Mutation

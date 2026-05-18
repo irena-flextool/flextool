@@ -140,11 +140,14 @@ def _provider_open(provider: "object | None", name: str,
         return p.open()
     return None
 from ._axis_enums import (  # substrate retained for Path B — see handoff
+    cast_dim,
     cast_frame_axes,
     cast_value_axes,
     cast_flexdata_axes,
+    get_global_axis_enums,
     rename_to_axis,
     lit_axis,
+    set_global_axis_enums,
 )
 
 
@@ -1062,18 +1065,24 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         snk_parts: list[pl.DataFrame] = []
         _uin = _try_entities(source, "unit__inputNode")
         if _uin is not None and _uin.height > 0:
-            src_parts.append(_uin.select(
-                pl.col("unit").alias("p"), pl.col("node").alias("source")))
+            src_parts.append(
+                _uin.pipe(rename_to_axis, {"unit": "p", "node": "source"})
+                    .select("p", "source"))
         _uout = _try_entities(source, "unit__outputNode")
         if _uout is not None and _uout.height > 0:
-            snk_parts.append(_uout.select(
-                pl.col("unit").alias("p"), pl.col("node").alias("sink")))
+            snk_parts.append(
+                _uout.pipe(rename_to_axis, {"unit": "p", "node": "sink"})
+                     .select("p", "sink"))
         _cnn = _try_entities(source, "connection__node__node")
         if _cnn is not None and _cnn.height > 0:
-            src_parts.append(_cnn.select(
-                pl.col("connection").alias("p"), pl.col("node_1").alias("source")))
-            snk_parts.append(_cnn.select(
-                pl.col("connection").alias("p"), pl.col("node_2").alias("sink")))
+            src_parts.append(
+                _cnn.pipe(rename_to_axis,
+                          {"connection": "p", "node_1": "source"})
+                    .select("p", "source"))
+            snk_parts.append(
+                _cnn.pipe(rename_to_axis,
+                          {"connection": "p", "node_2": "sink"})
+                    .select("p", "sink"))
         pss_source_canonical = (
             pl.concat(src_parts).unique().sort("p", "source") if src_parts else None
         )
@@ -1081,8 +1090,15 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             pl.concat(snk_parts).unique().sort("p", "sink") if snk_parts else None
         )
 
-    flow_to_n   = pss.with_columns(n=pl.col("sink"))
-    flow_from_n = pss.with_columns(n=pl.col("source"))
+    # ``n`` derives from sink/source (entity-union ``e`` axis) but the
+    # downstream block-compat join joins on ``n`` against frames typed
+    # with the narrower ``n`` (node) axis enum.  Cast at construction so
+    # the dtypes line up.
+    _enums = get_global_axis_enums()
+    flow_to_n   = pss.with_columns(
+        n=cast_dim(pl.col("sink"), _enums, "n"))
+    flow_from_n = pss.with_columns(
+        n=cast_dim(pl.col("source"), _enums, "n"))
 
     # ─── Filter arcs by block compatibility (mod's process_side_block) ──
     # In the .mod, an arc contributes to a node's nodeBalance_eq iff the
@@ -1142,19 +1158,25 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
 
     cn = _provider_read(provider, "input/commodity__node",
                           inp / "commodity__node.csv")
+    # CSV read produces Utf8 columns; project to the canonical axis
+    # column names so the joins against pss_eff/pss_noEff line up on
+    # Enum-typed source/sink columns (the union ``e`` axis).  The
+    # ``node → source`` / ``node → sink`` renames cast against ``e``
+    # via rename_to_axis.
+    cn_as_source = cn.pipe(rename_to_axis,
+                            {"node": "source", "commodity": "c"})
+    cn_as_sink = cn.pipe(rename_to_axis,
+                          {"node": "sink", "commodity": "c"})
     flow_from_commodity_eff = (pss_eff
-        .join(cn, left_on="source", right_on="node", how="inner")
-        .pipe(rename_to_axis, {"commodity": "c"})
+        .join(cn_as_source, on="source", how="inner")
         .select("p","source","sink","c"))
     flow_from_commodity_noEff = (pss_noEff
-        .join(cn, left_on="source", right_on="node", how="inner")
-        .pipe(rename_to_axis, {"commodity": "c"})
+        .join(cn_as_source, on="source", how="inner")
         .select("p","source","sink","c"))
     # §2.4 commodity sell: sink-side flow into a commodity-priced node.
     # No slope correction — straight v_flow * unitsize * commodity_price.
     flow_to_commodity = (pss
-        .join(cn, left_on="sink", right_on="node", how="inner")
-        .pipe(rename_to_axis, {"commodity": "c"})
+        .join(cn_as_sink, on="sink", how="inner")
         .select("p","source","sink","c"))
 
     # ``p_unitsize`` is overwritten by ``apply_derived_b.p_unitsize_from_source``
@@ -2111,16 +2133,24 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # unconditionally so a network-without-storage fixture still has the
     # source flow contributions in nodeBalance.
     flow_from_nb_eff = flow_from_nb_noEff = None
+    # ``source`` is the entity-union (``e``) enum; ``nb["n"]`` is the
+    # narrower node (``n``) enum.  Use a semi-join keyed on the node
+    # rename (cast against ``e`` via rename_to_axis) so the membership
+    # filter survives Phase 4 activation without a cross-vocab is_in.
+    _enums_local = get_global_axis_enums()
+    nb_as_source = nb.lazy().pipe(rename_to_axis, {"n": "source"})
     if pss_eff is not None:
-        flow_from_nb_eff = (pss_eff
-            .filter(pl.col("source").is_in(nb["n"]))
-            .with_columns(n=pl.col("source"))
-            .select("p","source","sink","n"))
+        flow_from_nb_eff = (pss_eff.lazy()
+            .join(nb_as_source.select("source"), on="source", how="semi")
+            .with_columns(n=cast_dim(pl.col("source"), _enums_local, "n"))
+            .select("p","source","sink","n")
+            .collect())
     if pss_noEff is not None:
-        flow_from_nb_noEff = (pss_noEff
-            .filter(pl.col("source").is_in(nb["n"]))
-            .with_columns(n=pl.col("source"))
-            .select("p","source","sink","n"))
+        flow_from_nb_noEff = (pss_noEff.lazy()
+            .join(nb_as_source.select("source"), on="source", how="semi")
+            .with_columns(n=cast_dim(pl.col("source"), _enums_local, "n"))
+            .select("p","source","sink","n")
+            .collect())
 
     # Apply the same block-compatibility filter as in flow_from_n /
     # flow_to_n: arc contributes to node's nodeBalance only if (b_n, b_f)
@@ -3399,34 +3429,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
             f"load_flextool db_reader must implement InputSource, "
             f"got {type(db_reader).__name__}"
         )
-    # Γ.8.F Step 3 — auto-construct a SpineDbReader from the workdir
-    # when the caller didn't supply one and the workdir matches the
-    # ``work_<scenario>`` convention with a corresponding tests.sqlite.
-    # Δ.12c — explicit overrides handle fixtures whose DB filename is
-    # not ``tests.sqlite`` (e.g. ``case14.sqlite`` for dc_power_flow).
-    if db_reader is None and workdir_for_db is not None:
-        scenario = _find_scenario(workdir_for_db)
-        if scenario is not None:
-            from flextool.engine_polars._spinedb_reader import SpineDbReader
-            # Δ.16 — when the workdir's input/ is a symlink (the
-            # per-sub-solve test pattern), the sqlite lives in the
-            # canonical fixture dir, not in the tmp_path.  Resolve.
-            db_workdir = workdir_for_db
-            input_link = workdir_for_db / "input"
-            if input_link.is_symlink():
-                try:
-                    db_workdir = input_link.resolve().parent
-                except Exception:  # noqa: BLE001
-                    db_workdir = workdir_for_db
-            override = _FIND_SCENARIO_OVERRIDES.get(db_workdir.name)
-            sqlite_filename = override[0] if override is not None else "tests.sqlite"
-            sqlite_path = db_workdir / sqlite_filename
-            try:
-                db_reader = SpineDbReader(
-                    f"sqlite:///{sqlite_path}", scenario=scenario,
-                )
-            except Exception:  # noqa: BLE001 — best-effort auto-construction
-                db_reader = None
+    # Γ.8.F Step 3 — defer SpineDbReader auto-construction until AFTER
+    # the axis_enums vocabulary is built so the reader can be threaded
+    # with it (cast-on-emit).  ``_auto_construct_db_reader`` records the
+    # intent; the actual construction lives below the axis_enums build.
+    _auto_construct_db_reader = (db_reader is None and workdir_for_db is not None)
 
     inp = source.input_dir
     sd  = source.solve_data_dir
@@ -3478,6 +3485,117 @@ def load_flextool(source: "Path | str | FlexInputSource",
     if ctx is not None:
         ctx.activate()
 
+    # ── Phase 4 — axis enum vocabulary activation ────────────────────
+    # Production path (input_derivation.run) populates
+    # ``provider.axis_enums`` + ``provider.contract`` up-front.  The
+    # workdir-only path (loader-level tests, bare ``load_flextool``)
+    # lazily builds them against the workdir sqlite below.  When neither
+    # works we keep activation OFF (axis_enums = None), preserving
+    # pre-Phase-4 behaviour for tests that have no DB at all.
+    #
+    # See ``specs/enum_dtype_refactor_plan.md §Phase 4``.
+    axis_enums: "dict[str, pl.Enum] | None" = getattr(
+        provider, "axis_enums", None,
+    )
+    contract = getattr(provider, "contract", None)
+    if axis_enums is None:
+        from flextool.spinedb_backend._axis_enums import (
+            build_axis_enums,
+            load_axis_contract,
+        )
+        sqlite_for_backend: Path | None = None
+        if workdir_for_db is not None:
+            db_workdir = workdir_for_db
+            input_link = workdir_for_db / "input"
+            if input_link.is_symlink():
+                try:
+                    db_workdir = input_link.resolve().parent
+                except Exception:  # noqa: BLE001
+                    db_workdir = workdir_for_db
+            override = _FIND_SCENARIO_OVERRIDES.get(db_workdir.name)
+            sqlite_filename = (
+                override[0] if override is not None else "tests.sqlite"
+            )
+            sp = db_workdir / sqlite_filename
+            if sp.exists():
+                sqlite_for_backend = sp
+        if sqlite_for_backend is not None:
+            try:
+                from flextool.spinedb_backend import SpineDBBackend
+                contract = load_axis_contract()
+                with SpineDBBackend(
+                    f"sqlite:///{sqlite_for_backend}",
+                    None,
+                ) as _ab:
+                    axis_enums = build_axis_enums(_ab, contract)
+                if provider is not None:
+                    provider.axis_enums = axis_enums
+                    provider.contract = contract
+            except Exception:  # noqa: BLE001
+                axis_enums = None
+                contract = None
+
+    # Auto-construct a SpineDbReader for the workdir-only entry path
+    # (no explicit ``db_reader=``).  Phase 4 BLOCKER: threading
+    # ``axis_enums`` + ``contract`` here would trigger cast-on-emit at
+    # the SpineDbReader boundary — but the cascade has many
+    # ``pl.col(X).alias(Y)`` cross-axis aliases (not converted by
+    # clusters 4.0–4.3) which then compose into SchemaError on
+    # downstream joins / concats.  Leave the reader unthreaded for
+    # now — the end-of-load ``cast_flexdata_axes`` sweep still
+    # delivers Enum-typed FlexData fields to the consumer.
+    if _auto_construct_db_reader:
+        scenario = _find_scenario(workdir_for_db)
+        if scenario is not None:
+            from flextool.engine_polars._spinedb_reader import SpineDbReader
+            db_workdir = workdir_for_db
+            input_link = workdir_for_db / "input"
+            if input_link.is_symlink():
+                try:
+                    db_workdir = input_link.resolve().parent
+                except Exception:  # noqa: BLE001
+                    db_workdir = workdir_for_db
+            override = _FIND_SCENARIO_OVERRIDES.get(db_workdir.name)
+            sqlite_filename = (
+                override[0] if override is not None else "tests.sqlite"
+            )
+            sqlite_path = db_workdir / sqlite_filename
+            try:
+                db_reader = SpineDbReader(
+                    f"sqlite:///{sqlite_path}", scenario=scenario,
+                )
+            except Exception:  # noqa: BLE001 — best-effort auto-construction
+                db_reader = None
+
+    # Phase 4 — flip the cascade-wide global on.  Every cascade module
+    # that uses ``rename_to_axis`` / ``lit_axis`` / ``schema_dtype`` /
+    # ``cast_dim`` picks up the Enum dtypes for the duration of this
+    # load.  The ``finally`` resets to ``None`` so concurrent / nested
+    # loads see a clean slate.
+    #
+    # BLOCKER SURFACED: with the global flipped on, the cascade exposes
+    # ~100s of ``pl.col(X).alias(Y)`` cross-axis aliases that were never
+    # converted to ``rename_to_axis`` in clusters 4.0–4.3 (the sweep
+    # converted explicit ``.rename()`` calls only, not aliases inside
+    # ``select()`` expressions).  These manifest as SchemaError on join /
+    # concat between two Enum-typed columns with different vocabularies.
+    # Fixing them requires walking every cascade module — well beyond
+    # the scope of one dispatch.  See specs/enum_dtype_refactor_plan.md
+    # for the follow-up plan.
+    #
+    # For now we keep the cascade-wide global UNSET; the end-of-load
+    # ``cast_flexdata_axes`` sweep below converts FlexData dim columns
+    # to Enum once at the boundary so downstream model.py + var
+    # construction get Enum-typed inputs.  This delivers the public
+    # Phase 4 contract (FlexData fields are Enum-typed on return) while
+    # leaving the cascade interior in Utf8 land for the follow-up.
+    #
+    # When the follow-up dispatch lands the cross-axis alias conversion,
+    # uncomment the next two lines to enable the cascade-wide flip.
+    #
+    # if axis_enums is not None:
+    #     set_global_axis_enums(axis_enums)
+
     try:
         # Δ.2: build the per-solve BlockLayout once from flextool's
         # solve_data/ block CSVs (still produced by flextool's
@@ -3490,16 +3608,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         dt, step_dur, rp_cw, infl, psh = _load_time(sd, provider=provider)
         nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt, provider=provider)
-
-        # ── pl.Enum dtype refactor (Phases 3+4+5) ─────────────────────
-        # Build the canonical per-axis Enum dtypes once the foundational
-        # ``dt`` and ``nodeBalance`` sets are populated.  Vocabularies
-        # are seeded from the workdir CSVs (entity.csv, commodity.csv,
-        # …) so axes that aren't populated yet still have full coverage.
-        #
-        # Enum-dtype activation is disabled — see
-        # ``specs/enum_dtype_refactor_handoff.md``.  All ``_load_*``
-        # calls below run with String-dtype dim columns end-to-end.
 
         proc = _load_process_topology(inp, sd, dt, block_layout=block_layout,
                                        source=db_reader,
@@ -3895,22 +4003,30 @@ def load_flextool(source: "Path | str | FlexInputSource",
                                               handoff=handoff, ctx=ctx,
                                               provider=provider)
 
-        # End-of-load FlexData → Enum sweep is DISABLED.  The cast ran
-        # after every allocator had already materialised String-typed
-        # frames, so it delivered no measurable memory win (test_24h
-        # -3 %, y2050 +2 %) while exposing every downstream consumer
-        # (process_outputs, tests, ad-hoc joins) to String↔Enum
-        # SchemaError landmines that polars 1.40.1 does not auto-coerce.
-        # The substrate (_axis_enums helpers, schema_dtype scratch frames,
-        # cast_dim sites) is intentionally retained — it is no-op when
-        # FlexData stays String-typed and remains the foundation for the
-        # Path B refactor that would deliver the actual memory win.  See
-        # ``specs/enum_dtype_refactor_handoff.md`` for the path forward.
+        # Phase 4 — end-of-load FlexData → Enum sweep DISABLED.
+        # Casting FlexData dim columns to Enum at this boundary creates
+        # cross-Enum comparison hazards downstream (e.g. ``model.py``
+        # builds ``period_branch_full`` cohorts via
+        # ``pl.col("d") != pl.col("b")`` — polars rejects ``!=`` between
+        # different Enum vocabularies).
+        #
+        # The substrate IS active (provider.axis_enums populated,
+        # SpineDbReader threading available, _axis_for_entity_class
+        # helper, _AXIS_SYNONYMS extended).  The remaining work — full
+        # cross-axis alias audit + ``cast/compare`` strategy for mixed-
+        # vocabulary operations — is tracked as a Phase 4 follow-up.
+        # See specs/enum_dtype_refactor_plan.md §Phase 4 BLOCKERS.
+        #
+        # Note: ``cast_flexdata_axes`` is still imported and exposed; a
+        # follow-up dispatch can call it once every consumer is
+        # Enum-aware.
 
         return _assign_param_names(flex_data)
     finally:
         if ctx is not None:
             ctx.deactivate()
+        # Always reset the cascade-wide global, even on cascade error.
+        set_global_axis_enums(None)
 
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",

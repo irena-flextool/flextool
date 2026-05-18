@@ -47,7 +47,24 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine_polars._axis_enums import lit_axis, rename_to_axis
+from flextool.engine_polars._axis_enums import (
+    cast_dim,
+    cast_frame_axes,
+    get_global_axis_enums,
+    lit_axis,
+    rename_to_axis,
+)
+
+
+def _to_e(expr: pl.Expr) -> pl.Expr:
+    """Cast *expr* to the entity-union (``e``) axis enum if active.
+
+    Used at ``pl.col("p").alias("source"/"sink")`` sites where a
+    process-typed column is reused as an entity-union slot.  Without
+    the cast, ``vertical_relaxed`` concat downstream raises
+    ``SchemaError: failed to determine supertype of enum and enum``.
+    """
+    return cast_dim(expr, get_global_axis_enums(), "e")
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -284,11 +301,10 @@ def process_source_sink_canonical(source: "InputSource",
         cls_conns = (classified.lazy()
                        .filter(pl.col("klass") == "connection")
                        .select("p", "method"))
-        cnn_lf = cnn.lazy().select(
-            pl.col("connection").alias("p"),
-            pl.col("node_1").alias("source"),
-            pl.col("node_2").alias("sink"),
-        )
+        cnn_lf = cnn.lazy().pipe(
+            rename_to_axis,
+            {"connection": "p", "node_1": "source", "node_2": "sink"},
+        ).select("p", "source", "sink")
         # Join with classifier to get internal method per arc.
         cnn_with_method = cnn_lf.join(cls_conns, on="p", how="left")
         # Forward direction: tag eff/noEff by method.
@@ -332,15 +348,17 @@ def process_source_sink_canonical(source: "InputSource",
                        .filter(pl.col("klass") == "unit")
                        .select("p", "method"))
         uin = _try_entities(source, "unit__inputNode")
-        sources_lf = (uin.lazy().select(
-            pl.col("unit").alias("p"),
-            pl.col("node").alias("source"),
-        )) if uin is not None else _empty_lf("p", "source")
+        sources_lf = (
+            uin.lazy().pipe(rename_to_axis,
+                              {"unit": "p", "node": "source"})
+                      .select("p", "source")
+        ) if uin is not None else _empty_lf("p", "source")
         uout = _try_entities(source, "unit__outputNode")
-        sinks_lf = (uout.lazy().select(
-            pl.col("unit").alias("p"),
-            pl.col("node").alias("sink"),
-        )) if uout is not None else _empty_lf("p", "sink")
+        sinks_lf = (
+            uout.lazy().pipe(rename_to_axis,
+                              {"unit": "p", "node": "sink"})
+                       .select("p", "sink")
+        ) if uout is not None else _empty_lf("p", "sink")
 
         # ── DIRECT methods: cross-join → ``_eff`` partition ──
         direct_p = (cls_units
@@ -372,7 +390,7 @@ def process_source_sink_canonical(source: "InputSource",
             .select("p"))
         indirect_inputs = (sources_lf
             .join(indirect_p, on="p", how="inner")
-            .select("p", "source", pl.col("p").alias("sink"),
+            .select("p", "source", _to_e(pl.col("p")).alias("sink"),
                     pl.lit("noEff").alias("method")))
         parts.append(indirect_inputs)
 
@@ -382,14 +400,14 @@ def process_source_sink_canonical(source: "InputSource",
             .select("p"))
         indirect_inputs_rev = (sources_lf
             .join(two_way_nvar_p, on="p", how="inner")
-            .select("p", pl.col("p").alias("source"),
+            .select("p", _to_e(pl.col("p")).alias("source"),
                     pl.col("source").alias("sink"),
                     pl.lit("noEff").alias("method")))
         parts.append(indirect_inputs_rev)
 
         indirect_outputs = (sinks_lf
             .join(indirect_p, on="p", how="inner")
-            .select("p", pl.col("p").alias("source"), "sink",
+            .select("p", _to_e(pl.col("p")).alias("source"), "sink",
                     pl.lit("noEff").alias("method")))
         parts.append(indirect_outputs)
 
@@ -403,12 +421,12 @@ def process_source_sink_canonical(source: "InputSource",
         no_source_p = one_way_1var_p.join(sources_exist, on="p", how="anti")
         no_sink_arcs = (sources_lf
             .join(no_sink_p, on="p", how="inner")
-            .select("p", "source", pl.col("p").alias("sink"),
+            .select("p", "source", _to_e(pl.col("p")).alias("sink"),
                     pl.lit("noEff").alias("method")))
         parts.append(no_sink_arcs)
         no_source_arcs = (sinks_lf
             .join(no_source_p, on="p", how="inner")
-            .select("p", pl.col("p").alias("source"), "sink",
+            .select("p", _to_e(pl.col("p")).alias("source"), "sink",
                     pl.lit("noEff").alias("method")))
         parts.append(no_source_arcs)
 
@@ -427,6 +445,16 @@ def process_source_sink_canonical(source: "InputSource",
     if out.height == 0:
         return _empty({"p": pl.Utf8, "source": pl.Utf8,
                        "sink": pl.Utf8, "method": pl.Utf8})
+    # Cast dim columns to canonical axis enums.  Many partitions emit
+    # ``source``/``sink`` via ``pl.col("p").alias(...)`` (cross-axis from
+    # the ``p`` enum into the ``source``/``sink`` slot whose contract
+    # axis is ``e``).  The concat above is ``vertical_relaxed`` so
+    # types fall to a common supertype (string when mixing enum
+    # vocabularies); the cast here re-establishes canonical Enum
+    # dtypes once at the boundary.
+    enums = get_global_axis_enums()
+    if enums is not None:
+        out = cast_frame_axes(out, enums)
     return out
 
 
@@ -1462,6 +1490,7 @@ def group_entity(source: "InputSource") -> pl.DataFrame:
     Schema: ``[g, e]``.
     """
     parts: list[pl.LazyFrame] = []
+    _enums = get_global_axis_enums()
     for cls, dim in (("group__node", "node"),
                       ("group__unit", "unit"),
                       ("group__connection", "connection")):
@@ -1470,11 +1499,17 @@ def group_entity(source: "InputSource") -> pl.DataFrame:
             continue
         parts.append(df.lazy().select(
             pl.col("group").alias("g"),
-            pl.col(dim).alias("e"),
+            # cast across class-specific enum into the entity-union ``e``
+            # enum so concat across (group__node, group__unit,
+            # group__connection) lines up on a single dtype.
+            cast_dim(pl.col(dim), _enums, "e").alias("e"),
         ))
     if not parts:
         return _empty({"g": pl.Utf8, "e": pl.Utf8})
-    return pl.concat(parts).unique().sort("g", "e").collect()
+    out = pl.concat(parts).unique().sort("g", "e").collect()
+    if _enums is not None:
+        out = cast_frame_axes(out, _enums)
+    return out
 
 
 def group_process_node(source: "InputSource") -> pl.DataFrame:
@@ -1485,18 +1520,18 @@ def group_process_node(source: "InputSource") -> pl.DataFrame:
     parts: list[pl.LazyFrame] = []
     u = _try_entities(source, "group__unit__node")
     if u is not None:
-        parts.append(u.lazy().select(
-            pl.col("group").alias("g"),
-            pl.col("unit").alias("p"),
-            pl.col("node").alias("n"),
-        ))
+        parts.append(
+            u.lazy().pipe(rename_to_axis,
+                           {"group": "g", "unit": "p", "node": "n"})
+                    .select("g", "p", "n"),
+        )
     c = _try_entities(source, "group__connection__node")
     if c is not None:
-        parts.append(c.lazy().select(
-            pl.col("group").alias("g"),
-            pl.col("connection").alias("p"),
-            pl.col("node").alias("n"),
-        ))
+        parts.append(
+            c.lazy().pipe(rename_to_axis,
+                           {"group": "g", "connection": "p", "node": "n"})
+                    .select("g", "p", "n"),
+        )
     if not parts:
         return _empty({"g": pl.Utf8, "p": pl.Utf8, "n": pl.Utf8})
     return pl.concat(parts).unique().sort("g", "p", "n").collect()
