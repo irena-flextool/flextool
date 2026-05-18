@@ -425,6 +425,50 @@ def rename_to_axis(
     return out.with_columns(*casts)
 
 
+def alias_to_axis(
+    source: "str | pl.Expr",
+    target_axis: str,
+) -> "pl.Expr":
+    """``pl.col(source).alias(target_axis)`` with axis-aware cast.
+
+    The sibling of :func:`rename_to_axis` for ``select()`` /
+    ``with_columns()`` projections that rename via alias rather than via
+    ``.rename(...)``.  Two equivalent call forms:
+
+    .. code-block:: python
+
+        # Column-name source
+        df.select(alias_to_axis("name", "p"), ...)
+
+        # Expression source (arithmetic, str ops, conditionals, etc.)
+        df.select(alias_to_axis(pl.col("a") + pl.col("b"), "d"), ...)
+
+    Behavior:
+
+    * If ``source`` is a string, treated as ``pl.col(source)``.
+    * Reads :data:`_LIVE_AXIS_ENUMS`.  When unset, reduces to a plain
+      ``expr.alias(target_axis)`` — pre-activation passthrough.
+    * Resolves ``target_axis`` via :data:`_AXIS_SYNONYMS` (so
+      ``"period"`` → ``"d"``, ``"source"`` → ``"e"`` etc).
+    * When the resolved canonical axis is in the live enum dict, casts
+      the source expression to that Enum before aliasing.  Otherwise
+      (non-axis target like ``"value"``, ``"method"``) just aliases.
+
+    The non-strict cast nulls out values not in the Enum vocabulary,
+    consistent with :func:`rename_to_axis` / :func:`cast_dim`
+    /:func:`cast_frame_axes` defaults.
+    """
+    expr = pl.col(source) if isinstance(source, str) else source
+    enums = _LIVE_AXIS_ENUMS
+    if enums is None:
+        return expr.alias(target_axis)
+    canonical = _resolve_axis(target_axis)
+    dt = enums.get(canonical)
+    if dt is None:
+        return expr.alias(target_axis)
+    return expr.cast(dt, strict=False).alias(target_axis)
+
+
 def lit_axis(value: object, axis: str) -> "pl.Expr":
     """:func:`pl.lit` that emits the canonical axis Enum dtype.
 
@@ -534,6 +578,7 @@ __all__ = [
     "align_join_dtypes",
     "schema_dtype",
     "rename_to_axis",
+    "alias_to_axis",
     "lit_axis",
     "set_global_axis_enums",
     "get_global_axis_enums",

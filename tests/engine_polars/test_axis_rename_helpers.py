@@ -23,6 +23,7 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars._axis_enums import (
+    alias_to_axis,
     get_global_axis_enums,
     lit_axis,
     rename_to_axis,
@@ -268,6 +269,73 @@ def test_lit_axis_unknown_axis_passes_through(activated) -> None:
     df = pl.DataFrame({"x": [1]})
     out = df.with_columns(method=lit_axis("constant_efficiency", "method"))
     assert out.schema["method"] == pl.Utf8
+
+
+# ---------------------------------------------------------------------------
+# alias_to_axis — activation OFF and ON
+# ---------------------------------------------------------------------------
+
+
+def test_alias_to_axis_passthrough_when_unset() -> None:
+    """With no global axis_enums set, behaves like plain
+    ``pl.col(X).alias(Y)`` — no cast applied."""
+    df = pl.DataFrame({"name": ["coal", "gas"]})
+    out = df.select(alias_to_axis("name", "n"))
+    assert out.columns == ["n"]
+    assert out.schema["n"] == pl.Utf8
+
+
+def test_alias_to_axis_casts_canonical_target(activated) -> None:
+    """Activation on + canonical target → cast to that Enum."""
+    df = pl.DataFrame({"name": ["coal", "gas"]})
+    out = df.select(alias_to_axis("name", "n"))
+    assert out.columns == ["n"]
+    assert out.schema["n"] == activated["n"]
+
+
+def test_alias_to_axis_casts_via_synonym(activated) -> None:
+    """Synonym target resolves to canonical axis enum."""
+    df = pl.DataFrame({"x": ["2030", "2040"]})
+    out = df.select(alias_to_axis("x", "period"))
+    assert out.schema["period"] == activated["d"]
+
+
+def test_alias_to_axis_mixed_vocab_uses_entity_union(activated) -> None:
+    """Aliasing as source/sink casts against the 'e' union axis."""
+    df = pl.DataFrame({"process_col": ["coal_plant", "gas_chp"]})
+    out = df.select(alias_to_axis("process_col", "source"))
+    assert out.schema["source"] == activated["e"]
+
+
+def test_alias_to_axis_non_dim_passthrough(activated) -> None:
+    """Aliasing to a data column (non-axis) skips the cast."""
+    df = pl.DataFrame({"x": [1.0, 2.0]})
+    out = df.select(alias_to_axis("x", "value"))
+    assert out.schema["value"] == pl.Float64  # original dtype preserved
+
+
+def test_alias_to_axis_accepts_expression(activated) -> None:
+    """Source can be an arbitrary pl.Expr, not just a column name."""
+    df = pl.DataFrame({"a": ["2030"], "b": ["2040"]})
+    # Conditional projection: pick "a" when row 0, else "b"
+    expr = pl.col("a")  # trivial; real callers use arithmetic / when/then
+    out = df.select(alias_to_axis(expr, "period"))
+    assert out.schema["period"] == activated["d"]
+
+
+def test_alias_to_axis_unknown_target_passthrough(activated) -> None:
+    """Target name that doesn't resolve to a canonical axis (and isn't
+    a known synonym) leaves the alias dtype-untouched."""
+    df = pl.DataFrame({"x": [1]})
+    out = df.select(alias_to_axis("x", "made_up_target"))
+    assert out.schema["made_up_target"] == pl.Int64
+
+
+def test_alias_to_axis_nulls_unknown_tokens(activated) -> None:
+    """Non-strict cast: tokens outside vocabulary become null."""
+    df = pl.DataFrame({"name": ["coal", "made_up_node"]})
+    out = df.select(alias_to_axis("name", "n"))
+    assert out["n"].to_list() == ["coal", None]
 
 
 # ---------------------------------------------------------------------------
