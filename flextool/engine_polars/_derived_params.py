@@ -4601,6 +4601,7 @@ def p_group_capacity_for_scaling_from_source(source: "InputSource",
                                                   active_solve: str | None,
                                                   workdir: Path | None = None,
                                                   *,
+                                                  ctx: "SolveContext | None" = None,
                                                   provider: "object | None" = None,
                                                   ) -> "Param | None":
     """Per-(g, d) row scaling factor.  Algorithm (audit §3.12.2,
@@ -4613,9 +4614,14 @@ def p_group_capacity_for_scaling_from_source(source: "InputSource",
     (rare; activated via ``solve.use_row_scaling``) returns None and the
     CSV value survives.
     """
-    period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
+    period_in_use = _period_in_use_set(source, active_solve, workdir,
+                                        ctx=ctx, provider=provider)
     if not period_in_use:
         return None
+    # A4-followup: broadcast to stochastic-branch siblings — same
+    # rationale as p_node_capacity_for_scaling.
+    period_in_use = _expand_branch_periods(period_in_use, workdir,
+                                            ctx=ctx, provider=provider)
     groups_df = _try_entities(source, "group")
     if groups_df is None or groups_df.height == 0:
         return None
@@ -4644,12 +4650,15 @@ def p_group_capacity_for_scaling_from_source(source: "InputSource",
 def p_inv_group_cap_from_source(source: "InputSource",
                                     active_solve: str | None,
                                     workdir: Path | None = None,
+                                    *,
+                                    ctx: "SolveContext | None" = None,
+                                    provider: "object | None" = None,
                                     ) -> "Param | None":
     """Reciprocal of ``p_group_capacity_for_scaling``.  When scaling is
     inactive (default), this is 1.0 per (g, d).
     """
-    gcs = p_group_capacity_for_scaling_from_source(source, active_solve,
-                                                       workdir)
+    gcs = p_group_capacity_for_scaling_from_source(
+        source, active_solve, workdir, ctx=ctx, provider=provider)
     if gcs is None:
         return None
     out = (gcs.frame.lazy()
@@ -4663,6 +4672,7 @@ def p_node_capacity_for_scaling_from_source(source: "InputSource",
                                                   active_solve: str | None,
                                                   workdir: Path | None = None,
                                                   *,
+                                                  ctx: "SolveContext | None" = None,
                                                   provider: "object | None" = None,
                                                   ) -> "Param | None":
     """Per-(n, d) row scaling factor for slack-penalty terms in the
@@ -4688,7 +4698,8 @@ def p_node_capacity_for_scaling_from_source(source: "InputSource",
     ``solve.use_row_scaling=1``.  For now the helper bails (returns
     None) when scaling is active so the seed CSV survives.
     """
-    period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
+    period_in_use = _period_in_use_set(source, active_solve, workdir,
+                                        ctx=ctx, provider=provider)
     if not period_in_use:
         return None
     # Detect scaling active: solve.use_row_scaling truthy.
@@ -4887,10 +4898,11 @@ def apply_derived_c(
     # ``solve_data/group_capacity_for_scaling.csv`` /
     # ``solve_data/inv_group_cap.csv``.  Keep the conditional assignment.
     gcs_db = p_group_capacity_for_scaling_from_source(
-        source, active_solve, workdir)
+        source, active_solve, workdir, ctx=ctx, provider=provider)
     if gcs_db is not None:
         flex_data.p_group_capacity_for_scaling = gcs_db
-    igc_db = p_inv_group_cap_from_source(source, active_solve, workdir)
+    igc_db = p_inv_group_cap_from_source(
+        source, active_solve, workdir, ctx=ctx, provider=provider)
     if igc_db is not None:
         flex_data.p_inv_group_cap = igc_db
     # Δ.29 — tactical default-1.0 path for p_node_capacity_for_scaling.
@@ -4908,7 +4920,7 @@ def apply_derived_c(
     # consumers (e.g. region filter, warm cascade) see a populated
     # frame.
     ncs_db = p_node_capacity_for_scaling_from_source(
-        source, active_solve, workdir)
+        source, active_solve, workdir, ctx=ctx, provider=provider)
     if ncs_db is not None:
         flex_data.p_node_capacity_for_scaling = ncs_db
 
@@ -7301,8 +7313,22 @@ def apply_derived_e(
 
     # 5. p_state_existing_capacity / p_state_upper --------------------
     if has_state:
+        # A4-followup (BUG fix): pass ``provider`` so the helper can
+        # read the workdir ``period__branch.csv`` / ``period_in_use_set.csv``
+        # for stochastic-branch broadcast.  Without the provider the
+        # Provider-only ``_provider_has_key`` returns False (Step 2.5
+        # removed the disk-fallback), ``ctx`` is typically empty at this
+        # cascade stage, and the helper falls through to the
+        # ``solve.realized_periods`` set — which does NOT include
+        # stochastic-branch siblings.  Result: ``p_state_existing_capacity``
+        # carries only the realized-period row → downstream constraints
+        # that join on (n, d) lose branch rows, e.g.
+        # ``storage_state_solve_horizon_reference_value`` becomes an
+        # empty Param for branches and the LP leaves their v_state at 0
+        # while the realized branch is properly pinned.
         pse = p_state_existing_capacity_from_source(
-            source, active_solve, nodeState_df, workdir, ctx=ctx)
+            source, active_solve, nodeState_df, workdir,
+            ctx=ctx, provider=provider)
         flex_data.p_state_existing_capacity = pse
         flex_data.p_state_upper = p_state_upper_from_source(
             source, pse, nodeState_df)
