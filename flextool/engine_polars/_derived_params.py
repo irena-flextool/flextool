@@ -99,14 +99,12 @@ def _provider_read(provider, path: "Path | str") -> "pl.DataFrame":
     return provider.get(_provider_key(path))
 
 # Derived-param helpers operate on a ``source`` (InputSource); FlexData
-# is not yet built when the broadcast cascade runs.  Phase 4 binds
-# ``_enums`` to a live proxy over the cascade-wide
-# ``_axis_enums._GLOBAL_AXIS_ENUMS`` global, so every scratch-frame
-# ``schema_dtype(_enums, axis)`` and ``cast_dim(expr, _enums, axis)``
-# call at this module's sites picks up the active vocabulary as soon as
-# ``load_flextool`` installs it.  Falsy / no-op when the global is
-# unset (legacy loader-level tests that bypass load_flextool).
-from flextool.engine_polars._axis_enums import _LIVE_AXIS_ENUMS as _enums  # noqa: E402
+# is not yet built when the broadcast cascade runs.  ``_enums = None``
+# keeps every empty-scratch frame allocated as ``pl.Utf8`` (matching
+# today's behaviour); the flexible-lookup form is in place so a
+# follow-up dispatch can thread an explicit ``axis_enums`` and have
+# every site allocate as Enum without further file changes.
+_enums: dict | None = None
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

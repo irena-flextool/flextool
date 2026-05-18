@@ -52,10 +52,12 @@ from flextool.engine_polars._axis_enums import schema_dtype
 from flextool.engine_polars._solve_state import FlexToolConfigError
 
 # BlockLayout's emit_frames runs before the broadcast cascade and has no
-# FlexData in scope.  Phase 4 binds ``_enums`` to the live cascade-wide
-# vocabulary proxy so emitted frames are Enum-typed under
-# ``load_flextool``.  Falsy / pl.Utf8 fallback outside an active cascade.
-from flextool.engine_polars._axis_enums import _LIVE_AXIS_ENUMS as _enums  # noqa: E402
+# FlexData in scope — ``_enums`` is always ``None`` here, so
+# :func:`schema_dtype` returns ``pl.Utf8`` and the schemas remain
+# String-typed as today.  The flexible-lookup form keeps the audit
+# pattern uniform across files; a follow-up dispatch can thread an
+# explicit ``axis_enums`` kwarg if these frames become a join target.
+_enums: dict | None = None
 
 if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
     from flextool.engine_polars._solve_config import SolveConfig

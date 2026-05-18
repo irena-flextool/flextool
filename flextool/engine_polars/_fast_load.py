@@ -59,11 +59,10 @@ from ._axis_enums import schema_dtype
 
 # ``_empty_flex_data`` runs before any FlexData is materialised — the
 # returned sentinel frames are immediately overwritten by the override
-# chain.  Phase 4 binds ``_enums`` to the live cascade-wide vocabulary
-# proxy so the sentinel frames are Enum-typed when ``load_flextool``
-# is active (the override chain then preserves dtype on rewrite).
-# Falsy / pl.Utf8 fallback outside an active cascade.
-from flextool.engine_polars._axis_enums import _LIVE_AXIS_ENUMS as _enums  # noqa: E402
+# chain.  ``_enums`` is always ``None`` here, so ``schema_dtype`` falls
+# back to ``pl.Utf8`` (same dtype as before).  Pattern is uniform with
+# the rest of the cascade for the dtype-flexible refactor.
+_enums: dict | None = None
 
 if TYPE_CHECKING:
     from flextool.engine_polars._spinedb_reader import SpineDbReader

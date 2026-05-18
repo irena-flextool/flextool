@@ -443,14 +443,8 @@ def _build_period_vocab(backend: Any, spec_source: dict) -> list[str]:
       * keys of ``solve.years_represented`` (Map),
       * values of ``solve.realized_periods`` (Array),
       * keys of ``solve.invest_periods`` (Map),
-      * keys of ``solve.realized_invest_periods`` (Map),
-      * keys of any entity-level period-keyed maps listed under
-        ``additional_sources`` (Phase 4 — covers entity-level
-        ``invest_max_period`` / ``invest_min_period`` whose keys are
-        not always a subset of the solve-level period sources after a
-        scenario filter).
-
-    All sources are unioned (deterministic order).
+      * keys of ``solve.realized_invest_periods`` (Map).
+    All four are unioned (deterministic order).
     """
     entity_class = spec_source.get("entity_class", "solve")
     params = spec_source.get("parameters", [])
@@ -463,13 +457,6 @@ def _build_period_vocab(backend: Any, spec_source: dict) -> list[str]:
             backend, entity_class, param_name
         )
         out.extend(vals)
-    for entry in spec_source.get("additional_sources", []) or []:
-        ec = entry.get("entity_class")
-        pn = entry.get("parameter")
-        if ec is None or pn is None:
-            continue
-        out.extend(_collect_parameter_map_keys(backend, ec, pn))
-        out.extend(_collect_parameter_array_values(backend, ec, pn))
     return _dedup_keep_order(out)
 
 

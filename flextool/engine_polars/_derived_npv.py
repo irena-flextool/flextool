@@ -90,11 +90,10 @@ from polar_high import Param
 from ._axis_enums import cast_dim, schema_dtype
 
 # NPV-cascade helpers take ``source`` (an InputSource); no FlexData in
-# scope here.  Phase 4 binds ``_enums`` to the live cascade-wide
-# vocabulary proxy; ``schema_dtype(_enums, axis)`` / ``cast_dim(expr,
-# _enums, axis)`` activate Enum allocation under ``load_flextool``.
-# Falsy / pl.Utf8 fallback outside an active cascade.
-from flextool.engine_polars._axis_enums import _LIVE_AXIS_ENUMS as _enums  # noqa: E402
+# scope here.  ``_enums = None`` keeps schema_dtype falling back to
+# pl.Utf8 — same dtype as before — while the flexible-lookup form is in
+# place for a future activation pass.
+_enums: dict | None = None
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

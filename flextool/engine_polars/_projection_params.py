@@ -895,24 +895,8 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
     source=unit).  Connection profile-method rows are mapped via
     connection__node__node similarly.
     """
-    # Phase 4 — canonical axis dtypes for the union output.  Each
-    # ``parts`` entry is cast to this schema before concat so polars'
-    # schema-match check passes across the unit / connection sources.
-    from flextool.engine_polars._axis_enums import (
-        get_global_axis_enums, schema_dtype,
-    )
-    enums = get_global_axis_enums()
-    out_schema = {
-        "p": schema_dtype(enums, "p"),
-        "source": schema_dtype(enums, "e"),  # mixed-vocab union axis
-        "sink": schema_dtype(enums, "e"),
-        "f": schema_dtype(enums, "f"),
-    }
-
-    def _align(lf: pl.LazyFrame) -> pl.LazyFrame:
-        return lf.with_columns([
-            pl.col(c).cast(dt, strict=False) for c, dt in out_schema.items()
-        ])
+    out_schema = {"p": pl.Utf8, "source": pl.Utf8,
+                   "sink": pl.Utf8, "f": pl.Utf8}
 
     parts: list[pl.LazyFrame] = []
 
@@ -927,25 +911,25 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
         # Input side (node=source, sink=unit).
         uin = _try_entities(source, "unit__inputNode")
         if uin is not None:
-            parts.append(_align(
+            parts.append(
                 unp_lz.join(uin.lazy(), on=["unit", "node"], how="inner")
                        .select(
                            pl.col("unit").alias("p"),
                            pl.col("node").alias("source"),
                            pl.col("unit").alias("sink"),
                            "f",
-                       )))
+                       ))
         # Output side (source=unit, sink=node).
         uout = _try_entities(source, "unit__outputNode")
         if uout is not None:
-            parts.append(_align(
+            parts.append(
                 unp_lz.join(uout.lazy(), on=["unit", "node"], how="inner")
                        .select(
                            pl.col("unit").alias("p"),
                            pl.col("unit").alias("source"),
                            pl.col("node").alias("sink"),
                            "f",
-                       )))
+                       ))
 
     # Connection profile rows (rare in current fixtures but covered for
     # completeness).  connection__node__profile: (connection, node, profile).
@@ -958,7 +942,7 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
         cnn = _try_entities(source, "connection__node__node")
         if cnn is not None:
             cnn_lz = cnn.lazy()
-            parts.append(_align(
+            parts.append(
                 cnp_lz.join(cnn_lz, left_on=["connection", "node"],
                              right_on=["connection", "node_1"], how="inner")
                        .select(
@@ -966,8 +950,8 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
                            pl.col("node").alias("source"),
                            pl.col("node_2").alias("sink"),
                            "f",
-                       )))
-            parts.append(_align(
+                       ))
+            parts.append(
                 cnp_lz.join(cnn_lz, left_on=["connection", "node"],
                              right_on=["connection", "node_2"], how="inner")
                        .select(
@@ -975,7 +959,7 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
                            pl.col("node_1").alias("source"),
                            pl.col("node").alias("sink"),
                            "f",
-                       )))
+                       ))
 
     if not parts:
         return _empty(out_schema)
@@ -1484,11 +1468,11 @@ def group_entity(source: "InputSource") -> pl.DataFrame:
             continue
         parts.append(df.lazy().select(
             pl.col("group").alias("g"),
-            pl.col(dim).cast(pl.Utf8, strict=False).alias("e"),
+            pl.col(dim).alias("e"),
         ))
     if not parts:
         return _empty({"g": pl.Utf8, "e": pl.Utf8})
-    return pl.concat(parts, how="vertical_relaxed").unique().sort("g", "e").collect()
+    return pl.concat(parts).unique().sort("g", "e").collect()
 
 
 def group_process_node(source: "InputSource") -> pl.DataFrame:
@@ -1501,19 +1485,19 @@ def group_process_node(source: "InputSource") -> pl.DataFrame:
     if u is not None:
         parts.append(u.lazy().select(
             pl.col("group").alias("g"),
-            pl.col("unit").cast(pl.Utf8, strict=False).alias("p"),
+            pl.col("unit").alias("p"),
             pl.col("node").alias("n"),
         ))
     c = _try_entities(source, "group__connection__node")
     if c is not None:
         parts.append(c.lazy().select(
             pl.col("group").alias("g"),
-            pl.col("connection").cast(pl.Utf8, strict=False).alias("p"),
+            pl.col("connection").alias("p"),
             pl.col("node").alias("n"),
         ))
     if not parts:
         return _empty({"g": pl.Utf8, "p": pl.Utf8, "n": pl.Utf8})
-    return pl.concat(parts, how="vertical_relaxed").unique().sort("g", "p", "n").collect()
+    return pl.concat(parts).unique().sort("g", "p", "n").collect()
 
 
 def _g_param_set(source: "InputSource", parameter_name: str,

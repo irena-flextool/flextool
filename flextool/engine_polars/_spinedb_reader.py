@@ -658,15 +658,7 @@ class SpineDbReader:
                 cols.append("t")
                 break
             if isinstance(cur, Array):
-                # Phase 4 — emit a contract-neutral name for the Array
-                # positional index.  The ``i`` axis in the canonical
-                # contract is reserved for ``commodity.price_ladder_*``
-                # tier-index Maps (string keys ``'1'..'N'``); an Array
-                # index is an integer position and casting it against
-                # the tier-index Enum raises
-                # :class:`FlexDataIntegrityError`.  ``array_pos`` is not
-                # an axis name and therefore skipped by the cast.
-                cols.append("array_pos")
+                cols.append("i")
                 break
             break
         return cols
@@ -713,11 +705,7 @@ class SpineDbReader:
         # Array: 1-d sequence, indexed by integer position.
         if isinstance(v, Array):
             depth = sum(1 for c in index_cols if c in base)
-            # Phase 4 — ``array_pos`` (contract-neutral) instead of
-            # ``i`` (which collides with the canonical tier-index axis).
-            col_name = (
-                index_cols[depth] if depth < len(index_cols) else "array_pos"
-            )
+            col_name = index_cols[depth] if depth < len(index_cols) else "i"
             for i, val in enumerate(v.values):
                 row = dict(base)
                 row[col_name] = i

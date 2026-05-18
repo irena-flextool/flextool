@@ -66,13 +66,9 @@ from flextool.engine_polars._block_layout import (
 )
 
 # BlockBundle helpers operate on a ``BlockLayout`` (block-flavoured
-# CSVs); there is no FlexData in scope here.  Phase 4 binds ``_enums``
-# to the live cascade-wide vocabulary proxy
-# (``_axis_enums._LIVE_AXIS_ENUMS``) so ``schema_dtype(_enums, axis)``
-# and ``cast_dim(expr, _enums, axis)`` pick up the active vocabulary the
-# moment ``load_flextool`` installs it.  Falsy / no-op outside an active
-# ``load_flextool`` invocation.
-from flextool.engine_polars._axis_enums import _LIVE_AXIS_ENUMS as _enums  # noqa: E402
+# CSVs); there is no FlexData in scope here, so ``_enums`` is ``None``
+# and ``schema_dtype`` returns ``pl.Utf8`` — same dtype as before.
+_enums: dict | None = None
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from flextool.engine_polars._input_source import InputSource

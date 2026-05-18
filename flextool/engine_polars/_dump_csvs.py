@@ -52,7 +52,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import get_global_axis_enums, schema_dtype
+from ._axis_enums import schema_dtype
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +399,7 @@ def _write_input_entity_set_csvs(data: "FlexData", inp_dir: Path) -> None:
     if nb is not None:
         node_lf = nb.rename({"n": "node"}).select("node")
     else:
-        _enums = get_global_axis_enums()
+        _enums = getattr(data, "_axis_enums", None)
         node_lf = pl.DataFrame({"node": []},
                                 schema={"node": schema_dtype(_enums, "node")})
     node_lf.write_csv(inp_dir / "node.csv")
@@ -409,7 +409,7 @@ def _write_input_entity_set_csvs(data: "FlexData", inp_dir: Path) -> None:
     if pu is not None:
         pu_out = pu.rename({"p": "process_unit"}).select("process_unit")
     else:
-        _enums = get_global_axis_enums()
+        _enums = getattr(data, "_axis_enums", None)
         pu_out = pl.DataFrame({"process_unit": []},
                               schema={"process_unit": schema_dtype(_enums, "process_unit")})
     pu_out.write_csv(inp_dir / "process_unit.csv")

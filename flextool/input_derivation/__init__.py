@@ -150,37 +150,12 @@ def run(
         backend._precision_digits = precision_digits  # type: ignore[attr-defined]
         backend._scenario_name = scenario_name        # type: ignore[attr-defined]
 
-        # Phase 4 — build the axis enum vocabulary once per run.
-        # Sources tokens from the backend (entity classes, parameter
-        # map keys) per the canonical contract at
-        # ``version/flextool_axis_contract.json``.  Threaded into every
-        # Backend method call so emit-time casts land Enum-typed dim
-        # columns, and stashed on the Provider so ``load_flextool``
-        # downstream can thread the same vocabulary into its
-        # SpineDbReader constructions.
-        from flextool.spinedb_backend._axis_enums import (
-            build_axis_enums,
-            load_axis_contract,
-        )
-        contract = load_axis_contract()
-        axis_enums = build_axis_enums(backend, contract)
-        backend._axis_enums = axis_enums              # type: ignore[attr-defined]
-        backend._contract = contract                  # type: ignore[attr-defined]
-        provider.axis_enums = axis_enums
-        provider.contract = contract
-        # Phase 4 redo — substrate global stays unset.  Flipping it
-        # "live" here causes the writers' many cross-axis rename sites
-        # to land cross-Enum joins polars refuses to coerce.  Tracked
-        # as follow-up.
-
         for spec in _DEFAULT_VALUES_SPECS:
             frame = backend.parameter_defaults(
                 cl_pars=spec["cl_pars"],
                 header=spec["header"],
                 filter_in_type=spec.get("filter_in_type"),
                 only_value=spec.get("only_value", False),
-                axis_enums=axis_enums,
-                contract=contract,
             )
             provider.put(_provider_key(spec["filename"]), frame)
 
@@ -189,8 +164,6 @@ def run(
                 classes=spec.classes,
                 header=spec.header,
                 entity_dimens=spec.entity_dimens,
-                axis_enums=axis_enums,
-                contract=contract,
             )
             provider.put(_provider_key(spec.filename), frame)
 
@@ -198,11 +171,7 @@ def run(
 
         for spec in _PARAMETER_SPECS:
             kwargs = {k: v for k, v in spec.items() if k != "filename"}
-            frame = backend.parameter_values(
-                **kwargs,
-                axis_enums=axis_enums,
-                contract=contract,
-            )
+            frame = backend.parameter_values(**kwargs)
             provider.put(_provider_key(spec["filename"]), frame)
 
         # Step 2 — DB-driven derivations.

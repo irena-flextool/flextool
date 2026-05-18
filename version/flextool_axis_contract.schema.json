@@ -170,19 +170,7 @@
                   "depth": {},
                   "key_kind": { "type": "string" },
                   "carrier": { "type": "string" },
-                  "column": { "type": "string" },
-                  "additional_sources": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "required": ["entity_class", "parameter"],
-                      "properties": {
-                        "entity_class": { "type": "string" },
-                        "parameter": { "type": "string" }
-                      },
-                      "additionalProperties": false
-                    }
-                  }
+                  "column": { "type": "string" }
                 },
                 "additionalProperties": false
               }
