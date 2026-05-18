@@ -1,0 +1,288 @@
+{
+  "_comment": "Canonical axis contract for FlexTool's pl.Enum dtype activation. Migrates hand-in-hand with flextool_template_master.json. See specs/enum_dtype_refactor_plan.md and version/AXIS_CONTRACT.md.",
+  "_doc": "version/AXIS_CONTRACT.md",
+  "_schema_version": "1.0.0",
+  "_template_master_version_compat": {
+    "path": "version/flextool_template_master.json",
+    "git_commit": "52df156c631443814246918051f68f8ae4d36571",
+    "git_commit_date": "2026-05-12 20:40:54 +0300",
+    "note": "Verified during Phase 0. Bump these fields when flextool_template_master.json changes in a way that affects axes (new/renamed/removed entity classes or parameter definitions referenced below)."
+  },
+  "axes": [
+    {
+      "name": "n",
+      "label": "node",
+      "source_type": "entity_class",
+      "source": "node",
+      "filter": "scenario_filter",
+      "column_synonyms": ["node"],
+      "note": "Node entities. Cascade column synonym: 'node' (renamed to 'n' in most helpers; see flextool/engine_polars/_axis_enums.py _AXIS_SYNONYMS)."
+    },
+    {
+      "name": "p",
+      "label": "process",
+      "source_type": "entity_class_union",
+      "source": ["unit", "connection"],
+      "filter": "scenario_filter",
+      "column_synonyms": ["process"],
+      "note": "FlexTool convention: 'process' = unit ∪ connection. Cascade column synonym: 'process'."
+    },
+    {
+      "name": "c",
+      "label": "commodity",
+      "source_type": "entity_class",
+      "source": "commodity",
+      "filter": "scenario_filter",
+      "column_synonyms": ["commodity"],
+      "note": "Commodity entities. WARNING: the cascade letter 'c' is overloaded — _direct_params._node_constraint_coef and _process_constraint_coef rename constraint→c (see review_notes.c_collision). Phase 1 build_axis_enums must decide whether to (a) rename the constraint column to 'cn' in those helpers or (b) split into two enums under different column names. The contract here documents the commodity vocabulary; the constraint axis is registered separately below."
+    },
+    {
+      "name": "g",
+      "label": "group",
+      "source_type": "entity_class",
+      "source": "group",
+      "filter": "scenario_filter",
+      "column_synonyms": ["group"]
+    },
+    {
+      "name": "f",
+      "label": "profile",
+      "source_type": "entity_class",
+      "source": "profile",
+      "filter": "scenario_filter"
+    },
+    {
+      "name": "d",
+      "label": "period",
+      "source_type": "parameter_keys",
+      "source": {
+        "entity_class": "solve",
+        "parameters": ["years_represented", "realized_periods", "invest_periods", "realized_invest_periods"],
+        "depth": 1,
+        "key_kind": "union_keys_and_array_values"
+      },
+      "filter": "∩ realized_periods of the active model instance",
+      "column_synonyms": ["period", "d_invest", "d_divest", "d_previous", "d_upper", "d_back"],
+      "note": "FlexTool 'period' axis. Sources: keys of solve.years_represented (Map), values of solve.realized_periods (Array), keys of solve.invest_periods (Map), keys of solve.realized_invest_periods (Map). NOT 'timeline' — the earlier audit reported source=timeline but the cascade renames period→d at every reader (e.g. _derived_block.py:169/180, _derived_branch.py:150, _invest_seeds.py:80/107). The 'period' is a logical year/horizon label, distinct from the timeline (timestep grid)."
+    },
+    {
+      "name": "e",
+      "label": "investable_entity",
+      "source_type": "entity_class_union",
+      "source": ["node", "unit", "connection"],
+      "filter": "scenario_filter",
+      "column_synonyms": ["entity"],
+      "note": "Union of node + process. Used in investment params and any frame mixing node and process names (source/sink). The substrate _AXIS_SYNONYMS already maps the column 'entity' → 'e', so 'e' IS the canonical entity-union axis. The separate 'entity' axis row in earlier drafts was a duplicate; consolidated here."
+    },
+    {
+      "name": "t",
+      "label": "timestep",
+      "source_type": "parameter_keys",
+      "source": {
+        "entity_class": "timeline",
+        "parameter": "timestep_duration",
+        "depth": 1
+      },
+      "filter": "∩ timeset.period_timestep values; union across active timelines",
+      "column_synonyms": [
+        "step",
+        "t_previous", "t_previous_within_block", "t_previous_within_timeset", "t_previous_within_solve",
+        "t_upper", "t_back", "t_source", "t_sink",
+        "b_first", "b_next"
+      ],
+      "note": "Vocabulary = keys of timeline.timestep_duration map. Per-timeline; union across active timelines if multiple are active in the model instance. 'b_first' and 'b_next' are confusingly named — they are cardinal timestep synonyms (the FIRST timestep of a coarse block) NOT 'block' axis values; see _derived_block.py:601-625."
+    },
+    {
+      "name": "i",
+      "label": "tier_index",
+      "source_type": "parameter_keys",
+      "source": {
+        "entity_class": "commodity",
+        "parameter_prefix": "price_ladder_",
+        "depth": "discover"
+      },
+      "filter": null,
+      "note": "Integer tier indices serialised as strings ('1', '2', …, 'N'). N discovered from max map depth across commodity.price_ladder_* parameters. Phase 1 build_axis_enums must inspect the runtime depth and emit a fixed-N enum."
+    },
+    {
+      "name": "branch",
+      "label": "stochastic_branch",
+      "source_type": "parameter_value_list",
+      "source": {
+        "entity_class": "solve",
+        "parameter": "stochastic_branches"
+      },
+      "filter": "gated by solve.include_stochastics",
+      "column_synonyms": ["b"],
+      "note": "Stochastic branch labels. The cascade column is 'b' (renamed from 'branch' in _derived_branch.py:150). WARNING: 'b' is overloaded — _derived_block.py / _block_layout.py also use 'b' for the BLOCK axis (see 'block' axis below). The two never appear in the same frame, but Phase 1 must decide on a disambiguation (e.g. rename block→bk in block helpers, or rename branch→br). See review_notes.b_collision. Empty enum is valid (deterministic runs)."
+    },
+    {
+      "name": "block",
+      "label": "block",
+      "source_type": "parameter_keys",
+      "source": {
+        "entity_class": "group",
+        "parameter": "new_stepduration",
+        "depth": "discover",
+        "key_kind": "values_plus_default"
+      },
+      "filter": "active blocks for the solve (includes synthetic DEFAULT_BLOCK)",
+      "column_synonyms": ["b"],
+      "tokens_default_extension": ["default"],
+      "note": "Block names are derived in _block_layout.py from 'group' entities that carry a new_stepduration parameter, plus a synthetic DEFAULT_BLOCK fallback. Vocabulary = group names participating as resolution blocks ∪ {DEFAULT_BLOCK}. Cascade column: 'b' (collides with branch — see review_notes.b_collision)."
+    },
+    {
+      "name": "r",
+      "label": "reserve",
+      "source_type": "entity_class",
+      "source": "reserve",
+      "filter": "scenario_filter",
+      "note": "Reserve entities. Cascade column: 'r' (renamed from 'reserve' in _reserve.py:160 and downstream)."
+    },
+    {
+      "name": "ud",
+      "label": "up_or_down",
+      "source_type": "synthetic",
+      "source": null,
+      "tokens": ["up", "down"],
+      "filter": null,
+      "note": "Fixed 2-value axis. Substrate of the schema is the 'upDown' entity class which has exactly two members ('up', 'down') — treated as synthetic to make the contract independent of the entity-class table for these two fixed tokens. Cascade column: 'ud' (renamed from 'upDown' in _reserve.py:160)."
+    },
+    {
+      "name": "constraint",
+      "label": "constraint",
+      "source_type": "entity_class",
+      "source": "constraint",
+      "filter": "scenario_filter",
+      "column_synonyms": ["c"],
+      "note": "User-defined constraints. WARNING: in _direct_params._node_constraint_coef and _process_constraint_coef (lines 285, 306), the 'constraint' column is renamed to 'c' — colliding with the commodity axis letter. The two never appear in the same frame, but Phase 1 build_axis_enums must either (a) rename to 'cn' in those helpers, or (b) recognise that the join contexts disambiguate by sibling columns ((n, c) for nodes, (p, c) for processes). See review_notes.c_collision."
+    },
+    {
+      "name": "d_anchor",
+      "label": "branch_anchor_period",
+      "source_type": "parameter_keys",
+      "source": {
+        "carrier": "period__branch",
+        "column": "d_anchor"
+      },
+      "filter": "subset of 'd' when stochastic",
+      "note": "Only populated when stochastic. Vocabulary = distinct anchor periods in the per-solve period__branch carrier. Derived; not a schema axis."
+    },
+    {
+      "name": "side",
+      "label": "flow_side",
+      "source_type": "synthetic",
+      "source": null,
+      "tokens": ["source", "sink"],
+      "filter": null,
+      "note": "Fixed pair. Substrate token introduced in cascade helpers (e.g. _derived_params.py and _writer_leaf_sets) when pivoting node/process membership by side."
+    },
+    {
+      "name": "klass",
+      "label": "process_klass",
+      "source_type": "synthetic",
+      "source": null,
+      "tokens": ["unit", "connection"],
+      "filter": null,
+      "note": "Fixed pair, mirrors the two entity classes that compose 'process'. Introduced in _derived_params.py efficiency-method derivation when tagging rows by their underlying process class."
+    }
+  ],
+  "synthetic_token_allowlist": [
+    {
+      "axis": "branch",
+      "tokens": ["eff", "noEff"],
+      "introduced_by": "_writer_co2_accumulators.py:160-164",
+      "note": "Literal suffix tags for efficiency-method branches in CO2 accumulator writer; must be present in the branch enum vocabulary even in deterministic runs."
+    },
+    {
+      "axis": "block",
+      "tokens": ["default"],
+      "introduced_by": "flextool/engine_polars/_block_layout.py DEFAULT_BLOCK",
+      "note": "Synthetic fallback block name assigned to nodes/processes that lack an explicit resolution group."
+    }
+  ],
+  "mixed_vocab_columns": {
+    "_comment": "Columns that hold a union vocabulary mixing entity classes. Cast against the 'e' (entity union) axis enum, not a column-name-matched single-class enum. The substrate _AXIS_SYNONYMS already maps 'entity' → 'e'; source/sink need an explicit cast against the same enum.",
+    "confirmed": ["source", "sink", "entity"],
+    "pending_audit": []
+  },
+  "non_dim_columns": {
+    "_comment": "String columns that look like dim columns by name but hold data values (method discriminators, scenario labels, etc). Leave as pl.Utf8 — do NOT cast.",
+    "confirmed": ["method", "scenario", "model", "solve", "value", "paramName", "class", "ts", "default_value"]
+  },
+  "_review_notes": [
+    {
+      "id": "c_collision",
+      "summary": "The cascade letter 'c' is used both for commodity (the commodity entity-class axis) and for constraint (in _direct_params._node_constraint_coef / _process_constraint_coef where the 'constraint' column is renamed to 'c').",
+      "code_sites": [
+        "flextool/engine_polars/_direct_params.py:285",
+        "flextool/engine_polars/_direct_params.py:306",
+        "flextool/engine_polars/input.py:1547",
+        "flextool/engine_polars/input.py:1564"
+      ],
+      "options": [
+        "(a) Rename the constraint-axis column to 'cn' in those helpers (lowest-risk; localised).",
+        "(b) Keep 'c' as a polymorphic column letter and rely on join siblings to disambiguate — requires Phase 2 cast_against_contract to inspect frame schema and pick the right enum per Param/frame.",
+        "(c) Promote 'cn' as the canonical constraint column and update the rename helpers."
+      ],
+      "recommendation_for_phase_1": "Pick option (a). The two helpers are the only sites; renaming there keeps build_axis_enums simple (one enum per column name)."
+    },
+    {
+      "id": "b_collision",
+      "summary": "The cascade letter 'b' is used both for stochastic branch (in _derived_branch.py) and for block (in _derived_block.py / _block_layout.py). Both are derived axes with distinct vocabularies. No frame holds both at once, but Phase 1 must disambiguate to keep one enum-per-column-name in build_axis_enums.",
+      "code_sites": [
+        "flextool/engine_polars/_derived_branch.py:138, 150, 155, 177, 182, 191, 201",
+        "flextool/engine_polars/_derived_block.py:140, 165, 176",
+        "flextool/engine_polars/_block_layout.py:1435"
+      ],
+      "options": [
+        "(a) Rename block→'bk' and keep branch→'b'.",
+        "(b) Rename branch→'br' and keep block→'b'.",
+        "(c) Schema-aware cast helper that picks the right enum based on the surrounding columns ((d, b, w) → branch, (n, b) → block)."
+      ],
+      "recommendation_for_phase_1": "Pick option (a) (rename block→'bk'). branch is far more pervasive in stochastic-aware code; block is contained to ~4 modules and easier to rename."
+    },
+    {
+      "id": "i_axis_depth",
+      "summary": "The 'i' (tier_index) axis depth is discovered at runtime from commodity.price_ladder_* parameter maps. Vocabulary is integer strings '1'..'N' but N is not in the schema.",
+      "code_sites": [
+        "flextool/engine_polars/_commodity_ladder.py"
+      ],
+      "options": [
+        "(a) Build the 'i' enum lazily at first use after backend ingest discovers N.",
+        "(b) Hard-cap N at some safe upper bound (e.g. 16) and pad — easier but wastes a little memory."
+      ],
+      "recommendation_for_phase_1": "Option (a). build_axis_enums runs after the Backend has read the ladder parameters so the max depth is known."
+    },
+    {
+      "id": "d_axis_source",
+      "summary": "The original audit reported axis 'd' source=timeline. Verification in the cascade (renames 'period'→'d' at many sites; no timeline-name lookup) shows 'd' is the PERIOD axis, not timeline. Sourced from solve.years_represented keys, solve.realized_periods array, solve.invest_periods keys, solve.realized_invest_periods keys.",
+      "code_sites": [
+        "flextool/engine_polars/_derived_block.py:169",
+        "flextool/engine_polars/_derived_block.py:180",
+        "flextool/engine_polars/_derived_branch.py:150",
+        "flextool/engine_polars/_invest_seeds.py:80",
+        "flextool/engine_polars/_invest_seeds.py:107"
+      ],
+      "resolution": "Updated axis row in this contract: source_type=parameter_keys with the four solve parameters listed."
+    },
+    {
+      "id": "entity_e_consolidation",
+      "summary": "The original audit listed 'entity' and 'e' as separate axes. The substrate at _axis_enums.py _AXIS_SYNONYMS already maps 'entity' → 'e' — they are the same axis (vocabulary = node ∪ unit ∪ connection) accessed via two column names.",
+      "resolution": "Consolidated into a single 'e' axis with column_synonyms=['entity']. source/sink also cast against this enum (see mixed_vocab_columns)."
+    },
+    {
+      "id": "ud_axis_synthetic_vs_entity_class",
+      "summary": "The 'upDown' entity class has exactly two members ('up', 'down'). Could be sourced from the entity class, but treated as synthetic in this contract because (1) the vocabulary is fixed by FlexTool semantics, (2) it never gains members, (3) keeping it synthetic decouples the Enum from the entity-class table.",
+      "options": [
+        "(a) source_type=synthetic with fixed tokens (current choice).",
+        "(b) source_type=entity_class, source=upDown — requires the Backend to enumerate the class."
+      ],
+      "recommendation_for_phase_1": "Phase 1 may switch to (b) for consistency if build_axis_enums prefers entity_class lookups over synthetic tokens. Either is fine; the tokens are identical."
+    },
+    {
+      "id": "block_source_classification",
+      "summary": "The 'block' axis is derived from 'group' entities that carry a new_stepduration parameter, plus a DEFAULT_BLOCK fallback. Strictly it could be classified as source_type=entity_class_subset (groups filtered by parameter presence) — modelled here as parameter_keys with key_kind=values_plus_default to keep the contract schema simple. Phase 1 build_axis_enums must traverse group entities and check for new_stepduration. Note: the internal field on BlockBundle is called block_step_duration but the SOURCE schema parameter is named new_stepduration."
+    }
+  ]
+}
