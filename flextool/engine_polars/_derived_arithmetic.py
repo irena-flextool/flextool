@@ -48,7 +48,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine_polars._axis_enums import rename_to_axis
+from flextool.engine_polars._axis_enums import alias_to_axis, rename_to_axis
 
 from ._derived_params import (
     _entity_unitsize_lf,
@@ -171,9 +171,9 @@ def _penalty_param_from_source(source: "InputSource",
     period_col = next((c for c in ("period", "d", "x") if c in cols), None)
     time_col = next((c for c in ("t", "time", "step") if c in cols), None)
     base = df.lazy().select(
-        pl.col("name").alias("n"),
-        *([pl.col(period_col).alias("d")] if period_col else []),
-        *([pl.col(time_col).alias("t")] if time_col else []),
+        alias_to_axis("name", "n"),
+        *([alias_to_axis(period_col, "d")] if period_col else []),
+        *([alias_to_axis(time_col, "t")] if time_col else []),
         pl.col("value").cast(pl.Float64),
     )
     if period_col and time_col:
@@ -277,8 +277,8 @@ def _flow_coef_from_source(source: "InputSource",
     unit_col = "unit" if "unit" in cols else cols[0]
     node_col = "node" if "node" in cols else cols[1]
     base = df.lazy().select(
-        pl.col(unit_col).alias("p"),
-        pl.col(node_col).alias(node_role),
+        alias_to_axis(unit_col, "p"),
+        alias_to_axis(node_col, node_role),
         pl.col("value").cast(pl.Float64).alias("coef"),
     )
     zero = (base.filter(pl.col("coef") == 0.0)

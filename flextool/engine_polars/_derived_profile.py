@@ -74,6 +74,7 @@ import polars as pl
 from polar_high import Param
 
 from ._writer_provider_io import _provider_key
+from ._axis_enums import alias_to_axis
 
 
 def _provider_has_key(provider, path: "Path") -> bool:
@@ -257,7 +258,7 @@ def _profile_time_lf(source: "InputSource",
                           .filter(pl.col("profile").is_in(time_profiles))
                           .select(
                               pl.col("profile").cast(pl.Utf8).alias("f"),
-                              pl.col("time").cast(pl.Utf8).alias("t"),
+                              alias_to_axis(pl.col("time").cast(pl.Utf8), "t"),
                               pl.col("pt_profile")
                                   .cast(pl.Float64, strict=False)
                                   .alias("value"),
@@ -289,7 +290,7 @@ def _profile_time_lf(source: "InputSource",
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(time_profiles))
                   .select(pl.col("name").alias("f"),
-                          pl.col(t_col).cast(pl.Utf8).alias("t"),
+                          alias_to_axis(pl.col(t_col).cast(pl.Utf8), "t"),
                           pl.col("value").cast(pl.Float64, strict=False)))
     return (raw_lf
               .join(dt_lf, on="t", how="inner")
@@ -335,8 +336,8 @@ def _profile_period_time_lf(source: "InputSource",
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(pt_profiles))
                   .select(pl.col("name").alias("f"),
-                          pl.col("period").cast(pl.Utf8).alias("d"),
-                          pl.col(t_col).cast(pl.Utf8).alias("t"),
+                          alias_to_axis(pl.col("period").cast(pl.Utf8), "d"),
+                          alias_to_axis(pl.col(t_col).cast(pl.Utf8), "t"),
                           pl.col("value").cast(pl.Float64, strict=False)))
     return raw_lf.join(dt_lf, on=["d", "t"], how="inner")
 
@@ -377,7 +378,7 @@ def _profile_period_only_lf(source: "InputSource",
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(period_profiles))
                   .select(pl.col("name").alias("f"),
-                          pl.col("period").cast(pl.Utf8).alias("d"),
+                          alias_to_axis(pl.col("period").cast(pl.Utf8), "d"),
                           pl.col("value").cast(pl.Float64, strict=False)))
     return (raw_lf
               .join(dt_lf, on="d", how="inner")
@@ -476,7 +477,7 @@ def _profile_stochastic_lf(workdir: Path | None,
         pl.col("profile").cast(pl.Utf8).alias("f"),
         pl.col("branch").cast(pl.Utf8).alias("tb"),
         pl.col("time_start").cast(pl.Utf8).alias("ts"),
-        pl.col("time").cast(pl.Utf8).alias("t"),
+        alias_to_axis(pl.col("time").cast(pl.Utf8), "t"),
         pl.col("value").cast(pl.Float64, strict=False),
     )
 

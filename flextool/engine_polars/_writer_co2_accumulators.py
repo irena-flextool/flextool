@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine_polars._axis_enums import lit_axis, rename_to_axis
+from flextool.engine_polars._axis_enums import alias_to_axis, lit_axis, rename_to_axis
 
 if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
@@ -154,7 +154,7 @@ def compute_co2_rolling_accumulator(
     if realized.height == 0:
         return _passthrough_prior(prior_cumulative_co2, co2_groups)
     realized_dt = (realized
-        .select(pl.col("period").alias("d"), pl.col("step").alias("t"))
+        .select(alias_to_axis("period", "d"), alias_to_axis("step", "t"))
         .unique())
 
     pss_eff = _set_frame(
@@ -270,7 +270,7 @@ def compute_co2_rolling_accumulator(
                 * pl.col("rpw") * pl.col("slope_used") * pl.col("coeff")),
             attr_node=pl.col("source"),
         )
-        .select("attr_node", pl.col("d").alias("period"), "contribution"))
+        .select("attr_node", alias_to_axis("d", "period"), "contribution"))
 
     # Removal branch (sink ∈ CO2 nodes).
     cn_rem = cn_co2.pipe(rename_to_axis, {"n": "sink", "c": "c_rem"})
@@ -287,7 +287,7 @@ def compute_co2_rolling_accumulator(
                 * pl.col("rpw")),
             attr_node=pl.col("sink"),
         )
-        .select("attr_node", pl.col("d").alias("period"), "contribution"))
+        .select("attr_node", alias_to_axis("d", "period"), "contribution"))
 
     contrib = pl.concat([emis, rem], how="vertical")
     if contrib.height == 0:

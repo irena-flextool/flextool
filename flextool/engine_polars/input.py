@@ -140,6 +140,7 @@ def _provider_open(provider: "object | None", name: str,
         return p.open()
     return None
 from ._axis_enums import (  # substrate retained for Path B — see handoff
+    alias_to_axis,
     cast_dim,
     cast_frame_axes,
     cast_value_axes,
@@ -4904,8 +4905,8 @@ def build_handoff_from_flexpy(
             d_col = "period" if "period" in cols else "d"
             t_col = "step" if "step" in cols else "t"
             last_pairs_df = (last_pairs_df
-                .select(pl.col(d_col).alias("d"),
-                         pl.col(t_col).alias("t"))
+                .select(alias_to_axis(d_col, "d"),
+                         alias_to_axis(t_col, "t"))
                 .unique()
                 .sort(["d", "t"]))
             if last_pairs_df.height > 0:
@@ -4976,8 +4977,8 @@ def build_handoff_from_flexpy(
         if fs_steps_df.height > 0 and {"period", "step"}.issubset(
                 fs_steps_df.columns):
             fs_steps = (fs_steps_df
-                .select(pl.col("period").alias("d"),
-                         pl.col("step").alias("t"))
+                .select(alias_to_axis("period", "d"),
+                         alias_to_axis("step", "t"))
                 .unique())
             v_state = sol.value("v_state")
             if v_state is not None and v_state.height > 0:
@@ -4995,8 +4996,8 @@ def build_handoff_from_flexpy(
                         .join(us_df, on="n", how="inner")
                         .with_columns(quantity=pl.col("value") * pl.col("us"))
                         .select(
-                            pl.col("n").alias("node"),
-                            pl.col("d").alias("period"),
+                            alias_to_axis("n", "node"),
+                            alias_to_axis("d", "period"),
                             pl.col("t").alias("time"),
                             pl.col("quantity"),
                             pl.lit(None).cast(pl.Float64).alias("price"),

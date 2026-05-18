@@ -69,6 +69,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from ._axis_enums import alias_to_axis
+
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
 
@@ -154,7 +156,7 @@ def _timeline_step_duration_lf(source: "InputSource"
         return None
     return (tl_dur.lazy().select(
         pl.col("name").alias("timeline"),
-        pl.col(step_col).alias("t"),
+        alias_to_axis(step_col, "t"),
         pl.col("value").cast(pl.Float64).alias("step_duration"),
     ))
 
@@ -176,7 +178,7 @@ def _period_timeset_lf(source: "InputSource", active_solve: str
         return None
     lf = (p_ts.lazy()
               .filter(pl.col("name") == active_solve)
-              .select(pl.col(period_col).alias("d"),
+              .select(alias_to_axis(period_col, "d"),
                       pl.col("value").alias("ts")))
     if lf.collect().height == 0:
         return None

@@ -30,6 +30,8 @@ from pathlib import Path
 
 import polars as pl
 
+from ._axis_enums import alias_to_axis
+
 
 # ---------------------------------------------------------------------------
 # Method-enum constants — mirror flextool/flextool_base.dat and the legacy
@@ -151,7 +153,7 @@ def _project_entity_by_method(
         df.filter(
             (pl.col("entity") != "") & (~pl.col("method").is_in(list(disallowed_methods)))
         )
-        .select(pl.col("entity").alias(out_column))
+        .select(alias_to_axis("entity", out_column))
         .unique(maintain_order=True)
     )
 

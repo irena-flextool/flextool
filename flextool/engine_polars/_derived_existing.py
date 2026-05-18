@@ -70,7 +70,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine_polars._axis_enums import rename_to_axis
+from flextool.engine_polars._axis_enums import alias_to_axis, rename_to_axis
 
 from ._derived_walks import period_walk_iterator, WindowMethod
 
@@ -136,7 +136,7 @@ def _entity_class_lf(source: "InputSource") -> pl.LazyFrame:
         if df.height == 0:
             continue
         parts.append(df.lazy().select(
-            pl.col("name").alias("e"),
+            alias_to_axis("name", "e"),
             pl.lit(ec).alias("ec"),
         ))
     if not parts:
@@ -166,7 +166,7 @@ def _entity_method_lf(source: "InputSource",
         if df.height == 0:
             continue
         parts.append(df.lazy().select(
-            pl.col("name").alias("e"),
+            alias_to_axis("name", "e"),
             pl.col("value").cast(pl.Utf8, strict=False).alias("method"),
         ))
     if not parts:
@@ -226,14 +226,14 @@ def _per_entity_param_lf(source: "InputSource",
         period_col = "period" if "period" in extra else (extra[0] if extra else None)
         if period_col is not None:
             parts.append(df.lazy().select(
-                pl.col("name").alias("e"),
-                pl.col(period_col).cast(pl.Utf8, strict=False).alias("d"),
+                alias_to_axis("name", "e"),
+                alias_to_axis(period_col, "d"),
                 pl.col("value").cast(pl.Float64, strict=False),
                 pl.lit(False).alias("is_scalar"),
             ))
         else:
             parts.append(df.lazy().select(
-                pl.col("name").alias("e"),
+                alias_to_axis("name", "e"),
                 pl.lit(None, dtype=pl.Utf8).alias("d"),
                 pl.col("value").cast(pl.Float64, strict=False),
                 pl.lit(True).alias("is_scalar"),
@@ -511,7 +511,7 @@ def _entity_class_partition_lf(source: "InputSource") -> pl.LazyFrame:
         if df.height == 0:
             continue
         parts.append(df.lazy().select(
-            pl.col("name").alias("e"),
+            alias_to_axis("name", "e"),
             pl.lit(kind).alias("kind"),
         ))
     if not parts:
@@ -690,7 +690,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
         return pl.LazyFrame(schema={
             "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,
         })
-    inv_anchor = ed_invest_lf.select("e", pl.col("d").alias("d_invest"))
+    inv_anchor = ed_invest_lf.select("e", alias_to_axis("d", "d_invest"))
     if inv_anchor.collect().height == 0:
         return pl.LazyFrame(schema={
             "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,

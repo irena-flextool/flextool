@@ -28,7 +28,7 @@ from . import _cumulative_invest
 from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
-from ._axis_enums import rename_to_axis, lit_axis
+from ._axis_enums import alias_to_axis, rename_to_axis, lit_axis
 
 
 # ---------------------------------------------------------------------------
@@ -661,8 +661,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         )
         lag_xp = (lag_frame
                   .select("d", "t",
-                          pl.col("d_previous").alias("d_back"),
-                          pl.col("t_previous_within_solve").alias("t_back")))
+                          alias_to_axis("d_previous", "d_back"),
+                          alias_to_axis("t_previous_within_solve", "t_back")))
         return Sum(Where(v_state_back, lag_xp), over=("d_back", "t_back"))
 
     if (has_storage

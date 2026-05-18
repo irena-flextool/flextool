@@ -87,7 +87,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import cast_dim, schema_dtype
+from ._axis_enums import alias_to_axis, cast_dim, schema_dtype
 
 # NPV-cascade helpers take ``source`` (an InputSource); no FlexData in
 # scope here.  ``_enums = None`` keeps schema_dtype falling back to
@@ -140,7 +140,7 @@ def _entity_class_lf(source: "InputSource") -> pl.LazyFrame:
         if df.height == 0:
             continue
         parts.append(df.lazy().select(
-            cast_dim(pl.col("name"), _enums, "e").alias("e"),
+            alias_to_axis("name", "e"),
             pl.lit(ec).alias("ec"),
         ))
     if not parts:
@@ -199,15 +199,15 @@ def _per_entity_param_lf(source: "InputSource",
         period_col = "period" if "period" in extra else (extra[0] if extra else None)
         if period_col is not None:
             parts.append(df.lazy().select(
-                cast_dim(pl.col("name"), _enums, "e").alias("e"),
-                cast_dim(pl.col(period_col).cast(pl.Utf8, strict=False),
-                          _enums, "d").alias("d"),
+                alias_to_axis("name", "e"),
+                alias_to_axis(pl.col(period_col).cast(pl.Utf8, strict=False),
+                              "d"),
                 pl.col("value").cast(pl.Float64, strict=False),
                 pl.lit(False).alias("is_scalar"),
             ))
         else:
             parts.append(df.lazy().select(
-                cast_dim(pl.col("name"), _enums, "e").alias("e"),
+                alias_to_axis("name", "e"),
                 pl.lit(None).cast(schema_dtype(_enums, "d"), strict=False).alias("d"),
                 pl.col("value").cast(pl.Float64, strict=False),
                 pl.lit(True).alias("is_scalar"),
@@ -275,7 +275,7 @@ def _entity_method_lf(source: "InputSource",
         if df.height == 0:
             continue
         parts.append(df.lazy().select(
-            cast_dim(pl.col("name"), _enums, "e").alias("e"),
+            alias_to_axis("name", "e"),
             pl.col("value").cast(pl.Utf8, strict=False).alias("method"),
         ))
     if not parts:
@@ -375,7 +375,7 @@ def _years_for_period_lf(source: "InputSource",
             "y": pl.Utf8, "width": pl.Float64,
         })
     return pl.LazyFrame(rows, schema=["d", "y", "width"], orient="row").with_columns(
-        cast_dim(pl.col("d"), _enums, "d").alias("d"))
+        alias_to_axis("d", "d"))
 
 
 def _inflation_factors_lf(source: "InputSource",
@@ -417,7 +417,7 @@ def _inflation_factors_lf(source: "InputSource",
     # so collecting once is cheap; the rest stays lazy.
     yfp_eager = yfp_lf.collect()
     period_lf = pl.LazyFrame({"d": period_universe}).with_columns(
-        cast_dim(pl.col("d"), _enums, "d").alias("d"))
+        alias_to_axis("d", "d"))
 
     if yfp_eager.height == 0:
         # No years_represented data — every period gets the trivial 1.0
@@ -703,7 +703,7 @@ def npv_invest_discounted_lf(
     # method-allowed gate (mirror of preprocessing/invest_method_sets).
     entity_invest_set = _entity_invest_set_lf(source, _INVEST_NOT_ALLOWED)
     pi_lf = pl.LazyFrame({"d": period_invest}).with_columns(
-        cast_dim(pl.col("d"), _enums, "d").alias("d"))
+        alias_to_axis("d", "d"))
     ed_anchor_lf = entity_invest_set.join(pi_lf, how="cross")
 
     # Annuity (invest cost).
@@ -728,7 +728,7 @@ def npv_invest_discounted_lf(
 
     # life_lf for the bounded walk (uses edEntity_lifetime per L236).
     pwh_lf = pl.LazyFrame({"d": list({d for d in period_invest})}).with_columns(
-        cast_dim(pl.col("d"), _enums, "d").alias("d"))
+        alias_to_axis("d", "d"))
     life_lf = _ed_lifetime_lf(source, all_e_lf, pwh_lf)
 
     bounded = period_walk_iterator(
@@ -797,7 +797,7 @@ def npv_divest_discounted_lf(
         })
     entity_divest_set = _entity_invest_set_lf(source, _DIVEST_NOT_ALLOWED)
     pi_lf = pl.LazyFrame({"d": period_invest}).with_columns(
-        cast_dim(pl.col("d"), _enums, "d").alias("d"))
+        alias_to_axis("d", "d"))
     ed_anchor_lf = entity_divest_set.join(pi_lf, how="cross")
 
     ann_lf = _per_method_annuity_lf(
@@ -888,7 +888,7 @@ def lifetime_fixed_cost_invest_lf(
     # Build (e, d) over all_entities × period_with_history.
     all_e_lf = _all_entities_lf(source)
     pwh_lf = pl.LazyFrame({"d": period_with_history}).with_columns(
-        cast_dim(pl.col("d"), _enums, "d").alias("d"))
+        alias_to_axis("d", "d"))
     ed_anchor_lf = all_e_lf.join(pwh_lf, how="cross")
 
     fc_lf = _ed_fixed_cost_raw_lf(source, ed_anchor_lf)
@@ -969,7 +969,7 @@ def lifetime_fixed_cost_divest_lf(
         })
     entity_divest_set = _entity_invest_set_lf(source, _DIVEST_NOT_ALLOWED)
     pi_lf = pl.LazyFrame({"d": period_invest}).with_columns(
-        cast_dim(pl.col("d"), _enums, "d").alias("d"))
+        alias_to_axis("d", "d"))
     ed_anchor_lf = entity_divest_set.join(pi_lf, how="cross")
 
     fc_lf = _ed_fixed_cost_raw_lf(source, ed_anchor_lf)
@@ -1035,7 +1035,7 @@ def p_inflation_op_from_source(source: "InputSource",
         period_universe = period_in_use
     factors_lf = _inflation_factors_lf(source, active_solve, period_universe)
     out = (pl.LazyFrame({"d": period_in_use})
-              .with_columns(cast_dim(pl.col("d"), _enums, "d").alias("d"))
+              .with_columns(alias_to_axis("d", "d"))
               .join(factors_lf, on="d", how="left")
               .with_columns(
                   value=pl.col("ops_factor").fill_null(1.0),
@@ -1060,7 +1060,7 @@ def p_ed_fixed_cost_from_source(source: "InputSource",
         return None
     all_e_lf = _all_entities_lf(source)
     pwh_lf = pl.LazyFrame({"d": period_with_history}).with_columns(
-        cast_dim(pl.col("d"), _enums, "d").alias("d"))
+        alias_to_axis("d", "d"))
     ed_lf = all_e_lf.join(pwh_lf, how="cross")
     fc_lf = _ed_fixed_cost_raw_lf(source, ed_lf).rename({"fc": "value"})
     out = (fc_lf

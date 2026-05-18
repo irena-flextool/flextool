@@ -59,7 +59,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import cast_dim, rename_to_axis, schema_dtype
+from ._axis_enums import alias_to_axis, cast_dim, rename_to_axis, schema_dtype
 from ._writer_provider_io import _provider_key
 
 
@@ -140,8 +140,7 @@ def period_branch_pairs_lf(
         pb_df = getattr(ctx, "period_branch", None)
         if pb_df is not None and pb_df.height > 0:
             return (pb_df.lazy()
-                          .select(cast_dim(pl.col("d_anchor").alias("d"),
-                                            _enums, "d"),
+                          .select(alias_to_axis("d_anchor", "d"),
                                   cast_dim(pl.col("b"), _enums, "b"))
                           .unique())
     if workdir is None:
@@ -198,7 +197,7 @@ def solve_branch_weights_lf(
     else:
         return _empty_lf(schema)
     return (df.lazy()
-              .select(cast_dim(pl.col(b_col).alias("b"), _enums, "b"),
+              .select(alias_to_axis(b_col, "b"),
                       pl.col(v_col).cast(pl.Float64, strict=False).alias("w")))
 
 
@@ -222,7 +221,7 @@ def first_timesteps_lf(workdir: Path | None,
     s_col = ("step" if "step" in cols else
              ("time" if "time" in cols else cols[1]))
     return (df.lazy()
-              .select(cast_dim(pl.col(d_col).alias("d"), _enums, "d"),
+              .select(alias_to_axis(d_col, "d"),
                       pl.col(s_col).cast(pl.Utf8, strict=False).alias("ts")))
 
 
@@ -254,8 +253,7 @@ def period_in_use_set_lf(workdir: Path | None,
         if df is not None and df.height > 0 and df.columns:
             col = df.columns[0]
             return (df.lazy()
-                      .select(cast_dim(pl.col(col).alias("d"),
-                                        _enums, "d"))
+                      .select(alias_to_axis(col, "d"))
                       .unique())
     # Fall back to source-derived realized + invest.
     if source is None or active_solve is None:
@@ -271,8 +269,7 @@ def period_in_use_set_lf(workdir: Path | None,
             continue
         parts.append(df.lazy()
                        .filter(pl.col("name") == active_solve)
-                       .select(cast_dim(pl.col("value").alias("d"),
-                                         _enums, "d")))
+                       .select(alias_to_axis("value", "d")))
     if not parts:
         return _empty_lf(schema)
     return pl.concat(parts).unique()
@@ -294,8 +291,8 @@ def realized_dispatch_lf(workdir: Path | None,
     t_col = ("step" if "step" in cols else
              ("time" if "time" in cols else cols[1]))
     return (df.lazy()
-              .select(cast_dim(pl.col(d_col).alias("d"), _enums, "d"),
-                      cast_dim(pl.col(t_col).alias("t"), _enums, "t"))
+              .select(alias_to_axis(d_col, "d"),
+                      alias_to_axis(t_col, "t"))
               .unique())
 
 
@@ -315,8 +312,8 @@ def fix_storage_timesteps_lf(workdir: Path | None,
     t_col = ("step" if "step" in cols else
              ("time" if "time" in cols else cols[1]))
     return (df.lazy()
-              .select(cast_dim(pl.col(d_col).alias("d"), _enums, "d"),
-                      cast_dim(pl.col(t_col).alias("t"), _enums, "t"))
+              .select(alias_to_axis(d_col, "d"),
+                      alias_to_axis(t_col, "t"))
               .unique())
 
 
@@ -336,8 +333,8 @@ def steps_in_use_lf(workdir: Path | None,
     t_col = ("step" if "step" in cols else
              ("time" if "time" in cols else cols[1]))
     return (df.lazy()
-              .select(cast_dim(pl.col(d_col).alias("d"), _enums, "d"),
-                      cast_dim(pl.col(t_col).alias("t"), _enums, "t"))
+              .select(alias_to_axis(d_col, "d"),
+                      alias_to_axis(t_col, "t"))
               .unique())
 
 

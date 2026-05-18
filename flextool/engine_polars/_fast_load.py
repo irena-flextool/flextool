@@ -55,7 +55,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from ._axis_enums import rename_to_axis, schema_dtype
+from ._axis_enums import alias_to_axis, rename_to_axis, schema_dtype
 
 # ``_empty_flex_data`` runs before any FlexData is materialised — the
 # returned sentinel frames are immediately overwritten by the override
@@ -194,17 +194,17 @@ def _populate_topology(flex_data: "FlexData",
     _uin = _try_entities(source, "unit__inputNode")
     if _uin is not None and _uin.height > 0:
         src_parts.append(_uin.select(
-            pl.col("unit").alias("p"), pl.col("node").alias("source")))
+            alias_to_axis("unit", "p"), alias_to_axis("node", "source")))
     _uout = _try_entities(source, "unit__outputNode")
     if _uout is not None and _uout.height > 0:
         snk_parts.append(_uout.select(
-            pl.col("unit").alias("p"), pl.col("node").alias("sink")))
+            alias_to_axis("unit", "p"), alias_to_axis("node", "sink")))
     _cnn = _try_entities(source, "connection__node__node")
     if _cnn is not None and _cnn.height > 0:
         src_parts.append(_cnn.select(
-            pl.col("connection").alias("p"), pl.col("node_1").alias("source")))
+            alias_to_axis("connection", "p"), alias_to_axis("node_1", "source")))
         snk_parts.append(_cnn.select(
-            pl.col("connection").alias("p"), pl.col("node_2").alias("sink")))
+            alias_to_axis("connection", "p"), alias_to_axis("node_2", "sink")))
     if src_parts:
         flex_data.process_source_canonical = (
             pl.concat(src_parts).unique().sort("p", "source")

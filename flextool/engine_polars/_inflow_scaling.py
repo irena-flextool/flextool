@@ -78,7 +78,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import cast_dim, schema_dtype
+from ._axis_enums import alias_to_axis, cast_dim, schema_dtype
 from ._writer_provider_io import _provider_key
 
 
@@ -179,13 +179,13 @@ def _node_period_scalar_lf(source: "InputSource", parameter_name: str,
     period_col = next((c for c in ("period", "x") if c in cols), None)
     if period_col is not None:
         return (raw.lazy()
-                   .select(cast_dim(pl.col("name").alias("n"), _enums, "n"),
-                           cast_dim(pl.col(period_col).alias("d"), _enums, "d"),
+                   .select(alias_to_axis("name", "n"),
+                           alias_to_axis(period_col, "d"),
                            pl.col("value").cast(pl.Float64)))
     # Scalar — broadcast across periods.
     periods = dt_lf.select("d").unique()
     return (raw.lazy()
-               .select(cast_dim(pl.col("name").alias("n"), _enums, "n"),
+               .select(alias_to_axis("name", "n"),
                        pl.col("value").cast(pl.Float64))
                .join(periods, how="cross")
                .select("n", "d", "value"))
@@ -263,7 +263,7 @@ def _pt_node_inflow_lf(source: "InputSource",
         # ``ptNode_inflow[n, t]`` falls through to the entity's scalar
         # default when no (n, t) row is present.
         raw_lf = raw.lazy().select(
-            cast_dim(pl.col("name").alias("n"), _enums, "n"),
+            alias_to_axis("name", "n"),
             cast_dim(pl.col("t"), _enums, "t"),
             pl.col("value").cast(pl.Float64),
         )
@@ -292,7 +292,7 @@ def _pt_node_inflow_lf(source: "InputSource",
         # 2d_map(period, t) — fold over period (sum) for the (n, t) raw.
         # Used by some stochastic-adjacent fixtures; drop period.
         explicit_lf = (raw.lazy()
-                          .select(cast_dim(pl.col("name").alias("n"), _enums, "n"),
+                          .select(alias_to_axis("name", "n"),
                                   cast_dim(pl.col("t"), _enums, "t"),
                                   pl.col("value").cast(pl.Float64))
                           .group_by("n", "t").agg(pl.col("value").sum()))
@@ -305,7 +305,7 @@ def _pt_node_inflow_lf(source: "InputSource",
     # Scalar — broadcast across (nodes × time) using per-node value when
     # explicit, else default 0.0.
     explicit_scalar = (raw.lazy()
-                          .select(cast_dim(pl.col("name").alias("n"), _enums, "n"),
+                          .select(alias_to_axis("name", "n"),
                                   pl.col("value").cast(pl.Float64)
                                                   .alias("scalar")))
     full_lf = (nodes_lf.join(time_lf, how="cross")
@@ -348,14 +348,14 @@ def _inflow_method_lf(source: "InputSource") -> pl.LazyFrame:
         if raw is None:
             return pl.LazyFrame(schema=schema)
         return (raw.lazy()
-                   .select(cast_dim(pl.col("name").alias("n"), _enums, "n"),
+                   .select(alias_to_axis("name", "n"),
                            pl.col("value").alias("method")))
-    nodes_lf = nodes.lazy().select(cast_dim(pl.col("name").alias("n"), _enums, "n"))
+    nodes_lf = nodes.lazy().select(alias_to_axis("name", "n"))
     if raw is None:
         # Every node falls back to the schema default.
         return nodes_lf.with_columns(method=pl.lit("use_original"))
     explicit = (raw.lazy()
-                   .select(cast_dim(pl.col("name").alias("n"), _enums, "n"),
+                   .select(alias_to_axis("name", "n"),
                            pl.col("value").alias("method")))
     explicit_n = explicit.select("n").unique() \
                           .with_columns(_has_explicit=pl.lit(True))
@@ -635,7 +635,7 @@ def _pbt_node_inflow_frame(source: "InputSource") -> "pl.DataFrame | None":
     if missing:
         return None
     return pbt.select(
-        cast_dim(pl.col("name").alias("n"), _enums, "n"),
+        alias_to_axis("name", "n"),
         pl.col("branch").cast(pl.Utf8).alias("tb"),
         pl.col("time_start").cast(pl.Utf8).alias("ts"),
         pl.col("t").cast(pl.Utf8),
@@ -859,7 +859,7 @@ def _balance_nodes_lf(
                      if c in balance_set.columns), None)
         if col is not None:
             parts.append(balance_set.lazy().select(
-                cast_dim(pl.col(col).alias("n"), _enums, "n")))
+                alias_to_axis(col, "n")))
     if workdir is not None:
         for fname in ("nodeBalance.csv", "nodeBalancePeriod.csv"):
             p = Path(workdir) / "solve_data" / fname
@@ -871,7 +871,7 @@ def _balance_nodes_lf(
             if col is None:
                 continue
             parts.append(df.lazy().select(
-                cast_dim(pl.col(col).alias("n"), _enums, "n")))
+                alias_to_axis(col, "n")))
     if not parts:
         return None
     return pl.concat(parts).unique()
@@ -1127,12 +1127,12 @@ def _dt_complete_lf(workdir: Path | None,
             cols = df.columns
             if "period" in cols and "step" in cols:
                 return df.lazy().select(
-                    cast_dim(pl.col("period").alias("d"), _enums, "d"),
-                    cast_dim(pl.col("step").alias("t"), _enums, "t"))
+                    alias_to_axis("period", "d"),
+                    alias_to_axis("step", "t"))
             if "period" in cols and "time" in cols:
                 return df.lazy().select(
-                    cast_dim(pl.col("period").alias("d"), _enums, "d"),
-                    cast_dim(pl.col("time").alias("t"), _enums, "t"))
+                    alias_to_axis("period", "d"),
+                    alias_to_axis("time", "t"))
     return dt_lf.select("d", "t")
 
 
@@ -1179,7 +1179,7 @@ def _timeline_aggregates(source: "InputSource",
             period_col = next((c for c in ("period", "d") if c in cols), None)
             if period_col is not None and "value" in cols:
                 cpsoy = cp_df.lazy().select(
-                    cast_dim(pl.col(period_col).alias("d"), _enums, "d"),
+                    alias_to_axis(period_col, "d"),
                     pl.col("value").cast(pl.Float64))
         # p_timeline_duration_in_years.csv
         tdy_path = Path(workdir) / "solve_data" / "p_timeline_duration_in_years.csv"
@@ -1199,7 +1199,7 @@ def _timeline_aggregates(source: "InputSource",
             cols = pt_df.columns
             if "period" in cols and "timeline" in cols:
                 period_timeline = pt_df.lazy().select(
-                    cast_dim(pl.col("period").alias("d"), _enums, "d"),
+                    alias_to_axis("period", "d"),
                     pl.col("timeline"),
                 )
 
@@ -1247,7 +1247,7 @@ def _derive_timeline_aggregates(
         return None
     tl_lf = (tl_dur.lazy().select(
         pl.col("name").alias("timeline"),
-        pl.col(step_col).alias("t"),
+        alias_to_axis(step_col, "t"),
         pl.col("value").cast(pl.Float64).alias("step_dur"),
     ))
     p_tdy = (tl_lf.group_by("timeline")
@@ -1266,7 +1266,7 @@ def _derive_timeline_aggregates(
     if period_col is None:
         return None
     pt_lf = p_ts.lazy().select(
-        cast_dim(pl.col(period_col).alias("d"), _enums, "d"),
+        alias_to_axis(period_col, "d"),
         pl.col("value").alias("ts"),
     ).unique()
     ttl_lf = ts_tl.lazy().select(

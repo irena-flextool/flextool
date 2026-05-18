@@ -44,6 +44,7 @@ import polars as pl
 from polar_high import Param
 
 from ._axis_enums import (
+    alias_to_axis,
     cast_dim,
     cast_frame_axes,
     get_global_axis_enums,
@@ -350,7 +351,7 @@ def dt_and_step_duration_from_source(
         piu = _ctx_read(ctx, workdir, "period_in_use_set.csv", provider=provider)
         if piu is not None and piu.height > 0 and "period" in piu.columns:
             realized_p = (piu.lazy()
-                            .select(pl.col("period").alias("d"))
+                            .select(alias_to_axis("period", "d"))
                             .unique())
     if realized_p is None:
         parts: list[pl.LazyFrame] = []
@@ -362,9 +363,7 @@ def dt_and_step_duration_from_source(
                 continue
             parts.append(df.lazy()
                            .filter(pl.col("name") == active_solve)
-                           .select(
-                               cast_dim(pl.col("value"), _live,
-                                          "d").alias("d")))
+                           .select(alias_to_axis("value", "d")))
         if not parts:
             return None
         realized_p = pl.concat(parts).unique()
@@ -381,7 +380,7 @@ def dt_and_step_duration_from_source(
         return None
     pt = (p_ts.lazy()
               .filter(pl.col("name") == active_solve)
-              .select(pl.col(period_col).alias("d"),
+              .select(alias_to_axis(period_col, "d"),
                       pl.col("value").alias("ts")))
     # Broadcast timesets to stochastic-branch periods: when a period
     # appears in period_in_use_set without a direct period_timeset row,
@@ -432,7 +431,7 @@ def dt_and_step_duration_from_source(
         return None
     tl = (tl_dur.lazy()
                 .select(pl.col("name").alias("timeline"),
-                        pl.col(tl_step_col).alias("t"),
+                        alias_to_axis(tl_step_col, "t"),
                         pl.col("value").cast(pl.Float64).alias("step_duration")))
     # Determine step rank within each timeline (sort by t lex order, which
     # matches t0001 < t0002 < ... in flextool's canonical naming).
@@ -624,7 +623,7 @@ def p_inflation_op_from_source(
             for cand in candidate_names:
                 lf = (yr_raw.lazy()
                             .filter(pl.col("name") == cand)
-                            .select(pl.col("period").alias("d"),
+                            .select(alias_to_axis("period", "d"),
                                     pl.col("value").cast(pl.Float64).alias("yr_total")))
                 if lf.collect().height > 0:
                     yr_lf = lf
@@ -734,7 +733,7 @@ def p_rp_cost_weight_from_source(
         return Param(("d", "t"), out) if out.height > 0 else None
     period_timeset_lf = (pt.lazy()
                             .filter(pl.col("name") == active_solve)
-                            .select(pl.col(period_col).alias("d"),
+                            .select(alias_to_axis(period_col, "d"),
                                     pl.col("value").alias("ts")))
 
     tw = _try_param_explicit(source, "timeset", "timeset_weights")
@@ -749,7 +748,7 @@ def p_rp_cost_weight_from_source(
         return Param(("d", "t"), out) if out.height > 0 else None
     weights_lf = (tw.lazy()
                     .select(pl.col("name").alias("ts"),
-                            pl.col(step_col).alias("t"),
+                            alias_to_axis(step_col, "t"),
                             pl.col("value").cast(pl.Float64).alias("w_raw")))
 
     # Per-(d, t) raw weight: lookup via period_timeset → timeset_weights.
@@ -910,8 +909,8 @@ def p_inflow_from_source(
     if not {"name", "period", "t", "value"}.issubset(cols):
         return None
     out = (raw.lazy()
-              .select(pl.col("name").alias("n"),
-                      pl.col("period").alias("d"),
+              .select(alias_to_axis("name", "n"),
+                      alias_to_axis("period", "d"),
                       pl.col("t"),
                       pl.col("value").cast(pl.Float64))
               # Restrict to the active solve's (d, t) — matches CSV-side
@@ -1028,13 +1027,13 @@ def p_process_existing_count_from_source(
         if ex is None:
             continue
         ex_lf = ex.lazy().select(
-            pl.col("name").alias("p"),
+            alias_to_axis("name", "p"),
             pl.col("value").cast(pl.Float64).alias("existing"),
         )
         us = _try_param_explicit(source, cls, "virtual_unitsize")
         if us is not None and us.height > 0:
             us_lf = us.lazy().select(
-                pl.col("name").alias("p"),
+                alias_to_axis("name", "p"),
                 pl.col("value").cast(pl.Float64).alias("us_raw"),
             )
             ex_lf = (ex_lf.join(us_lf, on="p", how="left")
@@ -1152,7 +1151,7 @@ def p_profile_value_from_source(
         # 2d_map: direct (f, d, t, value).
         out = (raw.lazy()
                   .select(pl.col("name").alias("f"),
-                          pl.col("period").alias("d"),
+                          alias_to_axis("period", "d"),
                           pl.col("t"),
                           pl.col("value").cast(pl.Float64))
                   .join(dt_lf, on=["d", "t"], how="inner")
@@ -1162,7 +1161,7 @@ def p_profile_value_from_source(
         # 1d_map(period): broadcast over t of dt for matching periods.
         out = (raw.lazy()
                   .select(pl.col("name").alias("f"),
-                          pl.col("period").alias("d"),
+                          alias_to_axis("period", "d"),
                           pl.col("value").cast(pl.Float64))
                   .join(dt_lf, on="d", how="inner")
                   .select("f", "d", "t", "value")
@@ -1592,12 +1591,12 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     cm_parts: list[pl.LazyFrame] = []
     if cm_unit is not None:
         cm_parts.append(cm_unit.lazy().select(
-            pl.col("name").alias("p"),
+            alias_to_axis("name", "p"),
             pl.col("value").alias("ct"),
         ))
     if cm_conn is not None:
         cm_parts.append(cm_conn.lazy().select(
-            pl.col("name").alias("p"),
+            alias_to_axis("name", "p"),
             pl.col("value").alias("ct"),
         ))
     cm_lazy = pl.concat(cm_parts) if cm_parts else None
@@ -1607,19 +1606,19 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     sm_parts: list[pl.LazyFrame] = []
     if sm_unit is not None:
         sm_parts.append(sm_unit.lazy().select(
-            pl.col("name").alias("p"),
+            alias_to_axis("name", "p"),
             pl.col("value").alias("startup_raw"),
         ))
     if sm_conn is not None:
         sm_parts.append(sm_conn.lazy().select(
-            pl.col("name").alias("p"),
+            alias_to_axis("name", "p"),
             pl.col("value").alias("startup_raw"),
         ))
     sm_lazy = pl.concat(sm_parts) if sm_parts else None
 
     mtm = _try_param(source, "unit", "minimum_time_method")
     mtm_lazy = (mtm.lazy().select(
-        pl.col("name").alias("p"),
+        alias_to_axis("name", "p"),
         pl.col("value").alias("mtm"),
     )) if mtm is not None else None
 
@@ -1628,11 +1627,11 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     delay_parts: list[pl.LazyFrame] = []
     if delay_unit is not None:
         delay_parts.append(delay_unit.lazy().select(
-            pl.col("name").alias("p"),
+            alias_to_axis("name", "p"),
         ).unique())
     if delay_conn is not None:
         delay_parts.append(delay_conn.lazy().select(
-            pl.col("name").alias("p"),
+            alias_to_axis("name", "p"),
         ).unique())
     delay_lazy = (pl.concat(delay_parts).unique()
                     .with_columns(is_delayed=pl.lit(True))) \
@@ -1643,14 +1642,14 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     sink_acc: list[pl.LazyFrame] = []
     uin = _try_entities(source, "unit__inputNode")
     if uin is not None:
-        src_acc.append(uin.lazy().select(pl.col("unit").alias("p")))
+        src_acc.append(uin.lazy().select(alias_to_axis("unit", "p")))
     uout = _try_entities(source, "unit__outputNode")
     if uout is not None:
-        sink_acc.append(uout.lazy().select(pl.col("unit").alias("p")))
+        sink_acc.append(uout.lazy().select(alias_to_axis("unit", "p")))
     cnn = _try_entities(source, "connection__node__node")
     if cnn is not None:
-        src_acc.append(cnn.lazy().select(pl.col("connection").alias("p")))
-        sink_acc.append(cnn.lazy().select(pl.col("connection").alias("p")))
+        src_acc.append(cnn.lazy().select(alias_to_axis("connection", "p")))
+        sink_acc.append(cnn.lazy().select(alias_to_axis("connection", "p")))
 
     src_counts = (pl.concat(src_acc).group_by("p").agg(
                     pl.len().alias("n_src"))) if src_acc else None
@@ -1981,16 +1980,16 @@ def p_flow_upper_existing_from_source(source: "InputSource",
     e_unit = _try_param_explicit(source, "unit", "existing")
     if e_unit is not None:
         parts.append(e_unit.lazy().select(
-            pl.col("name").alias("p"),
-            pl.col(_index_col(e_unit, "period")).alias("d"),
+            alias_to_axis("name", "p"),
+            alias_to_axis(_index_col(e_unit, "period"), "d"),
             pl.col("value").cast(pl.Float64).alias("cap"),
         ) if _index_col(e_unit, "period") in e_unit.columns
             else _broadcast_existing_to_pd(e_unit, source, workdir, ctx=ctx, provider=provider))
     e_conn = _try_param_explicit(source, "connection", "existing")
     if e_conn is not None:
         parts.append(e_conn.lazy().select(
-            pl.col("name").alias("p"),
-            pl.col(_index_col(e_conn, "period")).alias("d"),
+            alias_to_axis("name", "p"),
+            alias_to_axis(_index_col(e_conn, "period"), "d"),
             pl.col("value").cast(pl.Float64).alias("cap"),
         ) if _index_col(e_conn, "period") in e_conn.columns
             else _broadcast_existing_to_pd(e_conn, source, workdir, ctx=ctx, provider=provider))
@@ -2009,7 +2008,7 @@ def p_flow_upper_existing_from_source(source: "InputSource",
         if us_df is None or us_df.height == 0:
             continue
         us_parts.append(us_df.lazy().select(
-            pl.col("name").alias("p"),
+            alias_to_axis("name", "p"),
             pl.col("value").cast(pl.Float64).alias("us"),
         ))
     if us_parts:
@@ -2102,7 +2101,7 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
         if piu_ctx.height > 0:
             pd_lf = piu_ctx.lazy().select("d").unique()
             return (df.lazy()
-                      .select(pl.col("name").alias("p"),
+                      .select(alias_to_axis("name", "p"),
                                pl.col("value").cast(pl.Float64).alias("cap"))
                       .join(pd_lf, how="cross")
                       .select("p", "d", "cap"))
@@ -2112,10 +2111,10 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
             piu_df = _provider_read(provider, piu_path)
             if piu_df.height > 0 and "period" in piu_df.columns:
                 pd_lf = (piu_df.lazy()
-                            .select(pl.col("period").alias("d"))
+                            .select(alias_to_axis("period", "d"))
                             .unique())
                 return (df.lazy()
-                          .select(pl.col("name").alias("p"),
+                          .select(alias_to_axis("name", "p"),
                                    pl.col("value").cast(pl.Float64).alias("cap"))
                           .join(pd_lf, how="cross")
                           .select("p", "d", "cap"))
@@ -2124,7 +2123,7 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
         rp = _try_param(source, "solve", par)
         if rp is None:
             continue
-        parts.append(rp.lazy().select(pl.col("value").alias("d")))
+        parts.append(rp.lazy().select(alias_to_axis("value", "d")))
     if not parts:
         return pl.DataFrame(schema={
             "p": schema_dtype(_enums, "p"),
@@ -2133,7 +2132,7 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
         }).lazy()
     pd_lf = pl.concat(parts).unique()
     return (df.lazy()
-              .select(pl.col("name").alias("p"),
+              .select(alias_to_axis("name", "p"),
                        pl.col("value").cast(pl.Float64).alias("cap"))
               .join(pd_lf, how="cross")
               .select("p", "d", "cap"))
@@ -2183,9 +2182,9 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
         if c_col is None:
             continue
         parts.append(df.lazy().select(
-            pl.col(p_col).alias("p"),
-            pl.col(n_col).alias("n"),
-            pl.col(c_col).alias("cn"),
+            alias_to_axis(p_col, "p"),
+            alias_to_axis(n_col, "n"),
+            alias_to_axis(c_col, "cn"),
             pl.col("value").cast(pl.Float64).alias("coef"),
         ))
     if not parts:
@@ -2271,14 +2270,14 @@ def p_pssdt_varCost_from_source(source: "InputSource",
         t_col = next((c for c in ("t", "time", "step") if c in idx_cols), None)
 
         # Build base lazyframe and rename keys.
-        select_exprs = [pl.col(ent_p_col).alias("p"),
+        select_exprs = [alias_to_axis(ent_p_col, "p"),
                          pl.col("value").cast(pl.Float64).alias("v")]
         if ent_n_col is not None:
-            select_exprs.append(pl.col(ent_n_col).alias("n"))
+            select_exprs.append(alias_to_axis(ent_n_col, "n"))
         if period_col is not None:
-            select_exprs.append(pl.col(period_col).alias("d"))
+            select_exprs.append(alias_to_axis(period_col, "d"))
         if t_col is not None:
-            select_exprs.append(pl.col(t_col).alias("t"))
+            select_exprs.append(alias_to_axis(t_col, "t"))
         lf = df.lazy().select(*select_exprs).filter(pl.col("v") != 0.0)
 
         # Match against pss to get (p, source, sink) tuples.
@@ -2418,7 +2417,7 @@ def p_slope_from_source(source: "InputSource",
         eta_min_lf = _broadcast_param_to_dt(eff_at_min, dt,
                                               value_col_alias="eta_min")
         ml_lf = (minload.lazy().select(
-            pl.col("name").alias("p"),
+            alias_to_axis("name", "p"),
             pl.col("value").cast(pl.Float64).alias("min_load"),
         ))
         if eta_min_lf is not None:
@@ -2481,9 +2480,9 @@ def _broadcast_param_to_dt(df: pl.DataFrame,
     t_col = next((c for c in ("t", "time", "step") if c in cols), None)
     dt_lf = dt.lazy()
     base = df.lazy().select(
-        pl.col("name").alias("p"),
-        *([pl.col(period_col).alias("d")] if period_col else []),
-        *([pl.col(t_col).alias("t")] if t_col else []),
+        alias_to_axis("name", "p"),
+        *([alias_to_axis(period_col, "d")] if period_col else []),
+        *([alias_to_axis(t_col, "t")] if t_col else []),
         pl.col("value").cast(pl.Float64).alias(value_col_alias),
     )
     if has_period and has_t:
@@ -2907,7 +2906,7 @@ def _entity_invest_method(source: "InputSource") -> pl.LazyFrame | None:
         if df is None:
             continue
         parts.append(df.lazy().select(
-            pl.col("name").alias("e"),
+            alias_to_axis("name", "e"),
             pl.col("value").alias("method"),
         ))
     if not parts:
@@ -2943,7 +2942,7 @@ def _has_capacity_constraint_invest_set(source: "InputSource"
             # Spine reader returns the entity name column as ``name``.
             if "name" in df.columns:
                 parts.append(df.lazy().select(
-                    pl.col("name").alias("e")).unique())
+                    alias_to_axis("name", "e")).unique())
     if not parts:
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e")}).lazy()
     return pl.concat(parts).unique()
@@ -3033,15 +3032,15 @@ def _per_entity_period_cost(source: "InputSource",
         # (name, ..., value).
         if "period" in cols:
             parts.append(df.lazy().select(
-                pl.col("name").alias("e"),
-                pl.col("period").alias("d"),
+                alias_to_axis("name", "e"),
+                alias_to_axis("period", "d"),
                 pl.col("value").cast(pl.Float64).alias("v"),
             ))
         else:
             # Broadcast scalar across period_invest.
             pi_lf = pl.LazyFrame({"d": period_invest})
             parts.append(df.lazy().select(
-                pl.col("name").alias("e"),
+                alias_to_axis("name", "e"),
                 pl.col("value").cast(pl.Float64).alias("v"),
             ).join(pi_lf, how="cross"))
     if not parts:
@@ -3371,7 +3370,7 @@ def _p_years_d_lf(source: "InputSource",
                     val_col = ("value" if "value" in df.columns
                                 else df.columns[-1])
                     return df.lazy().select(
-                        pl.col("period").alias("d"),
+                        alias_to_axis("period", "d"),
                         pl.col(val_col).cast(pl.Float64, strict=False)
                                           .alias("yr"),
                     )
@@ -3385,7 +3384,7 @@ def _p_years_d_lf(source: "InputSource",
                     val_col = ("param" if "param" in df.columns
                                 else df.columns[-1])
                     return df.lazy().select(
-                        pl.col("period").alias("d"),
+                        alias_to_axis("period", "d"),
                         pl.col(val_col).cast(pl.Float64, strict=False)
                                           .alias("yr"),
                     )
@@ -3397,7 +3396,7 @@ def _p_years_d_lf(source: "InputSource",
         sub = yfs.filter(pl.col("name") == active_solve)
         if sub.height > 0:
             return sub.lazy().select(
-                pl.col("period").alias("d"),
+                alias_to_axis("period", "d"),
                 pl.col("value").cast(pl.Float64).alias("yr"),
             )
     # 3 — cumulative-sum from years_represented.
@@ -3447,13 +3446,13 @@ def _edEntity_lifetime_lf(source: "InputSource",
         cols = df.columns
         if "period" in cols:
             parts.append(df.lazy().select(
-                pl.col("name").alias("e"),
-                pl.col("period").alias("d"),
+                alias_to_axis("name", "e"),
+                alias_to_axis("period", "d"),
                 pl.col("value").cast(pl.Float64).alias("life"),
             ))
         else:
             parts.append(df.lazy().select(
-                pl.col("name").alias("e"),
+                alias_to_axis("name", "e"),
                 pl.col("value").cast(pl.Float64).alias("life"),
             ).join(ed_invest_lf.select("d").unique(), how="cross"))
     if not parts:
@@ -3629,24 +3628,24 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
         if ents is None or ents.height == 0:
             continue
         base_parts.append(ents.lazy().select(
-            pl.col("name").alias("e")))
+            alias_to_axis("name", "e")))
         us = _try_param_explicit(source, ec, "virtual_unitsize")
         if us is not None and us.height > 0:
             us_parts.append(us.lazy().select(
-                pl.col("name").alias("e"),
+                alias_to_axis("name", "e"),
                 pl.col("value").cast(pl.Float64).alias("vu"),
             ))
         ex = _try_param_explicit(source, ec, "existing")
         if ex is not None and ex.height > 0:
             if "period" in ex.columns:
                 ex_parts.append(ex.lazy()
-                    .select(pl.col("name").alias("e"),
+                    .select(alias_to_axis("name", "e"),
                               pl.col("value").cast(pl.Float64).alias("v"))
                     .group_by("e")
                     .agg(pl.col("v").max().alias("ex")))
             else:
                 ex_parts.append(ex.lazy().select(
-                    pl.col("name").alias("e"),
+                    alias_to_axis("name", "e"),
                     pl.col("value").cast(pl.Float64).alias("ex"),
                 ))
     if not base_parts:
@@ -3708,7 +3707,7 @@ def _e_explicit_param(source: "InputSource", parameter_name: str
         if df is None or df.height == 0:
             continue
         parts.append(df.lazy().select(
-            pl.col("name").alias("e"),
+            alias_to_axis("name", "e"),
             pl.col("value").cast(pl.Float64),
         ))
     if not parts:
@@ -3740,8 +3739,8 @@ def _ed_explicit_period_param(source: "InputSource", parameter_name: str
         if period_col is None:
             continue
         parts.append(df.lazy().select(
-            pl.col("name").alias("e"),
-            pl.col(period_col).alias("d"),
+            alias_to_axis("name", "e"),
+            alias_to_axis(period_col, "d"),
             pl.col("value").cast(pl.Float64),
         ))
     if not parts:
@@ -3958,7 +3957,7 @@ def p_inflation_op_multi_year_from_source(source: "InputSource",
     if dt is None or dt.height == 0:
         return None
     yfs_lf = yfs_sub.lazy().select(
-        pl.col("period").alias("d"),
+        alias_to_axis("period", "d"),
         pl.col("value").cast(pl.Float64).alias("yr"),
     )
     out = (dt.lazy().select("d").unique()
@@ -4015,7 +4014,7 @@ def p_section_from_source(source: "InputSource",
     if eta_lf is None or eta_min_lf is None:
         return None
     ml_lf = (minload.lazy().select(
-        pl.col("name").alias("p"),
+        alias_to_axis("name", "p"),
         pl.col("value").cast(pl.Float64).alias("min_load"),
     ))
 
@@ -4128,14 +4127,14 @@ def _process_source_pairs_lf(source: "InputSource") -> pl.LazyFrame:
     uin = _try_entities(source, "unit__inputNode")
     if uin is not None and uin.height > 0:
         parts.append(uin.lazy().select(
-            pl.col("unit").alias("p"),
-            pl.col("node").alias("source"),
+            alias_to_axis("unit", "p"),
+            alias_to_axis("node", "source"),
         ))
     cnn = _try_entities(source, "connection__node__node")
     if cnn is not None and cnn.height > 0:
         parts.append(cnn.lazy().select(
-            pl.col("connection").alias("p"),
-            pl.col("node_1").alias("source"),
+            alias_to_axis("connection", "p"),
+            alias_to_axis("node_1", "source"),
         ))
     if not parts:
         return pl.LazyFrame(schema={"p": schema_dtype(_enums, "p"),
@@ -4150,14 +4149,14 @@ def _process_sink_pairs_lf(source: "InputSource") -> pl.LazyFrame:
     uout = _try_entities(source, "unit__outputNode")
     if uout is not None and uout.height > 0:
         parts.append(uout.lazy().select(
-            pl.col("unit").alias("p"),
-            pl.col("node").alias("sink"),
+            alias_to_axis("unit", "p"),
+            alias_to_axis("node", "sink"),
         ))
     cnn = _try_entities(source, "connection__node__node")
     if cnn is not None and cnn.height > 0:
         parts.append(cnn.lazy().select(
-            pl.col("connection").alias("p"),
-            pl.col("node_2").alias("sink"),
+            alias_to_axis("connection", "p"),
+            alias_to_axis("node_2", "sink"),
         ))
     if not parts:
         return pl.LazyFrame(schema={"p": schema_dtype(_enums, "p"),
@@ -4665,7 +4664,7 @@ def p_group_capacity_for_scaling_from_source(source: "InputSource",
                 pass
     if scaling_active:
         return None  # defer; CSV path handles pow10 cascade
-    out = (groups_df.lazy().select(pl.col("name").alias("g"))
+    out = (groups_df.lazy().select(alias_to_axis("name", "g"))
               .join(pl.LazyFrame({"d": period_in_use}), how="cross")
               .with_columns(value=pl.lit(1.0))
               .sort("g", "d")
@@ -5262,13 +5261,13 @@ def p_entity_all_existing_from_source(source: "InputSource",
         period_col = "period" if "period" in extra else (extra[0] if extra else None)
         if period_col is not None:
             parts.append(df.lazy().select(
-                pl.col("name").alias("e"),
-                pl.col(period_col).cast(pl.Utf8, strict=False).alias("d"),
+                alias_to_axis("name", "e"),
+                alias_to_axis(pl.col(period_col).cast(pl.Utf8, strict=False), "d"),
                 pl.col("value").cast(pl.Float64).alias("ex"),
             ))
         else:
             base = df.lazy().select(
-                pl.col("name").alias("e"),
+                alias_to_axis("name", "e"),
                 pl.col("value").cast(pl.Float64).alias("ex"),
             )
             parts.append(base.join(pl.LazyFrame({"d": piu}), how="cross")
@@ -5763,8 +5762,8 @@ def _dt_period_active_steps_from_workdir(
                            if c in siu_raw.columns), None)
         if period_col is None or step_col is None:
             return None
-        siu = siu_raw.select(pl.col(period_col).alias("d"),
-                                pl.col(step_col).alias("t")).unique()
+        siu = siu_raw.select(alias_to_axis(period_col, "d"),
+                                alias_to_axis(step_col, "t")).unique()
     if siu.height == 0:
         return None
     sd = workdir / "solve_data"
@@ -5812,7 +5811,7 @@ def _dt_period_active_steps_from_workdir(
         return None
     tl_lf = (tl_dur.lazy()
                     .select(pl.col("name").alias("timeline"),
-                            pl.col(tl_step_col).alias("t"),
+                            alias_to_axis(tl_step_col, "t"),
                             pl.col("value").cast(pl.Float64)
                                             .alias("step_duration"))
                     .sort("timeline", "t")
@@ -6025,7 +6024,7 @@ def _dt_period_active_steps(source: "InputSource",
         return None
     tl_lf = (tl_dur.lazy()
                     .select(pl.col("name").alias("timeline"),
-                            pl.col(tl_step_col).alias("t"),
+                            alias_to_axis(tl_step_col, "t"),
                             pl.col("value").cast(pl.Float64)
                                             .alias("step_duration"))
                     .sort("timeline", "t")
@@ -6545,7 +6544,7 @@ def nodeStateBlock_from_source(source: "InputSource",
         intraperiod = (sbm.lazy()
                           .filter(pl.col("value")
                                   == "bind_intraperiod_blocks")
-                          .select(pl.col("name").alias("n"))
+                          .select(alias_to_axis("name", "n"))
                           .collect())
         if intraperiod.height > 0:
             rows.extend(intraperiod["n"].to_list())
@@ -6844,9 +6843,9 @@ def _node_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
     if nodes is None or nodes.height == 0:
         return pl.LazyFrame(schema={"n": schema_dtype(_enums, "n"),
                                      "us": pl.Float64})
-    base = nodes.lazy().select(pl.col("name").alias("n"))
+    base = nodes.lazy().select(alias_to_axis("name", "n"))
     if us is not None and us.height > 0:
-        us_lf = us.lazy().select(pl.col("name").alias("n"),
+        us_lf = us.lazy().select(alias_to_axis("name", "n"),
                                     pl.col("value").cast(pl.Float64)
                                                      .alias("vu"))
         base = base.join(us_lf, on="n", how="left")
@@ -6857,12 +6856,12 @@ def _node_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
         ex_cols = ex.columns
         if "period" in ex_cols:
             ex_lf = (ex.lazy()
-                       .select(pl.col("name").alias("n"),
+                       .select(alias_to_axis("name", "n"),
                                  pl.col("value").cast(pl.Float64))
                        .group_by("n")
                        .agg(pl.col("value").max().alias("ex")))
         else:
-            ex_lf = ex.lazy().select(pl.col("name").alias("n"),
+            ex_lf = ex.lazy().select(alias_to_axis("name", "n"),
                                        pl.col("value").cast(pl.Float64)
                                                         .alias("ex"))
         base = base.join(ex_lf, on="n", how="left")
@@ -6935,7 +6934,7 @@ def storage_use_reference_value_from_source(source: "InputSource",
         return None
     base = (sshm.lazy()
                  .filter(pl.col("value") == "use_reference_value")
-                 .select(pl.col("name").alias("n"))
+                 .select(alias_to_axis("name", "n"))
                  .unique()
                  .collect())
     if base.height == 0:
@@ -6946,7 +6945,7 @@ def storage_use_reference_value_from_source(source: "InputSource",
     if sse is not None:
         e = (sse.lazy()
                  .filter(pl.col("value").is_in(["fix_end", "fix_start_end"]))
-                 .select(pl.col("name").alias("n"))
+                 .select(alias_to_axis("name", "n"))
                  .collect())
         if e.height > 0:
             excl_lists.append(e["n"].to_list())

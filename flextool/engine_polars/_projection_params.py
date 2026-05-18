@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flextool.engine_polars._axis_enums import (
+    alias_to_axis,
     cast_dim,
     cast_frame_axes,
     get_global_axis_enums,
@@ -158,23 +159,23 @@ def process_source_sink(source: "InputSource") -> pl.DataFrame:
     uin = _try_entities(source, "unit__inputNode")
     if uin is not None:
         parts.append(uin.lazy().select(
-            pl.col("unit").alias("p"),
-            pl.col("node").alias("source"),
-            pl.col("unit").alias("sink"),
+            alias_to_axis("unit", "p"),
+            alias_to_axis("node", "source"),
+            alias_to_axis("unit", "sink"),
         ))
     uout = _try_entities(source, "unit__outputNode")
     if uout is not None:
         parts.append(uout.lazy().select(
-            pl.col("unit").alias("p"),
-            pl.col("unit").alias("source"),
-            pl.col("node").alias("sink"),
+            alias_to_axis("unit", "p"),
+            alias_to_axis("unit", "source"),
+            alias_to_axis("node", "sink"),
         ))
     cnn = _try_entities(source, "connection__node__node")
     if cnn is not None:
         parts.append(cnn.lazy().select(
-            pl.col("connection").alias("p"),
-            pl.col("node_1").alias("source"),
-            pl.col("node_2").alias("sink"),
+            alias_to_axis("connection", "p"),
+            alias_to_axis("node_1", "source"),
+            alias_to_axis("node_2", "sink"),
         ))
 
     if not parts:
@@ -323,8 +324,8 @@ def process_source_sink_canonical(source: "InputSource",
         rev_eff = (cnn_with_method
             .filter(pl.col("method").is_in(list(_METHOD_2WAY_2VAR_LOCAL)))
             .select("p",
-                    pl.col("sink").alias("source"),
-                    pl.col("source").alias("sink"),
+                    alias_to_axis("sink", "source"),
+                    alias_to_axis("source", "sink"),
                     pl.lit("eff").alias("method")))
         parts.append(rev_eff)
         # 2way_nvar connections — emits indirect 2-arc form.  In practice
@@ -332,8 +333,8 @@ def process_source_sink_canonical(source: "InputSource",
         rev_noEff = (cnn_with_method
             .filter(pl.col("method").is_in(list(_METHOD_2WAY_NVAR_LOCAL)))
             .select("p",
-                    pl.col("sink").alias("source"),
-                    pl.col("source").alias("sink"),
+                    alias_to_axis("sink", "source"),
+                    alias_to_axis("source", "sink"),
                     pl.lit("noEff").alias("method")))
         parts.append(rev_noEff)
 
@@ -379,8 +380,8 @@ def process_source_sink_canonical(source: "InputSource",
             .join(two_way_p, on="p", how="inner")
             .join(sinks_lf, on="p", how="inner")
             .select(pl.col("p"),
-                    pl.col("sink").alias("source"),
-                    pl.col("source").alias("sink"),
+                    alias_to_axis("sink", "source"),
+                    alias_to_axis("source", "sink"),
                     pl.lit("eff").alias("method")))
         parts.append(rev_arcs)
 
@@ -390,7 +391,7 @@ def process_source_sink_canonical(source: "InputSource",
             .select("p"))
         indirect_inputs = (sources_lf
             .join(indirect_p, on="p", how="inner")
-            .select("p", "source", _to_e(pl.col("p")).alias("sink"),
+            .select("p", "source", alias_to_axis(pl.col("p"), "sink"),
                     pl.lit("noEff").alias("method")))
         parts.append(indirect_inputs)
 
@@ -400,14 +401,14 @@ def process_source_sink_canonical(source: "InputSource",
             .select("p"))
         indirect_inputs_rev = (sources_lf
             .join(two_way_nvar_p, on="p", how="inner")
-            .select("p", _to_e(pl.col("p")).alias("source"),
-                    pl.col("source").alias("sink"),
+            .select("p", alias_to_axis(pl.col("p"), "source"),
+                    alias_to_axis("source", "sink"),
                     pl.lit("noEff").alias("method")))
         parts.append(indirect_inputs_rev)
 
         indirect_outputs = (sinks_lf
             .join(indirect_p, on="p", how="inner")
-            .select("p", _to_e(pl.col("p")).alias("source"), "sink",
+            .select("p", alias_to_axis(pl.col("p"), "source"), "sink",
                     pl.lit("noEff").alias("method")))
         parts.append(indirect_outputs)
 
@@ -421,12 +422,12 @@ def process_source_sink_canonical(source: "InputSource",
         no_source_p = one_way_1var_p.join(sources_exist, on="p", how="anti")
         no_sink_arcs = (sources_lf
             .join(no_sink_p, on="p", how="inner")
-            .select("p", "source", _to_e(pl.col("p")).alias("sink"),
+            .select("p", "source", alias_to_axis(pl.col("p"), "sink"),
                     pl.lit("noEff").alias("method")))
         parts.append(no_sink_arcs)
         no_source_arcs = (sinks_lf
             .join(no_source_p, on="p", how="inner")
-            .select("p", _to_e(pl.col("p")).alias("source"), "sink",
+            .select("p", alias_to_axis(pl.col("p"), "source"), "sink",
                     pl.lit("noEff").alias("method")))
         parts.append(no_source_arcs)
 
@@ -751,7 +752,7 @@ def group_co2_max_period(source: "InputSource") -> pl.DataFrame:
     if df is None:
         return _empty({"g": pl.Utf8})
     return (df.lazy()
-              .select(pl.col("name").alias("g"))
+              .select(alias_to_axis("name", "g"))
               .unique()
               .sort("g")
               .collect())
@@ -774,7 +775,7 @@ def process_indirect(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value").is_in(_INDIRECT_CONVERSION_METHODS))
-              .select(pl.col("name").alias("p"))
+              .select(alias_to_axis("name", "p"))
               .sort("p")
               .collect())
 
@@ -853,7 +854,7 @@ def cdt_filter(source: "InputSource", sense: str,
         return None
     rows = (s.lazy()
               .filter(pl.col("value") == sense)
-              .select(pl.col("name").alias("cn"))
+              .select(alias_to_axis("name", "cn"))
               .collect())
     if rows.height == 0:
         return None
@@ -944,9 +945,9 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
             parts.append(
                 unp_lz.join(uin.lazy(), on=["unit", "node"], how="inner")
                        .select(
-                           pl.col("unit").alias("p"),
-                           pl.col("node").alias("source"),
-                           pl.col("unit").alias("sink"),
+                           alias_to_axis("unit", "p"),
+                           alias_to_axis("node", "source"),
+                           alias_to_axis("unit", "sink"),
                            "f",
                        ))
         # Output side (source=unit, sink=node).
@@ -955,9 +956,9 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
             parts.append(
                 unp_lz.join(uout.lazy(), on=["unit", "node"], how="inner")
                        .select(
-                           pl.col("unit").alias("p"),
-                           pl.col("unit").alias("source"),
-                           pl.col("node").alias("sink"),
+                           alias_to_axis("unit", "p"),
+                           alias_to_axis("unit", "source"),
+                           alias_to_axis("node", "sink"),
                            "f",
                        ))
 
@@ -976,18 +977,18 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
                 cnp_lz.join(cnn_lz, left_on=["connection", "node"],
                              right_on=["connection", "node_1"], how="inner")
                        .select(
-                           pl.col("connection").alias("p"),
-                           pl.col("node").alias("source"),
-                           pl.col("node_2").alias("sink"),
+                           alias_to_axis("connection", "p"),
+                           alias_to_axis("node", "source"),
+                           alias_to_axis("node_2", "sink"),
                            "f",
                        ))
             parts.append(
                 cnp_lz.join(cnn_lz, left_on=["connection", "node"],
                              right_on=["connection", "node_2"], how="inner")
                        .select(
-                           pl.col("connection").alias("p"),
-                           pl.col("node_1").alias("source"),
-                           pl.col("node").alias("sink"),
+                           alias_to_axis("connection", "p"),
+                           alias_to_axis("node_1", "source"),
+                           alias_to_axis("node", "sink"),
                            "f",
                        ))
 
@@ -1010,7 +1011,7 @@ def node_profile_filter(source: "InputSource", method: str) -> pl.DataFrame:
         return _empty({"n": pl.Utf8, "f": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == method)
-              .select(pl.col("node").alias("n"),
+              .select(alias_to_axis("node", "n"),
                        pl.col("profile").alias("f"))
               .sort("n", "f")
               .collect())
@@ -1039,7 +1040,7 @@ def process_online(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value").is_in(["linear", "integer"]))
-              .select(pl.col("name").alias("p"))
+              .select(alias_to_axis("name", "p"))
               .sort("p")
               .collect())
 
@@ -1050,7 +1051,7 @@ def process_online_linear(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "linear")
-              .select(pl.col("name").alias("p"))
+              .select(alias_to_axis("name", "p"))
               .sort("p")
               .collect())
 
@@ -1061,7 +1062,7 @@ def process_online_integer(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "integer")
-              .select(pl.col("name").alias("p"))
+              .select(alias_to_axis("name", "p"))
               .sort("p")
               .collect())
 
@@ -1077,7 +1078,7 @@ def process_minload(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") > 0)
-              .select(pl.col("name").alias("p"))
+              .select(alias_to_axis("name", "p"))
               .sort("p")
               .collect())
 
@@ -1089,7 +1090,7 @@ def process_min_load_eff(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "min_load_efficiency")
-              .select(pl.col("name").alias("p"))
+              .select(alias_to_axis("name", "p"))
               .sort("p")
               .collect())
 
@@ -1174,7 +1175,7 @@ def _group_yes(source: "InputSource", parameter_name: str) -> pl.DataFrame:
         return _empty({"g": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "yes")
-              .select(pl.col("name").alias("g"))
+              .select(alias_to_axis("name", "g"))
               .unique()
               .sort("g")
               .collect())
@@ -1319,18 +1320,18 @@ def process_reserve_upDown_node_active(source: "InputSource") -> pl.DataFrame:
     u = _try_entities(source, "reserve__upDown__unit__node")
     if u is not None:
         parts.append(u.lazy().select(
-            pl.col("unit").alias("p"),
+            alias_to_axis("unit", "p"),
             pl.col("reserve").alias("r"),
             pl.col("upDown").alias("ud"),
-            pl.col("node").alias("n"),
+            alias_to_axis("node", "n"),
         ))
     c = _try_entities(source, "reserve__upDown__connection__node")
     if c is not None:
         parts.append(c.lazy().select(
-            pl.col("connection").alias("p"),
+            alias_to_axis("connection", "p"),
             pl.col("reserve").alias("r"),
             pl.col("upDown").alias("ud"),
-            pl.col("node").alias("n"),
+            alias_to_axis("node", "n"),
         ))
     if not parts:
         return _empty({"p": pl.Utf8, "r": pl.Utf8, "ud": pl.Utf8, "n": pl.Utf8})
@@ -1348,20 +1349,20 @@ def _process_reserve_upDown_node_filter(source: "InputSource",
         parts.append(u.lazy()
                        .filter(pl.col("value") != 0)
                        .select(
-                           pl.col("unit").alias("p"),
+                           alias_to_axis("unit", "p"),
                            pl.col("reserve").alias("r"),
                            pl.col("upDown").alias("ud"),
-                           pl.col("node").alias("n"),
+                           alias_to_axis("node", "n"),
                        ))
     c = _try_param(source, "reserve__upDown__connection__node", parameter_name)
     if c is not None:
         parts.append(c.lazy()
                        .filter(pl.col("value") != 0)
                        .select(
-                           pl.col("connection").alias("p"),
+                           alias_to_axis("connection", "p"),
                            pl.col("reserve").alias("r"),
                            pl.col("upDown").alias("ud"),
-                           pl.col("node").alias("n"),
+                           alias_to_axis("node", "n"),
                        ))
     if not parts:
         return _empty({"p": pl.Utf8, "r": pl.Utf8, "ud": pl.Utf8, "n": pl.Utf8})
@@ -1395,7 +1396,7 @@ def _e_param_set(source: "InputSource", parameter_name: str,
         flt = df.lazy()
         if positive_only:
             flt = flt.filter(pl.col("value") > 0)
-        parts.append(flt.select(pl.col("name").alias("e")))
+        parts.append(flt.select(alias_to_axis("name", "e")))
     if not parts:
         return _empty({"e": pl.Utf8})
     return pl.concat(parts).unique().sort("e").collect()
@@ -1428,7 +1429,7 @@ def _e_invest_method_filter(source: "InputSource",
             continue
         parts.append(df.lazy()
                        .filter(pl.col("value").is_in(list(allowed)))
-                       .select(pl.col("name").alias("e")))
+                       .select(alias_to_axis("name", "e")))
     if not parts:
         return _empty({"e": pl.Utf8})
     return pl.concat(parts).unique().sort("e").collect()
@@ -1473,7 +1474,7 @@ def ed_invest_cumulative(source: "InputSource",
                 continue
             parts.append(df.lazy()
                            .filter(pl.col("value") > 0)
-                           .select(pl.col("name").alias("e")))
+                           .select(alias_to_axis("name", "e")))
 
     if not parts:
         return _empty({"e": pl.Utf8, "d": pl.Utf8})
@@ -1498,11 +1499,11 @@ def group_entity(source: "InputSource") -> pl.DataFrame:
         if df is None:
             continue
         parts.append(df.lazy().select(
-            pl.col("group").alias("g"),
+            alias_to_axis("group", "g"),
             # cast across class-specific enum into the entity-union ``e``
             # enum so concat across (group__node, group__unit,
             # group__connection) lines up on a single dtype.
-            cast_dim(pl.col(dim), _enums, "e").alias("e"),
+            alias_to_axis(pl.col(dim), "e"),
         ))
     if not parts:
         return _empty({"g": pl.Utf8, "e": pl.Utf8})
@@ -1548,7 +1549,7 @@ def _g_param_set(source: "InputSource", parameter_name: str,
     flt = df.lazy()
     if positive_only:
         flt = flt.filter(pl.col("value") > 0)
-    return (flt.select(pl.col("name").alias("g"))
+    return (flt.select(alias_to_axis("name", "g"))
                 .unique()
                 .sort("g")
                 .collect())
@@ -1616,7 +1617,7 @@ def process_delayed(source: "InputSource") -> pl.DataFrame:
             continue
         parts.append(df.lazy()
                        .filter(pl.col("value") != 0)
-                       .select(pl.col("name").alias("p")))
+                       .select(alias_to_axis("name", "p")))
     if not parts:
         return _empty({"p": pl.Utf8})
     return pl.concat(parts).unique().sort("p").collect()
@@ -1701,7 +1702,7 @@ def connection_dc_power_flow(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "yes")
-              .select(pl.col("name").alias("p"))
+              .select(alias_to_axis("name", "p"))
               .sort("p")
               .collect())
 
@@ -1720,7 +1721,7 @@ def commodity_with_ladder(source: "InputSource") -> pl.DataFrame:
         return _empty({"c": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value").is_in(_LADDER_METHODS))
-              .select(pl.col("name").alias("c"))
+              .select(alias_to_axis("name", "c"))
               .sort("c")
               .collect())
 
@@ -1731,7 +1732,7 @@ def commodity_with_ladder_annual(source: "InputSource") -> pl.DataFrame:
         return _empty({"c": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "price_ladder_annual")
-              .select(pl.col("name").alias("c"))
+              .select(alias_to_axis("name", "c"))
               .sort("c")
               .collect())
 
@@ -1742,7 +1743,7 @@ def commodity_with_ladder_cumulative(source: "InputSource") -> pl.DataFrame:
         return _empty({"c": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "price_ladder_cumulative")
-              .select(pl.col("name").alias("c"))
+              .select(alias_to_axis("name", "c"))
               .sort("c")
               .collect())
 
