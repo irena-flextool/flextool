@@ -357,6 +357,108 @@ class _UnrecognisedIndex(Exception):
         self.depth = depth
 
 
+def _disambiguate_shape_by_value_domain(
+    df: "pl.DataFrame",
+    ent_cols: "list[str]",
+    resolved_labels: "list[str | None]",
+    allowed: "set[Shape]",
+    period_filter: "pl.DataFrame | None",
+) -> "Shape | None":
+    """Value-domain probing fallback for silent-default ``index_name`` Maps.
+
+    When the registry permits multiple shapes at the observed depth
+    (e.g. ``("group", "co2_price")`` admits both ``MAP_PERIOD`` and
+    ``MAP_TIME``) and the DB carried no ``index_name`` label, we
+    cannot decide structurally.  Mirroring the legacy CSV pipeline
+    (``_timeline.separate_period_and_timeseries_data``), we look at
+    the Map's actual index values: a Map keyed by ``y2019, y2020, ...``
+    is :class:`Shape.MAP_PERIOD`; a Map keyed by ``t0001, t0002, ...``
+    is :class:`Shape.MAP_TIME`.
+
+    Requires *period_filter* with columns ``d`` (periods) and ``t``
+    (timesteps).  Returns ``None`` when probing is impossible (no
+    filter, no candidates, mixed values matching neither set).
+
+    Currently only handles depth-1 ambiguity (a single Map level).  For
+    depth-2 Maps we don't yet probe — the registry's allow-list usually
+    fixes the ordering by allowing only one 2d shape at a time, so the
+    silent-default case there is rare; the standard structural pathway
+    handles every fixture observed in the cascade gate as of 2026-05.
+    """
+    if period_filter is None:
+        return None
+    depth = len(resolved_labels)
+    if depth != 1:
+        return None
+    # Identify the silent-default level (the only position with None
+    # in resolved_labels — every other depth-1 case yielded a definite
+    # shape above and never reached this fallback).
+    if resolved_labels[0] is not None:
+        return None
+    # The candidate set at depth 1 is the intersection of *allowed* with
+    # depth-1 shapes: at most MAP_PERIOD and MAP_TIME.
+    candidates = {s for s in allowed
+                  if len(_SHAPE_LABELS[s]) == 1
+                  and s in (Shape.MAP_PERIOD, Shape.MAP_TIME)}
+    if not candidates:
+        return None
+    # Locate the index column (the first non-entity, non-value column).
+    non_ent_cols = [
+        c for c in df.columns if c not in ent_cols and c != "value"
+    ]
+    if len(non_ent_cols) != 1:
+        # Defensive: depth-1 frame should carry exactly one index column.
+        return None
+    idx_col = non_ent_cols[0]
+    # Get distinct index values from the frame.
+    try:
+        idx_values = (
+            df.lazy()
+              .select(pl.col(idx_col).cast(pl.Utf8))
+              .unique()
+              .collect()
+              .get_column(idx_col)
+              .to_list()
+        )
+    except Exception:
+        return None
+    if not idx_values:
+        return None
+    idx_set = {str(v) for v in idx_values if v is not None}
+    # Build the period / timestep universes from period_filter.
+    pf_cols = period_filter.columns
+    periods_set: "set[str] | None" = None
+    timesteps_set: "set[str] | None" = None
+    if "d" in pf_cols:
+        periods_set = set(
+            period_filter.lazy()
+                         .select(pl.col("d").cast(pl.Utf8))
+                         .unique()
+                         .collect()
+                         .get_column("d")
+                         .to_list()
+        )
+    if "t" in pf_cols:
+        timesteps_set = set(
+            period_filter.lazy()
+                         .select(pl.col("t").cast(pl.Utf8))
+                         .unique()
+                         .collect()
+                         .get_column("t")
+                         .to_list()
+        )
+    # All-or-nothing: every observed index value must lie in exactly
+    # one of the two universes (and the corresponding shape must be in
+    # the candidate set).  Mixed → genuinely ambiguous → don't guess.
+    in_periods = bool(periods_set) and idx_set.issubset(periods_set)
+    in_timesteps = bool(timesteps_set) and idx_set.issubset(timesteps_set)
+    if in_periods and not in_timesteps and Shape.MAP_PERIOD in candidates:
+        return Shape.MAP_PERIOD
+    if in_timesteps and not in_periods and Shape.MAP_TIME in candidates:
+        return Shape.MAP_TIME
+    return None
+
+
 def _read_index_names_from_source(
     source: "InputSource",
     entity_class: str,
@@ -470,6 +572,7 @@ def resolve_param_shape(
     source: "InputSource",
     entity_class: str,
     parameter_name: str,
+    period_filter: "pl.DataFrame | None" = None,
 ) -> "ResolvedShape | None":
     """DB-driven shape detection + per-parameter allow-list validation.
 
@@ -488,6 +591,21 @@ def resolve_param_shape(
        shape outside the allow-list → :class:`FlexToolConfigError`
        with full context (parameter name, observed labels, allowed
        shapes).
+
+    When the index_name labels are silent-default (e.g. spinedb_api's
+    ``"x"``) AND ``period_filter`` is supplied, the resolver probes the
+    index column values against the active solve's known periods /
+    timesteps (mirroring the legacy CSV pipeline's value-domain
+    discrimination in
+    :func:`flextool.engine_polars._timeline.separate_period_and_timeseries_data`).
+    This recovers Rivendell-style fixtures where ``group.co2_price`` is
+    authored as ``Map(period→value)`` but the author omitted
+    ``index_name`` so the DB stores the silent ``"x"`` label.  Without
+    this probing the resolver returns ``None`` and ``p_co2_price`` is
+    silently dropped while the feature gate (driven by topology, not
+    data) stays active — the LP build then aborts at
+    :func:`flextool.engine_polars.model.build_flextool`'s ``CO2_PRICE``
+    invariant check.
 
     Returns ``None`` only when the parameter has no explicit rows AND
     no scalar default to broadcast (the source plugin's None-skip per
@@ -540,11 +658,28 @@ def resolve_param_shape(
 
     if shape is None:
         # Ambiguous shape — at least one Map level carries the spinedb_api
-        # silent default.  Per Δ.17c policy: don't raise; return None so
-        # the caller falls back to its non-resolver pathway (typically the
-        # seed CSV).  Δ.18+ punch-list: re-author fixtures so every Map
-        # level carries an explicit ``index_name``.
-        return None
+        # silent default and the per-parameter allow-list permits multiple
+        # interpretations at that depth.  Try value-domain probing against
+        # the active solve's known periods / timesteps when *period_filter*
+        # is supplied — this mirrors the legacy CSV pipeline's
+        # ``separate_period_and_timeseries_data`` discriminator (a Map's
+        # index values reveal whether it indexes by period or timestep,
+        # regardless of the silent ``"x"`` index_name).
+        shape = _disambiguate_shape_by_value_domain(
+            df, ent_cols, resolved_labels, allowed, period_filter,
+        )
+        if shape is None:
+            # Still ambiguous (no period_filter, or values match neither
+            # the period nor the timestep set).  Per Δ.17c policy: don't
+            # raise; return None so the caller falls back to its
+            # non-resolver pathway (typically the seed CSV).  Δ.18+
+            # punch-list: re-author fixtures so every Map level carries
+            # an explicit ``index_name``.
+            return None
+        # Update the resolved labels so the downstream rename block sees
+        # the disambiguated label and renames the silent-default column
+        # (typically ``"x"``) to ``"period"`` or ``"t"``.
+        resolved_labels = list(_SHAPE_LABELS[shape])
 
     if shape not in allowed:
         # Render observed shape for the message — labels can be empty

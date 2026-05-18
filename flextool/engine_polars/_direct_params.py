@@ -863,7 +863,8 @@ def pdt_max_instant_flow_from_source(source: "InputSource",
     Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
     shapes: scalar / 1d_map[period] / 1d_map[time] / 2d_map[period,time].
     """
-    resolved = resolve_param_shape(source, "group", "max_instant_flow")
+    resolved = resolve_param_shape(
+        source, "group", "max_instant_flow", period_filter=period_filter)
     return broadcast_to_period_time(
         resolved, "g", period_filter, filter_zero=True)
 
@@ -876,7 +877,8 @@ def pdt_min_instant_flow_from_source(source: "InputSource",
     Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
     shapes: scalar / 1d_map[period] / 1d_map[time] / 2d_map[period,time].
     """
-    resolved = resolve_param_shape(source, "group", "min_instant_flow")
+    resolved = resolve_param_shape(
+        source, "group", "min_instant_flow", period_filter=period_filter)
     return broadcast_to_period_time(
         resolved, "g", period_filter, filter_zero=True)
 
@@ -1068,7 +1070,8 @@ def p_node_availability_from_source(source: "InputSource",
     the apply site; the helper here returns ALL availability rows.  The
     nodeState filter is applied downstream by ``_load_storage``.
     """
-    resolved = resolve_param_shape(source, "node", "availability")
+    resolved = resolve_param_shape(
+        source, "node", "availability", period_filter=period_filter)
     return broadcast_to_period_time(resolved, "n", period_filter)
 
 
@@ -1083,7 +1086,8 @@ def p_storage_state_reference_value_from_source(source: "InputSource",
     the gate stays on the consumer side.
     """
     resolved = resolve_param_shape(
-        source, "node", "storage_state_reference_value")
+        source, "node", "storage_state_reference_value",
+        period_filter=period_filter)
     return broadcast_to_period_time(resolved, "n", period_filter)
 
 
@@ -1102,7 +1106,8 @@ def p_co2_price_from_source(source: "InputSource",
     (param='co2_price').  None default on the schema — explicit rows
     only.
     """
-    resolved = resolve_param_shape(source, "group", "co2_price")
+    resolved = resolve_param_shape(
+        source, "group", "co2_price", period_filter=period_filter)
     return broadcast_to_period_time(resolved, "g", period_filter)
 
 
@@ -1120,7 +1125,8 @@ def p_co2_max_period_from_source(source: "InputSource",
     ``group__node`` is non-empty (see ``_load_co2_cap``).  We return the
     Param unconditionally — the consumer decides whether to wire it.
     """
-    resolved = resolve_param_shape(source, "group", "co2_max_period")
+    resolved = resolve_param_shape(
+        source, "group", "co2_max_period", period_filter=period_filter)
     return broadcast_to_period(resolved, "g", period_filter)
 
 
@@ -1436,7 +1442,8 @@ def p_process_availability_from_source(source: "InputSource",
     """
     parts: list[pl.LazyFrame] = []
     for cls in ("unit", "connection"):
-        resolved = resolve_param_shape(source, cls, "availability")
+        resolved = resolve_param_shape(
+            source, cls, "availability", period_filter=period_filter)
         param = broadcast_to_period_time(resolved, "p", period_filter)
         if param is None:
             continue
@@ -1460,7 +1467,8 @@ def p_commodity_price_from_source(source: "InputSource",
     default on the schema; CSV path slices ``pdtCommodity.csv``
     (param='price') and emits explicit rows only.
     """
-    resolved = resolve_param_shape(source, "commodity", "price")
+    resolved = resolve_param_shape(
+        source, "commodity", "price", period_filter=period_filter)
     return broadcast_to_period_time(resolved, "c", period_filter)
 
 
