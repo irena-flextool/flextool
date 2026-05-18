@@ -28,14 +28,17 @@ Per ``cumulative_handoffs.py::write_ladder_rolling_accumulators``:
     cumulative_commodity[coal, 1, p2020] = Σ_n v_trade[coal, n, p2020, 1]
                                               × unitsize[coal] × fraction
                                           ≈ 1.0          (tier 1 binds at cap)
-    cumulative_commodity[coal, 2, p2020] = Σ_n v_trade[coal, n, p2020, 2]
-                                              × unitsize[coal] × fraction
-                                          ≈ 58599.0      (tier 2 absorbs)
 
-The exact tier-2 value follows from the LP's coal demand × all
-hours.  The test asserts the extracted carrier matches the hand-
-derived total within machine precision — which is the parity
-contract for the Δ.11 in-memory carrier path.
+Tier 2 (quantity = 1e30 infinity sentinel) is intentionally excluded
+from the carrier — B1 parity with legacy
+``_load_finite_ladder_tiers`` in ``cumulative_handoffs.py``.  The
+mod's ``p_ladder_cum_realized_mwh`` defaults to 0 for any
+unspecified ``(c, i, d)`` triple so an infinite-cap tier's absent
+row collapses to the same 0-default the on-disk format produces.
+
+The test asserts the extracted carrier matches the hand-derived
+total within machine precision — which is the parity contract for
+the Δ.11 in-memory carrier path.
 """
 from __future__ import annotations
 
@@ -96,34 +99,50 @@ def test_cum_sim_hours_extracted_from_workdir():
 def test_cumulative_commodity_extracted_from_v_trade():
     """``cumulative_commodity[coal, i, p2020]`` matches the
     uniform-split formula: Σ_n v_trade × unitsize × (realized/horizon).
+
+    B1 — infinite-cap tiers (quantity >= 1e29 sentinel) are filtered
+    out of the carrier, mirroring legacy
+    ``write_ladder_rolling_accumulators`` which only persists rows for
+    ``_load_finite_ladder_tiers``.  This fixture has tier-1 (quantity =
+    1.0) finite and tier-2 (quantity = 1e30) infinite, so only the
+    tier-1 row materialises.  The mod's ``p_ladder_cum_realized_mwh``
+    defaults to 0 for unspecified ``(c, i, d)`` triples so infinite
+    tiers are silently 0 anyway — the on-disk byte parity stays intact.
     """
     sol, handoff = _solve_fixture()
     carrier = handoff.cumulative_commodity
     assert carrier is not None, (
         "cumulative_commodity must be populated for a fixture with "
         "v_trade + ci_ladder_cumulative")
-    # Fixture has 2 finite tiers (coal/1, coal/2).
-    assert carrier.height == 2, (
-        f"two finite tiers → two carrier rows, got {carrier.height}")
+    # Fixture: tier-1 finite (cap = 1 MWh), tier-2 infinite (1e30 sentinel).
+    # Only finite tiers materialise in the carrier (B1 parity with legacy
+    # ``_load_finite_ladder_tiers``).
+    assert carrier.height == 1, (
+        f"one finite tier → one carrier row, got {carrier.height}")
     by_tier = {(r["commodity"], int(r["tier"])): float(r["mwh"])
                   for r in carrier.iter_rows(named=True)}
 
     # Hand check: tier 1 binds at the 1 MWh cumulative cap.
     assert abs(by_tier[("coal", 1)] - 1.0) < 1e-6, (
         f"hand-derived tier-1 mwh = 1.0; got {by_tier[('coal', 1)]}")
-    # Tier 2 absorbs the rest of the demand.
-    assert by_tier[("coal", 2)] > 100.0, (
-        f"tier 2 (+∞ cap) should absorb most demand; got {by_tier[('coal', 2)]}")
+    # Tier 2 (infinite cap) is intentionally absent — the mod defaults
+    # ``p_ladder_cum_realized_mwh`` to 0 for unspecified rows.
+    assert ("coal", 2) not in by_tier, (
+        "infinite-cap tier 2 must NOT appear in carrier; got "
+        f"{by_tier.get(('coal', 2))}")
 
     # Independent re-derivation from v_trade for the parity
     # cross-check (mirror of the extractor's algorithm, computed
-    # without going through the SolveHandoff carrier path).
+    # without going through the SolveHandoff carrier path).  Restricted
+    # to finite tiers (tier-1 only) to match the carrier's filter.
     v_trade = sol.value("v_trade")
     # All timesteps realized → fraction = 1.0; unitsize defaults to 1.0
     # since p_commodity_unitsize.csv is absent for this fixture.
     expected: dict[tuple[str, int], float] = {}
     for r in v_trade.iter_rows(named=True):
         c = str(r["c"]); i = int(r["i"]); v = float(r["value"])
+        if (c, i) != ("coal", 1):
+            continue
         expected[(c, i)] = expected.get((c, i), 0.0) + v
     for key, exp_v in expected.items():
         got = by_tier.get(key)

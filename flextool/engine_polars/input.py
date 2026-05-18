@@ -4386,6 +4386,23 @@ def _extract_cumulative_commodity(
     # Finite ladder tiers — cumulative restriction set.  Phase 4 (Gap F):
     # prefer in-memory ``flex_data.ci_ladder_cumulative`` over the workdir
     # CSV when supplied.
+    #
+    # B1 — also filter by quantity to mirror the legacy
+    # ``_load_finite_ladder_tiers`` in ``cumulative_handoffs.py``:
+    # tiers with the ``1e30`` infinity sentinel (quantity >= 1e29) are
+    # dropped because their cap never binds and a 0-valued accumulator
+    # row carries no semantic content.  Without this filter
+    # infinity-sentinel tiers like ``coal,2`` leak into the carrier with
+    # 0.0 values and breach the test invariant in
+    # ``tests/test_commodity_ladder_rolling.py``.
+    #
+    # B1 — additionally union annual-ladder tiers from
+    # ``commodity__tier_ann``.  Annual fixtures may have an EMPTY
+    # ``ci_ladder_cumulative`` (no cumulative ladder commodities) but
+    # still need accumulator rows — the legacy
+    # ``_load_finite_ladder_tiers`` reads BOTH
+    # ``commodity_ladder_cumulative`` and ``commodity_ladder_annual``
+    # for this same reason.
     finite_tiers: set[tuple[str, int]] = set()
     cilc_df = None
     if flex_data is not None and getattr(flex_data, "ci_ladder_cumulative", None) is not None:
@@ -4407,6 +4424,66 @@ def _extract_cumulative_commodity(
                     finite_tiers.add((str(r[c_col]), int(r[i_col])))
                 except (TypeError, ValueError, KeyError):
                     continue
+
+    # Annual-ladder tier set (commodity__tier_ann) — additive.
+    cta_df = None
+    if flex_data is not None and getattr(flex_data, "commodity__tier_ann", None) is not None:
+        cta_df = flex_data.commodity__tier_ann
+    else:
+        cta_path = sd / "commodity__tier_ann.csv"
+        if _provider_has(provider, "solve_data/commodity__tier_ann", cta_path):
+            try:
+                cta_df = _provider_read(provider, "solve_data/commodity__tier_ann", cta_path)
+            except pl.exceptions.NoDataError:
+                cta_df = None
+    if cta_df is not None and cta_df.height > 0:
+        c_col = "commodity" if "commodity" in cta_df.columns else "c"
+        i_col = "tier" if "tier" in cta_df.columns else "i"
+        if c_col in cta_df.columns and i_col in cta_df.columns:
+            for r in cta_df.iter_rows(named=True):
+                try:
+                    finite_tiers.add((str(r[c_col]), int(r[i_col])))
+                except (TypeError, ValueError, KeyError):
+                    continue
+
+    if not finite_tiers:
+        return None
+
+    # B1 — drop infinity-sentinel tiers (quantity >= 1e29).  The
+    # quantity column lives on ``input/commodity_ladder_cumulative`` and
+    # ``input/commodity_ladder_annual``; a tier is "finite" if either
+    # source carries a finite quantity for it (the annual cap evaluates
+    # per period, so any finite-cap period qualifies the tier).
+    _INFINITE_TIER_THRESHOLD = 1e29
+    qty_finite: set[tuple[str, int]] = set()
+    for prov_key, csv_path in (
+        ("input/commodity_ladder_cumulative",
+         (Path(sd).parent / "input" / "commodity_ladder_cumulative.csv")),
+        ("input/commodity_ladder_annual",
+         (Path(sd).parent / "input" / "commodity_ladder_annual.csv")),
+    ):
+        qdf = None
+        if _provider_has(provider, prov_key, csv_path):
+            try:
+                qdf = _provider_read(provider, prov_key, csv_path)
+            except pl.exceptions.NoDataError:
+                qdf = None
+        if qdf is None or qdf.height == 0:
+            continue
+        if not {"commodity", "tier", "quantity"}.issubset(qdf.columns):
+            continue
+        for r in qdf.iter_rows(named=True):
+            try:
+                c = str(r["commodity"])
+                i = int(r["tier"])
+                q = float(r["quantity"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            if q != q or q >= _INFINITE_TIER_THRESHOLD:
+                continue
+            qty_finite.add((c, i))
+    if qty_finite:
+        finite_tiers = finite_tiers & qty_finite
     if not finite_tiers:
         return None
 
