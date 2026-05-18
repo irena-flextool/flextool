@@ -56,6 +56,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from flextool.engine_polars._axis_enums import rename_to_axis
+
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
 
@@ -185,7 +187,7 @@ def period_walk_iterator(
     # (the strict-lookback predicate doesn't reference lifetime).
 
     # Anchor years.
-    pyd_anchor = pyd_lf.rename({"d": "d", "yr": "yr_d"})
+    pyd_anchor = pyd_lf.pipe(rename_to_axis, {"d": "d", "yr": "yr_d"})
     # d_all years.
     pyd_all = pyd_lf.rename({"d": "d_all", "yr": "yr_dall"})
     # ``period_in_use`` is a plain ``list[str]``; the cross join with

@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING, Iterable
 
 import polars as pl
 
-from flextool.engine_polars._axis_enums import schema_dtype
+from flextool.engine_polars._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine_polars._solve_state import FlexToolConfigError
 
 # BlockLayout's emit_frames runs before the broadcast cascade and has no
@@ -1442,7 +1442,7 @@ class BlockLayout:
                                          "b_f": pl.Utf8})
         return (
             self.overlap_set_frame
-            .rename({"block_coarse": "bk", "block_fine": "b_f"})
+            .pipe(rename_to_axis, {"block_coarse": "bk", "block_fine": "b_f"})
             .select("bk", "b_f").unique()
         )
 

@@ -52,7 +52,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import schema_dtype
+from ._axis_enums import rename_to_axis, schema_dtype
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +232,7 @@ def _write_frame(frame: pl.DataFrame, path: Path,
     # Apply the rename only for present columns.
     eff_rename = {k: v for k, v in rename.items() if k in df.columns}
     if eff_rename:
-        df = df.rename(eff_rename)
+        df = df.pipe(rename_to_axis, eff_rename)
     # Order: rename targets first (in dict order), then any remaining cols.
     target_order = [v for v in rename.values() if v in df.columns]
     rest = [c for c in df.columns if c not in target_order]
@@ -336,7 +336,7 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
     if data.p_entity_all_existing is not None:
         f = _frame_of(data.p_entity_all_existing)
         if f is not None:
-            stub = (f.rename({"e": "entity", "d": "period"})
+            stub = (f.pipe(rename_to_axis, {"e": "entity", "d": "period"})
                      .with_columns(
                          p_entity_period_existing_capacity=pl.col("value"),
                          p_entity_period_invested_capacity=pl.lit(0.0),
@@ -397,7 +397,7 @@ def _write_input_entity_set_csvs(data: "FlexData", inp_dir: Path) -> None:
     # node.csv
     nb = _frame_of(data.nodeBalance) if data.nodeBalance is not None else None
     if nb is not None:
-        node_lf = nb.rename({"n": "node"}).select("node")
+        node_lf = nb.pipe(rename_to_axis, {"n": "node"}).select("node")
     else:
         _enums = getattr(data, "_axis_enums", None)
         node_lf = pl.DataFrame({"node": []},
@@ -545,7 +545,8 @@ def _write_pdt_sliced(data: "FlexData", sd_dir: Path,
             # Expected schema: (n, d, t, value) — rename to canonical and add
             # the literal ``param=`` column.
             ren = {"n": "node", "d": "period", "t": "time"}
-            rows.append((f.rename({k: v for k, v in ren.items() if k in f.columns})
+            rows.append((f.pipe(rename_to_axis,
+                                 {k: v for k, v in ren.items() if k in f.columns})
                            .with_columns(param=pl.lit(param_value))
                            .select("node", "param", "period", "time", "value")))
         if rows:
@@ -560,7 +561,8 @@ def _write_pdt_sliced(data: "FlexData", sd_dir: Path,
             if f is None:
                 continue
             ren = {"p": "process", "d": "period", "t": "time"}
-            rows.append((f.rename({k: v for k, v in ren.items() if k in f.columns})
+            rows.append((f.pipe(rename_to_axis,
+                                 {k: v for k, v in ren.items() if k in f.columns})
                            .with_columns(param=pl.lit(param_value))
                            .select("process", "param", "period", "time", "value")))
         if rows:
@@ -574,7 +576,8 @@ def _write_pdt_sliced(data: "FlexData", sd_dir: Path,
         if f is None:
             continue
         ren = {"c": "commodity", "d": "period", "t": "time"}
-        rows.append((f.rename({k: v for k, v in ren.items() if k in f.columns})
+        rows.append((f.pipe(rename_to_axis,
+                             {k: v for k, v in ren.items() if k in f.columns})
                        .with_columns(param=pl.lit(param_value))
                        .select("commodity", "param", "period", "time", "value")))
     if rows:
@@ -588,7 +591,8 @@ def _write_pdt_sliced(data: "FlexData", sd_dir: Path,
         if f is None:
             continue
         ren = {"g": "group", "d": "period", "t": "time"}
-        rows.append((f.rename({k: v for k, v in ren.items() if k in f.columns})
+        rows.append((f.pipe(rename_to_axis,
+                             {k: v for k, v in ren.items() if k in f.columns})
                        .with_columns(param=pl.lit(param_value))
                        .select("group", "param", "period", "time", "value")))
     if rows:
@@ -613,7 +617,8 @@ def _write_pd_sliced(data: "FlexData", sd_dir: Path) -> None:
         if f is None:
             continue
         ren = {"p": "process", "d": "period"}
-        rows.append((f.rename({k: v for k, v in ren.items() if k in f.columns})
+        rows.append((f.pipe(rename_to_axis,
+                             {k: v for k, v in ren.items() if k in f.columns})
                        .with_columns(param=pl.lit(param_value))
                        .select("process", "param", "period", "value")))
     if rows:
@@ -712,7 +717,7 @@ def _write_p_input_sliced(data: "FlexData", inp_dir: Path) -> None:
         f = _frame_of(getattr(data, field, None))
         if f is None:
             continue
-        rec = (f.rename({"c": "commodity", "value": "p_commodity"})
+        rec = (f.pipe(rename_to_axis, {"c": "commodity", "value": "p_commodity"})
                 .with_columns(commodityParam=pl.lit(param_value))
                 .select("commodity", "commodityParam", "p_commodity"))
         rows.append(rec)
@@ -728,7 +733,7 @@ def _write_p_input_sliced(data: "FlexData", inp_dir: Path) -> None:
         f = _frame_of(getattr(data, field, None))
         if f is None:
             continue
-        rec = (f.rename({"n": "node", "value": "p_node"})
+        rec = (f.pipe(rename_to_axis, {"n": "node", "value": "p_node"})
                 .with_columns(nodeParam=pl.lit(param_value))
                 .select("node", "nodeParam", "p_node"))
         rows.append(rec)
@@ -744,7 +749,7 @@ def _write_p_input_sliced(data: "FlexData", inp_dir: Path) -> None:
         f = _frame_of(getattr(data, field, None))
         if f is None:
             continue
-        rec = (f.rename({"p": "process", "value": "p_process"})
+        rec = (f.pipe(rename_to_axis, {"p": "process", "value": "p_process"})
                 .with_columns(processParam=pl.lit(param_value))
                 .select("process", "processParam", "p_process"))
         rows.append(rec)

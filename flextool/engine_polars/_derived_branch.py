@@ -59,7 +59,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import cast_dim, schema_dtype
+from ._axis_enums import cast_dim, rename_to_axis, schema_dtype
 from ._writer_provider_io import _provider_key
 
 
@@ -111,7 +111,7 @@ def _maybe_provider_lf(provider, path: Path,
         cols = df.columns
         applied = {k: v for k, v in rename.items() if k in cols}
         if applied:
-            lf = lf.rename(applied)
+            lf = lf.pipe(rename_to_axis, applied)
     return lf
 
 

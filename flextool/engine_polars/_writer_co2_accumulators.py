@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from flextool.engine_polars._axis_enums import lit_axis, rename_to_axis
+
 if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
 
@@ -79,7 +81,8 @@ def _read_commodity_node_co2(
     df = provider.get("solve_data/commodity_node_co2")
     if df.height == 0:
         return pl.DataFrame(schema={"c": pl.Utf8, "n": pl.Utf8})
-    return df.rename({"commodity": "c", "node": "n"}).select("c", "n").unique()
+    return (df.pipe(rename_to_axis, {"commodity": "c", "node": "n"})
+            .select("c", "n").unique())
 
 
 def _param_frame(param, *cols: str) -> pl.DataFrame:
@@ -157,11 +160,11 @@ def compute_co2_rolling_accumulator(
     pss_eff = _set_frame(
         getattr(flex_data, "process_source_sink_eff", None),
         "p", "source", "sink",
-    ).with_columns(branch=pl.lit("eff"))
+    ).with_columns(branch=lit_axis("eff", "branch"))
     pss_noeff = _set_frame(
         getattr(flex_data, "process_source_sink_noEff", None),
         "p", "source", "sink",
-    ).with_columns(branch=pl.lit("noEff"))
+    ).with_columns(branch=lit_axis("noEff", "branch"))
     pss = pl.concat([pss_eff, pss_noeff], how="diagonal")
 
     process_unit = _set_frame(
@@ -240,7 +243,7 @@ def compute_co2_rolling_accumulator(
 
     # Emission branch (source ∈ CO2 nodes).  Skip rows whose pss isn't
     # categorised (branch null) — mirrors the legacy "skip uncategorised".
-    cn_emis = cn_co2.rename({"n": "source", "c": "c_emis"})
+    cn_emis = cn_co2.pipe(rename_to_axis, {"n": "source", "c": "c_emis"})
     co2_emis = co2_content.rename({"c": "c_emis", "content": "content_emis"})
     emis = (vf
         .join(cn_emis, on="source", how="inner")
@@ -270,7 +273,7 @@ def compute_co2_rolling_accumulator(
         .select("attr_node", pl.col("d").alias("period"), "contribution"))
 
     # Removal branch (sink ∈ CO2 nodes).
-    cn_rem = cn_co2.rename({"n": "sink", "c": "c_rem"})
+    cn_rem = cn_co2.pipe(rename_to_axis, {"n": "sink", "c": "c_rem"})
     co2_rem = co2_content.rename({"c": "c_rem", "content": "content_rem"})
     rem = (vf
         .join(cn_rem, on="sink", how="inner")
@@ -296,14 +299,14 @@ def compute_co2_rolling_accumulator(
             .join(gn, left_on="attr_node", right_on="n", how="inner")
             .group_by(["g", "period"])
             .agg(pl.col("contribution").sum().alias("value"))
-            .rename({"g": "group"}))
+            .pipe(rename_to_axis, {"g": "group"}))
     else:
         # No group_node mapping → fan out to every active group.
         per_period = (contrib
             .group_by("period")
             .agg(pl.col("contribution").sum().alias("value")))
         attributed = pl.concat(
-            [per_period.with_columns(group=pl.lit(g))
+            [per_period.with_columns(group=lit_axis(g, "group"))
              for g in sorted(co2_groups)],
             how="vertical",
         ).select("group", "period", "value")

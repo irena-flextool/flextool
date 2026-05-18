@@ -55,7 +55,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from ._axis_enums import schema_dtype
+from ._axis_enums import rename_to_axis, schema_dtype
 
 # ``_empty_flex_data`` runs before any FlexData is materialised — the
 # returned sentinel frames are immediately overwritten by the override
@@ -228,19 +228,19 @@ def _populate_topology(flex_data: "FlexData",
             flex_data.flow_from_commodity_eff = (
                 pss_eff
                 .join(cn, left_on="source", right_on="node", how="inner")
-                .rename({"commodity": "c"})
+                .pipe(rename_to_axis, {"commodity": "c"})
                 .select("p", "source", "sink", "c")
             )
             flex_data.flow_from_commodity_noEff = (
                 pss_noEff
                 .join(cn, left_on="source", right_on="node", how="inner")
-                .rename({"commodity": "c"})
+                .pipe(rename_to_axis, {"commodity": "c"})
                 .select("p", "source", "sink", "c")
             )
             flex_data.flow_to_commodity = (
                 pss
                 .join(cn, left_on="sink", right_on="node", how="inner")
-                .rename({"commodity": "c"})
+                .pipe(rename_to_axis, {"commodity": "c"})
                 .select("p", "source", "sink", "c")
             )
 

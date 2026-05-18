@@ -32,6 +32,8 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine_polars._axis_enums import rename_to_axis
+
 
 # ---------------------------------------------------------------------------
 # CSV I/O — same conventions as _writer_leaf_sets:
@@ -462,8 +464,9 @@ def _per_entity_fallback(
     preserve their CSV order.
     """
     entity_col, method_col = out_columns
-    explicit = explicit.rename({explicit.columns[0]: entity_col,
-                                explicit.columns[1]: method_col})
+    explicit = explicit.pipe(rename_to_axis,
+                              {explicit.columns[0]: entity_col,
+                               explicit.columns[1]: method_col})
 
     explicit_by_entity: dict[str, list[str]] = {}
     for e, m in explicit.iter_rows():

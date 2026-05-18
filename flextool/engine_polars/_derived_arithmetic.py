@@ -48,6 +48,8 @@ import polars as pl
 
 from polar_high import Param
 
+from flextool.engine_polars._axis_enums import rename_to_axis
+
 from ._derived_params import (
     _entity_unitsize_lf,
     _node_unitsize_lf,
@@ -90,7 +92,7 @@ def p_unitsize_from_source(source: "InputSource",
     if pss is None or pss.height == 0:
         return None
     procs = pss.lazy().select(pl.col("p")).unique()
-    us_lf = _entity_unitsize_lf(source).rename({"e": "p"})
+    us_lf = _entity_unitsize_lf(source).pipe(rename_to_axis, {"e": "p"})
     df = (procs
             .join(us_lf, on="p", how="inner")
             .select("p", pl.col("us").alias("value"))
