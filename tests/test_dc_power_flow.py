@@ -1006,3 +1006,127 @@ class TestPGLibCase14Integration:
             assert float(angle_row[bus_col]) != 0.0, (
                 f"{bus_col} should have non-zero angle"
             )
+
+
+# ===================================================================
+# Test 12: MATPOWER converter parameter regression (LATENT BUG B2)
+# ===================================================================
+#
+# The MATPOWER → FlexTool converter has to write three things that are
+# easy to forget and silently produce a wrong LP:
+#
+# 1. ``unit.conversion_method`` — must be a FlexTool method enum
+#    (e.g. ``constant_efficiency``), NEVER the raw integer from
+#    ``gencost.model``.
+# 2. ``commodity.price`` — must reflect the linear coefficient ``c1``
+#    from ``gencost`` so the cheap-fuel route is actually cheap.
+# 3. ``node.node_type = "commodity"`` on the per-generator fuel node
+#    — otherwise the node behaves as ``none``, the unit's input flow
+#    has no inflow source, and the model serves load through
+#    ``vq_state_up`` at the bus's ``penalty_up`` instead.  This was the
+#    proximate cause of LATENT BUG B2 (case14 v_obj 1264× too large).
+class TestMatpowerConverterRegression:
+    """Regression: read_matpower converter writes the parameters that
+    LATENT BUG B2 showed were necessary for a non-slack LP solution.
+    """
+
+    def test_converter_writes_node_type_commodity(self, tmp_path: Path) -> None:
+        from spinedb_api import DatabaseMapping
+
+        from flextool.process_inputs.read_matpower import (
+            create_flextool_db_from_matpower,
+            read_matpower,
+        )
+
+        case = read_matpower(str(_CASE14_PATH))
+        db_path = str(tmp_path / "case14.sqlite")
+        url = create_flextool_db_from_matpower(case, db_path)
+
+        with DatabaseMapping(url) as db:
+            # Inspect every commodity_gen* node, plus collect the gen_*
+            # unit parameters and the fuel_gen* commodity prices.
+            commodity_nodes: dict[str, dict] = {}
+            unit_params: dict[str, dict] = {}
+            commodity_params: dict[str, dict] = {}
+
+            for ent in db.get_entity_items(entity_class_name="node"):
+                name = ent["name"]
+                if name.startswith("commodity_gen"):
+                    commodity_nodes[name] = {}
+            for ent in db.get_entity_items(entity_class_name="unit"):
+                name = ent["name"]
+                if name.startswith("gen_"):
+                    unit_params[name] = {}
+            for ent in db.get_entity_items(entity_class_name="commodity"):
+                name = ent["name"]
+                if name.startswith("fuel_gen"):
+                    commodity_params[name] = {}
+
+            for pv in db.get_parameter_value_items(entity_class_name="node"):
+                if pv["entity_name"] in commodity_nodes:
+                    commodity_nodes[pv["entity_name"]][
+                        pv["parameter_definition_name"]
+                    ] = pv["parsed_value"]
+            for pv in db.get_parameter_value_items(entity_class_name="unit"):
+                if pv["entity_name"] in unit_params:
+                    unit_params[pv["entity_name"]][
+                        pv["parameter_definition_name"]
+                    ] = pv["parsed_value"]
+            for pv in db.get_parameter_value_items(entity_class_name="commodity"):
+                if pv["entity_name"] in commodity_params:
+                    commodity_params[pv["entity_name"]][
+                        pv["parameter_definition_name"]
+                    ] = pv["parsed_value"]
+
+        # At least gen_1 and gen_2 are non-zero-capacity in case14.
+        assert "gen_1" in unit_params and "gen_2" in unit_params
+
+        # (1) conversion_method must be a FlexTool method enum, not the
+        #     raw MATPOWER ``gencost.model`` integer.
+        for name, params in unit_params.items():
+            assert "conversion_method" in params, (
+                f"{name}: conversion_method missing"
+            )
+            method = params["conversion_method"]
+            # Defensive: spinedb_api may hand us back ``str`` or
+            # ``ParameterValue`` wrappers.  Normalise to ``str`` and assert
+            # against the documented FlexTool enum.
+            method_str = str(method)
+            assert method_str == "constant_efficiency", (
+                f"{name}.conversion_method = {method_str!r}; expected "
+                "'constant_efficiency' (must be a FlexTool method enum, "
+                "NOT the raw gencost.model integer)"
+            )
+
+        # (2) commodity.price must reflect the linear cost coefficient
+        #     from gencost.  case14 gen_1 has c1 = 7.920951.
+        assert "fuel_gen1" in commodity_params
+        assert float(commodity_params["fuel_gen1"]["price"]) == pytest.approx(
+            7.920951, rel=1e-9,
+        ), (
+            "fuel_gen1.price must equal gencost c1 (7.920951 for case14); "
+            f"got {commodity_params['fuel_gen1'].get('price')!r}"
+        )
+        # gen_2 cost 23.269494 in case14.
+        assert "fuel_gen2" in commodity_params
+        assert float(commodity_params["fuel_gen2"]["price"]) == pytest.approx(
+            23.269494, rel=1e-9,
+        )
+
+        # (3) Each per-generator fuel node must declare node_type =
+        #     "commodity".  Without this, the unit's input has no inflow
+        #     source and the LP serves load through vq_state_up slack
+        #     (the proximate cause of LATENT BUG B2).
+        assert "commodity_gen1" in commodity_nodes
+        assert "commodity_gen2" in commodity_nodes
+        for name, params in commodity_nodes.items():
+            assert "node_type" in params, (
+                f"{name}: node_type parameter missing — LATENT BUG B2 "
+                "regression"
+            )
+            assert str(params["node_type"]) == "commodity", (
+                f"{name}.node_type = {params['node_type']!r}; expected "
+                "'commodity'. Without this, FlexTool treats the node as "
+                "default ``none`` with no inflow source, and load is "
+                "served by vq_state_up slack at penalty_up."
+            )

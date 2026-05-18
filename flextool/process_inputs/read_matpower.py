@@ -343,10 +343,18 @@ def _add_matpower_data(
             # For n=3: coeffs = [c2, c1, c0]
             c1 = gen.cost_coeffs[-2]  # c1 is the second-to-last
 
-        # Commodity and commodity node
+        # Commodity and commodity node.  The node must declare
+        # ``node_type = "commodity"`` — otherwise FlexTool treats it as a
+        # default ``none`` balance node with no source of inflow, and the
+        # unit's input flow ends up served by ``vq_state_up`` slack at
+        # the bus's ``penalty_up``.  See LATENT BUG B2.
         add_entity("commodity", commodity_name)
         add_entity("node", commodity_node_name)
         add_entity("commodity__node", (commodity_name, commodity_node_name))
+
+        parameter_values.append((
+            "node", commodity_node_name, "node_type", "commodity", alternative,
+        ))
 
         # Set commodity price = marginal cost
         parameter_values.append(("commodity", commodity_name, "price", c1, alternative))
