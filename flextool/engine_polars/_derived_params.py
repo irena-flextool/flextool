@@ -43,7 +43,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import schema_dtype
+from ._axis_enums import lit_axis, rename_to_axis, schema_dtype
 from ._writer_provider_io import _provider_key
 
 
@@ -381,7 +381,7 @@ def dt_and_step_duration_from_source(
     pb_raw = _ctx_read(ctx, workdir, "period__branch.csv", provider=provider) if workdir is not None or ctx is not None else None
     if pb_raw is not None and pb_raw.height > 0:
         pb_lf = (pb_raw.lazy()
-                    .rename({"period": "anchor", "branch": "d"})
+                    .pipe(rename_to_axis, {"period": "anchor", "branch": "d"})
                     .filter(pl.col("anchor") != pl.col("d")))
         # Map branch d → anchor's timeset.
         anchor_ts = (pt.rename({"d": "anchor"})
@@ -952,7 +952,7 @@ def _read_p_entity_all_existing_csv(workdir: Path | None,
     if (df.height == 0 or "entity" not in df.columns
             or "period" not in df.columns or "value" not in df.columns):
         return None
-    return (df.rename({"entity": "e", "period": "d"})
+    return (df.pipe(rename_to_axis, {"entity": "e", "period": "d"})
               .with_columns(value=pl.col("value")
                                        .cast(pl.Float64, strict=False)
                                        .fill_null(0.0))
@@ -1002,8 +1002,8 @@ def p_process_existing_count_from_source(
         if per_proc.height > 0:
             us_lf = _entity_unitsize_lf(source)
             df = (per_proc.lazy()
-                     .rename({"e": "p"})
-                     .join(us_lf.rename({"e": "p"}), on="p", how="left")
+                     .pipe(rename_to_axis, {"e": "p"})
+                     .join(us_lf.pipe(rename_to_axis, {"e": "p"}), on="p", how="left")
                      .with_columns(us=pl.col("us").fill_null(1000.0))
                      .with_columns(value=pl.col("value") / pl.col("us"))
                      .select("p", "d", "value")
@@ -1557,12 +1557,12 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     if units is not None:
         parts.append(units.lazy().select(
             pl.col("name").alias("p"),
-            pl.lit("unit").alias("klass"),
+            lit_axis("unit", "klass").alias("klass"),
         ))
     if conns is not None:
         parts.append(conns.lazy().select(
             pl.col("name").alias("p"),
-            pl.lit("connection").alias("klass"),
+            lit_axis("connection", "klass").alias("klass"),
         ))
     if not parts:
         return pl.DataFrame(schema={
@@ -1769,7 +1769,7 @@ def _zero_flow_coef_pairs(source: "InputSource",
             rename[c] = "p"
         elif c == "node":
             rename[c] = col
-    out = (df.lazy().rename(rename)
+    out = (df.lazy().pipe(rename_to_axis, rename)
               .with_columns(pl.col("value").cast(pl.Float64, strict=False))
               .filter(pl.col("value") == 0.0)
               .select("p", col))
@@ -1911,8 +1911,8 @@ def _flow_upper_existing_from_chained_csv(source: "InputSource",
         return None
     us_lf = _entity_unitsize_lf(source)
     base = (per_proc.lazy()
-              .rename({"e": "p"})
-              .join(us_lf.rename({"e": "p"}), on="p", how="left")
+              .pipe(rename_to_axis, {"e": "p"})
+              .join(us_lf.pipe(rename_to_axis, {"e": "p"}), on="p", how="left")
               .with_columns(us=pl.col("us").fill_null(1000.0))
               .with_columns(value=pl.col("value") / pl.col("us"))
               .select("p", "d", "value"))
@@ -3570,8 +3570,8 @@ def edd_divest_active_from_source(source: "InputSource",
             "d": schema_dtype(_enums, "d"),
         })
     period_lf = pl.LazyFrame({"d": periods})
-    pdd_lf = pd_divest.lazy().rename({"d": "d_divest"})
-    yr_div = pyd_lf.rename({"d": "d_divest", "yr": "yr_divest"})
+    pdd_lf = pd_divest.lazy().pipe(rename_to_axis, {"d": "d_divest"})
+    yr_div = pyd_lf.pipe(rename_to_axis, {"d": "d_divest", "yr": "yr_divest"})
     yr_d = pyd_lf.rename({"yr": "yr"})
     out = (pdd_lf
               .join(period_lf, how="cross")
@@ -4100,7 +4100,7 @@ def _arc_max_capacity_coef_lf(source: "InputSource",
             rename[c] = "p"
         elif c == "node":
             rename[c] = node_alias
-    return (df.lazy().rename(rename)
+    return (df.lazy().pipe(rename_to_axis, rename)
               .with_columns(pl.col("value").cast(pl.Float64).alias("coef"))
               .select("p", node_alias, "coef")
               .unique(subset=["p", node_alias], keep="last"))
@@ -4236,7 +4236,7 @@ def p_flow_upper_from_source(source: "InputSource",
     # p_entity_all_existing / p_unitsize.
     if p_entity_max_units is not None and p_entity_max_units.frame.height > 0:
         cap_per_unit_lf = (p_entity_max_units.frame.lazy()
-            .rename({"e": "p"})
+            .pipe(rename_to_axis, {"e": "p"})
             .select("p", "d", pl.col("value").alias("cap_per_unit")))
     else:
         # Derive from existing / unitsize.  We only need rows that join
@@ -4246,14 +4246,14 @@ def p_flow_upper_from_source(source: "InputSource",
         # p_unitsize may come keyed on (p,) (post-Δ.4b override) or (e,)
         # (raw cascade); accept both.
         if p_unitsize is None or p_unitsize.frame.height == 0:
-            us_df = _entity_unitsize_lf(source).rename({"e": "p", "us": "us"}).collect()
+            us_df = _entity_unitsize_lf(source).pipe(rename_to_axis, {"e": "p", "us": "us"}).collect()
         else:
             us_cols = p_unitsize.frame.columns
             us_key = "p" if "p" in us_cols else "e"
-            us_df = p_unitsize.frame.rename({us_key: "p", "value": "us"})
+            us_df = p_unitsize.frame.pipe(rename_to_axis, {us_key: "p", "value": "us"})
         cap_per_unit_lf = (
             p_entity_all_existing.frame.lazy()
-                .rename({"e": "p", "value": "cap"})
+                .pipe(rename_to_axis, {"e": "p", "value": "cap"})
                 .join(us_df.lazy(), on="p", how="left")
                 .with_columns(
                     cap_per_unit=pl.when((pl.col("us").is_not_null())
@@ -5191,7 +5191,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
                 and "entity" in pae_ctx.columns \
                 and "period" in pae_ctx.columns \
                 and "value" in pae_ctx.columns:
-            df2 = (pae_ctx.rename({"entity": "e", "period": "d"})
+            df2 = (pae_ctx.pipe(rename_to_axis, {"entity": "e", "period": "d"})
                           .with_columns(value=pl.col("value")
                                                   .cast(pl.Float64,
                                                           strict=False)
@@ -5207,7 +5207,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
                 df = _provider_read(provider, pae_path)
                 if df.height > 0 and "entity" in df.columns \
                         and "period" in df.columns and "value" in df.columns:
-                    df2 = (df.rename({"entity": "e", "period": "d"})
+                    df2 = (df.pipe(rename_to_axis, {"entity": "e", "period": "d"})
                               .with_columns(value=pl.col("value")
                                                        .cast(pl.Float64,
                                                                 strict=False)
@@ -5459,7 +5459,7 @@ def _reserve_active_relationships(source: "InputSource"
         if "r" not in [rename.get(c, c) for c in cols] \
                 or "ud" not in [rename.get(c, c) for c in cols]:
             continue
-        parts.append(ents.lazy().rename(rename).select("p", "r", "ud", "n"))
+        parts.append(ents.lazy().pipe(rename_to_axis, rename).select("p", "r", "ud", "n"))
     if not parts:
         return None
     return pl.concat(parts).unique().sort("p", "r", "ud", "n").collect()
@@ -5505,7 +5505,7 @@ def process_reserve_upDown_node_active_from_source(source: "InputSource",
                 rename[c] = "n"
             elif c in ("unit", "connection"):
                 rename[c] = "p"
-        rel_dfs.append(df.lazy().rename(rename).select(
+        rel_dfs.append(df.lazy().pipe(rename_to_axis, rename).select(
             "p", "r", "ud", "n",
             pl.col("value").cast(pl.Float64).alias("rel"),
         ))
@@ -5919,7 +5919,7 @@ def _dt_period_active_steps(source: "InputSource",
         return None
     pt_eager_full = (p_ts
                        .filter(pl.col("name") == active_solve)
-                       .rename({period_col: "d"})
+                       .pipe(rename_to_axis, {period_col: "d"})
                        .select("d", pl.col("value").alias("ts")))
     if pt_eager_full.height == 0:
         # Active solve isn't in the source's period_timeset (synthetic
@@ -5951,7 +5951,7 @@ def _dt_period_active_steps(source: "InputSource",
         pb_ctx = ctx.period_branch
         if pb_ctx.height > 0:
             # Match the legacy iteration shape via a local rename.
-            pbf = pb_ctx.rename({"d_anchor": "period", "b": "branch"})
+            pbf = pb_ctx.pipe(rename_to_axis, {"d_anchor": "period", "b": "branch"})
     if workdir is not None:
         if not in_use:
             piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
@@ -6378,11 +6378,12 @@ def period_block_family_from_source(source: "InputSource",
                         bsd_c = bsd.filter(
                             pl.col("block").is_in(coarse_use))
                         new_pb = (bsd_c
-                            .rename({"period": "d", "step": "b_first"})
+                            .pipe(rename_to_axis, {"period": "d", "step": "b_first"})
                             .select("d", "b_first").unique())
                         # period_block_succ: cyclic per (block, period).
                         succ_rows: list[tuple[str, str, str]] = []
-                        bsd_sorted = bsd_c.rename(
+                        bsd_sorted = bsd_c.pipe(
+                            rename_to_axis,
                             {"period": "d", "step": "b_first"}
                             ).sort("block", "d", "b_first")
                         for (blk, dval), grp in bsd_sorted.group_by(
@@ -6400,7 +6401,7 @@ def period_block_family_from_source(source: "InputSource",
                         new_pbt = None
                         ov = bl.overlap_set_frame
                         if ov.height > 0:
-                            ov = ov.rename({
+                            ov = ov.pipe(rename_to_axis, {
                                 "period": "d",
                                 "block_coarse": "b",
                                 "step_coarse": "b_first",
@@ -6451,7 +6452,7 @@ def _node_storage_binding_method_with_fallback(source: "InputSource"
                                               "method": pl.Utf8})
     else:
         explicit_rows = (explicit
-            .rename({"name": "n", "value": "method"})
+            .pipe(rename_to_axis, {"name": "n", "value": "method"})
             .select("n", "method"))
     explicit_n = set(explicit_rows["n"].to_list())
     fallback_n = [n for n in nodes["name"].to_list() if n not in explicit_n]
@@ -6625,9 +6626,10 @@ def arc_block_dt_from_source(source: "InputSource",
             or bl.process_side_block_frame.height == 0
             or bl.block_step_duration_frame.height == 0):
         return None
-    psb = bl.process_side_block_frame.rename(
-        {"process": "p", "block": "b_f"})
-    bsd_arc = bl.block_step_duration_frame.rename(
+    psb = bl.process_side_block_frame.pipe(
+        rename_to_axis, {"process": "p", "block": "b_f"})
+    bsd_arc = bl.block_step_duration_frame.pipe(
+        rename_to_axis,
         {"block": "b_f", "period": "d", "step": "t",
           "step_duration": "weight"})
     nsb_set = nodeStateBlock_df["n"].unique()
@@ -6711,7 +6713,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
     pae = p_entity_all_existing_from_source(source, active_solve, workdir, ctx=ctx, provider=provider)
     if pae is not None and pae.frame.height > 0:
         base = (pae.frame.lazy()
-                  .rename({"e": "n"})
+                  .pipe(rename_to_axis, {"e": "n"})
                   .filter(pl.col("n").is_in(list(state_n)))
                   .select("n", "d", "value")
                   .collect())
@@ -6749,7 +6751,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
     cols = ex.columns
     if "period" in cols:
         df = (ex.lazy()
-                .rename({"name": "n", "period": "d"})
+                .pipe(rename_to_axis, {"name": "n", "period": "d"})
                 .filter(pl.col("n").is_in(list(state_n)))
                 .select("n", "d", pl.col("value").cast(pl.Float64))
                 .sort("n", "d")
@@ -6758,7 +6760,7 @@ def p_state_existing_capacity_from_source(source: "InputSource",
         if not full_periods:
             return None
         df = (ex.lazy()
-                .rename({"name": "n"})
+                .pipe(rename_to_axis, {"name": "n"})
                 .filter(pl.col("n").is_in(list(state_n)))
                 .select("n", pl.col("value").cast(pl.Float64))
                 .join(pl.LazyFrame({"d": full_periods}), how="cross")
@@ -6978,7 +6980,7 @@ def p_roll_continue_state_from_workdir(workdir: Path | None,
     df.columns = [c.strip() for c in df.columns]
     if df.height == 0:
         return None
-    df = (df.rename({"node": "n", "p_roll_continue_state": "value"})
+    df = (df.pipe(rename_to_axis, {"node": "n", "p_roll_continue_state": "value"})
             .with_columns(value=pl.col("value").cast(pl.Float64))
             .select("n", "value"))
     return Param(("n",), df)
@@ -6999,7 +7001,7 @@ def p_fix_storage_quantity_from_workdir(workdir: Path | None,
     df = _provider_read(provider, p)
     if df.height == 0:
         return None
-    df = (df.rename({"period": "d", "step": "t", "node": "n",
+    df = (df.pipe(rename_to_axis, {"period": "d", "step": "t", "node": "n",
                        "p_fix_storage_quantity": "value"})
             .with_columns(value=pl.col("value").cast(pl.Float64))
             .select("n", "d", "t", "value"))
@@ -7028,7 +7030,7 @@ def dtt_timeline_matching_from_workdir(workdir: Path | None,
     if df.height == 0:
         return None
     return (df
-            .rename({"period": "d", "step": "t", "upper_step": "t_upper"})
+            .pipe(rename_to_axis, {"period": "d", "step": "t", "upper_step": "t_upper"})
             .select("d", "t", "t_upper")
             .unique())
 
@@ -7059,7 +7061,7 @@ def period_branch_from_source(source: "InputSource",
             # ctx.period_branch schema: [d_anchor, b]; downstream consumer
             # expects (d_upper, d) where d_upper == branch, d == anchor.
             return (pb
-                    .rename({"d_anchor": "d", "b": "d_upper"})
+                    .pipe(rename_to_axis, {"d_anchor": "d", "b": "d_upper"})
                     .select("d_upper", "d")
                     .unique())
     if workdir is not None:
@@ -7068,7 +7070,7 @@ def period_branch_from_source(source: "InputSource",
             df = _provider_read(provider, p)
             if df.height > 0:
                 return (df
-                        .rename({"period": "d", "branch": "d_upper"})
+                        .pipe(rename_to_axis, {"period": "d", "branch": "d_upper"})
                         .select("d_upper", "d")
                         .unique())
     return None
@@ -7725,7 +7727,7 @@ def _read_handoff_e_d_from_workdir(workdir: Path,
     df = _provider_read(provider, p)
     if df.height == 0:
         return None
-    df = (df.rename({"entity": "e", "period": "d"})
+    df = (df.pipe(rename_to_axis, {"entity": "e", "period": "d"})
               .with_columns(value=pl.col("value")
                                        .cast(pl.Float64, strict=False)
                                        .fill_null(0.0))
@@ -7753,7 +7755,7 @@ def _read_handoff_e_from_workdir(workdir: Path, name: str,
         if not non:
             return None
         value_col = non[0]
-    df = (df.rename({"entity": "e", value_col: "value"})
+    df = (df.pipe(rename_to_axis, {"entity": "e", value_col: "value"})
               .with_columns(value=pl.col("value")
                                        .cast(pl.Float64, strict=False)
                                        .fill_null(0.0))
@@ -8480,7 +8482,7 @@ def p_f_d_k_from_source(
                                       .cast(pl.Float64, strict=False))
                       .group_by("period")
                       .agg(pl.col("step_duration").sum().alias("sum_step"))
-                      .rename({"period": "d"}))
+                      .pipe(rename_to_axis, {"period": "d"}))
     # complete_period_share_of_year[d]
     if ctx is not None and ctx.period_share_of_year.height > 0:
         csy = (ctx.period_share_of_year.lazy()
@@ -8493,7 +8495,7 @@ def p_f_d_k_from_source(
         if not _provider_has_key(provider, csy_path):  # Phase E-j — seed-aware (no-op for non-_calc variant)
             return None
         csy = (_provider_read(provider, csy_path).lazy()
-                  .rename({"period": "d"})
+                  .pipe(rename_to_axis, {"period": "d"})
                   .with_columns(pl.col("value").cast(pl.Float64, strict=False)
                                       .alias("share")))
     # ladder_cum_sim_hours — default 0.0 when absent.
@@ -8502,7 +8504,7 @@ def p_f_d_k_from_source(
         cum_raw = _provider_read(provider, cum_path)
         if cum_raw.height > 0 and "p_ladder_cum_sim_hours" in cum_raw.columns:
             cum_lf = (cum_raw.lazy()
-                       .rename({"period": "d",
+                       .pipe(rename_to_axis, {"period": "d",
                                 "p_ladder_cum_sim_hours": "cum"})
                        .with_columns(pl.col("cum")
                                        .cast(pl.Float64, strict=False)))
@@ -8519,7 +8521,7 @@ def p_f_d_k_from_source(
         if not _provider_has_key(provider, piu_path):  # Phase E-j — seed-aware
             return None
         piu_lf = (_provider_read(provider, piu_path).lazy()
-                    .rename({"period": "d"})
+                    .pipe(rename_to_axis, {"period": "d"})
                     .select("d"))
     out_lf = (piu_lf
                 .join(sum_step.select("d", "sum_step"), on="d", how="left")
@@ -8565,7 +8567,7 @@ def p_ladder_cum_realized_mwh_from_workdir(
                  if "p_ladder_cum_realized_mwh" in raw.columns else "value")
     if value_col not in raw.columns:
         return None
-    out = (raw.rename({"commodity": "c", "tier": "i", "period": "d",
+    out = (raw.pipe(rename_to_axis, {"commodity": "c", "tier": "i", "period": "d",
                          value_col: "value"})
               .with_columns(pl.col("i").cast(pl.Utf8))
               .with_columns(pl.col("value").cast(pl.Float64, strict=False))
@@ -8649,7 +8651,7 @@ def prundt_from_source(
             rename[c] = "r"
         elif c == "upDown":
             rename[c] = "ud"
-    res_lf = (res.lazy().rename(rename)
+    res_lf = (res.lazy().pipe(rename_to_axis, rename)
                  .with_columns(pl.col("value")
                                  .cast(pl.Float64, strict=False)))
     # Sum over the value column per (r, ud) — non-zero ⇒ active.

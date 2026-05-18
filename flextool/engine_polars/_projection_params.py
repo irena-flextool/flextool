@@ -47,6 +47,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from flextool.engine_polars._axis_enums import lit_axis, rename_to_axis
+
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
 
@@ -97,7 +99,7 @@ def nodeBalance(source: "InputSource") -> pl.DataFrame:
         return _empty({"n": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value").is_in(["balance", "storage"]))
-              .rename({"name": "n"})
+              .pipe(rename_to_axis, {"name": "n"})
               .select("n")
               .sort("n")
               .collect())
@@ -561,10 +563,10 @@ def _ramp_limit_set(source: "InputSource",
     if side == "source":
         rel_class = "unit__inputNode"
         ramp_pairs = _ramp_pairs(source, rel_class, _RAMP_LIMIT_METHOD) \
-                        .rename({"unit": "p", "node": "source"})
+                        .pipe(rename_to_axis, {"unit": "p", "node": "source"})
         speed_pairs = _ramp_speed_positive_pairs(
             source, rel_class, f"ramp_speed_{direction}") \
-                .rename({"unit": "p", "node": "source"})
+                .pipe(rename_to_axis, {"unit": "p", "node": "source"})
         gated = ramp_pairs.join(speed_pairs, on=["p", "source"],
                                   how="inner")
         canonical = process_source_sink_canonical(source).lazy()
@@ -579,10 +581,10 @@ def _ramp_limit_set(source: "InputSource",
     if side == "sink":
         rel_class = "unit__outputNode"
         ramp_pairs = _ramp_pairs(source, rel_class, _RAMP_LIMIT_METHOD) \
-                        .rename({"unit": "p", "node": "sink"})
+                        .pipe(rename_to_axis, {"unit": "p", "node": "sink"})
         speed_pairs = _ramp_speed_positive_pairs(
             source, rel_class, f"ramp_speed_{direction}") \
-                .rename({"unit": "p", "node": "sink"})
+                .pipe(rename_to_axis, {"unit": "p", "node": "sink"})
         gated = ramp_pairs.join(speed_pairs, on=["p", "sink"],
                                   how="inner")
         canonical = process_source_sink_canonical(source).lazy()
@@ -629,9 +631,9 @@ def process_source_sink_ramp_cost(source: "InputSource") -> pl.DataFrame:
     speed-gate; pure method membership).
     """
     src_cost = (_ramp_pairs(source, "unit__inputNode", _RAMP_COST_METHOD)
-                  .rename({"unit": "p", "node": "source"}))
+                  .pipe(rename_to_axis, {"unit": "p", "node": "source"}))
     sink_cost = (_ramp_pairs(source, "unit__outputNode", _RAMP_COST_METHOD)
-                   .rename({"unit": "p", "node": "sink"}))
+                   .pipe(rename_to_axis, {"unit": "p", "node": "sink"}))
     canonical = process_source_sink_canonical(source).lazy().select(
         "p", "source", "sink").unique()
     via_source = canonical.join(src_cost, on=["p", "source"], how="inner")
@@ -659,7 +661,7 @@ def flow_from_commodity_eff(source: "InputSource",
                        "sink": pl.Utf8, "c": pl.Utf8})
     return (pss_eff.lazy()
               .join(cn.lazy(), left_on="source", right_on="node", how="inner")
-              .rename({"commodity": "c"})
+              .pipe(rename_to_axis, {"commodity": "c"})
               .select("p", "source", "sink", "c")
               .sort("p", "source", "sink", "c")
               .collect())
@@ -679,7 +681,7 @@ def flow_from_commodity_noEff(source: "InputSource",
                        "sink": pl.Utf8, "c": pl.Utf8})
     return (pss_noEff.lazy()
               .join(cn.lazy(), left_on="source", right_on="node", how="inner")
-              .rename({"commodity": "c"})
+              .pipe(rename_to_axis, {"commodity": "c"})
               .select("p", "source", "sink", "c")
               .sort("p", "source", "sink", "c")
               .collect())
@@ -702,7 +704,7 @@ def flow_to_commodity(source: "InputSource",
                        "sink": pl.Utf8, "c": pl.Utf8})
     return (pss.lazy()
               .join(cn.lazy(), left_on="sink", right_on="node", how="inner")
-              .rename({"commodity": "c"})
+              .pipe(rename_to_axis, {"commodity": "c"})
               .select("p", "source", "sink", "c")
               .sort("p", "source", "sink", "c")
               .collect())
@@ -853,7 +855,7 @@ def _profile_filter(source: "InputSource",
         return _empty(empty_schema)
     return (df.lazy()
               .filter(pl.col("value") == method)
-              .rename(dim_renames)
+              .pipe(rename_to_axis, dim_renames)
               .select(*out_cols)
               .sort(*out_cols)
               .collect())
@@ -1076,7 +1078,7 @@ def nodeState(source: "InputSource") -> pl.DataFrame:
         return _empty({"n": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "storage")
-              .rename({"name": "n"})
+              .pipe(rename_to_axis, {"name": "n"})
               .select("n")
               .sort("n")
               .collect())
@@ -1089,7 +1091,7 @@ def storage_bind_filter(source: "InputSource", method: str) -> pl.DataFrame:
         return _empty({"n": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == method)
-              .rename({"name": "n"})
+              .pipe(rename_to_axis, {"name": "n"})
               .select("n")
               .sort("n")
               .collect())
@@ -1114,7 +1116,7 @@ def storage_fix_start(source: "InputSource") -> pl.DataFrame:
         return _empty({"n": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "fix_start")
-              .rename({"name": "n"})
+              .pipe(rename_to_axis, {"name": "n"})
               .select("n")
               .sort("n")
               .collect())
@@ -1127,7 +1129,7 @@ def n_fix_storage_quantity(source: "InputSource") -> pl.DataFrame:
         return _empty({"n": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "fix_quantity")
-              .rename({"name": "n"})
+              .pipe(rename_to_axis, {"name": "n"})
               .select("n")
               .sort("n")
               .collect())
@@ -1172,7 +1174,7 @@ def group_node(source: "InputSource") -> pl.DataFrame:
     if df is None:
         return _empty({"g": pl.Utf8, "n": pl.Utf8})
     return (df.lazy()
-              .rename({"group": "g", "node": "n"})
+              .pipe(rename_to_axis, {"group": "g", "node": "n"})
               .select("g", "n")
               .sort("g", "n")
               .collect())
@@ -1184,7 +1186,7 @@ def process_unit(source: "InputSource") -> pl.DataFrame:
     if df is None:
         return _empty({"p": pl.Utf8})
     return (df.lazy()
-              .rename({"name": "p"})
+              .pipe(rename_to_axis, {"name": "p"})
               .select("p")
               .sort("p")
               .collect())
@@ -1197,7 +1199,7 @@ def process_sink_inertia(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8, "sink": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") != 0)
-              .rename({"unit": "p", "node": "sink"})
+              .pipe(rename_to_axis, {"unit": "p", "node": "sink"})
               .select("p", "sink")
               .sort("p", "sink")
               .collect())
@@ -1210,7 +1212,7 @@ def process_source_inertia(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8, "source": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") != 0)
-              .rename({"unit": "p", "node": "source"})
+              .pipe(rename_to_axis, {"unit": "p", "node": "source"})
               .select("p", "source")
               .sort("p", "source")
               .collect())
@@ -1223,7 +1225,7 @@ def process_sink_nonSync(source: "InputSource") -> pl.DataFrame:
         return _empty({"p": pl.Utf8, "sink": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == "yes")
-              .rename({"unit": "p", "node": "sink"})
+              .pipe(rename_to_axis, {"unit": "p", "node": "sink"})
               .select("p", "sink")
               .sort("p", "sink")
               .collect())
@@ -1244,7 +1246,7 @@ def reserve_upDown_group(source: "InputSource") -> pl.DataFrame:
     if df is None:
         return _empty({"r": pl.Utf8, "ud": pl.Utf8, "g": pl.Utf8})
     return (df.lazy()
-              .rename({"reserve": "r", "upDown": "ud", "group": "g"})
+              .pipe(rename_to_axis, {"reserve": "r", "upDown": "ud", "group": "g"})
               .select("r", "ud", "g")
               .unique()
               .sort("r", "ud", "g")
@@ -1272,7 +1274,7 @@ def reserve_upDown_group_method(source: "InputSource", method: str) -> pl.DataFr
                        "method": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") == spine_method)
-              .rename({"reserve": "r", "upDown": "ud", "group": "g",
+              .pipe(rename_to_axis, {"reserve": "r", "upDown": "ud", "group": "g",
                         "value": "method"})
               .select("r", "ud", "g", "method")
               .sort("r", "ud", "g")
@@ -1539,7 +1541,7 @@ def gdt_maxInstantFlow(source: "InputSource") -> pl.DataFrame:
         return _empty({"g": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
     if "period" in df.columns:
         return (df.lazy()
-                  .rename({"name": "g", "period": "d"})
+                  .pipe(rename_to_axis, {"name": "g", "period": "d"})
                   .select("g", "d", "t")
                   .unique()
                   .sort("g", "d", "t")
@@ -1554,7 +1556,7 @@ def gdt_minInstantFlow(source: "InputSource") -> pl.DataFrame:
         return _empty({"g": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
     if "period" in df.columns:
         return (df.lazy()
-                  .rename({"name": "g", "period": "d"})
+                  .pipe(rename_to_axis, {"name": "g", "period": "d"})
                   .select("g", "d", "t")
                   .unique()
                   .sort("g", "d", "t")
@@ -1728,7 +1730,7 @@ def commodity__tier_ann(source: "InputSource") -> pl.DataFrame:
         cols = df.columns
         if "tier" in cols and "name" in cols:
             return (df.lazy()
-                      .rename({"name": "c", "tier": "i"})
+                      .pipe(rename_to_axis, {"name": "c", "tier": "i"})
                       .select("c", "i")
                       .unique()
                       .sort("c", "i")
@@ -1745,7 +1747,7 @@ def commodity__tier_cum(source: "InputSource") -> pl.DataFrame:
         cols = df.columns
         if "tier" in cols and "name" in cols:
             return (df.lazy()
-                      .rename({"name": "c", "tier": "i"})
+                      .pipe(rename_to_axis, {"name": "c", "tier": "i"})
                       .select("c", "i")
                       .unique()
                       .sort("c", "i")
