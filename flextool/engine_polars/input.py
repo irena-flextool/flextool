@@ -143,6 +143,8 @@ from ._axis_enums import (  # substrate retained for Path B — see handoff
     cast_frame_axes,
     cast_value_axes,
     cast_flexdata_axes,
+    rename_to_axis,
+    lit_axis,
 )
 
 
@@ -154,7 +156,7 @@ def _read_long(path: Path, *, drop=("solve",), rename=None,
                provider: "object | None" = None) -> pl.DataFrame:
     df = _provider_read(provider, _provider_key(path), path)
     df = df.drop([c for c in drop if c in df.columns])
-    if rename: df = df.rename(rename)
+    if rename: df = df.pipe(rename_to_axis, rename)
     if cast_value and "value" in df.columns:
         df = df.with_columns(value=pl.col("value").cast(pl.Float64,
                                                         strict=False))
@@ -175,13 +177,13 @@ def _read_wide_per_entity(path: Path, value_col: str = "value",
         # Long format from new Python preprocessing.  Entity column is
         # the first; rename to "entity" to keep the downstream contract.
         entity_col = df.columns[0]
-        out = (df.rename({entity_col: "entity",
+        out = (df.pipe(rename_to_axis, {entity_col: "entity",
                            "period": "d", "time": "t"})
                  .with_columns(value=pl.col(value_col).cast(pl.Float64,
                                                             strict=False))
                  .select("entity", "d", "t", "value"))
         out = out.with_columns(value=pl.col("value").fill_null(0.0))
-        if rename: out = out.rename(rename)
+        if rename: out = out.pipe(rename_to_axis, rename)
         return out
     # Legacy wide-per-entity format.
     df = df.drop("solve")
@@ -189,8 +191,8 @@ def _read_wide_per_entity(path: Path, value_col: str = "value",
     value_cols = [c for c in df.columns if c not in id_cols]
     out = (df.unpivot(on=value_cols, index=id_cols, variable_name="entity",
                       value_name=value_col)
-             .rename({"period": "d", "time": "t"}))
-    if rename: out = out.rename(rename)
+             .pipe(rename_to_axis, {"period": "d", "time": "t"}))
+    if rename: out = out.pipe(rename_to_axis, rename)
     return out
 
 
@@ -204,7 +206,7 @@ def _read_unitsize(path: Path,
     fixtures."""
     df = _provider_read(provider, _provider_key(path), path)
     if {"entity", "value"}.issubset(df.columns):
-        return (df.rename({"entity": "e"})
+        return (df.pipe(rename_to_axis, {"entity": "e"})
                   .with_columns(value=pl.col("value")
                                           .cast(pl.Float64, strict=False))
                   .select("e", "value"))
@@ -232,7 +234,7 @@ def _read_capacity(path: Path,
         if "solve" in df.columns: df = df.drop("solve")
         # Long-format variant: columns are (entity, period, value).
         if {"entity", "period", "value"}.issubset(df.columns):
-            return (df.rename({"entity": "e", "period": "d"})
+            return (df.pipe(rename_to_axis, {"entity": "e", "period": "d"})
                       .with_columns(value=pl.col("value")
                                             .cast(pl.Float64, strict=False)
                                             .fill_null(0.0))
@@ -243,7 +245,7 @@ def _read_capacity(path: Path,
             return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
         out = (df.unpivot(on=val_cols, index=["period"], variable_name="e",
                           value_name="value")
-                 .rename({"period": "d"})
+                 .pipe(rename_to_axis, {"period": "d"})
                  .with_columns(value=pl.col("value")
                                        .cast(pl.Float64, strict=False)
                                        .fill_null(0.0))
@@ -282,7 +284,7 @@ def _read_capacity(path: Path,
         df = (df.join(prior, on=["entity", "period"], how="left")
                 .with_columns(prior=pl.col("prior").fill_null(0.0))
                 .with_columns(value=pl.col("value") + pl.col("prior")))
-    return (df.rename({"entity": "e", "period": "d"})
+    return (df.pipe(rename_to_axis, {"entity": "e", "period": "d"})
               .select("e", "d", "value"))
 
 
@@ -314,7 +316,7 @@ def _read_p_flow_max(
     df = _provider_read(provider, name, path)
     if df is None or df.height == 0:
         return None
-    return df.rename({"process": "p", "period": "d", "time": "t"}) \
+    return df.pipe(rename_to_axis, {"process": "p", "period": "d", "time": "t"}) \
              .select("p", "source", "sink", "d", "t", "value")
 
 
@@ -347,7 +349,7 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
         rename["time"] = "t"
     if rename_entity_to is not None:
         rename[entity_col] = rename_entity_to
-    out = sliced.rename(rename)
+    out = sliced.pipe(rename_to_axis, rename)
     cols = [rename.get(entity_col, entity_col), "d"] + (["t"] if has_time else []) + ["value"]
     return out.select(cols)
 
@@ -371,7 +373,7 @@ def _read_step_previous(path: Path,
         "previous_period": "d_previous",
         "previous_within_solve": "t_previous_within_solve",
     }
-    out = df.rename({k: v for k, v in rename.items() if k in df.columns})
+    out = df.pipe(rename_to_axis, {k: v for k, v in rename.items() if k in df.columns})
     keep = [v for v in rename.values() if v in out.columns]
     return out.select(keep)
 
@@ -877,8 +879,8 @@ def _load_time(sd: Path,
     # that only cover dispatch periods — using them silently drops the
     # invest-period (d, t) rows in multi-period scenarios.
     siu = _provider_read(provider, "solve_data/steps_in_use",
-                          sd / "steps_in_use.csv").rename(
-        {"period": "d", "step": "t", "step_duration": "value"})
+                          sd / "steps_in_use.csv").pipe(
+        rename_to_axis, {"period": "d", "step": "t", "step_duration": "value"})
     # Phase E-d — the in-memory accumulator returns Utf8-typed frames
     # (writers funnel through ``_to_utf8_frame``); cast ``value`` to
     # Float64 so downstream Param arithmetic doesn't hit a
@@ -898,7 +900,7 @@ def _load_time(sd: Path,
         if rp_df.height > 0:
             # canonical column is named ``weight`` per .mod's ``table data IN``.
             value_col = "weight" if "weight" in rp_df.columns else "value"
-            rp_df = (rp_df.rename({"period": "d", "time": "t",
+            rp_df = (rp_df.pipe(rename_to_axis, {"period": "d", "time": "t",
                                     value_col: "value"})
                           .with_columns(value=pl.col("value")
                                                  .cast(pl.Float64, strict=False))
@@ -925,7 +927,7 @@ def _load_node(sd: Path, dt: pl.DataFrame,
                 *,
                 provider: "object | None" = None):
     nb = _provider_read(provider, "solve_data/nodeBalance",
-                         sd / "nodeBalance.csv").rename({"node": "n"})
+                         sd / "nodeBalance.csv").pipe(rename_to_axis, {"node": "n"})
     # pdtNodeInflow.csv is canonical (.mod reads it via `table data IN`).
     # TODO(Δ.18+): retire pdtNodeInflow.csv read when ``apply_derived_a``
     # extends ``p_inflow_from_source`` to cover ``inflow_method ∈ {scale_to_*}``
@@ -947,7 +949,7 @@ def _load_node(sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, "solve_data/pdtNode", pdtnode_path):
         df_pn = _provider_read(provider, "solve_data/pdtNode", pdtnode_path)
         if df_pn.height > 0 and {"node", "param", "period", "time", "value"}.issubset(df_pn.columns):
-            df_pn = (df_pn.rename({"node": "n", "period": "d", "time": "t"})
+            df_pn = (df_pn.pipe(rename_to_axis, {"node": "n", "period": "d", "time": "t"})
                           .with_columns(value=pl.col("value")
                                                   .cast(pl.Float64, strict=False)
                                                   .fill_null(0.0)))
@@ -1000,7 +1002,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             df = _provider_read(provider, f"solve_data/{p.stem}", p)
             if df.height == 0 or "process" not in df.columns:
                 return empty_pss
-            return (df.rename({"process": "p"})
+            return (df.pipe(rename_to_axis, {"process": "p"})
                       .select("p", "source", "sink")
                       .unique()
                       .sort("p", "source", "sink"))
@@ -1030,7 +1032,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             df = _provider_read(provider, name, p)
             if df.height == 0 or "process" not in df.columns or side not in df.columns:
                 return None
-            return (df.rename({"process": "p"})
+            return (df.pipe(rename_to_axis, {"process": "p"})
                       .select("p", side)
                       .unique()
                       .sort("p", side))
@@ -1099,10 +1101,10 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             and block_layout.process_side_block_frame.height > 0
             and block_layout.entity_block_frame.height > 0
             and block_layout.overlap_set_frame.height > 0):
-        psb_local = block_layout.process_side_block_frame.rename(
-            {"process": "p", "block": "b_f"})
-        eb_local = block_layout.entity_block_frame.rename(
-            {"entity": "n", "block": "bk"})
+        psb_local = block_layout.process_side_block_frame.pipe(
+            rename_to_axis, {"process": "p", "block": "b_f"})
+        eb_local = block_layout.entity_block_frame.pipe(
+            rename_to_axis, {"entity": "n", "block": "bk"})
         block_compat = block_layout.block_compat()
         if (psb_local.height > 0 and eb_local.height > 0
                 and block_compat.height > 0):
@@ -1142,17 +1144,17 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                           inp / "commodity__node.csv")
     flow_from_commodity_eff = (pss_eff
         .join(cn, left_on="source", right_on="node", how="inner")
-        .rename({"commodity": "c"})
+        .pipe(rename_to_axis, {"commodity": "c"})
         .select("p","source","sink","c"))
     flow_from_commodity_noEff = (pss_noEff
         .join(cn, left_on="source", right_on="node", how="inner")
-        .rename({"commodity": "c"})
+        .pipe(rename_to_axis, {"commodity": "c"})
         .select("p","source","sink","c"))
     # §2.4 commodity sell: sink-side flow into a commodity-priced node.
     # No slope correction — straight v_flow * unitsize * commodity_price.
     flow_to_commodity = (pss
         .join(cn, left_on="sink", right_on="node", how="inner")
-        .rename({"commodity": "c"})
+        .pipe(rename_to_axis, {"commodity": "c"})
         .select("p","source","sink","c"))
 
     # ``p_unitsize`` is overwritten by ``apply_derived_b.p_unitsize_from_source``
@@ -1166,7 +1168,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
         ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
     ) or (inp / "p_entity_unitsize.csv"), provider=provider)
-    unitsize_p = (unitsize_long.rename({"e": "p"})
+    unitsize_p = (unitsize_long.pipe(rename_to_axis, {"e": "p"})
                        .filter(pl.col("p").is_in(pss["p"].unique())))
 
     # ``p_slope`` is produced by ``apply_derived_b.p_slope_from_source``
@@ -1239,12 +1241,12 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                 for f in files):
         return (None, None, None, None)
     g_price = _provider_read(provider, "solve_data/group_co2_price",
-                              sd / "group_co2_price.csv").rename({"group": "g"})
+                              sd / "group_co2_price.csv").pipe(rename_to_axis, {"group": "g"})
     if g_price.height == 0: return (None, None, None, None)
     cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
-                              sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
+                              sd / "commodity_node_co2.csv").pipe(rename_to_axis, {"commodity":"c","node":"n"})
     g_node = _provider_read(provider, "input/group__node",
-                              inp / "group__node.csv").rename({"group":"g","node":"n"})
+                              inp / "group__node.csv").pipe(rename_to_axis, {"group":"g","node":"n"})
     gcn = (g_price.join(g_node, on="g", how="inner")
                   .join(cn_co2, on="n", how="inner")
                   .select("g","c","n"))
@@ -1274,7 +1276,7 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                               inp / "p_commodity.csv")
     co2_content = Param(("c",),
         p_comm.filter(pl.col("commodityParam")=="co2_content")
-              .rename({"commodity":"c","p_commodity":"value"})
+              .pipe(rename_to_axis, {"commodity":"c","p_commodity":"value"})
               .select("c","value"))
     # Δ.17c Gap C: ``p_co2_price`` produced authoritatively by
     # ``apply_direct_params`` via ``p_co2_price_from_source`` (uses the
@@ -1296,12 +1298,12 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     p = sd / "group_co2_max_period.csv"
     if not _provider_has(provider, "solve_data/group_co2_max_period", p):
         return (None, None, None, None, None)
-    g_max = _provider_read(provider, "solve_data/group_co2_max_period", p).rename({"group":"g"})
+    g_max = _provider_read(provider, "solve_data/group_co2_max_period", p).pipe(rename_to_axis, {"group":"g"})
     if g_max.height == 0: return (None, None, None, None, None)
     cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
-                              sd / "commodity_node_co2.csv").rename({"commodity":"c","node":"n"})
+                              sd / "commodity_node_co2.csv").pipe(rename_to_axis, {"commodity":"c","node":"n"})
     g_node = _provider_read(provider, "input/group__node",
-                              inp / "group__node.csv").rename({"group":"g","node":"n"})
+                              inp / "group__node.csv").pipe(rename_to_axis, {"group":"g","node":"n"})
     gcn = (g_max.join(g_node, on="g", how="inner")
                 .join(cn_co2, on="n", how="inner")
                 .select("g","c","n"))
@@ -1366,15 +1368,15 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     p = sd / "group_co2_max_total.csv"
     if not _provider_has(provider, "solve_data/group_co2_max_total", p):
         return (None, None, None, None)
-    g_max = _provider_read(provider, "solve_data/group_co2_max_total", p).rename({"group": "g"})
+    g_max = _provider_read(provider, "solve_data/group_co2_max_total", p).pipe(rename_to_axis, {"group": "g"})
     if g_max.height == 0:
         return (None, None, None, None)
     cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
-                              sd / "commodity_node_co2.csv").rename(
-        {"commodity": "c", "node": "n"})
+                              sd / "commodity_node_co2.csv").pipe(
+        rename_to_axis, {"commodity": "c", "node": "n"})
     g_node = _provider_read(provider, "input/group__node",
-                              inp / "group__node.csv").rename(
-        {"group": "g", "node": "n"})
+                              inp / "group__node.csv").pipe(
+        rename_to_axis, {"group": "g", "node": "n"})
     gcn = (g_max.join(g_node, on="g", how="inner")
                 .join(cn_co2, on="n", how="inner")
                 .select("g", "c", "n"))
@@ -1407,7 +1409,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
         df = _provider_read(provider, "solve_data/pdGroup", pdg)
         if df.height > 0 and {"group", "param", "value"}.issubset(df.columns):
             sliced = (df.filter(pl.col("param") == "co2_max_total")
-                        .rename({"group": "g"})
+                        .pipe(rename_to_axis, {"group": "g"})
                         .with_columns(pl.col("value").cast(pl.Float64,
                                                             strict=False))
                         .filter(pl.col("value").is_not_null())
@@ -1445,7 +1447,7 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
     p = sd / "process__method_indirect.csv"
     if not _provider_has(provider, "solve_data/process__method_indirect", p):
         return (None, None, None, None, None, None)
-    raw = _provider_read(provider, "solve_data/process__method_indirect", p).rename({"process":"p"})
+    raw = _provider_read(provider, "solve_data/process__method_indirect", p).pipe(rename_to_axis, {"process":"p"})
     if raw.height == 0: return (None, None, None, None, None, None)
     indirect = raw.select("p").unique()
     inputs  = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("sink")==pl.col("p")))
@@ -1475,7 +1477,7 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
                                      src_path)
             if srcdf.height > 0 and "p_process_source_flow_coefficient" in srcdf.columns:
                 src_long = (srcdf
-                    .rename({"process": "p",
+                    .pipe(rename_to_axis, {"process": "p",
                              "p_process_source_flow_coefficient": "coef"})
                     .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
                     .select("p", "source", "coef"))
@@ -1505,7 +1507,7 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
                                       sink_path)
             if sinkdf.height > 0 and "p_process_sink_flow_coefficient" in sinkdf.columns:
                 sink_long = (sinkdf
-                    .rename({"process": "p",
+                    .pipe(rename_to_axis, {"process": "p",
                              "p_process_sink_flow_coefficient": "coef"})
                     .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
                     .select("p", "sink", "coef"))
@@ -1544,7 +1546,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     cs_path = inp / "constraint__sense.csv"
     if not _provider_has(provider, "input/constraint__sense", cs_path):
         return [None]*12
-    cs = _provider_read(provider, "input/constraint__sense", cs_path).rename({"constraint":"cn"})
+    cs = _provider_read(provider, "input/constraint__sense", cs_path).pipe(rename_to_axis, {"constraint":"cn"})
     if cs.height == 0: return [None]*12
     coef_path = inp / "p_process_node_constraint_flow_coefficient.csv"
     flow_cstr_idx = None
@@ -1564,7 +1566,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
                 provider,
                 "input/p_process_node_constraint_flow_coefficient",
                 coef_path)
-            .rename({"process":"p","node":"n","constraint":"cn",
+            .pipe(rename_to_axis, {"process":"p","node":"n","constraint":"cn",
                      "p_process_node_constraint_flow_coefficient":"coef"})
             .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
             .select("p","n","cn","coef"))
@@ -1621,7 +1623,7 @@ def _read_wide_e_d(path: Path,
         return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
     # Long-format detection: explicit (entity, period, value) columns.
     if {"entity", "period", "value"}.issubset(df.columns):
-        return (df.rename({"entity": "e", "period": "d"})
+        return (df.pipe(rename_to_axis, {"entity": "e", "period": "d"})
                   .with_columns(value=pl.col("value")
                                         .cast(pl.Float64, strict=False)
                                         .fill_null(0.0))
@@ -1629,7 +1631,7 @@ def _read_wide_e_d(path: Path,
     val_cols = [c for c in df.columns if c != "period"]
     return (df.unpivot(on=val_cols, index=["period"], variable_name="e",
                        value_name="value")
-              .rename({"period": "d"})
+              .pipe(rename_to_axis, {"period": "d"})
               .with_columns(value=pl.col("value")
                                   .cast(pl.Float64, strict=False)
                                   .fill_null(0.0)))
@@ -1789,7 +1791,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         if "entity" not in df.columns or "value" not in df.columns:
             return None
         return Param(("e",),
-                     df.rename({"entity": "e"})
+                     df.pipe(rename_to_axis, {"entity": "e"})
                        .with_columns(value=pl.col("value")
                                              .cast(pl.Float64, strict=False)
                                              .fill_null(0.0))
@@ -1901,7 +1903,7 @@ def _read_p_process_side(path: Path, side_col: str,
         # value column is last; rename for uniformity
         value_col = df.columns[-1]
         out_df = (df.filter(pl.col(value_col) != 0)
-                    .rename({"process": "p",
+                    .pipe(rename_to_axis, {"process": "p",
                              "sourceSinkParam": "param",
                              value_col: "value"}))
         for param, sub in out_df.group_by("param", maintain_order=True):
@@ -1945,7 +1947,7 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
             return None
         df = _provider_read(provider, key, p)
         if df.height == 0: return None
-        return df.rename({"process": "p"}).select("p", "source", "sink")
+        return df.pipe(rename_to_axis, {"process": "p"}).select("p", "source", "sink")
 
     sets = {f"process_source_sink_ramp_limit_{name}": _read_set(name)
             for name in ("sink_up", "sink_down", "source_up", "source_down")}
@@ -1988,24 +1990,24 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     online_path = sd / "process_online.csv"
     if not _provider_has(provider, "solve_data/process_online", online_path):
         return blank
-    p_online = _provider_read(provider, "solve_data/process_online", online_path).rename({"process": "p"})
+    p_online = _provider_read(provider, "solve_data/process_online", online_path).pipe(rename_to_axis, {"process": "p"})
     if p_online.height == 0:
         return blank
 
     p_online_lin = _provider_read(
         provider, "solve_data/process_online_linear",
-        sd / "process_online_linear.csv").rename({"process": "p"})
+        sd / "process_online_linear.csv").pipe(rename_to_axis, {"process": "p"})
     p_online_int_path = sd / "process_online_integer.csv"
     p_online_int = (_provider_read(
                         provider, "solve_data/process_online_integer",
-                        p_online_int_path).rename({"process": "p"})
+                        p_online_int_path).pipe(rename_to_axis, {"process": "p"})
                     if _provider_has(provider,
                                        "solve_data/process_online_integer",
                                        p_online_int_path) else
                     pl.DataFrame(schema={"p": pl.Utf8}))
     p_minload_path = sd / "process_minload.csv"
     p_minload = (_provider_read(provider, "solve_data/process_minload",
-                                  p_minload_path).rename({"process": "p"})
+                                  p_minload_path).pipe(rename_to_axis, {"process": "p"})
                  if _provider_has(provider, "solve_data/process_minload",
                                    p_minload_path) else
                  pl.DataFrame(schema={"p": pl.Utf8}))
@@ -2021,15 +2023,15 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         ctm_key = "solve_data/process__ct_method"
     p_min_load_eff = pl.DataFrame(schema={"p": pl.Utf8})
     if _provider_has(provider, ctm_key, ctm_path):
-        ctm = _provider_read(provider, ctm_key, ctm_path).rename({"process": "p"})
+        ctm = _provider_read(provider, ctm_key, ctm_path).pipe(rename_to_axis, {"process": "p"})
         method_col = "ct_method" if "ct_method" in ctm.columns else "method"
         p_min_load_eff = (ctm.filter(pl.col(method_col) == "min_load_efficiency")
                           .select("p").unique())
 
     # p_online_dt — block-aware variable indexing (process, period, step)
     p_odt = _provider_read(provider, "solve_data/p_online_dt_set",
-                              sd / "p_online_dt_set.csv").rename({"process": "p", "step": "t"})
-    p_odt = p_odt.select("p", "period", "t").rename({"period": "d"})
+                              sd / "p_online_dt_set.csv").pipe(rename_to_axis, {"process": "p", "step": "t"})
+    p_odt = p_odt.select("p", "period", "t").pipe(rename_to_axis, {"period": "d"})
 
     # Δ.12-drop: ``p_min_load`` produced authoritatively by
     # ``apply_direct_params.p_min_load_from_source``.  Seed dropped.
@@ -2131,10 +2133,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             and block_layout.entity_block_frame.height > 0
             and block_layout.overlap_set_frame.height > 0
             and (flow_from_nb_eff is not None or flow_from_nb_noEff is not None)):
-        psb_l = block_layout.process_side_block_frame.rename(
-            {"process": "p", "block": "b_f"})
-        eb_l = block_layout.entity_block_frame.rename(
-            {"entity": "n", "block": "bk"})
+        psb_l = block_layout.process_side_block_frame.pipe(
+            rename_to_axis, {"process": "p", "block": "b_f"})
+        eb_l = block_layout.entity_block_frame.pipe(
+            rename_to_axis, {"entity": "n", "block": "bk"})
         block_compat_l = block_layout.block_compat()
         if psb_l.height > 0 and eb_l.height > 0 and block_compat_l.height > 0:
             psb_src_l = psb_l.filter(pl.col("side") == "source").select("p", "b_f")
@@ -2196,7 +2198,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     ns_path = sd / "nodeState.csv"
     if not _provider_has(provider, "solve_data/nodeState", ns_path):
         return blank
-    nodeState = _provider_read(provider, "solve_data/nodeState", ns_path).rename({"node": "n"})
+    nodeState = _provider_read(provider, "solve_data/nodeState", ns_path).pipe(rename_to_axis, {"node": "n"})
     if nodeState.height == 0:
         return blank
 
@@ -2220,11 +2222,11 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, "solve_data/period_first_of_solve", fpos_path):
         df = _provider_read(provider, "solve_data/period_first_of_solve", fpos_path)
         if df.height > 0:
-            first_period = df.rename({"period": "d"}).select("d").unique()
+            first_period = df.pipe(rename_to_axis, {"period": "d"}).select("d").unique()
     if first_period is None and _provider_has(provider, "solve_data/period_first", fp_path):
         df = _provider_read(provider, "solve_data/period_first", fp_path)
         if df.height > 0:
-            first_period = df.rename({"period": "d"}).select("d").unique()
+            first_period = df.pipe(rename_to_axis, {"period": "d"}).select("d").unique()
     if first_period is None:
         # Fallback: take the lexicographically smallest period.
         first_period = (dt.select("d").unique()
@@ -2253,10 +2255,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
             ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
         ) or (inp / "p_entity_unitsize.csv"), provider=provider)
-        state_existing = (cap_long.rename({"e": "n", "value": "cap"})
+        state_existing = (cap_long.pipe(rename_to_axis, {"e": "n", "value": "cap"})
             .filter(pl.col("n").is_in(nodeState["n"]))
             .select("n", "d", "cap"))
-        state_us_long = (unitsize_long.rename({"e": "n"})
+        state_us_long = (unitsize_long.pipe(rename_to_axis, {"e": "n"})
             .filter(pl.col("n").is_in(nodeState["n"]))
             .select("n", "value"))
         if state_existing.height > 0 and state_us_long.height > 0:
@@ -2309,9 +2311,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         sbm = _provider_read(provider, "solve_data/node__storage_binding_method", sbm_path)
         # Column names in this file have varied — handle both schemas
         if "storage_binding_method" in sbm.columns:
-            sbm = sbm.rename({"node":"n","storage_binding_method":"method"})
+            sbm = sbm.pipe(rename_to_axis, {"node":"n","storage_binding_method":"method"})
         elif "method" in sbm.columns:
-            sbm = sbm.rename({"node":"n"})
+            sbm = sbm.pipe(rename_to_axis, {"node":"n"})
         binding_within_timeset = (sbm.filter(pl.col("method")=="bind_within_timeset")
                                      .select("n").unique())
         fo = (sbm.filter(pl.col("method")=="bind_forward_only")
@@ -2352,9 +2354,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, sse_key, sse_path):
         sse = _provider_read(provider, sse_key, sse_path)
         if "storage_start_end_method" in sse.columns:
-            sse = sse.rename({"node":"n","storage_start_end_method":"method"})
+            sse = sse.pipe(rename_to_axis, {"node":"n","storage_start_end_method":"method"})
         elif "method" in sse.columns:
-            sse = sse.rename({"node":"n"})
+            sse = sse.pipe(rename_to_axis, {"node":"n"})
         fix_start = (sse.filter(pl.col("method")=="fix_start").select("n").unique())
         fix_end = (sse.filter(pl.col("method")=="fix_end").select("n").unique())
         fix_start_end = (sse.filter(pl.col("method")=="fix_start_end").select("n").unique())
@@ -2373,7 +2375,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         col = ("storage_solve_horizon_method"
                if "storage_solve_horizon_method" in sshm.columns
                else "method")
-        sshm = sshm.rename({"node": "n", col: "method"})
+        sshm = sshm.pipe(rename_to_axis, {"node": "n", col: "method"})
         use_reference_value = (sshm
             .filter(pl.col("method") == "use_reference_value")
             .select("n").unique())
@@ -2388,7 +2390,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         if _provider_has(provider, "solve_data/nodeStateBlock", nsb_path_local):
             nsb_df_local = _provider_read(provider, "solve_data/nodeStateBlock", nsb_path_local)
             if nsb_df_local.height > 0:
-                nsb_for_excl = nsb_df_local.rename({"node": "n"}).select("n")
+                nsb_for_excl = nsb_df_local.pipe(rename_to_axis, {"node": "n"}).select("n")
         for excl in (fix_end, fix_start_end,
                      binding_within_solve, binding_within_timeset,
                      nsb_for_excl):
@@ -2419,7 +2421,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, "solve_data/nodeStateBlock", nsb_path_seed):
         nsb_df_seed = _provider_read(provider, "solve_data/nodeStateBlock", nsb_path_seed)
         if nsb_df_seed.height > 0 and "node" in nsb_df_seed.columns:
-            nodeStateBlock = nsb_df_seed.rename({"node": "n"}).select("n").unique()
+            nodeStateBlock = nsb_df_seed.pipe(rename_to_axis, {"node": "n"}).select("n").unique()
     period_block = None
     period_block_succ = None
     period_block_time = None
@@ -2465,7 +2467,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                         value_col = c
                         break
             if value_col is not None:
-                df_rcs = (df_rcs.rename({"node": "n", value_col: "value"})
+                df_rcs = (df_rcs.pipe(rename_to_axis, {"node": "n", value_col: "value"})
                                   .with_columns(value=pl.col("value")
                                                           .cast(pl.Float64, strict=False)
                                                           .fill_null(0.0))
@@ -2492,7 +2494,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                 value_col = "value"
             if value_col is not None:
                 ren[value_col] = "value"
-            df_fsq = df_fsq.rename(ren)
+            df_fsq = df_fsq.pipe(rename_to_axis, ren)
             if {"n", "d", "t", "value"}.issubset(df_fsq.columns):
                 df_fsq = (df_fsq
                           .with_columns(value=pl.col("value")
@@ -2526,7 +2528,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, "solve_data/period_last", pl_path):
         df = _provider_read(provider, "solve_data/period_last", pl_path)
         if df.height > 0:
-            period_last_df = df.rename({"period": "d"}).select("d").unique()
+            period_last_df = df.pipe(rename_to_axis, {"period": "d"}).select("d").unique()
 
     # nodeState_last_dt: (n, d, t) — last (d, t) per node, used as the index
     # for ``node_balance_fix_quantity_eq_lower``.  Built from
@@ -2540,10 +2542,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             and block_layout is not None
             and block_layout.block_period_time_last_frame.height > 0
             and block_layout.entity_block_frame.height > 0):
-        bptl = block_layout.block_period_time_last_frame.rename(
-            {"block": "bk", "period": "d", "step": "t"}).select("bk", "d", "t")
-        eb = block_layout.entity_block_frame.rename(
-            {"entity": "n", "block": "bk"}).select("n", "bk")
+        bptl = block_layout.block_period_time_last_frame.pipe(
+            rename_to_axis, {"block": "bk", "period": "d", "step": "t"}).select("bk", "d", "t")
+        eb = block_layout.entity_block_frame.pipe(
+            rename_to_axis, {"entity": "n", "block": "bk"}).select("n", "bk")
         if bptl.height > 0 and eb.height > 0:
             nodeState_last_dt = (nodeState.select("n")
                 .join(eb, on="n", how="inner")
@@ -2623,7 +2625,7 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
         return [None]*6
     pp = _provider_read(provider,
                           "solve_data/process__source__sink__profile__profile_method",
-                          pp_path).rename({"process":"p"})
+                          pp_path).pipe(rename_to_axis, {"process":"p"})
     if pp.height == 0:
         return [None]*6
     method_col = "method" if "method" in pp.columns else "profile_method"
@@ -2643,9 +2645,9 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
         prof_long = _read_wide_per_entity(pdt_profile, rename={"entity":"f"},
                                             provider=provider)
         if "profile" in upper.columns:
-            upper = upper.rename({"profile": "f"})
-            lower = lower.rename({"profile": "f"})
-            fixed = fixed.rename({"profile": "f"})
+            upper = upper.pipe(rename_to_axis, {"profile": "f"})
+            lower = lower.pipe(rename_to_axis, {"profile": "f"})
+            fixed = fixed.pipe(rename_to_axis, {"profile": "f"})
         profile_value = Param(("f","d","t"), prof_long.select("f","d","t","value"))
 
     # existing_count = capacity / unitsize per (p, d).  For our scenarios
@@ -2696,7 +2698,7 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None,
         df = _provider_read(provider, f"solve_data/{name}", f)
         if df.height == 0:
             return None
-        return df.rename({"process": "p", "period": "d", "time": "t"}) \
+        return df.pipe(rename_to_axis, {"process": "p", "period": "d", "time": "t"}) \
                  .select("p", "source", "sink", "d", "t")
 
     pssdt_noEff = _read_pssdt_set("pssdt_varCost_noEff")
@@ -2715,7 +2717,7 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None,
     if _provider_has(provider, "solve_data/pdtProcess__source__sink__dt_varCost", pssdt_path):
         df = _provider_read(provider, "solve_data/pdtProcess__source__sink__dt_varCost", pssdt_path)
         if df.height > 0:
-            sliced = (df.rename({"process": "p", "period": "d", "time": "t"})
+            sliced = (df.pipe(rename_to_axis, {"process": "p", "period": "d", "time": "t"})
                         .with_columns(value=pl.col("value")
                                               .cast(pl.Float64, strict=False)
                                               .fill_null(0.0))
@@ -2737,7 +2739,7 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None,
                    .drop("param")
         if sliced.height == 0:
             return None
-        sliced = (sliced.rename({"process": "p", "period": "d", "time": "t"})
+        sliced = (sliced.pipe(rename_to_axis, {"process": "p", "period": "d", "time": "t"})
                           .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
                                                               .fill_null(0.0))
                           .filter(pl.col("value") != 0))
@@ -2758,7 +2760,7 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None,
             sliced = df.filter(pl.col("param") == "other_operational_cost") \
                        .drop("param")
             if sliced.height > 0:
-                sliced = (sliced.rename({"process": "p", "period": "d", "time": "t"})
+                sliced = (sliced.pipe(rename_to_axis, {"process": "p", "period": "d", "time": "t"})
                                   .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
                                                                       .fill_null(0.0))
                                   .filter(pl.col("value") != 0))
@@ -2825,7 +2827,7 @@ def _load_node_capacity_for_scaling(sd: Path,
     df = _provider_read(provider, "solve_data/node_capacity_for_scaling", f)
     if df.height == 0:
         return blank
-    df = df.rename({"node": "n", "period": "d"}) \
+    df = df.pipe(rename_to_axis, {"node": "n", "period": "d"}) \
            .with_columns(value=pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
     # Restrict to nodes in nodeBalance to avoid spurious rows
     if nb is not None and nb.height > 0:
@@ -2854,7 +2856,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
         df = _provider_read(provider, f"solve_data/{name}", f)
         if df.height == 0: return None
         rename = {s: d for s, d in src_to_dst.items() if s in df.columns}
-        out_df = df.rename(rename).select(*src_to_dst.values()).unique()
+        out_df = df.pipe(rename_to_axis, rename).select(*src_to_dst.values()).unique()
         return out_df if out_df.height > 0 else None
 
     # Δ.17 — ``_read_set_drop_zeros`` / ``_read_e_d_param`` / ``_read_e_param``
@@ -2874,7 +2876,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
         df = _provider_read(provider, "solve_data/pdtGroup", f)
         if df.height == 0: return None
         sliced = (df.filter(pl.col("param") == param_name)
-                    .rename({"group": "g", "period": "d", "time": "t"})
+                    .pipe(rename_to_axis, {"group": "g", "period": "d", "time": "t"})
                     .with_columns(pl.col("value").cast(pl.Float64, strict=False))
                     .filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0))
                     .select("g", "d", "t", "value"))
@@ -2896,7 +2898,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
         if _provider_has(provider, key, cand):
             df = _provider_read(provider, key, cand)
             if df.height > 0:
-                ge = df.rename(mapping).select("g", "e").unique()
+                ge = df.pipe(rename_to_axis, mapping).select("g", "e").unique()
                 break
     out["group_entity"] = ge
 
@@ -2910,7 +2912,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
         if _provider_has(provider, key, cand):
             df = _provider_read(provider, key, cand)
             if df.height > 0:
-                gpn = df.rename(mapping).select("g", "p", "n").unique()
+                gpn = df.pipe(rename_to_axis, mapping).select("g", "p", "n").unique()
                 break
     out["group_process_node"] = gpn
 
@@ -2950,7 +2952,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
         if df.height == 0 or "entity" not in df.columns or "value" not in df.columns:
             return None
         return Param(("e",),
-                     df.rename({"entity": "e"})
+                     df.pipe(rename_to_axis, {"entity": "e"})
                        .with_columns(value=pl.col("value")
                                              .cast(pl.Float64, strict=False)
                                              .fill_null(0.0))
@@ -3137,7 +3139,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, "solve_data/pdt_branch_weight", pdt_bw_path):
         df = _provider_read(provider, "solve_data/pdt_branch_weight", pdt_bw_path)
         if df.height > 0:
-            df = (df.rename({"period": "d", "time": "t"})
+            df = (df.pipe(rename_to_axis, {"period": "d", "time": "t"})
                     .with_columns(value=pl.col("value")
                                             .cast(pl.Float64, strict=False)
                                             .fill_null(1.0))
@@ -3155,7 +3157,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, "solve_data/pd_branch_weight", pd_bw_path):
         df = _provider_read(provider, "solve_data/pd_branch_weight", pd_bw_path)
         if df.height > 0:
-            df = (df.rename({"period": "d"})
+            df = (df.pipe(rename_to_axis, {"period": "d"})
                     .with_columns(value=pl.col("value")
                                             .cast(pl.Float64, strict=False)
                                             .fill_null(1.0))
@@ -3174,7 +3176,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, "solve_data/period_in_use_set", piu_path):
         df = _provider_read(provider, "solve_data/period_in_use_set", piu_path)
         if df.height > 0 and "period" in df.columns:
-            period_in_use_set = df.rename({"period": "d"}).select("d").unique()
+            period_in_use_set = df.pipe(rename_to_axis, {"period": "d"}).select("d").unique()
 
     # groupIncludeStochastics: (g,)
     gis_path = inp / "groupIncludeStochastics.csv"
@@ -3183,7 +3185,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
         df = _provider_read(provider, "input/groupIncludeStochastics", gis_path)
         if df.height > 0:
             # CSV column is named ``group``; rename to canonical ``g``.
-            df = df.rename({df.columns[0]: "g"})
+            df = df.pipe(rename_to_axis, {df.columns[0]: "g"})
             groupStochastic = df.select("g").unique()
 
     return dict(
@@ -3523,11 +3525,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
             if unitsize_long.height > 0:
                 all_entity_unitsize_param = Param(
                     ("e",),
-                    unitsize_long.rename({"e": "e"}).select("e", "value"),
+                    unitsize_long.pipe(rename_to_axis, {"e": "e"}).select("e", "value"),
                 )
-            cap_us_pd = (cap_long.rename({"e":"p","value":"cap"})
+            cap_us_pd = (cap_long.pipe(rename_to_axis, {"e":"p","value":"cap"})
                 .filter(pl.col("p").is_in(proc["pss"]["p"].unique()))
-                .join(unitsize_long.rename({"e":"p","value":"us"}), on="p", how="inner"))
+                .join(unitsize_long.pipe(rename_to_axis, {"e":"p","value":"us"}), on="p", how="inner"))
             base_cap_pd = (cap_us_pd
                 .with_columns(base=pl.col("cap")/pl.col("us"))
                 .select("p","d","base"))
@@ -3570,7 +3572,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
                                       inp / "p_commodity.csv")
             co2c = Param(("c",),
                 p_comm.filter(pl.col("commodityParam")=="co2_content")
-                      .rename({"commodity":"c","p_commodity":"value"})
+                      .pipe(rename_to_axis, {"commodity":"c","p_commodity":"value"})
                       .select("c","value"))
 
         (indir_set, indir_in, indir_out, indir_dt,
@@ -3817,8 +3819,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
             sd / "dt_realize_dispatch_set.csv", ("period", "time"),
             provider=provider)
         if flex_data.realized_dispatch is not None:
-            flex_data.realized_dispatch = flex_data.realized_dispatch.rename(
-                {"time": "step"})
+            flex_data.realized_dispatch = flex_data.realized_dispatch.pipe(
+                rename_to_axis, {"time": "step"})
         if flex_data.realized_dispatch is None:
             flex_data.realized_dispatch = _load_handoff_aux_pair(
                 sd / "realized_dispatch.csv", ("period", "step"),
@@ -5188,7 +5190,7 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
             .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
                                  .fill_null(0.0))
             .group_by("entity").agg(pl.col("value").sum())
-            .rename({"entity": "e"})
+            .pipe(rename_to_axis, {"entity": "e"})
             .filter(pl.col("value") != 0.0)
             .select("e", "value"))
         overrides["p_entity_invested"] = (
@@ -5197,7 +5199,7 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
     # --- divest_cumulative → p_entity_divested (e,) ---
     if handoff.divest_cumulative is not None:
         df = (handoff.divest_cumulative
-            .rename({"entity": "e"})
+            .pipe(rename_to_axis, {"entity": "e"})
             .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
                                  .fill_null(0.0))
             .filter(pl.col("value") != 0.0)
@@ -5208,7 +5210,7 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
     # --- roll_end_state → p_roll_continue_state (n,) ---
     if handoff.roll_end_state is not None:
         df = (handoff.roll_end_state
-            .rename({"node": "n"})
+            .pipe(rename_to_axis, {"node": "n"})
             .with_columns(value=pl.col("value").cast(pl.Float64, strict=False))
             .select("n", "value"))
         # The loader does NOT filter zero rows for this carrier (see
@@ -5222,7 +5224,7 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
     if handoff.fix_storage is not None and "quantity" in handoff.fix_storage.columns:
         df = (handoff.fix_storage
             .filter(pl.col("quantity").is_not_null())
-            .rename({"node": "n", "period": "d", "time": "t",
+            .pipe(rename_to_axis, {"node": "n", "period": "d", "time": "t",
                      "quantity": "value"})
             .with_columns(value=pl.col("value").cast(pl.Float64, strict=False))
             .select("n", "d", "t", "value"))
