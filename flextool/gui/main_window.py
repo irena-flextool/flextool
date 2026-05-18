@@ -300,11 +300,11 @@ class MainWindow(tk.Tk):
         ))
 
         # "File outputs" header sits above the bordered LabelFrame
-        # below — placed in col 5 to align with the right edge of the
-        # bordered box.
+        # below — placed in col 5 with sticky="sw" and the same left
+        # padding as the box so its left edge lines up with the box.
         outputs_lbl = ttk.Label(outer, text="File outputs", font=self._bold_font)
         outputs_lbl.grid(
-            row=row, column=5, sticky="se", padx=(0, 0), pady=(10, 2)
+            row=row, column=5, sticky="sw", padx=(20, 0), pady=(10, 2)
         )
         attach_tooltip(outputs_lbl, (
             "Per-checked-executed-scenario output artefacts on disk.\n"
