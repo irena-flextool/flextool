@@ -1327,8 +1327,9 @@ def run_chain_from_db(
             probe_solver_licenses,
         )
         statuses = probe_solver_licenses()
-        formatted = ", ".join(f"{n}={s}" for n, s in statuses.items())
-        logger.info("Solver license status: %s", formatted)
+        if statuses:
+            formatted = ", ".join(f"{n}={s}" for n, s in statuses.items())
+            logger.info("Solver license status: %s", formatted)
     except ImportError:  # pragma: no cover — older polar_high without dispatch
         pass
 

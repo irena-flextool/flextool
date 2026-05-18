@@ -265,6 +265,13 @@ def probe_solver_licenses() -> dict[str, str]:
     import io
     import os
     from contextlib import redirect_stdout, redirect_stderr
+    # Tests set FLEXTOOL_SKIP_SOLVER_PROBE=1 in conftest to avoid the
+    # FICO Xpress Community LicenseWarning (and other startup chatter)
+    # that the probe triggers via xpress.problem().  Skip silently and
+    # cache an empty dict so callers' .items() iteration is a no-op.
+    if os.environ.get("FLEXTOOL_SKIP_SOLVER_PROBE"):
+        _LICENSE_PROBE_CACHE = {}
+        return _LICENSE_PROBE_CACHE
     import polars as pl
     from polar_high import Problem
     from polar_high.solvers import (

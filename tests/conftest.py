@@ -22,6 +22,13 @@ highs.opt and symlinks to the actual solver binaries.
 """
 from __future__ import annotations
 
+import os
+# Skip the per-cascade solver license probe in tests.  The probe calls
+# xpress.problem() (among others), which emits a FICO Community
+# LicenseWarning; the production solve uses HiGHS anyway.  Must be set
+# before any flextool / polar_high import.
+os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
+
 import shutil
 import sys
 from pathlib import Path
