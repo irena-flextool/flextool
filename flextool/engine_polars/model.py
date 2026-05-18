@@ -1862,8 +1862,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                       for x in (d.cdt_eq, d.cdt_le, d.cdt_ge))
     if has_any_cdt:
         # Build the LHS expression as a sum of optional contributions.
-        # Each piece resolves to dims (c, d, t) (or (c, d) for invest, which
-        # broadcasts over t at constraint emission).
+        # Each piece resolves to dims (cn, d, t) (or (cn, d) for invest,
+        # which broadcasts over t at constraint emission).  The
+        # constraint axis column is ``cn`` (not ``c``) — see the
+        # c_collision review note in flextool_axis_contract.json.
         lhs_pieces: list = []
         if d.flow_constraint_idx is not None and d.flow_constraint_idx.height > 0:
             lhs_pieces.append(Sum(
@@ -1873,13 +1875,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             ))
         # Invest-capacity terms.  Only relevant rows of v_invest_n /
         # v_invest_p are picked up by the inner-join in Where (entities
-        # whose (n, c) or (p, c) appear in the coefficient frame).  The
-        # join also adds the c dim.  Sum collapses n / p, leaving (c, d).
+        # whose (n, cn) or (p, cn) appear in the coefficient frame).  The
+        # join also adds the cn dim.  Sum collapses n / p, leaving (cn, d).
         if (has_invest_n and
                 d.p_node_constraint_invested_capacity_coefficient is not None):
             us_n_user = Param(("n",), d.p_state_unitsize.frame)
             n_inv_idx = (d.p_node_constraint_invested_capacity_coefficient
-                          .frame.select("n", "c"))
+                          .frame.select("n", "cn"))
             lhs_pieces.append(Sum(
                 Where(v_invest_n * us_n_user, n_inv_idx)
                 * d.p_node_constraint_invested_capacity_coefficient,
@@ -1888,22 +1890,22 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         if (has_invest_p and
                 d.p_process_constraint_invested_capacity_coefficient is not None):
             p_inv_idx = (d.p_process_constraint_invested_capacity_coefficient
-                          .frame.select("p", "c"))
+                          .frame.select("p", "cn"))
             lhs_pieces.append(Sum(
                 Where(v_invest_p * d.p_unitsize, p_inv_idx)
                 * d.p_process_constraint_invested_capacity_coefficient,
                 over=("p",),
             ))
         # State-coefficient term:
-        #   + Σ_{(n,c) in node_state_constraint} v_state[n,d,t]
-        #         * p_node_constraint_state_coefficient[n,c]
+        #   + Σ_{(n,cn) in node_state_constraint} v_state[n,d,t]
+        #         * p_node_constraint_state_coefficient[n,cn]
         #         * p_entity_unitsize[n]
-        # Yields (c, d, t) after summing over n.
+        # Yields (cn, d, t) after summing over n.
         if (has_storage
                 and d.p_node_constraint_state_coefficient is not None):
             us_n_state = Param(("n",), d.p_state_unitsize.frame)
             n_state_idx = (d.p_node_constraint_state_coefficient
-                           .frame.select("n", "c"))
+                           .frame.select("n", "cn"))
             lhs_pieces.append(Sum(
                 Where(v_state * us_n_state, n_state_idx)
                 * d.p_node_constraint_state_coefficient,
@@ -1913,9 +1915,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # constants, accumulated into a separate ``cstr_const`` so they
         # land on lhs_terms as Param entries (not summed into ``lhs_pieces``
         # which is an Expr).  Mirror of mod's:
-        #   + Σ_{(n,c) in node_capacity_constraint_prebuilt}
+        #   + Σ_{(n,cn) in node_capacity_constraint_prebuilt}
         #       (existing/unitsize) * coef * unitsize[n]
-        # = Σ_n existing[n,d] * coef[n,c]   →  Param dims (c, d)
+        # = Σ_n existing[n,d] * coef[n,cn]   →  Param dims (cn, d)
         cstr_const_pieces: list = []
         if (d.p_node_constraint_prebuilt_capacity_coefficient is not None
                 and d.p_state_existing_capacity is not None):
@@ -1924,10 +1926,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                             .frame.rename({"value": "coef"}),
                             on="n", how="inner")
                      .with_columns(value=pl.col("value") * pl.col("coef"))
-                     .group_by(["c", "d"]).agg(pl.col("value").sum())
-                     .select("c", "d", "value"))
+                     .group_by(["cn", "d"]).agg(pl.col("value").sum())
+                     .select("cn", "d", "value"))
             if n_pre.height > 0:
-                cstr_const_pieces.append(Param(("c", "d"), n_pre))
+                cstr_const_pieces.append(Param(("cn", "d"), n_pre))
         if (d.p_process_constraint_prebuilt_capacity_coefficient is not None
                 and d.p_process_existing_count is not None
                 and d.p_unitsize is not None):
@@ -1940,16 +1942,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                               .frame.rename({"value": "coef"}),
                               on="p", how="inner")
                        .with_columns(value=pl.col("cap") * pl.col("coef"))
-                       .group_by(["c", "d"]).agg(pl.col("value").sum())
-                       .select("c", "d", "value"))
+                       .group_by(["cn", "d"]).agg(pl.col("value").sum())
+                       .select("cn", "d", "value"))
             if p_pre.height > 0:
-                cstr_const_pieces.append(Param(("c", "d"), p_pre))
+                cstr_const_pieces.append(Param(("cn", "d"), p_pre))
 
         # Prebuilt-capacity cumulative-invest contribution — variable.
         # Mirror of mod:2885-2898 / 2843-2856:
-        #   + Σ {(p,c) in process_capacity_constraint_prebuilt}
+        #   + Σ {(p,cn) in process_capacity_constraint_prebuilt}
         #       (Σ_{d_invest : year[d_invest] < year[d]} v_invest[p, d_invest])
-        #         * coef[p, c] * unitsize[p]
+        #         * coef[p, cn] * unitsize[p]
         # The static-existing piece above is the first half of the LHS;
         # this adds the cumulative-prior-invest variable summand that
         # closes the multi_year_wind_growth_cap parity gap.
@@ -1964,7 +1966,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 lower=v_invest_p.lower, upper=v_invest_p.upper,
             )
             p_pre_idx = (d.p_process_constraint_prebuilt_capacity_coefficient
-                          .frame.select("p", "c"))
+                          .frame.select("p", "cn"))
             lkb_p = (d.edd_invest_lookback_set.rename({"e": "p"})
                        .join(p_pre_idx, on="p", how="inner"))
             if lkb_p.height > 0:
@@ -1985,7 +1987,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 lower=v_invest_n.lower, upper=v_invest_n.upper,
             )
             n_pre_idx = (d.p_node_constraint_prebuilt_capacity_coefficient
-                          .frame.select("n", "c"))
+                          .frame.select("n", "cn"))
             lkb_n = (d.edd_invest_lookback_set.rename({"e": "n"})
                        .join(n_pre_idx, on="n", how="inner"))
             if lkb_n.height > 0:

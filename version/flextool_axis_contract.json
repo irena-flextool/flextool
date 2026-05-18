@@ -127,9 +127,9 @@
         "key_kind": "values_plus_default"
       },
       "filter": "active blocks for the solve (includes synthetic DEFAULT_BLOCK)",
-      "column_synonyms": ["b"],
+      "column_synonyms": ["bk"],
       "tokens_default_extension": ["default"],
-      "note": "Block names are derived in _block_layout.py from 'group' entities that carry a new_stepduration parameter, plus a synthetic DEFAULT_BLOCK fallback. Vocabulary = group names participating as resolution blocks ∪ {DEFAULT_BLOCK}. Cascade column: 'b' (collides with branch — see review_notes.b_collision)."
+      "note": "Block names are derived in _block_layout.py from 'group' entities that carry a new_stepduration parameter, plus a synthetic DEFAULT_BLOCK fallback. Vocabulary = group names participating as resolution blocks ∪ {DEFAULT_BLOCK}. Phase 1 resolved the b_collision review note by renaming the cascade column from 'b' to 'bk' in _derived_block.py / _block_layout.py / input.py block-aware filters. The companion 'b_f' (block-fine) column also carries block vocabulary but is a distinct column name and does not collide."
     },
     {
       "name": "r",
@@ -154,8 +154,8 @@
       "source_type": "entity_class",
       "source": "constraint",
       "filter": "scenario_filter",
-      "column_synonyms": ["c"],
-      "note": "User-defined constraints. WARNING: in _direct_params._node_constraint_coef and _process_constraint_coef (lines 285, 306), the 'constraint' column is renamed to 'c' — colliding with the commodity axis letter. The two never appear in the same frame, but Phase 1 build_axis_enums must either (a) rename to 'cn' in those helpers, or (b) recognise that the join contexts disambiguate by sibling columns ((n, c) for nodes, (p, c) for processes). See review_notes.c_collision."
+      "column_synonyms": ["cn"],
+      "note": "User-defined constraints. Phase 1 resolved the c-collision review note by renaming the constraint column from 'c' to 'cn' across _direct_params, _projection_params, input.py (_load_user_constraints), _derived_params (p_flow_constraint_coef_from_source) and model.py. The constraint axis now lives under the 'cn' column name and never collides with the commodity 'c' column."
     },
     {
       "name": "d_anchor",
@@ -225,7 +225,8 @@
         "(b) Keep 'c' as a polymorphic column letter and rely on join siblings to disambiguate — requires Phase 2 cast_against_contract to inspect frame schema and pick the right enum per Param/frame.",
         "(c) Promote 'cn' as the canonical constraint column and update the rename helpers."
       ],
-      "recommendation_for_phase_1": "Pick option (a). The two helpers are the only sites; renaming there keeps build_axis_enums simple (one enum per column name)."
+      "recommendation_for_phase_1": "Pick option (a). The two helpers are the only sites; renaming there keeps build_axis_enums simple (one enum per column name).",
+      "resolution": "Phase 1 landed option (a): the constraint column is now 'cn' across the cascade (_direct_params, _projection_params.cdt_filter, input.py:_load_user_constraints, _derived_params.p_flow_constraint_coef_from_source, model.py user-constraint emission). The constraint axis 'column_synonyms' field reflects the new name."
     },
     {
       "id": "b_collision",
@@ -240,7 +241,8 @@
         "(b) Rename branch→'br' and keep block→'b'.",
         "(c) Schema-aware cast helper that picks the right enum based on the surrounding columns ((d, b, w) → branch, (n, b) → block)."
       ],
-      "recommendation_for_phase_1": "Pick option (a) (rename block→'bk'). branch is far more pervasive in stochastic-aware code; block is contained to ~4 modules and easier to rename."
+      "recommendation_for_phase_1": "Pick option (a) (rename block→'bk'). branch is far more pervasive in stochastic-aware code; block is contained to ~4 modules and easier to rename.",
+      "resolution": "Phase 1 landed option (a). The block-axis column is now 'bk' in BlockBundle properties (entity_block_lf, block_period_time_first_lf, block_period_time_last_lf), in block_compat() and in the block-aware flow_to_n / flow_from_n filters in input.py and _derived_block.py. The branch column remains 'b'."
     },
     {
       "id": "i_axis_depth",
@@ -252,7 +254,8 @@
         "(a) Build the 'i' enum lazily at first use after backend ingest discovers N.",
         "(b) Hard-cap N at some safe upper bound (e.g. 16) and pad — easier but wastes a little memory."
       ],
-      "recommendation_for_phase_1": "Option (a). build_axis_enums runs after the Backend has read the ladder parameters so the max depth is known."
+      "recommendation_for_phase_1": "Option (a). build_axis_enums runs after the Backend has read the ladder parameters so the max depth is known.",
+      "resolution": "Phase 1 landed option (a) — see flextool/spinedb_backend/_axis_enums.py::_discover_tier_vocabulary. build_axis_enums walks the level-2 keys of every commodity.price_ladder_* map at runtime and unions the tier labels (sorted numerically); no hard-coded N."
     },
     {
       "id": "d_axis_source",

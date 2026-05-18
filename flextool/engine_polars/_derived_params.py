@@ -2123,7 +2123,11 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
 def p_flow_constraint_coef_from_source(source: "InputSource",
                                           pss: pl.DataFrame,
                                           ) -> "Param | None":
-    """User-defined per-arc (p, source, sink, c) flow_coefficient.
+    """User-defined per-arc (p, source, sink, cn) flow_coefficient.
+
+    The constraint axis column is ``cn`` (not ``c``) to avoid collision
+    with the commodity axis — see the c_collision review note in
+    ``version/flextool_axis_contract.json``.
 
     Algorithm (audit §3.5.1, input.py:1005-1019):
       1. Pull unit__inputNode / unit__outputNode /
@@ -2131,7 +2135,7 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
          ``(process, node, constraint, coef)``.
       2. Inner-join with pss on (p, n=source) → source-leg rows.
       3. Inner-join with pss on (p, n=sink) → sink-leg rows.
-      4. Concat + group_by(p, source, sink, c).sum.
+      4. Concat + group_by(p, source, sink, cn).sum.
 
     Returns ``None`` when no flow_coefficient rows exist.
     """
@@ -2157,7 +2161,7 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
         parts.append(df.lazy().select(
             pl.col(p_col).alias("p"),
             pl.col(n_col).alias("n"),
-            pl.col(c_col).alias("c"),
+            pl.col(c_col).alias("cn"),
             pl.col("value").cast(pl.Float64).alias("coef"),
         ))
     if not parts:
@@ -2167,19 +2171,19 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
     src_match = (pss.lazy()
         .join(coef, left_on=["p", "source"], right_on=["p", "n"],
                 how="inner")
-        .select("p", "source", "sink", "c", "coef"))
+        .select("p", "source", "sink", "cn", "coef"))
     sink_match = (pss.lazy()
         .join(coef, left_on=["p", "sink"], right_on=["p", "n"],
                 how="inner")
-        .select("p", "source", "sink", "c", "coef"))
+        .select("p", "source", "sink", "cn", "coef"))
     joined = (pl.concat([src_match, sink_match], how="vertical")
-                .group_by(["p", "source", "sink", "c"])
+                .group_by(["p", "source", "sink", "cn"])
                 .agg(pl.col("coef").sum().alias("value"))
-                .sort("p", "source", "sink", "c")
+                .sort("p", "source", "sink", "cn")
                 .collect())
     if joined.height == 0:
         return None
-    return Param(("p", "source", "sink", "c"), joined)
+    return Param(("p", "source", "sink", "cn"), joined)
 
 
 # ---------------------------------------------------------------------------

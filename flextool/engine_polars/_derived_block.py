@@ -132,14 +132,19 @@ class BlockBundle:
 
     @property
     def entity_block_lf(self) -> pl.LazyFrame:
-        """Lazy ``(n, b)`` frame, or empty when no block data."""
+        """Lazy ``(n, bk)`` frame, or empty when no block data.
+
+        The block axis column is named ``bk`` (not ``b``) to disambiguate
+        from the branch axis — see the b_collision review note in
+        ``version/flextool_axis_contract.json``.
+        """
         f = self.layout.entity_block_frame
         if f.height == 0:
             return pl.LazyFrame(schema={
                 "n": schema_dtype(_enums, "n"),
-                "b": schema_dtype(_enums, "b"),
+                "bk": schema_dtype(_enums, "bk"),
             })
-        return f.lazy().rename({"entity": "n", "block": "b"})
+        return f.lazy().rename({"entity": "n", "block": "bk"})
 
     @property
     def block_step_duration_arc_lf(self) -> pl.LazyFrame:
@@ -162,22 +167,22 @@ class BlockBundle:
         f = self.layout.block_period_time_first_frame
         if f.height == 0:
             return pl.LazyFrame(schema={
-                "b": schema_dtype(_enums, "b"),
+                "bk": schema_dtype(_enums, "bk"),
                 "d": schema_dtype(_enums, "d"),
                 "t": schema_dtype(_enums, "t"),
             })
-        return f.lazy().rename({"block": "b", "period": "d", "step": "t"})
+        return f.lazy().rename({"block": "bk", "period": "d", "step": "t"})
 
     @property
     def block_period_time_last_lf(self) -> pl.LazyFrame:
         f = self.layout.block_period_time_last_frame
         if f.height == 0:
             return pl.LazyFrame(schema={
-                "b": schema_dtype(_enums, "b"),
+                "bk": schema_dtype(_enums, "bk"),
                 "d": schema_dtype(_enums, "d"),
                 "t": schema_dtype(_enums, "t"),
             })
-        return f.lazy().rename({"block": "b", "period": "d", "step": "t"})
+        return f.lazy().rename({"block": "bk", "period": "d", "step": "t"})
 
     @property
     def block_compat_frame(self) -> pl.DataFrame:
@@ -338,12 +343,12 @@ def filter_flow_n_by_block(
         .join(eb_lf, on="n", how="left")
         .with_columns(
             b_f=pl.col("b_f").fill_null(DEFAULT_BLOCK),
-            b=pl.col("b").fill_null(DEFAULT_BLOCK),
+            bk=pl.col("bk").fill_null(DEFAULT_BLOCK),
         )
     )
     filtered = (
         with_blocks
-        .join(compat.lazy(), on=["b", "b_f"], how="inner")
+        .join(compat.lazy(), on=["bk", "b_f"], how="inner")
         .select("p", "source", "sink", "n")
         .unique()
         .collect()
@@ -545,7 +550,7 @@ def nodeStateBlock_lf(
             eb_lf = bundle.entity_block_lf
             picked = (
                 eb_lf
-                .filter(pl.col("b").is_in(coarse))
+                .filter(pl.col("bk").is_in(coarse))
                 .select(pl.col("n"))
             )
             if node_set is not None:
@@ -644,13 +649,13 @@ def period_block_multi_resolution_lf(
         return None
     ov_renamed = ov.rename({
         "period": "d",
-        "block_coarse": "b",
+        "block_coarse": "bk",
         "step_coarse": "b_first",
         "block_fine": "b_fine",
         "step_fine": "t",
     })
     ov_keep = ov_renamed.filter(
-        pl.col("b").is_in(coarse_use)
+        pl.col("bk").is_in(coarse_use)
         & (pl.col("b_fine") == DEFAULT_BLOCK)
     )
     if ov_keep.height == 0:
@@ -801,7 +806,7 @@ def nodeState_last_dt_lf(
     return (
         nodeState.lazy().select("n")
         .join(bundle.entity_block_lf, on="n", how="inner")
-        .join(bundle.block_period_time_last_lf, on="b", how="inner")
+        .join(bundle.block_period_time_last_lf, on="bk", how="inner")
         .select("n", "d", "t")
         .unique()
     )

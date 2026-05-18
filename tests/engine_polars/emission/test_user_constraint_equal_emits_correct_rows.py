@@ -54,7 +54,7 @@ def test_user_constraint_equal_emits_correct_rows() -> None:
         f"process_constraint_equal must use sense '=='; "
         f"got {recs[0].proto.sense!r}"
     )
-    assert set(recs[0].over.columns) >= {"c", "d", "t"}, (
-        f"process_constraint_equal `over` should carry (c, d, t); "
+    assert set(recs[0].over.columns) >= {"cn", "d", "t"}, (
+        f"process_constraint_equal `over` should carry (cn, d, t); "
         f"got {recs[0].over.columns}"
     )

@@ -823,13 +823,13 @@ def cdt_filter(source: "InputSource", sense: str,
         return None
     rows = (s.lazy()
               .filter(pl.col("value") == sense)
-              .select(pl.col("name").alias("c"))
+              .select(pl.col("name").alias("cn"))
               .collect())
     if rows.height == 0:
         return None
     return (rows.lazy()
               .join(dt.lazy(), how="cross")
-              .sort("c", "d", "t")
+              .sort("cn", "d", "t")
               .collect())
 
 

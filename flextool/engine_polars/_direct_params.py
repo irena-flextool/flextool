@@ -58,25 +58,29 @@ def p_co2_content_from_source(source: "InputSource") -> Param | None:
 
 
 def p_constraint_constant_from_source(source: "InputSource") -> Param | None:
-    """``constraint.constant`` → ``Param(("c",), [c, value])``.
+    """``constraint.constant`` → ``Param(("cn",), [cn, value])``.
 
     Default ``0.0`` — broadcast to every constraint via the source.
+
+    The constraint axis uses the column name ``cn`` (not ``c``) to avoid
+    collision with the commodity axis — see
+    ``version/flextool_axis_contract.json`` review note ``c_collision``.
     """
     df = source.parameter("constraint", "constant")
     if df.height == 0:
         return None
-    return Param(("c",),
-                 df.lazy().rename({"name": "c"}).select("c", "value"))
+    return Param(("cn",),
+                 df.lazy().rename({"name": "cn"}).select("cn", "value"))
 
 
 def constraint_sense_from_source(source: "InputSource") -> pl.DataFrame:
-    """Return the constraint sense set as ``[c, sense]``.  Empty frame
+    """Return the constraint sense set as ``[cn, sense]``.  Empty frame
     if no constraints carry a ``sense`` value (None-default policy).
     """
     df = source.parameter("constraint", "sense")
     if df.height == 0:
-        return pl.DataFrame(schema={"c": pl.Utf8, "sense": pl.Utf8})
-    return df.lazy().rename({"name": "c", "value": "sense"}).select("c", "sense").collect()
+        return pl.DataFrame(schema={"cn": pl.Utf8, "sense": pl.Utf8})
+    return df.lazy().rename({"name": "cn", "value": "sense"}).select("cn", "sense").collect()
 
 
 # ---------------------------------------------------------------------------
@@ -273,17 +277,20 @@ FIRST_WAVE_PARAMS = (
 
 
 def _node_constraint_coef(source: "InputSource", parameter_name: str) -> Param | None:
-    """Return ``Param(("n", "c"), [n, c, value])`` for a per-(node,
+    """Return ``Param(("n", "cn"), [n, cn, value])`` for a per-(node,
     constraint) coefficient parameter.  ``None`` if the DB has no rows.
+
+    The constraint axis column is named ``cn`` to disambiguate from the
+    commodity axis column ``c`` (the contract's ``c_collision`` decision).
     """
     df = source.parameter("node", parameter_name)
     if df.height == 0:
         return None
     return Param(
-        ("n", "c"),
+        ("n", "cn"),
         df.lazy()
-          .rename({"name": "n", "constraint": "c"})
-          .select("n", "c", "value")
+          .rename({"name": "n", "constraint": "cn"})
+          .select("n", "cn", "value")
     )
 
 
@@ -303,12 +310,12 @@ def _process_constraint_coef(source: "InputSource",
             continue
         parts.append(
             df.lazy()
-              .rename({"name": "p", "constraint": "c"})
-              .select("p", "c", "value")
+              .rename({"name": "p", "constraint": "cn"})
+              .select("p", "cn", "value")
         )
     if not parts:
         return None
-    return Param(("p", "c"), pl.concat(parts).sort("p", "c"))
+    return Param(("p", "cn"), pl.concat(parts).sort("p", "cn"))
 
 
 def _entity_methods_pairs(source: "InputSource") -> set[tuple[str, str]]:

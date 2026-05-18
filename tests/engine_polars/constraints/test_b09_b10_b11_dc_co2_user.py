@@ -516,21 +516,21 @@ def _add_user_constraint_storage_invest(d: FlexData) -> FlexData:
     p_process_existing_count = Param(("p", "d"),
         pl.DataFrame({"p": ["p", "p"], "d": ["d1", "d2"], "value": [1.0, 1.0]}))
 
-    # User constraint axes: c1 sense ``<=`` over (c, d, t) — apply at d2/t01
+    # User constraint axes: c1 sense ``<=`` over (cn, d, t) — apply at d2/t01
     # only so the lookback cumulative-invest term (d_invest=d1 < d=d2) fires.
-    cdt_le = pl.DataFrame({"c": ["c1"], "d": ["d2"], "t": ["t01"]})
-    p_constraint_constant = Param(("c",),
-        pl.DataFrame({"c": ["c1"], "value": [20.0]}))
+    cdt_le = pl.DataFrame({"cn": ["c1"], "d": ["d2"], "t": ["t01"]})
+    p_constraint_constant = Param(("cn",),
+        pl.DataFrame({"cn": ["c1"], "value": [20.0]}))
     # State coef: 1.0 on (s, c1).  Contributes v_state[s,d2,t01] * 3 * 1.
-    p_node_constraint_state_coefficient = Param(("n", "c"),
-        pl.DataFrame({"n": ["s"], "c": ["c1"], "value": [1.0]}))
+    p_node_constraint_state_coefficient = Param(("n", "cn"),
+        pl.DataFrame({"n": ["s"], "cn": ["c1"], "value": [1.0]}))
     # Prebuilt process coef: 1.0 on (p, c1).
     # Pre-summed constant = existing_count[p,d2] * unitsize[p] * coef
     #                     = 1 * 2 * 1 = 2  → adds to LHS.
     # Cumulative invest contribution = v_invest_p[p, d_invest=d1] * unitsize * 1
     #                                = v_invest_p[p, d1] * 2.
-    p_process_constraint_prebuilt_capacity_coefficient = Param(("p", "c"),
-        pl.DataFrame({"p": ["p"], "c": ["c1"], "value": [1.0]}))
+    p_process_constraint_prebuilt_capacity_coefficient = Param(("p", "cn"),
+        pl.DataFrame({"p": ["p"], "cn": ["c1"], "value": [1.0]}))
 
     return FlexData(
         dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
@@ -593,8 +593,8 @@ def test_b11_user_cstr_state_and_prebuilt_coefs():
     # Switch sense to >= so the constraint forces all LHS terms to bind.
     cdt_ge = d.cdt_le
     d = dataclasses.replace(d, cdt_le=None, cdt_ge=cdt_ge)
-    p_const = Param(("c",),
-        pl.DataFrame({"c": ["c1"], "value": [7.0]}))
+    p_const = Param(("cn",),
+        pl.DataFrame({"cn": ["c1"], "value": [7.0]}))
     d = dataclasses.replace(d, p_constraint_constant=p_const)
     pb, sol = _solve(d)
     assert sol.optimal, (
@@ -653,9 +653,9 @@ def test_b11_empty_lhs_short_circuit(toy_1n1p_1d2t):
     d = toy_1n1p_1d2t
     # cdt_le populated, p_constraint_constant populated, but NO contribution
     # Params (no flow_constraint_idx, no invest/state/prebuilt coefs).
-    cdt_le = pl.DataFrame({"c": ["c1"], "d": ["d1"], "t": ["t01"]})
-    p_const = Param(("c",),
-        pl.DataFrame({"c": ["c1"], "value": [0.0]}))
+    cdt_le = pl.DataFrame({"cn": ["c1"], "d": ["d1"], "t": ["t01"]})
+    p_const = Param(("cn",),
+        pl.DataFrame({"cn": ["c1"], "value": [0.0]}))
     data = dataclasses.replace(d,
         cdt_le=cdt_le,
         p_constraint_constant=p_const,

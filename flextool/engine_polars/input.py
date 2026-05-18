@@ -480,17 +480,17 @@ class FlexData:
     p_process_sink_flow_coef: Param | None = None    # (p, sink)
 
     # ─── User-defined flow constraints ────────────────────────────────────
-    flow_constraint_idx: pl.DataFrame | None = None
-    p_flow_constraint_coef: Param | None = None  # (p, source, sink, c)
-    p_constraint_constant: Param | None = None   # (c,)
-    cdt_eq: pl.DataFrame | None = None
-    cdt_le: pl.DataFrame | None = None
-    cdt_ge: pl.DataFrame | None = None
-    p_node_constraint_invested_capacity_coefficient: Param | None = None  # (n, c)
-    p_process_constraint_invested_capacity_coefficient: Param | None = None  # (p, c)
-    p_node_constraint_state_coefficient: Param | None = None  # (n, c) — user-cstr v_state coefficient
-    p_node_constraint_prebuilt_capacity_coefficient: Param | None = None  # (n, c)
-    p_process_constraint_prebuilt_capacity_coefficient: Param | None = None  # (p, c)
+    flow_constraint_idx: pl.DataFrame | None = None  # (p, source, sink, cn)
+    p_flow_constraint_coef: Param | None = None  # (p, source, sink, cn)
+    p_constraint_constant: Param | None = None   # (cn,)
+    cdt_eq: pl.DataFrame | None = None  # (cn, d, t)
+    cdt_le: pl.DataFrame | None = None  # (cn, d, t)
+    cdt_ge: pl.DataFrame | None = None  # (cn, d, t)
+    p_node_constraint_invested_capacity_coefficient: Param | None = None  # (n, cn)
+    p_process_constraint_invested_capacity_coefficient: Param | None = None  # (p, cn)
+    p_node_constraint_state_coefficient: Param | None = None  # (n, cn) — user-cstr v_state coefficient
+    p_node_constraint_prebuilt_capacity_coefficient: Param | None = None  # (n, cn)
+    p_process_constraint_prebuilt_capacity_coefficient: Param | None = None  # (p, cn)
 
     # ─── Profiles ─────────────────────────────────────────────────────────
     process_profile_upper: pl.DataFrame | None = None    # (p, source, sink, f)
@@ -1102,7 +1102,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         psb_local = block_layout.process_side_block_frame.rename(
             {"process": "p", "block": "b_f"})
         eb_local = block_layout.entity_block_frame.rename(
-            {"entity": "n", "block": "b"})
+            {"entity": "n", "block": "bk"})
         block_compat = block_layout.block_compat()
         if (psb_local.height > 0 and eb_local.height > 0
                 and block_compat.height > 0):
@@ -1112,14 +1112,14 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             ftn_with_blocks = (flow_to_n
                 .join(psb_sink, on="p", how="left")
                 .join(eb_local, on="n", how="left"))
-            # If b_f or b is null, treat as 'default' (compatibility default).
+            # If b_f or bk is null, treat as 'default' (compatibility default).
             ftn_with_blocks = ftn_with_blocks.with_columns(
                 b_f=pl.col("b_f").fill_null("default"),
-                b=pl.col("b").fill_null("default"),
+                bk=pl.col("bk").fill_null("default"),
             )
             # Inner-join with block_compat to keep compatible rows.
             ftn_filtered = (ftn_with_blocks
-                .join(block_compat, on=["b", "b_f"], how="inner")
+                .join(block_compat, on=["bk", "b_f"], how="inner")
                 .select("p", "source", "sink", "n").unique())
             # Replace flow_to_n if filter actually drops rows.
             if ftn_filtered.height > 0 and ftn_filtered.height < flow_to_n.height:
@@ -1130,10 +1130,10 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                 .join(eb_local, on="n", how="left"))
             ffn_with_blocks = ffn_with_blocks.with_columns(
                 b_f=pl.col("b_f").fill_null("default"),
-                b=pl.col("b").fill_null("default"),
+                bk=pl.col("bk").fill_null("default"),
             )
             ffn_filtered = (ffn_with_blocks
-                .join(block_compat, on=["b", "b_f"], how="inner")
+                .join(block_compat, on=["bk", "b_f"], how="inner")
                 .select("p", "source", "sink", "n").unique())
             if ffn_filtered.height > 0 and ffn_filtered.height < flow_from_n.height:
                 flow_from_n = ffn_filtered
@@ -1544,7 +1544,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     cs_path = inp / "constraint__sense.csv"
     if not _provider_has(provider, "input/constraint__sense", cs_path):
         return [None]*12
-    cs = _provider_read(provider, "input/constraint__sense", cs_path).rename({"constraint":"c"})
+    cs = _provider_read(provider, "input/constraint__sense", cs_path).rename({"constraint":"cn"})
     if cs.height == 0: return [None]*12
     coef_path = inp / "p_process_node_constraint_flow_coefficient.csv"
     flow_cstr_idx = None
@@ -1553,6 +1553,9 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     # non-empty.  We retain the CSV read because ``flow_constraint_idx``
     # (the index frame, not a Param) is still needed by downstream
     # constraint emission and isn't produced by an override-chain helper.
+    # The constraint axis column is ``cn`` (not ``c``) to disambiguate
+    # from the commodity axis — see the c_collision review note in
+    # ``version/flextool_axis_contract.json``.
     flow_cstr_coef = None
     if _provider_has(provider,
                       "input/p_process_node_constraint_flow_coefficient",
@@ -1561,19 +1564,19 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
                 provider,
                 "input/p_process_node_constraint_flow_coefficient",
                 coef_path)
-            .rename({"process":"p","node":"n","constraint":"c",
+            .rename({"process":"p","node":"n","constraint":"cn",
                      "p_process_node_constraint_flow_coefficient":"coef"})
             .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
-            .select("p","n","c","coef"))
+            .select("p","n","cn","coef"))
         src_match = (pss.join(coef_long, left_on=["p","source"], right_on=["p","n"],
-                              how="inner").select("p","source","sink","c","coef"))
+                              how="inner").select("p","source","sink","cn","coef"))
         sink_match = (pss.join(coef_long, left_on=["p","sink"], right_on=["p","n"],
-                               how="inner").select("p","source","sink","c","coef"))
+                               how="inner").select("p","source","sink","cn","coef"))
         if src_match.height + sink_match.height > 0:
             joined = (pl.concat([src_match, sink_match], how="vertical")
-                        .group_by(["p","source","sink","c"])
+                        .group_by(["p","source","sink","cn"])
                         .agg(pl.col("coef").sum()))
-            flow_cstr_idx  = joined.select("p","source","sink","c")
+            flow_cstr_idx  = joined.select("p","source","sink","cn")
     # Δ.12-drop: ``p_node_constraint_invested_capacity_coefficient`` /
     # ``p_process_constraint_invested_capacity_coefficient`` /
     # ``p_node_constraint_state_coefficient`` /
@@ -1589,7 +1592,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     constraint_constant = None
     cdt_eq = cdt_le = cdt_ge = None
     for s, slot in [("equal","eq"), ("less_than","le"), ("greater_than","ge")]:
-        cs_s = cs.filter(pl.col("sense")==s).select("c")
+        cs_s = cs.filter(pl.col("sense")==s).select("cn")
         if cs_s.height > 0:
             axes = cs_s.join(dt, how="cross")
             if   slot=="eq": cdt_eq = axes
@@ -2131,7 +2134,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         psb_l = block_layout.process_side_block_frame.rename(
             {"process": "p", "block": "b_f"})
         eb_l = block_layout.entity_block_frame.rename(
-            {"entity": "n", "block": "b"})
+            {"entity": "n", "block": "bk"})
         block_compat_l = block_layout.block_compat()
         if psb_l.height > 0 and eb_l.height > 0 and block_compat_l.height > 0:
             psb_src_l = psb_l.filter(pl.col("side") == "source").select("p", "b_f")
@@ -2143,10 +2146,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                     .join(eb_l, on="n", how="left"))
                 with_blocks = with_blocks.with_columns(
                     b_f=pl.col("b_f").fill_null("default"),
-                    b=pl.col("b").fill_null("default"),
+                    bk=pl.col("bk").fill_null("default"),
                 )
                 f = (with_blocks
-                    .join(block_compat_l, on=["b", "b_f"], how="inner")
+                    .join(block_compat_l, on=["bk", "b_f"], how="inner")
                     .select("p", "source", "sink", "n").unique())
                 if f.height < df.height and f.height > 0:
                     return f
@@ -2527,7 +2530,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
     # nodeState_last_dt: (n, d, t) — last (d, t) per node, used as the index
     # for ``node_balance_fix_quantity_eq_lower``.  Built from
-    # block_period_time_last (b, d, t) × entity_block (e=n, b) × nodeState.
+    # block_period_time_last (bk, d, t) × entity_block (e=n, bk) × nodeState.
+    # The block-axis column is ``bk`` (not ``b``) to disambiguate from the
+    # branch axis — see the b_collision review note in
+    # ``version/flextool_axis_contract.json``.
     # Δ.2: consume frames from in-memory ``BlockLayout``.
     nodeState_last_dt = None
     if (nodeState is not None and nodeState.height > 0
@@ -2535,13 +2541,13 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             and block_layout.block_period_time_last_frame.height > 0
             and block_layout.entity_block_frame.height > 0):
         bptl = block_layout.block_period_time_last_frame.rename(
-            {"block": "b", "period": "d", "step": "t"}).select("b", "d", "t")
+            {"block": "bk", "period": "d", "step": "t"}).select("bk", "d", "t")
         eb = block_layout.entity_block_frame.rename(
-            {"entity": "n", "block": "b"}).select("n", "b")
+            {"entity": "n", "block": "bk"}).select("n", "bk")
         if bptl.height > 0 and eb.height > 0:
             nodeState_last_dt = (nodeState.select("n")
                 .join(eb, on="n", how="inner")
-                .join(bptl, on="b", how="inner")
+                .join(bptl, on="bk", how="inner")
                 .select("n", "d", "t").unique())
             if nodeState_last_dt.height == 0:
                 nodeState_last_dt = None

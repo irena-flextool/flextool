@@ -683,15 +683,17 @@ def test_load_from_solve_data_missing_directory_returns_empty() -> None:
 
 
 def test_load_from_solve_data_block_compat_lh2() -> None:
-    """``block_compat`` returns the (b, b_f) compatibility set used to
-    filter flow_to_n / flow_from_n in input.py."""
+    """``block_compat`` returns the (bk, b_f) compatibility set used to
+    filter flow_to_n / flow_from_n in input.py.  The block-axis column
+    is ``bk`` (not ``b``) — see the b_collision contract review note.
+    """
     workdir = DATA / "work_lh2_three_region"
     if not (workdir / "solve_data" / "overlap_set.csv").exists():
         pytest.skip("lh2_three_region overlap_set missing")
 
     layout = BlockLayout.load_from_solve_data(workdir / "solve_data")
     compat = layout.block_compat()
-    pairs = set(zip(compat["b"].to_list(), compat["b_f"].to_list()))
+    pairs = set(zip(compat["bk"].to_list(), compat["b_f"].to_list()))
 
     # daily_group → fine (hourly / default) emitted in both senses
     # (coarse↔default symmetric, coarse↔fine canonical-direction).

@@ -90,7 +90,7 @@ def test_cdt_cross_with_dt_cardinality(tmp_path: Path):
     # with 3 dt rows -> height=3.  No le/ge sense rows -> those slots None.
     cdt_eq, cdt_le, cdt_ge = out[3], out[4], out[5]
     assert cdt_eq is not None and cdt_eq.height == 3
-    assert set(cdt_eq.columns) == {"c", "d", "t"}
+    assert set(cdt_eq.columns) == {"cn", "d", "t"}
     assert sorted(cdt_eq.rows()) == sorted(
         [("c1", "d1", "t1"), ("c1", "d1", "t2"), ("c1", "d2", "t1")])
     assert cdt_le is None and cdt_ge is None
@@ -123,7 +123,7 @@ def test_flow_cstr_idx_source_plus_sink_dedup(tmp_path: Path):
     # (Δ.12-drop, owned by apply_derived_b).
     fci = out[0]
     assert fci is not None and fci.height == 1
-    assert fci.columns == ["p", "source", "sink", "c"]
+    assert fci.columns == ["p", "source", "sink", "cn"]
     assert fci.row(0) == ("p1", "n_x", "n_y", "c1")
     assert out[1] is None  # flow_cstr_coef
 
@@ -170,7 +170,7 @@ def test_flow_cstr_idx_via_provider_utf8_coef_column(tmp_path: Path):
     # collapses src_match + sink_match to a single index row.
     fci = out[0]
     assert fci is not None and fci.height == 1
-    assert fci.columns == ["p", "source", "sink", "c"]
+    assert fci.columns == ["p", "source", "sink", "cn"]
     assert fci.row(0) == ("p1", "n_x", "n_y", "c1")
 
 

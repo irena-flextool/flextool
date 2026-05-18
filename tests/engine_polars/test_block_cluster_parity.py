@@ -147,7 +147,7 @@ def _csv_path_flow_to_n(work: str) -> pl.DataFrame:
         return base.sort("p", "source", "sink", "n")
     psb_l = bl.process_side_block_frame.rename(
         {"process": "p", "block": "b_f"})
-    eb_l = bl.entity_block_frame.rename({"entity": "n", "block": "b"})
+    eb_l = bl.entity_block_frame.rename({"entity": "n", "block": "bk"})
     block_compat = bl.block_compat()
     if block_compat.height == 0:
         return base.sort("p", "source", "sink", "n")
@@ -156,9 +156,9 @@ def _csv_path_flow_to_n(work: str) -> pl.DataFrame:
         .join(psb_sink, on="p", how="left")
         .join(eb_l, on="n", how="left")
         .with_columns(b_f=pl.col("b_f").fill_null(DEFAULT_BLOCK),
-                       b=pl.col("b").fill_null(DEFAULT_BLOCK)))
+                       bk=pl.col("bk").fill_null(DEFAULT_BLOCK)))
     filtered = (with_blocks
-        .join(block_compat, on=["b", "b_f"], how="inner")
+        .join(block_compat, on=["bk", "b_f"], how="inner")
         .select("p", "source", "sink", "n").unique())
     if 0 < filtered.height < base.height:
         return filtered.sort("p", "source", "sink", "n")
@@ -180,7 +180,7 @@ def _csv_path_flow_from_n(work: str) -> pl.DataFrame:
         return base.sort("p", "source", "sink", "n")
     psb_l = bl.process_side_block_frame.rename(
         {"process": "p", "block": "b_f"})
-    eb_l = bl.entity_block_frame.rename({"entity": "n", "block": "b"})
+    eb_l = bl.entity_block_frame.rename({"entity": "n", "block": "bk"})
     block_compat = bl.block_compat()
     if block_compat.height == 0:
         return base.sort("p", "source", "sink", "n")
@@ -189,9 +189,9 @@ def _csv_path_flow_from_n(work: str) -> pl.DataFrame:
         .join(psb_source, on="p", how="left")
         .join(eb_l, on="n", how="left")
         .with_columns(b_f=pl.col("b_f").fill_null(DEFAULT_BLOCK),
-                       b=pl.col("b").fill_null(DEFAULT_BLOCK)))
+                       bk=pl.col("bk").fill_null(DEFAULT_BLOCK)))
     filtered = (with_blocks
-        .join(block_compat, on=["b", "b_f"], how="inner")
+        .join(block_compat, on=["bk", "b_f"], how="inner")
         .select("p", "source", "sink", "n").unique())
     if 0 < filtered.height < base.height:
         return filtered.sort("p", "source", "sink", "n")
@@ -290,7 +290,7 @@ def test_nodeStateBlock_synthesis_parity(work: str) -> None:
     # Reference combined frame: explicit ∪ (entity_block ∩ coarse ∩ nb).
     eb_lf = bundle.entity_block_lf
     synth = (eb_lf
-              .filter(pl.col("b").is_in(coarse))
+              .filter(pl.col("bk").is_in(coarse))
               .select("n")
               .filter(pl.col("n").is_in(list(nb_set)))
               .unique().sort("n").collect())
@@ -336,11 +336,11 @@ def test_nodeState_last_dt_parity(work: str) -> None:
         return
 
     # Reference: build the same way ``input.py:2233-2253`` does.
-    bptl = bptl_f.rename({"block": "b", "period": "d", "step": "t"})
-    eb = eb_f.rename({"entity": "n", "block": "b"})
+    bptl = bptl_f.rename({"block": "bk", "period": "d", "step": "t"})
+    eb = eb_f.rename({"entity": "n", "block": "bk"})
     expected = (nodeState.select("n")
         .join(eb, on="n", how="inner")
-        .join(bptl, on="b", how="inner")
+        .join(bptl, on="bk", how="inner")
         .select("n", "d", "t").unique())
 
     actual = nodeState_last_dt_lf(nodeState, bundle).collect()
@@ -443,11 +443,11 @@ def test_period_block_multi_resolution_parity(work: str) -> None:
     # period_block_time: overlap_set rows with b_coarse=coarse,
     # b_fine=default.
     ov = bundle.layout.overlap_set_frame
-    expected_pbt = (ov.rename({"period": "d", "block_coarse": "b",
+    expected_pbt = (ov.rename({"period": "d", "block_coarse": "bk",
                                  "step_coarse": "b_first",
                                  "block_fine": "b_fine",
                                  "step_fine": "t"})
-                      .filter(pl.col("b").is_in(coarse_use)
+                      .filter(pl.col("bk").is_in(coarse_use)
                               & (pl.col("b_fine") == DEFAULT_BLOCK))
                       .select("d", "b_first", "t").unique())
     eq, diag = _frames_equal(expected_pbt, pbt)

@@ -227,15 +227,15 @@ def test_node_constraint_invested_coef_parity():
     if not csv_path.exists():
         pytest.skip("no p_node_constraint_invested_capacity_coefficient.csv")
     csv_df = (pl.read_csv(csv_path)
-                .rename({"node": "n", "constraint": "c",
+                .rename({"node": "n", "constraint": "cn",
                           "p_node_constraint_invested_capacity_coefficient": "value"})
-                .select("n", "c", "value")
+                .select("n", "cn", "value")
                 .with_columns(value=pl.col("value").cast(pl.Float64)))
     reader = SpineDbReader(fixture / "tests.sqlite", "test_a_lot")
     db_df = (reader.parameter("node", "constraint_invested_capacity_coefficient")
-                   .rename({"name": "n", "constraint": "c"})
-                   .select("n", "c", "value"))
-    eq, diff = _equal_after_sort(csv_df, db_df, ["n", "c"])
+                   .rename({"name": "n", "constraint": "cn"})
+                   .select("n", "cn", "value"))
+    eq, diff = _equal_after_sort(csv_df, db_df, ["n", "cn"])
     assert eq, f"node constraint_invested_coef mismatch: {diff}"
 
 
@@ -1192,7 +1192,7 @@ class TestDerivedBTopology:
             pytest.skip(f"{work} has no flow_constraint_coef")
         eq, diff = _frame_eq_value(csv_d.p_flow_constraint_coef,
                                     db_d.p_flow_constraint_coef,
-                                    ["p", "source", "sink", "c"])
+                                    ["p", "source", "sink", "cn"])
         assert eq, f"p_flow_constraint_coef mismatch on {work}: {diff}"
 
     @pytest.mark.parametrize("work, sqlite, scenario", DERIVED_B_FIXTURES,

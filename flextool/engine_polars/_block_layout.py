@@ -1419,25 +1419,31 @@ class BlockLayout:
     # ------------------------------------------------------------------
 
     def block_compat(self) -> pl.DataFrame:
-        """Return the (b, b_f) → 1 compatibility set used by the
+        """Return the (bk, b_f) → 1 compatibility set used by the
         block-aware filtering of flow_to_n / flow_from_n.
+
+        The block axis column is named ``bk`` (not ``b``) to disambiguate
+        from the branch axis — see the b_collision review note in
+        ``version/flextool_axis_contract.json``.  ``b_f`` is the
+        block-fine companion column (also block vocabulary, but distinct
+        column name so it doesn't collide).
 
         Equivalent to::
 
             overlap_set_frame
-                .rename({"block_coarse": "b", "block_fine": "b_f"})
-                .select("b", "b_f").unique()
+                .rename({"block_coarse": "bk", "block_fine": "b_f"})
+                .select("bk", "b_f").unique()
 
         Cached attribute would help on hot paths; the materialised set
         is small (≤ |blocks|² ≈ tens of rows).
         """
         if self.overlap_set_frame.height == 0:
-            return pl.DataFrame(schema={"b": schema_dtype(_enums, "b"),
+            return pl.DataFrame(schema={"bk": schema_dtype(_enums, "bk"),
                                          "b_f": pl.Utf8})
         return (
             self.overlap_set_frame
-            .rename({"block_coarse": "b", "block_fine": "b_f"})
-            .select("b", "b_f").unique()
+            .rename({"block_coarse": "bk", "block_fine": "b_f"})
+            .select("bk", "b_f").unique()
         )
 
     def coarse_blocks(self, threshold: float = 1.0) -> list[str]:
