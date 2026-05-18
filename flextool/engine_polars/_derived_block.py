@@ -59,7 +59,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine_polars._axis_enums import cast_dim, schema_dtype
+from flextool.engine_polars._axis_enums import cast_dim, rename_to_axis, schema_dtype
 from flextool.engine_polars._block_layout import (
     DEFAULT_BLOCK,
     BlockLayout,
@@ -128,7 +128,7 @@ class BlockBundle:
                 "side": pl.Utf8,
                 "b_f": pl.Utf8,
             })
-        return f.lazy().rename({"process": "p", "block": "b_f"})
+        return f.lazy().pipe(rename_to_axis, {"process": "p", "block": "b_f"})
 
     @property
     def entity_block_lf(self) -> pl.LazyFrame:
@@ -144,7 +144,7 @@ class BlockBundle:
                 "n": schema_dtype(_enums, "n"),
                 "bk": schema_dtype(_enums, "bk"),
             })
-        return f.lazy().rename({"entity": "n", "block": "bk"})
+        return f.lazy().pipe(rename_to_axis, {"entity": "n", "block": "bk"})
 
     @property
     def block_step_duration_arc_lf(self) -> pl.LazyFrame:
@@ -157,7 +157,7 @@ class BlockBundle:
                 "t": schema_dtype(_enums, "t"),
                 "weight": pl.Float64,
             })
-        return f.lazy().rename({
+        return f.lazy().pipe(rename_to_axis, {
             "block": "b_f", "period": "d",
             "step": "t", "step_duration": "weight",
         })
@@ -171,7 +171,7 @@ class BlockBundle:
                 "d": schema_dtype(_enums, "d"),
                 "t": schema_dtype(_enums, "t"),
             })
-        return f.lazy().rename({"block": "bk", "period": "d", "step": "t"})
+        return f.lazy().pipe(rename_to_axis, {"block": "bk", "period": "d", "step": "t"})
 
     @property
     def block_period_time_last_lf(self) -> pl.LazyFrame:
@@ -182,7 +182,7 @@ class BlockBundle:
                 "d": schema_dtype(_enums, "d"),
                 "t": schema_dtype(_enums, "t"),
             })
-        return f.lazy().rename({"block": "bk", "period": "d", "step": "t"})
+        return f.lazy().pipe(rename_to_axis, {"block": "bk", "period": "d", "step": "t"})
 
     @property
     def block_compat_frame(self) -> pl.DataFrame:
@@ -606,7 +606,7 @@ def period_block_multi_resolution_lf(
     # period_block: (d, b_first) — coarse block step list.
     new_pb = (
         bsd_c
-        .rename({"period": "d", "step": "b_first"})
+        .pipe(rename_to_axis, {"period": "d", "step": "b_first"})
         .select("d", "b_first")
         .unique()
     )
@@ -615,7 +615,7 @@ def period_block_multi_resolution_lf(
     succ_rows: list[tuple[str, str, str]] = []
     bsd_sorted = (
         bsd_c
-        .rename({"period": "d", "step": "b_first"})
+        .pipe(rename_to_axis, {"period": "d", "step": "b_first"})
         .sort("block", "d", "b_first")
     )
     for (_blk, dval), grp in bsd_sorted.group_by(
@@ -647,7 +647,7 @@ def period_block_multi_resolution_lf(
     ov = bundle.layout.overlap_set_frame
     if ov.height == 0:
         return None
-    ov_renamed = ov.rename({
+    ov_renamed = ov.pipe(rename_to_axis, {
         "period": "d",
         "block_coarse": "bk",
         "step_coarse": "b_first",

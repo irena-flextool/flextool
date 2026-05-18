@@ -70,6 +70,8 @@ import polars as pl
 
 from polar_high import Param
 
+from flextool.engine_polars._axis_enums import rename_to_axis
+
 from ._derived_walks import period_walk_iterator, WindowMethod
 
 if TYPE_CHECKING:
@@ -452,7 +454,7 @@ def _edd_history_lf_for(source: "InputSource",
             window_method=WindowMethod.UNBOUNDED_FORWARD,
             life_lf=None, factor_side=None,
             workdir=workdir)
-    return walk.rename({"d": "d_history", "d_all": "d"})
+    return walk.pipe(rename_to_axis, {"d": "d_history", "d_all": "d"})
 
 
 def edd_history_lf(source: "InputSource",
@@ -528,7 +530,7 @@ def pd_invest_set_lf(source: "InputSource",
     return (ed_invest_lf
               .join(cls_lf, on="e", how="inner")
               .filter(pl.col("kind") == "process")
-              .rename({"e": "p"})
+              .pipe(rename_to_axis, {"e": "p"})
               .select("p", "d")
               .unique()
               .sort("p", "d"))
@@ -542,7 +544,7 @@ def nd_invest_set_lf(source: "InputSource",
     return (ed_invest_lf
               .join(cls_lf, on="e", how="inner")
               .filter(pl.col("kind") == "node")
-              .rename({"e": "n"})
+              .pipe(rename_to_axis, {"e": "n"})
               .select("n", "d")
               .unique()
               .sort("n", "d"))
@@ -556,7 +558,7 @@ def pd_divest_set_lf(source: "InputSource",
     return (ed_divest_lf
               .join(cls_lf, on="e", how="inner")
               .filter(pl.col("kind") == "process")
-              .rename({"e": "p"})
+              .pipe(rename_to_axis, {"e": "p"})
               .select("p", "d")
               .unique()
               .sort("p", "d"))
@@ -570,7 +572,7 @@ def nd_divest_set_lf(source: "InputSource",
     return (ed_divest_lf
               .join(cls_lf, on="e", how="inner")
               .filter(pl.col("kind") == "node")
-              .rename({"e": "n"})
+              .pipe(rename_to_axis, {"e": "n"})
               .select("n", "d")
               .unique()
               .sort("n", "d"))
@@ -647,10 +649,10 @@ def edd_invest_set_lf(source: "InputSource",
     edd = edd_history_lf(source, active_solve,
                               period_with_history, period_in_use,
                               workdir)
-    inv_pairs = ed_invest_lf.rename({"d": "d_history"})
+    inv_pairs = ed_invest_lf.pipe(rename_to_axis, {"d": "d_history"})
     return (edd
               .join(inv_pairs, on=["e", "d_history"], how="inner")
-              .rename({"d_history": "d_invest"})
+              .pipe(rename_to_axis, {"d_history": "d_invest"})
               .select("e", "d_invest", "d"))
 
 
@@ -707,7 +709,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
 
     # Shape the anchor as ``[e, d]`` for the shared walker (it expects
     # the anchor period column to be named ``d``).
-    anchor_lf = inv_anchor.rename({"d_invest": "d"})
+    anchor_lf = inv_anchor.pipe(rename_to_axis, {"d_invest": "d"})
 
     # The source-driven ``_all_entities_lf`` reads raw CSV — String
     # ``e``.  ``anchor_lf.e`` carries whatever dtype the caller passed
@@ -759,7 +761,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
             workdir=workdir)
 
     return (pl.concat([bounded_walk, unbounded_walk], how="vertical")
-              .rename({"d": "d_invest", "d_all": "d"})
+              .pipe(rename_to_axis, {"d": "d_invest", "d_all": "d"})
               .select("e", "d_invest", "d")
               .unique()
               .sort("e", "d_invest", "d"))
@@ -875,7 +877,7 @@ def p_entity_all_existing_from_handoff(
                                 pl.col("value").alias("ppec")))
         edd_lf = edd_history.lazy()
         if {"entity", "period_history", "period"}.issubset(set(edd_history.columns)):
-            edd_lf = edd_lf.rename({"entity": "e",
+            edd_lf = edd_lf.pipe(rename_to_axis, {"entity": "e",
                                        "period_history": "d_h",
                                        "period": "d"})
         # later_existing[e, d] = Σ_{d_h: (e, d_h, d) ∈ edd_history ∧
@@ -1117,12 +1119,13 @@ def _lifetime_expired_pairs_lf(source: "InputSource",
     pf_lf = pl.LazyFrame({"d_first": period_first})
     pyd_first = pyd_lf.rename({"d": "d_first", "yr": "yr_first"})
     e_dfirst = (in_methods.join(pf_lf, how="cross")
-                          .rename({"d_first": "d"})
+                          .pipe(rename_to_axis, {"d_first": "d"})
                           .pipe(lambda lf: lf))  # placeholder for symmetry
     # Resolve lifetime[e, d_first] via cascade.
     life_per = _per_entity_param_lf(source, "lifetime")
     life_resolved = (_resolve_per_period_lf(
-        life_per, in_methods.join(pf_lf, how="cross").rename({"d_first": "d"}),
+        life_per,
+        in_methods.join(pf_lf, how="cross").pipe(rename_to_axis, {"d_first": "d"}),
         fill=0.0))
     life_at_first = life_resolved.rename({"d": "d_first", "value": "life"})
     summed_lf = (life_at_first
@@ -1235,7 +1238,7 @@ def apply_existing_chain(flex_data: object,
         re_frame = handoff.realized_existing
         if re_frame.height > 0:
             ppec_param = _Param(("e", "d"),
-                                  re_frame.rename({"entity": "e",
+                                  re_frame.pipe(rename_to_axis, {"entity": "e",
                                                        "period": "d"})
                                           .select("e", "d", "value"))
     if ppec_param is None:
@@ -1249,7 +1252,7 @@ def apply_existing_chain(flex_data: object,
         if (df is not None and df.height > 0
                 and "p_entity_period_existing_capacity" in df.columns):
             ppec_param = _Param(("e", "d"),
-                                  df.rename({"entity": "e",
+                                  df.pipe(rename_to_axis, {"entity": "e",
                                                "period": "d"})
                                     .select("e", "d",
                                               pl.col("p_entity_period_existing_capacity")

@@ -43,7 +43,7 @@ import polars as pl
 from polar_high import Sum, Where, Param
 from polar_high.engine import Var
 
-from ._axis_enums import schema_dtype
+from ._axis_enums import rename_to_axis, schema_dtype
 from ._writer_provider_io import _provider_key
 
 
@@ -144,7 +144,7 @@ def load_data(inp: Path | str, sd: Path | str,
     rug = _provider_get(provider, rug_path)
     if rug is None or rug.height == 0:
         return out
-    rug = rug.rename({"reserve": "r", "upDown": "ud", "group": "g"}) \
+    rug = rug.pipe(rename_to_axis, {"reserve": "r", "upDown": "ud", "group": "g"}) \
               .select("r", "ud", "g")
     out["reserve_upDown_group"] = rug
 
@@ -157,7 +157,7 @@ def load_data(inp: Path | str, sd: Path | str,
         path = sd / f"reserve__upDown__group__method_{method}.csv"
         df = _provider_get(provider, path)
         if df is not None and df.height > 0:
-            df = df.rename({"reserve": "r", "upDown": "ud", "group": "g"}) \
+            df = df.pipe(rename_to_axis, {"reserve": "r", "upDown": "ud", "group": "g"}) \
                    .select("r", "ud", "g", "method")
         else:
             df = pl.DataFrame(schema={
@@ -178,7 +178,7 @@ def load_data(inp: Path | str, sd: Path | str,
     irr = _provider_get(provider, irr_path)
     if irr is not None:
         if irr.height > 0:
-            irr = irr.rename({"process": "p", "reserve": "r",
+            irr = irr.pipe(rename_to_axis, {"process": "p", "reserve": "r",
                                "upDown": "ud", "node": "n"}) \
                       .select("p", "r", "ud", "n")
         else:
@@ -194,7 +194,7 @@ def load_data(inp: Path | str, sd: Path | str,
     lfr = _provider_get(provider, lfr_path)
     if lfr is not None:
         if lfr.height > 0:
-            lfr = lfr.rename({"process": "p", "reserve": "r",
+            lfr = lfr.pipe(rename_to_axis, {"process": "p", "reserve": "r",
                                "upDown": "ud", "node": "n"}) \
                       .select("p", "r", "ud", "n")
         else:
@@ -220,7 +220,7 @@ def load_data(inp: Path | str, sd: Path | str,
             continue
         seen_any = True
         if df.height > 0:
-            gn = df.rename({"group": "g", "node": "n"}).select("g", "n").unique()
+            gn = df.pipe(rename_to_axis, {"group": "g", "node": "n"}).select("g", "n").unique()
             break
     if gn is not None:
         out["group_node"] = gn
@@ -237,7 +237,7 @@ def load_data(inp: Path | str, sd: Path | str,
     pdtR = _provider_get(provider, pdtR_path)
     if pdtR is not None:
         if pdtR.height > 0:
-            pdtR = pdtR.rename({"reserve": "r", "upDown": "ud",
+            pdtR = pdtR.pipe(rename_to_axis, {"reserve": "r", "upDown": "ud",
                                  "group": "g", "period": "d", "time": "t"})
             res_only = (pdtR.filter(pl.col("param") == "reservation")
                             .select("r", "ud", "g", "d", "t", "value")
@@ -315,7 +315,7 @@ def add_constraints(m, d, vars: dict) -> None:
     rug        = d.reserve_upDown_group                # (r, ud, g)
     rug_dt     = rug.join(d.dt, how="cross")           # (r, ud, g, d, t)
     pruna      = d.process_reserve_upDown_node_active  # (p, r, ud, n)
-    gn         = d.group_node.rename({"n": "n"})       # (g, n)
+    gn         = d.group_node.pipe(rename_to_axis, {"n": "n"})       # (g, n)
 
     # ── LHS (shared across all four reserveBalance variants) ────────────
     #
@@ -418,13 +418,13 @@ def add_constraints(m, d, vars: dict) -> None:
                 # to the eff sink-side rows.  Listed in manifest TODO.
                 pieces = []
                 # n on the "sink" side: pss has columns (p, source, sink)
-                pss_as_sink = pss.rename({"sink": "n"}).select("p", "source", "n")
+                pss_as_sink = pss.pipe(rename_to_axis, {"sink": "n"}).select("p", "source", "n")
                 pieces.append(Sum(
                     Where(v_flow * p_unitsize * irr_param,
                           pss_as_sink.join(irr_g, on=["p", "n"], how="inner")),
                     over=("p", "source", "n"),
                 ))
-                pss_as_source = pss.rename({"source": "n"}).select("p", "n", "sink")
+                pss_as_source = pss.pipe(rename_to_axis, {"source": "n"}).select("p", "n", "sink")
                 pieces.append(Sum(
                     Where(v_flow * p_unitsize * irr_param,
                           pss_as_source.join(irr_g, on=["p", "n"], how="inner")),
@@ -486,7 +486,7 @@ def add_constraints(m, d, vars: dict) -> None:
                     pss = d.process_source_sink
                     if ud_filter == "up":
                         # n is the failing-process sink (delivering side)
-                        pss_idx = pss.rename({"sink": "n"}).select("p", "source", "n")
+                        pss_idx = pss.pipe(rename_to_axis, {"sink": "n"}).select("p", "source", "n")
                         rhs_terms["n_1_failure"] = Sum(
                             Where(v_flow * p_unitsize * lfr_param,
                                   pss_idx.join(lfr_g, on=["p", "n"], how="inner")),
@@ -494,7 +494,7 @@ def add_constraints(m, d, vars: dict) -> None:
                         )
                     else:
                         # n is the failing-process source (consuming side)
-                        pss_idx = pss.rename({"source": "n"}).select("p", "n", "sink")
+                        pss_idx = pss.pipe(rename_to_axis, {"source": "n"}).select("p", "n", "sink")
                         rhs_terms["n_1_failure"] = Sum(
                             Where(v_flow * p_unitsize * lfr_param,
                                   pss_idx.join(lfr_g, on=["p", "n"], how="inner")),
@@ -550,13 +550,13 @@ def add_constraints(m, d, vars: dict) -> None:
                 # invest tightening: -Σ_{d_inv} v_invest_p[d_inv] · max_share
                 if (v_invest_p is not None and edd_inv_set is not None
                         and edd_inv_set.height > 0):
-                    edd_p = (edd_inv_set.rename({"e": "p"})
+                    edd_p = (edd_inv_set.pipe(rename_to_axis, {"e": "p"})
                              .join(p_in_idx, on="p", how="inner"))
                     if edd_p.height > 0:
                         v_inv_at = Var(
                             name=v_invest_p.name + f"__at_{name}",
                             dims=("p", "d_invest"),
-                            frame=v_invest_p.frame.rename({"d": "d_invest"}),
+                            frame=v_invest_p.frame.pipe(rename_to_axis, {"d": "d_invest"}),
                             lower=v_invest_p.lower, upper=v_invest_p.upper,
                         )
                         inv_sum = Sum(Where(v_inv_at, edd_p), over=("d_invest",))
@@ -569,7 +569,7 @@ def add_constraints(m, d, vars: dict) -> None:
                         v_div_at = Var(
                             name=v_divest_p.name + f"__at_{name}",
                             dims=("p", "d_divest"),
-                            frame=v_divest_p.frame.rename({"d": "d_divest"}),
+                            frame=v_divest_p.frame.pipe(rename_to_axis, {"d": "d_divest"}),
                             lower=v_divest_p.lower, upper=v_divest_p.upper,
                         )
                         div_sum = Sum(Where(v_div_at, edd_p_div), over=("d_divest",))
