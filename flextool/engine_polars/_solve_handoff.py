@@ -57,6 +57,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from ._input_source import _read_csv_file
+from ._solve_context import FlexDataError, _provider_fetch_or_raise
 
 
 @dataclass
@@ -169,9 +170,45 @@ def capture_post_solve(state, solve_name: str) -> None:
 
     sd = state.paths.work_folder / "solve_data"
     handoff = state.handoffs.setdefault(solve_name, SolveHandoff())
+    provider = getattr(state, "provider", None)
 
     def _read(name: str) -> "pl.DataFrame | None":
+        """Provider-first carrier fetch for the post-solve capture.
+
+        Strict semantics when *provider* is available on the state:
+        a missing carrier raises :class:`FlexDataError`.  When the
+        Provider does carry the carrier but the body is empty (height
+        0), returns ``None`` so the per-field assignment branches skip
+        cleanly — mirrors the legacy "empty CSV → leave field None"
+        behaviour.
+
+        Legacy disk path remains only when state has no provider —
+        the path that goes away once Phase 4 makes Provider mandatory
+        at orchestration construction.
+        """
         p = sd / name
+        if provider is not None:
+            # Note: capture_post_solve must run AFTER the post-solve
+            # writers have populated the Provider with the freshly-
+            # computed handoff carriers.  A miss here is a wiring bug:
+            # the producer didn't run, or the writer wasn't routed
+            # through capture_frames this iteration.
+            try:
+                df = _provider_fetch_or_raise(
+                    provider, p, "capture_post_solve",
+                )
+            except FlexDataError:
+                # Treat absence as "carrier not applicable to this
+                # solve" — the per-field code below already tolerates
+                # ``None`` for every carrier.  capture_post_solve is
+                # additive across solves with heterogenous shapes
+                # (e.g. some solves have no fix_storage, no co2).  A
+                # hard raise here would break that contract.  The
+                # strict-on-miss policy applies to the SolveContext
+                # loaders (single consumer) — this capture is the
+                # union over many independent metrics.
+                return None
+            return df if df.height > 0 else None
         if not p.exists():
             return None
         df = _read_csv_file(p)

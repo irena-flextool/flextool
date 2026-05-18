@@ -117,6 +117,12 @@ class SolveContext:
     solveFirst: bool = True
     realized_periods: set[str] = field(default_factory=set)
     realized_invest_periods: set[str] = field(default_factory=set)
+    # Phase 3 — Provider stashed at construction so the lazy DataFrame
+    # property loaders can consult it without re-plumbing the kwarg
+    # through every caller.  When ``provider`` is None the legacy disk
+    # path remains active (test-only fallback that goes away with
+    # Phase 4 activation).
+    provider: "object | None" = field(default=None, repr=False)
     # ``period_in_use`` / ``period_branch`` / ``edd_history`` /
     # ``p_entity_period_existing_capacity`` / ``p_entity_pre_existing``
     # are populated on first access via the descriptor machinery below —
@@ -227,7 +233,7 @@ class SolveContext:
         """
         wd = Path(workdir)
         sd = wd / "solve_data"
-        ctx = cls(workdir=wd)
+        ctx = cls(workdir=wd, provider=provider)
         ctx.solve_name = _read_active_solve(wd, provider=provider)
         ctx.solveFirst = _read_solve_first(wd, provider=provider)
         ctx.realized_periods = _read_realized_dispatch_periods(
@@ -335,7 +341,8 @@ class SolveContext:
     def period_in_use(self) -> pl.DataFrame:
         if not self._period_in_use_loaded:
             self._period_in_use = _load_period_in_use(
-                self.solve_data_dir / "period_in_use_set.csv"
+                self.solve_data_dir / "period_in_use_set.csv",
+                provider=self.provider,
             )
             self._period_in_use_loaded = True
         return self._period_in_use
@@ -344,7 +351,8 @@ class SolveContext:
     def period_branch(self) -> pl.DataFrame:
         if not self._period_branch_loaded:
             self._period_branch = _load_period_branch(
-                self.solve_data_dir / "period__branch.csv"
+                self.solve_data_dir / "period__branch.csv",
+                provider=self.provider,
             )
             self._period_branch_loaded = True
         return self._period_branch
@@ -353,7 +361,8 @@ class SolveContext:
     def edd_history(self) -> pl.DataFrame:
         if not self._edd_history_loaded:
             self._edd_history = _load_edd_history(
-                self.solve_data_dir / "edd_history.csv"
+                self.solve_data_dir / "edd_history.csv",
+                provider=self.provider,
             )
             self._edd_history_loaded = True
         return self._edd_history
@@ -362,7 +371,8 @@ class SolveContext:
     def p_entity_period_existing_capacity(self) -> pl.DataFrame:
         if not self._ppec_loaded:
             self._ppec = _maybe_read(
-                self.solve_data_dir / "p_entity_period_existing_capacity.csv"
+                self.solve_data_dir / "p_entity_period_existing_capacity.csv",
+                provider=self.provider,
             )
             self._ppec_loaded = True
         return self._ppec
@@ -371,7 +381,8 @@ class SolveContext:
     def p_entity_pre_existing(self) -> pl.DataFrame:
         if not self._ppe_loaded:
             self._ppe = _maybe_read(
-                self.solve_data_dir / "p_entity_pre_existing.csv"
+                self.solve_data_dir / "p_entity_pre_existing.csv",
+                provider=self.provider,
             )
             self._ppe_loaded = True
         return self._ppe
@@ -388,7 +399,8 @@ class SolveContext:
         """
         if not self._steps_in_use_loaded:
             self._steps_in_use = _load_steps_in_use(
-                self.solve_data_dir / "steps_in_use.csv"
+                self.solve_data_dir / "steps_in_use.csv",
+                provider=self.provider,
             )
             self._steps_in_use_loaded = True
         return self._steps_in_use
@@ -405,7 +417,9 @@ class SolveContext:
         typed accessor.
         """
         if not self._period_share_loaded:
-            self._period_share = _load_period_share(self.solve_data_dir)
+            self._period_share = _load_period_share(
+                self.solve_data_dir, provider=self.provider,
+            )
             self._period_share_loaded = True
         return self._period_share
 
@@ -421,7 +435,8 @@ class SolveContext:
         """
         if not self._p_entity_all_existing_loaded:
             self._p_entity_all_existing = _maybe_read(
-                self.solve_data_dir / "p_entity_all_existing.csv"
+                self.solve_data_dir / "p_entity_all_existing.csv",
+                provider=self.provider,
             )
             self._p_entity_all_existing_loaded = True
         return self._p_entity_all_existing
@@ -438,7 +453,8 @@ class SolveContext:
         """
         if not self._solve_branch_weight_loaded:
             self._solve_branch_weight = _load_solve_branch_weight(
-                self.solve_data_dir / "solve_branch_weight.csv"
+                self.solve_data_dir / "solve_branch_weight.csv",
+                provider=self.provider,
             )
             self._solve_branch_weight_loaded = True
         return self._solve_branch_weight
@@ -461,8 +477,76 @@ class SolveContext:
 # ---------------------------------------------------------------------------
 
 
-def _maybe_read(path: Path) -> pl.DataFrame:
-    """Eager read returning empty frame on missing / empty CSV."""
+def _carrier_miss(path: Path, consumer: str) -> "FlexDataError":
+    """Build the strict-Provider miss error for a SolveContext loader.
+
+    The producer-side writer should have populated the carrier before
+    the loader runs.  A miss here is a cascade bug — likely the writer
+    didn't run, or its frame was emitted under a non-canonical key.
+    """
+    return FlexDataError(
+        f"FlexDataProvider has no carrier for '{path.name}' "
+        f"(consumer: {consumer}).  This per-solve frame must be "
+        f"populated by its writer before SolveContext consumes it.  "
+        f"In cascade mode the producer routes through capture_frames; "
+        f"check that the writer ran and emitted under the canonical "
+        f"key '{_provider_key_for(path)}'."
+    )
+
+
+def _provider_key_for(path: Path) -> str:
+    """Return the canonical Provider key for *path* (parent/stem)."""
+    parent = path.parent.name
+    stem = path.stem
+    if parent:
+        return f"{parent}/{stem}"
+    return stem
+
+
+class FlexDataError(RuntimeError):
+    """Raised when the Provider lacks a carrier the cascade requires.
+
+    This is a programming/wiring error — surfaced rather than worked
+    around so the broken edge is visible.  See ``specs/enum_dtype_refactor_plan.md``
+    §Phase 3 for the rationale (no silent disk-fallback arms).
+    """
+
+
+def _provider_fetch_or_raise(
+    provider: "object", path: Path, consumer: str,
+) -> pl.DataFrame:
+    """Fetch *path*'s carrier from *provider* strictly; raise on miss."""
+    from ._writer_provider_io import _provider_key
+    key = _provider_key(path)
+    if provider.has(key):
+        df = provider.get(key)
+        if df is not None:
+            return df
+    bare = path.stem
+    if provider.has(bare):
+        df = provider.get(bare)
+        if df is not None:
+            return df
+    raise _carrier_miss(path, consumer)
+
+
+def _maybe_read(path: Path,
+                 *, provider: "object | None" = None) -> pl.DataFrame:
+    """Eager read returning empty frame on missing / empty CSV.
+
+    Provider-first: when *provider* is supplied, the carrier is fetched
+    strictly from the Provider; a missing key raises :class:`FlexDataError`.
+    Empty frames (height 0) are returned as ``pl.DataFrame()`` so callers
+    that ``if df.height == 0`` continue to short-circuit cleanly.
+
+    Disk fallback only runs when *provider* is None (the test-only path
+    that remains until Phase 4 activation makes provider mandatory).
+    """
+    if provider is not None:
+        df = _provider_fetch_or_raise(provider, path, "SolveContext._maybe_read")
+        if df.height == 0:
+            return pl.DataFrame()
+        return df
     if not path.exists():
         return pl.DataFrame()
     try:
@@ -582,7 +666,35 @@ def _read_realized_dispatch_periods(path: Path,
     return out
 
 
-def _load_period_in_use(path: Path) -> pl.DataFrame:
+def _read_frame(path: Path,
+                 *, provider: "object | None" = None,
+                 consumer: str = "SolveContext") -> pl.DataFrame | None:
+    """Provider-first frame fetch with strict semantics.
+
+    Returns the frame when present (Provider lookup if *provider* is
+    supplied; disk read when *provider* is None — the legacy test-only
+    path).  Returns ``None`` when the source genuinely yields an empty
+    body (height 0 or NoDataError).  Raises :class:`FlexDataError` when
+    a Provider is supplied but lacks the carrier.
+    """
+    if provider is not None:
+        df = _provider_fetch_or_raise(provider, path, consumer)
+        if df.height == 0:
+            return None
+        return df
+    if not path.exists():
+        return None
+    try:
+        df = _read_csv_file(path)
+    except pl.exceptions.NoDataError:
+        return None
+    if df.height == 0:
+        return None
+    return df
+
+
+def _load_period_in_use(path: Path,
+                         *, provider: "object | None" = None) -> pl.DataFrame:
     """Load ``period_in_use_set.csv`` and rename to canonical ``[d]``.
 
     Preserves CSV row order (``unique(maintain_order=True)``) so callers
@@ -590,28 +702,23 @@ def _load_period_in_use(path: Path) -> pl.DataFrame:
     canonical-order reorder in ``_dt_period_active_steps``) get the
     same active_time_list ordering the workdir CSV exposes.
     """
-    if not path.exists():
-        return pl.DataFrame(schema={"d": pl.Utf8})
-    try:
-        df = _read_csv_file(path)
-    except pl.exceptions.NoDataError:
-        return pl.DataFrame(schema={"d": pl.Utf8})
-    if df.height == 0:
-        return pl.DataFrame(schema={"d": pl.Utf8})
+    empty = pl.DataFrame(schema={"d": pl.Utf8})
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.period_in_use")
+    if df is None:
+        return empty
     df = df.rename({df.columns[0]: "d"})
     return df.select("d").unique(maintain_order=True)
 
 
-def _load_period_branch(path: Path) -> pl.DataFrame:
+def _load_period_branch(path: Path,
+                         *, provider: "object | None" = None) -> pl.DataFrame:
     """Load ``period__branch.csv`` as ``[d_anchor, b]``."""
-    if not path.exists():
-        return pl.DataFrame(schema={"d_anchor": pl.Utf8, "b": pl.Utf8})
-    try:
-        df = _read_csv_file(path)
-    except pl.exceptions.NoDataError:
-        return pl.DataFrame(schema={"d_anchor": pl.Utf8, "b": pl.Utf8})
-    if df.height == 0:
-        return pl.DataFrame(schema={"d_anchor": pl.Utf8, "b": pl.Utf8})
+    empty = pl.DataFrame(schema={"d_anchor": pl.Utf8, "b": pl.Utf8})
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.period_branch")
+    if df is None:
+        return empty
     rename = {}
     if "period" in df.columns:
         rename["period"] = "d_anchor"
@@ -619,22 +726,21 @@ def _load_period_branch(path: Path) -> pl.DataFrame:
         rename["branch"] = "b"
     df = df.rename(rename)
     cols = [c for c in ("d_anchor", "b") if c in df.columns]
-    return df.select(cols).unique(maintain_order=True) if cols else pl.DataFrame(
-        schema={"d_anchor": pl.Utf8, "b": pl.Utf8}
-    )
+    return df.select(cols).unique(maintain_order=True) if cols else empty
 
 
-def _load_edd_history(path: Path) -> pl.DataFrame:
+def _load_edd_history(path: Path,
+                       *, provider: "object | None" = None) -> pl.DataFrame:
     """Load ``edd_history.csv`` — schema preserved as-is."""
-    if not path.exists():
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.edd_history")
+    if df is None:
         return pl.DataFrame()
-    try:
-        return _read_csv_file(path)
-    except pl.exceptions.NoDataError:
-        return pl.DataFrame()
+    return df
 
 
-def _load_steps_in_use(path: Path) -> pl.DataFrame:
+def _load_steps_in_use(path: Path,
+                        *, provider: "object | None" = None) -> pl.DataFrame:
     """Load ``steps_in_use.csv`` and rename to canonical ``[d, t,
     step_duration]``.  Empty frame when missing.
 
@@ -646,13 +752,9 @@ def _load_steps_in_use(path: Path) -> pl.DataFrame:
     empty = pl.DataFrame(
         schema={"d": pl.Utf8, "t": pl.Utf8, "step_duration": pl.Float64}
     )
-    if not path.exists():
-        return empty
-    try:
-        df = _read_csv_file(path)
-    except pl.exceptions.NoDataError:
-        return empty
-    if df.height == 0:
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.steps_in_use")
+    if df is None:
         return empty
     period_col = next((c for c in ("period", "d") if c in df.columns), None)
     step_col = next(
@@ -669,7 +771,8 @@ def _load_steps_in_use(path: Path) -> pl.DataFrame:
     return out.select(cols)
 
 
-def _load_period_share(solve_data_dir: Path) -> pl.DataFrame:
+def _load_period_share(solve_data_dir: Path,
+                        *, provider: "object | None" = None) -> pl.DataFrame:
     """Load ``complete_period_share_of_year_calc.csv`` (preferred) or
     its non-``_calc`` variant — rename ``period`` → ``d``.
 
@@ -683,6 +786,34 @@ def _load_period_share(solve_data_dir: Path) -> pl.DataFrame:
         solve_data_dir / "complete_period_share_of_year_calc.csv",
         solve_data_dir / "complete_period_share_of_year.csv",
     )
+    if provider is not None:
+        # Provider-strict: at least one of the canonical variants must
+        # carry the frame.  We probe ``_calc`` first (the producer's
+        # default), then the legacy non-``_calc`` name as a fallback.
+        from ._writer_provider_io import _provider_key
+        for path in cand_paths:
+            key = _provider_key(path)
+            if provider.has(key) or provider.has(path.stem):
+                df = (provider.get(key) if provider.has(key)
+                      else provider.get(path.stem))
+                if df is None or df.height == 0:
+                    continue
+                out = df
+                if "period" in out.columns:
+                    out = out.rename({"period": "d"})
+                if "value" in out.columns:
+                    out = out.with_columns(
+                        pl.col("value").cast(pl.Float64, strict=False)
+                    )
+                cols = [c for c in ("d", "value") if c in out.columns]
+                if cols:
+                    return out.select(cols)
+        # Neither variant carried a usable frame — treat as empty.
+        # ``period_share_of_year`` is genuinely optional (some fixtures
+        # skip the inflation-factor pipeline entirely); empty is the
+        # legacy semantics.
+        return empty
+    # Legacy disk path — kept until Phase 4 makes provider mandatory.
     for path in cand_paths:
         if path.exists():
             try:
@@ -704,7 +835,8 @@ def _load_period_share(solve_data_dir: Path) -> pl.DataFrame:
     return empty
 
 
-def _load_solve_branch_weight(path: Path) -> pl.DataFrame:
+def _load_solve_branch_weight(path: Path,
+                                *, provider: "object | None" = None) -> pl.DataFrame:
     """Load ``solve_branch_weight.csv`` and rename to canonical
     ``[b, p_branch_weight_input]``.
 
@@ -713,13 +845,9 @@ def _load_solve_branch_weight(path: Path) -> pl.DataFrame:
     empty = pl.DataFrame(
         schema={"b": pl.Utf8, "p_branch_weight_input": pl.Float64}
     )
-    if not path.exists():
-        return empty
-    try:
-        df = _read_csv_file(path)
-    except pl.exceptions.NoDataError:
-        return empty
-    if df.height == 0:
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.solve_branch_weight")
+    if df is None:
         return empty
     ren = {}
     if "branch" in df.columns:
@@ -733,4 +861,4 @@ def _load_solve_branch_weight(path: Path) -> pl.DataFrame:
     return out.select(cols) if cols else empty
 
 
-__all__ = ["SolveContext"]
+__all__ = ["SolveContext", "FlexDataError"]

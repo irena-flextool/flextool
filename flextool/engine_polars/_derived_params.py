@@ -271,6 +271,16 @@ def _ctx_read(
         except pl.exceptions.NoDataError:
             return pl.DataFrame()
 
+    # Phase 3 — provider-strict for ctx.read_csv path.  When the caller
+    # passes a *provider*, the Provider is the authoritative source for
+    # this carrier; falling through to ``ctx.read_csv`` would re-read
+    # the stale on-disk CSV (when one even exists; in cascade mode
+    # capture_frames skips disk emission).  Return ``None`` so the
+    # caller's "no frame" branch runs — same semantics as the disk
+    # path's absent-file → None contract that ctx.read_csv preserved.
+    if provider is not None:
+        return None
+
     if ctx is not None:
         return ctx.read_csv(name, kind=kind)
     if path is None:

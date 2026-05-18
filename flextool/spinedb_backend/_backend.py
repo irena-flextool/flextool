@@ -132,6 +132,15 @@ class SpineDBBackend:
             )
     """
 
+    # Class-level defaults so ``__new__`` paths (e.g.
+    # ``flextool.input_derivation.run`` bypasses ``__init__`` and attaches
+    # ``_db`` / ``_api`` / ``_precision_digits`` manually) still expose the
+    # attributes Phase-2 cast code reads.  ``_scenario_name`` defaults to
+    # ``None`` (unfiltered backend); callers that *do* want a scenario
+    # filter should construct via ``__init__``.
+    _scenario_name: str | None = None
+    _db_url: str = ""
+
     def __init__(
         self,
         db_url: str,

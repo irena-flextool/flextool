@@ -148,6 +148,7 @@ def run(
         backend._db = db                              # type: ignore[attr-defined]
         backend._api = api                            # type: ignore[attr-defined]
         backend._precision_digits = precision_digits  # type: ignore[attr-defined]
+        backend._scenario_name = scenario_name        # type: ignore[attr-defined]
 
         for spec in _DEFAULT_VALUES_SPECS:
             frame = backend.parameter_defaults(
