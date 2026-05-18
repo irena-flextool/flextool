@@ -56,26 +56,12 @@ from flextool.engine_polars._axis_enums import (
 from flextool.engine_polars._solve_state import FlexToolConfigError
 
 
-# Phase 4.6 — proxy over the live cascade-wide axis enum dict so every
-# ``schema_dtype(_enums, axis)`` site in this module picks up activation
-# state on the fly.  Same pattern as in the ``_derived_*`` cascade
-# modules.
-class _EnumsProxy:
-    def __bool__(self) -> bool:
-        return get_global_axis_enums() is not None
-
-    def get(self, key, default=None):
-        live = get_global_axis_enums()
-        if live is None:
-            return default
-        return live.get(key, default)
-
-    def __iter__(self):
-        live = get_global_axis_enums()
-        return iter(live) if live is not None else iter(())
-
-
-_enums = _EnumsProxy()
+# Substrate handle for the cascade-wide axis enum vocabulary.
+# Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
+# ``_axis_enums`` fall back to ``_LIVE_AXIS_ENUMS_CTX`` (the live
+# ContextVar) when this is ``None``, so substrate sites pick up
+# activation set by ``load_flextool`` automatically.
+_enums: "dict | None" = None
 
 if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
     from flextool.engine_polars._solve_config import SolveConfig

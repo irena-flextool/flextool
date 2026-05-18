@@ -107,30 +107,12 @@ def _provider_read(provider, path: "Path | str") -> "pl.DataFrame":
         )
     return provider.get(_provider_key(path))
 
-# Derived-param helpers operate on a ``source`` (InputSource); FlexData
-# Phase 4.6 — replace the module-level ``_enums = None`` sentinel with
-# a proxy that defers every lookup to the live cascade-wide axis enum
-# dict (set by ``load_flextool`` via :func:`set_global_axis_enums`).
-# Pre-activation ``get_global_axis_enums()`` returns ``None`` and
-# ``schema_dtype`` falls back to ``pl.Utf8`` — same dtype the cascade
-# emitted before activation.  Same pattern as in ``_derived_npv`` /
-# ``_derived_block`` / ``_derived_branch``.
-class _EnumsProxy:
-    def __bool__(self) -> bool:
-        return get_global_axis_enums() is not None
-
-    def get(self, key, default=None):
-        live = get_global_axis_enums()
-        if live is None:
-            return default
-        return live.get(key, default)
-
-    def __iter__(self):
-        live = get_global_axis_enums()
-        return iter(live) if live is not None else iter(())
-
-
-_enums = _EnumsProxy()
+# Substrate handle for the cascade-wide axis enum vocabulary.
+# Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
+# ``_axis_enums`` fall back to ``_LIVE_AXIS_ENUMS_CTX`` (the live
+# ContextVar) when this is ``None``, so substrate sites pick up
+# activation set by ``load_flextool`` automatically.
+_enums: "dict | None" = None
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

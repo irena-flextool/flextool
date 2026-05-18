@@ -23,6 +23,7 @@ Public API
 """
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -91,18 +92,17 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "bk": "block",
     # Branch column synonym (per contract: branch.column_synonyms = ["b"]).
     "b": "branch",
-    # Cascade timestep synonyms used in coarse-block successor frames.
-    # Per the contract, t.column_synonyms includes "b_first" and "b_next"
-    # — these are timestep labels, NOT block names (see _derived_block.py
-    # period_block_succ derivation: bsd "step" column is renamed to
-    # "b_first" / "b_next" via successor walk).
+    # ----------------------------------------------------------------
+    # WARNING — easily confused: ``b_f`` is the BLOCK-AXIS short form
+    # (process-side block column in BlockBundle, renamed from "block")
+    # while ``b_first`` / ``b_next`` are TIMESTEP-AXIS short forms
+    # (cardinal timestep labels in coarse-block successor frames, NOT
+    # block names — see _derived_block.py period_block_succ where bsd
+    # "step" column is renamed to "b_first" / "b_next" via successor
+    # walk).  Don't conflate them.
+    # ----------------------------------------------------------------
     "b_first": "t",
     "b_next": "t",
-    # Block-fine column — per _derived_block.py BlockBundle, b_f is the
-    # process-side block column (renamed from the layout's "block"
-    # column). It holds block-axis tokens; the canonical block axis is
-    # "block" in the contract (with "bk" already listed as a synonym
-    # above).
     "b_f": "block",
     # Period history column — holds period tokens (subset of d).
     "d_h": "d",
@@ -111,32 +111,31 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "d_first": "d",
     # Output-side timestep column — same vocabulary as cascade "t".
     "time": "t",
-    # ----------------------------------------------------------------
-    # Canonical axis self-references.  Allow callers checking
-    # ``target in _AXIS_SYNONYMS`` (e.g. when deciding whether a
-    # rename/alias target is axis-aware) to see every canonical axis
-    # uniformly without having to maintain a separate canonical-set
-    # constant.  Self-mapping is a no-op for ``_resolve_axis`` (which
-    # already falls through with ``dict.get(name, name)``); the
-    # entries exist purely so membership tests are exhaustive.
-    "n": "n",
-    "p": "p",
-    "c": "c",
-    "g": "g",
-    "f": "f",
-    "d": "d",
-    "e": "e",
-    "t": "t",
-    "i": "i",
-    "branch": "branch",
-    "block": "block",
-    "constraint": "constraint",
-    "side": "side",
-    "klass": "klass",
-    "ud": "ud",
-    "r": "r",
-    "d_anchor": "d_anchor",
 }
+
+
+# Canonical axis short names — the set of values that ``_resolve_axis``
+# may return.  Kept as a separate constant (rather than self-references
+# in :data:`_AXIS_SYNONYMS`) so cluster-conversion tooling and ad-hoc
+# membership tests can ask "is this name axis-aware?" via
+# ``is_axis_aware(name)`` below.
+_CANONICAL_AXES: frozenset[str] = frozenset({
+    "n", "p", "c", "g", "f", "d", "e", "t", "i",
+    "branch", "block", "constraint", "side", "klass", "ud", "r",
+    "d_anchor",
+})
+
+
+def is_axis_aware(name: str) -> bool:
+    """Return ``True`` iff ``name`` resolves to a canonical axis.
+
+    Used by cluster-conversion tooling and any "should I cast this
+    column?" callsite to decide whether ``name`` references an
+    axis-typed dim.  A name is axis-aware iff it appears in
+    :data:`_AXIS_SYNONYMS` or matches a member of
+    :data:`_CANONICAL_AXES` directly.
+    """
+    return name in _AXIS_SYNONYMS or name in _CANONICAL_AXES
 
 
 def _resolve_axis(name: str) -> str:
@@ -161,18 +160,21 @@ def _resolve_axis(name: str) -> str:
 #
 # Default ``None`` means "no activation" — substrate helpers fall back
 # to ``pl.Utf8`` and downstream joins compose in Utf8 as before.  Setting
-# the global to a populated dict flips activation on for the duration of
-# the cascade.  ``load_flextool`` uses a try/finally to reset on exit.
+# to a populated dict flips activation on for the duration of the
+# cascade.  ``load_flextool`` uses a try/finally to reset on exit.
 #
-# This is module-level mutable state under the GIL; threadsafe under
-# CPython's GIL but NOT safe across concurrent ``load_flextool``
-# invocations.  When/if FlexTool moves to threaded cascade evaluation,
-# this becomes a ``contextvars.ContextVar``.
+# Stored in a :class:`contextvars.ContextVar` so concurrent cascades
+# (current code is single-threaded but tests may set/reset around
+# fixtures) do not see each other's state.
 
-_LIVE_AXIS_ENUMS: "dict[str, pl.Enum] | None" = None
+_LIVE_AXIS_ENUMS_CTX: "contextvars.ContextVar[dict[str, pl.Enum] | None]" = (
+    contextvars.ContextVar("_LIVE_AXIS_ENUMS", default=None)
+)
 
 
-def set_global_axis_enums(enums: "dict[str, pl.Enum] | None") -> None:
+def set_global_axis_enums(
+    enums: "dict[str, pl.Enum] | None",
+) -> "contextvars.Token":
     """Set the cascade-wide axis enum vocabulary.
 
     Called from ``load_flextool`` immediately after
@@ -182,23 +184,32 @@ def set_global_axis_enums(enums: "dict[str, pl.Enum] | None") -> None:
     invocation so scratch frames, renames, and literals all pick up
     Enum dtypes uniformly.
 
-    Idempotent; pass ``None`` to reset (the ``finally`` clause in
-    ``load_flextool`` does this on exit).
+    Returns the ``contextvars.Token`` the caller can pass to
+    :func:`reset_global_axis_enums` to undo this set.  Callers that
+    don't care about token-based reset can ignore the return value
+    and call ``set_global_axis_enums(None)`` to clear.
+
+    Pass ``None`` to reset to the no-activation default.
     """
-    global _LIVE_AXIS_ENUMS
-    _LIVE_AXIS_ENUMS = enums
+    return _LIVE_AXIS_ENUMS_CTX.set(enums)
+
+
+def reset_global_axis_enums(token: "contextvars.Token") -> None:
+    """Restore the axis enum vocabulary to whatever it was before the
+    matching :func:`set_global_axis_enums` call.  Use the token
+    returned by ``set_global_axis_enums``.
+    """
+    _LIVE_AXIS_ENUMS_CTX.reset(token)
 
 
 def get_global_axis_enums() -> "dict[str, pl.Enum] | None":
     """Return the current cascade-wide axis enum vocabulary, or ``None``
     when activation is off.
 
-    Equivalent to reading ``_LIVE_AXIS_ENUMS`` directly; prefer this
-    accessor so callers don't depend on the module-level name and so
-    a future migration to ``contextvars.ContextVar`` is a one-line
-    change here.
+    Reads the ``contextvars.ContextVar`` storage so concurrent /
+    nested calls observe their own state.
     """
-    return _LIVE_AXIS_ENUMS
+    return _LIVE_AXIS_ENUMS_CTX.get()
 
 
 def cast_frame_axes(
@@ -358,7 +369,15 @@ def cast_dim(col_expr: "pl.Expr",
 
     The non-strict cast nulls out values not in the Enum vocabulary
     (consistent with :func:`cast_frame_axes` defaults).
+
+    When ``enums`` is ``None``, the helper falls back to the live
+    cascade-wide vocabulary (see :func:`get_global_axis_enums`).  This
+    lets substrate modules pass ``_enums = None`` at the call site and
+    automatically pick up activation when ``load_flextool`` flips the
+    global on.
     """
+    if enums is None:
+        enums = _LIVE_AXIS_ENUMS_CTX.get()
     if enums is None:
         return col_expr
     canonical = _resolve_axis(axis)
@@ -389,11 +408,15 @@ def schema_dtype(enums: "dict[str, pl.Enum] | None",
         })
 
     With ``_enums is None`` (default during the cascade pre-activation)
-    the lookup returns ``pl.Utf8`` and behavior is identical to the
-    hard-coded form.  When ``load_flextool`` calls
-    :func:`set_global_axis_enums` with a populated dict, the scratch
-    frames pick up the canonical Enum dtype automatically.
+    the lookup falls back to the live cascade-wide vocabulary; if that
+    is also unset, returns ``pl.Utf8`` (the hard-coded form).  When
+    ``load_flextool`` calls :func:`set_global_axis_enums` with a
+    populated dict, scratch frames pick up the canonical Enum dtype
+    automatically without each substrate module needing to plumb the
+    dict through.
     """
+    if enums is None:
+        enums = _LIVE_AXIS_ENUMS_CTX.get()
     if enums is None:
         return pl.Utf8
     canonical = _resolve_axis(axis)
@@ -442,7 +465,7 @@ def rename_to_axis(
     that fact.
     """
     out = frame.rename(mapping)
-    enums = _LIVE_AXIS_ENUMS
+    enums = _LIVE_AXIS_ENUMS_CTX.get()
     if enums is None:
         return out
     casts: list[pl.Expr] = []
@@ -491,7 +514,7 @@ def alias_to_axis(
     /:func:`cast_frame_axes` defaults.
     """
     expr = pl.col(source) if isinstance(source, str) else source
-    enums = _LIVE_AXIS_ENUMS
+    enums = _LIVE_AXIS_ENUMS_CTX.get()
     if enums is None:
         return expr.alias(target_axis)
     canonical = _resolve_axis(target_axis)
@@ -520,7 +543,7 @@ def lit_axis(value: object, axis: str) -> "pl.Expr":
     When :data:`_LIVE_AXIS_ENUMS` is ``None`` (no activation), returns
     a plain ``pl.lit(value)`` — pre-activation behavior.
     """
-    enums = _LIVE_AXIS_ENUMS
+    enums = _LIVE_AXIS_ENUMS_CTX.get()
     if enums is None:
         return pl.lit(value)
     canonical = _resolve_axis(axis)
@@ -629,7 +652,7 @@ def axis_lazyframe(
         Lazy frame with the requested data and axis-cast schema.
     """
     lf = pl.LazyFrame(data)
-    enums = _LIVE_AXIS_ENUMS
+    enums = _LIVE_AXIS_ENUMS_CTX.get()
     if enums is None:
         return lf
     casts: list[pl.Expr] = []
@@ -658,5 +681,7 @@ __all__ = [
     "alias_to_axis",
     "lit_axis",
     "set_global_axis_enums",
+    "reset_global_axis_enums",
     "get_global_axis_enums",
+    "is_axis_aware",
 ]

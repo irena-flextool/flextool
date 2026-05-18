@@ -81,23 +81,12 @@ from ._axis_enums import (
 )
 
 
-# Phase 4.6 — proxy over the live cascade-wide axis enum dict.
-class _EnumsProxy:
-    def __bool__(self) -> bool:
-        return get_global_axis_enums() is not None
-
-    def get(self, key, default=None):
-        live = get_global_axis_enums()
-        if live is None:
-            return default
-        return live.get(key, default)
-
-    def __iter__(self):
-        live = get_global_axis_enums()
-        return iter(live) if live is not None else iter(())
-
-
-_enums = _EnumsProxy()
+# Substrate handle for the cascade-wide axis enum vocabulary.
+# Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
+# ``_axis_enums`` fall back to ``_LIVE_AXIS_ENUMS_CTX`` (the live
+# ContextVar) when this is ``None``, so substrate sites pick up
+# activation set by ``load_flextool`` automatically.
+_enums: "dict | None" = None
 
 
 def _provider_has_key(provider, path: "Path") -> bool:

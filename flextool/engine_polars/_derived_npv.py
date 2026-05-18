@@ -95,42 +95,12 @@ from ._axis_enums import (
     schema_dtype,
 )
 
-# NPV-cascade helpers take ``source`` (an InputSource); no FlexData in
-# scope here.  Phase 4.6 — replace the module-level ``_enums = None``
-# sentinel with a property-like lookup so every ``schema_dtype(_enums,
-# ...)`` call site picks up the live cascade-wide enum dict
-# (set by ``load_flextool`` via :func:`set_global_axis_enums`) without
-# needing a constructor argument.
-#
-# Implementation: ``_enums`` is a small object whose only purpose is to
-# look "dict-like" enough for :func:`schema_dtype` (which only invokes
-# ``.get(canonical, pl.Utf8)`` on its first argument when populated, or
-# the ``None`` branch when not).  Returning ``None`` from the accessor
-# preserves the pre-activation fall-back to ``pl.Utf8``.
-class _EnumsProxy:
-    """Module-level proxy returning the live axis enum mapping.
-
-    ``schema_dtype(enums, axis)`` calls ``enums.get(canonical, pl.Utf8)``
-    when ``enums`` is not None; we forward to the live dict.  When the
-    global is unset, ``__bool__`` returns False and callers using the
-    ``if enums is None`` idiom continue to short-circuit cleanly.
-    """
-
-    def __bool__(self) -> bool:
-        return get_global_axis_enums() is not None
-
-    def get(self, key, default=None):
-        live = get_global_axis_enums()
-        if live is None:
-            return default
-        return live.get(key, default)
-
-    def __iter__(self):
-        live = get_global_axis_enums()
-        return iter(live) if live is not None else iter(())
-
-
-_enums = _EnumsProxy()
+# Substrate handle for the cascade-wide axis enum vocabulary.
+# Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
+# ``_axis_enums`` fall back to ``_LIVE_AXIS_ENUMS_CTX`` (the live
+# ContextVar) when this is ``None``, so substrate sites pick up
+# activation set by ``load_flextool`` automatically.
+_enums: "dict | None" = None
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

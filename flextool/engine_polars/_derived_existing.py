@@ -78,25 +78,12 @@ from flextool.engine_polars._axis_enums import (
 )
 
 
-# Phase 4.6 — proxy over the live cascade-wide axis enum dict.  Same
-# pattern as in ``_derived_npv`` / ``_derived_block`` / ``_derived_branch`` /
-# ``_derived_params``.
-class _EnumsProxy:
-    def __bool__(self) -> bool:
-        return get_global_axis_enums() is not None
-
-    def get(self, key, default=None):
-        live = get_global_axis_enums()
-        if live is None:
-            return default
-        return live.get(key, default)
-
-    def __iter__(self):
-        live = get_global_axis_enums()
-        return iter(live) if live is not None else iter(())
-
-
-_enums = _EnumsProxy()
+# Substrate handle for the cascade-wide axis enum vocabulary.
+# Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
+# ``_axis_enums`` fall back to ``_LIVE_AXIS_ENUMS_CTX`` (the live
+# ContextVar) when this is ``None``, so substrate sites pick up
+# activation set by ``load_flextool`` automatically.
+_enums: "dict | None" = None
 
 from ._derived_walks import period_walk_iterator, WindowMethod
 
