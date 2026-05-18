@@ -243,14 +243,19 @@ class MainWindow(tk.Tk):
         outer.grid(row=0, column=0, sticky="nsew")
 
         # We'll use a high-level grid inside `outer`.
-        # Columns: 0-3 left area, 4 center area, 5-7 right area
-        # Let columns with treeviews expand.
-        outer.columnconfigure(0, weight=1)   # input sources / available scenarios
-        outer.columnconfigure(1, weight=0)   # buttons column
-        outer.columnconfigure(2, weight=0)   # auto-generate / plot & exec menus
-        outer.columnconfigure(3, weight=0)   # auto-generate continued
-        outer.columnconfigure(4, weight=0)   # output actions frame (right-aligned)
-        outer.columnconfigure(5, weight=1)   # executed scenarios (lower section)
+        # Top-section column layout:
+        #   col 0  input sources tree           (stretch)
+        #   col 1  input source buttons         (narrow)
+        #   col 2  side menu: Debug / themes / Png / Exec / Results
+        #   col 3-5 unified Outputs table       (3-col span)
+        # The lower section reuses the same columns; only col 0 and col 5
+        # carry weight so the scenario trees stretch with the window.
+        outer.columnconfigure(0, weight=1)   # input / available scenarios
+        outer.columnconfigure(1, weight=0)   # source buttons
+        outer.columnconfigure(2, weight=0)   # side menu column
+        outer.columnconfigure(3, weight=0)   # Outputs table
+        outer.columnconfigure(4, weight=0)   # Outputs table
+        outer.columnconfigure(5, weight=1)   # executed scenarios (lower)
 
         # ── Row 0: Project selector ──────────────────────────────────
         row = 0
@@ -267,33 +272,15 @@ class MainWindow(tk.Tk):
         )
         self.project_menu_btn.grid(row=row, column=1, sticky="w", padx=5)
 
-        # Debug checkbox (above the Auto-generate column). When on, scenario
-        # runs add --debug and --csv-dump to the CLI invocation.
-        from flextool.gui.hover_tooltip import attach_tooltip as _attach_tip
-        self.debug_var = tk.BooleanVar(value=False)
-        self.debug_cb = ttk.Checkbutton(
-            outer, text="Debug", variable=self.debug_var,
-        )
-        self.debug_cb.grid(row=row, column=2, sticky="w", padx=(20, 0))
-        _attach_tip(self.debug_cb, (
-            "Run scenarios with --debug and --csv-dump.\n"
-            "\n"
-            "  • --debug enables verbose engine logging.\n"
-            "  • --csv-dump writes the cascade's processed inputs\n"
-            "    to disk after the last sub-solve for inspection."
-        ))
-        self.debug_var.trace_add("write", self._on_auto_gen_toggled)
-
-        # ── Theme radio buttons (far right of row 0) ─────────────
-        theme_frame = ttk.Frame(outer)
-        theme_frame.grid(row=row, column=3, columnspan=3, sticky="e", padx=(20, 0))
-
+        # Debug / themes / Png settings / Execution jobs / Results viewer
+        # used to occupy row 0 and a separate bottom-of-section row; both
+        # now live in the side menu column to the left of the Outputs
+        # table (built further below). _theme_var is created here so the
+        # Project popup can refer to it, but the radio buttons themselves
+        # are placed inside the side menu.
         self._theme_var = tk.StringVar(value=initial_theme)
-        for text, value in [("OS theme", "os"), ("Dark", "dark"), ("Light", "light")]:
-            ttk.Radiobutton(
-                theme_frame, text=text, variable=self._theme_var,
-                value=value, command=self._on_theme_change,
-            ).pack(side="left", padx=3)
+        self.debug_var = tk.BooleanVar(value=False)
+        self.debug_var.trace_add("write", self._on_auto_gen_toggled)
 
         # ── Row 1: Section headers ───────────────────────────────────
         from flextool.gui.hover_tooltip import attach_tooltip
@@ -311,7 +298,7 @@ class MainWindow(tk.Tk):
 
         outputs_lbl = ttk.Label(outer, text="Outputs", font=self._bold_font)
         outputs_lbl.grid(
-            row=row, column=2, columnspan=3, sticky="sw", padx=(20, 0), pady=(10, 2)
+            row=row, column=3, columnspan=3, sticky="sw", padx=(20, 0), pady=(10, 2)
         )
         attach_tooltip(outputs_lbl, (
             "Per-checked-executed-scenario output artefacts on disk.\n"
@@ -426,7 +413,7 @@ class MainWindow(tk.Tk):
         theme_fg = style.lookup("TLabel", "foreground") or "white"
         self.output_frame = tk.Frame(outer, bg=theme_bg, padx=5, pady=5)
         self.output_frame.grid(
-            row=2, column=2, rowspan=6, columnspan=3,
+            row=2, column=3, rowspan=7, columnspan=3,
             sticky="nw", padx=(20, 0), pady=2,
         )
         self._output_frame_default_bg = theme_bg
@@ -521,26 +508,56 @@ class MainWindow(tk.Tk):
         self.auto_comp_plots_var.trace_add("write", self._on_auto_gen_toggled)
         self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
 
-        # --- Below the table: Png settings | Execution jobs | Results viewer ---
+        # --- Side menu column (col 2): Debug / themes / Png / Exec / Results ---
+        # Lives to the left of the Outputs table. Was previously split
+        # between row 0 (Debug + themes) and a row below the Outputs
+        # table (Png / Exec / Results); consolidated into one vertical
+        # stack so the section is shorter.
+        from flextool.gui.hover_tooltip import attach_tooltip as _attach_tip
+        side_menu = ttk.Frame(outer)
+        side_menu.grid(
+            row=2, column=2, rowspan=7, sticky="nw", padx=(20, 0), pady=2,
+        )
+
+        self.debug_cb = ttk.Checkbutton(
+            side_menu, text="Debug", variable=self.debug_var,
+        )
+        self.debug_cb.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        _attach_tip(self.debug_cb, (
+            "Run scenarios with --debug and --csv-dump.\n"
+            "\n"
+            "  • --debug enables verbose engine logging.\n"
+            "  • --csv-dump writes the cascade's processed inputs\n"
+            "    to disk after the last sub-solve for inspection."
+        ))
+
+        theme_frame = ttk.Frame(side_menu)
+        theme_frame.grid(row=1, column=0, sticky="w", pady=(0, 8))
+        for text, value in [("OS theme", "os"), ("Dark", "dark"), ("Light", "light")]:
+            ttk.Radiobutton(
+                theme_frame, text=text, variable=self._theme_var,
+                value=value, command=self._on_theme_change,
+            ).pack(side="left", padx=(0, 4))
+
         self.plot_menu_btn = ttk.Button(
-            outer, text="Png settings", width=14,
+            side_menu, text="Png settings", width=22,
             command=self._on_plot_menu,
         )
-        self.plot_menu_btn.grid(row=8, column=2, sticky="w", padx=(20, 8), pady=(10, 2))
+        self.plot_menu_btn.grid(row=2, column=0, sticky="w", pady=2)
 
         self.execution_menu_btn = ttk.Button(
-            outer, text="Execution jobs", width=14,
+            side_menu, text="Execution jobs", width=22,
             command=self._on_execution_menu,
         )
-        self.execution_menu_btn.grid(row=8, column=3, sticky="w", padx=(0, 8), pady=(10, 2))
+        self.execution_menu_btn.grid(row=3, column=0, sticky="w", pady=2)
 
         # Width 22 to fit the alternate label "Update view scenarios"
         # when the viewer is already open.
         self.view_results_btn = ttk.Button(
-            outer, text="Results viewer", width=22,
+            side_menu, text="Results viewer", width=22,
             command=self._on_view_results,
         )
-        self.view_results_btn.grid(row=8, column=4, sticky="w", padx=(0, 0), pady=(10, 2))
+        self.view_results_btn.grid(row=4, column=0, sticky="w", pady=2)
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
