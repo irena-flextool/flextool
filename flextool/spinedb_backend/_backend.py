@@ -51,6 +51,12 @@ from typing import Any, Iterable
 import polars as pl
 
 from flextool.flextoolrunner.precision import format_scalar_for_csv
+from flextool.spinedb_backend._axis_enums import (
+    AxisContract,
+    FlexDataIntegrityError,
+    cast_against_contract,
+    load_axis_contract,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +280,8 @@ class SpineDBBackend:
         header: str,
         filter_in_type: Iterable[str] | None = None,
         only_value: bool = False,
+        axis_enums: dict[str, pl.Enum] | None = None,
+        contract: AxisContract | None = None,
     ) -> pl.DataFrame:
         """Materialise the default-value rows for one ``_DEFAULT_VALUES_SPECS`` entry.
 
@@ -321,6 +329,11 @@ class SpineDBBackend:
         # locally by (class, name) to mirror write_default_values exactly.
         definitions = self._db.find_parameter_definitions()
         rows: list[list[str]] = []
+        # Origin breadcrumbs parallel to ``rows`` (Option C) — each entry
+        # is a dict captured at row-emit time so a downstream
+        # FlexDataIntegrityError can name the parameter / class that
+        # generated the offending row.
+        row_origins: list[dict[str, Any]] = []
         from flextool.flextoolrunner.runner_state import FlexToolConfigError
 
         for cl_par in cl_pars:
@@ -349,6 +362,11 @@ class SpineDBBackend:
                             definition["name"],
                             formatted,
                         ])
+                    row_origins.append({
+                        "parameter": definition["name"],
+                        "entity": definition["entity_class_name"],
+                        "scenario": self._scenario_name,
+                    })
                 else:
                     raise FlexToolConfigError(
                         "Default_value found in a parameter definition not "
@@ -356,7 +374,10 @@ class SpineDBBackend:
                         + definition.get("parameter_definition_name", definition["name"])
                     )
 
-        return _rows_to_frame(rows, cols)
+        frame = _rows_to_frame(rows, cols)
+        return self._maybe_cast(
+            frame, rows, row_origins, axis_enums, contract,
+        )
 
     # ------------------------------------------------------------------
     # entities — Item 3
@@ -368,6 +389,8 @@ class SpineDBBackend:
         classes: Iterable[str],
         header: str,
         entity_dimens: Iterable[Iterable[int]] | None = None,
+        axis_enums: dict[str, pl.Enum] | None = None,
+        contract: AxisContract | None = None,
     ) -> pl.DataFrame:
         """Materialise the entity rows for one ``_ENTITY_SPECS`` entry.
 
@@ -402,6 +425,7 @@ class SpineDBBackend:
         cols = [c.strip() for c in header.split(",")]
 
         rows: list[list[str]] = []
+        row_origins: list[dict[str, Any]] = []
         for i, ent_class in enumerate(classes_list):
             dim_proj = dimens_list[i] if i < len(dimens_list) else None
             for entity in self._db.find_entities(entity_class_name=ent_class):
@@ -410,7 +434,16 @@ class SpineDBBackend:
                     rows.append(list(byname))
                 else:
                     rows.append([byname[x] for x in dim_proj])
-        return _rows_to_frame(rows, cols)
+                row_origins.append({
+                    "parameter": None,
+                    "entity": "->".join(str(b) for b in byname),
+                    "scenario": self._scenario_name,
+                    "entity_class": ent_class,
+                })
+        frame = _rows_to_frame(rows, cols)
+        return self._maybe_cast(
+            frame, rows, row_origins, axis_enums, contract,
+        )
 
     # ------------------------------------------------------------------
     # parameter_values — Item 4
@@ -429,6 +462,8 @@ class SpineDBBackend:
         dimens: Iterable[int] | None = None,
         param_loc: int | None = None,
         no_entity: bool | None = None,
+        axis_enums: dict[str, pl.Enum] | None = None,
+        contract: AxisContract | None = None,
     ) -> pl.DataFrame:
         """Materialise the parameter-value rows for one ``_PARAMETER_SPECS`` entry.
 
@@ -486,6 +521,12 @@ class SpineDBBackend:
             )
 
         rows: list[list[str]] = []
+        # Origin breadcrumbs parallel to ``rows`` (Option C).  Each
+        # entry is a dict of (parameter, entity, scenario, map_index)
+        # captured at row-emit time.  Map rows append the map index
+        # specifically; scalar / array rows leave map_index as None.
+        row_origins: list[dict[str, Any]] = []
+        scen = self._scenario_name
         for param in params:
             if param["type"] is None:
                 continue
@@ -516,6 +557,11 @@ class SpineDBBackend:
                         ]
             else:
                 first_cols = list(entity_byname)
+
+            pname = param["parameter_definition_name"]
+            ent_str = "->".join(
+                str(b) for b in param["entity_byname"]
+            )
 
             ptype = param["type"]
             if ptype == "map":
@@ -550,6 +596,12 @@ class SpineDBBackend:
                             rows.append(first_cols + [idx])
                         else:
                             rows.append(first_cols + [idx, val])
+                        row_origins.append({
+                            "parameter": pname,
+                            "entity": ent_str,
+                            "scenario": scen,
+                            "map_index": idx,
+                        })
                 else:
                     flat_map = api.convert_map_to_table(value)
                     for index in flat_map:
@@ -561,12 +613,31 @@ class SpineDBBackend:
                                 row[-1], effective_precision,
                             )
                             rows.append(first_cols + row)
+                        # The map index path is the row content before
+                        # the value; render it as a joined-string for
+                        # the breadcrumb.  Use index[:-1] to drop the
+                        # leaf value.
+                        idx_path = "->".join(
+                            str(x) for x in list(index)[:-1]
+                        )
+                        row_origins.append({
+                            "parameter": pname,
+                            "entity": ent_str,
+                            "scenario": scen,
+                            "map_index": idx_path,
+                        })
             elif ptype in ("array", "time_series"):
-                for v in param["parsed_value"].values:
+                for i_arr, v in enumerate(param["parsed_value"].values):
                     rows.append(
                         list(entity_byname)
                         + [format_scalar_for_csv(v, effective_precision)]
                     )
+                    row_origins.append({
+                        "parameter": pname,
+                        "entity": ent_str,
+                        "scenario": scen,
+                        "map_index": str(i_arr),
+                    })
             elif ptype in ("str", "float", "bool"):
                 if filter_in_value is not None and param["parsed_value"] != filter_in_value:
                     continue
@@ -579,6 +650,11 @@ class SpineDBBackend:
                             param["parsed_value"], effective_precision,
                         )]
                     )
+                row_origins.append({
+                    "parameter": pname,
+                    "entity": ent_str,
+                    "scenario": scen,
+                })
             else:
                 supported = (
                     filter_in_type_list
@@ -595,7 +671,102 @@ class SpineDBBackend:
                 logging.error(message)
                 raise FlexToolConfigError(message)
 
-        return _rows_to_frame(rows, cols)
+        frame = _rows_to_frame(rows, cols)
+        return self._maybe_cast(
+            frame, rows, row_origins, axis_enums, contract,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal cast helper
+    # ------------------------------------------------------------------
+
+    def _maybe_cast(
+        self,
+        frame: pl.DataFrame,
+        rows: list[list[Any]],
+        row_origins: list[dict[str, Any]],
+        axis_enums: dict[str, pl.Enum] | None,
+        contract: AxisContract | None,
+    ) -> pl.DataFrame:
+        """Cast *frame* against the axis contract when *axis_enums* is
+        non-None.
+
+        Origin breadcrumbs (Option C from the Phase 2 plan): the row
+        builder kept a *row_origins* list parallel to *rows*; on a cast
+        failure we identify the offending column / token by scanning
+        the frame, then look up which row introduced that token and
+        thread the row's origin dict into the raised
+        :class:`FlexDataIntegrityError`.
+
+        When *axis_enums* is None the method is a no-op (pre-Phase-2
+        behaviour: callers that don't opt-in see Utf8 frames).
+        """
+        if axis_enums is None:
+            return frame
+        if contract is None:
+            contract = load_axis_contract()
+        # First pass: identify bad (column, token) before raising so
+        # we can find its row in row_origins.
+        bad_col: str | None = None
+        bad_token: str | None = None
+        for col in frame.columns:
+            axis = contract.column_to_axis(col)
+            if axis is None:
+                continue
+            dtype = axis_enums.get(axis.name)
+            if dtype is None:
+                continue
+            vocab = set(dtype.categories.to_list())
+            for v in frame[col].to_list():
+                if v is None or v == "":
+                    continue
+                if v not in vocab:
+                    bad_col = col
+                    bad_token = str(v)
+                    break
+            if bad_col is not None:
+                break
+
+        if bad_col is None:
+            # All values fit — let cast_against_contract do the cast.
+            return cast_against_contract(
+                frame,
+                contract=contract,
+                axis_enums=axis_enums,
+                origin={"scenario": self._scenario_name},
+                backend=self,
+            )
+
+        # Identify the row that introduced the bad token to thread the
+        # right breadcrumb into the error.
+        origin_for_error: dict[str, Any] = {
+            "scenario": self._scenario_name,
+        }
+        try:
+            col_idx = frame.columns.index(bad_col)
+        except ValueError:  # pragma: no cover — defensive
+            col_idx = -1
+        if col_idx >= 0:
+            for i, r in enumerate(rows):
+                if col_idx < len(r) and str(r[col_idx]) == bad_token:
+                    if i < len(row_origins):
+                        origin_for_error = {
+                            **row_origins[i],
+                            "scenario": row_origins[i].get(
+                                "scenario", self._scenario_name,
+                            ),
+                        }
+                    break
+
+        # Re-run cast_against_contract with the located breadcrumb so
+        # the FlexDataIntegrityError carries the precise origin.
+        return cast_against_contract(
+            frame,
+            contract=contract,
+            axis_enums=axis_enums,
+            origin=origin_for_error,
+            backend=self,
+        )
 
 
 # ---------------------------------------------------------------------------

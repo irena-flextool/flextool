@@ -24,6 +24,13 @@ from typing import Any, Iterable
 import numpy as np
 import polars as pl
 
+from flextool.spinedb_backend._axis_enums import (
+    AxisContract,
+    FlexDataIntegrityError,
+    cast_against_contract,
+    load_axis_contract,
+)
+
 # Late imports of spinedb_api at construction time keep the import
 # graph free of an unconditional dependency for users who only consume
 # CSVs.
@@ -101,12 +108,28 @@ class SpineDbReader:
     # ------------------------------------------------------------------
     # Construction
 
-    def __init__(self, db_url: str, scenario: str):
+    def __init__(
+        self,
+        db_url: str,
+        scenario: str,
+        *,
+        axis_enums: dict[str, pl.Enum] | None = None,
+        contract: AxisContract | None = None,
+    ):
         url = str(db_url)
         if not url.startswith("sqlite:") and not url.startswith("postgresql"):
             url = f"sqlite:///{url}"
         self._db_url = url
         self._scenario = scenario
+        # Phase 2 cast-on-emit: when ``axis_enums`` is supplied, every
+        # frame returned by entities / parameter / parameter_explicit is
+        # cast against the contract before return.  ``None`` keeps the
+        # pre-Phase-2 behaviour (Utf8 dim columns) so callers that
+        # haven't opted in yet see no change.
+        self._axis_enums = axis_enums
+        if contract is None and axis_enums is not None:
+            contract = load_axis_contract()
+        self._contract = contract
 
         # Build caches once.
         from spinedb_api import DatabaseMapping, from_database
@@ -233,10 +256,15 @@ class SpineDbReader:
         if not rows:
             return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
         if len(cols) == 1:
-            return (
+            frame = (
                 pl.DataFrame({cols[0]: [name for _, name, _ in rows]},
                              schema={cols[0]: pl.Utf8})
                 .sort(cols)
+            )
+            return self._maybe_cast_frame(
+                frame,
+                entity_class=entity_class,
+                parameter_name=None,
             )
         # Multi-dim: split element_name_list into N columns.
         data: dict[str, list[str]] = {c: [] for c in cols}
@@ -247,7 +275,12 @@ class SpineDbReader:
             for c, v in zip(cols, elements):
                 data[c].append(v)
         schema = {c: pl.Utf8 for c in cols}
-        return pl.DataFrame(data, schema=schema).sort(cols)
+        frame = pl.DataFrame(data, schema=schema).sort(cols)
+        return self._maybe_cast_frame(
+            frame,
+            entity_class=entity_class,
+            parameter_name=None,
+        )
 
     # ------------------------------------------------------------------
     # InputSource Protocol — parameter
@@ -372,9 +405,18 @@ class SpineDbReader:
             for ic in index_cols:
                 schema_in[ic] = pl.Utf8
             schema_in["value"] = leaf_dtype or pl.Float64
-            return pl.DataFrame(schema=schema_in)
-        return self._finalize(pl.DataFrame(out_rows).lazy(),
-                               ent_cols + index_cols)
+            return self._maybe_cast_frame(
+                pl.DataFrame(schema=schema_in),
+                entity_class=entity_class,
+                parameter_name=parameter_name,
+            )
+        frame = self._finalize(pl.DataFrame(out_rows).lazy(),
+                                ent_cols + index_cols)
+        return self._maybe_cast_frame(
+            frame,
+            entity_class=entity_class,
+            parameter_name=parameter_name,
+        )
 
     def parameter(self, entity_class: str, parameter_name: str) -> pl.DataFrame:
         cls_id = self._class_name_to_id.get(entity_class)
@@ -412,18 +454,98 @@ class SpineDbReader:
         # Step 3 — apply the §4.5 default policy lazily.
         if default is None:
             # None-skip: return rows as-is.
-            return self._finalize(v_lf, ent_cols + index_cols)
+            frame = self._finalize(v_lf, ent_cols + index_cols)
+            return self._maybe_cast_frame(
+                frame,
+                entity_class=entity_class,
+                parameter_name=parameter_name,
+            )
 
         if not index_cols:
-            # Scalar-default + scalar-parameter → broadcast.
-            E = self.entities(entity_class).lazy()
+            # Scalar-default + scalar-parameter → broadcast.  Build the
+            # entities frame from the raw cache (not via self.entities())
+            # so the join keys stay Utf8 — casting happens once at the
+            # end against the joined frame.
+            E = self._entities_frame_raw(cls_id, ent_cols).lazy()
             joined = (E.join(v_lf, on=ent_cols, how="left")
                        .with_columns(pl.col("value").fill_null(default)))
-            return self._finalize(joined, ent_cols)
+            frame = self._finalize(joined, ent_cols)
+            return self._maybe_cast_frame(
+                frame,
+                entity_class=entity_class,
+                parameter_name=parameter_name,
+            )
 
         # Scalar-default + indexed-parameter → return overrides only;
         # the default is consumed via parameter_default() upstream.
-        return self._finalize(v_lf, ent_cols + index_cols)
+        frame = self._finalize(v_lf, ent_cols + index_cols)
+        return self._maybe_cast_frame(
+            frame,
+            entity_class=entity_class,
+            parameter_name=parameter_name,
+        )
+
+    def _entities_frame_raw(
+        self, cls_id: int, cols: list[str],
+    ) -> pl.DataFrame:
+        """Internal — build the raw Utf8 entities frame for *cls_id*
+        without going through :meth:`entities` (which would cast).
+
+        Used by :meth:`parameter` to keep the join keys Utf8 so the
+        join is a String/String op (polars 1.40 won't auto-coerce
+        Utf8↔Enum on join keys); the final frame is cast once before
+        return.
+        """
+        rows = self._entities_by_class.get(cls_id, [])
+        if not rows:
+            return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
+        if len(cols) == 1:
+            return (
+                pl.DataFrame({cols[0]: [name for _, name, _ in rows]},
+                             schema={cols[0]: pl.Utf8})
+                .sort(cols)
+            )
+        data: dict[str, list[str]] = {c: [] for c in cols}
+        for _, _ent_name, elements in rows:
+            if elements is None or len(elements) != len(cols):
+                continue
+            for c, v in zip(cols, elements):
+                data[c].append(v)
+        return pl.DataFrame(
+            data, schema={c: pl.Utf8 for c in cols},
+        ).sort(cols)
+
+    def _maybe_cast_frame(
+        self,
+        frame: pl.DataFrame,
+        *,
+        entity_class: str,
+        parameter_name: str | None,
+    ) -> pl.DataFrame:
+        """Cast *frame* against the configured axis enums + contract.
+
+        When the reader was constructed with ``axis_enums=None``
+        (default), the frame passes through unchanged — pre-Phase-2
+        back-compat.  When ``axis_enums`` is non-None, every dim
+        column resolved via :meth:`AxisContract.column_to_axis` is
+        cast strictly; a vocabulary miss raises
+        :class:`FlexDataIntegrityError` with
+        ``(parameter, entity_class, scenario)`` threaded as the
+        origin breadcrumb.
+        """
+        if self._axis_enums is None:
+            return frame
+        origin = {
+            "parameter": parameter_name,
+            "entity": entity_class,
+            "scenario": self._scenario,
+        }
+        return cast_against_contract(
+            frame,
+            contract=self._contract,
+            axis_enums=self._axis_enums,
+            origin=origin,
+        )
 
     # ------------------------------------------------------------------
     # Unrolling the per-row blob into rectangular rows
