@@ -848,8 +848,13 @@ def process_indirect_dt(process_indirect_set: pl.DataFrame,
         return _empty({"p": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
     if dt is None or dt.height == 0:
         return _empty({"p": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
+    # Defensive re-cast: ensure d/t are canonical Enum on the cross-join
+    # output (process_indirect_set carries Enum p).
     return (process_indirect_set.lazy()
-              .join(dt.lazy(), how="cross")
+              .join(dt.lazy()
+                       .with_columns(alias_to_axis(pl.col("d"), "d"),
+                                     alias_to_axis(pl.col("t"), "t")),
+                    how="cross")
               .sort("p", "d", "t")
               .collect())
 
@@ -875,8 +880,13 @@ def cdt_filter(source: "InputSource", sense: str,
               .collect())
     if rows.height == 0:
         return None
+    # Defensive re-cast: ensure d/t are canonical Enum on the cross-join
+    # output (rows carries Enum cn via alias_to_axis above).
     return (rows.lazy()
-              .join(dt.lazy(), how="cross")
+              .join(dt.lazy()
+                       .with_columns(alias_to_axis(pl.col("d"), "d"),
+                                     alias_to_axis(pl.col("t"), "t")),
+                    how="cross")
               .sort("cn", "d", "t")
               .collect())
 
