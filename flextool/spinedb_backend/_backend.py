@@ -542,6 +542,24 @@ class SpineDBBackend:
         for cl_par in cl_pars:
             params.extend(index.get((cl_par[0], cl_par[1]), ()))
 
+        # Track A.6 — chunked row accumulator.  Some specs (notably
+        # ``('profile', 'profile')`` on H2_trade) flatten to multi-million
+        # Python row-lists, which dominate input_derivation peak RSS even
+        # after Track A + A.5.  Flushing the row accumulator to a polars
+        # sub-frame periodically and clearing the list keeps the
+        # in-flight Python overhead bounded to ``_ROWS_FLUSH_THRESHOLD``
+        # entries.  The sub-frames are concatenated at end; for ≤1 chunk
+        # the path is identical to the pre-chunking code.
+        #
+        # Disabled when ``axis_enums`` is supplied: ``_maybe_cast``'s
+        # error-breadcrumb logic walks ``rows`` and ``row_origins`` in
+        # parallel, so partial-rows views would mis-attribute cast
+        # failures.  axis_enum-supplied callsites are tests with small
+        # fixtures where the peak doesn't bind; safe to fall back.
+        _ROWS_FLUSH_THRESHOLD = 200_000
+        _can_chunk = axis_enums is None
+        chunk_frames: list[pl.DataFrame] = []
+
         rows: list[list[str]] = []
         # Origin breadcrumbs parallel to ``rows`` (Option C).  Each
         # entry is a dict of (parameter, entity, scenario, map_index)
@@ -592,6 +610,12 @@ class SpineDBBackend:
                 prev.mapped_item._parsed_value = None
 
         for param in _evict_as_we_go(params):
+            if _can_chunk and len(rows) >= _ROWS_FLUSH_THRESHOLD:
+                # Flush the in-flight rows into a sub-frame and start
+                # fresh.  ``rows = []`` rebinds; the previous list
+                # becomes garbage as soon as ``_rows_to_frame`` returns.
+                chunk_frames.append(_rows_to_frame(rows, cols))
+                rows = []
             if param["type"] is None:
                 continue
             if filter_in_type_list and param["type"] not in filter_in_type_list:
@@ -735,7 +759,25 @@ class SpineDBBackend:
                 logging.error(message)
                 raise FlexToolConfigError(message)
 
-        frame = _rows_to_frame(rows, cols)
+        # Track A.6 — assemble the final frame from any flushed chunks
+        # plus the in-flight remainder.  Single-chunk path is identical
+        # to the pre-chunking behaviour (one ``_rows_to_frame`` call,
+        # one ``_maybe_cast``).  Multi-chunk path concatenates the
+        # sub-frames *before* the cast so ``_maybe_cast`` sees a single
+        # frame.  ``row_origins`` is empty in the chunked path (Track A.5
+        # gated it to non-None axis_enums callers; chunked path is
+        # axis_enums-None only), so ``_maybe_cast``'s breadcrumb walk is
+        # a no-op there.
+        if chunk_frames:
+            if rows:
+                chunk_frames.append(_rows_to_frame(rows, cols))
+                rows = []
+            if len(chunk_frames) == 1:
+                frame = chunk_frames[0]
+            else:
+                frame = pl.concat(chunk_frames)
+        else:
+            frame = _rows_to_frame(rows, cols)
         return self._maybe_cast(
             frame, rows, row_origins, axis_enums, contract,
         )
