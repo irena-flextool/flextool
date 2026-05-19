@@ -4044,12 +4044,35 @@ def load_flextool(source: "Path | str | FlexInputSource",
         if axis_enums is not None:
             cast_flexdata_axes(flex_data, axis_enums)
 
-        return _assign_param_names(flex_data)
+        # Stash the resolved axis_enums on the returned FlexData so
+        # downstream consumers (``build_flextool`` and the dumpers that
+        # already read ``getattr(data, "_axis_enums", None)``) can rebind
+        # the global ContextVar — substrate helpers ``cast_dim`` /
+        # ``schema_dtype`` / ``lit_axis`` / ``alias_to_axis`` reach for
+        # the live ContextVar when called with ``enums=None``, and
+        # without this stash the ContextVar is reset before
+        # ``build_flextool`` runs (see _delay.build_indirect_delayed_in_flow
+        # which calls ``cast_dim(..., None, ...)``).
+        flex_data._axis_enums = axis_enums
+
+        result = _assign_param_names(flex_data)
+        load_ok = True  # noqa: F841 — consumed by finally clause below
+        return result
     finally:
         if ctx is not None:
             ctx.deactivate()
-        # Always reset the cascade-wide global, even on cascade error.
-        set_global_axis_enums(None)
+        # On the success path, leave the global ContextVar set to the
+        # cascade's axis_enums — ``build_flextool`` runs AFTER
+        # ``load_flextool`` returns and still needs the live vocabulary
+        # for ``cast_dim(..., None, "e")`` call sites in _delay /
+        # downstream model builders.  On cascade error reset so a
+        # half-built state doesn't leak into the next cascade.  When
+        # activation is off (``axis_enums is None``) the reset is a no-op
+        # because ``set_global_axis_enums(None)`` matches the default.
+        if not locals().get("load_ok", False):
+            set_global_axis_enums(None)
+        else:
+            set_global_axis_enums(axis_enums)
 
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
