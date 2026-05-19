@@ -120,6 +120,7 @@ from polar_high import Sum, Where, Param
 from polar_high.engine import Var, Expr
 
 from ._writer_provider_io import _provider_key
+from ._axis_enums import align_join_dtypes
 
 
 def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
@@ -561,9 +562,16 @@ def _add_capacity_margin(m, d, vars: dict) -> None:
         pss_unit = pss
         if proc_unit is not None and proc_unit.height > 0:
             pss_unit = pss.join(proc_unit.select("p"), on="p", how="inner")
-        # Map sink → n for join.
-        pss_to_grp = (pss_unit.rename({"sink": "n"})
-                              .join(gn_no_state, on="n", how="inner")
+        # Map sink → n for join.  ``sink`` carries the entity-union Enum
+        # (wider vocab including non-node entities); ``gn_no_state.n``
+        # carries the node-only Enum.  Renaming alone doesn't reconcile
+        # the dtypes; ``align_join_dtypes`` upcasts to the wider Enum so
+        # the join keys match.
+        pss_unit_n = pss_unit.rename({"sink": "n"})
+        pss_unit_n, gn_no_state_aligned = align_join_dtypes(
+            pss_unit_n, gn_no_state, ("n",))
+        pss_to_grp = (pss_unit_n
+                              .join(gn_no_state_aligned, on="n", how="inner")
                               .rename({"n": "sink"}))   # (p, source, sink, g)
 
     # Profile-limited subset (upper_limit or fixed):
@@ -631,7 +639,12 @@ def _add_capacity_margin(m, d, vars: dict) -> None:
         e = edd
         if rename_e and "e" in e.columns:
             e = e.rename({"e": "p"})
-        e = e.join(pset_pl.select("p").unique(), on="p", how="inner")
+        # ``edd``'s renamed-e column carries the entity-union Enum (wider
+        # than the ``p`` process Enum); reconcile dtypes before joining
+        # against ``pset_pl.p`` (process Enum).
+        pset_p = pset_pl.select("p").unique()
+        e, pset_p = align_join_dtypes(e, pset_p, ("p",))
+        e = e.join(pset_p, on="p", how="inner")
         if e.height == 0:
             return None
         v_at = Var(name=v_inv.name + "__cap_margin_inv",
@@ -643,7 +656,9 @@ def _add_capacity_margin(m, d, vars: dict) -> None:
     def _divest_sum(v_div: Var, pset_pl: pl.DataFrame, edd: pl.DataFrame) -> Expr | None:
         if v_div is None or edd is None or edd.height == 0:
             return None
-        e = edd.join(pset_pl.select("p").unique(), on="p", how="inner")
+        pset_p = pset_pl.select("p").unique()
+        e, pset_p = align_join_dtypes(edd, pset_p, ("p",))
+        e = e.join(pset_p, on="p", how="inner")
         if e.height == 0:
             return None
         v_at = Var(name=v_div.name + "__cap_margin_div",
