@@ -1598,41 +1598,22 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
             .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
             .select("p","n","cn","coef"))
         # Cross-axis join: pss carries ``source``/``sink`` (e-axis) joined
-        # against ``coef_long.n`` (n-axis).  Under Phase 4 activation
-        # both are Enum but with different vocabularies; cast both sides
-        # of the join keys to Utf8 so polars compares by token string,
-        # then cast the surviving e-axis columns back to the canonical
-        # ``e`` Enum for downstream consumers.
-        from flextool.engine_polars._axis_enums import (
-            get_global_axis_enums as _g_enums,
-        )
-        _live_enums = _g_enums()
-        _e_dt = (_live_enums.get("e") if _live_enums is not None
-                 else pl.Utf8)
-        pss_utf = pss.with_columns(
-            pl.col("source").cast(pl.Utf8),
-            pl.col("sink").cast(pl.Utf8),
-        )
-        coef_long_utf = coef_long.with_columns(
-            pl.col("n").cast(pl.Utf8))
-        src_match = (pss_utf.join(
-                            coef_long_utf,
+        # against ``coef_long.n`` (n-axis).  Per the contract n ⊂ e, so
+        # up-cast coef_long.n to e-Enum once; the join then composes
+        # natively in Enum without any Utf8 materialisation at the join
+        # boundary.
+        coef_long_e = coef_long.with_columns(
+            cast_dim(pl.col("n"), None, "e"))
+        src_match = (pss.join(
+                            coef_long_e,
                             left_on=["p","source"], right_on=["p","n"],
                             how="inner")
-                       .select(
-                           "p",
-                           pl.col("source").cast(_e_dt, strict=False),
-                           pl.col("sink").cast(_e_dt, strict=False),
-                           "cn", "coef"))
-        sink_match = (pss_utf.join(
-                            coef_long_utf,
+                       .select("p", "source", "sink", "cn", "coef"))
+        sink_match = (pss.join(
+                            coef_long_e,
                             left_on=["p","sink"], right_on=["p","n"],
                             how="inner")
-                        .select(
-                            "p",
-                            pl.col("source").cast(_e_dt, strict=False),
-                            pl.col("sink").cast(_e_dt, strict=False),
-                            "cn", "coef"))
+                        .select("p", "source", "sink", "cn", "coef"))
         if src_match.height + sink_match.height > 0:
             joined = (pl.concat([src_match, sink_match], how="vertical")
                         .group_by(["p","source","sink","cn"])

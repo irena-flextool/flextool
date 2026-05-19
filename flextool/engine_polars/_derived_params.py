@@ -2227,32 +2227,18 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
     coef = pl.concat(parts)
 
     # Cross-axis joins: pss carries ``source``/``sink`` (e-axis) joined
-    # against ``coef.n`` (n-axis).  Under Phase 4 activation the
-    # vocabularies differ; cast both sides to Utf8 for the join, then
-    # re-cast surviving e-axis columns back to e-Enum.
-    _live_enums = get_global_axis_enums()
-    _e_dt = (_live_enums.get("e") if _live_enums is not None else pl.Utf8)
-    pss_utf = pss.lazy().with_columns(
-        pl.col("source").cast(pl.Utf8),
-        pl.col("sink").cast(pl.Utf8),
-    )
-    coef_utf = coef.with_columns(pl.col("n").cast(pl.Utf8))
-    src_match = (pss_utf
-        .join(coef_utf, left_on=["p", "source"], right_on=["p", "n"],
+    # against ``coef.n`` (n-axis).  Per the contract n ⊂ e; up-cast
+    # coef.n to e-Enum once and the join composes natively in Enum
+    # without Utf8 materialisation at the join boundary.
+    coef_e = coef.with_columns(cast_dim(pl.col("n"), None, "e"))
+    src_match = (pss.lazy()
+        .join(coef_e, left_on=["p", "source"], right_on=["p", "n"],
                 how="inner")
-        .select(
-            "p",
-            pl.col("source").cast(_e_dt, strict=False),
-            pl.col("sink").cast(_e_dt, strict=False),
-            "cn", "coef"))
-    sink_match = (pss_utf
-        .join(coef_utf, left_on=["p", "sink"], right_on=["p", "n"],
+        .select("p", "source", "sink", "cn", "coef"))
+    sink_match = (pss.lazy()
+        .join(coef_e, left_on=["p", "sink"], right_on=["p", "n"],
                 how="inner")
-        .select(
-            "p",
-            pl.col("source").cast(_e_dt, strict=False),
-            pl.col("sink").cast(_e_dt, strict=False),
-            "cn", "coef"))
+        .select("p", "source", "sink", "cn", "coef"))
     joined = (pl.concat([src_match, sink_match], how="vertical")
                 .group_by(["p", "source", "sink", "cn"])
                 .agg(pl.col("coef").sum().alias("value"))
