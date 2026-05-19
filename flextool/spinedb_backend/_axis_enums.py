@@ -463,13 +463,40 @@ def _build_period_vocab(backend: Any, spec_source: dict) -> list[str]:
 def _build_block_vocab(backend: Any, spec_source: dict) -> list[str]:
     """Build the ``block`` axis vocabulary.
 
-    Per the contract, block names come from the keys of
-    ``group.new_stepduration`` maps.  The ``DEFAULT_BLOCK`` token is
-    added by the ``tokens_default_extension`` allowlist (folded by the
+    Per the contract (``axes/block.source``), the block axis source is
+    ``group.new_stepduration`` with ``key_kind: "values_plus_default"``.
+    Block names are the names of ``group`` entities that carry a
+    non-null ``new_stepduration`` parameter value — regardless of
+    whether the parameter is authored as a per-period Map or as a
+    scalar-per-entity.  The synthetic ``default`` token is appended
+    later by the ``tokens_default_extension`` allowlist (folded by the
     caller via :func:`_allowlist_tokens_for` for the ``block`` axis).
+
+    When ``key_kind == "values_plus_default"`` we enumerate group
+    entities whose ``new_stepduration`` value is set to anything (Map
+    or scalar).  For other ``key_kind`` values (or none specified) we
+    fall back to the original Map-key extraction for backwards
+    compatibility.
     """
     entity_class = spec_source.get("entity_class", "group")
     parameter = spec_source.get("parameter", "new_stepduration")
+    key_kind = spec_source.get("key_kind")
+    if key_kind == "values_plus_default":
+        rows = backend.find_parameter_values(
+            entity_class_name=entity_class,
+            parameter_definition_name=parameter,
+        )
+        out: list[str] = []
+        for param in rows:
+            if param.get("parsed_value") is None:
+                continue
+            ent = param.get("entity_byname")
+            if not ent:
+                continue
+            # ``entity_byname`` is a tuple — for the single-dim 'group'
+            # class the entity name lives at index 0.
+            out.append(str(ent[0]))
+        return _dedup_keep_order(out)
     return _collect_parameter_map_keys(backend, entity_class, parameter)
 
 

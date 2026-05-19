@@ -6476,15 +6476,22 @@ def period_block_family_from_source(source: "InputSource",
                         new_pbt = None
                         ov = bl.overlap_set_frame
                         if ov.height > 0:
+                            # Mirror the canonical block-axis cascade
+                            # column name ``bk`` (see _AXIS_SYNONYMS in
+                            # _axis_enums.py: ``"b" → "branch"``,
+                            # ``"bk" → "block"``).  Using ``"b"`` here
+                            # would cast block tokens to the BRANCH enum
+                            # and null every row out.  Parallel pattern:
+                            # _derived_block.py:696-705.
                             ov = ov.pipe(rename_to_axis, {
                                 "period": "d",
-                                "block_coarse": "b",
+                                "block_coarse": "bk",
                                 "step_coarse": "b_first",
                                 "block_fine": "b_fine",
                                 "step_fine": "t",
                             })
                             ov_keep = ov.filter(
-                                pl.col("b").is_in(coarse_use)
+                                pl.col("bk").is_in(coarse_use)
                                 & (pl.col("b_fine") == "default"))
                             if ov_keep.height > 0:
                                 new_pbt = ov_keep.select(
