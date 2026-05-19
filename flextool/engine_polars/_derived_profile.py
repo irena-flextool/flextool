@@ -519,10 +519,11 @@ def _profile_stochastic_lf(workdir: Path | None,
                 for ts in tss:
                     d_tb_ts.append((d, tb, ts))
         if d_tb_ts:
-            d_tb_ts_lf = pl.LazyFrame(
+            d_tb_ts_lf = (pl.LazyFrame(
                 {"d": [r[0] for r in d_tb_ts],
                  "tb": [r[1] for r in d_tb_ts],
                  "ts": [r[2] for r in d_tb_ts]})
+                .with_columns(alias_to_axis("d", "d")))
             stoch_lf = (pbt_lf
                           .filter(pl.col("f").is_in(stoch_active))
                           .join(d_tb_ts_lf, on=["tb", "ts"], how="inner")
@@ -546,10 +547,11 @@ def _profile_stochastic_lf(workdir: Path | None,
                     for ts in tss:
                         d_tb_ts_pp.append((d, tb, ts))
         if d_tb_ts_pp:
-            d_tb_ts_pp_lf = pl.LazyFrame(
+            d_tb_ts_pp_lf = (pl.LazyFrame(
                 {"d": [r[0] for r in d_tb_ts_pp],
                  "tb": [r[1] for r in d_tb_ts_pp],
                  "ts": [r[2] for r in d_tb_ts_pp]})
+                .with_columns(alias_to_axis("d", "d")))
             pp_lf = (pbt_lf
                        .join(d_tb_ts_pp_lf, on=["tb", "ts"], how="inner")
                        .group_by(["f", "d", "t"])
@@ -735,11 +737,12 @@ def p_profile_value_lf(source: "InputSource",
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
-    # Phase 4.6: keep ``dt``'s dim dtypes as-is — under activation
-    # they're d-Enum / t-Enum and downstream joins compose cleanly.
-    # Previously cast to Utf8 to defend against a mixed dtype, but that
-    # strip-to-Utf8 now breaks the downstream Enum joins.
-    dt_lf = dt.lazy().select("d", "t").unique()
+    # Defensive re-cast: callers occasionally pass dt with Utf8 d/t (e.g. stochastic
+    # fixtures where a CSV path bypasses upstream casting). Re-cast here so every
+    # tier helper composes on a consistent dtype.
+    dt_lf = (dt.lazy()
+                .select(alias_to_axis("d", "d"), alias_to_axis("t", "t"))
+                .unique())
 
     tiers = _classify_profile_rows(source)
     scalar_profiles = sorted(p for p, t in tiers.items() if t == "scalar")
