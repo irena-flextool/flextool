@@ -8575,9 +8575,12 @@ def apply_derived_f(
     # (single-solve fixtures, or first-of-chain) — ``None`` is the
     # explicit "no prior-solve state" signal.
     flex_data.p_entity_previously_invested_capacity = (
-        p_entity_previously_invested_capacity_from_workdir(workdir))
-    flex_data.p_entity_invested = p_entity_invested_from_workdir(workdir)
-    flex_data.p_entity_divested = p_entity_divested_from_workdir(workdir)
+        p_entity_previously_invested_capacity_from_workdir(
+            workdir, provider=provider))
+    flex_data.p_entity_invested = p_entity_invested_from_workdir(
+        workdir, provider=provider)
+    flex_data.p_entity_divested = p_entity_divested_from_workdir(
+        workdir, provider=provider)
 
 
 
