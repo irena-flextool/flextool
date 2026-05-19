@@ -1154,9 +1154,18 @@ def _drive_cascade(
             # Un-scale the objective value back to user-facing units.
             # ``build_flextool`` multiplied the objective coefficients by
             # ``effective_obj_scale``, so HiGHS reports a scaled value.
+            # Overwrite ``sol.obj`` in place so the public
+            # ``step.solution.obj`` matches the unscaled ``step.obj`` /
+            # the ``v_obj__{solve}.parquet`` value that the legacy
+            # writer un-scales via ``_resolve_inv_scale_the_objective``.
+            # Without this, callers reading ``step.solution.obj`` see
+            # the LP-internal (scaled-by-1e-6) magnitude — a parity
+            # break with the legacy flextool objective.
             unscaled_obj = (
                 sol.obj / effective_obj_scale if sol.obj is not None else None
             )
+            if sol is not None and unscaled_obj is not None:
+                sol.obj = unscaled_obj
             # In rolling solves, every iteration's ``complete_solve_name``
             # is the parent solve name (see ``recursive_solves.py:259``:
             # ``complete_solves[roll_name] = complete_solve_name``).  Use
@@ -1704,11 +1713,17 @@ def run_single_solve_from_db(
     # Un-scale the objective value back to user-facing units.
     # ``build_flextool`` multiplied the objective coefficients by
     # ``effective_obj_scale``, so HiGHS reports a scaled value.
+    # Overwrite ``sol.obj`` in place so the public ``step.solution.obj``
+    # matches the unscaled ``step.obj`` / the ``v_obj__{solve}.parquet``
+    # value that the legacy writer un-scales via
+    # ``_resolve_inv_scale_the_objective``.
     unscaled_obj = (
         sol.obj / effective_obj_scale
         if sol.optimal and sol.obj is not None
         else None
     )
+    if sol is not None and unscaled_obj is not None:
+        sol.obj = unscaled_obj
 
     return OrchestrationStep(
         solve_name=scenario_name,
