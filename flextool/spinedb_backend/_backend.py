@@ -547,9 +547,51 @@ class SpineDBBackend:
         # entry is a dict of (parameter, entity, scenario, map_index)
         # captured at row-emit time.  Map rows append the map index
         # specifically; scalar / array rows leave map_index as None.
+        #
+        # Track A.5 — these breadcrumbs are *only* consulted by
+        # :meth:`_maybe_cast` when an axis-enum cast fails.  When
+        # ``axis_enums`` is ``None`` (the default for the
+        # ``input_derivation`` callsites) ``_maybe_cast`` returns the
+        # frame untouched and never reads ``row_origins``.  Building 3+
+        # million-entry dict lists for that path is pure waste, so we
+        # short-circuit append to a no-op when no cast is requested.
+        # For axis-enum-enabled callsites the full origin dict list is
+        # still constructed and the error breadcrumb quality is
+        # unchanged.
         row_origins: list[dict[str, Any]] = []
+        if axis_enums is None:
+            def _origin_append(_origin: dict[str, Any]) -> None:
+                pass
+        else:
+            _origin_append = row_origins.append  # type: ignore[assignment]
         scen = self._scenario_name
-        for param in params:
+        # Track A — wrap ``params`` so each :class:`spinedb_api.PublicItem`
+        # has its underlying ``MappedItem._parsed_value`` set to ``None``
+        # as iteration advances past it.  ``parsed_value`` is a lazy
+        # property in spinedb-api: dropping the cached object releases the
+        # parsed ``Map`` / ``TimeSeries`` / ``Array`` and the next access
+        # would re-parse via ``from_database(value, type)``.  Each
+        # ``(class, param)`` is touched exactly once per
+        # ``input_derivation`` pass, so this gives the full memory win at
+        # zero re-parse cost.  The wrapper is safe even when callers
+        # ``continue`` mid-iteration: the next ``next()`` call enters the
+        # generator body BEFORE yielding the new item, so the previously
+        # yielded item is evicted no matter how the caller exited the
+        # body.  At any moment at most one parsed_value lives.
+        # ``tests/spinedb_backend/test_parsed_value_eviction.py`` enforces
+        # this contract and warns loudly on spinedb-api API drift.
+
+        def _evict_as_we_go(items):
+            prev = None
+            for item in items:
+                if prev is not None:
+                    prev.mapped_item._parsed_value = None
+                prev = item
+                yield item
+            if prev is not None:
+                prev.mapped_item._parsed_value = None
+
+        for param in _evict_as_we_go(params):
             if param["type"] is None:
                 continue
             if filter_in_type_list and param["type"] not in filter_in_type_list:
@@ -618,7 +660,7 @@ class SpineDBBackend:
                             rows.append(first_cols + [idx])
                         else:
                             rows.append(first_cols + [idx, val])
-                        row_origins.append({
+                        _origin_append({
                             "parameter": pname,
                             "entity": ent_str,
                             "scenario": scen,
@@ -642,7 +684,7 @@ class SpineDBBackend:
                         idx_path = "->".join(
                             str(x) for x in list(index)[:-1]
                         )
-                        row_origins.append({
+                        _origin_append({
                             "parameter": pname,
                             "entity": ent_str,
                             "scenario": scen,
@@ -654,7 +696,7 @@ class SpineDBBackend:
                         list(entity_byname)
                         + [format_scalar_for_csv(v, effective_precision)]
                     )
-                    row_origins.append({
+                    _origin_append({
                         "parameter": pname,
                         "entity": ent_str,
                         "scenario": scen,
@@ -672,7 +714,7 @@ class SpineDBBackend:
                             param["parsed_value"], effective_precision,
                         )]
                     )
-                row_origins.append({
+                _origin_append({
                     "parameter": pname,
                     "entity": ent_str,
                     "scenario": scen,
