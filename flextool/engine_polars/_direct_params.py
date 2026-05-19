@@ -931,7 +931,7 @@ def _e_period_param_union(source: "InputSource",
         if period_col is None or "value" not in cols:
             continue
         lf = (df.lazy()
-                .rename({"name": "e", period_col: "d"})
+                .pipe(rename_to_axis, {"name": "e", period_col: "d"})
                 .filter(pl.col("value").is_not_null()))
         if filter_zero:
             lf = lf.filter(pl.col("value") != 0.0)

@@ -1273,8 +1273,13 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     gcn = (g_price.join(g_node, on="g", how="inner")
                   .join(cn_co2, on="n", how="inner")
                   .select("g","c","n"))
+    # Cross-axis join (Pattern 2): pss_eff.source is the entity-union
+    # (``e``) axis; gcn.n is the node (``n``) axis.  Up-cast the
+    # narrower side to ``e`` so the join is a native Enum match under
+    # Phase 4 activation.
+    gcn_e = gcn.with_columns(cast_dim(pl.col("n"), None, "e"))
     flow_from_co2_priced = (pss_eff
-        .join(gcn, left_on="source", right_on="n", how="inner")
+        .join(gcn_e, left_on="source", right_on="n", how="inner")
         .select("p","source","sink","c","g"))
     # noEff variant: source flow into a CO2-priced commodity node where the
     # process is on the noEff side.  Rare but used for "cheap simplified"
@@ -1282,7 +1287,7 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     flow_from_co2_priced_noEff = None
     if pss_noEff is not None:
         flow_from_co2_priced_noEff = (pss_noEff
-            .join(gcn, left_on="source", right_on="n", how="inner")
+            .join(gcn_e, left_on="source", right_on="n", how="inner")
             .select("p","source","sink","c","g"))
         if flow_from_co2_priced_noEff.height == 0:
             flow_from_co2_priced_noEff = None
@@ -1331,6 +1336,9 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                 .join(cn_co2, on="n", how="inner")
                 .select("g","c","n"))
     if gcn.height == 0: return (None, None, None, None, None)
+    # Cross-axis join setup (Pattern 2): up-cast gcn.n (n axis) to ``e``
+    # so the join against pss.source (e axis) is a native Enum match.
+    gcn_e = gcn.with_columns(cast_dim(pl.col("n"), None, "e"))
     # The .mod's co2_max_period sums emissions over (p, source, sink)
     # for processes whose source is a CO2-priced node — but with
     # different formulae for eff vs noEff.  eff is multiplied by
@@ -1345,13 +1353,13 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     flow_from_co2_capped_noEff = None
     if pss_eff is not None and pss_eff.height > 0:
         eff = (pss_eff.select("p","source","sink")
-            .join(gcn, left_on="source", right_on="n", how="inner")
+            .join(gcn_e, left_on="source", right_on="n", how="inner")
             .select("p","source","sink","c","g"))
         if eff.height > 0:
             flow_from_co2_capped_eff = eff
     if pss_noEff is not None and pss_noEff.height > 0:
         noeff = (pss_noEff.select("p","source","sink")
-            .join(gcn, left_on="source", right_on="n", how="inner")
+            .join(gcn_e, left_on="source", right_on="n", how="inner")
             .select("p","source","sink","c","g"))
         if noeff.height > 0:
             flow_from_co2_capped_noEff = noeff

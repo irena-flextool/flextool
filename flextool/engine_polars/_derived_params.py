@@ -2309,11 +2309,15 @@ def p_pssdt_varCost_from_source(source: "InputSource",
         period_col = next((c for c in ("period", "d") if c in idx_cols), None)
         t_col = next((c for c in ("t", "time", "step") if c in idx_cols), None)
 
-        # Build base lazyframe and rename keys.
+        # Build base lazyframe and rename keys.  ``ent_n_col`` (the
+        # node column on the source side of unit__inputNode /
+        # unit__outputNode) is cast to the entity-union ``e`` axis so
+        # the join against pss.source / pss.sink (also e-typed)
+        # composes natively under Phase 4 activation.  Pattern 2.
         select_exprs = [alias_to_axis(ent_p_col, "p"),
                          pl.col("value").cast(pl.Float64).alias("v")]
         if ent_n_col is not None:
-            select_exprs.append(alias_to_axis(ent_n_col, "n"))
+            select_exprs.append(alias_to_axis(ent_n_col, "e"))
         if period_col is not None:
             select_exprs.append(alias_to_axis(period_col, "d"))
         if t_col is not None:
@@ -2322,16 +2326,16 @@ def p_pssdt_varCost_from_source(source: "InputSource",
 
         # Match against pss to get (p, source, sink) tuples.
         if side == "source":
-            # n binds source.
+            # e binds source.
             psk = (pss.lazy()
-                .join(lf, left_on=["p", "source"], right_on=["p", "n"],
+                .join(lf, left_on=["p", "source"], right_on=["p", "e"],
                        how="inner"))
         elif side == "sink":
             psk = (pss.lazy()
-                .join(lf, left_on=["p", "sink"], right_on=["p", "n"],
+                .join(lf, left_on=["p", "sink"], right_on=["p", "e"],
                        how="inner"))
         else:
-            # process-level, no n match.
+            # process-level, no entity match.
             psk = pss.lazy().join(lf, on="p", how="inner")
 
         # Broadcast over dt according to which dims are present.
