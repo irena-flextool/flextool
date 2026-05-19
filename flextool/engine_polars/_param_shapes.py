@@ -70,7 +70,11 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine_polars._axis_enums import rename_to_axis
+from flextool.engine_polars._axis_enums import (
+    cast_frame_axes,
+    get_global_axis_enums,
+    rename_to_axis,
+)
 from flextool.engine_polars._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
@@ -792,6 +796,16 @@ def broadcast_to_period_time(
             .filter(pl.col("value").is_not_null()))
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
+    # Phase 4 — align producer-side dim dtypes to the canonical Enum
+    # vocabulary so the downstream join against ``period_filter`` (which
+    # carries Enum d/t after :func:`apply_derived_a` runs) doesn't trip
+    # over Utf8-vs-Enum on the ``t`` (or entity) axis.  The cascade
+    # contract is "Enum when global vocabulary is active"; the resolver
+    # reads frames in String land via ``InputSource.parameter*``, so the
+    # cast happens here at the broadcast boundary.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        lf = cast_frame_axes(lf, _enums)
     dt_lf = period_filter.lazy().select("d", "t").unique()
 
     shape = resolved.shape
@@ -870,6 +884,14 @@ def broadcast_to_period(
         lf = lf.filter(pl.col("value").is_not_null())
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
+    # Phase 4 — align producer-side dim dtypes to the canonical Enum
+    # vocabulary so the downstream join against ``period_filter`` (which
+    # carries Enum d after :func:`apply_derived_a` runs) doesn't trip
+    # over Utf8-vs-Enum on the ``d`` (or entity) axis.  See the matching
+    # comment in :func:`broadcast_to_period_time`.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        lf = cast_frame_axes(lf, _enums)
 
     shape = resolved.shape
     if shape == Shape.SCALAR:
