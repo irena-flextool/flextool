@@ -4,6 +4,8 @@
 #   pip install -e .              (FlexTool GUI only)
 #   pip install -e ".[toolbox]"   (FlexTool GUI + Spine Toolbox)
 
+polar-high>=1.1.3
+polars
 pandas
 openpyxl
 odfpy

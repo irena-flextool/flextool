@@ -3,11 +3,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flextool"
-# 3.34.0 — multi-solver support + documentation overhaul.  Engine_polars
-# / GMPL retirement work was tagged separately as 3.33.0; 4.0.0
-# semantic bump is held until the new engine demonstrates full parity
-# with the old one across the test suite.
-version = "3.34.0"
+# 3.38.0 — Rivendell bug-fix suite.  Last known-stable release before
+# the in-flight enum-dtype refactor.  4.0.0 semantic bump is held
+# until the new engine demonstrates full parity with the old one
+# across the test suite.
+version = "3.38.0"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
