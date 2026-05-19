@@ -44,7 +44,12 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine_polars.input import FlexData
-from flextool.engine_polars._axis_enums import schema_dtype
+from flextool.engine_polars._axis_enums import (
+    get_global_axis_enums,
+    reset_global_axis_enums,
+    schema_dtype,
+    set_global_axis_enums,
+)
 
 
 __all__ = [
@@ -218,13 +223,34 @@ def load_region_membership(
 # ---------------------------------------------------------------------------
 
 
+def _is_in_keep(col: str, keep: set[str]) -> pl.Expr:
+    """Membership test for ``pl.col(col)`` against *keep* that tolerates
+    keep elements outside the column's Enum vocabulary.
+
+    ``keep`` is built by the region splitter and may include synthetic
+    virtual-entity tokens (``hf_pipe_*`` / ``*__export__*`` /
+    ``*__import__*``) that aren't in the source DB's Enum vocab.  A
+    naive ``pl.col(c).is_in(list(keep))`` casts *keep* to the column's
+    Enum dtype and raises ``conversion from str to enum failed`` on
+    those synthetic tokens — even though the data column itself
+    contains only real entities and the synthetic tokens would never
+    match anyway.
+
+    Casting to Utf8 for the membership check is a contained, semantic
+    operation (no join, no persisted Utf8 column, no downstream
+    propagation).  The filter's output retains the column's original
+    Enum dtype.
+    """
+    return pl.col(col).cast(pl.Utf8).is_in(list(keep))
+
+
 def _filter_frame(df: pl.DataFrame | None, col: str,
                   keep: set[str]) -> pl.DataFrame | None:
     if df is None:
         return None
     if col not in df.columns:
         return df
-    return df.filter(pl.col(col).is_in(list(keep)))
+    return df.filter(_is_in_keep(col, keep))
 
 
 def _filter_frame_multi(df: pl.DataFrame | None,
@@ -234,7 +260,7 @@ def _filter_frame_multi(df: pl.DataFrame | None,
     out = df
     for col, keep in cond_cols:
         if col in out.columns:
-            out = out.filter(pl.col(col).is_in(list(keep)))
+            out = out.filter(_is_in_keep(col, keep))
     return out
 
 
@@ -244,7 +270,7 @@ def _filter_param(p: Param | None, col: str,
         return None
     if col not in p.dims:
         return p
-    new_frame = p.frame.filter(pl.col(col).is_in(list(keep)))
+    new_frame = p.frame.filter(_is_in_keep(col, keep))
     return Param(p.dims, new_frame, name=p.name)
 
 
@@ -379,7 +405,7 @@ def _build_region_data(
         df = _drop_cross(df)
         if df is None or "p" not in df.columns:
             return df
-        return df.filter(pl.col("p").is_in(list(keep_procs)))
+        return df.filter(_is_in_keep("p", keep_procs))
 
     def _filter_param_arc(p: Param | None) -> Param | None:
         if p is None:
@@ -399,7 +425,7 @@ def _build_region_data(
                        "source": schema_dtype(_enums, "source"),
                        "sink": schema_dtype(_enums, "sink")})
             f = f.join(key_df, on=("p", "source", "sink"), how="anti")
-        f = f.filter(pl.col("p").is_in(list(keep_procs)))
+        f = f.filter(_is_in_keep("p", keep_procs))
         return Param(p.dims, f, name=p.name)
 
     new.process_source_sink = _filter_arc_by_proc(src.process_source_sink)
@@ -457,11 +483,11 @@ def _build_region_data(
     if src.group_entity is not None and "e" in src.group_entity.columns:
         keep_e = keep_nodes | keep_procs
         new.group_entity = src.group_entity.filter(
-            pl.col("e").is_in(list(keep_e))
+            _is_in_keep("e", keep_e)
         )
     if src.group_node is not None and "n" in src.group_node.columns:
         new.group_node = src.group_node.filter(
-            pl.col("n").is_in(list(keep_nodes))
+            _is_in_keep("n", keep_nodes)
         )
     new.process_unit = _filter_frame(src.process_unit, "p", keep_procs)
 
@@ -851,7 +877,7 @@ def _inject_half_flows(
     if rd.p_process_availability is not None and rd.pss_dt is not None:
         # Add a (p, d, t) row for each (virtual_p, d, t) in pss_dt.
         avail_rows = (rd.pss_dt
-                      .filter(pl.col("p").is_in([hf.virtual_p for hf in half_flows]))
+                      .filter(pl.col("p").cast(pl.Utf8).is_in([hf.virtual_p for hf in half_flows]))
                       .select("p", "d", "t")
                       .with_columns(value=pl.lit(1.0)))
         if avail_rows.height > 0:
@@ -864,7 +890,7 @@ def _inject_half_flows(
     if rd.p_process_existing_count is not None and rd.pss_dt is not None:
         # (p, d) row for each virtual half-flow
         ec_rows = (rd.pss_dt
-                   .filter(pl.col("p").is_in([hf.virtual_p for hf in half_flows]))
+                   .filter(pl.col("p").cast(pl.Utf8).is_in([hf.virtual_p for hf in half_flows]))
                    .select("p", "d").unique()
                    .with_columns(value=pl.lit(1.0)))
         if ec_rows.height > 0:
@@ -1047,32 +1073,72 @@ def split(
     for r in cross.iter_rows(named=True):
         cross_arcs_by_pss.add((r["p"], r["source"], r["sink"]))
 
-    splits: list[RegionSplit] = []
-    for r in regions:
-        keep_nodes = region_nodes.get(r, set()) | shared_nodes
-        keep_procs = region_procs.get(r, set()) | shared_procs
-        # Also keep cross-region pipes' original `p` membership in this
-        # region IF the in-region terminal is here.  We'll drop the
-        # specific (p, source, sink) cross-arc rows below; but we keep
-        # the process p in keep_procs so the OTHER direction (back-flow)
-        # which has the in-region node as its sink/source is retained.
-        # In fact, we add the original cross-region pipe p iff this
-        # region has a half-flow involving that p.
-        for hf in half_flows_by_region.get(r, []):
-            keep_procs.add(hf.original_p)
-            keep_procs.add(hf.virtual_p)
+    # Phase 4 — virtual half-flow entities ("hf_pipe_*" / "pipe_*__*__*")
+    # are created at runtime by ``_make_half_flows``; they are not in the
+    # source DB and therefore not in the axis_enums vocabulary built by
+    # ``build_axis_enums``.  Downstream filter operations like
+    # ``pl.col("p").is_in([...keep_procs incl. virtual_p...])`` raise
+    # ``conversion from str to enum failed`` when polars casts the
+    # comparison list against the Enum dtype.  Widen the live vocabulary
+    # to include the virtual tokens for the duration of the split.
+    _virt_p: set[str] = set()
+    _virt_n: set[str] = set()
+    for _hfs in half_flows_by_region.values():
+        for _hf in _hfs:
+            _virt_p.add(_hf.virtual_p)
+            _virt_n.add(_hf.virtual_node)
+    _enums_token = None
+    _base_enums = get_global_axis_enums()
+    if _base_enums is not None and (_virt_p or _virt_n):
+        _ext: dict[str, pl.Enum] = dict(_base_enums)
+        _virt_e = _virt_p | _virt_n
+        for _axis_name, _new_toks in (
+            ("p", _virt_p),
+            ("n", _virt_n),
+            ("source", _virt_n),
+            ("sink", _virt_n),
+            ("e", _virt_e),
+        ):
+            _existing = _ext.get(_axis_name)
+            if _existing is None:
+                continue
+            _existing_cats = list(_existing.categories)
+            _existing_set = set(_existing_cats)
+            _add = [t for t in _new_toks if t not in _existing_set]
+            if _add:
+                _ext[_axis_name] = pl.Enum(_existing_cats + _add)
+        _enums_token = set_global_axis_enums(_ext)
 
-        rdata = _build_region_data(
-            src=data,
-            region=r,
-            keep_nodes=keep_nodes,
-            keep_procs=keep_procs,
-            half_flows=half_flows_by_region.get(r, []),
-            cross_arcs_by_pss=cross_arcs_by_pss,
-        )
-        splits.append(RegionSplit(
-            region=r,
-            data=rdata,
-            half_flows=half_flows_by_region.get(r, []),
-        ))
-    return splits
+    try:
+        splits: list[RegionSplit] = []
+        for r in regions:
+            keep_nodes = region_nodes.get(r, set()) | shared_nodes
+            keep_procs = region_procs.get(r, set()) | shared_procs
+            # Also keep cross-region pipes' original `p` membership in this
+            # region IF the in-region terminal is here.  We'll drop the
+            # specific (p, source, sink) cross-arc rows below; but we keep
+            # the process p in keep_procs so the OTHER direction (back-flow)
+            # which has the in-region node as its sink/source is retained.
+            # In fact, we add the original cross-region pipe p iff this
+            # region has a half-flow involving that p.
+            for hf in half_flows_by_region.get(r, []):
+                keep_procs.add(hf.original_p)
+                keep_procs.add(hf.virtual_p)
+
+            rdata = _build_region_data(
+                src=data,
+                region=r,
+                keep_nodes=keep_nodes,
+                keep_procs=keep_procs,
+                half_flows=half_flows_by_region.get(r, []),
+                cross_arcs_by_pss=cross_arcs_by_pss,
+            )
+            splits.append(RegionSplit(
+                region=r,
+                data=rdata,
+                half_flows=half_flows_by_region.get(r, []),
+            ))
+        return splits
+    finally:
+        if _enums_token is not None:
+            reset_global_axis_enums(_enums_token)
