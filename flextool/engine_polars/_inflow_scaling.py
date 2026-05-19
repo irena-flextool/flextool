@@ -983,7 +983,13 @@ def p_inflow_with_scaling_from_source(
         return None
 
     nodes_lf = eligible_nodes.lazy()
-    dt_lf = dt.lazy()
+    # Defensive re-cast: ensure d/t are canonical Enum so the many
+    # downstream joins (period_lf, dt_complete, method_lf, etc.) all
+    # compose cleanly even when ``dt`` arrives with Utf8 axis columns.
+    dt_lf = dt.lazy().with_columns(
+        alias_to_axis(pl.col("d"), "d"),
+        alias_to_axis(pl.col("t"), "t"),
+    )
     period_lf = dt_lf.select("d").unique()
     # dt_complete: per-period × full-timeline timesteps.  Used by the
     # ``period_share_of_annual_flow`` sum (mod L1395).
