@@ -1087,13 +1087,22 @@ def ed_entity_annual_discounted_from_source(
         period_in_use: list[str],
         period_universe: list[str],
         ) -> "Param | None":
-    """Public entry: ``ed_entity_annual_discounted[e, d]``."""
+    """Public entry: ``ed_entity_annual_discounted[e, d]``.
+
+    Returns the full ``entityInvest × period_invest`` frame, including
+    zero-valued rows, to mirror the snapshot CSV produced by
+    :func:`._writer_entity_annual.write_entity_annual_calc_params`
+    (which the loader's ``_read_e_d`` seed retains unfiltered).  The
+    loader's ``apply_npv`` only overwrites the seed when this entry
+    returns a non-None frame, so emitting the zero rows is required
+    for the lazy result to match the seed on fixtures where every
+    (e, d) value is zero (e.g. ``work_wind_battery_invest``).
+    """
     if not period_invest:
         return None
     out = (npv_invest_discounted_lf(
               source, active_solve,
               period_invest, period_in_use, period_universe)
-              .filter(pl.col("value") != 0.0)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1109,13 +1118,16 @@ def ed_entity_annual_divest_discounted_from_source(
         period_in_use: list[str],
         period_universe: list[str],
         ) -> "Param | None":
-    """Public entry: ``ed_entity_annual_divest_discounted[e, d]``."""
+    """Public entry: ``ed_entity_annual_divest_discounted[e, d]``.
+
+    Unfiltered ``entityDivest × period_invest`` — see the rationale on
+    :func:`ed_entity_annual_discounted_from_source`.
+    """
     if not period_invest:
         return None
     out = (npv_divest_discounted_lf(
               source, active_solve,
               period_invest, period_in_use, period_universe)
-              .filter(pl.col("value") != 0.0)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1131,13 +1143,16 @@ def ed_lifetime_fixed_cost_from_source(
         period_in_use: list[str],
         period_universe: list[str],
         ) -> "Param | None":
-    """Public entry: ``ed_lifetime_fixed_cost[e, d]``."""
+    """Public entry: ``ed_lifetime_fixed_cost[e, d]``.
+
+    Unfiltered ``entity × period_with_history`` — see the rationale on
+    :func:`ed_entity_annual_discounted_from_source`.
+    """
     if not period_with_history:
         return None
     out = (lifetime_fixed_cost_invest_lf(
               source, active_solve,
               period_with_history, period_in_use, period_universe)
-              .filter(pl.col("value") != 0.0)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1153,13 +1168,16 @@ def ed_lifetime_fixed_cost_divest_from_source(
         period_in_use: list[str],
         period_universe: list[str],
         ) -> "Param | None":
-    """Public entry: ``ed_lifetime_fixed_cost_divest[e, d]``."""
+    """Public entry: ``ed_lifetime_fixed_cost_divest[e, d]``.
+
+    Unfiltered ``entityDivest × period_invest`` — see the rationale on
+    :func:`ed_entity_annual_discounted_from_source`.
+    """
     if not period_invest:
         return None
     out = (lifetime_fixed_cost_divest_lf(
               source, active_solve,
               period_invest, period_in_use, period_universe)
-              .filter(pl.col("value") != 0.0)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
