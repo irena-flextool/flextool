@@ -41,10 +41,15 @@ solver) on first access.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
 import polars as pl
+import polars.exceptions as pl_exc
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 Kind = Literal["input", "solve_data"]
@@ -138,9 +143,28 @@ def seed_provider_from_dir(
         targets = sorted(d.glob("*.csv"))
     seeded = 0
     for p in targets:
-        df = _read_csv_file(p)
-        provider.put(p.stem, df)
-        provider.put(f"{kind}/{p.stem}", df)
+        try:
+            df = _read_csv_file(p)
+            provider.put(p.stem, df)
+            provider.put(f"{kind}/{p.stem}", df)
+        except (pl_exc.ComputeError, pl_exc.NoDataError) as exc:
+            _LOGGER.warning(
+                "seed_provider_from_dir: skipping malformed CSV %s "
+                "(%s: %s)",
+                p,
+                type(exc).__name__,
+                exc,
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001 — log + continue for stray files
+            _LOGGER.warning(
+                "seed_provider_from_dir: skipping unreadable CSV %s "
+                "(%s: %s)",
+                p,
+                type(exc).__name__,
+                exc,
+            )
+            continue
         seeded += 1
     return seeded
 
