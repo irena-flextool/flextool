@@ -805,9 +805,9 @@ def process_input_flows(source: "InputSource",
     if pss.height == 0 or process_indirect_set.height == 0:
         return _empty({"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
     return (pss.lazy()
-              # Cross-axis compare: sink (e) vs p (p) — cast to Utf8.
-              .filter(pl.col("sink").cast(pl.Utf8)
-                      == pl.col("p").cast(pl.Utf8))
+              # Cross-axis compare: sink (e) vs p (p).  Per contract
+              # p ⊂ e; up-cast p to e so the compare runs in Enum.
+              .filter(pl.col("sink") == cast_dim(pl.col("p"), None, "e"))
               .join(process_indirect_set.lazy(), on="p", how="inner")
               .sort("p", "source", "sink")
               .collect())
@@ -828,9 +828,9 @@ def process_output_flows(source: "InputSource",
     if pss.height == 0 or process_indirect_set.height == 0:
         return _empty({"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
     return (pss.lazy()
-              # Cross-axis compare: source (e) vs p (p) — cast to Utf8.
-              .filter(pl.col("source").cast(pl.Utf8)
-                      == pl.col("p").cast(pl.Utf8))
+              # Cross-axis compare: source (e) vs p (p).  Per contract
+              # p ⊂ e; up-cast p to e so the compare runs in Enum.
+              .filter(pl.col("source") == cast_dim(pl.col("p"), None, "e"))
               .join(process_indirect_set.lazy(), on="p", how="inner")
               .sort("p", "source", "sink")
               .collect())

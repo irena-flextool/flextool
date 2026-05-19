@@ -1473,12 +1473,11 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
     raw = _provider_read(provider, "solve_data/process__method_indirect", p).pipe(rename_to_axis, {"process":"p"})
     if raw.height == 0: return (None, None, None, None, None, None)
     indirect = raw.select("p").unique()
-    # Cross-axis compares: sink/source (e-axis) vs p (p-axis) — cast to
-    # Utf8 so the equality test is on the token string, not the Enum
-    # ordinal (which would SchemaError between different vocabularies
-    # under Phase 4 activation).
-    inputs  = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("sink").cast(pl.Utf8) == pl.col("p").cast(pl.Utf8)))
-    outputs = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("source").cast(pl.Utf8) == pl.col("p").cast(pl.Utf8)))
+    # Cross-axis compares: sink/source (e-axis) vs p (p-axis).  Per
+    # contract p ⊂ e; up-cast p to e so the compare runs in Enum
+    # natively without Utf8 materialisation.
+    inputs  = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("sink") == cast_dim(pl.col("p"), None, "e")))
+    outputs = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("source") == cast_dim(pl.col("p"), None, "e")))
 
     # The .mod's conversion_indirect LHS multiplies each source-side
     # v_flow by ``p_process_source_flow_coefficient[p, source]`` and the

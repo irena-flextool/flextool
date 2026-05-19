@@ -63,6 +63,7 @@ from flextool.engine_polars._axis_enums import (
     alias_to_axis,
     cast_dim,
     get_global_axis_enums,
+    lit_axis,
     rename_to_axis,
     schema_dtype,
 )
@@ -346,34 +347,34 @@ def filter_flow_n_by_block(
     )
     eb_lf = bundle.entity_block_lf
 
-    # Align ``n`` dtype across both sides.  Under Phase 4 activation
-    # the entity-block frame carries n-Enum on ``n``; ``flow_n.n`` is
-    # Utf8 (mix of node + process tokens after the sink/source
-    # cross-axis projection in :func:`flow_to_n_block_filtered`).
-    # Cast both sides to Utf8 for the join — token-string equality is
-    # the right semantics here.
-    eb_lf_utf = eb_lf.with_columns(pl.col("n").cast(pl.Utf8))
+    # Align ``n`` dtype across both sides.  Under activation
+    # ``flow_n.n`` carries e-vocabulary (node + process tokens for
+    # indirect units' arcs); entity_block_lf.n carries n-vocabulary
+    # (nodes only).  Per contract n ⊂ e, so up-cast entity_block_lf.n
+    # to e-Enum and the join composes natively in Enum.  Process
+    # tokens in flow_n.n won't match any entity_block_lf row (left
+    # join produces null block info) and the subsequent inner join
+    # with ``compat`` drops them — same semantics as the prior
+    # Utf8-roundtrip but without the materialisation.
+    #
+    # Block join keys (bk, b_f) use the cast_dim fill: substrate
+    # produces them as block-Enum under activation, Utf8 otherwise.
+    # The ``DEFAULT_BLOCK`` fill must use lit_axis so the literal
+    # matches the column dtype.
+    eb_lf_e = eb_lf.with_columns(cast_dim(pl.col("n"), None, "e"))
+    flow_n_e = flow_n.with_columns(cast_dim(pl.col("n"), None, "e"))
     with_blocks = (
-        flow_n.lazy()
+        flow_n_e.lazy()
         .join(psb_side, on="p", how="left")
-        .join(eb_lf_utf, on="n", how="left")
+        .join(eb_lf_e, on="n", how="left")
         .with_columns(
-            # Force the block join keys to Utf8 here so the downstream
-            # join with ``compat`` (which carries block-Enum bk/b_f)
-            # has matching dtypes regardless of which branch of
-            # ``process_side_block_lf`` / ``entity_block_lf`` produced
-            # the columns.
-            b_f=pl.col("b_f").cast(pl.Utf8).fill_null(DEFAULT_BLOCK),
-            bk=pl.col("bk").cast(pl.Utf8).fill_null(DEFAULT_BLOCK),
+            b_f=pl.col("b_f").fill_null(lit_axis(DEFAULT_BLOCK, "block")),
+            bk=pl.col("bk").fill_null(lit_axis(DEFAULT_BLOCK, "block")),
         )
-    )
-    compat_utf = compat.lazy().with_columns(
-        pl.col("bk").cast(pl.Utf8),
-        pl.col("b_f").cast(pl.Utf8),
     )
     filtered = (
         with_blocks
-        .join(compat_utf, on=["bk", "b_f"], how="inner")
+        .join(compat.lazy(), on=["bk", "b_f"], how="inner")
         .select("p", "source", "sink", "n")
         .unique()
         .collect()
@@ -398,20 +399,25 @@ def flow_to_n_block_filtered(
     same filter.
     """
     if pss is None or pss.height == 0:
+        # Empty-fallback dtype: ``n`` carries e-vocabulary (sink/source
+        # values are e-typed under activation; the column legitimately
+        # mixes node + process tokens for indirect units' arcs).
+        # Declare it ``e`` so empty and populated branches agree.
         return pl.DataFrame(schema={
             "p": schema_dtype(_enums, "p"),
             "source": schema_dtype(_enums, "source"),
             "sink": schema_dtype(_enums, "sink"),
-            "n": schema_dtype(_enums, "n"),
+            "n": schema_dtype(_enums, "e"),
         })
     # Cross-axis projection: ``sink`` carries e-axis tokens (mix of
-    # node + process names).  Cast to Utf8 so the downstream block
-    # filter (which joins on ``n``) compares by token string — the
-    # narrower n-Enum would null-out process tokens that legitimately
-    # appear here (indirect units' ``flow_to_n`` arcs).
+    # node + process names).  ``alias_to_axis("sink", "e")`` casts
+    # to e-Enum under activation, preserving every token.  The
+    # downstream block-filter join in ``filter_flow_n_by_block``
+    # also up-casts entity_block_lf.n to e-Enum (n ⊂ e), so the
+    # join composes natively without Utf8 materialisation.
     base = (
         pss.lazy()
-        .with_columns(n=pl.col("sink").cast(pl.Utf8))
+        .with_columns(alias_to_axis(pl.col("sink"), "e").alias("n"))
         .select("p", "source", "sink", "n")
         .sort("p", "source", "sink", "n")
         .collect()
@@ -429,14 +435,15 @@ def flow_from_n_block_filtered(
             "p": schema_dtype(_enums, "p"),
             "source": schema_dtype(_enums, "source"),
             "sink": schema_dtype(_enums, "sink"),
-            "n": schema_dtype(_enums, "n"),
+            "n": schema_dtype(_enums, "e"),
         })
     base = (
         pss.lazy()
         # Cross-axis projection: ``source`` is e-axis (node + process
-        # union); cast to Utf8 so the downstream block-filter join on
-        # ``n`` compares by token string without nulling process names.
-        .with_columns(n=pl.col("source").cast(pl.Utf8))
+        # union).  Cast to e-Enum (preserves every token) so the
+        # downstream block-filter join on ``n`` composes natively in
+        # Enum after entity_block_lf.n is up-cast to e as well.
+        .with_columns(alias_to_axis(pl.col("source"), "e").alias("n"))
         .select("p", "source", "sink", "n")
         .sort("p", "source", "sink", "n")
         .collect()

@@ -1835,10 +1835,10 @@ def process_input_flows(source: "InputSource",
         return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
                                       "source": schema_dtype(_enums, "source"),
                                       "sink": schema_dtype(_enums, "sink")})
-    # Cross-axis compare: sink (e) vs p (p) — cast to Utf8.
+    # Cross-axis compare: sink (e) vs p (p).  Per contract p ⊂ e;
+    # up-cast p to e so the compare runs in Enum.
     out_lf = (pss.lazy()
-                .filter(pl.col("sink").cast(pl.Utf8)
-                        == pl.col("p").cast(pl.Utf8))
+                .filter(pl.col("sink") == cast_dim(pl.col("p"), None, "e"))
                 .join(pi.lazy(), on="p", how="inner"))
     zero_src = _zero_flow_coef_pairs(source, "source")
     if zero_src.height > 0:
@@ -1860,10 +1860,10 @@ def process_output_flows(source: "InputSource",
         return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
                                       "source": schema_dtype(_enums, "source"),
                                       "sink": schema_dtype(_enums, "sink")})
-    # Cross-axis compare: source (e) vs p (p) — cast to Utf8.
+    # Cross-axis compare: source (e) vs p (p).  Per contract p ⊂ e;
+    # up-cast p to e so the compare runs in Enum.
     out_lf = (pss.lazy()
-                .filter(pl.col("source").cast(pl.Utf8)
-                        == pl.col("p").cast(pl.Utf8))
+                .filter(pl.col("source") == cast_dim(pl.col("p"), None, "e"))
                 .join(pi.lazy(), on="p", how="inner"))
     zero_sink = _zero_flow_coef_pairs(source, "sink")
     if zero_sink.height > 0:

@@ -97,6 +97,7 @@ import polars as pl
 from polar_high import Sum, Where, Param
 # Engine imports kept light — we don't introduce new variable types.
 
+from ._axis_enums import cast_dim
 from ._writer_provider_io import _provider_key
 
 
@@ -317,10 +318,10 @@ def delayed_input_expr(d, v_flow):
     if psse_delayed is None or psse_delayed.height == 0:
         return None
     indirect_inputs_delayed = psse_delayed.filter(
-        # Cross-axis value compare: "sink" is the entity-union (e) axis
-        # and "p" is the process axis (different Enums under Phase 4
-        # activation).  Cast both to Utf8 for the equality test.
-        pl.col("sink").cast(pl.Utf8) == pl.col("p").cast(pl.Utf8)
+        # Cross-axis value compare: "sink" is e-axis, "p" is process
+        # axis.  Per contract p ⊂ e; up-cast p to e for the equality
+        # so the compare runs in Enum without Utf8 materialisation.
+        pl.col("sink") == cast_dim(pl.col("p"), None, "e")
     ).select("p", "source", "sink")
     if indirect_inputs_delayed.height == 0:
         return None
