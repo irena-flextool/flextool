@@ -706,29 +706,38 @@ def build_axis_enums(
             # vocabulary, non-strict casts silently null the ``b``
             # column on stochastic fixtures and break the LP joins.
             if axis.name == "branch":
-                vocab = list(vocab)
-                vocab.extend(
-                    _collect_stochastic_branch_period_tokens(backend)
-                )
-                # Base period tokens — ``period__branch.csv`` includes
-                # ``(period, period)`` rows where the ``b`` value is the
-                # bare period name (see _stochastic.py:463).
-                base_periods: list[str] = []
-                for solve_param in ["years_represented",
-                                       "invest_periods",
-                                       "realized_invest_periods"]:
+                # Only widen for stochastic fixtures: if no
+                # ``solve.stochastic_branches`` entries exist, the
+                # period__branch overlay is not constructed and no
+                # base-period tokens flow into the ``b`` column.
+                # Polluting the branch vocab with base periods on
+                # deterministic fixtures changes the branch Enum and
+                # cascades through downstream joins that key on ``b``.
+                stoch_tokens = (
+                    _collect_stochastic_branch_period_tokens(backend))
+                if stoch_tokens:
+                    vocab = list(vocab)
+                    vocab.extend(stoch_tokens)
+                    # Base period tokens — ``period__branch.csv``
+                    # includes ``(period, period)`` rows where the
+                    # ``b`` value is the bare period name (see
+                    # _stochastic.py:463).
+                    base_periods: list[str] = []
+                    for solve_param in ["years_represented",
+                                           "invest_periods",
+                                           "realized_invest_periods"]:
+                        base_periods.extend(
+                            _collect_parameter_map_keys(
+                                backend, "solve", solve_param
+                            )
+                        )
                     base_periods.extend(
-                        _collect_parameter_map_keys(
-                            backend, "solve", solve_param
+                        _collect_parameter_array_values(
+                            backend, "solve", "realized_periods"
                         )
                     )
-                base_periods.extend(
-                    _collect_parameter_array_values(
-                        backend, "solve", "realized_periods"
-                    )
-                )
-                vocab.extend(base_periods)
-                vocab = _dedup_keep_order(vocab)
+                    vocab.extend(base_periods)
+                    vocab = _dedup_keep_order(vocab)
         elif st == "synthetic":
             vocab = list(axis.tokens or [])
         else:
