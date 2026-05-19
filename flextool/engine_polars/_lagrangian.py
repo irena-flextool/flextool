@@ -22,6 +22,11 @@ from polar_high import (CouplingEntry, CouplingSpec, LagrangianProblem,
 from flextool.engine_polars import _region_filter
 from flextool.engine_polars.input import FlexData
 from flextool.engine_polars._region_filter import HalfFlow, RegionSplit
+from flextool.engine_polars._axis_enums import (
+    get_global_axis_enums,
+    reset_global_axis_enums,
+    set_global_axis_enums,
+)
 
 
 __all__ = ["Coupling", "LagrangianResult", "solve_lagrangian"]
@@ -181,31 +186,49 @@ def solve_lagrangian(
         from flextool.engine_polars.model import build_flextool as _bf
         build_problem = _bf
 
-    splits = _region_filter.split(data, regions=regions)
-    subproblems = [Problem() for _ in splits]
-    for s, pb in zip(splits, subproblems):
-        build_problem(pb, s.data)
-
-    warm_lookup = [WarmProblem(p) for p in subproblems]
-    couplings = _identify_coupling_cols(splits, warm_lookup)
-    if not couplings:
-        region_objs: dict[str, float] = {}
+    # Activate ``data``'s own axis_enums snapshot for the duration of
+    # the decomposition.  ``load_flextool`` leaves the live global set
+    # to the most-recently-loaded data's vocabulary; in tests where a
+    # sibling test loads a different DB between the lh2 fixture load
+    # and this call, the live global no longer matches ``data``'s
+    # frames, and downstream cast_dim / is_in operations fail with
+    # ``conversion from str to enum failed`` or Enum-mismatch joins.
+    # ``_region_filter.split`` widens this snapshot with virtual
+    # half-flow tokens; the widened global persists across the
+    # build_problem calls below thanks to the outer try/finally.
+    _data_enums = getattr(data, "_axis_enums", None)
+    _enums_token = None
+    if _data_enums is not None and _data_enums != get_global_axis_enums():
+        _enums_token = set_global_axis_enums(_data_enums)
+    try:
+        splits = _region_filter.split(data, regions=regions)
+        subproblems = [Problem() for _ in splits]
         for s, pb in zip(splits, subproblems):
-            sol = pb.solve()
-            if not sol.optimal:
-                raise RuntimeError(
-                    f"Lagrangian trivial solve {s.region!r} not optimal")
-            region_objs[s.region] = sol.obj
-        return LagrangianResult(
-            converged=True, iterations=0,
-            total_objective=sum(region_objs.values()),
-            region_objectives=region_objs, final_lambdas={}, couplings=[])
+            build_problem(pb, s.data)
 
-    specs = _build_coupling_specs(splits, warm_lookup, couplings)
-    sol = LagrangianProblem(subproblems, specs).solve(
-        max_iters=max_iters, tol=tol, step=alpha,
-        initial_lambda=initial_lambda, min_iters=min_iters,
-        primal_tail=primal_tail)
+        warm_lookup = [WarmProblem(p) for p in subproblems]
+        couplings = _identify_coupling_cols(splits, warm_lookup)
+        if not couplings:
+            region_objs: dict[str, float] = {}
+            for s, pb in zip(splits, subproblems):
+                sol = pb.solve()
+                if not sol.optimal:
+                    raise RuntimeError(
+                        f"Lagrangian trivial solve {s.region!r} not optimal")
+                region_objs[s.region] = sol.obj
+            return LagrangianResult(
+                converged=True, iterations=0,
+                total_objective=sum(region_objs.values()),
+                region_objectives=region_objs, final_lambdas={}, couplings=[])
+
+        specs = _build_coupling_specs(splits, warm_lookup, couplings)
+        sol = LagrangianProblem(subproblems, specs).solve(
+            max_iters=max_iters, tol=tol, step=alpha,
+            initial_lambda=initial_lambda, min_iters=min_iters,
+            primal_tail=primal_tail)
+    finally:
+        if _enums_token is not None:
+            reset_global_axis_enums(_enums_token)
 
     region_objs = {s.region: o for s, o in zip(splits, sol.subproblem_objectives)}
     final_lambdas: dict[tuple[str, str, str], float] = {}

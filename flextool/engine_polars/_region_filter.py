@@ -769,6 +769,25 @@ def _inject_half_flows(
                         "_side": "sink",
                     })
 
+    # The widened Enum vocabulary set by ``split()`` lives on the global
+    # ContextVar.  ``src._axis_enums`` is the narrower snapshot captured
+    # before widening — using it for new-row schemas would null the
+    # virtual ``hf_pipe_*`` / virtual-node tokens.  Read from the global
+    # first; the live widened vocabulary is a strict superset of the
+    # source snapshot, so upcasting existing-frame columns to it is safe.
+    _enums_loc = get_global_axis_enums() or getattr(src, "_axis_enums", None)
+
+    def _upcast_dims(frame: pl.DataFrame | None,
+                     cols: Iterable[str]) -> pl.DataFrame | None:
+        """Re-cast the named dim columns on ``frame`` to the wider Enum
+        vocabulary in ``_enums_loc``.  Required before concat against
+        new rows built with ``schema_dtype(_enums_loc, axis)`` — both
+        sides must agree on the Enum vocabulary or polars raises."""
+        if frame is None:
+            return None
+        exprs = [cast_dim(pl.col(c), _enums_loc, c) for c in cols]
+        return frame.with_columns(exprs)
+
     # ---- Concatenate into rd ----
     def _concat(orig: pl.DataFrame | None,
                 rows: list[dict],
@@ -779,12 +798,14 @@ def _inject_half_flows(
         if orig is None or orig.height == 0:
             # Need a frame matching the original schema; fall back to new.
             return new_df.select(list(schema.keys()))
-        # Coerce types to match orig.
-        return pl.concat([orig.select(list(schema.keys())),
+        # Upcast orig's dim columns to the wider Enum before concat so
+        # both sides agree on the vocabulary.  Value-typed columns
+        # (Float64) pass through ``cast_dim`` unchanged.
+        orig_w = _upcast_dims(orig, list(schema.keys()))
+        return pl.concat([orig_w.select(list(schema.keys())),
                           new_df.select(list(schema.keys()))],
                          how="vertical")
 
-    _enums_loc = getattr(src, "_axis_enums", None)
     _pss_schema = {"p": schema_dtype(_enums_loc, "p"),
                     "source": schema_dtype(_enums_loc, "source"),
                     "sink": schema_dtype(_enums_loc, "sink")}
@@ -817,51 +838,51 @@ def _inject_half_flows(
 
     # Append unitsize Param.
     if rd.p_unitsize is not None and new_unitsize_rows:
-        _enums = getattr(src, "_axis_enums", None)
         new_us = pl.DataFrame(new_unitsize_rows,
-                              schema={"p": schema_dtype(_enums, "p"),
+                              schema={"p": schema_dtype(_enums_loc, "p"),
                                       "value": pl.Float64})
-        merged_us = pl.concat([rd.p_unitsize.frame.select("p", "value"),
+        merged_us = pl.concat([_upcast_dims(rd.p_unitsize.frame, ("p",))
+                                 .select("p", "value"),
                                new_us], how="vertical")
         rd.p_unitsize = Param(("p",), merged_us, name=rd.p_unitsize.name)
 
     # Append p_slope rows for half-flows that are eff-classified.
     if rd.p_slope is not None and new_p_slope_rows:
-        _enums = getattr(src, "_axis_enums", None)
         new_sl = pl.DataFrame(new_p_slope_rows,
-                              schema={"p": schema_dtype(_enums, "p"),
-                                      "d": schema_dtype(_enums, "d"),
-                                      "t": schema_dtype(_enums, "t"),
+                              schema={"p": schema_dtype(_enums_loc, "p"),
+                                      "d": schema_dtype(_enums_loc, "d"),
+                                      "t": schema_dtype(_enums_loc, "t"),
                                       "value": pl.Float64})
-        merged_sl = pl.concat([rd.p_slope.frame.select("p", "d", "t", "value"),
+        merged_sl = pl.concat([_upcast_dims(rd.p_slope.frame, ("p", "d", "t"))
+                                 .select("p", "d", "t", "value"),
                                new_sl], how="vertical")
         rd.p_slope = Param(("p", "d", "t"), merged_sl, name=rd.p_slope.name)
 
     # Append flow_upper Param rows.
     if rd.p_flow_upper is not None and new_flow_upper_rows:
-        _enums = getattr(src, "_axis_enums", None)
         new_fu = pl.DataFrame(new_flow_upper_rows,
-                              schema={"p": schema_dtype(_enums, "p"),
-                                      "source": schema_dtype(_enums, "source"),
-                                      "sink": schema_dtype(_enums, "sink"),
-                                      "d": schema_dtype(_enums, "d"),
-                                      "t": schema_dtype(_enums, "t"),
+                              schema={"p": schema_dtype(_enums_loc, "p"),
+                                      "source": schema_dtype(_enums_loc, "source"),
+                                      "sink": schema_dtype(_enums_loc, "sink"),
+                                      "d": schema_dtype(_enums_loc, "d"),
+                                      "t": schema_dtype(_enums_loc, "t"),
                                       "value": pl.Float64})
-        merged_fu = pl.concat([rd.p_flow_upper.frame.select(
-                                  "p", "source", "sink", "d", "t", "value"),
+        merged_fu = pl.concat([_upcast_dims(rd.p_flow_upper.frame,
+                                            ("p", "source", "sink", "d", "t"))
+                                 .select("p", "source", "sink", "d", "t", "value"),
                                new_fu], how="vertical")
         rd.p_flow_upper = Param(("p", "source", "sink", "d", "t"),
                                 merged_fu, name=rd.p_flow_upper.name)
     if rd.p_flow_upper_existing is not None and new_flow_upper_existing_rows:
-        _enums = getattr(src, "_axis_enums", None)
         new_fue = pl.DataFrame(new_flow_upper_existing_rows,
-                               schema={"p": schema_dtype(_enums, "p"),
-                                       "source": schema_dtype(_enums, "source"),
-                                       "sink": schema_dtype(_enums, "sink"),
-                                       "d": schema_dtype(_enums, "d"),
+                               schema={"p": schema_dtype(_enums_loc, "p"),
+                                       "source": schema_dtype(_enums_loc, "source"),
+                                       "sink": schema_dtype(_enums_loc, "sink"),
+                                       "d": schema_dtype(_enums_loc, "d"),
                                        "value": pl.Float64})
-        merged_fue = pl.concat([rd.p_flow_upper_existing.frame.select(
-                                    "p", "source", "sink", "d", "value"),
+        merged_fue = pl.concat([_upcast_dims(rd.p_flow_upper_existing.frame,
+                                             ("p", "source", "sink", "d"))
+                                  .select("p", "source", "sink", "d", "value"),
                                 new_fue], how="vertical")
         rd.p_flow_upper_existing = Param(
             ("p", "source", "sink", "d"),
@@ -880,8 +901,9 @@ def _inject_half_flows(
                       .select("p", "d", "t")
                       .with_columns(value=pl.lit(1.0)))
         if avail_rows.height > 0:
-            merged = pl.concat([rd.p_process_availability.frame.select(
-                                    "p", "d", "t", "value"),
+            merged = pl.concat([_upcast_dims(rd.p_process_availability.frame,
+                                             ("p", "d", "t"))
+                                  .select("p", "d", "t", "value"),
                                 avail_rows], how="vertical")
             rd.p_process_availability = Param(
                 ("p", "d", "t"), merged,
@@ -893,8 +915,9 @@ def _inject_half_flows(
                    .select("p", "d").unique()
                    .with_columns(value=pl.lit(1.0)))
         if ec_rows.height > 0:
-            merged = pl.concat([rd.p_process_existing_count.frame.select(
-                                    "p", "d", "value"),
+            merged = pl.concat([_upcast_dims(rd.p_process_existing_count.frame,
+                                             ("p", "d"))
+                                  .select("p", "d", "value"),
                                 ec_rows], how="vertical")
             rd.p_process_existing_count = Param(
                 ("p", "d"), merged,
@@ -908,63 +931,70 @@ def _inject_half_flows(
     src_w_rows = [r for r in new_p_arc_sink_weight_rows if r["_side"] == "source"]
     snk_w_rows = [r for r in new_p_arc_sink_weight_rows if r["_side"] == "sink"]
 
-    _enums = getattr(src, "_axis_enums", None)
     if rd.arc_source_block_dt is not None and src_block_rows:
         new_df = pl.DataFrame(
             [{k: r[k] for k in ("p", "source", "sink", "d", "b_first", "t", "weight")}
              for r in src_block_rows],
-            schema={"p": schema_dtype(_enums, "p"),
-                    "source": schema_dtype(_enums, "source"),
-                    "sink": schema_dtype(_enums, "sink"),
-                    "d": schema_dtype(_enums, "d"),
-                    "b_first": schema_dtype(_enums, "b_first"),
-                    "t": schema_dtype(_enums, "t"),
+            schema={"p": schema_dtype(_enums_loc, "p"),
+                    "source": schema_dtype(_enums_loc, "source"),
+                    "sink": schema_dtype(_enums_loc, "sink"),
+                    "d": schema_dtype(_enums_loc, "d"),
+                    "b_first": schema_dtype(_enums_loc, "b_first"),
+                    "t": schema_dtype(_enums_loc, "t"),
                     "weight": pl.Float64})
         rd.arc_source_block_dt = pl.concat([
-            rd.arc_source_block_dt.select(*new_df.columns), new_df],
+            _upcast_dims(rd.arc_source_block_dt,
+                         ("p", "source", "sink", "d", "b_first", "t"))
+              .select(*new_df.columns), new_df],
             how="vertical")
     if rd.arc_sink_block_dt is not None and snk_block_rows:
         new_df = pl.DataFrame(
             [{k: r[k] for k in ("p", "source", "sink", "d", "b_first", "t", "weight")}
              for r in snk_block_rows],
-            schema={"p": schema_dtype(_enums, "p"),
-                    "source": schema_dtype(_enums, "source"),
-                    "sink": schema_dtype(_enums, "sink"),
-                    "d": schema_dtype(_enums, "d"),
-                    "b_first": schema_dtype(_enums, "b_first"),
-                    "t": schema_dtype(_enums, "t"),
+            schema={"p": schema_dtype(_enums_loc, "p"),
+                    "source": schema_dtype(_enums_loc, "source"),
+                    "sink": schema_dtype(_enums_loc, "sink"),
+                    "d": schema_dtype(_enums_loc, "d"),
+                    "b_first": schema_dtype(_enums_loc, "b_first"),
+                    "t": schema_dtype(_enums_loc, "t"),
                     "weight": pl.Float64})
         rd.arc_sink_block_dt = pl.concat([
-            rd.arc_sink_block_dt.select(*new_df.columns), new_df],
+            _upcast_dims(rd.arc_sink_block_dt,
+                         ("p", "source", "sink", "d", "b_first", "t"))
+              .select(*new_df.columns), new_df],
             how="vertical")
     if rd.p_arc_source_weight is not None and src_w_rows:
         new_df = pl.DataFrame(
             [{k: r[k] for k in ("p", "source", "sink", "d", "t", "value")}
              for r in src_w_rows],
-            schema={"p": schema_dtype(_enums, "p"),
-                    "source": schema_dtype(_enums, "source"),
-                    "sink": schema_dtype(_enums, "sink"),
-                    "d": schema_dtype(_enums, "d"),
-                    "t": schema_dtype(_enums, "t"),
+            schema={"p": schema_dtype(_enums_loc, "p"),
+                    "source": schema_dtype(_enums_loc, "source"),
+                    "sink": schema_dtype(_enums_loc, "sink"),
+                    "d": schema_dtype(_enums_loc, "d"),
+                    "t": schema_dtype(_enums_loc, "t"),
                     "value": pl.Float64})
         rd.p_arc_source_weight = Param(
             ("p", "source", "sink", "d", "t"),
-            pl.concat([rd.p_arc_source_weight.frame.select(*new_df.columns),
+            pl.concat([_upcast_dims(rd.p_arc_source_weight.frame,
+                                    ("p", "source", "sink", "d", "t"))
+                         .select(*new_df.columns),
                        new_df], how="vertical"),
             name=rd.p_arc_source_weight.name)
     if rd.p_arc_sink_weight is not None and snk_w_rows:
         new_df = pl.DataFrame(
             [{k: r[k] for k in ("p", "source", "sink", "d", "t", "value")}
              for r in snk_w_rows],
-            schema={"p": schema_dtype(_enums, "p"),
-                    "source": schema_dtype(_enums, "source"),
-                    "sink": schema_dtype(_enums, "sink"),
-                    "d": schema_dtype(_enums, "d"),
-                    "t": schema_dtype(_enums, "t"),
+            schema={"p": schema_dtype(_enums_loc, "p"),
+                    "source": schema_dtype(_enums_loc, "source"),
+                    "sink": schema_dtype(_enums_loc, "sink"),
+                    "d": schema_dtype(_enums_loc, "d"),
+                    "t": schema_dtype(_enums_loc, "t"),
                     "value": pl.Float64})
         rd.p_arc_sink_weight = Param(
             ("p", "source", "sink", "d", "t"),
-            pl.concat([rd.p_arc_sink_weight.frame.select(*new_df.columns),
+            pl.concat([_upcast_dims(rd.p_arc_sink_weight.frame,
+                                    ("p", "source", "sink", "d", "t"))
+                         .select(*new_df.columns),
                        new_df], how="vertical"),
             name=rd.p_arc_sink_weight.name)
 
@@ -1087,7 +1117,16 @@ def split(
             _virt_p.add(_hf.virtual_p)
             _virt_n.add(_hf.virtual_node)
     _enums_token = None
-    _base_enums = get_global_axis_enums()
+    # Base the widening on the SOURCE's own axis_enums snapshot — that
+    # is guaranteed to match the dtypes embedded in ``data``'s frames.
+    # The live global ContextVar may have been overwritten by an
+    # unrelated ``load_flextool`` call between the lh2 fixture's load
+    # and this split (e.g. a sibling test loaded a different DB), in
+    # which case widening the live vocabulary would yield an Enum that
+    # doesn't contain ``data``'s entity tokens.  Fall back to the live
+    # global only when ``data`` lacks its own snapshot.
+    _base_enums = (getattr(data, "_axis_enums", None)
+                   or get_global_axis_enums())
     if _base_enums is not None and (_virt_p or _virt_n):
         _ext: dict[str, pl.Enum] = dict(_base_enums)
         _virt_e = _virt_p | _virt_n
