@@ -38,6 +38,18 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars.input import _load_time
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine_polars._input_source import seed_provider_from_dir
+
+
+def _provider_for(sd: Path) -> FlexDataProvider:
+    """Seed an in-memory provider from a test ``solve_data/`` directory
+    (Step 2.5 — _load_time no longer has a disk-only fallback).
+    """
+    provider = FlexDataProvider()
+    if sd.exists():
+        seed_provider_from_dir(provider, sd, "solve_data")
+    return provider
 
 
 def _write_steps_in_use(sd: Path, period_steps: dict[str, list[str]]) -> None:
@@ -104,7 +116,7 @@ class TestLoadRpCostWeight:
             ("p1", "t3", 1.2),
             ("p1", "t4", 1.6),
         ])
-        _, _, rp_cw, _, _ = _load_time(sd)
+        _, _, rp_cw, _, _ = _load_time(sd, provider=_provider_for(sd))
         d = _rpcw_dict(rp_cw)
         assert d == {
             ("p1", "t1"): 0.4,
@@ -126,7 +138,7 @@ class TestLoadRpCostWeight:
             ("p1", "t3", 1.0),
             ("p1", "t4", 1.0),
         ])
-        _, _, rp_cw, _, _ = _load_time(sd)
+        _, _, rp_cw, _, _ = _load_time(sd, provider=_provider_for(sd))
         assert all(v == 1.0 for v in _rpcw_dict(rp_cw).values())
 
     def test_missing_steps_default_to_one(self, tmp_path: Path) -> None:
@@ -153,7 +165,7 @@ class TestLoadRpCostWeight:
             ("p", "t3", 2.0),
             ("p", "t4", 0.0),
         ])
-        _, _, rp_cw, _, _ = _load_time(sd)
+        _, _, rp_cw, _, _ = _load_time(sd, provider=_provider_for(sd))
         d = _rpcw_dict(rp_cw)
         assert d == {("p", "t1"): 2.0, ("p", "t2"): 0.0,
                      ("p", "t3"): 2.0, ("p", "t4"): 0.0}
@@ -164,7 +176,7 @@ class TestLoadRpCostWeight:
         loader must default every (d, t) to 1.0 in that case."""
         sd = _setup(tmp_path, {"p": ["t1", "t2"]})
         # No rp_cost_weight.csv at all.
-        _, _, rp_cw, _, _ = _load_time(sd)
+        _, _, rp_cw, _, _ = _load_time(sd, provider=_provider_for(sd))
         assert _rpcw_dict(rp_cw) == {("p", "t1"): 1.0, ("p", "t2"): 1.0}
 
     def test_empty_csv_defaults_to_one(self, tmp_path: Path) -> None:
@@ -172,7 +184,7 @@ class TestLoadRpCostWeight:
         legitimate "no overrides" state.  Loader must default to 1.0."""
         sd = _setup(tmp_path, {"p": ["t1", "t2"]})
         _write_rp_cost_weight(sd, [])
-        _, _, rp_cw, _, _ = _load_time(sd)
+        _, _, rp_cw, _, _ = _load_time(sd, provider=_provider_for(sd))
         assert _rpcw_dict(rp_cw) == {("p", "t1"): 1.0, ("p", "t2"): 1.0}
 
     def test_multiple_periods_independent(self, tmp_path: Path) -> None:
@@ -187,7 +199,7 @@ class TestLoadRpCostWeight:
             ("p1", "t1", 0.5), ("p1", "t2", 1.5),
             ("p2", "t3", 0.3), ("p2", "t4", 1.2), ("p2", "t5", 1.5),
         ])
-        _, _, rp_cw, _, _ = _load_time(sd)
+        _, _, rp_cw, _, _ = _load_time(sd, provider=_provider_for(sd))
         d = _rpcw_dict(rp_cw)
         assert d == {
             ("p1", "t1"): 0.5, ("p1", "t2"): 1.5,
@@ -211,7 +223,7 @@ class TestLoadRpCostWeight:
             ("p1", "t1", 0.4), ("p1", "t2", 1.6),
             # p2 absent — writer skipped emission for that period.
         ])
-        _, _, rp_cw, _, _ = _load_time(sd)
+        _, _, rp_cw, _, _ = _load_time(sd, provider=_provider_for(sd))
         d = _rpcw_dict(rp_cw)
         assert d == {
             ("p1", "t1"): 0.4, ("p1", "t2"): 1.6,

@@ -15,8 +15,37 @@ import pytest
 from flextool.engine_polars._input_source import (
     _install_csv_cache,
     _read_csv_file,
+    seed_provider_from_dir,
 )
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
 from flextool.engine_polars._solve_context import SolveContext
+
+
+def _seed_workdir_provider(wd: Path) -> FlexDataProvider:
+    """Build an in-memory provider from a test workdir's input/ +
+    solve_data/ for SolveContext, post Step 2.5 (disk fallback removed).
+
+    Seeds empty placeholder frames for SolveContext's lazy-field
+    carriers whose absence was previously treated as "empty default"
+    via the disk-fallback path.  Post Step 2.5 the lazy readers call
+    ``_provider_fetch_or_raise``; an empty placeholder keeps the
+    test's "empty workdir → empty fields" semantics intact under the
+    new strict contract.
+    """
+    provider = FlexDataProvider()
+    if (wd / "input").exists():
+        seed_provider_from_dir(provider, wd / "input", "input")
+    if (wd / "solve_data").exists():
+        seed_provider_from_dir(provider, wd / "solve_data", "solve_data")
+    # Empty placeholders for the SolveContext lazy carriers — only
+    # seeded when the on-disk seed didn't supply them.
+    for stem in ("period_in_use_set", "period__branch", "edd_history",
+                  "p_entity_period_existing_capacity",
+                  "p_entity_pre_existing"):
+        key = f"solve_data/{stem}"
+        if not provider.has(key):
+            provider.put(key, pl.DataFrame())
+    return provider
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +118,7 @@ def workdir(tmp_path: Path) -> Path:
 
 
 def test_solve_context_typed_fields_loaded(workdir: Path) -> None:
-    ctx = SolveContext.from_workdir(workdir)
+    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
     assert ctx.solve_name == "s1"
     assert ctx.solveFirst is True
     assert ctx.realized_periods == {"p2020", "p2025"}
@@ -104,7 +133,7 @@ def test_solve_context_typed_fields_loaded(workdir: Path) -> None:
 
 def test_solve_context_handles_missing_workdir(tmp_path: Path) -> None:
     """Empty workdir → all fields default to empty."""
-    ctx = SolveContext.from_workdir(tmp_path)
+    ctx = SolveContext.from_workdir(tmp_path, provider=_seed_workdir_provider(tmp_path))
     assert ctx.solve_name is None
     assert ctx.solveFirst is True  # default policy
     assert ctx.realized_periods == set()
@@ -120,7 +149,7 @@ def test_solve_context_solve_first_zero(tmp_path: Path) -> None:
         ["modelParam", "p_model"],
         [["solveFirst", 0]],
     )
-    ctx = SolveContext.from_workdir(tmp_path)
+    ctx = SolveContext.from_workdir(tmp_path, provider=_seed_workdir_provider(tmp_path))
     assert ctx.solveFirst is False
 
 
@@ -130,7 +159,7 @@ def test_solve_context_solve_first_zero(tmp_path: Path) -> None:
 
 
 def test_read_csv_caches_repeats(workdir: Path) -> None:
-    ctx = SolveContext.from_workdir(workdir)
+    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
     df1 = ctx.read_csv("solve_current.csv")
     df2 = ctx.read_csv("solve_current.csv")
     # Same identity → cache hit.
@@ -138,14 +167,14 @@ def test_read_csv_caches_repeats(workdir: Path) -> None:
 
 
 def test_read_csv_returns_none_for_missing(workdir: Path) -> None:
-    ctx = SolveContext.from_workdir(workdir)
+    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
     assert ctx.read_csv("does_not_exist.csv") is None
 
 
 def test_read_csv_kind_input(workdir: Path) -> None:
     inp = workdir / "input"
     _write_csv(inp / "p_node.csv", ["node", "value"], [["n1", 1.0]])
-    ctx = SolveContext.from_workdir(workdir)
+    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
     df = ctx.read_csv("p_node.csv", kind="input")
     assert df is not None
     assert df.height == 1
@@ -157,7 +186,7 @@ def test_read_csv_kind_input(workdir: Path) -> None:
 
 
 def test_activate_installs_global_cache(workdir: Path) -> None:
-    ctx = SolveContext.from_workdir(workdir)
+    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
     csv_path = workdir / "solve_data" / "solve_current.csv"
     # Pre-activation: each _read_csv_file is a fresh polars.read_csv.
     df_a = _read_csv_file(csv_path)
@@ -180,7 +209,7 @@ def test_activate_installs_global_cache(workdir: Path) -> None:
 
 
 def test_context_manager_protocol(workdir: Path) -> None:
-    ctx = SolveContext.from_workdir(workdir)
+    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
     csv_path = workdir / "solve_data" / "solve_current.csv"
     with ctx:
         df1 = _read_csv_file(csv_path)
@@ -206,6 +235,6 @@ def test_install_csv_cache_clears(workdir: Path) -> None:
 
 
 def test_solve_data_dir_property(workdir: Path) -> None:
-    ctx = SolveContext.from_workdir(workdir)
+    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
     assert ctx.solve_data_dir == workdir / "solve_data"
     assert ctx.input_dir == workdir / "input"
