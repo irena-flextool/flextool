@@ -677,8 +677,9 @@ def p_inflation_op_from_source(
     if yr is None:
         # Fallback: trivial 1.0 per realized period (no
         # ``years_represented`` row → defaults to 1 year per period).
+        # Defensive re-cast: ensure d is canonical Enum on the Param.
         yr = (dt.lazy()
-                .select("d").unique()
+                .select(alias_to_axis("d", "d")).unique()
                 .with_columns(value=pl.lit(1.0).cast(pl.Float64))
                 .sort("d")
                 .collect())
@@ -741,8 +742,9 @@ def p_rp_cost_weight_from_source(
 
     # Build the dense default as the baseline; any per-(d, t) override
     # from ``timeset_weights`` will replace it via a left-join.
+    # Defensive re-cast: ensure d/t are canonical Enum on the Param.
     default_lf = (dt.lazy()
-                    .select("d", "t")
+                    .select(alias_to_axis("d", "d"), alias_to_axis("t", "t"))
                     .with_columns(value=pl.lit(1.0).cast(pl.Float64))
                     .sort("d", "t"))
 
@@ -850,8 +852,9 @@ def pd_branch_weight_from_source(
     """
     if dt is None:
         return None
+    # Defensive re-cast: ensure d is canonical Enum on the Param.
     out = (dt.lazy()
-             .select("d").unique()
+             .select(alias_to_axis("d", "d")).unique()
              .with_columns(value=pl.lit(1.0))
              .sort("d")
              .collect())
@@ -872,9 +875,12 @@ def pdt_branch_weight_from_source(
     """
     if dt is None:
         return None
+    # Defensive re-cast: ensure d/t are canonical Enum on the Param.
     out = (dt.lazy()
              .with_columns(value=pl.lit(1.0))
-             .select("d", "t", "value")
+             .select(alias_to_axis("d", "d"),
+                     alias_to_axis("t", "t"),
+                     "value")
              .sort("d", "t")
              .collect())
     if out.height == 0:
@@ -946,7 +952,14 @@ def p_inflow_from_source(
                       pl.col("value").cast(pl.Float64))
               # Restrict to the active solve's (d, t) — matches CSV-side
               # which only emits rows for periods/timesteps in dt.
-              .join(dt.lazy(), on=["d", "t"], how="inner")
+              # Defensive re-cast: align d/t to canonical Enum so this
+              # inner-join composes cleanly against the alias_to_axis-cast
+              # base above even when ``dt`` arrives with Utf8 d/t.
+              .join(dt.lazy()
+                       .select(alias_to_axis("d", "d"),
+                               alias_to_axis("t", "t"))
+                       .unique(),
+                    on=["d", "t"], how="inner")
               .sort("n", "d", "t")
               .collect())
     if out.height == 0:
@@ -1084,7 +1097,9 @@ def p_process_existing_count_from_source(
     if not parts:
         return None
     base = pl.concat(parts)
-    periods = dt.lazy().select("d").unique()
+    # Defensive re-cast: align d to canonical Enum so the cross-join
+    # output keeps Enum dtype on (p, d) for the downstream Param.
+    periods = dt.lazy().select(alias_to_axis("d", "d")).unique()
     out = (base.join(periods, how="cross")
                 .with_columns(value=pl.col("existing") / pl.col("us"))
                 .select("p", "d", "value")
@@ -1178,7 +1193,12 @@ def p_profile_value_from_source(
     # callers in the test suite).  Generic ``x`` / ``i`` keys are now
     # tolerated and routed through the time-axis branch by the column
     # detector below.
-    dt_lf = dt.lazy()
+    # Defensive re-cast: ensure d/t are canonical Enum so the joins
+    # below against alias_to_axis-cast raw frames compose cleanly.
+    dt_lf = dt.lazy().with_columns(
+        alias_to_axis(pl.col("d"), "d"),
+        alias_to_axis(pl.col("t"), "t"),
+    )
     # Detect tier by which columns are present.
     has_period = "period" in cols
     has_t = "t" in cols
@@ -1885,8 +1905,13 @@ def process_indirect_dt(source: "InputSource",
         return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
                                       "d": schema_dtype(_enums, "d"),
                                       "t": schema_dtype(_enums, "t")})
+    # Defensive re-cast: ensure d/t are canonical Enum so the cross-join
+    # against pi (Enum p) keeps Enum dtype on the output (p, d, t) Param.
     return (pi.lazy()
-              .join(dt.lazy(), how="cross")
+              .join(dt.lazy()
+                       .with_columns(alias_to_axis(pl.col("d"), "d"),
+                                     alias_to_axis(pl.col("t"), "t")),
+                    how="cross")
               .sort("p", "d", "t")
               .collect())
 
@@ -2344,7 +2369,13 @@ def p_pssdt_varCost_from_source(source: "InputSource",
             psk = pss.lazy().join(lf, on="p", how="inner")
 
         # Broadcast over dt according to which dims are present.
-        dt_lf = dt.lazy()
+        # Defensive re-cast: ensure d/t are canonical Enum so the joins
+        # below against psk (Enum d/t via alias_to_axis above) compose
+        # cleanly even when ``dt`` arrives with Utf8 axis columns.
+        dt_lf = dt.lazy().with_columns(
+            alias_to_axis(pl.col("d"), "d"),
+            alias_to_axis(pl.col("t"), "t"),
+        )
         if has_period and has_t:
             return (psk.join(dt_lf, on=["d", "t"], how="inner")
                        .select("p", "source", "sink", "d", "t", "v"))
@@ -2443,9 +2474,14 @@ def p_slope_from_source(source: "InputSource",
     # explicit efficiency rows.  flextool's default is 1.0 (constant_eff
     # ct_method baseline) — broadcast to the full classified × dt grid
     # then left-join with explicit rows so explicit overrides win.
+    # Defensive re-cast: ensure d/t are canonical Enum on the cross-join
+    # output (classified carries Enum p / ct / klass).
     classified_dt = (classified.lazy()
         .select("p", "ct", "klass")
-        .join(dt.lazy(), how="cross")
+        .join(dt.lazy()
+                 .with_columns(alias_to_axis(pl.col("d"), "d"),
+                               alias_to_axis(pl.col("t"), "t")),
+              how="cross")
         .select("p", "d", "t", "ct", "klass"))
     if eff_lfs:
         explicit = pl.concat(eff_lfs).unique(subset=["p", "d", "t"])
@@ -2527,7 +2563,12 @@ def _broadcast_param_to_dt(df: pl.DataFrame,
     has_t = any(c in cols for c in ("t", "time", "step"))
     period_col = next((c for c in ("period", "d") if c in cols), None)
     t_col = next((c for c in ("t", "time", "step") if c in cols), None)
-    dt_lf = dt.lazy()
+    # Defensive re-cast: ensure d/t are canonical Enum so the joins below
+    # against alias_to_axis-cast ``base`` compose cleanly.
+    dt_lf = dt.lazy().with_columns(
+        alias_to_axis(pl.col("d"), "d"),
+        alias_to_axis(pl.col("t"), "t"),
+    )
     base = df.lazy().select(
         alias_to_axis("name", "p"),
         *([alias_to_axis(period_col, "d")] if period_col else []),
@@ -4020,7 +4061,9 @@ def p_inflation_op_multi_year_from_source(source: "InputSource",
         alias_to_axis("period", "d"),
         pl.col("value").cast(pl.Float64).alias("yr"),
     )
-    out = (dt.lazy().select("d").unique()
+    # Defensive re-cast: align d to canonical Enum so the left-join
+    # against yfs_lf (Enum d) composes cleanly.
+    out = (dt.lazy().select(alias_to_axis("d", "d")).unique()
               .join(yfs_lf, on="d", how="left")
               .with_columns(yr=pl.col("yr").fill_null(0.0))
               .with_columns(
@@ -4372,8 +4415,14 @@ def p_flow_upper_from_source(source: "InputSource",
 
     # ── 6. Build peedt = pss × dt with cap-per-unit and indirect tags ─
     pss_lf = pss.lazy().select("p", "source", "sink")
+    # Defensive re-cast: ensure d/t are canonical Enum on the cross-join
+    # against pss (Enum p / source / sink) — keeps the (p, source, sink,
+    # d, t) base frame Enum-typed across all axes.
     base = (pss_lf
-        .join(dt.lazy(), how="cross")  # adds d, t
+        .join(dt.lazy()
+                 .with_columns(alias_to_axis(pl.col("d"), "d"),
+                               alias_to_axis(pl.col("t"), "t")),
+              how="cross")  # adds d, t
         .join(cap_per_unit_lf, on=["p", "d"], how="left")
         .with_columns(
             cap_per_unit=pl.col("cap_per_unit").fill_null(0.0))
@@ -4624,7 +4673,11 @@ def _step_order_with_duration(dt: pl.DataFrame,
         df = dt.sort("d", "t")
         return [(d, t, 1.0) for d, t in zip(
             df["d"].to_list(), df["t"].to_list())]
+    # Defensive re-cast: align d/t to canonical Enum so the left-join
+    # against sd (alias_to_axis-cast d/t) composes cleanly.
     df = (dt.lazy()
+            .with_columns(alias_to_axis(pl.col("d"), "d"),
+                          alias_to_axis(pl.col("t"), "t"))
             .join(sd.lazy(), on=["d", "t"], how="left")
             .with_columns(value=pl.col("value").fill_null(1.0))
             .sort("d", "t")
@@ -8746,8 +8799,13 @@ def prundt_from_source(
                    .select("r", "ud").unique())
     # Restrict pruna to active (r, ud) pairs.
     pruna_lf = pruna.lazy().join(active_ru, on=["r", "ud"], how="inner")
+    # Defensive re-cast: ensure d/t are canonical Enum on the cross-join
+    # output (pruna_lf carries Enum p / r / ud / n).
     out = (pruna_lf
-              .join(dt.lazy().select("d", "t"), how="cross")
+              .join(dt.lazy()
+                       .select(alias_to_axis("d", "d"),
+                               alias_to_axis("t", "t")),
+                    how="cross")
               .select("p", "r", "ud", "n", "d", "t")
               .sort("p", "r", "ud", "n", "d", "t")
               .collect())
@@ -9060,8 +9118,9 @@ def pd_branch_weight_full_from_source(
     # solves where the workdir CSVs may be absent but dt is built.
     if dt is None or dt.height == 0:
         return None
+    # Defensive re-cast: ensure d is canonical Enum on the Param.
     df = (dt.lazy()
-              .select("d").unique()
+              .select(alias_to_axis("d", "d")).unique()
               .with_columns(value=pl.lit(1.0))
               .sort("d")
               .collect())
