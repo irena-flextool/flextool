@@ -397,10 +397,10 @@ class SpineDbReader:
             )
         ent_cols = self._entity_columns(cls_id)
         rows = self._param_rows.get((cls_id, pdef["id"]), [])
-        out_rows, index_cols, leaf_dtype = self._unroll_rows(
+        columns, index_cols, leaf_dtype = self._unroll_rows(
             rows, ent_cols, parameter_name,
         )
-        if not out_rows:
+        if not columns or not columns["value"]:
             schema_in = {c: pl.Utf8 for c in ent_cols}
             for ic in index_cols:
                 schema_in[ic] = pl.Utf8
@@ -410,8 +410,11 @@ class SpineDbReader:
                 entity_class=entity_class,
                 parameter_name=parameter_name,
             )
-        frame = self._finalize(pl.DataFrame(out_rows).lazy(),
-                                ent_cols + index_cols)
+        overrides = {"value": leaf_dtype} if leaf_dtype is not None else None
+        frame = self._finalize(
+            pl.DataFrame(columns, schema_overrides=overrides).lazy(),
+            ent_cols + index_cols,
+        )
         return self._maybe_cast_frame(
             frame,
             entity_class=entity_class,
@@ -432,24 +435,25 @@ class SpineDbReader:
         rows = self._param_rows.get((cls_id, pdef["id"]), [])
         default = pdef["default_value"]
 
-        # Step 1 — unroll each row into a list of dict rows.  The shape
+        # Step 1 — unroll each row into per-column lists.  The shape
         # depends on the value's runtime type (scalar / Map / TimeSeries
         # / Array).  We don't know up-front whether the parameter is
         # "scalar across all rows"; we infer per-row.
-        out_rows, index_cols, leaf_dtype = self._unroll_rows(
+        columns, index_cols, leaf_dtype = self._unroll_rows(
             rows, ent_cols, parameter_name,
         )
 
         # Step 2 — assemble the per-parameter LazyFrame.  Empty rows
         # collapse to a 0-row frame with the correct schema.
-        if not out_rows:
+        if not columns or not columns["value"]:
             schema_in = {c: pl.Utf8 for c in ent_cols}
             for ic in index_cols:
                 schema_in[ic] = pl.Utf8
             schema_in["value"] = leaf_dtype or pl.Float64
             v_lf = pl.DataFrame(schema=schema_in).lazy()
         else:
-            v_lf = pl.DataFrame(out_rows).lazy()
+            overrides = {"value": leaf_dtype} if leaf_dtype is not None else None
+            v_lf = pl.DataFrame(columns, schema_overrides=overrides).lazy()
 
         # Step 3 — apply the §4.5 default policy lazily.
         if default is None:
@@ -632,60 +636,69 @@ class SpineDbReader:
         rows: list[tuple[int, Any]],
         ent_cols: list[str],
         parameter_name: str,
-    ) -> tuple[list[dict], list[str], pl.DataType | None]:
-        """Walk each (entity_id, parsed_value) pair and emit a list of
-        dict rows ready for ``pl.DataFrame``.
+    ) -> tuple[dict[str, list], list[str], pl.DataType | None]:
+        """Walk each (entity_id, parsed_value) pair and emit a columnar
+        dict of per-column lists ready for ``pl.DataFrame``.
 
-        Returns the rows, the index column names (uniform across rows
-        for the parameter), and the inferred leaf dtype.  Empty input
-        returns ``([], [], None)``.
+        Columnar layout: ``columns[col_name]`` is a list, one entry per
+        scalar leaf.  Every list has the same length.  Building columns
+        directly is ~9x faster than the previous row-of-dicts pattern
+        when handed to ``pl.DataFrame`` (per the
+        ``arrow_value_direct_read_study.md`` benchmark).  The recursion
+        uses a positional ``idx_path`` mutated in place via append /
+        pop, avoiding ``dict(base)`` copies at every Map node.
+
+        Returns the columns dict, the index column names (uniform
+        across rows for the parameter), and the inferred leaf dtype.
+        Empty input returns ``({}, [], None)``.
+
+        Dim columns leave as Utf8 lists; the caller's
+        ``_maybe_cast_frame`` (i.e.
+        :func:`flextool.spinedb_backend._axis_enums.cast_against_contract`)
+        applies the contract-axis Enum cast with its
+        (parameter, entity, scenario) error breadcrumbs.  Don't wire
+        enum dtypes here — keep the construction step orthogonal to
+        the Phase 4 enum refactor for forward-compatibility with the
+        future Arrow-native read.
         """
         if not rows:
-            return [], [], None
+            return {}, [], None
 
-        from spinedb_api.parameter_value import (
-            Map, TimeSeries, Array, DateTime, Duration,
-        )
-
-        # Probe the first non-None value to decide structure.  We
-        # require all rows to share the same structure (Spine schema
-        # invariant under a scenario).
+        # Discover index columns from the widest-shaped row (spec
+        # §5.2.5).  In practice flextool's params don't mix shapes
+        # within one scenario — but we're defensive.
         index_cols: list[str] = []
-        leaf_dtype: pl.DataType | None = None
-
-        # Discover index columns from the first non-trivial row.  This
-        # is the spec's "pick the widest schema" rule applied per
-        # parameter.
         for _eid, v in rows:
             cand = self._discover_index_cols(v, parameter_name)
             if len(cand) > len(index_cols):
                 index_cols = cand
-        # Pad narrower rows by replicating their leaf at the last index
-        # level (spec §5.2.5: 1d_map vs 2d_map for the same param name).
-        # In practice flextool's params don't mix shapes within one
-        # scenario — but we're defensive.
 
-        out_rows: list[dict] = []
+        # Pre-allocate one list per output column.
+        col_names = ent_cols + index_cols + ["value"]
+        columns: dict[str, list] = {name: [] for name in col_names}
+
+        # Walk each (entity_id, parsed_value) pair.  ``idx_path`` is a
+        # positional list mirroring ``index_cols`` — mutated via
+        # append/pop inside the recursion, no per-node dict copy.
+        idx_path: list[Any] = []
         for eid, v in rows:
             cls_id, ent_name = self._entity_by_id[eid]
             ent_values = self._entity_dim_values(cls_id, ent_name)
-            base = dict(zip(ent_cols, ent_values))
-            self._unroll_value(v, index_cols, base, out_rows)
+            self._unroll_value(
+                v, index_cols, columns, ent_cols, ent_values, idx_path,
+            )
 
-        # Infer leaf dtype from a sample of out_rows' value column.
-        if out_rows:
-            sample = next((r["value"] for r in out_rows if r["value"] is not None),
-                          None)
-            if isinstance(sample, bool):
-                leaf_dtype = pl.Boolean
-            elif isinstance(sample, (int, float)):
-                leaf_dtype = pl.Float64
-            elif isinstance(sample, str):
-                leaf_dtype = pl.Utf8
-            else:
-                leaf_dtype = None
+        # Infer leaf dtype from the first non-None value.
+        leaf_dtype: pl.DataType | None = None
+        sample = next((x for x in columns["value"] if x is not None), None)
+        if isinstance(sample, bool):
+            leaf_dtype = pl.Boolean
+        elif isinstance(sample, (int, float)):
+            leaf_dtype = pl.Float64
+        elif isinstance(sample, str):
+            leaf_dtype = pl.Utf8
 
-        return out_rows, index_cols, leaf_dtype
+        return columns, index_cols, leaf_dtype
 
     def _entity_dim_values(self, class_id: int, ent_name: str) -> list[str]:
         """Return the dim-element values for *ent_name* in class
@@ -746,11 +759,18 @@ class SpineDbReader:
         return cols
 
     def _unroll_value(self, v: Any, index_cols: list[str],
-                       base: dict, out: list[dict]) -> None:
-        """Recursively unroll *v* into ``out`` using ``index_cols`` as
-        the per-level column names.  ``base`` holds the entity dim
-        values + already-decided index columns from outer levels.
-        Scalars become a single row.
+                       columns: dict[str, list],
+                       ent_cols: list[str],
+                       ent_values: list[str],
+                       idx_path: list[Any]) -> None:
+        """Recursively unroll *v* into per-column lists in ``columns``.
+
+        ``idx_path`` is a positional list parallel to ``index_cols`` —
+        mutated via append/pop as we descend.  Each scalar leaf
+        triggers an ``_emit_leaf`` that appends entity values + the
+        current ``idx_path`` (padded with ``None`` for any
+        unreached trailing index columns) + the coerced leaf into the
+        relevant column lists.
         """
         from spinedb_api.parameter_value import (
             Map, TimeSeries, Array,
@@ -758,42 +778,69 @@ class SpineDbReader:
 
         # Scalar leaf.
         if not isinstance(v, (Map, TimeSeries, Array)):
-            row = dict(base)
-            row["value"] = _coerce_value(v)
-            out.append(row)
+            self._emit_leaf(
+                columns, ent_cols, ent_values, idx_path, index_cols,
+                _coerce_value(v),
+            )
             return
 
-        # Map: recurse on each (index, value) pair.
+        # Map / TimeSeries / Array all recurse identically once we know
+        # which index column applies at the current depth.  Map's
+        # ``index_name`` is already resolved into ``index_cols`` at
+        # discovery time; TimeSeries / Array fall through to the
+        # depth-indexed slot (or ``i`` if we've outrun the discovered
+        # index_cols, e.g. a shape-mixed parameter).
+        depth = len(idx_path)
         if isinstance(v, Map):
-            depth = sum(1 for c in index_cols if c in base)
-            col_name = index_cols[depth] if depth < len(index_cols) else "i"
             for idx, child in zip(v.indexes, v.values):
-                child_base = dict(base)
-                child_base[col_name] = _coerce_index(idx)
-                self._unroll_value(child, index_cols, child_base, out)
+                idx_path.append(_coerce_index(idx))
+                self._unroll_value(
+                    child, index_cols, columns, ent_cols, ent_values, idx_path,
+                )
+                idx_path.pop()
             return
 
-        # TimeSeries: emit one row per (datetime, float).
         if isinstance(v, TimeSeries):
-            depth = sum(1 for c in index_cols if c in base)
-            col_name = index_cols[depth] if depth < len(index_cols) else "t"
             for idx, val in zip(v.indexes, v.values):
-                row = dict(base)
-                row[col_name] = _coerce_index(idx)
-                row["value"] = _coerce_value(val)
-                out.append(row)
+                idx_path.append(_coerce_index(idx))
+                self._emit_leaf(
+                    columns, ent_cols, ent_values, idx_path, index_cols,
+                    _coerce_value(val),
+                )
+                idx_path.pop()
             return
 
-        # Array: 1-d sequence, indexed by integer position.
         if isinstance(v, Array):
-            depth = sum(1 for c in index_cols if c in base)
-            col_name = index_cols[depth] if depth < len(index_cols) else "i"
             for i, val in enumerate(v.values):
-                row = dict(base)
-                row[col_name] = i
-                row["value"] = _coerce_value(val)
-                out.append(row)
+                idx_path.append(i)
+                self._emit_leaf(
+                    columns, ent_cols, ent_values, idx_path, index_cols,
+                    _coerce_value(val),
+                )
+                idx_path.pop()
             return
+
+    def _emit_leaf(self, columns: dict[str, list],
+                    ent_cols: list[str],
+                    ent_values: list[str],
+                    idx_path: list[Any],
+                    index_cols: list[str],
+                    value: Any) -> None:
+        """Append one scalar leaf row across all per-column lists.
+
+        Pads trailing ``index_cols`` (those beyond ``len(idx_path)``)
+        with ``None`` so every column list ends up at the same length
+        even when a parameter mixes shallow and deep shapes within a
+        scenario (defensive — flextool fixtures don't currently do
+        this).
+        """
+        for col, val in zip(ent_cols, ent_values):
+            columns[col].append(val)
+        n_idx = len(index_cols)
+        n_path = len(idx_path)
+        for i in range(n_idx):
+            columns[index_cols[i]].append(idx_path[i] if i < n_path else None)
+        columns["value"].append(value)
 
     # ------------------------------------------------------------------
     # Materialisation
