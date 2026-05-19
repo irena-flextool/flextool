@@ -45,6 +45,7 @@ from polar_high import Param
 
 from flextool.engine_polars.input import FlexData
 from flextool.engine_polars._axis_enums import (
+    cast_dim,
     get_global_axis_enums,
     reset_global_axis_enums,
     schema_dtype,
@@ -225,23 +226,21 @@ def load_region_membership(
 
 def _is_in_keep(col: str, keep: set[str]) -> pl.Expr:
     """Membership test for ``pl.col(col)`` against *keep* that tolerates
-    keep elements outside the column's Enum vocabulary.
+    keep elements outside the column's *original* Enum vocabulary by
+    upcasting the column to the live (widened) Enum first.
 
     ``keep`` is built by the region splitter and may include synthetic
     virtual-entity tokens (``hf_pipe_*`` / ``*__export__*`` /
-    ``*__import__*``) that aren't in the source DB's Enum vocab.  A
-    naive ``pl.col(c).is_in(list(keep))`` casts *keep* to the column's
-    Enum dtype and raises ``conversion from str to enum failed`` on
-    those synthetic tokens — even though the data column itself
-    contains only real entities and the synthetic tokens would never
-    match anyway.
-
-    Casting to Utf8 for the membership check is a contained, semantic
-    operation (no join, no persisted Utf8 column, no downstream
-    propagation).  The filter's output retains the column's original
-    Enum dtype.
+    ``*__import__*``) that the Spine-DB-derived axis_enums don't
+    contain.  ``split()`` widens the global axis_enums ContextVar to
+    include those virtual tokens before the filter runs; here we
+    upcast the column to that widened vocabulary via
+    :func:`cast_dim` (``enums=None`` reads the live ContextVar).  The
+    upcast is a strict superset operation (every original value is in
+    the wider Enum), the ``is_in`` then succeeds natively, and the
+    filter's output retains the widened Enum dtype.
     """
-    return pl.col(col).cast(pl.Utf8).is_in(list(keep))
+    return cast_dim(pl.col(col), None, col).is_in(list(keep))
 
 
 def _filter_frame(df: pl.DataFrame | None, col: str,
@@ -877,7 +876,7 @@ def _inject_half_flows(
     if rd.p_process_availability is not None and rd.pss_dt is not None:
         # Add a (p, d, t) row for each (virtual_p, d, t) in pss_dt.
         avail_rows = (rd.pss_dt
-                      .filter(pl.col("p").cast(pl.Utf8).is_in([hf.virtual_p for hf in half_flows]))
+                      .filter(cast_dim(pl.col("p"), None, "p").is_in([hf.virtual_p for hf in half_flows]))
                       .select("p", "d", "t")
                       .with_columns(value=pl.lit(1.0)))
         if avail_rows.height > 0:
@@ -890,7 +889,7 @@ def _inject_half_flows(
     if rd.p_process_existing_count is not None and rd.pss_dt is not None:
         # (p, d) row for each virtual half-flow
         ec_rows = (rd.pss_dt
-                   .filter(pl.col("p").cast(pl.Utf8).is_in([hf.virtual_p for hf in half_flows]))
+                   .filter(cast_dim(pl.col("p"), None, "p").is_in([hf.virtual_p for hf in half_flows]))
                    .select("p", "d").unique()
                    .with_columns(value=pl.lit(1.0)))
         if ec_rows.height > 0:
