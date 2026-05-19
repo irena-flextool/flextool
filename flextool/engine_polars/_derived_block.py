@@ -925,11 +925,16 @@ def dtttdt_block_interior_lf(
         )
     if "t_previous_within_timeset" not in dtttdt.columns:
         return empty
+    # Defensive re-cast: align d / t / t_previous to canonical Enum so
+    # the returned schema matches the empty-fallback and multi_res
+    # branches above even when ``dtttdt`` arrives with Utf8 axis columns.
     return (
         dtttdt.lazy()
         .filter(pl.col("t_previous_within_timeset")
                 == pl.col("t_previous"))
-        .select("d", "t", "t_previous")
+        .select(alias_to_axis("d", "d"),
+                alias_to_axis("t", "t"),
+                alias_to_axis("t_previous", "t_previous"))
     )
 
 
