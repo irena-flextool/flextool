@@ -126,7 +126,6 @@ docs/                              MkDocs documentation site
 
 Other root files:
 ├── pyproject.toml                 Build config, dependencies, entry points
-├── requirements.txt               Pip requirements
 ├── mkdocs.yml                     Documentation site config
 ├── CITATION.cff                   Citation metadata
 ├── LICENSE.txt                    License (Apache 2.0)

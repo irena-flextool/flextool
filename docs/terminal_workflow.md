@@ -6,7 +6,7 @@ IRENA FlexTool can be run directly from the command line without Spine Toolbox o
 
 - **Python 3.11+** with a virtual environment (e.g. `~/venv-spi/`)
 - **HiGHS** solver, called from Python via the `highspy` bindings (installed automatically with the FlexTool package)
-- **Dependencies** installed: `pip install -r requirements.txt`
+- **FlexTool** installed: `pip install -e .` (add `[toolbox]` for Spine Toolbox integration)
 - See the [install page](https://irena-flextool.github.io/flextool/install_toolbox/) for full setup instructions
 
 Activate the virtual environment before running any commands:

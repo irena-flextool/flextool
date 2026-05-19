@@ -43,13 +43,14 @@ python -m venv .venv
 .venv\Scripts\activate
 ```
 
-- Install requirements (including Spine Toolbox) to the FlexTool virtual environment by
+- Install FlexTool (with Spine Toolbox) into the FlexTool virtual environment by
 
 ```
-python -m pip install -r requirements.txt --timeout=10000
+python -m pip install ".[toolbox]" --timeout=10000
 ```
 
 - Please note, the `timeout` argument is necessary only if you are on a slow internet connection
+- The `[toolbox]` extra pulls in Spine Toolbox alongside FlexTool's core dependencies (declared in `pyproject.toml`). Use `pip install .` without the extra if you only need the FlexTool GUI / CLI.
 - Create basic files that FlexTool needs (`skip-git` argument is needed if you did not install git)
 
 ```
