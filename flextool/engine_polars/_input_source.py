@@ -3,11 +3,10 @@
 This module hosts **two** Protocols, used by separate phases of the
 DB-direct migration:
 
-* :class:`FlexInputSource` — the **CSV-shaped** source used by P1
-  (``CsvSource`` and ``SpineDbSource``).  These materialise flextool's
-  ``input/`` + ``solve_data/`` CSV layout (either on disk, or via the
-  flextool preprocessing pipeline writing to a tempdir).  ``load_flextool``
-  walks them with ``polars.read_csv`` exactly as before.
+* :class:`FlexInputSource` — the **CSV-shaped** source used for the
+  fixture / pre-built-workdir path (:class:`CsvSource`).  Materialises
+  flextool's ``input/`` + ``solve_data/`` CSV layout on disk;
+  ``load_flextool`` walks them with ``polars.read_csv``.
 * :class:`InputSource` — the **per-(entity_class, parameter_name)
   frame** Protocol introduced in Γ.1 of the deeper DB-direct migration
   (audit/db_direct_param_map.md §4.3).  Implementations
@@ -17,11 +16,12 @@ DB-direct migration:
   defaults applied per §4.5.  This is the abstraction Γ.1/Γ.2/Γ.3
   helpers compose against.
 
-The two Protocols coexist: P1's ``FlexInputSource`` keeps the existing
-CSV-shaped loader unchanged, while ``InputSource`` is opt-in via a
-keyword argument to ``load_flextool`` for the migrated Direct Params.
+The two Protocols coexist: ``FlexInputSource`` keeps the existing
+CSV-shaped loader for fixture workdirs, while ``InputSource`` is the
+DB-direct abstraction used by the live cascade
+(:func:`flextool.engine_polars.run_chain_from_db`).
 
-CSV-shaped source notes (legacy P1):
+CSV-shaped source notes:
 
 Today's downstream consumer (:func:`flextool.input.load_flextool`) reads
 CSVs via ``polars.read_csv`` directly off the directory tree, so the
@@ -34,10 +34,7 @@ Protocol exposes both:
   want a frame by ``(kind, name)`` without dealing with paths.
 
 For :class:`CsvSource` the directories are just ``workdir/input`` and
-``workdir/solve_data`` with no materialisation work.  For
-:class:`SpineDbSource` the directories live under a tempdir filled by
-flextool's ``write_input`` + ``orchestration.run_model`` (with a no-op
-solver) on first access.
+``workdir/solve_data`` with no materialisation work.
 """
 from __future__ import annotations
 
@@ -284,10 +281,9 @@ class InputSource(Protocol):
 class FlexInputSource(Protocol):
     """Protocol every input-source must satisfy.
 
-    Implementations may materialise data lazily on first access (e.g.
-    :class:`SpineDbSource`) — but once :pyattr:`input_dir` /
-    :pyattr:`solve_data_dir` return, the directories must be populated
-    and ready for the existing CSV reader to walk.
+    Once :pyattr:`input_dir` / :pyattr:`solve_data_dir` return, the
+    directories must be populated and ready for the existing CSV
+    reader to walk.
     """
 
     @property

@@ -455,14 +455,31 @@ def main():
             )
             sys.exit(-1)
         try:
-            from flextool.engine_polars import load_flextool_from_db
+            from flextool.engine_polars import run_chain_from_db
             from flextool.engine_polars._lagrangian import solve_lagrangian
             from flextool.engine_polars._solve_config import SolveConfig
-            flex_data = load_flextool_from_db(
+            # Drive the native cascade to materialise the whole-system
+            # ``FlexData`` for the Lagrangian coordinator.  The last
+            # ``OrchestrationStep`` always retains ``flex_data`` (the
+            # cascade's slim-step optimisation only clears earlier
+            # steps); no need to set ``keep_solutions=True``.
+            steps = run_chain_from_db(
                 input_db_url,
                 scenario_name,
                 work_folder=wf,
             )
+            if not steps:
+                raise RuntimeError(
+                    "Native cascade produced no solve steps; cannot "
+                    "build FlexData for Lagrangian decomposition."
+                )
+            last_step = next(reversed(list(steps.values())))
+            flex_data = last_step.flex_data
+            if flex_data is None:
+                raise RuntimeError(
+                    "Last cascade step has no flex_data; cannot run "
+                    "Lagrangian decomposition."
+                )
             # Phase 3 — Lagrangian decomposition is HiGHS-only.  Read the
             # active solve's :class:`SolverConfig` and let
             # ``solve_lagrangian`` raise ``FlexToolUserError`` with an

@@ -1,93 +1,34 @@
-"""Δ.20 — engine_polars-owned workdir CSV writer.
+"""Cascade-input Provider population from a Spine DB.
 
-This module replaces the cascade's call to
-``flextool.flextoolrunner.flextoolrunner.FlexToolRunner.write_input(...)``.
+The live cascade's pre-solve "write_input" responsibility lives here:
+:func:`write_workdir_inputs` reads the Spine database, runs the
+:mod:`flextool.input_derivation` pipeline, and populates the
+caller-supplied :class:`FlexDataProvider` with every derived frame the
+cascade's downstream readers consume.
 
-Pre-Δ.20 the cascade in
-:func:`flextool.engine_polars._orchestration.run_chain_from_db` directly
-invoked the legacy FlexToolRunner method to populate the workdir's
-``input/`` and ``solve_data/`` CSVs.  Δ.20 lifts that responsibility into
-``engine_polars`` itself: the cascade now calls
-:func:`write_workdir_inputs`, an engine_polars module function whose
-contract is "produce the workdir CSVs the cascade and the output writer
-adapter need."
+Pure in-memory
+--------------
 
-Writer-port Phase 1 (L0-L9)
----------------------------
+The function is wrapped in
+:func:`flextool.engine_polars._flex_data_accumulator.capture_frames`,
+which monkey-patches every participating writer's ``_write(df, path)``
+helper to push the frame into the Provider and skip the disk write.
+No CSVs land on disk through this path; downstream readers
+(:func:`flextool.engine_polars.input.load_flextool`,
+:func:`flextool.engine_polars._output_writer.write_outputs_for_solve`,
+the per-solve preprocessing dispatched by
+:func:`flextool.flextoolrunner.orchestration.run_model`) resolve every
+input through the Provider.
 
-Fourteen preprocessing families are now produced natively:
+For the ``--csv-dump`` debug path the cascade calls
+:meth:`FlexDataProvider.snapshot_processed_inputs` separately; that is
+the only on-disk emission of the derived frames the cascade produces.
 
-* L0-L2 (:mod:`._writer_leaf_sets`): ``period_param_sets``,
-  ``invest_method_sets``, ``co2_method_sets``, ``simple_projections``.
-* L3-L6 (:mod:`._writer_mid_sets`): ``node_type_sets``, ``union_sets``,
-  ``dc_angle_bounds``, ``reserve_method_partitions``, ``nonsync_sets``,
-  ``method_with_fallback_sets``, ``invest_total_sets``,
-  ``structural_filters``.
-* L7-L9 (:mod:`._writer_calc_params`): ``entity_total_caps`` (first
-  calculated-param family; ``repr(float)`` precision-parity),
-  ``process_method_sets`` (process-method projections, ``process_VRE``,
-  10 method-gated arc-cross-product tables, 2 profile-method joins).
-
-The remaining ``input/*`` emission (DB → CSV per ``_PARAMETER_SPECS`` /
-``_ENTITY_SPECS``) and the two heaviest preprocessing families
-(``process_arc_unions`` ~2.3 kLOC, ``entity_period_calc_params``
-~2.4 kLOC) still delegate to the legacy ``input_writer.write_input``
-body — those are out of scope for this dispatch.  The swap is implemented via
-monkey-patch on the legacy preprocessing modules so the in-tree call
-sites in ``write_input`` route through native code without modifying
-the legacy module's source.
-
-Implementation strategy
------------------------
-
-The current implementation delegates to the legacy
-:func:`flextool.flextoolrunner.input_writer.write_input` for the bulk of
-the CSV emission.  This is intentional and documented:
-
-* :mod:`flextool.flextoolrunner.input_writer` is a 2356-LOC pure
-  function (no FlexToolRunner state required) that authoritatively
-  emits ~100 ``input/`` CSVs and triggers the L0–L9 preprocessing
-  passes that produce ~100 ``solve_data/`` CSVs.  Re-implementing the
-  whole stack natively against
-  :class:`flextool.engine_polars._input_source.InputSource` is well
-  beyond the dispatch budget for any single Δ.
-
-* By owning the *call site* in ``engine_polars`` we satisfy the literal
-  goal of Δ.20: the live cascade (``run_chain_from_db``) no longer
-  references ``FlexToolRunner.write_input``.  Future phases (Δ.21+) can
-  replace the delegation one writer at a time without touching the
-  cascade contract.
-
-* The cascade's :class:`flextool.flextoolrunner.flextoolrunner.FlexToolRunner`
-  is still used downstream — it carries the ``state`` (timeline, solve
-  config, handoff dict) consumed by flextool's existing
-  ``orchestration.run_model`` driver, which we still leverage for the
-  per-solve preprocessing chain (``preprocessing_solve_time``,
-  ``solve_writers``, ``handoff_writers``).  The runner is no longer the
-  *originator* of workdir CSVs — that ownership now lives here.
-
-Why not skip the writes entirely?
----------------------------------
-
-Several downstream consumers in the live cascade still read CSVs from
-``solve_data/`` and ``input/``:
-
-* :func:`flextool.engine_polars.input.load_flextool` — the per-iteration
-  ``_load_*`` family reads ~85 CSVs (post-Δ.18) from ``solve_data/``.
-* :func:`flextool.engine_polars._output_writer.write_outputs_for_solve`
-  → ``flextool.process_outputs.read_highs_solution.write_all_variables``
-  → reads ``solve_data/p_step_duration.csv``,
-  ``solve_data/process_block.csv``, etc.
-* :func:`flextool.flextoolrunner.orchestration.run_model` — its
-  ``separate_period_and_timeseries_data`` reads
-  ``input/pdt_commodity.csv`` / ``input/pdt_group.csv`` and the L9
-  passes (``preprocessing_solve_time``) read another ~30
-  ``solve_data/`` CSVs.
-
-Skipping writes in this dispatch would break all three.  Δ.20 lays the
-foundation; Δ.21+ retire the write path piece by piece.
-
-Reference: ``flextool/flextoolrunner/input_writer.py`` (read-only).
+This module also hosts :func:`write_output_support_csvs`, a small
+helper used by the surgical fast single-solve path
+(:func:`flextool.engine_polars.run_single_solve_from_db`) to seed the
+tiny subset of ``solve_data/`` CSVs the output writer adapter needs
+when the full preprocessing pipeline is bypassed.
 """
 from __future__ import annotations
 
@@ -218,11 +159,12 @@ def write_workdir_inputs(
     logger: logging.Logger | None = None,
     precision_digits: int = 0,
 ) -> None:
-    """Populate *work_folder* with the ``input/`` + ``solve_data/`` CSVs
-    the cascade needs, and seed *provider* with the spec-driven frames.
+    """Populate *provider* with every cascade-input frame derived from
+    the Spine database.
 
-    This is the engine_polars-owned replacement for the cascade's call
-    to :meth:`flextool.flextoolrunner.flextoolrunner.FlexToolRunner.write_input`.
+    Pure in-memory: :func:`capture_frames` is entered so each
+    participating writer's ``_write(df, path)`` push the frame into
+    *provider* under its canonical key without touching disk.
 
     Parameters
     ----------
@@ -231,43 +173,30 @@ def write_workdir_inputs(
         ``sqlite:///<path>`` / ``postgresql://...`` form.
     scenario_name : str | None
         Scenario filter; ``None`` triggers an auto-pick of the first
-        scenario in the DB (matches FlexToolRunner's default).
+        scenario in the DB.
     work_folder : Path
-        Workdir under which ``input/`` + ``solve_data/`` will be created.
+        Workdir.  Created if absent.  Forwarded to
+        :func:`flextool.input_derivation.run` for the not-yet-Provider-
+        only writers' fallback path (becomes optional once every
+        writer is Provider-only).
     provider : FlexDataProvider
-        Required cascade-input Provider.  The SpineDBBackend-driven spec
-        loops (Step 2.5 Phases 2-4) ``put`` their materialised frames
-        here; downstream cascade readers resolve them via
-        :meth:`flextool.engine_polars._flex_data_provider.FlexDataProvider.get`
-        rather than re-reading the workdir CSVs.
+        Required cascade-input Provider.  Every derivation in the
+        :mod:`flextool.input_derivation` pipeline ``put``'s its
+        materialised frames here; downstream cascade readers resolve
+        them via
+        :meth:`flextool.engine_polars._flex_data_provider.FlexDataProvider.get`.
     logger : logging.Logger, optional
-        Logger to use during emission.  ``None`` builds a default named
-        logger.
+        Logger to use during emission.  ``None`` builds a default
+        named logger.
     precision_digits : int, default 0
-        Float precision passed through to the underlying writer.
-
-    Notes
-    -----
-    Δ.20 delegates the actual emission to
-    :func:`flextool.flextoolrunner.input_writer.write_input`, which is a
-    pure function (no FlexToolRunner state needed).  Step 2.5 threads
-    the cascade-input *provider* through so the spec loops can
-    progressively migrate from disk-writing to Provider-population.
+        Float precision forwarded to ``SpineDBBackend.parameter_values``.
     """
     if logger is None:
         logger = logging.getLogger(__name__)
 
     work_folder = Path(work_folder)
     work_folder.mkdir(parents=True, exist_ok=True)
-    (work_folder / "input").mkdir(exist_ok=True)
-    (work_folder / "solve_data").mkdir(exist_ok=True)
 
-    # Step 2.5 item 14 — route directly through input_derivation.run.
-    # input_derivation dispatches native polars writers itself; the
-    # legacy ``_native_leaf_set_override`` monkey-patch wrapper is no
-    # longer needed at this call site.  ``capture_frames`` is entered
-    # so each writer's ``_write(df, path)`` populates *provider* under
-    # the canonical key without touching disk.
     from flextool.input_derivation import run as _input_derivation_run
     from flextool.engine_polars._flex_data_accumulator import capture_frames
 

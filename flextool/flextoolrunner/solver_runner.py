@@ -18,12 +18,11 @@ What's left
 
 * :class:`SolverRunner` — minimal base class that the native cascade's
   ``_FlexpyCascadeSolver`` / ``_NoOpSolver`` subclasses (in
-  :mod:`flextool.engine_polars._orchestration`,
-  :mod:`flextool.engine_polars._spinedb_source`,
-  :mod:`flextool.engine_polars.input`) extend.  Its ``__init__`` stores
-  ``state`` / ``logger`` for subclass use; ``run()`` is unimplemented
-  by design — the cascade overrides it to drive the polar-high LP
-  build/solve in-process and never reaches the legacy GMPL path.
+  :mod:`flextool.engine_polars._orchestration`) extend.  Its
+  ``__init__`` stores ``state`` / ``logger`` for subclass use;
+  ``run()`` is unimplemented by design — the cascade overrides it to
+  drive the polar-high LP build/solve in-process and never reaches
+  the legacy GMPL path.
 
 * :func:`resolve_relax_feasibility` / :func:`resolve_ipm` — kept as
   pure helpers that map a CLI / env-var value to a HiGHS option.

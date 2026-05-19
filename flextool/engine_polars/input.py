@@ -3355,10 +3355,9 @@ def _find_scenario(workdir: Path) -> str | None:
 
     This covers every fixture in ``tests/engine_polars/data/`` without
     forcing a scenario name into workdirs that don't follow the
-    convention (e.g. tempdirs materialised by ``SpineDbSource``).
-    Production callers that build their own workdirs without the
-    ``work_`` prefix will continue to use the CSV-only path until they
-    pass an explicit ``db_reader=``.
+    convention.  Production callers that build their own workdirs
+    without the ``work_`` prefix will continue to use the CSV-only
+    path until they pass an explicit ``db_reader=``.
     """
     # Δ.16 — per-sub-solve test pattern: ``tempdir/input`` is a symlink
     # into the fixture's canonical ``work_<scenario>/input``.  Recurse
@@ -3430,10 +3429,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
     Backward-compatible: passing a ``Path`` (today's call style) wraps
     it as a :class:`flextool._input_source.CsvSource` internally and
-    behaves identically.  Passing a
-    :class:`flextool._spinedb_source.SpineDbSource` triggers
-    DB-driven materialisation on first directory access — the rest of
-    this loader walks the resulting CSVs unchanged.
+    behaves identically.
 
     Γ.1 of the deeper DB-direct migration adds an optional ``db_reader``
     keyword: when supplied, the per-(entity_class, parameter_name)
@@ -4143,8 +4139,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     _timed("2  projection_params", _pp.apply_projection_params, db_reader, flex_data)
 
     # Pass 3-9: workdir-aware Params.  Resolve the workdir from the
-    # source object (CsvSource exposes ``input_dir.parent``;
-    # SpineDbSource exposes ``workdir``).
+    # source object (CsvSource exposes ``input_dir.parent``).
     try:
         workdir = source.workdir if hasattr(source, "workdir") \
                    else source.input_dir.parent
@@ -5431,180 +5426,3 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
     if not overrides:
         return flex_data
     return _assign_param_names(replace(flex_data, **overrides))
-
-
-def load_flextool_from_db(input_db_url: str | Path,
-                           scenario_name: str | None = None,
-                           *,
-                           flextool_dir: Path | str | None = None,
-                           bin_dir: Path | str | None = None,
-                           work_folder: Path | str | None = None,
-                           ) -> "FlexData":
-    """Load FlexData by running flextool's preprocessing pipeline directly
-    from a Spine input database, bypassing flextool's GMPL solver.
-
-    Internally this:
-
-    1. Constructs a ``FlexToolRunner`` (reads DB into ``RunnerState``).
-    2. Calls ``write_input()`` which writes ``input/`` and the L0-L9
-       batch ``solve_data/*.csv`` via Python preprocessing.
-    3. Runs ``orchestration.run_model()`` with a no-op solver, so the
-       per-solve preprocessing (``preprocessing_solve_time``,
-       ``solve_writers``) writes all the additional ``solve_data/*.csv``
-       flexpy needs — without invoking glpsol/HiGHS on flextool's side.
-    4. Loads from the resulting work folder via :func:`load_flextool`.
-
-    The CSV roundtrip still happens to disk (in ``work_folder``, which
-    can be a tempdir).  Eliminating the roundtrip requires refactoring
-    each preprocessing module to return frames in addition to / instead
-    of writing CSVs — that's a separate, larger effort.
-
-    Parameters
-    ----------
-    input_db_url : str | Path
-        Spine SQLite URL or path.  A bare path is upgraded to ``sqlite:///``.
-    scenario_name : str, optional
-        Scenario filter to apply.  ``None`` picks the first scenario
-        in the database.
-    flextool_dir, bin_dir : Path, optional
-        Override the default flextool install location.  Default: assume
-        ``~/sources/flextool/{flextool,bin}``.
-    work_folder : Path | str, optional
-        Where to stage the CSVs.  ``None`` (default) uses a tempdir
-        that is **not** auto-cleaned (so failures can be inspected).
-    """
-    import logging
-    import sys
-    import tempfile
-    REPO = Path("/home/jkiviluo/sources/flextool")
-    # Append (not insert) so flexpy's local ``flextool/`` package takes
-    # precedence as the importable name; flextool's runner submodule
-    # is reachable via ``flextool.flextoolrunner`` because flextool's
-    # __init__ exports it.
-    if str(REPO) not in sys.path:
-        sys.path.append(str(REPO))
-    from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
-    from flextool.flextoolrunner import orchestration
-    from flextool.flextoolrunner.solver_runner import SolverRunner
-
-    if work_folder is None:
-        work_folder = Path(tempfile.mkdtemp(prefix="flexpy_db_"))
-    else:
-        work_folder = Path(work_folder)
-        work_folder.mkdir(parents=True, exist_ok=True)
-
-    db_url = str(input_db_url)
-    if not db_url.startswith("sqlite:"):
-        db_url = f"sqlite:///{db_url}"
-
-    runner = FlexToolRunner(
-        input_db_url=db_url,
-        scenario_name=scenario_name,
-        flextool_dir=Path(flextool_dir) if flextool_dir else REPO / "flextool",
-        bin_dir=Path(bin_dir) if bin_dir else REPO / "bin",
-        work_folder=work_folder,
-    )
-    # Δ.20 — workdir CSV population is owned by engine_polars.  The
-    # legacy ``runner.write_input(...)`` call has been replaced by the
-    # native shim ``_native_input_writer.write_workdir_inputs`` so the
-    # cascade contract no longer references FlexToolRunner.write_input.
-    from flextool.engine_polars._native_input_writer import (
-        write_workdir_inputs,
-    )
-
-    write_workdir_inputs(
-        db_url, scenario_name, work_folder, logger=runner.state.logger,
-    )
-
-    # Quiet the flextool logger's stdout chatter.
-    runner.state.logger.setLevel(logging.ERROR)
-
-    # Detect single- vs multi-solve from the (already-built) solve config.
-    # Top-level solves are the values of the first ``model`` entry; nested
-    # rolling expands these into more iterations inside ``run_model``,
-    # but for the supported (non-rolling) cascade fixtures the top-level
-    # count matches the iteration count.
-    solves = next(iter(runner.state.solve.model_solve.values()))
-    total_solves = len(solves)
-
-    # Δ.16 — explicit db_reader keeps the override chain authoritative
-    # when the test's ``work_folder`` (typically a tmp_path) doesn't
-    # match the ``work_<scenario>`` convention that ``_find_scenario``
-    # uses for auto-construction.  Without this, the CSV-only path runs
-    # and Params dropped by Δ.12-drop (e.g. ``p_min_load``) stay
-    # ``None``, breaking ``build_flextool``'s feature-active check.
-    from flextool.engine_polars._spinedb_reader import SpineDbReader
-    explicit_db_reader = SpineDbReader(db_url, scenario=scenario_name) \
-        if scenario_name is not None else None
-
-    if total_solves <= 1:
-        # Single-solve: orchestration writes per-solve preprocessing
-        # CSVs (timesets, scaling, period_first, etc.) and the no-op
-        # solver suppresses the actual GMPL/HiGHS run.
-        class _NoOpSolver(SolverRunner):
-            def run(self, complete_solve_name: str) -> int:  # noqa: ARG002
-                return 0
-        orchestration.run_model(runner.state, _NoOpSolver(runner.state))
-        return load_flextool(work_folder, db_reader=explicit_db_reader)
-
-    # Multi-solve cascade: drive flextool's loop with a custom solver
-    # that runs flexpy on every solve except the last, builds a
-    # ``SolveHandoff`` from each solution, and deposits it into
-    # ``state.handoffs`` so the next iteration's preprocessing picks
-    # it up via the consume side wired in flextool.  The final solve's
-    # preprocessing runs but the solve itself is skipped — the caller
-    # builds + solves it externally on the returned ``FlexData`` and
-    # compares to the multi-solve reference obj.
-    runner.state.handoffs = {}  # opt-in: enable capture + consume
-
-    class _FlexpyCascadeSolver(SolverRunner):
-        def __init__(self, runner_state, total_solves: int):
-            super().__init__(runner_state)
-            self._total = total_solves
-            self._count = 0
-
-        def run(self, complete_solve_name: str) -> int:
-            self._count += 1
-            if self._count == self._total:
-                return 0  # caller solves the last one
-            data = load_flextool(self.state.paths.work_folder,
-                                   db_reader=explicit_db_reader)
-            from polar_high import Problem
-            from flextool.engine_polars.model import build_flextool as _build
-            pb = Problem()
-            _build(pb, data)
-            sol = pb.solve()
-            if not sol.optimal:
-                self.state.logger.error(
-                    f"flexpy non-optimal for {complete_solve_name}"
-                )
-                return 1
-            prior = (
-                self.state.handoffs.get(self.state.last_captured_solve)
-                if self.state.last_captured_solve is not None else None
-            )
-            # Phase 4 (Gap F) — thread in-memory carriers so the handoff
-            # extractor can skip the workdir CSV reads where the same
-            # data is already in scope.
-            parent_complete = getattr(
-                self.state, "current_parent_complete", None
-            )
-            parent_handoff = (
-                self.state.handoffs.get(parent_complete)
-                if parent_complete is not None else None
-            )
-            handoff = build_handoff_from_flexpy(
-                sol, self.state.paths.work_folder, complete_solve_name,
-                prior_handoff=prior,
-                flex_data=data,
-                parent_handoff=parent_handoff,
-            )
-            self.state.handoffs[complete_solve_name] = handoff
-            return 0
-
-    orchestration.run_model(
-        runner.state, _FlexpyCascadeSolver(runner.state, total_solves),
-    )
-    return load_flextool(work_folder, db_reader=explicit_db_reader)
-
-

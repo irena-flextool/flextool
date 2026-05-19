@@ -179,8 +179,7 @@ Exported from `flextool.engine_polars` (see `__init__.py`):
 | Symbol | Purpose |
 |---|---|
 | `FlexData` | The single input dataclass — polars frames + `polar_high.Param`s. Naming: sets unprefixed, parameters `p_*`. See `_param_shapes.py` for the full inventory. |
-| `load_flextool(source)` | Build `FlexData` from an on-disk `input/` + `solve_data/` workdir. |
-| `load_flextool_from_db(url)` | Build `FlexData` directly from a Spine input DB. |
+| `load_flextool(source)` | Build `FlexData` from an on-disk `input/` + `solve_data/` workdir, or (in the live cascade) from a workdir whose cascade-input Provider serves every read in-memory. |
 | `load_flextool_source_only(...)` | Fast-load shortcut that skips most preprocessing for single-solve scenarios; raises `FastLoadError` if a feature requires the full path. |
 | `build_flextool(m, d, ...)` | Add all variables, constraints, and the objective to a `Problem` (or `WarmProblem`) from `FlexData`. Feature-conditional — see table below. |
 | `run_chain(steps, ...)` / `run_chain_from_db(...)` | Run a sequence of `ChainStep`s, threading `SolveHandoff` between them. |
@@ -189,7 +188,7 @@ Exported from `flextool.engine_polars` (see `__init__.py`):
 | `SolveHandoff` | Per-solve output carrier (invest, divest, storage, roll-state, CO2 ladder, commodity ladder, cumulative sim-hours, history sets). |
 | `capture_post_solve(state, name)` | Extracts a `SolveHandoff` from the just-solved problem. |
 | `write_fix_storage_files_from_handoff(...)` | Materialises the three `fix_storage_*` CSVs from a handoff. |
-| `SpineDbReader` / `InMemoryReader` / `SpineDbSource` / `CsvSource` / `FlexInputSource` | Pluggable readers — Spine DB, in-memory test fixture, or CSV workdir. |
+| `SpineDbReader` / `InMemoryReader` / `CsvSource` / `FlexInputSource` | Pluggable readers — Spine DB, in-memory test fixture, or CSV workdir. |
 
 #### Feature blocks in `build_flextool`
 
@@ -241,8 +240,7 @@ declarations in `flextool.mod` are now produced in Python by the
 divestment carriers, `_writer_pdt_params.py` for the `pdt*` per-step
 parameter family, `_writer_arc_unions.py` for the arc set algebra,
 `_writer_co2_accumulators.py` for the cumulative-CO2 ladder. These run
-during `load_flextool` / `load_flextool_from_db` and populate the optional
-fields of `FlexData`.
+during `load_flextool` and populate the optional fields of `FlexData`.
 
 #### Auto-scaling
 
@@ -265,7 +263,6 @@ _lagrangian.py                    solve_lagrangian + Coupling/Result
 _warm.py                          WarmProblem update routine
 _param_shapes.py                  Canonical shape per FlexData field
 _spinedb_reader.py                Spine DB → FlexData (slow path)
-_spinedb_source.py                Spine DB source object
 _inmemory_reader.py               In-memory test fixture loader
 _input_source.py                  FlexInputSource / CsvSource / InputSource
 _recursive_solve.py               Rolling / nested solve tree builder
@@ -483,7 +480,7 @@ flowchart TD
   db --> runner["flextoolrunner<br/>(solve coordinator)<br/>RunnerState, recursive_solves,<br/>stochastic, timeline_config"]
   db --> excel_out["export_to_excel<br/>(.xlsx)"]
 
-  runner --> engine["engine_polars<br/>load_flextool_from_db<br/>+ _writer_*/_derived_* ports"]
+  runner --> engine["engine_polars<br/>run_chain_from_db<br/>+ _writer_*/_derived_* ports"]
   engine --> flexdata["FlexData<br/>(polars frames + Params)"]
   flexdata --> build["build_flextool<br/>(polar_high.Problem)"]
   build --> solve["HiGHS via highspy"]

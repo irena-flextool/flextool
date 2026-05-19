@@ -121,10 +121,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "boundary (post-Step-2 the Provider is threaded through, "
         "but the handoff retains a single disk read for back-compat)."
     ),
-    "_spinedb_source.py": (
-        "Reads scenario alternative CSVs from the SpineDB source "
-        "layer — out of scope for the Provider migration."
-    ),
     "_solve_context.py": (
         "Reads workdir solve_data/p_model.csv and similar context "
         "files at solve-context build time (pre-Provider)."

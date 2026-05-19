@@ -65,12 +65,11 @@ _install_polar_high_determinism()
 
 
 from flextool.engine_polars.input import (
-    FlexData, load_flextool, load_flextool_from_db,
+    FlexData, load_flextool,
 )
 from flextool.engine_polars.model import build_flextool
 from flextool.engine_polars.chain import run_chain, ChainStep
 from flextool.engine_polars._input_source import FlexInputSource, CsvSource, InputSource
-from flextool.engine_polars._spinedb_source import SpineDbSource
 from flextool.engine_polars._spinedb_reader import SpineDbReader
 from flextool.engine_polars._inmemory_reader import InMemoryReader
 from flextool.engine_polars._solve_handoff import (
@@ -85,9 +84,9 @@ from flextool.engine_polars._fast_load import (
 )
 
 __all__ = [
-    "FlexData", "load_flextool", "load_flextool_from_db", "build_flextool",
+    "FlexData", "load_flextool", "build_flextool",
     "run_chain", "ChainStep",
-    "FlexInputSource", "CsvSource", "SpineDbSource",
+    "FlexInputSource", "CsvSource",
     "InputSource", "SpineDbReader", "InMemoryReader",
     # Γ.8.D — native orchestrator + handoff carrier.
     "SolveHandoff", "capture_post_solve",

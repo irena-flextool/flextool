@@ -1251,8 +1251,7 @@ def _timeline_aggregates(source: "InputSource",
 
     # Source-side fallback: derive cpsoy + p_tdy from timeline.timestep_duration
     # and solve.period_timeset → timeset.timeline.  Only fires when the
-    # workdir CSVs are absent (e.g. callers materialising via SpineDbSource
-    # from scratch).
+    # workdir CSVs are absent.
     if (cpsoy.collect().height == 0 or p_tdy.collect().height == 0
             or period_timeline.collect().height == 0):
         derived = _derive_timeline_aggregates(source, dt_lf)

@@ -87,9 +87,8 @@ The loaders are stacked on two protocols defined in `_input_source.py`:
 
 | Source | Implementation | When used |
 |---|---|---|
-| `CsvSource` | `_input_source.py` | Loads from an on-disk `input/` + `solve_data/` workdir. The legacy reader path; still used by tests and by `load_flextool(path_or_csv_source)`. |
-| `SpineDbSource` | `_spinedb_source.py` | Materialises a Spine DB to a tempdir CSV workdir via FlexTool's preprocessing pipeline (the "slow path"), then hands the workdir to `CsvSource`. |
-| `SpineDbReader` | `_spinedb_reader.py` | The DB-direct reader — returns one polars frame per `(entity_class, parameter_name)` pair, no CSV roundtrip. Consumed by the override chain in `_apply_db_overrides` and by `_fast_load.load_flextool_source_only`. |
+| `CsvSource` | `_input_source.py` | Loads from an on-disk `input/` + `solve_data/` workdir. Used by tests and by `load_flextool(path_or_csv_source)` against pre-built fixture workdirs. |
+| `SpineDbReader` | `_spinedb_reader.py` | The DB-direct reader — returns one polars frame per `(entity_class, parameter_name)` pair, no CSV roundtrip. Consumed by the override chain in `_apply_db_overrides`, by `_fast_load.load_flextool_source_only`, and by the live cascade entry point `run_chain_from_db`. |
 | `InMemoryReader` | `_inmemory_reader.py` | Same `InputSource` protocol as `SpineDbReader`, but driven by an in-memory dict-of-frames fixture. The vehicle for fast unit tests under `tests/engine_polars/`. |
 
 `FlexInputSource` (CSV-shaped) and `InputSource` (per-parameter frame)
@@ -468,8 +467,7 @@ small. Repeating the table from
 | Symbol | Notes |
 |---|---|
 | `FlexData` | The single input dataclass. Everything else either produces it, consumes it, or transforms it in place. Modifying its field list is the cardinal extension act. |
-| `load_flextool(source, ...)` | CSV-shaped loader. Source may be a `Path`, a `str`, a `CsvSource`, or a `SpineDbSource`. Accepts an optional `InputSource` override for migrated parameters. |
-| `load_flextool_from_db(db_url, ...)` | DB-shaped loader. Constructs a `SpineDbReader` and runs the override chain. The standard production loader for Spine-DB-driven runs. |
+| `load_flextool(source, ...)` | CSV-shaped loader. Source may be a `Path`, a `str`, or a `CsvSource`. Accepts an optional `InputSource` override for migrated parameters. In the live cascade it is driven by `_drive_cascade` against a pre-built workdir whose Provider serves every read in-memory. |
 | `load_flextool_source_only(reader, ...)` | Fast path. Raises `FastLoadError` on any feature it can't synthesise. |
 | `build_flextool(m, d, *, include_existing_fixed_cost=False, scale_the_objective=1.0)` | The model build. `m` is a fresh `Problem` / `WarmProblem`; `d` is the populated `FlexData`. Returns `None`; mutates `m` in place. |
 | `run_chain(steps, ...)` | Thin compat shim around `run_chain_from_db`. Kept for callers that still hand-construct `ChainStep` lists. |
@@ -481,7 +479,7 @@ small. Repeating the table from
 | `write_fix_storage_files_from_handoff(...)` | Materialises the three `fix_storage_*.csv` files from a handoff for downstream tooling that still reads the legacy file layout. |
 | `OrchestrationStep` | Per-solve result. Carries `solve_name`, `solution`, `handoff`, `warm_used`. |
 | `ChainStep` | Per-sub-solve result of the compat shim. Same shape as `OrchestrationStep`. |
-| `FlexInputSource` / `CsvSource` / `SpineDbSource` | The CSV-shaped source protocol family. |
+| `FlexInputSource` / `CsvSource` | The CSV-shaped source protocol family. |
 | `InputSource` / `SpineDbReader` / `InMemoryReader` | The per-parameter-frame source protocol family. |
 | `FastLoadError` | Raised by the fast path when it can't synthesise a required field. |
 

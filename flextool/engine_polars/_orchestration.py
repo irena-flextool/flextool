@@ -591,10 +591,9 @@ def _drive_cascade(
     remains the default for backward compatibility with every existing
     caller.
 
-    This mirrors :func:`flextool.engine_polars.input.load_flextool_from_db`'s
-    multi-solve cascade but emits an :class:`OrchestrationStep` per solve
-    and runs the LAST solve too (the flexpy-side bookkeeping is the
-    deliverable, not just an intermediate).
+    Emits an :class:`OrchestrationStep` per solve and runs the LAST
+    solve too (the flexpy-side bookkeeping is the deliverable, not
+    just an intermediate).
     """
     # Late imports — keep the orchestration module's import surface narrow
     # for callers that only need the dataclass.
@@ -1268,11 +1267,9 @@ def run_chain_from_db(
     Combines:
 
     1. :func:`flextool.engine_polars._native_input_writer.write_workdir_inputs`
-       (Δ.20 — engine_polars-owned) populates the workdir's ``input/``
-       and ``solve_data/`` CSVs.  Replaces the legacy
-       ``FlexToolRunner.write_input`` call from earlier phases — the
-       cascade no longer calls into the FlexToolRunner.write_input
-       method directly.
+       populates the cascade-input Provider with every derived frame
+       from the Spine DB (pure in-memory; no workdir CSVs are
+       written).
     2. ``_orchestration.run_orchestration`` to drive the per-solve loop
        with a flexpy-as-inner-solver wrapper.
     3. Returns one :class:`OrchestrationStep` per per-solve iteration.
@@ -1362,12 +1359,9 @@ def run_chain_from_db(
         Path(bin_dir) if bin_dir is not None else _REPO_ROOT / "bin"
     )
 
-    # Δ.20 — workdir CSV population is now owned by engine_polars.
-    # ``_native_input_writer.write_workdir_inputs`` invokes the input
-    # writers from inside engine_polars; the live cascade no longer
-    # references ``FlexToolRunner.write_input``.  Future Δ.20+ phases
-    # progressively replace the underlying writers with InputSource-
-    # driven helpers.
+    # Cascade-input Provider population from the Spine DB.  Pure
+    # in-memory: ``write_workdir_inputs`` runs the input_derivation
+    # pipeline under ``capture_frames``, so no CSVs hit disk.
     from flextool.engine_polars._native_input_writer import (
         write_workdir_inputs,
     )
@@ -1388,13 +1382,12 @@ def run_chain_from_db(
         _memrec = _NoopMemoryRecorder()
     _memrec.checkpoint("cascade_start", logger)
 
-    # Step 2.5 — construct the cascade-input Provider BEFORE
-    # ``write_workdir_inputs`` runs.  The SpineDBBackend-driven spec
-    # loops (Phases 2-4) ``put`` their materialised frames here; this
-    # Provider is then attached to the cascade ``RunnerState`` below so
-    # the existing ``state.cascade_input_provider`` hook in
-    # :func:`flextool.engine_polars._native_run_model._native_run_model`
-    # (lines 365-370) picks it up at per-sub-solve provider seed time.
+    # Construct the cascade-input Provider and let
+    # ``write_workdir_inputs`` populate it from the Spine DB.  The
+    # Provider is then attached to the cascade ``RunnerState`` below
+    # so the per-sub-solve hook in
+    # :mod:`flextool.engine_polars._native_run_model` picks it up at
+    # provider seed time.
     from flextool.engine_polars._flex_data_provider import FlexDataProvider
     cascade_input_provider = FlexDataProvider()
 
@@ -1405,10 +1398,10 @@ def run_chain_from_db(
         logger=logger,
         provider=cascade_input_provider,
     )
-    # The legacy CSV writer (2.4 kLOC pure-Python loops) allocates and
-    # frees a lot of pandas/dict scratch state; glibc's heap retains the
-    # freed pages.  Release them before the polars-heavy ``load_flextool``
-    # starts so the heap watermark doesn't compound.
+    # input_derivation allocates and frees a lot of polars scratch
+    # state; glibc's heap retains the freed pages.  Release them
+    # before the polars-heavy ``load_flextool`` starts so the heap
+    # watermark doesn't compound.
     _try_malloc_trim()
     _memrec.checkpoint("write_workdir_inputs_end", logger)
 
