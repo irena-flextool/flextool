@@ -2029,6 +2029,10 @@ def p_flow_upper_existing_from_source(source: "InputSource",
     Returns ``None`` when the source has no usable ``existing`` data —
     caller falls back to CSV value.
     """
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _enums = get_global_axis_enums()
+    if _enums is not None and pss is not None:
+        pss = cast_frame_axes(pss, _enums)
     # Γ.6.D — prefer the canonical ``p_entity_all_existing.csv`` when
     # available (carries chained existing + lifetime gate from the
     # multi-solve handoff).
@@ -2229,6 +2233,10 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
     """
     if pss is None or pss.height == 0:
         return None
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        pss = cast_frame_axes(pss, _enums)
     parts: list[pl.LazyFrame] = []
     for entity_class in ("unit__inputNode", "unit__outputNode",
                           "connection__node"):
@@ -2306,6 +2314,12 @@ def p_pssdt_varCost_from_source(source: "InputSource",
     """
     if pss is None or pss.height == 0 or dt is None or dt.height == 0:
         return None
+
+    # Phase 4.8f: defend axis-aware join keys on incoming frame params.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        pss = cast_frame_axes(pss, _enums)
+        dt = cast_frame_axes(dt, _enums)
 
     contributions: list[pl.LazyFrame] = []
 
@@ -2452,6 +2466,11 @@ def p_slope_from_source(source: "InputSource",
         classified = _classify_process_method(source)
     if classified.height == 0:
         return None
+    # Phase 4.8f: defend axis-aware join keys on incoming frame params.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        dt = cast_frame_axes(dt, _enums)
+        classified = cast_frame_axes(classified, _enums)
     # Pull efficiency / efficiency_at_min_load / min_load from units +
     # transfer connections (efficiency lives on both unit and connection
     # though connection.efficiency may be implicit via transfer_method).
@@ -3639,6 +3658,10 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
             "d_invest": schema_dtype(_enums, "d_invest"),
             "d": schema_dtype(_enums, "d"),
         })
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _live = get_global_axis_enums()
+    if _live is not None:
+        ed_invest = cast_frame_axes(ed_invest, _live)
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         return None
@@ -3673,6 +3696,10 @@ def edd_divest_active_from_source(source: "InputSource",
             "d_divest": schema_dtype(_enums, "d_divest"),
             "d": schema_dtype(_enums, "d"),
         })
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _live = get_global_axis_enums()
+    if _live is not None:
+        pd_divest = cast_frame_axes(pd_divest, _live)
     pyd_lf = _p_years_d_lf(source, active_solve, provider=provider)
     if pyd_lf is None:
         return None
@@ -4101,6 +4128,11 @@ def p_section_from_source(source: "InputSource",
         classified = _classify_process_method(source)
     if classified.height == 0:
         return None
+    # Phase 4.8f: defend axis-aware join keys on incoming frame params.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        dt = cast_frame_axes(dt, _enums)
+        classified = cast_frame_axes(classified, _enums)
     # Only min_load_efficiency rows get a section.
     mle = (classified.lazy()
               .filter(pl.col("ct") == "min_load_efficiency")
@@ -4282,6 +4314,10 @@ def _process_source_sink_coeff_zero_lf(source: "InputSource",
             "p": schema_dtype(_enums, "p"),
             "source": schema_dtype(_enums, "source"),
             "sink": schema_dtype(_enums, "sink")})
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _live = get_global_axis_enums()
+    if _live is not None:
+        pss = cast_frame_axes(pss, _live)
     src_zero = (_arc_max_capacity_coef_lf(source, "source")
                   .filter(pl.col("coef") == 0.0)
                   .select("p", "source"))
@@ -4345,6 +4381,14 @@ def p_flow_upper_from_source(source: "InputSource",
     """
     if pss is None or pss.height == 0 or dt is None or dt.height == 0:
         return None
+
+    # Phase 4.8f: defend axis-aware join keys on incoming frame params.
+    _live = get_global_axis_enums()
+    if _live is not None:
+        pss = cast_frame_axes(pss, _live)
+        dt = cast_frame_axes(dt, _live)
+        if classified is not None:
+            classified = cast_frame_axes(classified, _live)
 
     # ── 1. Resolve the (p, d) cap-per-unitsize term ─────────────────
     # Prefer p_entity_max_units (= dispatch_capacity_max / unitsize per
@@ -6751,6 +6795,14 @@ def arc_block_dt_from_source(source: "InputSource",
             or pss.height == 0 or nodeStateBlock_df.height == 0
             or period_block_time_df.height == 0):
         return None
+    # Phase 4.8f: defensive cast of axis-aware columns on incoming
+    # cascade-helper params so joins on ``d``/``t``/``source``/``sink``
+    # never observe an Enum/Utf8 mismatch under axis-enum activation.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        nodeStateBlock_df = cast_frame_axes(nodeStateBlock_df, _enums)
+        period_block_time_df = cast_frame_axes(period_block_time_df, _enums)
+        pss = cast_frame_axes(pss, _enums)
     # Δ.2: consume block frames via BlockLayout instead of reading
     # process_side_block.csv + block_step_duration.csv directly.
     # Phase 2 multi-block fast-path: prefer the in-memory ``block_layout``
@@ -6771,7 +6823,17 @@ def arc_block_dt_from_source(source: "InputSource",
         rename_to_axis,
         {"block": "b_f", "period": "d", "step": "t",
           "step_duration": "weight"})
-    nsb_set = nodeStateBlock_df["n"].unique()
+    # Phase 4.8f: ``nsb_set`` participates in ``is_in`` against
+    # ``pss['sink']`` / ``pss['source']`` whose canonical axis is the
+    # ``entity`` union Enum vocabulary.  ``nodeStateBlock_df['n']``
+    # carries the ``node`` Enum vocabulary which differs from the entity
+    # Enum.  Use a 1-column frame and ``semi`` join (membership) on the
+    # entity axis instead of ``is_in`` so polars resolves both sides via
+    # the same Enum dtype path (no Series-side dtype mismatch).
+    nsb_set_e_df = (nodeStateBlock_df.select(pl.col("n").alias("e"))
+                                       .unique())
+    if _enums is not None:
+        nsb_set_e_df = cast_frame_axes(nsb_set_e_df, _enums)
     pbt = period_block_time_df
 
     out: dict[str, object | None] = {
@@ -6783,7 +6845,7 @@ def arc_block_dt_from_source(source: "InputSource",
 
     psb_sink = psb.filter(pl.col("side") == "sink").select("p", "b_f")
     sink_arcs = (pss
-        .filter(pl.col("sink").is_in(nsb_set))
+        .join(nsb_set_e_df.rename({"e": "sink"}), on="sink", how="semi")
         .join(psb_sink, on="p", how="inner"))
     if sink_arcs.height > 0:
         ab = (sink_arcs
@@ -6801,7 +6863,7 @@ def arc_block_dt_from_source(source: "InputSource",
 
     psb_src = psb.filter(pl.col("side") == "source").select("p", "b_f")
     src_arcs = (pss
-        .filter(pl.col("source").is_in(nsb_set))
+        .join(nsb_set_e_df.rename({"e": "source"}), on="source", how="semi")
         .join(psb_src, on="p", how="inner"))
     if src_arcs.height > 0:
         ab = (src_arcs
@@ -8662,6 +8724,18 @@ def p_f_d_k_from_source(
         piu_lf = (_provider_read(provider, piu_path).lazy()
                     .pipe(rename_to_axis, {"period": "d"})
                     .select("d"))
+    # Phase 4.8f: ctx-side (period_in_use, period_share_of_year,
+    # steps_in_use) and CSV-side ``d`` columns may arrive in different
+    # dtype regimes (Enum from SolveContext, Utf8 from raw CSV).  Defend
+    # the cascade join keys by casting every contributing LazyFrame to
+    # the canonical axis Enum vocabulary when active.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        piu_lf = cast_frame_axes(piu_lf, _enums)
+        sum_step = cast_frame_axes(sum_step, _enums)
+        csy = cast_frame_axes(csy, _enums)
+        if cum_lf is not None:
+            cum_lf = cast_frame_axes(cum_lf, _enums)
     out_lf = (piu_lf
                 .join(sum_step.select("d", "sum_step"), on="d", how="left")
                 .join(csy.select("d", "share"), on="d", how="left"))

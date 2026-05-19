@@ -62,6 +62,7 @@ from polar_high import Param
 from flextool.engine_polars._axis_enums import (
     alias_to_axis,
     cast_dim,
+    cast_frame_axes,
     get_global_axis_enums,
     lit_axis,
     rename_to_axis,
@@ -764,15 +765,29 @@ def arc_block_dt(
     if psb_f.height == 0 or bsd_f.height == 0:
         return out
 
+    # Phase 4.8f: defend axis-aware join keys on incoming frame params.
+    # ``pss`` joins on ``["d", "t"]`` against pbt and on entity-axis cols
+    # via ``is_in`` below; ``nodeStateBlock`` provides the n→entity set.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        pss = cast_frame_axes(pss, _enums)
+        nodeStateBlock = cast_frame_axes(nodeStateBlock, _enums)
+        period_block_time = cast_frame_axes(period_block_time, _enums)
+
     psb = bundle.process_side_block_lf
     bsd_arc = bundle.block_step_duration_arc_lf
-    nsb_set = nodeStateBlock["n"].unique().to_list()
+    # Phase 4.8f: ``is_in`` against ``pss['sink']`` / ``pss['source']``
+    # whose canonical axis is the ``entity`` union Enum vocabulary —
+    # cannot pass a node-Enum Series.  Use a 1-column frame + semi join.
+    nsb_set_e_df = (nodeStateBlock.select(pl.col("n").alias("e")).unique())
+    if _enums is not None:
+        nsb_set_e_df = cast_frame_axes(nsb_set_e_df, _enums)
     pbt = period_block_time
 
     psb_sink = psb.filter(pl.col("side") == "sink").select("p", "b_f")
     sink_arcs = (
         pss.lazy()
-        .filter(pl.col("sink").is_in(nsb_set))
+        .join(nsb_set_e_df.lazy().rename({"e": "sink"}), on="sink", how="semi")
         .join(psb_sink, on="p", how="inner")
     )
     sink_ab = (
@@ -797,7 +812,7 @@ def arc_block_dt(
     psb_src = psb.filter(pl.col("side") == "source").select("p", "b_f")
     src_arcs = (
         pss.lazy()
-        .filter(pl.col("source").is_in(nsb_set))
+        .join(nsb_set_e_df.lazy().rename({"e": "source"}), on="source", how="semi")
         .join(psb_src, on="p", how="inner")
     )
     src_ab = (
@@ -849,6 +864,10 @@ def nodeState_last_dt_lf(
     eb_f = bundle.layout.entity_block_frame
     if bptl_f.height == 0 or eb_f.height == 0:
         return empty
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _live = get_global_axis_enums()
+    if _live is not None:
+        nodeState = cast_frame_axes(nodeState, _live)
     return (
         nodeState.lazy().select("n")
         .join(bundle.entity_block_lf, on="n", how="inner")

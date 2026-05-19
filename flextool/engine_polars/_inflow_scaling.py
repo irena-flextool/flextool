@@ -81,6 +81,7 @@ from polar_high import Param
 from ._axis_enums import (
     alias_to_axis,
     cast_dim,
+    cast_frame_axes,
     get_global_axis_enums,
     schema_dtype,
 )
@@ -952,6 +953,13 @@ def p_inflow_with_scaling_from_source(
     """
     if dt is None or dt.height == 0:
         return None
+
+    # Phase 4.8f: defend axis-aware join keys on incoming frame params.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        dt = cast_frame_axes(dt, _enums)
+        if balance_set is not None:
+            balance_set = cast_frame_axes(balance_set, _enums)
 
     # Phase B: stochastic + parent-period fold-in is now native.  Build
     # the Branch 1+2 frame ahead of time; the deterministic Branch 3

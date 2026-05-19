@@ -48,7 +48,12 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine_polars._axis_enums import alias_to_axis, rename_to_axis
+from flextool.engine_polars._axis_enums import (
+    alias_to_axis,
+    cast_frame_axes,
+    get_global_axis_enums,
+    rename_to_axis,
+)
 
 from ._derived_params import (
     _entity_unitsize_lf,
@@ -91,6 +96,10 @@ def p_unitsize_from_source(source: "InputSource",
     """
     if pss is None or pss.height == 0:
         return None
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        pss = cast_frame_axes(pss, _enums)
     procs = pss.lazy().select(pl.col("p")).unique()
     us_lf = _entity_unitsize_lf(source).pipe(rename_to_axis, {"e": "p"})
     df = (procs
@@ -123,6 +132,10 @@ def p_state_unitsize_from_source(source: "InputSource",
     """
     if nodeState_df is None or nodeState_df.height == 0:
         return None
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        nodeState_df = cast_frame_axes(nodeState_df, _enums)
     state = nodeState_df.lazy().select(pl.col("n")).unique()
     us_lf = _node_unitsize_lf(source)
     df = (state
@@ -162,6 +175,11 @@ def _penalty_param_from_source(source: "InputSource",
     if (nodeBalance_df is None or nodeBalance_df.height == 0
             or dt is None or dt.height == 0):
         return None
+    # Phase 4.8f: defend axis-aware join keys on incoming frame params.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        nodeBalance_df = cast_frame_axes(nodeBalance_df, _enums)
+        dt = cast_frame_axes(dt, _enums)
     df = _try_param(source, "node", parameter_name)
     if df is None or df.height == 0:
         return None
@@ -293,6 +311,10 @@ def _flow_coef_from_source(source: "InputSource",
         zero = None
     if indirect_pairs is None or indirect_pairs.height == 0:
         return zero, None
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        indirect_pairs = cast_frame_axes(indirect_pairs, _enums)
     nondef = base.filter(
         (pl.col("coef") != 0.0) & (pl.col("coef") != 1.0))
     if nondef.collect().height == 0:
