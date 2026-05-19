@@ -387,11 +387,18 @@ def _discover_tier_vocabulary(
     distinct tier-level keys across all parameter definitions in
     *entity_class* whose name starts with *parameter_prefix*.
 
-    For ``commodity.price_ladder_*``, the Map structure is
-    ``period → tier → {price, quantity}``: the *tier* keys live at
-    level 2 (one nesting under the top-level period keys).  This
-    helper walks every map's level-2 indices and unions them, sorted
-    numerically when all keys are integer-like.
+    The ``commodity.price_ladder_*`` maps come in two shapes:
+
+    * ``price_ladder_cumulative``: depth-2 — ``tier → {price, quantity}``.
+      Tier keys live at the top level.
+    * ``price_ladder_annual``: depth-3 — ``period → tier → {price, quantity}``.
+      Tier keys live one nesting below the top.
+
+    The invariant across both shapes is that tier keys sit at the
+    level *immediately above the {price, quantity} leaves* — i.e. the
+    level whose immediate child Map's sub-indexes are non-Map scalars.
+    This helper walks the map dynamically and grabs index labels at
+    that depth, supporting both shapes uniformly.
 
     Returns
     -------
@@ -411,6 +418,37 @@ def _discover_tier_vocabulary(
     ]
     if not candidates:
         return []
+
+    def _collect_tier_level(node, out: list[str]) -> None:
+        """Recursively walk *node* and append indexes at the tier
+        level (the level whose immediate children are leaf-only maps).
+        """
+        if not hasattr(node, "indexes") or not hasattr(node, "values"):
+            return
+        # Inspect the first child to decide whether THIS node is the
+        # tier level.  A tier-level node's children are maps whose
+        # own children are non-Map scalars (the {price, quantity}
+        # leaves).  If the first child is itself a map-of-maps,
+        # recurse into each child instead.
+        first_child = next(iter(node.values), None)
+        if first_child is None:
+            return
+        if hasattr(first_child, "values"):
+            grandchild = next(iter(first_child.values), None)
+            if grandchild is not None and hasattr(grandchild, "indexes"):
+                # Grandchild is itself a Map → first_child is NOT a
+                # tier-leaf map → recurse one level deeper.
+                for child in node.values:
+                    _collect_tier_level(child, out)
+                return
+        # Either first_child is a leaf scalar (depth-1 map: caller is
+        # already at tier level — but that shouldn't happen for ladder
+        # params; treat defensively) or first_child is a map whose
+        # children are scalars (the {price, quantity} leaf map).  In
+        # the latter case, THIS node's indexes are the tier labels.
+        for idx in node.indexes:
+            out.append(str(idx))
+
     tier_keys: list[str] = []
     for pname in candidates:
         rows = backend.find_parameter_values(
@@ -423,12 +461,7 @@ def _discover_tier_vocabulary(
             pv = param.get("parsed_value")
             if pv is None or not hasattr(pv, "values"):
                 continue
-            # Walk one level in: each top-level value is the per-period
-            # tier-map; gather its indexes.
-            for v in pv.values:
-                if hasattr(v, "indexes"):
-                    for idx in v.indexes:
-                        tier_keys.append(str(idx))
+            _collect_tier_level(pv, tier_keys)
     unique = _dedup_keep_order(tier_keys)
     try:
         return sorted(unique, key=int)
