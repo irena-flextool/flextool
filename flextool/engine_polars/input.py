@@ -354,6 +354,24 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     if rename_entity_to is not None:
         rename[entity_col] = rename_entity_to
     out = sliced.pipe(rename_to_axis, rename)
+    # ``pdtProcess.csv`` / ``pdtNode.csv`` / ``pdtCommodity.csv`` / ``pdtGroup.csv``
+    # / ``pdProcess.csv`` are emitted by the writer-port with every column
+    # (including ``value``) as ``Utf8`` — values round-trip through
+    # ``repr(v)`` so heterogeneous param leaf types (int methods + float
+    # data) survive byte-identically (see
+    # :func:`flextool.engine_polars._writer_pdt_params.derive_pdtProcess`).
+    # When a numeric param (e.g. ``availability``) is sliced out for use
+    # as a polars-numeric Param ``value`` column, the Utf8 must be cast
+    # back to ``Float64`` at the producer — otherwise downstream
+    # ``Param × Param`` multiplications (e.g. ``flow_upper_rhs *
+    # p_process_availability`` at ``model.py:1348``) raise
+    # ``InvalidOperationError: arithmetic on string and numeric``.
+    # ``strict=False`` mirrors the casts in ``_read_long`` / pdtNode
+    # path (input.py:958) — non-parseable values become null and the
+    # downstream consumer's ``fill_null(0.0)`` handles them.
+    if "value" in out.columns and out.schema["value"] == pl.Utf8:
+        out = out.with_columns(
+            value=pl.col("value").cast(pl.Float64, strict=False))
     cols = [rename.get(entity_col, entity_col), "d"] + (["t"] if has_time else []) + ["value"]
     return out.select(cols)
 
