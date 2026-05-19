@@ -166,7 +166,12 @@ def _penalty_param_from_source(source: "InputSource",
     if df is None or df.height == 0:
         return None
     nb_lf = nodeBalance_df.lazy().select(pl.col("n")).unique()
-    dt_lf = dt.lazy().select("d", "t").unique()
+    # Defensive re-cast: re-cast d/t to canonical Enum so joins below
+    # against ``base`` (which alias_to_axis-casts already) match dtype
+    # even when ``dt`` arrives with Utf8 d/t.
+    dt_lf = (dt.lazy()
+                .select(alias_to_axis("d", "d"), alias_to_axis("t", "t"))
+                .unique())
     cols = df.columns
     period_col = next((c for c in ("period", "d", "x") if c in cols), None)
     time_col = next((c for c in ("t", "time", "step") if c in cols), None)
