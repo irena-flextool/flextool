@@ -47,6 +47,25 @@ from flextool.engine_polars._derived_params import (
     _periodAll_from_source,
     _read_period_with_history,
 )
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine_polars._input_source import seed_provider_from_dir
+
+
+def _seed_workdir_provider(work: Path) -> FlexDataProvider:
+    """Build an in-memory ``FlexDataProvider`` seeded from a workdir.
+
+    The lazy NPV helpers (``_read_active_solve`` / ``_period_in_use_set`` /
+    ``_read_period_with_history``) became Provider-required post Step 2.5
+    (the disk-fallback arm was removed).  Tests that call them directly
+    must thread a Provider; this helper builds one from
+    ``<work>/input/`` and ``<work>/solve_data/``.
+    """
+    provider = FlexDataProvider()
+    if (work / "input").exists():
+        seed_provider_from_dir(provider, work / "input", "input")
+    if (work / "solve_data").exists():
+        seed_provider_from_dir(provider, work / "solve_data", "solve_data")
+    return provider
 
 
 HERE = Path(__file__).resolve().parent
@@ -195,11 +214,15 @@ def test_npv_lazy_vs_eager_parity(work_name: str, scenario: str) -> None:
     data_eager = load_flextool(work, db_reader=reader)
 
     # Re-read via the lazy entry points and compare per-field.
-    active_solve = _read_active_solve(work)
-    period_in_use = _period_in_use_set(reader, active_solve, work)
-    period_universe = _periodAll_from_source(reader, active_solve, work)
+    provider = _seed_workdir_provider(work)
+    active_solve = _read_active_solve(work, provider=provider)
+    period_in_use = _period_in_use_set(reader, active_solve, work,
+                                          provider=provider)
+    period_universe = _periodAll_from_source(reader, active_solve,
+                                                workdir=work,
+                                                provider=provider)
     period_invest = _solve_periods(reader, active_solve, "invest_periods") or []
-    period_with_history = (_read_period_with_history(work)
+    period_with_history = (_read_period_with_history(work, provider=provider)
                               or list(period_in_use))
     # Compute lazy variants.
     lazy_infl = npv.p_inflation_op_from_source(
@@ -327,10 +350,12 @@ def test_npv_lazy_p_inflation_op_2pct():
     if not SQLITE_INFLATION.exists():
         pytest.skip("work_inflation_check fixture missing")
     reader = SpineDbReader(SQLITE_INFLATION, SCENARIO_INFLATION)
-    active_solve = _read_active_solve(WORK_INFLATION)
-    period_in_use = _period_in_use_set(reader, active_solve, WORK_INFLATION)
+    provider = _seed_workdir_provider(WORK_INFLATION)
+    active_solve = _read_active_solve(WORK_INFLATION, provider=provider)
+    period_in_use = _period_in_use_set(reader, active_solve, WORK_INFLATION,
+                                          provider=provider)
     period_universe = _periodAll_from_source(
-        reader, active_solve, WORK_INFLATION)
+        reader, active_solve, workdir=WORK_INFLATION, provider=provider)
     p_infl = npv.p_inflation_op_from_source(
         reader, active_solve, period_in_use, period_universe)
     assert p_infl is not None
@@ -351,10 +376,12 @@ def test_npv_lazy_ed_entity_annual_discounted_2pct():
         pytest.skip("work_inflation_check fixture missing")
     reader = SpineDbReader(SQLITE_INFLATION, SCENARIO_INFLATION)
     data = load_flextool(WORK_INFLATION, db_reader=reader)
-    active_solve = _read_active_solve(WORK_INFLATION)
-    period_in_use = _period_in_use_set(reader, active_solve, WORK_INFLATION)
+    provider = _seed_workdir_provider(WORK_INFLATION)
+    active_solve = _read_active_solve(WORK_INFLATION, provider=provider)
+    period_in_use = _period_in_use_set(reader, active_solve, WORK_INFLATION,
+                                          provider=provider)
     period_universe = _periodAll_from_source(
-        reader, active_solve, WORK_INFLATION)
+        reader, active_solve, workdir=WORK_INFLATION, provider=provider)
     period_invest = _solve_periods(reader, active_solve, "invest_periods") or []
     ed = npv.ed_entity_annual_discounted_from_source(
         reader, active_solve,
