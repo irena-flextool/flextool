@@ -1133,8 +1133,8 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                 .join(eb_local, on="n", how="left"))
             # If b_f or bk is null, treat as 'default' (compatibility default).
             ftn_with_blocks = ftn_with_blocks.with_columns(
-                b_f=pl.col("b_f").fill_null("default"),
-                bk=pl.col("bk").fill_null("default"),
+                b_f=pl.col("b_f").fill_null(lit_axis("default", "block")),
+                bk=pl.col("bk").fill_null(lit_axis("default", "block")),
             )
             # Inner-join with block_compat to keep compatible rows.
             ftn_filtered = (ftn_with_blocks
@@ -1148,8 +1148,8 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                 .join(psb_source, on="p", how="left")
                 .join(eb_local, on="n", how="left"))
             ffn_with_blocks = ffn_with_blocks.with_columns(
-                b_f=pl.col("b_f").fill_null("default"),
-                bk=pl.col("bk").fill_null("default"),
+                b_f=pl.col("b_f").fill_null(lit_axis("default", "block")),
+                bk=pl.col("bk").fill_null(lit_axis("default", "block")),
             )
             ffn_filtered = (ffn_with_blocks
                 .join(block_compat, on=["bk", "b_f"], how="inner")
@@ -2202,8 +2202,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                     .join(psb_src_l, on="p", how="left")
                     .join(eb_l, on="n", how="left"))
                 with_blocks = with_blocks.with_columns(
-                    b_f=pl.col("b_f").fill_null("default"),
-                    bk=pl.col("bk").fill_null("default"),
+                    b_f=pl.col("b_f").fill_null(lit_axis("default", "block")),
+                    bk=pl.col("bk").fill_null(lit_axis("default", "block")),
                 )
                 f = (with_blocks
                     .join(block_compat_l, on=["bk", "b_f"], how="inner")
