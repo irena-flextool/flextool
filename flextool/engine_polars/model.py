@@ -521,9 +521,21 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         v_reserve = reserve_vars["v_reserve"]
         pruna = d.process_reserve_upDown_node_active   # (p, r, ud, n)
         if pruna is not None and pruna.height > 0:
+            # Phase 4.8i: ``rename_to_axis({"n": "sink"})`` is a no-op cast
+            # inside ``build_flextool`` (ContextVar reset by input.py:4052),
+            # so the renamed ``sink`` column keeps the n-Enum dtype.  The
+            # downstream ``maxToSink`` / ``profile_flow_*`` constraints
+            # are indexed on ``pss_dt``-family frames whose ``sink`` /
+            # ``source`` columns carry the entity-union e-Enum (the
+            # canonical dtype for mixed-vocab axes).  Up-cast at the
+            # rename site so the cross-Enum join composes natively.
+            _sink_dt = d.process_source_sink.schema["sink"]
+            _source_dt = d.process_source_sink.schema["source"]
             # (p, r, ud='up', n=sink) selector — rename n→sink
             pruna_up_sink = (pruna.filter(pl.col("ud") == "up")
                                   .pipe(rename_to_axis, {"n": "sink"})
+                                  .with_columns(
+                                      pl.col("sink").cast(_sink_dt, strict=False))
                                   .select("p", "r", "ud", "sink"))
             if pruna_up_sink.height > 0:
                 # Where joins v_reserve dims (p,r,ud,n,d,t) with index
@@ -532,7 +544,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 v_res_at_sink = Var(
                     name=v_reserve.name + "__at_sink",
                     dims=("p", "r", "ud", "sink", "d", "t"),
-                    frame=v_reserve.frame.pipe(rename_to_axis, {"n": "sink"}),
+                    frame=v_reserve.frame
+                            .pipe(rename_to_axis, {"n": "sink"})
+                            .with_columns(
+                                pl.col("sink").cast(_sink_dt, strict=False)),
                     lower=v_reserve.lower, upper=v_reserve.upper,
                 )
                 reserve_up_to_sink_pdt = Sum(
@@ -543,12 +558,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             # (p, r, ud='down', n=sink) — only used by profile_flow_lower_limit
             pruna_down_sink = (pruna.filter(pl.col("ud") == "down")
                                      .pipe(rename_to_axis, {"n": "sink"})
+                                     .with_columns(
+                                         pl.col("sink").cast(_sink_dt, strict=False))
                                      .select("p", "r", "ud", "sink"))
             if pruna_down_sink.height > 0:
                 v_res_at_sink_dn = Var(
                     name=v_reserve.name + "__at_sink_dn",
                     dims=("p", "r", "ud", "sink", "d", "t"),
-                    frame=v_reserve.frame.pipe(rename_to_axis, {"n": "sink"}),
+                    frame=v_reserve.frame
+                            .pipe(rename_to_axis, {"n": "sink"})
+                            .with_columns(
+                                pl.col("sink").cast(_sink_dt, strict=False)),
                     lower=v_reserve.lower, upper=v_reserve.upper,
                 )
                 reserve_down_to_sink_pdt = Sum(
@@ -558,12 +578,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
 
             pruna_down_source = (pruna.filter(pl.col("ud") == "down")
                                        .pipe(rename_to_axis, {"n": "source"})
+                                       .with_columns(
+                                           pl.col("source").cast(_source_dt, strict=False))
                                        .select("p", "r", "ud", "source"))
             if pruna_down_source.height > 0:
                 v_res_at_source = Var(
                     name=v_reserve.name + "__at_source",
                     dims=("p", "r", "ud", "source", "d", "t"),
-                    frame=v_reserve.frame.pipe(rename_to_axis, {"n": "source"}),
+                    frame=v_reserve.frame
+                            .pipe(rename_to_axis, {"n": "source"})
+                            .with_columns(
+                                pl.col("source").cast(_source_dt, strict=False)),
                     lower=v_reserve.lower, upper=v_reserve.upper,
                 )
                 reserve_down_from_source_pdt = Sum(
@@ -777,9 +802,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                                  .select(pl.col("n").cast(_e_dt, strict=False)
                                                     .alias("e"))
                                  .unique())
+                    # Phase 4.8i: down-cast renamed ``n`` to v_invest_n's
+                    # n-Enum so the downstream ``Where`` join matches.
+                    _n_dt_v = v_invest_n.frame.schema["n"]
                     edd_inv_n_fwdfix = (d.edd_invest_set
                         .join(_n_in_e, on="e", how="semi")
                         .pipe(rename_to_axis, {"e": "n"})
+                        .with_columns(pl.col("n").cast(_n_dt_v, strict=False))
                         .join(fwd_fix_first_dt.select("n", "d", "t"),
                               on=["n", "d"], how="inner"))
                     if edd_inv_n_fwdfix.height > 0:
@@ -802,9 +831,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                                  .select(pl.col("n").cast(_p_dt, strict=False)
                                                     .alias("p"))
                                  .unique())
+                    # Phase 4.8i: down-cast renamed ``n`` to v_divest_n's
+                    # n-Enum so the downstream ``Where`` join matches.
+                    _n_dt_v = v_divest_n.frame.schema["n"]
                     edd_div_n_fwdfix = (d.edd_divest_active
                         .join(_n_in_p, on="p", how="semi")
                         .pipe(rename_to_axis, {"p": "n"})
+                        .with_columns(pl.col("n").cast(_n_dt_v, strict=False))
                         .join(fwd_fix_first_dt.select("n", "d", "t"),
                               on=["n", "d"], how="inner"))
                     if edd_div_n_fwdfix.height > 0:
@@ -1064,9 +1097,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             if (d.arc_sink_block_dt is not None
                     and d.arc_sink_block_dt.height > 0
                     and d.p_arc_sink_weight is not None):
+                # Phase 4.8i: ``rename_to_axis`` is a no-op inside
+                # ``build_flextool`` (ContextVar reset by input.py:4052);
+                # down-cast renamed ``n`` to nodeStateBlock's n-Enum so
+                # the downstream join against the ``nbb_over`` row index
+                # composes on matching key dtype.
+                _n_dt_v = d.nodeStateBlock.schema["n"]
                 sink_idx = (d.arc_sink_block_dt
                     .drop("weight")
-                    .pipe(rename_to_axis, {"sink": "n"}))
+                    .pipe(rename_to_axis, {"sink": "n"})
+                    .with_columns(pl.col("n").cast(_n_dt_v, strict=False)))
                 nbb_terms["sink_flow_block"] = -Sum(
                     Where(v_flow * d.p_unitsize * d.p_arc_sink_weight,
                           sink_idx),
@@ -1089,12 +1129,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     and d.flow_from_nodeBalance_eff is not None
                     and d.flow_from_nodeBalance_eff.height > 0):
                 # Restrict to eff arcs.
+                _n_dt_v = d.nodeStateBlock.schema["n"]
                 src_eff_idx = (d.arc_source_block_dt
                     .drop("weight")
                     .join(d.flow_from_nodeBalance_eff
                             .select("p", "source", "sink"),
                           on=["p", "source", "sink"], how="inner")
-                    .pipe(rename_to_axis, {"source": "n"}))
+                    .pipe(rename_to_axis, {"source": "n"})
+                    .with_columns(pl.col("n").cast(_n_dt_v, strict=False)))
                 if src_eff_idx.height > 0:
                     nbb_terms["source_eff_block"] = Sum(
                         Where(v_flow * d.p_unitsize * d.p_slope
@@ -1119,12 +1161,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     and d.p_arc_source_weight is not None
                     and d.flow_from_nodeBalance_noEff is not None
                     and d.flow_from_nodeBalance_noEff.height > 0):
+                _n_dt_v = d.nodeStateBlock.schema["n"]
                 src_noeff_idx = (d.arc_source_block_dt
                     .drop("weight")
                     .join(d.flow_from_nodeBalance_noEff
                             .select("p", "source", "sink"),
                           on=["p", "source", "sink"], how="inner")
-                    .pipe(rename_to_axis, {"source": "n"}))
+                    .pipe(rename_to_axis, {"source": "n"})
+                    .with_columns(pl.col("n").cast(_n_dt_v, strict=False)))
                 if src_noeff_idx.height > 0:
                     nbb_terms["source_noEff_block"] = Sum(
                         Where(v_flow * d.p_unitsize
@@ -1383,9 +1427,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                         .select(pl.col("p").cast(e_dt, strict=False)
                                   .alias("e"))
                         .unique())
+            # ``rename_to_axis`` is a no-op cast inside ``build_flextool``
+            # (the live axis-enum ContextVar was cleared by input.py:4052),
+            # so we must down-cast ``p`` back to the variable's p-Enum
+            # dtype before joining against ``v_inv_at`` (which already
+            # carries the p-Enum on its ``p`` column).
+            _p_dtype = v_inv_at.frame.schema["p"]
             edd_inv_p = (d.edd_invest_set
                             .join(p_as_e, on="e", how="semi")
-                            .pipe(rename_to_axis, {"e": "p"}))
+                            .pipe(rename_to_axis, {"e": "p"})
+                            .with_columns(
+                                pl.col("p").cast(_p_dtype, strict=False)))
             invest_in_dispatch = Sum(
                 Where(v_inv_at, edd_inv_p),
                 over=("d_invest",))
@@ -1530,9 +1582,15 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _p_in_e = (d.process_source_sink
                      .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
                      .unique())
+        # Phase 4.8i: also down-cast the renamed ``p`` to the p-Enum so the
+        # rhs Param key dtype matches ``pd_invest_set``/``pd_divest_set``
+        # (the constraint ``over`` row index) at LP emission time.
+        _p_dt_pd = (d.pd_invest_set if d.pd_invest_set is not None
+                    else d.pd_divest_set).schema["p"]
         max_units_p = Param(("p", "d"),
             _maxu.join(_p_in_e, on="e", how="semi")
-                  .pipe(rename_to_axis, {"e": "p"}))
+                  .pipe(rename_to_axis, {"e": "p"})
+                  .with_columns(pl.col("p").cast(_p_dt_pd, strict=False)))
     if has_invest_p:
         m.add_cstr(
             "maxInvest_var_bound",
@@ -1558,9 +1616,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _n_in_e = (d.nodeState
                      .select(pl.col("n").cast(_e_dt_n, strict=False).alias("e"))
                      .unique())
+        # Phase 4.8i: down-cast renamed ``n`` to the n-Enum carried by
+        # ``nd_invest_set`` / ``nd_divest_set`` (constraint over).
+        _n_dt_nd = (d.nd_invest_set if d.nd_invest_set is not None
+                    else d.nd_divest_set).schema["n"]
         max_units_n = Param(("n", "d"),
             _maxu_n.join(_n_in_e, on="e", how="semi")
-                    .pipe(rename_to_axis, {"e": "n"}))
+                    .pipe(rename_to_axis, {"e": "n"})
+                    .with_columns(pl.col("n").cast(_n_dt_nd, strict=False)))
     if has_invest_n:
         m.add_cstr(
             "maxInvest_var_bound_n",
@@ -1717,13 +1780,19 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _p_in_e = (d.process_source_sink
                      .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
                      .unique())
+        # Phase 4.8i: down-cast renamed ``p`` to v_invest_p's p-Enum so the
+        # ``Where`` against v_invest_p (and rhs Param vs ``over`` row index)
+        # composes natively.
+        _p_dt_v = v_invest_p.frame.schema["p"]
         e_inv_p = (d.e_invest_total
                      .join(_p_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "p"}))
+                     .pipe(rename_to_axis, {"e": "p"})
+                     .with_columns(pl.col("p").cast(_p_dt_v, strict=False)))
         if e_inv_p.height > 0:
-            cap_frame = _adjust_cap_frame(
+            cap_frame = (_adjust_cap_frame(
                 d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
                 "p", max_prior_cap)
+                .with_columns(pl.col("p").cast(_p_dt_v, strict=False)))
             e_inv_max_p = Param(("p",), cap_frame)
             m.add_cstr(
                 "maxInvest_entity_total",
@@ -1742,13 +1811,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _p_in_e = (d.process_source_sink
                      .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
                      .unique())
+        # Phase 4.8i: down-cast renamed ``p`` to v_divest_p's p-Enum.
+        _p_dt_v = v_divest_p.frame.schema["p"]
         e_div_p = (d.e_divest_total
                      .join(_p_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "p"}))
+                     .pipe(rename_to_axis, {"e": "p"})
+                     .with_columns(pl.col("p").cast(_p_dt_v, strict=False)))
         if e_div_p.height > 0:
-            cap_frame = _adjust_cap_frame(
+            cap_frame = (_adjust_cap_frame(
                 d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
                 "p", prior_divested)
+                .with_columns(pl.col("p").cast(_p_dt_v, strict=False)))
             e_div_max_p = Param(("p",), cap_frame)
             m.add_cstr(
                 "maxDivest_entity_total",
@@ -1768,13 +1841,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _n_in_e = (d.nodeState
                      .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
                      .unique())
+        # Phase 4.8i: down-cast renamed ``n`` to v_invest_n's n-Enum.
+        _n_dt_v = v_invest_n.frame.schema["n"]
         e_inv_n = (d.e_invest_total
                      .join(_n_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "n"}))
+                     .pipe(rename_to_axis, {"e": "n"})
+                     .with_columns(pl.col("n").cast(_n_dt_v, strict=False)))
         if e_inv_n.height > 0:
-            cap_frame = _adjust_cap_frame(
+            cap_frame = (_adjust_cap_frame(
                 d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "n"}),
                 "n", max_prior_cap)
+                .with_columns(pl.col("n").cast(_n_dt_v, strict=False)))
             e_inv_max_n = Param(("n",), cap_frame)
             us_n = Param(("n",), d.p_state_unitsize.frame)
             m.add_cstr(
@@ -1793,13 +1870,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _n_in_e = (d.nodeState
                      .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
                      .unique())
+        # Phase 4.8i: down-cast renamed ``n`` to v_divest_n's n-Enum.
+        _n_dt_v = v_divest_n.frame.schema["n"]
         e_div_n = (d.e_divest_total
                      .join(_n_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "n"}))
+                     .pipe(rename_to_axis, {"e": "n"})
+                     .with_columns(pl.col("n").cast(_n_dt_v, strict=False)))
         if e_div_n.height > 0:
-            cap_frame = _adjust_cap_frame(
+            cap_frame = (_adjust_cap_frame(
                 d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "n"}),
                 "n", prior_divested)
+                .with_columns(pl.col("n").cast(_n_dt_v, strict=False)))
             e_div_max_n = Param(("n",), cap_frame)
             us_n = Param(("n",), d.p_state_unitsize.frame)
             m.add_cstr(
@@ -2109,9 +2190,12 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             _n_in_p = (d.nodeState
                          .select(pl.col("n").cast(_p_dt, strict=False).alias("p"))
                          .unique())
+            # Phase 4.8i: down-cast ``n`` to v_div_n_at's n-Enum.
+            _n_dt_v = v_div_n_at.frame.schema["n"]
             edd_div_n = (d.edd_divest_active
                            .join(_n_in_p, on="p", how="semi")
-                           .pipe(rename_to_axis, {"p": "n"}))
+                           .pipe(rename_to_axis, {"p": "n"})
+                           .with_columns(pl.col("n").cast(_n_dt_v, strict=False)))
             if edd_div_n.height > 0:
                 state_lhs["divest"] = Sum(
                     Where(v_div_n_at, edd_div_n), over=("d_divest",))
@@ -2127,9 +2211,12 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             _n_in_e = (d.nodeState
                          .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
                          .unique())
+            # Phase 4.8i: down-cast ``n`` to v_inv_n_at's n-Enum.
+            _n_dt_v = v_inv_n_at.frame.schema["n"]
             edd_inv_n = (d.edd_invest_set
                            .join(_n_in_e, on="e", how="semi")
-                           .pipe(rename_to_axis, {"e": "n"}))
+                           .pipe(rename_to_axis, {"e": "n"})
+                           .with_columns(pl.col("n").cast(_n_dt_v, strict=False)))
             if edd_inv_n.height > 0:
                 state_lhs["invest_neg"] = -Sum(
                     Where(v_inv_n_at, edd_inv_n), over=("d_invest",))
@@ -2180,9 +2267,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                                  .select(pl.col("n").cast(_e_dt, strict=False)
                                                     .alias("e"))
                                  .unique())
+                    # Phase 4.8i: down-cast ``n`` to v_invest_n's n-Enum.
+                    _n_dt_v = v_invest_n.frame.schema["n"]
                     edd_inv_n_p = (d.edd_invest_set
                                      .join(_n_in_e, on="e", how="semi")
-                                     .pipe(rename_to_axis, {"e": "n"}))
+                                     .pipe(rename_to_axis, {"e": "n"})
+                                     .with_columns(
+                                         pl.col("n").cast(_n_dt_v, strict=False)))
                     if edd_inv_n_p.height > 0:
                         v_inv_n_at_p = Var(
                             name=v_invest_n.name + "__at_invest_node_profile",
@@ -2206,9 +2297,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                                  .select(pl.col("n").cast(_p_dt, strict=False)
                                                     .alias("p"))
                                  .unique())
+                    # Phase 4.8i: down-cast ``n`` to v_divest_n's n-Enum.
+                    _n_dt_v = v_divest_n.frame.schema["n"]
                     edd_div_n_p = (d.edd_divest_active
                                      .join(_n_in_p, on="p", how="semi")
-                                     .pipe(rename_to_axis, {"p": "n"}))
+                                     .pipe(rename_to_axis, {"p": "n"})
+                                     .with_columns(
+                                         pl.col("n").cast(_n_dt_v, strict=False)))
                     if edd_div_n_p.height > 0:
                         v_div_n_at_p = Var(
                             name=v_divest_n.name + "__at_divest_node_profile",
@@ -2303,9 +2398,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                              .select(pl.col("n").cast(_e_dt, strict=False)
                                                 .alias("e"))
                              .unique())
+                # Phase 4.8i: down-cast ``n`` to v_inv_n_at_s's n-Enum.
+                _n_dt_v = v_inv_n_at_s.frame.schema["n"]
                 edd_inv_n_s = (d.edd_invest_set
                                  .join(_n_in_e, on="e", how="semi")
-                                 .pipe(rename_to_axis, {"e": "n"}))
+                                 .pipe(rename_to_axis, {"e": "n"})
+                                 .with_columns(
+                                     pl.col("n").cast(_n_dt_v, strict=False)))
                 if edd_inv_n_s.height > 0:
                     start_lhs["invest_neg"] = -Sum(
                         Where(v_inv_n_at_s * d.p_state_start, edd_inv_n_s),
@@ -2323,9 +2422,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                              .select(pl.col("n").cast(_p_dt, strict=False)
                                                 .alias("p"))
                              .unique())
+                # Phase 4.8i: down-cast ``n`` to v_div_n_at_s's n-Enum.
+                _n_dt_v = v_div_n_at_s.frame.schema["n"]
                 edd_div_n_s = (d.edd_divest_active
                                  .join(_n_in_p, on="p", how="semi")
-                                 .pipe(rename_to_axis, {"p": "n"}))
+                                 .pipe(rename_to_axis, {"p": "n"})
+                                 .with_columns(
+                                     pl.col("n").cast(_n_dt_v, strict=False)))
                 if edd_div_n_s.height > 0:
                     start_lhs["divest"] = Sum(
                         Where(v_div_n_at_s * d.p_state_start, edd_div_n_s),
@@ -2389,9 +2492,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                                          .select(pl.col("n").cast(_e_dt, strict=False)
                                                             .alias("e"))
                                          .unique())
+                            # Phase 4.8i: down-cast ``n`` to v_inv_n_at_c's n-Enum.
+                            _n_dt_v = v_inv_n_at_c.frame.schema["n"]
                             edd_inv_n_c = (d.edd_invest_set
                                              .join(_n_in_e, on="e", how="semi")
-                                             .pipe(rename_to_axis, {"e": "n"}))
+                                             .pipe(rename_to_axis, {"e": "n"})
+                                             .with_columns(
+                                                 pl.col("n").cast(_n_dt_v, strict=False)))
                             if edd_inv_n_c.height > 0:
                                 cyclic_lhs["invest_neg"] = -Sum(
                                     Where(v_inv_n_at_c * d.p_state_start, edd_inv_n_c),
@@ -2409,9 +2516,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                                          .select(pl.col("n").cast(_p_dt, strict=False)
                                                             .alias("p"))
                                          .unique())
+                            # Phase 4.8i: down-cast ``n`` to v_div_n_at_c's n-Enum.
+                            _n_dt_v = v_div_n_at_c.frame.schema["n"]
                             edd_div_n_c = (d.edd_divest_active
                                              .join(_n_in_p, on="p", how="semi")
-                                             .pipe(rename_to_axis, {"p": "n"}))
+                                             .pipe(rename_to_axis, {"p": "n"})
+                                             .with_columns(
+                                                 pl.col("n").cast(_n_dt_v, strict=False)))
                             if edd_div_n_c.height > 0:
                                 cyclic_lhs["divest"] = Sum(
                                     Where(v_div_n_at_c * d.p_state_start, edd_div_n_c),
@@ -2496,9 +2607,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             _p_in_e = (d.process_source_sink
                          .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
                          .unique())
+            # Phase 4.8i: down-cast ``p`` to v_inv_p_prof's p-Enum so the
+            # downstream ``Where`` join matches on dtype.
+            _p_dt_prof = v_inv_p_prof.frame.schema["p"]
             edd_inv_p_prof = (d.edd_invest_set
                                 .join(_p_in_e, on="e", how="semi")
-                                .pipe(rename_to_axis, {"e": "p"}))
+                                .pipe(rename_to_axis, {"e": "p"})
+                                .with_columns(
+                                    pl.col("p").cast(_p_dt_prof, strict=False)))
             if edd_inv_p_prof.height > 0:
                 v_inv_for_profile = Sum(
                     Where(v_inv_p_prof, edd_inv_p_prof), over=("d_invest",))
@@ -2516,7 +2632,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             _p_pss = (d.process_source_sink
                         .select(pl.col("p").cast(_p_dt, strict=False))
                         .unique())
-            edd_div_p_prof = d.edd_divest_active.join(_p_pss, on="p", how="semi")
+            # Phase 4.8i: down-cast ``p`` to v_div_p_prof's p-Enum so the
+            # downstream ``Where`` join matches on dtype.
+            _p_dt_prof = v_div_p_prof.frame.schema["p"]
+            edd_div_p_prof = (d.edd_divest_active
+                                .join(_p_pss, on="p", how="semi")
+                                .with_columns(
+                                    pl.col("p").cast(_p_dt_prof, strict=False)))
             if edd_div_p_prof.height > 0:
                 v_div_for_profile = Sum(
                     Where(v_div_p_prof, edd_div_p_prof), over=("d_divest",))
@@ -2744,23 +2866,37 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # ``v_invest[e, d]`` only exists on realised periods — the weight
     # would be 1.0 anyway.  No multiplier needed.  Recourse-investment is
     # explicitly out of scope (see audit/a6_b_dim_alternative.md).
+    # Cross-Enum-different-vocab guards: ``ed_*`` Params carry the
+    # entity-union ``e`` Enum on the ``e`` axis.  ``rename_to_axis``
+    # would re-cast to the p/n vocab — but only if the live ContextVar
+    # is set, which it is NOT inside ``build_flextool`` (cleared by
+    # ``input.py:4052``).  Read the target dtype from the sibling
+    # ``p_unitsize`` / ``p_state_unitsize`` Param frame and cast at the
+    # rename site so the downstream ``Param * Param`` join on ``p`` /
+    # ``n`` has matching key dtypes.
     if has_invest_p:
+        _p_dtype = d.p_unitsize.frame.schema["p"]
         annu = Param(("p", "d"),
-            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
+            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "p"})
+            .with_columns(pl.col("p").cast(_p_dtype, strict=False))) \
             if d.ed_entity_annual_discounted is not None else None
         lf  = Param(("p", "d"),
-            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "p"})) \
+            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "p"})
+            .with_columns(pl.col("p").cast(_p_dtype, strict=False))) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu is not None:
             obj = obj + Sum(v_invest_p * d.p_unitsize * annu)
         if lf is not None:
             obj = obj + Sum(v_invest_p * d.p_unitsize * lf)
     if has_divest_p:
+        _p_dtype = d.p_unitsize.frame.schema["p"]
         lfd = Param(("p", "d"),
-            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "p"})) \
+            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "p"})
+            .with_columns(pl.col("p").cast(_p_dtype, strict=False))) \
             if d.ed_lifetime_fixed_cost_divest is not None else None
         annd = Param(("p", "d"),
-            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
+            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "p"})
+            .with_columns(pl.col("p").cast(_p_dtype, strict=False))) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd is not None:
             obj = obj - Sum(v_divest_p * d.p_unitsize * lfd)
@@ -2768,11 +2904,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             obj = obj - Sum(v_divest_p * d.p_unitsize * annd)
     if has_invest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
+        _n_dtype = d.p_state_unitsize.frame.schema["n"]
         annu_n = Param(("n", "d"),
-            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
+            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "n"})
+            .with_columns(pl.col("n").cast(_n_dtype, strict=False))) \
             if d.ed_entity_annual_discounted is not None else None
         lf_n = Param(("n", "d"),
-            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "n"})) \
+            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "n"})
+            .with_columns(pl.col("n").cast(_n_dtype, strict=False))) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu_n is not None:
             obj = obj + Sum(v_invest_n * us_n * annu_n)
@@ -2780,11 +2919,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             obj = obj + Sum(v_invest_n * us_n * lf_n)
     if has_divest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
+        _n_dtype = d.p_state_unitsize.frame.schema["n"]
         lfd_n = Param(("n", "d"),
-            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "n"})) \
+            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "n"})
+            .with_columns(pl.col("n").cast(_n_dtype, strict=False))) \
             if d.ed_lifetime_fixed_cost_divest is not None else None
         annd_n = Param(("n", "d"),
-            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
+            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "n"})
+            .with_columns(pl.col("n").cast(_n_dtype, strict=False))) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd_n is not None:
             obj = obj - Sum(v_divest_n * us_n * lfd_n)
