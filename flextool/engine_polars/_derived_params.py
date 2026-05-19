@@ -1102,9 +1102,13 @@ def p_process_existing_count_from_source(
         source, active_solve, workdir,
         methods=("reinvest_choice", "no_investment"))
     if expired:
-        expired_lf = pl.DataFrame(
-            [(e, d) for (e, d) in expired],
-            schema=["p", "d"], orient="row").lazy()
+        # Phase 4: build the (p, d) expired index with axis-aware Enum
+        # dtypes so the join against the cascade-typed ``out`` composes
+        # natively under activation.
+        expired_lf = axis_lazyframe({
+            "p": [e for (e, _d) in expired],
+            "d": [d for (_e, d) in expired],
+        })
         out = (out.lazy()
                   .join(expired_lf.with_columns(_expired=pl.lit(True)),
                           on=["p", "d"], how="left")
@@ -2081,9 +2085,10 @@ def p_flow_upper_existing_from_source(source: "InputSource",
         source, active_solve, workdir,
         methods=("reinvest_choice", "no_investment"))
     if expired:
-        expired_lf = pl.DataFrame(
-            [(e, d) for (e, d) in expired],
-            schema=["p", "d"], orient="row").lazy()
+        expired_lf = axis_lazyframe({
+            "p": [e for (e, _d) in expired],
+            "d": [d for (_e, d) in expired],
+        })
         out = (out.lazy()
                   .join(expired_lf.with_columns(_expired=pl.lit(True)),
                           on=["p", "d"], how="left")
@@ -3342,7 +3347,13 @@ def ed_invest_set_from_source(source: "InputSource",
             out = pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                         "d": schema_dtype(_enums, "d")})
         else:
-            out = pl.DataFrame(keep, schema=["e", "d"], orient="row")
+            # Phase 4: preserve Enum dtypes on the surviving (e, d) rows
+            # so downstream partitions / joins see the axis-typed columns
+            # rather than Utf8 from the Python-list rebuild.
+            out = axis_lazyframe({
+                "e": [e for (e, _d) in keep],
+                "d": [d for (_e, d) in keep],
+            }).collect()
     return out
 
 
@@ -5345,8 +5356,10 @@ def p_entity_all_existing_from_source(source: "InputSource",
     # which is allowed — only explicit unrecognised values would fall
     # through, and flextool's own writer drops them too).
     if expired:
-        expired_lf = pl.DataFrame(
-            list(expired), schema=["e", "d"], orient="row").lazy()
+        expired_lf = axis_lazyframe({
+            "e": [e for (e, _d) in expired],
+            "d": [d for (_e, d) in expired],
+        })
         out = (out.lazy()
                   .join(expired_lf.with_columns(_expired=pl.lit(True)),
                           on=["e", "d"], how="left")
