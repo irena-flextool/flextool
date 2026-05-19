@@ -1,3 +1,146 @@
+## Release 3.39.0 (19.5.2026) — `enum dtype` refactor + cascade perf
+
+Built on 3.38.0.  Completes the `enum dtype` refactor (Phase 0 → 4.9
+plus the `polar_high` companion) so that every cascade axis-aware
+column carries a polars `Enum` dtype end-to-end.  The refactor +
+follow-on perf work delivers a ~98 % reduction in per-loader cascade
+memory and a ~9× speed-up in `input_derivation.run` on the H2_trade
+test_24h fixture (the canonical large-fixture diagnostic).
+
+**Phase 4 enum dtype refactor (final pass — 4.7d → 4.9)**
+- 4.7d: `align_join_dtypes` adoption sweep + `_load_edd_history`
+  consumer audit
+- 4.7e: Pattern 5 `lit_axis` for `fill_null` on axis-aware columns
+  (`input.py` block-compat joins)
+- 4.7f: relax mixed-vocab `n` → `e` in `flow_to_n` / `flow_from_n`;
+  restore axis types post-Utf8 compare for `d`/`b` cross-Enum filter
+- 4.8a: structural Enum-typing in `_inflow_scaling`
+  `pbt_node_inflow` producer/fold (dict-LazyFrames now declare
+  explicit Enum schema)
+- 4.8b: `schema_dtype(...)` in empty-frame fallbacks across
+  `_solve_context.py` and writer modules — empty + populated frames
+  now agree on dtype under activation
+- 4.8c: `block` axis vocab `key_kind: "values_plus_default"`
+  substrate fix (scalar-per-entity `new_stepduration` was returning
+  empty vocab); cascade `block_coarse → "bk"` cascade fix; together
+  clear 84 lh2_three_region failures
+- 4.8d: defensive `d` / `t` Enum re-cast at `p_profile_value_lf`
+  entry — stochastic dt_lf paths cleared 25+ `derived_e` failures
+- 4.8e: defensive d/t re-cast across `_derived_arithmetic`,
+  `_derived_branch`, `_inflow_scaling`, `_derived_params`,
+  `_projection_params`, `_derived_block` — 22 sites
+- 4.8f: `cast_frame_axes` at cascade-helper entry — 17 sites
+- 4.8g: cross-Enum `is_in` semi-join in `model.py` + `_direct_params`
+  entry cast
+- 4.8h: `model.py` cross-Enum `is_in → semi-join` sweep across
+  18 sibling sites
+- 4.8i: cross-Enum-different-vocab join fixes for wind_battery /
+  lh2 / network_coal_wind_reserve (`model.py` per-Var down-casts
+  reading target dtype from the FlexData schema, since
+  `_LIVE_AXIS_ENUMS_CTX` was empty inside `build_flextool`)
+- 4.9 (substrate): `polar-high-opt` ships `_align_enum_join_keys` —
+  a generic subset-aware up-cast helper invoked at every internal
+  join site in `polar_high/engine.py`.  Cascade can now drop ~25
+  per-Var down-cast lines in `model.py`; the DSL stays unchanged.
+  Documented in `polar-high-opt/README.md` "Enum dtype handling"
+  section + 12 new tests in
+  `polar-high-opt/tests/test_enum_dtype_align.py`
+
+**Cascade performance (perf-fix follow-on)**
+- `SpineDBBackend.parameter_value` cache:
+  `find_parameter_values(class=, param=)` under spinedb-api's
+  scenario filter scales with the in-memory parameter_value table
+  (~1.85 s per call on H2_trade), not with filter selectivity.  One
+  bulk `find_parameter_values()` (~2.7 s for ~25 k rows) + Python
+  partition into `{(class, param): [rows]}` replaces ~100 individual
+  filtered calls in `input_derivation.run`.  **~60× speed-up** on
+  the parameter-fetch hot path.  Cache is lazy per-backend-instance,
+  invalidated on `close()`.
+- Columnar `_unroll_rows` in `SpineDbReader`: replaced the
+  row-of-dicts → `pl.DataFrame(out_rows)` pattern (~503 ms on the
+  hot `profile/profile` param) with `dict[str, list]` →
+  `pl.DataFrame(columns, schema_overrides=…)` (~58 ms).  Recursion
+  uses a positional `idx_path` mutated via append/pop, eliminating
+  per-recursion `dict(base)` copies.  Tolerant of mixed-type Map
+  indexes via `strict=False` + per-leaf last-wins consolidation in
+  `_emit_leaf`.  **~10 % per-parameter speed-up** end-to-end
+- Persist `_LIVE_AXIS_ENUMS_CTX` past `load_flextool`'s return so
+  cascade helpers calling `cast_dim(..., None, axis)` see the live
+  enum vocabulary inside `build_flextool` (substrate-level fix that
+  unblocked `_delay.py:324` and several latent cross-Enum joins)
+- Forward `provider=` through `apply_derived_f`'s three
+  `*_from_workdir` calls — restores the multi-solve handoff chain
+  (`p_entity_all_existing` accumulates correctly across sub-solves)
+
+**Measured wins on H2_trade test_24h (vs 2026-05-13 baseline)**
+- `cascade_start`: 276 MB → 276 MB (parity)
+- `input_derivation.run` wall-clock: **33 s → 25.9 s (~21 % faster)**
+- Per-loader cascade ΔRSS: **~950 MB → ~21 MB (~98 % reduction)**:
+  `_load_node` -99 %, `_load_process_topology` -96 %,
+  `_load_varcost` -99 %, `_load_profiles` -32 MB
+- Broadcast cascade (`write_workdir_inputs_end →
+  first_load_flextool_end`): +2.2 GB growth in baseline → **−0.8 GB
+  drop** here
+- 631-test gate: ~23 s → ~17 s (incidental)
+
+**Cascade robustness**
+- `seed_provider_from_dir` is now tolerant of malformed
+  `solve_data/*.csv` files — stray dev artefacts with bad headers
+  no longer block the whole loader; a warning is logged per skipped
+  file
+- Numeric-column → Enum cast guard at SpineDBBackend +
+  SpineDbReader emit boundaries: polars' numeric → Enum cast
+  reinterprets values as positional indices into the enum's
+  categories; the guard skips the cast for numeric source columns
+  (which are never dim columns under the contract)
+- `polar_high` (3.39.0-companion): defensive `if nm is not None:`
+  guard on `h.passRowName(i, nm)` mirrors the existing col-name
+  guard — null row names from `pl.format(...)` on null axis columns
+  no longer crash highspy
+
+**Test suite**
+- **Retired** `tests/engine_polars/test_db_direct_parity.py` (~95 %
+  of its 981 tests were CSV-vs-DB-direct migration scaffolding —
+  the migration is established).  Salvaged 45 survivor tests into
+  `tests/model/test_db_direct_solve_parity.py`: the LP-solve-vs-
+  parquet-objective parametric matrix, `InMemoryReader` /
+  `load_flextool` entry-point edge cases, `test_resolved_default_landed`
+  default matrix, and seven literal-value singletons.  37 pass; 4 of
+  the 6 remaining failures fixed mid-session (see "Bug fixes" below);
+  the 4 leftover failures are documented in `specs/model_bugs.md`
+  (two pre-existing LP-objective baseline issues, two stochastic
+  period-vocab cascades — none are enum-pattern fixes)
+
+**Bug fixes (parity-test survivors)**
+- `_delay.py:324` cross-Enum compare: substrate ContextVar
+  persistence (Fix 1 — see above)
+- `apply_derived_f` missing `provider=` forwarding to three
+  `*_from_workdir` handoff loaders (Fix 3 — pre-existing bug from
+  commit `5f9c50809a` 2026-05-05, surfaced now)
+- polar_high defensive `passRowName` guard (Fix 2 — masks but does
+  not fix the underlying stochastic period-vocab gap; tracked in
+  `specs/model_bugs.md::PARITY-3`)
+- Mixed-type Map indexes regression from columnar refactor
+  (commit `a98caa1c`) — `strict=False` on the two
+  `pl.DataFrame(columns, schema_overrides=…)` call sites + last-wins
+  consolidation in `_emit_leaf` for duplicate index-column names
+
+**Documentation**
+- `specs/memory_diagnostic_results.md` — appended "Post-perf-fix
+  re-measure (2026-05-19 — commit `e6797b17`)" section with the
+  numbers above
+- `specs/model_bugs.md` — added PARITY-1/2/3 (3 LP-objective parity
+  failures with legacy-trust discussion), RESERVE-1 (`prundt`
+  populator missing on `fullYear_roll`), ARITH-1
+  (`flow_upper_rhs * p_process_availability` Utf8 leaf on
+  `test_a_lot`), REGRESS-1 (FIXED), PERIODS-1 (`_solve_periods`
+  expects `"i"` column that `examples.sqlite::invest_5weeks` doesn't
+  produce), and TASK COVERAGE-1 (add automated e2e for three
+  `examples.sqlite` scenarios that surfaced four of the bugs above
+  — fixture data already in place, pure test-wiring)
+
+---
+
 ## Release 3.38.0 (18.5.2026) — Rivendell bug-fix suite
 
 Built on 3.37.0's in-memory cascade. Fixes a cluster of regressions that surfaced on the Rivendell customer database after the cascade rewrite, plus a final round of test ports.
