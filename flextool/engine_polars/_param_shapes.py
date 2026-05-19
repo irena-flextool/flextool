@@ -70,6 +70,7 @@ import polars as pl
 
 from polar_high import Param
 
+from flextool.engine_polars._axis_enums import rename_to_axis
 from flextool.engine_polars._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
@@ -787,7 +788,7 @@ def broadcast_to_period_time(
             f"broadcast_to_period_time: only 0-dim entity classes are "
             f"supported; got dims {resolved.entity_dim_columns}")
     lf = (df.lazy()
-            .rename({"name": entity_dim_alias})
+            .pipe(rename_to_axis, {"name": entity_dim_alias})
             .filter(pl.col("value").is_not_null()))
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
@@ -797,7 +798,7 @@ def broadcast_to_period_time(
     if shape == Shape.MAP_PERIOD_TIME:
         # Direct fill — already (d, t)-keyed.  Inner-join on dt to
         # restrict to the active solve's periods.
-        out = (lf.rename({"period": "d"})
+        out = (lf.pipe(rename_to_axis, {"period": "d"})
                   .select(entity_dim_alias, "d", "t", "value")
                   .join(dt_lf, on=["d", "t"], how="inner")
                   .collect())
@@ -805,13 +806,13 @@ def broadcast_to_period_time(
         # Same as MAP_PERIOD_TIME — column renames.  The frame already
         # has both ``period`` and ``t`` columns regardless of authoring
         # order (the SpineDbReader unrolls a 2d_map into a flat frame).
-        out = (lf.rename({"period": "d"})
+        out = (lf.pipe(rename_to_axis, {"period": "d"})
                   .select(entity_dim_alias, "d", "t", "value")
                   .join(dt_lf, on=["d", "t"], how="inner")
                   .collect())
     elif shape == Shape.MAP_PERIOD:
         # 1d_map(period) → broadcast across t per (entity, d).
-        out = (lf.rename({"period": "d"})
+        out = (lf.pipe(rename_to_axis, {"period": "d"})
                   .select(entity_dim_alias, "d", "value")
                   .join(dt_lf, on="d", how="inner")
                   .select(entity_dim_alias, "d", "t", "value")
@@ -864,7 +865,7 @@ def broadcast_to_period(
             f"broadcast_to_period: only 0-dim entity classes are "
             f"supported; got dims {resolved.entity_dim_columns}")
 
-    lf = df.lazy().rename({"name": entity_dim_alias})
+    lf = df.lazy().pipe(rename_to_axis, {"name": entity_dim_alias})
     if filter_null:
         lf = lf.filter(pl.col("value").is_not_null())
     if filter_zero:
@@ -880,7 +881,7 @@ def broadcast_to_period(
                   .select(entity_dim_alias, "d", "value")
                   .collect())
     elif shape == Shape.MAP_PERIOD:
-        out = (lf.rename({"period": "d"})
+        out = (lf.pipe(rename_to_axis, {"period": "d"})
                   .select(entity_dim_alias, "d", "value"))
         if period_filter is not None and period_filter.height > 0:
             out = out.join(

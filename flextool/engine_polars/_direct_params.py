@@ -30,6 +30,7 @@ import polars as pl
 
 from polar_high import Param
 
+from flextool.engine_polars._axis_enums import rename_to_axis
 from flextool.engine_polars._param_shapes import (
     broadcast_to_period,
     broadcast_to_period_time,
@@ -600,7 +601,7 @@ def _entity_period_scalar(source: "InputSource", entity_class: str,
             return None
         if "name" not in cols:
             return None
-        lf = df.lazy().rename({"name": entity_dim})
+        lf = df.lazy().pipe(rename_to_axis, {"name": entity_dim})
         if filter_null:
             lf = lf.filter(pl.col("value").is_not_null())
         if filter_zero:
@@ -613,7 +614,7 @@ def _entity_period_scalar(source: "InputSource", entity_class: str,
         if out.height == 0:
             return None
         return Param((entity_dim, "d"), out.lazy())
-    lf = df.lazy().rename({"name": entity_dim, "period": "d"})
+    lf = df.lazy().pipe(rename_to_axis, {"name": entity_dim, "period": "d"})
     if filter_null:
         lf = lf.filter(pl.col("value").is_not_null())
     if filter_zero:
@@ -670,7 +671,7 @@ def _entity_period_time_param(source: "InputSource", entity_class: str,
     has_t = "t" in cols
     if has_period and has_t:
         lf = (df.lazy()
-                .rename({"name": entity_dim, "period": "d"})
+                .pipe(rename_to_axis, {"name": entity_dim, "period": "d"})
                 .filter(pl.col("value").is_not_null()))
         if filter_zero:
             lf = lf.filter(pl.col("value") != 0.0)
@@ -687,14 +688,14 @@ def _entity_period_time_param(source: "InputSource", entity_class: str,
     pf_cols = set(period_filter.columns)
     if not {"d", "t"}.issubset(pf_cols):
         return None
-    lf = df.lazy().rename({"name": entity_dim}).filter(
+    lf = df.lazy().pipe(rename_to_axis, {"name": entity_dim}).filter(
         pl.col("value").is_not_null())
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
     dt_lf = period_filter.lazy().select("d", "t").unique()
     if has_period:
         # 1d_map(period) → broadcast across t per (entity, d).
-        lf2 = lf.rename({"period": "d"}).select(entity_dim, "d", "value")
+        lf2 = lf.pipe(rename_to_axis, {"period": "d"}).select(entity_dim, "d", "value")
         out = (lf2.join(dt_lf, on="d", how="inner")
                   .select(entity_dim, "d", "t", "value")
                   .collect())
@@ -732,7 +733,7 @@ def _g_scalar(source: "InputSource", parameter_name: str,
         return None
     if "value" not in df.columns:
         return None
-    lf = df.lazy().rename({"name": "g"}).filter(pl.col("value").is_not_null())
+    lf = df.lazy().pipe(rename_to_axis, {"name": "g"}).filter(pl.col("value").is_not_null())
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
     # Indexed (period) shapes don't belong here — guard.

@@ -342,9 +342,13 @@ def process_source_sink_canonical(source: "InputSource",
     # Per-unit dispatch keyed by classified method.  Build empty-but-typed
     # source/sink LazyFrames when the entity-class is missing, so the
     # noConversion branches still see "no source rows" / "no sink rows"
-    # rather than skipping entirely.
+    # rather than skipping entirely.  Phase 4: dim columns must carry
+    # their canonical Enum dtype so joins against Enum-keyed frames
+    # don't SchemaError on the empty branch.
+    _enums_empty = get_global_axis_enums()
     _empty_lf = lambda *cols: pl.DataFrame(
-        {c: [] for c in cols}, schema={c: pl.Utf8 for c in cols}).lazy()
+        {c: [] for c in cols},
+        schema={c: schema_dtype(_enums_empty, c) for c in cols}).lazy()
     if classified is not None and classified.height > 0:
         cls_units = (classified.lazy()
                        .filter(pl.col("klass") == "unit")
