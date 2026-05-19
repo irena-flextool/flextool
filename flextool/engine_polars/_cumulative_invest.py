@@ -534,11 +534,28 @@ def _emit_cumulative_capacity(m, d, vars: dict, sense: str) -> None:
 
     # Process side
     if v_inv_p is not None and d.p_unitsize is not None:
-        idx_p = idx.rename({"e": "p"}).filter(
+        # ``idx``'s ``e`` carries the entity-union Enum (entities cover
+        # processes + nodes); ``v_inv_p.frame["p"]`` carries the
+        # process-only Enum.  Cast the renamed ``p`` column to the
+        # narrower process Enum so the ``is_in`` membership test
+        # composes against a matching dtype.  Per the entity-union axis
+        # convention: cast at the boundary, never let polars sort it
+        # out via List(Enum).
+        idx_p = idx.rename({"e": "p"})
+        _p_dtype = v_inv_p.frame.schema["p"]
+        if idx_p.schema["p"] != _p_dtype:
+            idx_p = idx_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
+        idx_p = idx_p.filter(
             pl.col("p").is_in(v_inv_p.frame["p"].unique()))
         if idx_p.height > 0:
-            edd_p = (edd_set.rename({"e": "p"})
-                     .join(idx_p, on=["p", "d"], how="inner"))
+            edd_p = edd_set.rename({"e": "p"})
+            # Reconcile the renamed entity-union ``p`` (from ``edd_set``)
+            # against ``idx_p``'s narrower process-only ``p`` Enum.
+            from ._axis_enums import align_join_dtypes
+            edd_p, idx_p_aligned = align_join_dtypes(
+                edd_p, idx_p, ("p",),
+            )
+            edd_p = edd_p.join(idx_p_aligned, on=["p", "d"], how="inner")
             v_inv_at = Var(
                 name=v_inv_p.name + "__cumcap_at",
                 dims=("p", "d_invest"),
@@ -570,12 +587,23 @@ def _emit_cumulative_capacity(m, d, vars: dict, sense: str) -> None:
 
     # Node side
     if v_inv_n is not None and d.p_state_unitsize is not None:
-        idx_n = idx.rename({"e": "n"}).filter(
+        # Mirror of the process-side cast.  ``idx``'s ``e`` is the
+        # entity-union Enum; ``v_inv_n.frame["n"]`` is the node-only
+        # Enum.  Cast at the boundary before ``is_in``.
+        idx_n = idx.rename({"e": "n"})
+        _n_dtype = v_inv_n.frame.schema["n"]
+        if idx_n.schema["n"] != _n_dtype:
+            idx_n = idx_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
+        idx_n = idx_n.filter(
             pl.col("n").is_in(v_inv_n.frame["n"].unique()))
         if idx_n.height > 0:
             us_n = Param(("n",), d.p_state_unitsize.frame)
-            edd_n = (edd_set.rename({"e": "n"})
-                     .join(idx_n, on=["n", "d"], how="inner"))
+            edd_n = edd_set.rename({"e": "n"})
+            from ._axis_enums import align_join_dtypes
+            edd_n, idx_n_aligned = align_join_dtypes(
+                edd_n, idx_n, ("n",),
+            )
+            edd_n = edd_n.join(idx_n_aligned, on=["n", "d"], how="inner")
             v_inv_at = Var(
                 name=v_inv_n.name + "__cumcap_at",
                 dims=("n", "d_invest"),

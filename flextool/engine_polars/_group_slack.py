@@ -926,10 +926,20 @@ def _add_inertia(m, d, vars: dict) -> None:
         # Then filter by (g, side_value) ∈ group_node ∩ groupInertia.
         # Bring g in via join on side_value=node.
         pss_side = pss.join(side_idx, on=["p", side], how="inner")
-        # add g: rename side → n for the join
-        with_g = (pss_side.rename({side: "n"})
-                          .join(gn_in_gi, on="n", how="inner")
-                          .rename({"n": side}))   # (p, source, sink, g)
+        # add g: rename side → n for the join.  ``pss``'s ``side`` column
+        # carries the entity-union Enum (process names + node names);
+        # ``gn_in_gi``'s ``n`` column carries the node-only Enum.  The
+        # raw rename collides those two vocabularies, so reconcile via
+        # ``align_join_dtypes`` (preserves the wider Enum when both are
+        # Enums, falls back to Utf8 otherwise — per the entity-union
+        # axis convention).
+        pss_side_renamed = pss_side.rename({side: "n"})
+        pss_side_renamed, gn_in_gi_aligned = align_join_dtypes(
+            pss_side_renamed, gn_in_gi, ("n",),
+        )
+        with_g = (pss_side_renamed
+                  .join(gn_in_gi_aligned, on="n", how="inner")
+                  .rename({"n": side}))   # (p, source, sink, g)
         if with_g.height == 0:
             return
         # Inertia-constant Param has dims (p, side). Multiply by unitsize.

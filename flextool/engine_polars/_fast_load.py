@@ -393,6 +393,138 @@ class _SourceShim:
 
 
 # ---------------------------------------------------------------------------
+# Provider population — full slow-path preprocessing for one solve.
+# ---------------------------------------------------------------------------
+
+
+def _run_preprocessing_for_single_solve(
+    *,
+    reader: "SpineDbReader",
+    work_folder: Path,
+    active_solve: str,
+    logger: logging.Logger,
+) -> "object":
+    """Drive the slow path's preprocessing chain end-to-end for the
+    single active solve and return the populated FlexDataProvider.
+
+    Equivalent to a normal ``run_chain_from_db`` invocation truncated
+    before the LP build: builds a :class:`FlexToolRunner` (which
+    constructs the full :class:`RunnerState` with SolveConfig +
+    TimelineConfig from the Spine DB), runs
+    :func:`._native_input_writer.write_workdir_inputs` to populate the
+    cascade-input Provider, then invokes
+    :func:`._native_run_model.native_run_model` with a no-op solver
+    that captures the per-sub-solve Provider and exits before any LP
+    work.
+
+    The no-op solver is necessary because ``native_run_model`` mixes
+    the per-solve preprocessing (which we need) with the LP-build /
+    solve / handoff capture (which we don't).  Returning ``0`` from
+    ``solver.run`` causes ``native_run_model`` to treat the solve as
+    successful and continue to its bookkeeping — for a single-solve
+    fixture that loop body executes exactly once, and the captured
+    Provider carries every preprocessing-derived frame the fast
+    path's override chain needs (``solve_data/pdtNodeInflow``,
+    ``solve_data/steps_in_use``, the inflow-scaling family, …).
+
+    Parameters
+    ----------
+    reader : SpineDbReader
+        Used for ``db_url`` + ``scenario`` only — the FlexToolRunner
+        opens its own DatabaseMapping.
+    work_folder : Path
+        Workdir the slow path expects to exist; preprocessing writers
+        consult its ``input/`` + ``solve_data/`` subdirs (which the
+        cascade-input writers populate in memory under
+        ``capture_frames``, NOT on disk).
+    active_solve : str
+        Name of the single solve to drive preprocessing for.  Must
+        match ``model.solves[0]`` on the source.
+    logger : logging.Logger
+        Logger.
+
+    Returns
+    -------
+    FlexDataProvider
+        Populated with every cascade-wide + per-solve frame the slow
+        path emits before LP build.  Caller threads this into
+        :func:`._apply_db_overrides` so the override chain consumes
+        Provider-resolved frames instead of CSV side-channels.
+    """
+    from flextool.engine_polars import _native_run_model as _nrm
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine_polars._native_input_writer import (
+        write_workdir_inputs,
+    )
+    from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
+    from flextool.flextoolrunner.solver_runner import SolverRunner
+
+    # 1. Build FlexToolRunner — opens the DB, loads SolveConfig +
+    # TimelineConfig, builds RunnerState.  Reuses the same code the
+    # slow path's ``run_chain_from_db`` relies on (cf. lines 1414-1421
+    # in _orchestration.py).
+    runner = FlexToolRunner(
+        input_db_url=reader.db_url,
+        scenario_name=reader.scenario,
+        work_folder=work_folder,
+    )
+    runner.state.logger.setLevel(logging.ERROR)
+
+    # 2. Cascade-input Provider — populated by ``write_workdir_inputs``
+    # (input_derivation.run under capture_frames).  Stashed on
+    # ``state.cascade_input_provider`` so per-sub-solve Providers seed
+    # from it inside ``native_run_model``.
+    cascade_input_provider = FlexDataProvider()
+    write_workdir_inputs(
+        reader.db_url,
+        reader.scenario,
+        work_folder,
+        logger=logger,
+        provider=cascade_input_provider,
+    )
+    runner.state.cascade_input_provider = cascade_input_provider
+    # Single-solve has no chained handoff; enable the dict so the
+    # post-solve hook in ``native_run_model`` doesn't crash on a None
+    # ``state.handoffs``.
+    runner.state.handoffs = {}
+
+    # 3. Capture the per-sub-solve Provider from inside the loop.
+    # ``native_run_model`` stashes the live Provider onto
+    # ``state.current_provider`` BEFORE invoking ``solver.run`` (line
+    # 549 in _native_run_model.py), so a no-op solver that snapshots
+    # it and returns 0 hands us the fully-populated Provider for the
+    # single active solve.
+    captured: dict[str, "FlexDataProvider"] = {}
+
+    class _CapturingNoOpSolver(SolverRunner):
+        """Solver shell that snapshots state.current_provider and exits.
+
+        Returning 0 satisfies ``native_run_model``'s success branch;
+        the loop completes its post-solve bookkeeping (which is cheap
+        and a no-op without a real Solution to capture) and returns.
+        """
+
+        def run(self, current_solve: str) -> int:  # noqa: ARG002
+            captured["provider"] = self.state.current_provider
+            return 0
+
+    solver = _CapturingNoOpSolver(runner.state)
+
+    _nrm.native_run_model(runner.state, solver)
+
+    provider = captured.get("provider")
+    if provider is None:
+        raise FastLoadError(
+            f"fast path preprocessing: native_run_model completed but "
+            f"never invoked the no-op solver for active_solve="
+            f"{active_solve!r}.  Either the solve list is empty or the "
+            f"FlexToolRunner construction picked a different solve.  "
+            f"Check the source DB's `model.solves` array."
+        )
+    return provider
+
+
+# ---------------------------------------------------------------------------
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
@@ -452,126 +584,88 @@ def load_flextool_source_only(
     (work_folder / "output_raw").mkdir(parents=True, exist_ok=True)
     (work_folder / "input").mkdir(parents=True, exist_ok=True)
 
-    # The override chain's per-solve helpers (apply_derived_a..g) read
-    # ``solve_data/solve_current.csv`` to determine the active solve.
-    # In fast mode we don't run flextool's preprocessing, so we
-    # synthesize a minimal ``solve_current.csv`` from the source's
-    # ``model.solves`` entry: pick the first solve in
-    # ``model_solve[<the_one_model>]``.  This is the same logic the
-    # slow path's preprocessing arrives at on a single-solve fixture.
+    # Resolve the active solve once — used both as the active-solve
+    # argument for the preprocessing helper and as a diagnostic if the
+    # captured Provider is empty.
     active_solve = _resolve_single_solve_name(reader)
 
-    # Step 2.5 — ``_read_active_solve`` / ``_read_solve_first`` (and a
-    # handful of cousins) became Provider-required; the disk-fallback
-    # arm was removed.  Construct a FlexDataProvider here, seed it with
-    # the same tiny frames the fast path used to write to disk, and
-    # thread it through ``_apply_db_overrides``.  The on-disk writes
-    # are retained for any post-solve helper that still reads from disk
-    # (e.g. ``write_output_support_csvs`` populates the same dir later).
-    import polars as _pl
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
-    provider = FlexDataProvider()
-    provider.put(
-        "solve_data/solve_current",
-        _pl.DataFrame({"solve": [active_solve]}),
-    )
-    provider.put(
-        "solve_data/p_model",
-        _pl.DataFrame({"modelParam": ["solveFirst"], "p_model": [1]}),
-    )
-
-    (work_folder / "solve_data" / "solve_current.csv").write_text(
-        f"solve\n{active_solve}\n"
-    )
-    # Also a minimal p_model.csv so _read_solve_first defaults to True.
-    (work_folder / "solve_data" / "p_model.csv").write_text(
-        "modelParam,p_model\nsolveFirst,1\n"
+    # Fundamental fix (post-Δ.25): populate the Provider end-to-end via
+    # the slow path's preprocessing chain so every preprocessing-derived
+    # artefact (``pdtNodeInflow`` for ``p_inflow``, ``steps_in_use`` for
+    # the per-solve timeline, the inflow-scaling family, …) is available
+    # through the Provider — never via a CSV side-channel.  Both paths
+    # are now Provider-driven; both source from the Spine DB.
+    #
+    # The "fast" advantage of this path remains: it skips the multi-solve
+    # orchestration loop and the inner ``_FlexpyCascadeSolver`` wrapper,
+    # building exactly one LP from a single Provider populated once.  The
+    # preprocessing is the same code the slow path exercises
+    # (``input_derivation.run`` + the per-solve writers in
+    # :mod:`._writer_solve_time` driven by :func:`._native_run_model`).
+    # We invoke that chain with a no-op solver that captures the populated
+    # Provider and short-circuits before LP build.
+    provider = _run_preprocessing_for_single_solve(
+        reader=reader,
+        work_folder=work_folder,
+        active_solve=active_solve,
+        logger=logger,
     )
 
-    # 1. Empty FlexData stub.
-    flex_data = _empty_flex_data()
+    # Thread axis enums + contract onto the Provider so :func:`load_flextool`
+    # activates the same Enum vocabulary on the cascade as the SpineDbReader's
+    # per-Param reads.  Without this the global ContextVar stays at its
+    # last-set value (cross-test pollution) AND the Provider stays Utf8-only
+    # — downstream joins between cascade (Enum) and Provider (Utf8) frames
+    # raise ``SchemaError``.  Two source-of-truth paths:
+    #
+    #   1. Reader already carries ``_axis_enums`` (the cascade entry point
+    #      :func:`run_single_solve_from_db` builds them eagerly per Phase 4.6).
+    #      Use those — they're identical to what the cascade emits.
+    #   2. Reader has no enums (direct test callers like
+    #      ``tests/engine_polars/test_fast_single_solve.py:test_fast_single_solve_p_commodity_price_lh2``
+    #      construct ``SpineDbReader(db, scenario=...)`` without enums).
+    #      Build them eagerly here from the reader's db_url — same code the
+    #      slow path's auto-detection arm runs in :func:`load_flextool`
+    #      lines 3562-3597.  Eager build guarantees the global ContextVar
+    #      is set to the right vocabulary for THIS scenario, defeating the
+    #      cross-test pollution that the conditional ``if axis_enums is not
+    #      None`` activation in :func:`load_flextool` would otherwise leak.
+    if getattr(provider, "axis_enums", None) is None:
+        _reader_enums = getattr(reader, "_axis_enums", None)
+        _reader_contract = getattr(reader, "_contract", None)
+        if _reader_enums is None:
+            try:
+                from flextool.spinedb_backend import SpineDBBackend
+                from flextool.spinedb_backend._axis_enums import (
+                    build_axis_enums,
+                    load_axis_contract,
+                )
+                _reader_contract = load_axis_contract()
+                with SpineDBBackend(reader.db_url, None) as _ab:
+                    _reader_enums = build_axis_enums(_ab, _reader_contract)
+            except Exception:  # noqa: BLE001 — defensive
+                _reader_enums = None
+                _reader_contract = None
+        if _reader_enums is not None:
+            provider.axis_enums = _reader_enums
+            if _reader_contract is not None:
+                provider.contract = _reader_contract
 
-    # 2. Topology not covered by the override chain — populate FIRST
-    # so apply_derived_b's ``p_unitsize_from_source`` /
-    # ``p_flow_constraint_coef_from_source`` see ``process_source_sink``.
-    # The override chain reads but never writes ``process_source_sink``;
-    # if we don't seed it pre-chain, downstream Params keyed on the pss
-    # tuple stay None.
-    _populate_topology(flex_data, reader)
-
-    # Build a shim source object for _apply_db_overrides.
-    source_shim = _SourceShim(
-        workdir=work_folder,
-        input_dir=work_folder / "input",
+    # With the Provider fully populated, the canonical loader
+    # :func:`flextool.engine_polars.input.load_flextool` does the rest:
+    # it reads ``solve_data/pdtNodeInflow`` (seeding ``p_inflow``), the
+    # ``solve_data/nodeBalance`` family, the cluster-of-cascade overrides
+    # (``_apply_db_overrides`` runs from inside), the axis-enum sweep,
+    # and the Param-name reflection — every step the legacy ad-hoc fast
+    # path had open-coded.  Delegating here unifies the two paths'
+    # FlexData construction logic and eliminates the override-chain-only
+    # branch that left ``p_inflow`` empty on the fast path.
+    from flextool.engine_polars.input import load_flextool
+    return load_flextool(
+        work_folder,
+        db_reader=reader,
+        provider=provider,
     )
-
-    # Phase 2 multi-block fast-path: build BlockLayout source-only
-    # (Phase 1's ``BlockLayout.from_source``) so the override chain's
-    # block-aware helpers (``nodeStateBlock_from_source`` Branch 2,
-    # ``period_block_family_from_source`` multi-resolution synthesis,
-    # ``arc_block_dt_from_source``, ``load_block_bundle``) can consume
-    # the in-memory frames instead of looking for ``solve_data/`` CSVs
-    # that won't exist on the fast path (no preprocessing has run).
-    try:
-        from flextool.engine_polars._block_layout import BlockLayout
-        from flextool.engine_polars._solve_config import SolveConfig
-        from flextool.engine_polars._timeline import TimelineConfig
-
-        sc = SolveConfig.load_from_source(reader)
-        tc = TimelineConfig.load_from_source(reader)
-        tc.create_assumptive_parts(sc)
-        tc.create_timeline_from_timestep_duration(sc)
-        flex_data.block_layout = BlockLayout.from_source(
-            reader, sc, tc, active_solve=active_solve,
-        )
-    except Exception as exc:  # pragma: no cover — defensive
-        logger.warning(
-            "fast path: failed to build in-memory BlockLayout: %s; "
-            "multi-block helpers will see no block data and the LP may "
-            "be over-constrained on fixtures that use coarse blocks.",
-            exc,
-        )
-
-    # Phase 4 — push the reader's axis_enums (constructed by
-    # ``run_single_solve_from_db``) into the global ContextVar so the
-    # broadcast helpers (``broadcast_to_period{_time}`` /
-    # ``_penalty_param_from_source`` / …) cast producer-side dim columns
-    # to Enum, matching what the consumer side reads.  The slow path
-    # does this in :func:`load_flextool` at input.py:3641; the fast path
-    # had no equivalent setup, so cascade dim columns surfaced as Utf8
-    # while the reader's per-Param reads produced Enum — failing every
-    # downstream join with ``SchemaError: d: str on left does not match
-    # d: enum on right``.
-    _enum_token = None
-    _reader_enums = getattr(reader, "_axis_enums", None)
-    if _reader_enums is not None:
-        from flextool.engine_polars._axis_enums import set_global_axis_enums
-        _enum_token = set_global_axis_enums(_reader_enums)
-
-    try:
-        # 3-4. Override chain.  Late-import to avoid cycles.
-        from flextool.engine_polars.input import _apply_db_overrides
-        _apply_db_overrides(flex_data, reader, source_shim, ctx=None,
-                              provider=provider)
-    finally:
-        if _enum_token is not None:
-            from flextool.engine_polars._axis_enums import (
-                reset_global_axis_enums,
-            )
-            reset_global_axis_enums(_enum_token)
-
-    # 5. pss_dt / nodeBalance_dt — depend on dt (which the chain
-    # populates in apply_derived_a) AND on topology (which we seeded
-    # above).  Both must run before this.
-    _populate_pss_dt_and_balance_dt(flex_data)
-
-    # 5. Validate the absolute minimum.
-    _validate_required_fields(flex_data)
-
-    # Δ.25: assign Param names so the LP-build's reflection (``Param.name``)
-    # matches what the slow path produces.
-    from flextool.engine_polars.input import _assign_param_names
-    return _assign_param_names(flex_data)
 
 
 def _validate_required_fields(flex_data: "FlexData") -> None:
