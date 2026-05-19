@@ -17,6 +17,7 @@ asserting which callees DID NOT fire.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
@@ -192,7 +193,9 @@ class _StubSource:
         self.workdir = workdir
 
 
-def _stub_a20_passes(monkeypatch, calls: list, *, skip_modules: bool = False):
+def _stub_a20_passes(monkeypatch, calls: list, *,
+                       active_solve: str | None = None,
+                       skip_modules: bool = False):
     """Patch each ``apply_*`` callee in ``_apply_db_overrides`` with a
     no-op recorder that appends its label to ``calls``.
 
@@ -200,6 +203,14 @@ def _stub_a20_passes(monkeypatch, calls: list, *, skip_modules: bool = False):
     ``from flextool.engine_polars import _direct_params as _dp`` etc.
     inside the function body, so patching the module attributes is
     sufficient (no per-callsite indirection to chase).
+
+    *active_solve* — value the stubbed ``_read_active_solve`` returns.
+    The real helper is Provider-required post Step 2.5 (it no longer
+    reads ``solve_data/solve_current.csv`` from disk).  These A.20 tests
+    pre-date that refactor and drive ``_apply_db_overrides`` with a
+    workdir-only stub; monkey-patching the active-solve resolver
+    preserves their "write solve_current.csv to set the active solve"
+    idiom without needing to construct a real FlexDataProvider.
     """
     from flextool.engine_polars import (
         _direct_params as _dp,
@@ -224,6 +235,8 @@ def _stub_a20_passes(monkeypatch, calls: list, *, skip_modules: bool = False):
                         _record("synth_invest"))
     monkeypatch.setattr(_ex, "apply_existing_chain",
                         _record("10_existing"))
+    monkeypatch.setattr(_drv, "_read_active_solve",
+                        lambda workdir, *, provider=None: active_solve)
 
 
 # --- A.20 tests -----------------------------------------------------
@@ -249,9 +262,9 @@ def test_active_solve_none_skips_workdir_passes(tmp_path: Path, monkeypatch):
     # No solve_current.csv -> _read_active_solve returns None.
 
     calls: list[str] = []
-    _stub_a20_passes(monkeypatch, calls)
+    _stub_a20_passes(monkeypatch, calls, active_solve=None)
 
-    flex_data = object()  # never inspected by the recorders
+    flex_data = SimpleNamespace()  # synthetic-path c.synth reserve assigns attrs
     reader = _StubReader()
     # source.workdir resolves via attribute access; raise to force the
     # input_dir.parent fallback -> set input_dir explicitly.
@@ -301,7 +314,7 @@ def test_workdir_unresolvable_skips_to_pass_1b(tmp_path: Path, monkeypatch):
         @property
         def input_dir(self):
             raise RuntimeError("nope")
-    flex_data = object()
+    flex_data = SimpleNamespace()
     reader = _StubReader()
     _apply_db_overrides(flex_data, reader, _BadSource())
     # Hand-calc: workdir=None branch -> pass 1a, 2, 1b only; passes 3-10
@@ -325,11 +338,12 @@ def test_synthetic_solve_skips_per_solve_overrides(tmp_path: Path, monkeypatch):
     _write(sd / "solve_current.csv", "solve\ninvest_5weeks_p2020\n")
 
     calls: list[str] = []
-    _stub_a20_passes(monkeypatch, calls)
+    _stub_a20_passes(monkeypatch, calls,
+                      active_solve="invest_5weeks_p2020")
 
     reader = _StubReader(pl.DataFrame({"name": ["invest_5weeks"]}))
     src = _StubSource(tmp_path)
-    _apply_db_overrides(object(), reader, src)
+    _apply_db_overrides(SimpleNamespace(), reader, src)
     # Hand-calc: synthetic gate fires (active_solve='invest_5weeks_p2020'
     # NOT in Spine, but ('invest_5weeks','p2020') resolves) -> emit
     # synth_invest then 1b; return BEFORE derived_a..g + existing_chain.
@@ -359,11 +373,11 @@ def test_pass_order_invariants_b_after_a_and_existing_after_f(
     _write(sd / "solve_current.csv", "solve\nmysolve\n")
 
     calls: list[str] = []
-    _stub_a20_passes(monkeypatch, calls)
+    _stub_a20_passes(monkeypatch, calls, active_solve="mysolve")
 
     reader = _StubReader(pl.DataFrame({"name": ["mysolve"]}))
     src = _StubSource(tmp_path)
-    _apply_db_overrides(object(), reader, src)
+    _apply_db_overrides(SimpleNamespace(), reader, src)
     # Hand-calc: full chain, no skip.  Order recorded:
     # 1a, 2, 3a, 1b, 4b, 5c, 6d, 7e, 8f, 9g, 10_existing.
     assert calls == ["1a", "2", "3a", "1b", "4b", "5c",
