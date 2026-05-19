@@ -31,12 +31,21 @@ Git makes it easy to update FlexTool in the future. The alternative is to downlo
 Either clone with Git (recommended):
 ```bash
 git clone https://github.com/irena-flextool/flextool.git
+```
+
+Or download and unzip from [GitHub](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip).
+
+### 4. Enter the FlexTool directory
+
+All the remaining steps must be run from inside the FlexTool directory:
+
+```bash
 cd flextool
 ```
 
-Or download and unzip from [GitHub](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip), then navigate to the extracted directory.
+(Substitute the extracted folder name if you used the zip download.)
 
-### 4. Create a Virtual Environment
+### 5. Create a Virtual Environment
 
 **Linux (Debian / Ubuntu / Mint):** The system Python may not include `venv` with `pip` by default. Install it first:
 
@@ -62,7 +71,7 @@ Windows:
 .venv\Scripts\activate
 ```
 
-### 5. Install FlexTool
+### 6. Install FlexTool
 
 **Recommended** — install FlexTool with Spine Toolbox (includes Spine DB Editor for editing input databases):
 
@@ -82,7 +91,7 @@ pip install .
 
 This installs FlexTool and the GUI, but without Spine DB Editor. You can run scenarios and view results, but editing `.sqlite` input sources from the GUI requires Spine DB Editor. You can upgrade to the full install at any time by running the recommended command above.
 
-### 6. Initialize FlexTool
+### 7. Initialize FlexTool
 
 Create the necessary database files and templates:
 
@@ -90,7 +99,7 @@ Create the necessary database files and templates:
 python update_flextool.py --skip-git
 ```
 
-### 7. Launch FlexTool
+### 8. Launch FlexTool
 
 Start the FlexTool GUI:
 
