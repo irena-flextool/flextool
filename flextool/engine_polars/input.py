@@ -1091,15 +1091,20 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             pl.concat(snk_parts).unique().sort("p", "sink") if snk_parts else None
         )
 
-    # ``n`` derives from sink/source (entity-union ``e`` axis) but the
-    # downstream block-compat join joins on ``n`` against frames typed
-    # with the narrower ``n`` (node) axis enum.  Cast at construction so
-    # the dtypes line up.
+    # ``n`` derives from sink/source which are entity-union (``e``)
+    # axis values — they may carry node OR process tokens (indirect
+    # units' arcs).  Cast against the ``e`` axis (union) rather than
+    # the narrower ``n`` (node-only) axis so process-vocab tokens are
+    # preserved instead of silently nulled.  Downstream eb_local.n is
+    # also up-cast to ``e`` below so the join composes natively in
+    # Enum.  Mirrors the source-driven cascade pattern in
+    # ``_derived_block.flow_to_n_block_filtered`` /
+    # ``filter_flow_n_by_block``.
     _enums = get_global_axis_enums()
     flow_to_n   = pss.with_columns(
-        n=cast_dim(pl.col("sink"), _enums, "n"))
+        n=cast_dim(pl.col("sink"), _enums, "e"))
     flow_from_n = pss.with_columns(
-        n=cast_dim(pl.col("source"), _enums, "n"))
+        n=cast_dim(pl.col("source"), _enums, "e"))
 
     # ─── Filter arcs by block compatibility (mod's process_side_block) ──
     # In the .mod, an arc contributes to a node's nodeBalance_eq iff the
@@ -1120,8 +1125,15 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             and block_layout.overlap_set_frame.height > 0):
         psb_local = block_layout.process_side_block_frame.pipe(
             rename_to_axis, {"process": "p", "block": "b_f"})
-        eb_local = block_layout.entity_block_frame.pipe(
-            rename_to_axis, {"entity": "n", "block": "bk"})
+        # Match the flow_to_n / flow_from_n e-Enum ``n`` dtype: rename
+        # entity → e (cast against the union axis, no data loss), then
+        # alias to "n" while keeping the e-Enum dtype.  Downstream join
+        # on "n" then composes natively in Enum because both sides are
+        # e-typed (n ⊂ e — node-only tokens still match).
+        eb_local = (block_layout.entity_block_frame.pipe(
+                rename_to_axis, {"entity": "e", "block": "bk"})
+            .with_columns(n=cast_dim(pl.col("e"), None, "e"))
+            .drop("e"))
         block_compat = block_layout.block_compat()
         if (psb_local.height > 0 and eb_local.height > 0
                 and block_compat.height > 0):
@@ -2162,18 +2174,22 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # narrower node (``n``) enum.  Use a semi-join keyed on the node
     # rename (cast against ``e`` via rename_to_axis) so the membership
     # filter survives Phase 4 activation without a cross-vocab is_in.
+    # ``n`` is then aliased from the surviving e-typed source column
+    # (all surviving values are nodes per the semi-join, but the dtype
+    # stays e so the downstream block-compat join with eb_l.n (also
+    # cast to e below) composes natively in Enum).
     _enums_local = get_global_axis_enums()
     nb_as_source = nb.lazy().pipe(rename_to_axis, {"n": "source"})
     if pss_eff is not None:
         flow_from_nb_eff = (pss_eff.lazy()
             .join(nb_as_source.select("source"), on="source", how="semi")
-            .with_columns(n=cast_dim(pl.col("source"), _enums_local, "n"))
+            .with_columns(n=cast_dim(pl.col("source"), _enums_local, "e"))
             .select("p","source","sink","n")
             .collect())
     if pss_noEff is not None:
         flow_from_nb_noEff = (pss_noEff.lazy()
             .join(nb_as_source.select("source"), on="source", how="semi")
-            .with_columns(n=cast_dim(pl.col("source"), _enums_local, "n"))
+            .with_columns(n=cast_dim(pl.col("source"), _enums_local, "e"))
             .select("p","source","sink","n")
             .collect())
 
@@ -2190,8 +2206,14 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             and (flow_from_nb_eff is not None or flow_from_nb_noEff is not None)):
         psb_l = block_layout.process_side_block_frame.pipe(
             rename_to_axis, {"process": "p", "block": "b_f"})
-        eb_l = block_layout.entity_block_frame.pipe(
-            rename_to_axis, {"entity": "n", "block": "bk"})
+        # Match the e-Enum ``n`` dtype on flow_from_nb_{eff,noEff}: rename
+        # entity → e (cast against the union axis), then alias to "n"
+        # keeping the e-Enum dtype.  Downstream join on "n" composes
+        # natively in Enum (n ⊂ e).
+        eb_l = (block_layout.entity_block_frame.pipe(
+                rename_to_axis, {"entity": "e", "block": "bk"})
+            .with_columns(n=cast_dim(pl.col("e"), None, "e"))
+            .drop("e"))
         block_compat_l = block_layout.block_compat()
         if psb_l.height > 0 and eb_l.height > 0 and block_compat_l.height > 0:
             psb_src_l = psb_l.filter(pl.col("side") == "source").select("p", "b_f")

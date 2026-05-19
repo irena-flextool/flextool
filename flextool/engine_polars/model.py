@@ -28,7 +28,7 @@ from . import _cumulative_invest
 from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
-from ._axis_enums import alias_to_axis, rename_to_axis, lit_axis
+from ._axis_enums import alias_to_axis, cast_dim, rename_to_axis, lit_axis
 
 
 # ---------------------------------------------------------------------------
@@ -2808,6 +2808,15 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                        .rename({"d": "b"})
                        .with_columns(pl.col("b").cast(pl.Utf8)))
             db_pairs = db_pairs.join(piu, on="b", how="inner")
+        # Restore axis types post-compare (Utf8 was only needed for the
+        # cross-Enum filter/join above; downstream consumers cross-join
+        # ``db_pairs`` with axis-typed frames and join on "d"/"b" against
+        # axis-typed cohorts, which requires Enum-typed keys for native
+        # composition under Phase 4 activation).
+        db_pairs = db_pairs.with_columns(
+            cast_dim(pl.col("d"), None, "d"),
+            cast_dim(pl.col("b"), None, "b"),
+        )
         if db_pairs.height > 0:
             _add_non_anticipativity_constraints(
                 m, d, db_pairs,
