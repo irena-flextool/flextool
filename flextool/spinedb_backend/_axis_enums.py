@@ -436,6 +436,62 @@ def _discover_tier_vocabulary(
         return unique
 
 
+def _collect_stochastic_branch_period_tokens(backend: Any) -> list[str]:
+    """Enumerate forecast-branch period tokens from
+    ``solve.stochastic_branches``.
+
+    The cascade constructs stochastic forecast-branch period labels by
+    splicing each realised period with each declared branch name:
+    ``"{period}_{branch}"`` (see ``_stochastic.py:492`` /
+    ``_stochastic.py:522`` where ``solve_branch = period + "_" + branch``).
+    These tokens flow through the cascade as values in the period (``d``)
+    column of frames like ``period__branch.csv``,
+    ``period_in_use_set.csv``, and downstream constraint / parameter
+    frames (``nodeBalance_eq``, ``maxToSink``, ``maxState``,
+    ``process_constraint_equal``).
+
+    Without these tokens in the period-axis Enum vocabulary, the
+    cascade's non-strict cast nulls them silently, dropping 60-75 % of
+    the rows in the listed constraint frames and yielding a degraded LP
+    objective.  Mirrors the ``branch.tokens`` allowlist pattern in
+    spirit, but the tokens are derived per-fixture (one per period ×
+    branch) rather than hard-coded.
+
+    The Spine Map for ``solve.stochastic_branches`` is shaped
+    ``period → branch → timestep → realized_yn``; level-1 keys are
+    periods, level-2 keys are branch names.  We walk both levels and
+    emit the canonical ``"{period}_{branch}"`` token for every
+    encountered (period, branch) pair across all solve entities.
+
+    Returns
+    -------
+    list[str]
+        Forecast-branch period tokens in first-occurrence order; empty
+        for deterministic fixtures (where ``solve.stochastic_branches``
+        is empty / absent).
+    """
+    rows = backend.find_parameter_values(
+        entity_class_name="solve",
+        parameter_definition_name="stochastic_branches",
+    )
+    out: list[str] = []
+    for param in rows:
+        if param.get("type") != "map":
+            continue
+        pv = param.get("parsed_value")
+        if pv is None or not hasattr(pv, "indexes"):
+            continue
+        # Top level: period keys.  Each value is itself a Map keyed by
+        # branch name.
+        for period, branch_map in zip(pv.indexes, pv.values):
+            period_str = str(period)
+            if not hasattr(branch_map, "indexes"):
+                continue
+            for branch in branch_map.indexes:
+                out.append(f"{period_str}_{branch}")
+    return _dedup_keep_order(out)
+
+
 def _build_period_vocab(backend: Any, spec_source: dict) -> list[str]:
     """Build the ``d`` (period) axis vocabulary.
 
@@ -445,6 +501,16 @@ def _build_period_vocab(backend: Any, spec_source: dict) -> list[str]:
       * keys of ``solve.invest_periods`` (Map),
       * keys of ``solve.realized_invest_periods`` (Map).
     All four are unioned (deterministic order).
+
+    For stochastic fixtures the period vocabulary is additionally
+    widened with the forecast-branch period tokens derived from
+    ``solve.stochastic_branches`` (see
+    :func:`_collect_stochastic_branch_period_tokens`).  The cascade
+    constructs ``"{period}_{branch}"`` labels and casts them against
+    this Enum at multiple sites (period__branch overlay,
+    ``period_in_use_set``, ``nodeBalance_eq``, etc.); without the
+    widening the non-strict cast silently nulls 60-75 % of rows in
+    stochastic LPs.
     """
     entity_class = spec_source.get("entity_class", "solve")
     params = spec_source.get("parameters", [])
@@ -457,6 +523,9 @@ def _build_period_vocab(backend: Any, spec_source: dict) -> list[str]:
             backend, entity_class, param_name
         )
         out.extend(vals)
+    # Stochastic forecast-branch period tokens (empty for deterministic
+    # fixtures — _collect_parameter_values returns no map rows).
+    out.extend(_collect_stochastic_branch_period_tokens(backend))
     return _dedup_keep_order(out)
 
 
@@ -594,6 +663,39 @@ def build_axis_enums(
                 vocab = _collect_parameter_scalar_values(backend, ec, pn)
             else:
                 vocab = []
+            # Branch axis: the cascade column ``b`` (renamed from
+            # ``branch`` in _derived_branch.py:150) carries the
+            # ``"{period}_{branch}"`` sibling-period tokens emitted by
+            # _stochastic.py:492 (``solve_branch = period + "_" + branch``)
+            # plus the base period token itself.  These flow through
+            # ``period__branch.csv`` / ``solve_branch_weight.csv`` and
+            # downstream joins; without them in the branch enum
+            # vocabulary, non-strict casts silently null the ``b``
+            # column on stochastic fixtures and break the LP joins.
+            if axis.name == "branch":
+                vocab = list(vocab)
+                vocab.extend(
+                    _collect_stochastic_branch_period_tokens(backend)
+                )
+                # Base period tokens — ``period__branch.csv`` includes
+                # ``(period, period)`` rows where the ``b`` value is the
+                # bare period name (see _stochastic.py:463).
+                base_periods: list[str] = []
+                for solve_param in ["years_represented",
+                                       "invest_periods",
+                                       "realized_invest_periods"]:
+                    base_periods.extend(
+                        _collect_parameter_map_keys(
+                            backend, "solve", solve_param
+                        )
+                    )
+                base_periods.extend(
+                    _collect_parameter_array_values(
+                        backend, "solve", "realized_periods"
+                    )
+                )
+                vocab.extend(base_periods)
+                vocab = _dedup_keep_order(vocab)
         elif st == "synthetic":
             vocab = list(axis.tokens or [])
         else:
