@@ -1,3 +1,211 @@
+## Release 3.38.0 (18.5.2026) — Rivendell bug-fix suite
+
+Built on 3.37.0's in-memory cascade. Fixes a cluster of regressions that surfaced on the Rivendell customer database after the cascade rewrite, plus a final round of test ports.
+
+**This release is the last known-stable point before the in-flight `enum dtype` refactor (Phase 0 → 4.8); pin to 3.38.0 until that lands green.**
+
+**Bug fixes**
+- Rivendell bug 1+5+6: `engine_polars/scaling.user_bound_scale` recommendation is now column-only (a previous row+col recommendation collapsed solver progress on S17/B0)
+- Rivendell bug 2 / BUG A2: `engine_polars` casts `user_constraints` coefficients to Float64 — previously left as int when authored as integer, breaking polars joins downstream
+- Rivendell bug 3: `co2_price` shape probing uses value-domain inspection instead of column count when the shape is ambiguous
+- Rivendell bug 4: regression test added for the `process_online_dt` UC column carry
+- BUG A1: `blocks` + output writer route input/block reads through the Provider so they observe in-memory writer output rather than a stale on-disk snapshot
+- BUG A3: `process_outputs.process_source_sink_varCost` keyed by `alwaysProcess` (previously dropped rows for processes that only exist in some subsolves)
+- BUG A4 / A2-followup: branch-weight Provider-routed read + 1000× cap-margin restored on the cascade scaling/state path; provider threaded into cascade scaling/state helpers
+- BUG B1: cascade fans rolling-ladder accumulators back into the FlexData Provider on each roll so per-roll cumulative quotas no longer drift
+- BUG B2: MATPOWER → Spine converter sets `node_type=commodity` on the per-generator fuel nodes it synthesises (previously emitted with the default type, breaking `node_balance_eq` on imported MATPOWER cases)
+- BUG `p_online_dt_empty_no_blocks`: `p_online_dt_set` falls back correctly when UC is enabled but no `process_block` is authored
+
+**Test infrastructure**
+- `tests/perturbation/*` ported to the native cascade harness
+- `tests/emission/*` ported to polar_high `Problem` inspection (the underlying MPS-emission path was retired in Δ.22)
+- Solver license probe at startup is skipped under test to silence the Xpress `LicenseWarning` on CI
+- `tests/model`: invest-chain regression test (Pre-work 0b R1+R2) + LP-bound-range smoke for invest + `work_base` (Pre-work 0b R7)
+
+---
+
+## Release 3.37.0 (17.5.2026) — In-memory cascade (FlexData Provider/Accumulator + package refactor)
+
+This release retires the on-disk CSV round-trip that previously sat between every cascade stage. FlexData is now built, threaded, and consumed entirely in memory across the loader, writers, solver, and output writers. `--csv-dump` is the only path that still emits the intermediate CSVs (for debugging / GUI inspection); the production path keeps everything in `polars.DataFrame` form.
+
+Two new packages factor the cascade I/O surface: `spinedb_backend` (Spine DB → FlexData), and `input_derivation` (preprocessing derivations that previously lived in `flextoolrunner/preprocessing/*`). `flextoolrunner/preprocessing/*` and `flextoolrunner/input_writer.py` are deleted.
+
+**FlexData Accumulator (Phases C–H)**
+- Phase C: per-sub-solve `FlexDataAccumulator`
+- Phase D: `load_flextool(seed=FlexDataAccumulator)`
+- Phase E (a–j): cascade consumes accumulator via `seed=`; 8 batches of monolith-writer "lifts" so writers populate the accumulator rather than emit CSVs (`_writer_arc_unions`, `chain_params` + `co2_accumulators`, `_writer_pdt_params`, `_writer_period_params`, `dispatchers` + `calc_params`, the remaining 4 monolith writers, `_writer_solve_writers`, `period_calc` + `per_solve` + `reserve`); `--csv-dump` gating; cross-solve carriers lifted into `capture_frames`; seed-aware `csv.reader` + `path.exists()` audits in writer + loader modules; fixes for Rivendell `B0_base_hourly_rp` and `S08_co2cap_slice` regressions surfaced by the lift
+- Phase C.5: slimmed `OrchestrationStep` with `keep_solutions` opt-in
+- Phase F: parquet-bundle registry + `manifest.json` for hand-off between sub-solves
+- Phase G: `process_outputs` disk reads migrated to in-memory kwargs
+- Phase H: end-to-end verification pass
+
+**FlexData Provider (Step 1 + Step 2 + Step 2.5)**
+- Step 1-a → 1-g-7f: `FlexDataProvider` scaffolding; pilot migration of `_read_p_flow_max`; full migration of `input.py`, writer-side reads, `process_outputs` reads; Provider-exclusive writer population; per-writer `provider=` threading through `_writer_per_solve`, `_writer_period_calc`, `_writer_inflow_scaling`, `_writer_dispatchers`, `_writer_lp_scaling`, `_writer_chain_params`, `_writer_arc_unions`, `_writer_solve_time`, `_solve_context`, `_pdt_lookup`, `_derived_params`, `_derived_profile`
+- Step 2a–c: deleted the seed funnel + transitional shims; rewired `--csv-dump` and removed the CSV-emission gate
+- Step 2.5-E (Phases A+B+C): Provider through the timeline + averaged-timeseries cascade
+- Meta-test for post-Step-2 cascade invariants
+- Tighter `RAW_INPUT_FALLBACK_ALLOWLIST` after the disk-arm purge; meta-guard against new disk fallbacks creeping in
+
+**Disk-fallback purge**
+- Disk-fallback arms deleted from 12 writer modules: `_provider_open`, `_provider_lookup_positional`, `_derived_params`, `_invest_seeds`, `_dc_power_flow` + `_commodity_ladder`, `_derived_profile`, `_delay`, `_reserve`, `_group_slack`, `_derived_branch`, `_derived_existing`, `_timeline`, `_inflow_scaling`
+- `_load_handoff_aux_pair` callers fixed; `path.open` retired in the same area
+- `flextoolrunner/blocks` routes `write_block_data` through `_PATCH_MODULES`
+- Test verification: workdir-empty smoke + `--csv-dump` round-trip
+
+**`input_derivation` package**
+- Skeleton package created; validators extracted to `_validators` submodule
+- Ported derivations: `_write_process_method`, `_write_dc_power_flow_data`, commodity ladders + ladder_sets — all now in-memory
+- `run()` entry point introduced; `write_input` rewired through it; `write_workdir_inputs` routes through `input_derivation` directly
+- `flextoolrunner/preprocessing/*` and `flextoolrunner/input_writer.py` deleted (superseded)
+
+**`spinedb_backend` package**
+- Skeleton package + entity / parameter / default materialisers
+- `_ENTITY_SPECS`, `_PARAMETER_SPECS`, `_DEFAULT_VALUES_SPECS` migrated onto `Backend.entities` / `Backend.parameter_values` / `Backend.parameter_defaults`
+- Provider threaded into `write_input`, `_writer_leaf_sets`, `_writer_mid_sets`, `_writer_calc_params`
+- `flextoolrunner` plumbs Provider through `solve_writers.write_all_branches`, averaged-timeseries, and `timeline_config.py` disk read
+
+**In-memory region decomposition (item 2.6)**
+- `flextoolrunner` region decomposition is now fully in-memory across all entry points
+
+**Tests migrated to native cascade**
+- Migrated: `test_commodity_ladder_smoke`, `test_commodity_ladder_rolling`, `test_years_represented`, `test_timings_csv`, `TestPGLibCase14Integration`, `test_cost_aggregation_semantics`, `test_non_anticipativity`, `test_lh2_three_region`, `test_obj_decomposition`
+- Retired: `test_mps_parity.py` deleted (legacy MPS parity dead); `tests/emission/*` skipped (`flextool.mps` emission gone in Δ.22 — ported to polar_high in 3.38.0); perturbation/* skipped (harness incompatible — ported in 3.38.0); `test_solve_handoff.py` trimmed (9 retired PoC tests dropped)
+- `test_integration_parquet_matches_csv_on_base_scenario` skipped (legacy parquet/CSV parity is no longer meaningful)
+
+**Miscellaneous**
+- Commodity ladder reads routed through the Provider
+- `apply_npv` signature mismatch fixed; provider threaded
+- `engine_polars/scaling`: geometric-midpoint `user_bound_scale` + 6-decade gate
+- GUI: Debug checkbox passes `--debug --csv-dump` to scenario runs
+- Dropped redundant `_native_leaf_set_override` in `_drive_cascade`
+- `engine_polars`: ported `co2_max_total` + fixed `minimum_downtime` invest tightening
+- `read_parameters`: densified `reserve_upDown_group_reservation` to LP domain
+- `process_outputs` / `read_variables`: stream parts via `ParquetWriter` row-groups
+
+---
+
+## Release 3.36.0 (15.5.2026) — Output-writer hardening + LP determinism + Surface A audit
+
+Hardening release. The `engine_polars` cascade is pinned to a deterministic HiGHS solve and the LP column/row ordering is now canonical, so re-runs and goldens are stable across `PYTHONHASHSEED` and across CI workers. Many `process_outputs` regressions surfaced during the polars-cascade adoption are fixed; golden CSVs that drifted on the glpsol→HiGHS transition are regenerated with REGEN_LOG documentation. Surface A loader audit lands 50+24+13 focused tests.
+
+**LP determinism**
+- `engine_polars/scaling`: pin HiGHS to deterministic simplex options
+- Canonical LP column/row ordering via `add_var` / `add_cstr` wrappers
+- Post-`unique()` set frames sorted before LP id assignment
+- `engine_polars` keys `_all_steps` by per-roll solve name, not parent solve
+- `tests/db_utils`: numeric columns cast to float in `round_for_comparison`
+- `assert_frame_equal` gains `atol=1e-4` to absorb the rounding step
+- `scaling._scale_cache` cleared between scenarios in tests
+- Two scenarios' `time_budget` bumped to absorb the determinism overhead (incl. `wind_battery_invest_lifetime_renew_4solve` 4.0 → 6.0 s)
+
+**Output writers (`process_outputs`)**
+- `costs_discounted`: multi-roll inflation/lifetime values now correct
+- `dtt` MultiIndex sorted by `(solve, period, time, t_previous)`
+- Per-period `years_represented` threaded through `FlexData`
+- `d_realize_invest` filtered to realized periods only; divest periods included
+- `summary_solve.csv`: solve names natural-sorted; Investment discount factor written over `period_in_use`
+- `VRE_potential` + `group_flows` CSVs restored after a regression
+- `process__ct_method` built from `process_min_load_eff`
+- `dt_realize_dispatch` / `d_realized_period` use `realized_dispatch`
+- `unit_capacity__d.csv` lag in rolling solves fixed
+- `(entity, period)` lookups filtered to `v.invest`'s actual index
+- `par` / `s` unioned over `full_dt` for rolling/multi-solve
+- Self-discharge multiply fixed on rolling/multi-solve scenarios
+- `unit__{input,output}Node` wide-pivot columns sorted
+- Both flow directions emitted for direct-method arcs
+- `commodity_node` sets derived from FlexData `flow_*` frames
+- `nodeGroupDispatch` arc-union sets backfilled for `group_flows`
+- Sub-femto HiGHS LP residuals clipped in `out_flows` before CSV emit
+- Native engine + `process_outputs` fix for nested invest+dispatch cascades
+- Rolling-storage hand-off fix for non-forward-only storages
+- Forecast-branch rows emitted when `output_horizon=yes`
+- Reserve None-handling hardened; `process_reserve` column emission gated on scheduled reservation
+- `calc_group_flows`: `.squeeze()` dropped — was crashing single-timestep solves
+- `engine_polars`: detects period column under user-renamed `Map.index_name`
+
+**Goldens regenerated (HiGHS-clean vs glpsol residuals)**
+- 6 scenarios routed from retired glpsol to HiGHS
+- `coal_co2_limit` goldens regenerated against alt-optima
+- `cost-penalty` goldens regenerated (HiGHS-clean zeros vs glpsol residuals)
+- `multi_year_wind_no_investment` `unit_capacity` golden regenerated
+- 5 alt-optima goldens regenerated against canonical LP column ordering
+- `test_a_lot` + `5weeks_battery_intraperiod_blocks` alt-optima goldens regenerated
+- 3 + 4 `summary_solve.csv` goldens regenerated (HiGHS precision + chronological Investment-factor order)
+- `hyphenated_entity_names` regen documented
+- `tests/REGEN_LOG` documents Phase-2 candidate verification (1 regen + 5 flags)
+- Test infrastructure handles two-row-header / `Unnamed:` CSV forms
+
+**Surface A audit fixtures + tests**
+- Base fixtures for loader / constraint / objective audit
+- 50 focused loader tests for Surface A audit
+- 24 model-run constraint tests for B.1–B.15
+- 13 cost-term isolation tests for B.16–B.20
+- `step_duration=3` derived-fixture regression guards
+- Hand-computed `step_duration` LP objective tests
+- `engine_polars/scaling`: two-sided guard on `user_bound_scale` recommendation
+- `engine_polars`: cascade-vs-seed parity diagnostic
+
+**`plot_outputs` performance**
+- `_plot_simple_bars` vectorised; `FixedLocator` / `FixedFormatter` for bar tick axes
+- `_sum_row_heights` vectorised
+- Stacked & grouped bar paths vectorised
+- Sub-pixel-wide bars skipped in draw path
+- Single-level expand groups counted in pagination
+- Stale on-disk plans invalidated via `schema_version`
+- Phantom NaN rows/cols dropped after dim-rule pivot
+
+**Other**
+- `native_run_model`: write `timeline_matching_map.csv` from returned dict
+- GUI: stable input-source numbering with orphan reuse + visual marker; source-number suffix always written in output folder names
+- GUI: ResultViewer style overrides scoped to its own plot tree
+- GUI: status / peak / timestamp columns widened in jobs tree
+- `tests/scenarios` wired to `engine_polars` cascade
+
+---
+
+## Release 3.35.0 (13.5.2026) — Cascade memory + GUI font system + plot performance
+
+Performance, GUI and developer-experience release on top of 3.34.0. Long cascade runs no longer balloon RSS across rolls; the GUI handles per-monitor DPI scaling and user-tunable font sizes; `dump_csvs` no longer writes 7 GB debug oracles by default. Includes preparatory work for the engine-wide dtype refactor (axis-vocabulary discovery + canonical `pl.Enum`s) — the end-of-load Enum sweep was activated and then parked in the same release as a precaution.
+
+**Cascade memory**
+- Scaling diagnostic gated to once per base solve — 38 % wall-clock speedup on large cascades
+- Opt-in `tracemalloc` + RSS checkpoints to localise OOM phases (env-var gated)
+- `libc.malloc_trim` called after heavy allocators — 38 % RSS drop
+- Heap trimmed at end of each iter too (multi-roll heap accumulation)
+- `dump_csvs`: skip 7 GB-scale CSVs by default; env var restores the debug oracle
+
+**dtype refactor — preparatory**
+- Phase 1+2: axis-vocabulary discovery + canonical `pl.Enum`s
+- Phase 3+4+5 (partial): `load_flextool` end-of-load `pl.Enum` sweep — activated, then disabled in the same release as a guard while downstream fallout was understood
+- Dtype-flexible scratch frames in `engine_polars` (preparatory for Enum activation)
+- `cast_dim` helper + populated-branch alignment; `cast_dim` sweep across cascade (3 files + remainder)
+- `process_outputs`: normalise enum/utf8 join keys in `_entity_all_capacity`
+
+**Path B (rolling-handoff perf)**
+- Rolling-handoff CSV reads deduplicated (Path B, Category A)
+- `WriterSnapshot` for top-7 per-solve preprocessing (Path B, Cat B)
+- `ctx` threaded through period/branch helpers + `_dt_period_active_steps` + `dtttdt`
+
+**GUI font + DPI system**
+- Phase 1: centralised font metrics in `ui_metrics.py`
+- Phase 2: per-role named fonts via `setup_fonts`
+- Phase 3: saved geometry + sash clamped on restore
+- Phase 4: rescale saved positions by font metric on restore
+- Phase 5: Reset window layout action
+- Phase 6: em-ified dialog widths
+- Phase 7 + 7c: user-tunable UI font size + UX size tweaks
+- Phase 8: per-monitor DPI font rescale
+- Header fonts bound to named fonts so live size changes propagate
+
+**Other**
+- `engine_polars`: respect `solve.new_stepduration` in `apply_derived_a`
+- `engine_polars`: preserve legacy entity-level rows in `dump_csvs` slices
+- `engine_polars`: native `p_inflow` override in `apply_derived_a` disabled (regression guard)
+- `engine_polars`: end-of-load `FlexData → Enum` cast disabled (preparatory work parked)
+- `tests`: `pbt_node_inflow` multi-`time_start` + parent-period fixtures (Phase C)
+
+---
+
 ## Release 3.34.0 (12.5.2026) — Multi-solver support + documentation overhaul
 
 This release ships the two user-facing additions on top of 3.33.0's engine swap: per-solve commercial-solver selection and a documentation refresh organised around the Spine Toolbox GUI as the primary FlexTool interface.
