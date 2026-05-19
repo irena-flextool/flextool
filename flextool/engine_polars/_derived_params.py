@@ -2901,11 +2901,20 @@ def _solve_periods(source: "InputSource", active_solve: str,
     value="yes"]``).  This helper returns the period list regardless of
     shape.
 
+    The inner Map level's column name is taken from the Spine
+    ``index_name`` and is not guaranteed to be ``"i"`` — some
+    hand-authored fixtures (e.g. ``examples.sqlite::invest_5weeks``)
+    leave both Map levels named ``"x"``, producing the post-unroll
+    shape ``[name, x, value]``.  We therefore compute the period
+    column as ``df.columns[-2]`` (the last non-value column) instead
+    of hardcoding ``"i"``.
+
     Δ.19 — when ``active_solve`` doesn't appear in the param table,
     fall back to the synthetic ``<base>_<anchor>`` recognition: for
     Map-shaped params filter ``name==base AND x==anchor`` and return
-    the ``i`` values; for Array-shaped params return ``[anchor]``
-    (the single realised period of the synthetic sub-solve).
+    the inner-period values; for Array-shaped params return
+    ``[anchor]`` (the single realised period of the synthetic
+    sub-solve).
     """
     if active_solve is None:
         return None
@@ -2913,7 +2922,12 @@ def _solve_periods(source: "InputSource", active_solve: str,
     if df is None:
         return None
     is_map = "x" in df.columns
-    period_col = "i" if is_map else "value"
+    # Inner-period column = deepest non-entity, non-value column.
+    # For Map-shaped params this is ``df.columns[-2]`` (covers both
+    # the canonical ``"i"`` shape and the hand-authored ``"x"``-named
+    # inner-index shape from ``examples.sqlite``).  For Array shapes
+    # the value column itself carries the period.
+    period_col = df.columns[-2] if is_map else "value"
     sub = df.filter(pl.col("name") == active_solve)
     if sub.height == 0:
         # Synthetic fallback — split active_solve as <base>_<anchor>.
