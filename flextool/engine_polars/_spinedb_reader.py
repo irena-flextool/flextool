@@ -569,6 +569,16 @@ class SpineDbReader:
                 target = self._axis_enums.get(axis.name)
                 if target is None or frame.schema[col] == target:
                     continue
+                # Polars' numeric → Enum cast interprets the source value
+                # as a POSITIONAL INDEX into the enum's categories.  When
+                # the source column is numeric (e.g. a Spine 1d_map with
+                # numeric keys whose level was labelled "constraint" /
+                # other axis-synonym name), casting to the matching axis
+                # enum would silently produce category-by-position
+                # tokens.  Skip the cast — numeric columns are never dim
+                # columns under this contract.
+                if frame.schema[col].is_numeric():
+                    continue
                 element_casts.append(
                     pl.col(col).cast(target, strict=False)
                 )

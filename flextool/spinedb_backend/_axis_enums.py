@@ -867,6 +867,17 @@ def cast_against_contract(
         dtype = axis_enums.get(axis.name)
         if dtype is None:
             continue
+        # Polars' numeric → Enum cast interprets the numeric value as a
+        # POSITIONAL INDEX into the enum's categories — so a Float64 / Int
+        # column whose name happens to match an axis synonym (e.g. a
+        # Spine 1d_map[<constraint-like-key-name>] where the keys are
+        # numeric durations) would silently get reinterpreted as
+        # category-by-position.  That is a contract-axis bug, not a
+        # vocabulary mismatch: numeric columns are never dim columns
+        # under this contract.  Skip the cast.
+        src_dtype = frame.schema[col]
+        if src_dtype.is_numeric():
+            continue
         cast_pairs.append((col, axis))
         cast_exprs.append(pl.col(col).cast(dtype, strict=True))
 
