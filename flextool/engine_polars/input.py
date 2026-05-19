@@ -4197,6 +4197,23 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct
         # Params still apply against the CSV-loaded dt.
         _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
+
+        # RESERVE-1 — the synthetic-solve early-return skips passes 3-10
+        # entirely, but two reserve-feature fields are produced by those
+        # passes and are required by ``_reserve.add_variables`` /
+        # ``add_constraints`` when ``reserve_upDown_group`` is non-empty
+        # (``has_feature(d)`` activates the subsystem from the CSV-seeded
+        # ``reserve_upDown_group``).  Both producers are solve-agnostic
+        # (no ``active_solve`` filter), so calling them on the synthetic
+        # path is safe and mirrors what ``apply_derived_d`` / ``apply_derived_g``
+        # do on the non-synthetic path.  See
+        # ``specs/model_bugs.md::RESERVE-1`` for the full diagnosis.
+        def _wire_reserve_for_synthetic_solve():
+            flex_data.process_reserve_upDown_node_active = (
+                _drv.process_reserve_upDown_node_active_from_source(db_reader))
+            flex_data.prundt = _drv.prundt_from_source(
+                db_reader, active_solve, getattr(flex_data, "dt", None))
+        _timed("c.synth reserve", _wire_reserve_for_synthetic_solve)
         return
 
     _timed("3  derived_a", _drv.apply_derived_a, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
