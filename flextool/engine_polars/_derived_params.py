@@ -6166,7 +6166,11 @@ def _dt_period_active_steps(source: "InputSource",
                 anchor_to_ts[branch] = anchor_to_ts[anchor]
     if not anchor_to_ts:
         return None
-    pt_lf = pl.LazyFrame({
+    # Use axis_lazyframe so ``d`` carries the global Enum vocabulary
+    # when active — otherwise the downstream join against
+    # ``realized_clean`` (which IS axis_lazyframe-built) trips on
+    # ``SchemaError: d: enum on left does not match d: str on right``.
+    pt_lf = axis_lazyframe({
         "d": list(anchor_to_ts.keys()),
         "ts": list(anchor_to_ts.values()),
     })
@@ -6183,9 +6187,13 @@ def _dt_period_active_steps(source: "InputSource",
                      None)
     if step_col is None:
         return None
+    # ``start_step`` lives on the ``t`` axis; cast to the canonical Enum
+    # so the downstream join against ``tl_lf`` (whose ``t``/``start_step``
+    # is cast to Enum at line 6204+) doesn't trip on Utf8-vs-Enum.
     blocks_lf = (ts_dur.lazy()
                        .select(pl.col("name").alias("ts"),
-                               pl.col(step_col).alias("start_step"),
+                               cast_dim(pl.col(step_col), None, "t")
+                                 .alias("start_step"),
                                pl.col("value").cast(pl.Int64).alias("count")))
     tl_dur = _try_param(source, "timeline", "timestep_duration")
     if tl_dur is None:
@@ -6210,9 +6218,18 @@ def _dt_period_active_steps(source: "InputSource",
     realized = _try_param(source, "solve", "realized_periods")
     explicit_order: list[str] = []
     if realized is not None:
+        # ``realized_periods`` is Array-shaped; the index column name is
+        # the Spine ``index_name`` when set, else ``_array_index`` (see
+        # ``_spinedb_reader._unroll_index_columns_from_value`` — Array
+        # types use ``_array_index`` to avoid collision with the tier
+        # axis ``i``).  Use the second-to-last column (between ``name``
+        # and ``value``) rather than hardcoding ``"i"`` — same shape-
+        # tolerant rule as ``_solve_periods``.
+        order_col = (realized.columns[-2]
+                       if len(realized.columns) >= 2 else "i")
         realized_p = (realized
                        .filter(pl.col("name") == active_solve)
-                       .sort("i"))
+                       .sort(order_col))
         explicit_order = realized_p["value"].to_list()
     pt_eager = pt_lf.select("d").unique().collect()
     pt_periods = pt_eager["d"].to_list()

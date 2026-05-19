@@ -460,6 +460,26 @@ def load_flextool_source_only(
     # ``model_solve[<the_one_model>]``.  This is the same logic the
     # slow path's preprocessing arrives at on a single-solve fixture.
     active_solve = _resolve_single_solve_name(reader)
+
+    # Step 2.5 — ``_read_active_solve`` / ``_read_solve_first`` (and a
+    # handful of cousins) became Provider-required; the disk-fallback
+    # arm was removed.  Construct a FlexDataProvider here, seed it with
+    # the same tiny frames the fast path used to write to disk, and
+    # thread it through ``_apply_db_overrides``.  The on-disk writes
+    # are retained for any post-solve helper that still reads from disk
+    # (e.g. ``write_output_support_csvs`` populates the same dir later).
+    import polars as _pl
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    provider = FlexDataProvider()
+    provider.put(
+        "solve_data/solve_current",
+        _pl.DataFrame({"solve": [active_solve]}),
+    )
+    provider.put(
+        "solve_data/p_model",
+        _pl.DataFrame({"modelParam": ["solveFirst"], "p_model": [1]}),
+    )
+
     (work_folder / "solve_data" / "solve_current.csv").write_text(
         f"solve\n{active_solve}\n"
     )
@@ -512,9 +532,33 @@ def load_flextool_source_only(
             exc,
         )
 
-    # 3-4. Override chain.  Late-import to avoid cycles.
-    from flextool.engine_polars.input import _apply_db_overrides
-    _apply_db_overrides(flex_data, reader, source_shim, ctx=None)
+    # Phase 4 — push the reader's axis_enums (constructed by
+    # ``run_single_solve_from_db``) into the global ContextVar so the
+    # broadcast helpers (``broadcast_to_period{_time}`` /
+    # ``_penalty_param_from_source`` / …) cast producer-side dim columns
+    # to Enum, matching what the consumer side reads.  The slow path
+    # does this in :func:`load_flextool` at input.py:3641; the fast path
+    # had no equivalent setup, so cascade dim columns surfaced as Utf8
+    # while the reader's per-Param reads produced Enum — failing every
+    # downstream join with ``SchemaError: d: str on left does not match
+    # d: enum on right``.
+    _enum_token = None
+    _reader_enums = getattr(reader, "_axis_enums", None)
+    if _reader_enums is not None:
+        from flextool.engine_polars._axis_enums import set_global_axis_enums
+        _enum_token = set_global_axis_enums(_reader_enums)
+
+    try:
+        # 3-4. Override chain.  Late-import to avoid cycles.
+        from flextool.engine_polars.input import _apply_db_overrides
+        _apply_db_overrides(flex_data, reader, source_shim, ctx=None,
+                              provider=provider)
+    finally:
+        if _enum_token is not None:
+            from flextool.engine_polars._axis_enums import (
+                reset_global_axis_enums,
+            )
+            reset_global_axis_enums(_enum_token)
 
     # 5. pss_dt / nodeBalance_dt — depend on dt (which the chain
     # populates in apply_derived_a) AND on topology (which we seeded

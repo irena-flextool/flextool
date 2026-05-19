@@ -4239,7 +4239,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # carriers.  Now that ``apply_derived_f`` is the authoritative producer
     # of the carriers, the seed in ``_load_invest`` becomes redundant.
     from flextool.engine_polars import _derived_existing as _ex
-    _timed("10 existing_chain", _ex.apply_existing_chain, flex_data, db_reader, workdir_path, ctx=ctx)
+    _timed("10 existing_chain", _ex.apply_existing_chain, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
 
 
 def _load_handoff_aux_pair(path: Path, expected: tuple[str, str],
