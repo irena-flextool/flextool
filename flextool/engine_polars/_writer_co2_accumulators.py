@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine_polars._axis_enums import alias_to_axis, lit_axis, rename_to_axis
+from flextool.engine_polars._axis_enums import (
+    alias_to_axis,
+    lit_axis,
+    rename_to_axis,
+    schema_dtype,
+)
 
 if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
@@ -77,10 +82,16 @@ def _read_commodity_node_co2(
     Provider-only after Step 2.5 Phase C.
     """
     if provider is None or not provider.has("solve_data/commodity_node_co2"):
-        return pl.DataFrame(schema={"c": pl.Utf8, "n": pl.Utf8})
+        return pl.DataFrame(schema={
+            "c": schema_dtype(None, "c"),
+            "n": schema_dtype(None, "n"),
+        })
     df = provider.get("solve_data/commodity_node_co2")
     if df.height == 0:
-        return pl.DataFrame(schema={"c": pl.Utf8, "n": pl.Utf8})
+        return pl.DataFrame(schema={
+            "c": schema_dtype(None, "c"),
+            "n": schema_dtype(None, "n"),
+        })
     return (df.pipe(rename_to_axis, {"commodity": "c", "node": "n"})
             .select("c", "n").unique())
 
@@ -88,7 +99,7 @@ def _read_commodity_node_co2(
 def _param_frame(param, *cols: str) -> pl.DataFrame:
     """Return ``param.frame`` or an empty frame with the given dim columns."""
     if param is None or not hasattr(param, "frame"):
-        schema = {c: pl.Utf8 for c in cols}
+        schema = {c: schema_dtype(None, c) for c in cols}
         schema["value"] = pl.Float64
         return pl.DataFrame(schema=schema)
     return param.frame
@@ -96,7 +107,7 @@ def _param_frame(param, *cols: str) -> pl.DataFrame:
 
 def _set_frame(df, *cols: str) -> pl.DataFrame:
     if df is None or df.height == 0:
-        return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
+        return pl.DataFrame(schema={c: schema_dtype(None, c) for c in cols})
     return df
 
 
@@ -200,7 +211,10 @@ def compute_co2_rolling_accumulator(
     )
     gn = (gn_full.filter(pl.col("g").is_in(list(co2_groups)))
           if {"g", "n"}.issubset(gn_full.columns) and gn_full.height > 0
-          else pl.DataFrame(schema={"g": pl.Utf8, "n": pl.Utf8}))
+          else pl.DataFrame(schema={
+              "g": schema_dtype(None, "g"),
+              "n": schema_dtype(None, "n"),
+          }))
 
     pmle = _set_frame(getattr(flex_data, "process_min_load_eff", None), "p")
     if pmle.height > 0:
@@ -322,7 +336,9 @@ def _combine_with_prior(
     p_co2_cum_realized_tonnes]`` sorted."""
     if prior_cumulative_co2 is None or prior_cumulative_co2.height == 0:
         prior = pl.DataFrame(schema={
-            "group": pl.Utf8, "period": pl.Utf8, "prior": pl.Float64})
+            "group": schema_dtype(None, "group"),
+            "period": schema_dtype(None, "period"),
+            "prior": pl.Float64})
     else:
         prior = (prior_cumulative_co2
             .with_columns(prior=pl.col("value").cast(pl.Float64))

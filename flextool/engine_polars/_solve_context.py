@@ -44,6 +44,7 @@ from typing import Any
 
 import polars as pl
 
+from ._axis_enums import schema_dtype
 from ._input_source import _install_csv_cache, _read_csv_file
 
 
@@ -132,13 +133,18 @@ class SolveContext:
     # IO cost upfront.
     _period_in_use_loaded: bool = field(default=False, repr=False)
     _period_in_use: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema={"d": pl.Utf8}),
+        default_factory=lambda: pl.DataFrame(
+            schema={"d": schema_dtype(None, "d")}
+        ),
         repr=False,
     )
     _period_branch_loaded: bool = field(default=False, repr=False)
     _period_branch: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(
-            schema={"d_anchor": pl.Utf8, "b": pl.Utf8}
+            schema={
+                "d_anchor": schema_dtype(None, "d_anchor"),
+                "b": schema_dtype(None, "b"),
+            }
         ),
         repr=False,
     )
@@ -167,14 +173,18 @@ class SolveContext:
     _steps_in_use_loaded: bool = field(default=False, repr=False)
     _steps_in_use: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(
-            schema={"d": pl.Utf8, "t": pl.Utf8, "step_duration": pl.Float64}
+            schema={
+                "d": schema_dtype(None, "d"),
+                "t": schema_dtype(None, "t"),
+                "step_duration": pl.Float64,
+            }
         ),
         repr=False,
     )
     _period_share_loaded: bool = field(default=False, repr=False)
     _period_share: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(
-            schema={"d": pl.Utf8, "value": pl.Float64}
+            schema={"d": schema_dtype(None, "d"), "value": pl.Float64}
         ),
         repr=False,
     )
@@ -185,7 +195,10 @@ class SolveContext:
     _solve_branch_weight_loaded: bool = field(default=False, repr=False)
     _solve_branch_weight: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(
-            schema={"b": pl.Utf8, "p_branch_weight_input": pl.Float64}
+            schema={
+                "b": schema_dtype(None, "b"),
+                "p_branch_weight_input": pl.Float64,
+            }
         ),
         repr=False,
     )

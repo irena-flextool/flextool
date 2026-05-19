@@ -440,7 +440,10 @@ def _write_input_entity_set_csvs(data: "FlexData", inp_dir: Path) -> None:
         list(set(pss["p"].cast(pl.Utf8).to_list())) if pss is not None and "p" in pss.columns else []
     )
     entities = sorted(set(nodes) | set(processes))
-    pl.DataFrame({"entity": entities}).write_csv(inp_dir / "entity.csv")
+    pl.DataFrame(
+        {"entity": entities},
+        schema={"entity": schema_dtype(None, "entity")},
+    ).write_csv(inp_dir / "entity.csv")
 
 
 def _write_input_p_entity_unitsize_wide(data: "FlexData",

@@ -48,6 +48,8 @@ from pathlib import Path
 
 import polars as pl
 
+from ._axis_enums import schema_dtype
+
 
 # ---------------------------------------------------------------------------
 # CSV I/O — same conventions as _writer_{leaf,mid}_sets:
@@ -73,7 +75,10 @@ def _read_csv(path: Path, columns: list[str],
     )
     if seeded is not None:
         return seeded
-    return pl.DataFrame({c: [] for c in columns}, schema={c: pl.Utf8 for c in columns})
+    return pl.DataFrame(
+        {c: [] for c in columns},
+        schema={c: schema_dtype(None, c) for c in columns},
+    )
 
 
 def _write(df: pl.DataFrame, path: Path) -> None:
