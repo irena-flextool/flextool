@@ -33,6 +33,20 @@ from flextool.engine_polars._cumulative_invest import (
     _emit_group_invest_cumulative,
     has_feature,
 )
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine_polars._input_source import seed_provider_from_dir
+
+
+def _provider_for_workdir(sd: Path, inp: Path) -> FlexDataProvider:
+    """Seed an in-memory provider from a test ``solve_data/`` +
+    ``input/`` for _load_invest (Step 2.5 disk-fallback removal).
+    """
+    provider = FlexDataProvider()
+    if inp.exists():
+        seed_provider_from_dir(provider, inp, "input")
+    if sd.exists():
+        seed_provider_from_dir(provider, sd, "solve_data")
+    return provider
 
 
 # --- helpers --------------------------------------------------------
@@ -70,7 +84,7 @@ def test_divest_only_no_invest_bypasses_blank_shortcut(tmp_path: Path):
     _write(sd / "ed_invest.csv", "entity,period\n")
     _write(sd / "ed_divest.csv", "entity,period\ne1,p1\n")
 
-    out = _load_invest(sd, dt, inp, None, db_reader=None)
+    out = _load_invest(sd, dt, inp, None, db_reader=None, provider=_provider_for_workdir(sd, inp))
     # Hand-calc: ed_inv.height=0, ed_div.height=1 -> NOT blank;
     # ed_invest_set _hnz(0)=None, ed_divest_set _hnz(1)=frame{(e1,p1)}.
     assert out["ed_invest_set"] is None
@@ -95,7 +109,7 @@ def test_period_set_independent_from_max_period_param(tmp_path: Path):
     _write(sd / "ed_invest_period.csv", "entity,period\ne1,p1\n")
     # Intentionally NO ed_invest_max_period.csv
 
-    out = _load_invest(sd, dt, inp, None, db_reader=None)
+    out = _load_invest(sd, dt, inp, None, db_reader=None, provider=_provider_for_workdir(sd, inp))
     # Hand-calc: period_set populated by _seed_period_set -> height=1;
     # max_period CSV absent -> _read_e_d returns None.
     assert out["ed_invest_period_set"] is not None
@@ -137,7 +151,7 @@ def test_skip_set_seeds_when_synthetic_solve(tmp_path: Path):
                 return pl.DataFrame({"name": ["mysolve"], "value": ["p2020"]})
             raise KeyError(par)
 
-    out = _load_invest(sd, dt, inp, None, db_reader=_Reader())
+    out = _load_invest(sd, dt, inp, None, db_reader=_Reader(), provider=_provider_for_workdir(sd, inp))
     # Hand-calc: synthetic gate fires -> skip_set_seeds=True;
     # invest_periods=['p2020'] -> NOT blank -> set fields stay None,
     # cost-param seed loaded -> ed_lifetime_fixed_cost Param at (e1,p1)=100.

@@ -14,6 +14,20 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars import _group_slack, _reserve, _commodity_ladder
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine_polars._input_source import seed_provider_from_dir
+
+
+def _provider_for_workdir(inp: Path, sd: Path) -> FlexDataProvider:
+    """Seed an in-memory provider from a test ``input/`` + ``solve_data/``
+    for *.load_data (Step 2.5 disk-fallback removal).
+    """
+    provider = FlexDataProvider()
+    if inp.exists():
+        seed_provider_from_dir(provider, inp, "input")
+    if sd.exists():
+        seed_provider_from_dir(provider, sd, "solve_data")
+    return provider
 
 
 # --- helpers --------------------------------------------------------
@@ -51,7 +65,7 @@ def test_pdgroup_topfile_wide_unpivot_and_long_form_path(tmp_path: Path):
            "group,param,period,value\n"
            "g1,inertia_limit,d1,5.0\n")
 
-    out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(),
+    out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(), provider=_provider_for_workdir(inp, sd),
                                   nb=None, pss_eff=None, pss_noEff=None,
                                   p_unitsize=None)
     # Hand-calc: wide unpivot yields 2 (g, d) rows; groupCapacityMargin = {g1, g2}.
@@ -86,7 +100,7 @@ def test_zero_drop_and_nonsync_override_and_inertia_only_filter(tmp_path: Path):
            "p1,n1,efficiency,0.95\n"
            "p2,n1,inertia_constant,0.0\n")
 
-    out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(),
+    out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(), provider=_provider_for_workdir(inp, sd),
                                   nb=None, pss_eff=None, pss_noEff=None,
                                   p_unitsize=None)
     # Hand-calc: zero-row drop ⇒ g1 absent, only g2.
@@ -108,7 +122,7 @@ def test_process_unit_filter_excludes_connections(tmp_path: Path):
     """
     inp, sd = _make_dirs(tmp_path)
     _write(sd / "process_unit.csv", "process_unit\np_unit\n")
-    out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(),
+    out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(), provider=_provider_for_workdir(inp, sd),
                                   nb=None, pss_eff=None, pss_noEff=None,
                                   p_unitsize=None)
     # Hand-calc: 1 row, column renamed to "p", value "p_unit".
@@ -128,7 +142,7 @@ def test_feature_gate_empty_rug_returns_blank(tmp_path: Path):
     to an empty dict (no FlexData fields populated)."""
     inp, sd = _make_dirs(tmp_path)
     _write(sd / "reserve__upDown__group.csv", "reserve,upDown,group\n")
-    out = _reserve.load_data(inp, sd, dt=None)
+    out = _reserve.load_data(inp, sd, dt=None, provider=_provider_for_workdir(inp, sd))
     # Hand-calc: empty CSV ⇒ early return ⇒ {}.
     assert out == {}
 
@@ -149,7 +163,7 @@ def test_method_partition_three_way(tmp_path: Path):
     _write(sd / "reserve__upDown__group__method_n_1.csv",
            "reserve,upDown,group,method\nr1,up,g3,n_1\n")
 
-    out = _reserve.load_data(inp, sd, dt=None)
+    out = _reserve.load_data(inp, sd, dt=None, provider=_provider_for_workdir(inp, sd))
     # Hand-calc: each partition exactly one row, with its own group.
     assert out["reserve_upDown_group_method_timeseries"]["g"].to_list() == ["g1"]
     assert out["reserve_upDown_group_method_dynamic"]["g"].to_list() == ["g2"]
@@ -173,7 +187,7 @@ def test_pdtReserve_param_slice_and_dt_clip(tmp_path: Path):
            "r1,up,g1,d2,t1,reservation,77.0\n")
     dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})
 
-    out = _reserve.load_data(inp, sd, dt=dt)
+    out = _reserve.load_data(inp, sd, dt=dt, provider=_provider_for_workdir(inp, sd))
     # Hand-calc: param=="reservation" ⇒ 2 rows; dt-join ⇒ keep only (d1,t1)
     # ⇒ 1 row, value=50.0.  other_param dropped, (d2,t1) clipped.
     frame = out["pdtReserve_upDown_group_reservation"].frame
@@ -193,7 +207,7 @@ def test_feature_gate_no_commodity_with_ladder_returns_blank(tmp_path: Path):
     all-None blank dict (every key present, every value None).
     """
     inp, sd = _make_dirs(tmp_path)
-    out = _commodity_ladder.load_data(inp, sd)
+    out = _commodity_ladder.load_data(inp, sd, provider=_provider_for_workdir(inp, sd))
     # Hand-calc: missing CSV ⇒ blank dict (all values None).
     assert out["commodity_with_ladder"] is None
     assert all(v is None for v in out.values())
@@ -213,7 +227,7 @@ def test_tier_string_dtype_preservation(tmp_path: Path):
     _write(sd / "commodity_with_ladder.csv", "commodity\nc1\n")
     _write(sd / "cndi_ladder_set.csv",
            "commodity,node,period,tier\nc1,n1,d1,1\nc1,n1,d1,2\n")
-    out = _commodity_ladder.load_data(inp, sd)
+    out = _commodity_ladder.load_data(inp, sd, provider=_provider_for_workdir(inp, sd))
     cndi = out["cndi_ladder"]
     # Hand-calc: read int tier ⇒ cast to Utf8 ⇒ values ["1","2"].
     assert cndi["i"].dtype == pl.Utf8
