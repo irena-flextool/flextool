@@ -30,7 +30,9 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine_polars._axis_enums import rename_to_axis
+from flextool.engine_polars._axis_enums import (cast_frame_axes,
+                                                 get_global_axis_enums,
+                                                 rename_to_axis)
 from flextool.engine_polars._param_shapes import (
     broadcast_to_period,
     broadcast_to_period_time,
@@ -536,6 +538,15 @@ def _filter_param_by_periods(p: Param | None,
     fr = p.frame
     if "d" not in fr.columns:
         return p
+    # Phase 4.8g: ``p.frame`` may carry Utf8 ``d`` / ``t`` columns from the
+    # Direct-Param CSV/scalar path while ``period_filter`` (the ``dt``
+    # frame) is fully Enum-cast under activation.  Defensively cast both
+    # frames to the live axis enums so the join keys match — without this
+    # the joins at line 545 / 542 raise ``SchemaError`` (Utf8 ↔ Enum).
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        fr = cast_frame_axes(fr, _enums)
+        period_filter = cast_frame_axes(period_filter, _enums)
     pf_cols = set(period_filter.columns)
     if "t" in fr.columns and {"d", "t"}.issubset(pf_cols):
         keep = period_filter.select("d", "t").unique()

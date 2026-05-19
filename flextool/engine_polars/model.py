@@ -1348,10 +1348,30 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 frame=v_invest_p.frame.pipe(rename_to_axis, {"d": "d_invest"}),
                 lower=v_invest_p.lower, upper=v_invest_p.upper,
             )
-            # filter edd_invest to processes
-            edd_inv_p = d.edd_invest_set.filter(
-                pl.col("e").is_in(d.process_source_sink["p"].unique())
-            ).pipe(rename_to_axis, {"e": "p"})
+            # Phase 4.8g: ``edd_invest_set.e`` is entity-Enum (e-axis vocab,
+            # superset) while ``process_source_sink["p"]`` is process-Enum
+            # (p-axis vocab); a cross-Enum ``is_in`` is rejected by polars.
+            # Per the contract p ⊂ e — up-cast ``p`` to the e-axis Enum and
+            # use an Enum-on-Enum semi-join (mirror of the Phase 4.7b
+            # up-cast-to-e pattern at input.py:_load_user_constraints).
+            # Defensively re-cast ``edd_invest_set`` against the live axis
+            # enums in case it carries a stale vocab snapshot from the
+            # cascade build.
+            # Cascade-wide axis-enum ContextVar is reset by the time
+            # ``build_flextool`` runs, so we read the canonical e-axis
+            # Enum directly from ``edd_invest_set`` (already cast to the
+            # full entity-union vocabulary by ``cast_flexdata_axes`` at
+            # the end of the input cascade).  Up-cast ``p`` to that exact
+            # Enum dtype so the join composes natively without a
+            # cross-Enum SchemaError.
+            e_dt = d.edd_invest_set.schema["e"]
+            p_as_e = (d.process_source_sink
+                        .select(pl.col("p").cast(e_dt, strict=False)
+                                  .alias("e"))
+                        .unique())
+            edd_inv_p = (d.edd_invest_set
+                            .join(p_as_e, on="e", how="semi")
+                            .pipe(rename_to_axis, {"e": "p"}))
             invest_in_dispatch = Sum(
                 Where(v_inv_at, edd_inv_p),
                 over=("d_invest",))
@@ -1485,10 +1505,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
 
     # ─── Invest / divest variable bounds + maxToSink tightening ──────────
     if has_invest_p or has_divest_p:
-        # p-side max_units (rename "e" → "p" to align with process vars)
+        # p-side max_units (rename "e" → "p" to align with process vars).
+        # Phase 4.8g: the ContextVar is reset by the time ``build_flextool``
+        # runs, so ``rename_to_axis`` cannot re-cast the renamed column to
+        # the p-axis Enum.  Use a semi-join against ``process_source_sink``
+        # (already p-Enum) up-cast to the e-axis vocab of the source frame
+        # so the cross-Enum filter composes natively.
+        _maxu = d.p_entity_max_units.frame
+        _e_dt = _maxu.schema["e"]
+        _p_in_e = (d.process_source_sink
+                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
+                     .unique())
         max_units_p = Param(("p", "d"),
-            d.p_entity_max_units.frame.pipe(rename_to_axis, {"e": "p"})
-                .filter(pl.col("p").is_in(d.process_source_sink["p"].unique())))
+            _maxu.join(_p_in_e, on="e", how="semi")
+                  .pipe(rename_to_axis, {"e": "p"}))
     if has_invest_p:
         m.add_cstr(
             "maxInvest_var_bound",
@@ -1506,9 +1536,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             rhs_terms = {"max_units": max_units_p},
         )
     if has_invest_n or has_divest_n:
+        # Phase 4.8g: same cross-Enum pattern as the ``max_units_p`` site
+        # above — semi-join against ``nodeState['n']`` up-cast to the
+        # e-axis vocab carried by ``p_entity_max_units``.
+        _maxu_n = d.p_entity_max_units.frame
+        _e_dt_n = _maxu_n.schema["e"]
+        _n_in_e = (d.nodeState
+                     .select(pl.col("n").cast(_e_dt_n, strict=False).alias("e"))
+                     .unique())
         max_units_n = Param(("n", "d"),
-            d.p_entity_max_units.frame.pipe(rename_to_axis, {"e": "n"})
-                .filter(pl.col("n").is_in(d.nodeState["n"].unique())))
+            _maxu_n.join(_n_in_e, on="e", how="semi")
+                    .pipe(rename_to_axis, {"e": "n"}))
     if has_invest_n:
         m.add_cstr(
             "maxInvest_var_bound_n",
