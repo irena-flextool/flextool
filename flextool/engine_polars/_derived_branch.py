@@ -714,9 +714,14 @@ def apply_branch_cluster(
         # build a (d, t)-dense Param via left-join + coalesce default
         # of 1.0.  This mirrors the previous CSV-cascade behaviour at
         # input.py:2845-2870 (preserves exact frame shape).
+        # Defensive re-cast: cast d/t to canonical Enum so the left-join
+        # against ``pdt_bw.lazy`` (Enum d/t) composes cleanly even when
+        # ``dt`` arrives with Utf8 columns.
         base = (dt.lazy()
                   .with_columns(value=pl.lit(1.0))
-                  .select("d", "t", "value"))
+                  .select(alias_to_axis("d", "d"),
+                          alias_to_axis("t", "t"),
+                          "value"))
         joined = (base
                     .join(pdt_bw.lazy,
                           on=["d", "t"], how="left", suffix="__r")
