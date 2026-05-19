@@ -640,9 +640,17 @@ def _pbt_node_inflow_frame(source: "InputSource") -> "pl.DataFrame | None":
         return None
     return pbt.select(
         alias_to_axis("name", "n"),
-        pl.col("branch").cast(pl.Utf8).alias("tb"),
+        # branch arrives Enum-typed (branch axis) under activation; we
+        # preserve that Enum dtype under the alias "tb" — the alias name
+        # itself is not axis-aware, so we cast explicitly via
+        # schema_dtype(None, "branch") rather than relying on
+        # alias_to_axis's name-based resolution.
+        pl.col("branch").cast(schema_dtype(None, "branch")).alias("tb"),
+        # time_start is an opaque authored time-start tag, not an
+        # axis-aware column (not in _AXIS_SYNONYMS / _CANONICAL_AXES).
+        # Keep the Utf8 cast.
         pl.col("time_start").cast(pl.Utf8).alias("ts"),
-        pl.col("t").cast(pl.Utf8),
+        alias_to_axis(pl.col("t"), "t"),
         pl.col("value").cast(pl.Float64),
     )
 
@@ -786,11 +794,21 @@ def _pbt_node_inflow_fold_lf(
                 for ts in tss:
                     b1_rows.append((d, tb, ts))
         if b1_rows:
-            d_tb_ts_b1 = pl.LazyFrame({
-                "d":  [r[0] for r in b1_rows],
-                "tb": [r[1] for r in b1_rows],
-                "ts": [r[2] for r in b1_rows],
-            })
+            d_tb_ts_b1 = pl.LazyFrame(
+                {
+                    "d":  [r[0] for r in b1_rows],
+                    "tb": [r[1] for r in b1_rows],
+                    "ts": [r[2] for r in b1_rows],
+                },
+                schema={
+                    "d":  schema_dtype(None, "d"),
+                    # tb carries branch-axis tokens (renamed from
+                    # "branch" → "tb" by the producer above).
+                    "tb": schema_dtype(None, "branch"),
+                    # ts is an opaque time-start tag — keep Utf8.
+                    "ts": pl.Utf8,
+                },
+            )
             b1 = (pbt_lf
                     .filter(pl.col("n").is_in(list(stoch_nodes)))
                     .join(d_tb_ts_b1, on=["tb", "ts"], how="inner")
@@ -810,11 +828,21 @@ def _pbt_node_inflow_fold_lf(
                     for ts in tss:
                         b2_rows.append((d, tb, ts))
         if b2_rows:
-            d_tb_ts_b2 = pl.LazyFrame({
-                "d":  [r[0] for r in b2_rows],
-                "tb": [r[1] for r in b2_rows],
-                "ts": [r[2] for r in b2_rows],
-            })
+            d_tb_ts_b2 = pl.LazyFrame(
+                {
+                    "d":  [r[0] for r in b2_rows],
+                    "tb": [r[1] for r in b2_rows],
+                    "ts": [r[2] for r in b2_rows],
+                },
+                schema={
+                    "d":  schema_dtype(None, "d"),
+                    # tb carries branch-axis tokens (renamed from
+                    # "branch" → "tb" by the producer above).
+                    "tb": schema_dtype(None, "branch"),
+                    # ts is an opaque time-start tag — keep Utf8.
+                    "ts": pl.Utf8,
+                },
+            )
             b2 = (pbt_lf
                     .join(d_tb_ts_b2, on=["tb", "ts"], how="inner")
                     .group_by(["n", "d", "t"])
