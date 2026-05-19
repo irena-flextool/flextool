@@ -411,8 +411,12 @@ class SpineDbReader:
                 parameter_name=parameter_name,
             )
         overrides = {"value": leaf_dtype} if leaf_dtype is not None else None
+        # ``strict=False`` preserves the tolerance of the pre-columnar
+        # ``pl.DataFrame(list_of_dicts)`` constructor for heterogeneous
+        # Map-index columns (e.g. solve.invest_periods with mixed
+        # String / Int64 indexes across entities).
         frame = self._finalize(
-            pl.DataFrame(columns, schema_overrides=overrides).lazy(),
+            pl.DataFrame(columns, schema_overrides=overrides, strict=False).lazy(),
             ent_cols + index_cols,
         )
         return self._maybe_cast_frame(
@@ -453,7 +457,11 @@ class SpineDbReader:
             v_lf = pl.DataFrame(schema=schema_in).lazy()
         else:
             overrides = {"value": leaf_dtype} if leaf_dtype is not None else None
-            v_lf = pl.DataFrame(columns, schema_overrides=overrides).lazy()
+            # ``strict=False`` preserves pre-columnar tolerance of mixed
+            # Map-index types (see _spinedb_reader.py:415).
+            v_lf = pl.DataFrame(
+                columns, schema_overrides=overrides, strict=False,
+            ).lazy()
 
         # Step 3 — apply the §4.5 default policy lazily.
         if default is None:
@@ -831,15 +839,30 @@ class SpineDbReader:
         Pads trailing ``index_cols`` (those beyond ``len(idx_path)``)
         with ``None`` so every column list ends up at the same length
         even when a parameter mixes shallow and deep shapes within a
-        scenario (defensive — flextool fixtures don't currently do
-        this).
+        scenario.
+
+        Duplicate names in ``index_cols`` (e.g. a nested Map where
+        every level shares the same ``index_name='x'``) collapse to a
+        single column via the polars dict-of-lists deduplication.  In
+        that case we use a *last-wins* policy per leaf so the deepest
+        Map level's index value survives — matching the pre-columnar
+        ``pl.DataFrame(list_of_dicts)`` behaviour where each
+        ``child_base[col_name] = ...`` overwrote the outer entry.
         """
         for col, val in zip(ent_cols, ent_values):
             columns[col].append(val)
-        n_idx = len(index_cols)
+        # Resolve duplicate column names by keeping the last index_path
+        # value per name (deepest-wins; pad with None when idx_path is
+        # shorter than index_cols).
         n_path = len(idx_path)
-        for i in range(n_idx):
-            columns[index_cols[i]].append(idx_path[i] if i < n_path else None)
+        per_col_value: dict[str, Any] = {}
+        for i, col in enumerate(index_cols):
+            if i < n_path:
+                per_col_value[col] = idx_path[i]
+            else:
+                per_col_value.setdefault(col, None)
+        for col, v in per_col_value.items():
+            columns[col].append(v)
         columns["value"].append(value)
 
     # ------------------------------------------------------------------
