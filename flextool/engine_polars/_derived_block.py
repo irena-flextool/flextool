@@ -536,15 +536,17 @@ def flow_from_nodeBalance_seed(
         return None
     if "n" not in nodeBalance.columns:
         return None
-    # Cross-axis is_in: nodeBalance.n is n-Enum, pss.source is e-Enum.
-    # Cast both to Utf8 for token-string membership; project ``n`` as
-    # Utf8 to match the downstream block-filter join (see
-    # :func:`filter_flow_n_by_block`).
-    nb_nodes_utf = nodeBalance["n"].cast(pl.Utf8)
+    # Cross-axis is_in: nodeBalance.n is n-Enum (n ⊂ e), pss.source is
+    # e-Enum.  Up-cast nodeBalance.n to e-Enum (Pattern 2) so the
+    # membership filter composes natively in Enum.  Project ``n`` as
+    # e-Enum via alias_to_axis — matches the downstream block-filter
+    # join in :func:`filter_flow_n_by_block`, which also up-casts
+    # entity_block_lf.n to e-Enum.
+    nb_nodes_e = nodeBalance.lazy().select(cast_dim(pl.col("n"), None, "e"))
     seed = (
         pss_partition.lazy()
-        .filter(pl.col("source").cast(pl.Utf8).is_in(nb_nodes_utf))
-        .with_columns(n=pl.col("source").cast(pl.Utf8))
+        .filter(pl.col("source").is_in(nb_nodes_e.collect()["n"]))
+        .with_columns(alias_to_axis(pl.col("source"), "e").alias("n"))
         .select("p", "source", "sink", "n")
         .unique()
         .sort("p", "source", "sink", "n")
