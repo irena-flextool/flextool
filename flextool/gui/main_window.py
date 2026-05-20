@@ -12,6 +12,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import ttk, messagebox, simpledialog
 
+from flextool._resources import package_data_path
 from flextool.gui.project_utils import (
     create_project,
     get_projects_dir,
@@ -143,6 +144,9 @@ class MainWindow(tk.Tk):
         self.title("FlexTool")
 
         # ── Window icon (works on Windows, macOS, Linux) ──────────
+        # docs/ is shipped in the source repo but not in the PyPI wheel.
+        # In editable installs the icon is found; in wheel installs it
+        # silently doesn't load (the iconphoto call is non-fatal).
         icon_path = Path(__file__).resolve().parent.parent.parent / "docs" / "irena_flextool_favicon.png"
         if icon_path.exists():
             try:
@@ -2190,19 +2194,19 @@ class MainWindow(tk.Tk):
         from flextool.update_flextool.db_migration import migrate_database
         info = detect_excel_format(xlsx_path)
 
-        flextool_root = Path(__file__).resolve().parent.parent.parent
+        flextool_root = Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
         needs_migration = False
 
         if info.format == ExcelFormat.SELF_DESCRIBING and (
             info.version is None or info.version >= CURRENT_FLEXTOOL_DB_VERSION
         ):
             # Current version — import directly against the current schema
-            template = flextool_root / "version" / "flextool_template_master.json"
+            template = package_data_path("version/flextool_template_master.json")
         else:
             # Older Excel (SPECIFICATION or older SELF_DESCRIBING):
             # init from v25 base, migrate to the Excel's version, import, then
             # migrate the rest of the way to current after import.
-            template = flextool_root / "version" / "flextool_template_v25.json"
+            template = package_data_path("version/flextool_template_v25.json")
             needs_migration = True
 
         if not template.exists():
@@ -2291,7 +2295,7 @@ class MainWindow(tk.Tk):
             return
 
         info = detect_excel_format(xlsx_path)
-        flextool_root = Path(__file__).resolve().parent.parent.parent
+        flextool_root = Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
 
         # Create a temporary directory for the intermediate sqlite
         import tempfile
@@ -2310,7 +2314,7 @@ class MainWindow(tk.Tk):
                 pass
             return
         elif info.format == ExcelFormat.SELF_DESCRIBING:
-            template = flextool_root / "version" / "flextool_template_v25.json"
+            template = package_data_path("version/flextool_template_v25.json")
             import_cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
@@ -2318,7 +2322,7 @@ class MainWindow(tk.Tk):
             ]
         else:
             # SPECIFICATION format
-            template = flextool_root / "version" / "flextool_template_v25.json"
+            template = package_data_path("version/flextool_template_v25.json")
             import_cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_tabular_input",
@@ -2644,14 +2648,14 @@ class MainWindow(tk.Tk):
         from flextool.update_flextool.initialize_database import initialize_database
         from flextool.update_flextool.db_migration import migrate_database
         info = detect_excel_format(xlsx_path)
-        flextool_root = Path(__file__).resolve().parent.parent.parent
+        flextool_root = Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
         migrate_db_path: str | None = None
 
         if info.format == ExcelFormat.SELF_DESCRIBING and (
             info.version is None or info.version >= CURRENT_FLEXTOOL_DB_VERSION
         ):
             # Current version — import directly against the current schema
-            template = flextool_root / "version" / "flextool_template_master.json"
+            template = package_data_path("version/flextool_template_master.json")
             cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
@@ -2660,7 +2664,7 @@ class MainWindow(tk.Tk):
         elif info.format == ExcelFormat.SELF_DESCRIBING:
             # Older self-describing: init from v25 base, pre-migrate to
             # the Excel's version, import, then migrate to current.
-            template = flextool_root / "version" / "flextool_template_v25.json"
+            template = package_data_path("version/flextool_template_v25.json")
             cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
@@ -2668,7 +2672,7 @@ class MainWindow(tk.Tk):
             ]
             migrate_db_path = str(db_path)
         else:
-            template = flextool_root / "version" / "flextool_template_v25.json"
+            template = package_data_path("version/flextool_template_v25.json")
             cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_tabular_input",

@@ -19,15 +19,19 @@ logger = logging.getLogger(__name__)
 
 
 def _flextool_root() -> Path:
-    """Return the repository root (three levels up from gui/)."""
-    return get_projects_dir().parent
+    """Return the user's working directory (where project files live).
+
+    Historically this was the repo root (three levels up from ``gui/``).
+    In a wheel install that path is inside ``site-packages/`` and not
+    user-relevant; CWD is the workspace.
+    """
+    return Path.cwd()
 
 
 def _relative_config_path(abs_path: Path) -> str:
-    """Return the path relative to the FlexTool root when possible."""
-    root = _flextool_root()
+    """Return the path relative to CWD when possible."""
     try:
-        return str(abs_path.relative_to(root))
+        return str(abs_path.relative_to(Path.cwd()))
     except ValueError:
         return str(abs_path)
 
@@ -529,14 +533,19 @@ class DispatchConfigEditor(tk.Toplevel):
 def _resolve_config_path(config_file: str) -> Path:
     """Resolve a config file string to an absolute ``Path``.
 
-    If the string looks like a relative path (e.g.
-    ``templates/default_plots.yaml``), it is resolved relative to the
-    FlexTool root.  Absolute paths are returned as-is.
+    Absolute paths are returned as-is.  A bare name like
+    ``default_plots.yaml`` or the legacy
+    ``templates/default_plots.yaml`` is resolved against the bundled
+    ``textual_templates/`` package data.  Any other relative path is
+    resolved against the user's CWD.
     """
     p = Path(config_file)
     if p.is_absolute():
         return p
-    return _flextool_root() / p
+    if p.name in {"default_plots.yaml", "default_colors.yaml"}:
+        from flextool._resources import package_data_path
+        return package_data_path(f"textual_templates/{p.name}")
+    return Path.cwd() / p
 
 
 def _parse_int(text: str, fallback: int) -> int:

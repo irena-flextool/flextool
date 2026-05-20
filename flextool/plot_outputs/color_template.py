@@ -33,17 +33,9 @@ logger = logging.getLogger(__name__)
 _TEMPLATE_CACHE: dict[tuple[str, int], dict] = {}
 
 
-def _repo_root() -> Path:
-    """Return the FlexTool repository root.
-
-    ``color_template.py`` lives at ``flextool/plot_outputs/``; go two
-    levels up to reach the repo root alongside ``templates/``.
-    """
-    return Path(__file__).resolve().parent.parent.parent
-
-
 def _default_path() -> Path:
-    return _repo_root() / "templates" / "default_colors.yaml"
+    from flextool._resources import package_data_path
+    return package_data_path("textual_templates/default_colors.yaml")
 
 
 def load_color_template(path: Path | None = None) -> dict:

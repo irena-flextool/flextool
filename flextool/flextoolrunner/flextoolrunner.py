@@ -32,13 +32,16 @@ class FlexToolRunner:
                 highs_log.unlink()
             # make a directory for solve data
             (resolved_work_folder / "solve_data").mkdir(exist_ok=True)
-            # Build PathConfig
-            _default_root = Path(__file__).parent.parent.parent
+            # Build PathConfig — defaults are PyPI-friendly: the
+            # ``flextool`` package directory for static data, CWD for
+            # outputs and user-editable ``bin/highs.opt``.
+            from flextool._resources import package_data_path
+            _pkg_dir = package_data_path("")
             paths = PathConfig(
-                flextool_dir=Path(flextool_dir) if flextool_dir is not None else _default_root / "flextool",
-                bin_dir=Path(bin_dir) if bin_dir is not None else _default_root / "bin",
-                root_dir=Path(root_dir) if root_dir is not None else _default_root,
-                output_path=Path(output_path) if output_path is not None else _default_root,
+                flextool_dir=Path(flextool_dir) if flextool_dir is not None else _pkg_dir,
+                bin_dir=Path(bin_dir) if bin_dir is not None else Path.cwd() / "bin",
+                root_dir=Path(root_dir) if root_dir is not None else Path.cwd(),
+                output_path=Path(output_path) if output_path is not None else Path.cwd(),
                 work_folder=resolved_work_folder,
             )
             # read the data in

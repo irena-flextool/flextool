@@ -37,15 +37,17 @@ _LOGGER = logging.getLogger(__name__)
 
 
 SETTINGS_TEMPLATES: dict[str, str] = {
-    "output_info.sqlite": "version/output_info_template.json",
-    "output_settings.sqlite": "version/output_settings_template.json",
-    "comparison_settings.sqlite": "version/comparison_settings_template.json",
+    "output_info.sqlite": "output_info_template.json",
+    "output_settings.sqlite": "output_settings_template.json",
+    "comparison_settings.sqlite": "comparison_settings_template.json",
 }
 """Mapping from settings-DB basename to the JSON template that seeds it.
 
-Keys are compared case-sensitively against ``Path.name`` of the target
-path, not full paths — so a user-custom name like ``my_config.sqlite``
-is intentionally not auto-seeded.
+Templates are looked up under ``flextool/version/`` via
+``importlib.resources`` (see :func:`ensure_settings_db`).  Keys are
+compared case-sensitively against ``Path.name`` of the target path, not
+full paths — so a user-custom name like ``my_config.sqlite`` is
+intentionally not auto-seeded.
 """
 
 
@@ -86,7 +88,7 @@ def _sqlite_url_to_path(sqlite_url: str, cwd: Optional[Path] = None) -> Optional
 
 def ensure_settings_db(
     target: str | Path,
-    repo_root: Path,
+    repo_root: Path | None = None,
     *,
     logger: Optional[logging.Logger] = None,
 ) -> Optional[Path]:
@@ -94,10 +96,10 @@ def ensure_settings_db(
     yet exist, create it from the corresponding JSON template.
 
     ``target`` may be a filesystem path or an ``sqlite://...`` URL.
-    ``repo_root`` is the FlexTool repository root used to resolve the
-    ``version/*.json`` template path.  Returns the resolved target path
-    if a seed occurred, else ``None``.  Never raises on happy path;
-    logs a warning if the template is missing.
+    The JSON template ships inside the ``flextool`` package
+    (``flextool/version/<template>``); ``repo_root`` is accepted for
+    backward compatibility but ignored — templates are always read from
+    package data via :mod:`importlib.resources`.
     """
     log = logger or _LOGGER
     if target is None:
@@ -109,13 +111,14 @@ def ensure_settings_db(
     else:
         path = Path(target)
 
-    template_rel = SETTINGS_TEMPLATES.get(path.name)
-    if template_rel is None:
+    template_name = SETTINGS_TEMPLATES.get(path.name)
+    if template_name is None:
         return None
     if path.exists():
         return None
 
-    template_path = repo_root / template_rel
+    from flextool._resources import package_data_path
+    template_path = package_data_path(f"version/{template_name}")
     if not template_path.is_file():
         log.warning(
             "Cannot auto-seed %s: template %s is missing.",

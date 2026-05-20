@@ -548,26 +548,34 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
                     plot_file_format = str(settings_params['plot-file-format'])
 
     # Apply hardcoded defaults for anything still unset
-    _flextool_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from flextool._resources import package_data_path
+    _default_plots = str(package_data_path("textual_templates/default_plots.yaml"))
     if write_methods is None:
         write_methods = ['plot', 'parquet', 'excel']
     if output_config_path is None:
-        output_config_path = os.path.join(_flextool_root, 'templates', 'default_plots.yaml')
+        output_config_path = _default_plots
     elif not os.path.isabs(output_config_path):
-        output_config_path = os.path.join(_flextool_root, output_config_path)
+        # Legacy: a settings DB may carry a repo-relative override like
+        # ``templates/default_plots.yaml``.  Treat such relative paths as
+        # references to the bundled default — installing from a wheel no
+        # longer has a repo root to resolve against.
+        if os.path.basename(output_config_path) in {
+            'default_plots.yaml', 'default_comparison_plots.yaml'
+        }:
+            output_config_path = _default_plots
+        else:
+            output_config_path = os.path.abspath(output_config_path)
     # Self-heal for stale settings DBs that still point at the deleted
     # ``default_comparison_plots.yaml`` (comparison rules now live inside
     # default_plots.yaml via per-leaf ``scenario_rule``).
     if (os.path.basename(output_config_path) == 'default_comparison_plots.yaml'
             or not os.path.isfile(output_config_path)):
-        merged = os.path.join(_flextool_root, 'templates', 'default_plots.yaml')
-        if os.path.isfile(merged):
-            if output_config_path != merged:
-                logging.info(
-                    "output-config-path %s not found or superseded — using "
-                    "merged %s instead.", output_config_path, merged,
-                )
-            output_config_path = merged
+        if output_config_path != _default_plots:
+            logging.info(
+                "output-config-path %s not found or superseded — using "
+                "bundled %s instead.", output_config_path, _default_plots,
+            )
+        output_config_path = _default_plots
     if active_configs is None:
         active_configs = ['default']
     if plot_rows is None:

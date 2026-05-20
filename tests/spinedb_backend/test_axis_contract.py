@@ -27,10 +27,11 @@ from pathlib import Path
 import pytest
 
 
-VERSION_DIR = Path(__file__).resolve().parents[2] / "version"
-CONTRACT_PATH = VERSION_DIR / "flextool_axis_contract.json"
-CONTRACT_SCHEMA_PATH = VERSION_DIR / "flextool_axis_contract.schema.json"
-TEMPLATE_MASTER_PATH = VERSION_DIR / "flextool_template_master.json"
+from flextool._resources import package_data_path
+
+CONTRACT_PATH = package_data_path("version/flextool_axis_contract.json")
+CONTRACT_SCHEMA_PATH = package_data_path("version/flextool_axis_contract.schema.json")
+TEMPLATE_MASTER_PATH = package_data_path("version/flextool_template_master.json")
 
 
 @pytest.fixture(scope="module")

@@ -15,10 +15,12 @@ from flextool.export_to_tabular.db_reader import DatabaseContents, read_database
 from flextool.export_to_tabular.sheet_config import build_sheet_specs, SheetSpec, load_settings
 from flextool.export_to_tabular.export_to_excel import export_to_excel
 
+from flextool._resources import package_data_path
+
 FLEXTOOL_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_DB = FLEXTOOL_ROOT / "templates" / "examples.sqlite"
 EXAMPLE_DB_URL = f"sqlite:///{EXAMPLE_DB}"
-MASTER_TEMPLATE = FLEXTOOL_ROOT / "version" / "flextool_template_master.json"
+MASTER_TEMPLATE = package_data_path("version/flextool_template_master.json")
 
 # Parameters on split_params classes that are intentionally not surfaced in the
 # Excel whitelist (e.g. handled by a dedicated writer or never user-editable).

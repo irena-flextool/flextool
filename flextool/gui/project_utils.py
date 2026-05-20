@@ -19,11 +19,13 @@ PROJECT_SUBDIRS = [
 def get_projects_dir() -> Path:
     """Return the path to the top-level ``projects/`` directory.
 
-    This is located at the repository root, i.e.
-    ``<repo>/projects/`` which is three levels up from this file
-    (``flextool/gui/project_utils.py``).
+    Resolved against the user's current working directory.  In an
+    editable install with the GUI launched from the repo root this is
+    the historical ``<repo>/projects/``; in a wheel install the user is
+    expected to launch ``flextool-gui`` from their workspace, where
+    ``./projects/`` is created on demand.
     """
-    return Path(__file__).parent.parent.parent / "projects"
+    return Path.cwd() / "projects"
 
 
 def create_project(name: str) -> Path:

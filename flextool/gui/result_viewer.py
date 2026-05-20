@@ -583,8 +583,8 @@ class ResultViewer(tk.Toplevel):
         """Resolve a plot config path.
 
         If *user_config* is set and exists, use it.  Otherwise fall back
-        to *default_relative* resolved from the projects parent directory
-        (same approach as OutputActionManager).
+        to the bundled default that ships with the package (no longer a
+        repo-root path — works in wheel installs).
         """
         if user_config:
             p = Path(user_config)
@@ -595,8 +595,13 @@ class ResultViewer(tk.Toplevel):
             if candidate.is_file():
                 return candidate
 
-        # Fall back to templates/ relative to get_projects_dir().parent
-        return get_projects_dir().parent / default_relative
+        # ``default_relative`` historically pointed at the repo-root
+        # ``templates/`` dir; the canonical YAML now lives inside the
+        # package as ``textual_templates/`` and is fetched via
+        # ``package_data_path`` so wheel installs find it too.
+        from flextool._resources import package_data_path
+        basename = Path(default_relative).name
+        return package_data_path(f"textual_templates/{basename}")
 
     # ------------------------------------------------------------------
     # Scenario discovery

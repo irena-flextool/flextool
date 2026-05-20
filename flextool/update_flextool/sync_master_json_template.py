@@ -26,7 +26,9 @@ from spinedb_api import DatabaseMapping, export_data, import_data
 
 from flextool.update_flextool.db_migration import migrate_database
 
-VERSION_DIR = Path(__file__).resolve().parent.parent.parent / "version"
+from flextool._resources import package_data_path
+
+VERSION_DIR = package_data_path("version")
 MASTER_TEMPLATE = VERSION_DIR / "flextool_template_master.json"
 
 

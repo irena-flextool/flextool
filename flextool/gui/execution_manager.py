@@ -774,7 +774,7 @@ class ExecutionManager:
             self._notify_status_change(job)
 
             # Run from flextool root so relative paths (templates/, etc.) work
-            flextool_root = Path(__file__).resolve().parent.parent.parent
+            flextool_root = Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
 
             env = {**os.environ, "PYTHONUNBUFFERED": "1"}
             popen_kwargs = dict(
@@ -891,11 +891,14 @@ class ExecutionManager:
         # Active configs — pass all available if none explicitly set
         active = single.active_configs
         if not active:
+            from flextool._resources import package_data_path
             from flextool.gui.config_parser import parse_plot_configs
-            config_file = single.config_file or "templates/default_plots.yaml"
-            config_path = Path(config_file)
-            if not config_path.is_absolute():
-                config_path = Path(__file__).resolve().parent.parent.parent / config_file
+            if single.config_file:
+                config_path = Path(single.config_file)
+                if not config_path.is_absolute():
+                    config_path = Path.cwd() / config_path
+            else:
+                config_path = package_data_path("textual_templates/default_plots.yaml")
             active = parse_plot_configs(config_path) or ["default"]
         cmd.extend(["--active-configs", *active])
 
@@ -985,11 +988,14 @@ class ExecutionManager:
 
         active = comp.active_configs
         if not active:
+            from flextool._resources import package_data_path
             from flextool.gui.config_parser import parse_plot_configs
-            config_file = cfg_file or "templates/default_plots.yaml"
-            config_path = Path(config_file)
-            if not config_path.is_absolute():
-                config_path = Path(__file__).resolve().parent.parent.parent / config_file
+            if cfg_file:
+                config_path = Path(cfg_file)
+                if not config_path.is_absolute():
+                    config_path = Path.cwd() / config_path
+            else:
+                config_path = package_data_path("textual_templates/default_plots.yaml")
             active = parse_plot_configs(config_path) or ["default"]
         cmd.extend(["--active-configs", *active])
 
@@ -1020,7 +1026,7 @@ class ExecutionManager:
         self.append_stdout(job.job_id, cmd_str)
         self.append_stdout(job.job_id, "")
 
-        flextool_root = Path(__file__).resolve().parent.parent.parent
+        flextool_root = Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
         success = False
 
         try:

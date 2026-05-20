@@ -9,6 +9,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from flextool._resources import package_data_path
 from flextool.gui.dialogs.file_picker import FilePickerDialog
 from flextool.gui.project_utils import get_projects_dir
 
@@ -571,7 +572,7 @@ class AddDialog(tk.Toplevel):
             return
 
         json_template = (
-            self._flextool_root / "version" / "flextool_template_master.json"
+            package_data_path("version/flextool_template_master.json")
         )
         if not json_template.exists():
             messagebox.showerror(
@@ -660,7 +661,7 @@ class AddDialog(tk.Toplevel):
             return
 
         json_template = (
-            self._flextool_root / "version" / "flextool_template_master.json"
+            package_data_path("version/flextool_template_master.json")
         )
         if not json_template.exists():
             messagebox.showerror(
@@ -751,7 +752,7 @@ class AddDialog(tk.Toplevel):
                 return
 
         json_template = (
-            self._flextool_root / "version" / "flextool_template_master.json"
+            package_data_path("version/flextool_template_master.json")
         )
         if not json_template.exists():
             messagebox.showerror(

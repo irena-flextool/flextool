@@ -55,8 +55,8 @@ Examples:
                         choices=['plot', 'parquet', 'excel', 'csv'],
                         help='Output formats to generate (default: plot parquet csv)')
     parser.add_argument('--output-subdir', help='Subdirectory for output files (default: scenario_name)')
-    parser.add_argument('--output-config', default='templates/default_plots.yaml',
-                        help='Path to output configuration YAML file (default: templates/default_plots.yaml)')
+    parser.add_argument('--output-config', default=None,
+                        help='Path to output configuration YAML file (default: bundled textual_templates/default_plots.yaml)')
 
     # Skip flags for individual phases
     parser.add_argument('--skip-input-prep', action='store_true',
@@ -76,10 +76,9 @@ Examples:
     # fail opaquely when the user forgot to run `flextool-update`. Only
     # seeds output_info / output_settings / comparison_settings by
     # basename; other paths are left untouched.
-    _repo_root = Path(__file__).resolve().parent.parent.parent
     for _candidate in (args.output_db_url,):
         try:
-            ensure_settings_db(_candidate, _repo_root)
+            ensure_settings_db(_candidate)
         except Exception as _exc:
             logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
 
@@ -133,7 +132,8 @@ Examples:
         print(f"  Scenario:    {args.scenario_name}")
         print()
 
-        cmd = ['python', 'run_flextool.py', args.input_db_url, args.output_db_url, args.scenario_name]
+        cmd = [sys.executable, '-m', 'flextool.cli.cmd_run_flextool',
+               args.input_db_url, args.output_db_url, args.scenario_name]
         if args.debug:
             cmd.append('--debug')
 
@@ -154,17 +154,27 @@ Examples:
 
     # Phase 3: Output Generation
     if not args.skip_output_write:
+        # Resolve --output-config: bare basename or unset → bundled
+        # default from the package; absolute path → used verbatim.
+        from flextool._resources import package_data_path
+        output_config = args.output_config
+        if not output_config or Path(output_config).name in {
+            'default_plots.yaml', 'default_comparison_plots.yaml'
+        }:
+            output_config = str(package_data_path("textual_templates/default_plots.yaml"))
+
         print(f"\n{'='*70}")
         print("PHASE 3: WRITING OUTPUTS")
         print(f"{'='*70}")
         print(f"  Scenario:    {args.scenario_name}")
         print(f"  Formats:     {', '.join(args.output_methods)}")
         print(f"  Subdirectory: {output_subdir}")
-        print(f"  Config:      {args.output_config}")
+        print(f"  Config:      {output_config}")
         print()
 
-        cmd = ['python', 'write_outputs.py', args.scenario_name,
-               '--config_path', args.output_config,
+        cmd = [sys.executable, '-m', 'flextool.cli.cmd_write_outputs',
+               args.scenario_name,
+               '--config_path', output_config,
                '--methods'] + args.output_methods + ['--subdir', output_subdir]
 
         result = subprocess.run(cmd)

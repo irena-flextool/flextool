@@ -50,17 +50,13 @@ import polars as pl
 
 
 def _default_contract_path() -> Path:
-    """Return the on-disk path to ``version/flextool_axis_contract.json``.
+    """Return the bundled ``flextool/version/flextool_axis_contract.json``.
 
-    The contract lives in the repo's ``version/`` directory; this module
-    is at ``flextool/spinedb_backend/_axis_enums.py``, so the repo root
-    is two parents up.
+    Resolved via :mod:`importlib.resources` so the lookup works in both
+    editable and wheel installs.
     """
-    return (
-        Path(__file__).resolve().parents[2]
-        / "version"
-        / "flextool_axis_contract.json"
-    )
+    from flextool._resources import package_data_path
+    return package_data_path("version/flextool_axis_contract.json")
 
 
 # ---------------------------------------------------------------------------

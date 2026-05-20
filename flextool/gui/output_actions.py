@@ -176,10 +176,18 @@ class OutputActionManager:
     def _resolve_active_configs(ps: PlotSettings, default_config: str) -> list[str]:
         if ps.active_configs:
             return ps.active_configs
-        config_file = ps.config_file or default_config
-        config_path = Path(config_file)
-        if not config_path.is_absolute():
-            config_path = get_projects_dir().parent / config_file
+        if ps.config_file:
+            config_path = Path(ps.config_file)
+            if not config_path.is_absolute():
+                config_path = Path.cwd() / config_path
+        else:
+            # Bundled default — ``default_config`` is the historical
+            # repo-relative path (``templates/default_plots.yaml``);
+            # we resolve it against ``textual_templates/`` in the
+            # package so wheel installs work.
+            from flextool._resources import package_data_path
+            basename = Path(default_config).name
+            config_path = package_data_path(f"textual_templates/{basename}")
         return parse_plot_configs(config_path) or ["default"]
 
     # ------------------------------------------------------------------

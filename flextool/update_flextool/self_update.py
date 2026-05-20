@@ -7,6 +7,7 @@ try:
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from spinedb_api.exception import NothingToCommit
+from flextool._resources import package_data_path
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
 from flextool.update_flextool import canonical_databases
@@ -92,43 +93,74 @@ def update_flextool(skip_git):
     migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")
     os.remove("./.spinetoolbox/project_temp.json")
 
-    # Create input databases if they do not exist.
-    if not os.path.exists("input_data.sqlite"):
-        initialize_database("./version/flextool_template_master.json", "input_data.sqlite")
-    if not os.path.exists("templates/input_data_template.sqlite"):
-        initialize_database("./version/flextool_template_master.json", "templates/input_data_template.sqlite")
+    # Locate bundled JSON templates from the installed flextool package.
+    master_json = str(package_data_path("version/flextool_template_master.json"))
+    output_settings_json = str(package_data_path("version/output_settings_template.json"))
+    output_info_json = str(package_data_path("version/output_info_template.json"))
+    comparison_settings_json = str(package_data_path("version/comparison_settings_template.json"))
 
-    # Copy excel example from templates. It has no migration --> do it manually
-    if not os.path.exists("example_input.xlsx"):
-        shutil.copy("./templates/example_input_template.xlsx", "./example_input.xlsx")
+    # Create input databases if they do not exist.
+    os.makedirs("templates", exist_ok=True)
+    if not os.path.exists("input_data.sqlite"):
+        initialize_database(master_json, "input_data.sqlite")
+    if not os.path.exists("templates/input_data_template.sqlite"):
+        initialize_database(master_json, "templates/input_data_template.sqlite")
 
     # Create user copies of the auxiliary databases
     if not os.path.exists("output_settings.sqlite"):
-        initialize_database("./version/output_settings_template.json", "output_settings.sqlite")
+        initialize_database(output_settings_json, "output_settings.sqlite")
     if not os.path.exists("output_info.sqlite"):
-        initialize_database("./version/output_info_template.json", "output_info.sqlite")
+        initialize_database(output_info_json, "output_info.sqlite")
     if not os.path.exists("comparison_settings.sqlite"):
-        initialize_database("./version/comparison_settings_template.json", "comparison_settings.sqlite")
+        initialize_database(comparison_settings_json, "comparison_settings.sqlite")
 
-    # Keep templates up-to-date
-    if os.path.exists("templates/output_settings.sqlite"):
-        os.remove("templates/output_settings.sqlite")
-    initialize_database("./version/output_settings_template.json", "templates/output_settings.sqlite")
-    if os.path.exists("templates/output_info.sqlite"):
-        os.remove("templates/output_info.sqlite")
-    initialize_database("./version/output_info_template.json", "templates/output_info.sqlite")
-    if os.path.exists("templates/comparison_settings.sqlite"):
-        os.remove("templates/comparison_settings.sqlite")
-    initialize_database("./version/comparison_settings_template.json", "templates/comparison_settings.sqlite")
+    # Keep CWD-resident template SQLites up-to-date (Spine Toolbox refs).
+    for sqlite_rel, json_src in (
+        ("templates/output_settings.sqlite", output_settings_json),
+        ("templates/output_info.sqlite", output_info_json),
+        ("templates/comparison_settings.sqlite", comparison_settings_json),
+    ):
+        if os.path.exists(sqlite_rel):
+            os.remove(sqlite_rel)
+        initialize_database(json_src, sqlite_rel)
 
     # Materialize canonical example/template SQLites from their JSON
-    # sources (``version/canonical_databases/*.json``).  Skips files
-    # that already exist so user edits in the working tree survive.
-    # The canonical JSONs are kept current by
+    # sources (``flextool/textual_templates/canonical_databases/*.json``).
+    # Skips files that already exist so user edits in the working tree
+    # survive.  The canonical JSONs are kept current by
     # ``python -m flextool.update_flextool.canonical_databases migrate-all``
     # which is part of the schema-migration workflow — see
     # CONTRIBUTING.md.
     canonical_databases.materialize(overwrite=False)
+
+    # Generate XLSX templates from the canonical SQLites:
+    #   - example_input_template.xlsx  → derived from examples.sqlite
+    #   - empty_input_template.xlsx    → derived from input_data_template.sqlite
+    # Regenerating each ``update_flextool()`` keeps them in sync with the
+    # current schema without us having to track the binary in git.
+    from flextool.export_to_tabular import export_to_excel
+    _xlsx_pairs = (
+        ("templates/examples.sqlite", "templates/example_input_template.xlsx"),
+        ("templates/input_data_template.sqlite", "templates/empty_input_template.xlsx"),
+    )
+    for sqlite_rel, xlsx_rel in _xlsx_pairs:
+        if not os.path.exists(sqlite_rel):
+            continue
+        try:
+            export_to_excel(f"sqlite:///{sqlite_rel}", xlsx_rel)
+        except Exception as exc:
+            print(f"Warning: failed to generate {xlsx_rel}: {exc}")
+
+    # Copy the user-facing example_input.xlsx on first run.  Done after
+    # the template regeneration so users get the freshly-built XLSX.
+    if not os.path.exists("example_input.xlsx") and os.path.exists("templates/example_input_template.xlsx"):
+        shutil.copy("templates/example_input_template.xlsx", "example_input.xlsx")
+
+    # Seed bin/highs.opt from the bundled template on first run.
+    # ``highs.opt`` is user-editable; the template ships in the package.
+    os.makedirs("bin", exist_ok=True)
+    if not os.path.exists("bin/highs.opt"):
+        shutil.copy(str(package_data_path("bin/highs.opt.template")), "bin/highs.opt")
 
     # Migrate user-owned SQLites (canonical ones are already at current
     # version because they were just materialized from the canonical
@@ -148,7 +180,7 @@ def update_flextool(skip_git):
     for i in db_to_update:
         migrate_database(i)
 
-    result_template_path = './version/flextool_template_results_master.json'
+    result_template_path = str(package_data_path("version/flextool_template_results_master.json"))
     #replace the template sqlite
     if os.path.exists('templates/results_template.sqlite'):
         os.remove('templates/results_template.sqlite')
@@ -156,7 +188,7 @@ def update_flextool(skip_git):
 
     if not os.path.exists("results.sqlite"):
         shutil.copy("templates/results_template.sqlite", "results.sqlite")
-    #update result parameter definitions    
+    #update result parameter definitions
     #get template JSON. This can be the master or old template if conflicting migrations in between
     with open (result_template_path) as json_file:
         template = json.load(json_file)

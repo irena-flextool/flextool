@@ -21,11 +21,9 @@ from pathlib import Path
 
 import pytest
 
-MASTER_TEMPLATE = (
-    Path(__file__).resolve().parent.parent
-    / "version"
-    / "flextool_template_master.json"
-)
+from flextool._resources import package_data_path
+
+MASTER_TEMPLATE = package_data_path("version/flextool_template_master.json")
 
 _GROUP_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 

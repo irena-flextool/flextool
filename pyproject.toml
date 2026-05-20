@@ -101,17 +101,26 @@ markers = [
 ]
 testpaths = ["tests"]
 
-[tool.setuptools]
-packages = [
-    "flextool",
-    "flextool.cli",
-    "flextool.engine_polars",
-    "flextool.flextoolrunner",
-    "flextool.process_inputs",
-    "flextool.process_outputs",
-    "flextool.plot_outputs",
-    "flextool.update_flextool",
-    "flextool.helpers",
-    "flextool.scenario_comparison",
-    "flextool.gui",
+[tool.setuptools.packages.find]
+# Auto-discover all flextool subpackages.  Excludes test/scratch dirs.
+where = ["."]
+include = ["flextool*"]
+exclude = ["flextool*.__pycache__"]
+
+[tool.setuptools.package-data]
+# Static data files bundled with the wheel and accessed at runtime via
+# ``flextool._resources.package_data_path``:
+#   * version/*.json         — schema templates and migration sources
+#   * textual_templates/...  — YAML configs and canonical-DB JSON sources
+#   * bin/highs.opt.template — HiGHS options template (seeded into bin/highs.opt
+#                              on first run)
+#   * export_to_tabular/*.yaml — export settings (sheet config etc.)
+flextool = [
+    "version/*.json",
+    "version/*.md",
+    "textual_templates/*.yaml",
+    "textual_templates/*.txt",
+    "textual_templates/canonical_databases/*.json",
+    "bin/highs.opt.template",
+    "export_to_tabular/*.yaml",
 ]

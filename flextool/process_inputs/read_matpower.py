@@ -254,8 +254,8 @@ def create_flextool_db_from_matpower(
         The ``sqlite:///`` URL for the created database.
     """
     if template_json is None:
-        project_root = Path(__file__).resolve().parent.parent.parent
-        template_json = str(project_root / "version" / "flextool_template_master.json")
+        from flextool._resources import package_data_path
+        template_json = str(package_data_path("version/flextool_template_master.json"))
 
     # Step 1: Initialize from template and migrate to latest schema
     initialize_database(template_json, db_path)

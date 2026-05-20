@@ -209,10 +209,11 @@ class TestReadTimeSeriesScalarFiltering:
 
 def _build_test_db(db_path: str, yaml_path: str, seed: int = 42) -> None:
     """Initialize DB, build model, return."""
+    from flextool._resources import package_data_path
     from flextool.update_flextool import initialize_database
     from flextool.model_builder.build_model import build_model
     initialize_database(
-        "version/flextool_template_master.json", db_path
+        str(package_data_path("version/flextool_template_master.json")), db_path
     )
     build_model(yaml_path, db_url=f"sqlite:///{db_path}", seed=seed)
 

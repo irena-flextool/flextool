@@ -25,9 +25,9 @@ def _ensure_target_db_exists(target_db_url: str) -> None:
     parent = Path(db_path).parent
     parent.mkdir(parents=True, exist_ok=True)
 
-    # Locate the FlexTool master template
-    flextool_root = Path(__file__).resolve().parent.parent.parent
-    json_template = flextool_root / "version" / "flextool_template_master.json"
+    # Locate the FlexTool master template (bundled in the package).
+    from flextool._resources import package_data_path
+    json_template = package_data_path("version/flextool_template_master.json")
     if not json_template.exists():
         raise FileNotFoundError(
             f"FlexTool template not found at {json_template}. "

@@ -86,18 +86,14 @@ if TYPE_CHECKING:
     from flextool.engine_polars.input import FlexData
 
 
-# Repository pin — flextool's preprocessing modules live in the same
-# tree as the engine_polars package, but the legacy ``flextool``
-# top-level (separate repo at ``/home/jkiviluo/sources/flextool``) is
-# also available for some Spine fixtures.  Mirror the path-shim used
-# elsewhere so imports of ``flextool.flextoolrunner.flextoolrunner``
-# resolve when running against either tree.
-_REPO_ROOT = Path("/home/jkiviluo/sources/flextool")
-
-
+# Historical: ``_REPO_ROOT`` used to point at a second flextool checkout
+# at /home/jkiviluo/sources/flextool to satisfy old Spine fixtures.  With
+# flextool now installed as a regular package (editable or wheel), the
+# ``flextool`` import is always resolvable via ``sys.path`` and the shim
+# is a no-op.  Kept for ABI stability of the ``_ensure_flextool_importable``
+# symbol (referenced inside this module and historically by callers).
 def _ensure_flextool_importable() -> None:
-    if str(_REPO_ROOT) not in sys.path:
-        sys.path.append(str(_REPO_ROOT))
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -1491,12 +1487,18 @@ def run_chain_from_db(
         work_folder = Path(work_folder)
         work_folder.mkdir(parents=True, exist_ok=True)
 
+    # ``flextool_dir`` defaults to the installed flextool package directory
+    # (resolved via importlib.resources so it works both editable and wheel).
+    # ``bin_dir`` defaults to ``<cwd>/bin`` — this is where the user's
+    # editable ``highs.opt`` lives; the package's ``highs.opt.template``
+    # is only used to seed that file on first run.
+    from flextool._resources import package_data_path
     flextool_dir_resolved = (
         Path(flextool_dir) if flextool_dir is not None
-        else _REPO_ROOT / "flextool"
+        else package_data_path("")
     )
     bin_dir_resolved = (
-        Path(bin_dir) if bin_dir is not None else _REPO_ROOT / "bin"
+        Path(bin_dir) if bin_dir is not None else Path.cwd() / "bin"
     )
 
     # Cascade-input Provider population from the Spine DB.  Pure

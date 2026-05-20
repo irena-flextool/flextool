@@ -248,8 +248,8 @@ def main():
                         help='Subdirectory name under output_parquet/ (and the '
                              'other output dirs). Defaults to the scenario '
                              'name for backward compatibility.')
-    parser.add_argument('--flextool-location', default='template/flextool_location.txt',
-                        help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories).')
+    parser.add_argument('--flextool-location', default=None,
+                        help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories). Defaults to the user\'s current working directory.')
     parser.add_argument('--work-folder', metavar='PATH', default=None,
                         help='Working directory for intermediate files (default: current directory). '
                              'Enables parallel scenario execution by isolating each run.')
@@ -355,7 +355,14 @@ def main():
     settings_db_url = args.settings_db_url
     scenario_name = args.scenario_name
     DEBUG = args.debug
-    output_path = Path(args.flextool_location).resolve().parent.parent
+    # Legacy: Spine Toolbox passed ``--flextool-location <repo>/template/flextool_location.txt``
+    # so the output dir resolved to the repo root via ``.parent.parent``.
+    # Now defaults to CWD (the user's project directory) when unset, and
+    # still honours the explicit path-walk for old Toolbox profiles.
+    if args.flextool_location:
+        output_path = Path(args.flextool_location).resolve().parent.parent
+    else:
+        output_path = Path.cwd()
     work_folder = Path(args.work_folder) if args.work_folder else Path.cwd()
     work_folder.mkdir(parents=True, exist_ok=True)
     wf = work_folder
@@ -370,10 +377,9 @@ def main():
     # fail opaquely when the user forgot to run `flextool-update`. Only
     # seeds output_info / output_settings / comparison_settings by
     # basename; other paths are left untouched.
-    _repo_root = Path(__file__).resolve().parent.parent.parent
     for _candidate in (args.output_db_url, args.settings_db_url):
         try:
-            ensure_settings_db(_candidate, _repo_root)
+            ensure_settings_db(_candidate)
         except Exception as _exc:
             logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
 

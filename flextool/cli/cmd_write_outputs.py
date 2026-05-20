@@ -49,10 +49,9 @@ def main():
         # Self-heal missing lightweight settings DBs so fresh clones don't
         # fail opaquely when the user forgot to run `flextool-update`.
         # Only seeds output_info / output_settings / comparison_settings.
-        _repo_root = Path(__file__).resolve().parent.parent.parent
         for _candidate in (output_locations_db_url, args.settings_db_url):
             try:
-                ensure_settings_db(_candidate, _repo_root)
+                ensure_settings_db(_candidate)
             except Exception as _exc:
                 logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
         if args.scenario_name:
