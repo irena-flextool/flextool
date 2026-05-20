@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine_polars._writer_period_calc import (
+from flextool.engine_polars._emit_period_calc import (
     write_branch_weights,
 )
 

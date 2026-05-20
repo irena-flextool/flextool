@@ -343,7 +343,7 @@ def _build_pssdt_varCost_alwaysProcess(
     indexed by ``process_source_sink_alwaysProcess`` tuples, varCost
     needs the same keying.
 
-    Reference: ``_writer_period_params._derive_varCost_pair`` (used to
+    Reference: ``_emit_period_params._derive_varCost_pair`` (used to
     write ``pdtProcess__source__sink__dt_varCost_alwaysProcess.csv``)
     for the exact algebra.  Replicated here directly on FlexData
     Params (``p_pdt_varCost_source``, ``p_pdt_varCost_sink``,

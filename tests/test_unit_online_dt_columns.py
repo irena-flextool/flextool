@@ -22,7 +22,7 @@ from ``process_block ⋈ block_step_duration`` and the input data had no
 
 Root cause + fix
 ----------------
-``flextool/engine_polars/_writer_per_solve.py::write_per_solve_sets`` —
+``flextool/engine_polars/_emit_per_solve.py::write_per_solve_sets`` —
 when a process in ``process_online`` had no ``process_block`` entry, the
 emitted ``p_online_dt`` collapsed to zero rows, so the LP build skipped
 ``v_online_linear[(p, d, t)]`` for that process entirely, the post-solve

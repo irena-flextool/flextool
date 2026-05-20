@@ -55,9 +55,9 @@ from collections import defaultdict
 from flextool.flextoolrunner.blocks import write_block_data_for_solve
 # Step 2.5 — legacy preprocessing package deleted (item 15).  The per-
 # solve orchestrator now lives natively at
-# :mod:`flextool.engine_polars._writer_solve_time`.
+# :mod:`flextool.engine_polars._emit_solve_time`.
 from flextool.engine_polars import (
-    _writer_solve_time as preprocessing_solve_time,
+    _emit_solve_time as preprocessing_solve_time,
 )
 from flextool.flextoolrunner.runner_state import (
     FlexToolConfigError,
@@ -72,7 +72,7 @@ from flextool.flextoolrunner.scaling_report import write_scaling_report
 # Step 2.5 — solve_writers calls now resolve to the native polars
 # implementations.  The legacy disk-writing module remains in the tree
 # but is no longer called from the cascade.
-from flextool.engine_polars import _writer_solve_writers as solve_writers
+from flextool.engine_polars import _emit_solve_writers as solve_writers
 
 from flextool.engine_polars._flex_data_accumulator import capture_frames
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
@@ -496,7 +496,7 @@ def native_run_model(state, solver) -> int:
         _capture_ctx.__enter__()
         # S1-g-3 — expose the per-sub-solve Provider to writer entry
         # points BEFORE preprocessing runs, so native writers threaded
-        # with ``provider=`` (via :func:`_writer_solve_time.run`) can
+        # with ``provider=`` (via :func:`_emit_solve_time.run`) can
         # fetch it from ``state.current_provider``.  Writers not yet
         # threaded still resolve their reads via the Provider-as-seed
         # bridge installed above; Step 2 deletes both paths.
@@ -983,7 +983,7 @@ def native_run_model(state, solver) -> int:
             _capture_ctx.__exit__(None, None, None)
         if _mem_cp is not None:
             _mem_cp("prep_solve_time_dispatcher_done",
-                    "prep: _writer_solve_time.run (per-solve sets + params dispatcher) done")
+                    "prep: _emit_solve_time.run (per-solve sets + params dispatcher) done")
         # Step 1-f — Provider stash on state.  Read by
         # ``_FlexpyCascadeSolver.run`` to thread through into
         # ``load_flextool`` / ``write_outputs_for_solve`` /

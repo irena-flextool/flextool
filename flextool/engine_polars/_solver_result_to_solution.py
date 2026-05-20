@@ -2,7 +2,7 @@
 
 The polar-high ``Problem.solve`` path returns a :class:`polar_high.Solution`
 that downstream FlexTool consumers (``engine_polars/input.py``,
-``_writer_co2_accumulators.py``, ``process_outputs/read_parameters.py``,
+``_emit_co2_accumulators.py``, ``process_outputs/read_parameters.py``,
 ``_output_writer.py``) rely on for:
 
 * ``sol._vars`` — mapping ``var_name -> Var`` carrying ``.frame["col_id"]``.

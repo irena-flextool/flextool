@@ -180,7 +180,7 @@ def load_data(
     # orientations), but the .mod's dc_flow_eq is indexed over
     # ``process_source_toSink`` which is one direction per arc.  Read it
     # from the Provider's ``solve_data/process_source_toSink`` key (the
-    # cascade writes it via _writer_calc_params.derive_process_source_toSink).
+    # cascade writes it via _emit_calc_params.derive_process_source_toSink).
     sst = None
     if provider is not None and provider.has("solve_data/process_source_toSink"):
         sst = provider.get("solve_data/process_source_toSink")

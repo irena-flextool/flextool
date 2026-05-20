@@ -511,7 +511,7 @@ def _write_scale_csv_and_report(
     """
     if write_csv:
         try:
-            from flextool.engine_polars._writer_solve_writers import (
+            from flextool.engine_polars._emit_solve_writers import (
                 write_scale_the_objective,
             )
             write_scale_the_objective(solve_data_dir, effective_obj_scale)

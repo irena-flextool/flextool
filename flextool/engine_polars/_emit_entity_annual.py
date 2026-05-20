@@ -21,8 +21,8 @@ Outputs (all written under ``solve_data/``):
 
 Method-enum constants mirror flextool/flextool_base.dat:184 and
 :211-212.  ``PdLookup`` is the native 4-branch resolver from
-:mod:`._pdt_lookup` (same machinery used by ``_writer_dispatchers`` and
-``_writer_period_params``).
+:mod:`._pdt_lookup` (same machinery used by ``_emit_dispatchers`` and
+``_emit_period_params``).
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ _DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O helpers — same conventions as ``_writer_per_solve``.
+# CSV I/O helpers — same conventions as ``_emit_per_solve``.
 # ---------------------------------------------------------------------------
 
 
@@ -54,7 +54,7 @@ def _read_csv(path: Path, columns: list[str],
               *, provider: "object | None" = None) -> pl.DataFrame:
     """Provider-only — returns empty all-Utf8 frame on Provider miss.
     Step 2.5 Phase C dropped the disk-fallback arm."""
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )
@@ -132,7 +132,7 @@ def _write_keyed_2(path: Path, header: tuple[str, str, str],
 def _write(df: pl.DataFrame, path: Path) -> None:
     """Polars-frame emission funnel — patched by Phase E-b accumulator.
 
-    Identical I/O contract to :mod:`._writer_dispatchers._write`: parents
+    Identical I/O contract to :mod:`._emit_dispatchers._write`: parents
     created, ``df.write_csv`` does the byte emission.  Every CSV emitted
     by this module flows through this single name so the accumulator
     monkey-patch can intercept ``(path.name -> df)``.

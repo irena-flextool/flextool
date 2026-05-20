@@ -23,7 +23,7 @@ contract); ``write_*`` wrappers materialise the frame to the legacy
 ``solve_data/*.csv`` path so downstream consumers continue to read
 identical bytes.
 
-Style mirrors :mod:`._writer_leaf_sets` / :mod:`._writer_mid_sets`:
+Style mirrors :mod:`._emit_leaf_sets` / :mod:`._emit_mid_sets`:
 eager polars reads of tiny CSVs, expression chains,
 ``unique(maintain_order=True)`` for ordered dedup.
 
@@ -52,7 +52,7 @@ from ._axis_enums import schema_dtype
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O — same conventions as _writer_{leaf,mid}_sets:
+# CSV I/O — same conventions as _emit_{leaf,mid}_sets:
 #   * eager read, missing file → empty frame with requested schema
 #   * positional column rename (handle legacy headers that differ in label)
 #   * empty frame still writes header line
@@ -66,7 +66,7 @@ def _read_csv(path: Path, columns: list[str],
     all-``Utf8`` frame when the Provider misses the key.  Step 2.5
     Phase C dropped the disk-fallback arm.
     """
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )

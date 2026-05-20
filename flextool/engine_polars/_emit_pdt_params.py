@@ -39,7 +39,7 @@ Value-column semantics: the legacy emitters wrote ``f"...,{repr(v)}\\n"``
 which preserves the Python-type-as-emitted distinction
 between ``0`` (int) and ``0.0`` (float).  We mirror that by building
 ``value`` as a ``Utf8`` column with ``repr(v)`` applied per-row (the
-same pattern :mod:`._writer_chain_params` uses for its
+same pattern :mod:`._emit_chain_params` uses for its
 ``_ed_value_frame`` helper).
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars._writer_provider_io import (
+from flextool.engine_polars._emit_provider_io import (
     _provider_key,
     _provider_open,
 )
@@ -64,7 +64,7 @@ from flextool.engine_polars._pdt_lookup import (
 
 # ---------------------------------------------------------------------------
 # Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
-# in :mod:`._writer_arc_unions` and the other patched modules.  All
+# in :mod:`._emit_arc_unions` and the other patched modules.  All
 # writers in this module funnel their derived frames through this helper
 # so :mod:`._flex_data_accumulator` can capture them via its monkey-patch.
 # ---------------------------------------------------------------------------

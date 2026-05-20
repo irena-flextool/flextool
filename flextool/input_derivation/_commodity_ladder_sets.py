@@ -23,7 +23,7 @@ Output frames (canonical CSV column = ``commodity``):
 
 The frames land under the ``solve_data/<name>`` Provider key, matching
 the legacy ``solve_data/<file>.csv`` paths that consumers
-(``_writer_mid_sets``, ``_writer_per_solve``, ``model.py``, the
+(``_emit_mid_sets``, ``_emit_per_solve``, ``model.py``, the
 ``_commodity_ladder`` cascade loader) resolve through the
 Provider-aware ``_read_csv`` helper.
 """

@@ -1250,7 +1250,7 @@ def apply_existing_chain(flex_data: object,
         _read_period_with_history,
     )
     from .input import _read_solve_first
-    from ._writer_provider_io import _provider_key
+    from ._emit_provider_io import _provider_key
     from polar_high import Param as _Param
 
     def _provider_get(p):

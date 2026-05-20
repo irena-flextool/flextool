@@ -243,7 +243,7 @@ def test_synthetic_allowlist_merged_into_branch(
 ) -> None:
     """The ``branch`` enum carries the schema-derived branch labels
     PLUS the ``eff`` / ``noEff`` synthetic allowlist tokens introduced
-    by ``_writer_co2_accumulators``.
+    by ``_emit_co2_accumulators``.
 
     test_a_lot has no ``solve.stochastic_branches`` rows, so the only
     tokens in the branch enum are the allowlist entries.  The pin

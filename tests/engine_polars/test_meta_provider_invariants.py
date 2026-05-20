@@ -93,7 +93,7 @@ PROVIDER_IMPL_ALLOWLIST: dict[str, str] = {
     "_input_source.py": (
         "Defines _read_csv_file itself — the canonical residual reader."
     ),
-    "_writer_provider_io.py": (
+    "_emit_provider_io.py": (
         "Off-cascade writer-port test-harness shim "
         "(documented at module top): Provider-first with disk fallback "
         "used exclusively by test_writer_port_phase1.  In-cascade the "
@@ -126,9 +126,9 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "files at solve-context build time (pre-Provider)."
     ),
     # Note: `_pdt_lookup.py` and the writer-port modules
-    # (`_writer_arc_unions.py`, `_writer_chain_params.py`,
-    # `_writer_dispatchers.py`, `_writer_pdt_params.py`,
-    # `_writer_period_params.py`, `_writer_solve_writers.py`) previously
+    # (`_emit_arc_unions.py`, `_emit_chain_params.py`,
+    # `_emit_dispatchers.py`, `_emit_pdt_params.py`,
+    # `_emit_period_params.py`, `_emit_solve_writers.py`) previously
     # appeared here because the Rule 1 AST detector couldn't distinguish
     # `csv.reader(fh)` on a `_provider_open()` in-memory buffer from
     # `csv.reader(open(path))` on disk.  The detector now whitelists

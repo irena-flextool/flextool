@@ -119,7 +119,7 @@ import polars as pl
 from polar_high import Sum, Where, Param
 from polar_high.engine import Var, Expr
 
-from ._writer_provider_io import _provider_key
+from ._emit_provider_io import _provider_key
 from ._axis_enums import align_join_dtypes
 
 

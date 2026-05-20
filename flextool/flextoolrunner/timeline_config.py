@@ -658,7 +658,7 @@ def separate_period_and_timeseries_data(
     """
     from pathlib import Path
 
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key,
         _provider_open,
     )

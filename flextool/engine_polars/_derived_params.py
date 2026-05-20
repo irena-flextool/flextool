@@ -53,7 +53,7 @@ from ._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from ._writer_provider_io import _provider_key
+from ._emit_provider_io import _provider_key
 
 
 def _load_block_layout_with_seed(workdir, provider):
@@ -551,7 +551,7 @@ def p_years_represented_d_from_source(
     ``solve.years_represented`` Map carries — e.g. 5.0 for a 5-year
     investment period).
 
-    Mirrors ``_writer_period_calc.write_period_calculated_params``
+    Mirrors ``_emit_period_calc.write_period_calculated_params``
     (the ``p_years_represented_d_calc`` block) but builds the value
     directly from the source rather than from the CSV round-trip.
 
@@ -1350,7 +1350,7 @@ def apply_derived_a(
 
     # 2b. p_years_represented_d — per-period R width sum (e.g. 5.0 for a
     # 5-year invest period).  Mirrors
-    # ``_writer_period_calc.write_period_calculated_params``'s
+    # ``_emit_period_calc.write_period_calculated_params``'s
     # ``p_years_represented_d_calc.csv`` writer; consumed by
     # ``process_outputs.read_parameters`` to scale annualised
     # per-period costs / CO2 to absolute totals.

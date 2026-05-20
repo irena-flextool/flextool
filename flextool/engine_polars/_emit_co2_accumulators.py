@@ -35,7 +35,7 @@ _logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
-# in :mod:`._writer_arc_unions` and the four other patched modules.  Every
+# in :mod:`._emit_arc_unions` and the four other patched modules.  Every
 # CSV emission in this module is funnelled through here so the per-sub-solve
 # :mod:`._flex_data_accumulator` monkey-patch can stash the frame.
 # ---------------------------------------------------------------------------

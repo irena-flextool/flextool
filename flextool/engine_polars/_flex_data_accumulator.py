@@ -27,27 +27,27 @@ import polars as pl
 # ---------------------------------------------------------------------------
 # Writer modules whose ``_write`` helper feeds the 37 thin-wrapper writers.
 # Patching these four modules' ``_write`` covers every OK_thin_wrapper entry
-# from the Phase B audit (writers in _writer_leaf_sets, _writer_mid_sets,
-# _writer_calc_params, _writer_arc_unions).
+# from the Phase B audit (writers in _emit_leaf_sets, _emit_mid_sets,
+# _emit_calc_params, _emit_arc_unions).
 # ---------------------------------------------------------------------------
 
 _PATCH_MODULES = (
-    "flextool.engine_polars._writer_leaf_sets",
-    "flextool.engine_polars._writer_mid_sets",
-    "flextool.engine_polars._writer_calc_params",
-    "flextool.engine_polars._writer_arc_unions",
-    "flextool.engine_polars._writer_chain_params",
-    "flextool.engine_polars._writer_co2_accumulators",
-    "flextool.engine_polars._writer_pdt_params",
-    "flextool.engine_polars._writer_period_params",
-    "flextool.engine_polars._writer_dispatchers",
-    "flextool.engine_polars._writer_entity_annual",
-    "flextool.engine_polars._writer_inflow_scaling",
-    "flextool.engine_polars._writer_lp_scaling",
-    "flextool.engine_polars._writer_solve_writers",
-    "flextool.engine_polars._writer_period_calc",
-    "flextool.engine_polars._writer_per_solve",
-    "flextool.engine_polars._writer_reserve",
+    "flextool.engine_polars._emit_leaf_sets",
+    "flextool.engine_polars._emit_mid_sets",
+    "flextool.engine_polars._emit_calc_params",
+    "flextool.engine_polars._emit_arc_unions",
+    "flextool.engine_polars._emit_chain_params",
+    "flextool.engine_polars._emit_co2_accumulators",
+    "flextool.engine_polars._emit_pdt_params",
+    "flextool.engine_polars._emit_period_params",
+    "flextool.engine_polars._emit_dispatchers",
+    "flextool.engine_polars._emit_entity_annual",
+    "flextool.engine_polars._emit_inflow_scaling",
+    "flextool.engine_polars._emit_lp_scaling",
+    "flextool.engine_polars._emit_solve_writers",
+    "flextool.engine_polars._emit_period_calc",
+    "flextool.engine_polars._emit_per_solve",
+    "flextool.engine_polars._emit_reserve",
     "flextool.flextoolrunner.blocks",
 )
 
@@ -123,7 +123,7 @@ __all__ = [
 # the captured-vs-disk frames for each basename present in the cascade run.
 
 _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
-    # _writer_leaf_sets — 27 thin writers
+    # _emit_leaf_sets — 27 thin writers
     "period_group.csv",
     "period_node.csv",
     "period_commodity.csv",
@@ -151,7 +151,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "timeline.csv",
     "timeline_steps.csv",
     "commodity__tier_ann.csv",
-    # _writer_mid_sets — thin writers
+    # _emit_mid_sets — thin writers
     "group_entity.csv",
     "process_delayed__duration.csv",
     "process__sink_nonSync.csv",
@@ -164,9 +164,9 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "nodegroup_dispatch_node.csv",
     "commodity_node_co2.csv",
     "process__commodity__node.csv",
-    # _writer_calc_params — thin writers
+    # _emit_calc_params — thin writers
     "process_VRE.csv",
-    # _writer_arc_unions — thin writers + Phase E-b lifted streamed writers
+    # _emit_arc_unions — thin writers + Phase E-b lifted streamed writers
     # (this group expanded substantially when streamed writers were
     # converted to the canonical derive_X → _write pattern)
     "process_source_sink_param_t.csv",
@@ -244,7 +244,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process__source__timeParam.csv",
     "process__sink__timeParam.csv",
     "process__timeParam.csv",
-    # _writer_chain_params — Phase E-b lifted streamed writers
+    # _emit_chain_params — Phase E-b lifted streamed writers
     "p_entity_pre_existing.csv",
     "p_entity_divest_cumulative_max.csv",
     # — 5-CSV existing chain
@@ -258,16 +258,16 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "p_entity_max_units.csv",
     "p_entity_invest_cumulative_max.csv",
     "p_entity_dispatch_capacity_max.csv",
-    # _writer_co2_accumulators — Phase E-b lifted
+    # _emit_co2_accumulators — Phase E-b lifted
     "co2_cum_realized_tonnes.csv",
-    # _writer_pdt_params — Phase E-b lifted streamed writers
+    # _emit_pdt_params — Phase E-b lifted streamed writers
     # (high-memory hot path; ~280k-row dense frames preserved for
     # byte-parity, sparse-emit deferred per audit doc)
     "pdtProcess.csv",
     "pdtNode.csv",
     "pdtProcess_source.csv",
     "pdtProcess_sink.csv",
-    # _writer_period_params — Phase E-b lifted streamed writers
+    # _emit_period_params — Phase E-b lifted streamed writers
     "pdtNodeInflow.csv",
     "pdtProfile.csv",
     "pdtConversion_rate.csv",
@@ -296,7 +296,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "ed_divest_min_period.csv",
     "ed_cumulative_max_capacity.csv",
     "ed_cumulative_min_capacity.csv",
-    # _writer_calc_params — Phase E-b lifted streamed writers
+    # _emit_calc_params — Phase E-b lifted streamed writers
     # — write_process_arc_method_joins (10 CSVs, methodgated arc joins)
     "process_sink_toProcess.csv",
     "process_process_toSource.csv",
@@ -311,7 +311,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # — write_process_profile_method_joins (2 CSVs)
     "process__profileProcess__toSink__profile__profile_method.csv",
     "process__source__toProfileProcess__profile__profile_method.csv",
-    # _writer_dispatchers — Phase E-b lifted entity_period_calc_params
+    # _emit_dispatchers — Phase E-b lifted entity_period_calc_params
     # (5 CSVs from a single own-compute monolith; dispatcher module
     # joined _PATCH_MODULES to expose its new _write helper)
     "pdProcess.csv",
@@ -319,7 +319,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "edEntity_lifetime.csv",
     "ed_fixed_cost.csv",
     "p_entity_unitsize.csv",
-    # _writer_dispatchers — Phase E-b lifted process_arc_unions monolith
+    # _emit_dispatchers — Phase E-b lifted process_arc_unions monolith
     # (14 CSVs from a single own-compute dispatcher; convert _write_csv
     # into _write(derive_X(...), path) per emission)
     "process__profileProcess__toSink.csv",
@@ -336,7 +336,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_source_sink.csv",
     "process_source_sink_alwaysProcess.csv",
     "process__source__sink__profile__profile_method_direct.csv",
-    # _writer_entity_annual — Phase E-b lifted (6-CSV monolith;
+    # _emit_entity_annual — Phase E-b lifted (6-CSV monolith;
     # repr(float) precision preserved by the _rows_to_frame helper)
     "ed_entity_annual.csv",
     "ed_entity_annual_discounted.csv",
@@ -344,7 +344,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "ed_entity_annual_divest_discounted.csv",
     "ed_lifetime_fixed_cost.csv",
     "ed_lifetime_fixed_cost_divest.csv",
-    # _writer_inflow_scaling — Phase E-b lifted (17-CSV monolith, peak
+    # _emit_inflow_scaling — Phase E-b lifted (17-CSV monolith, peak
     # family heavy cross-CSV state — converted via dict-of-frames adapter
     # since splitting into 17 standalone derive_* would re-walk the
     # t-axis O(N) times per call)
@@ -365,7 +365,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "new_old_multiplier.csv",
     "new_old_slope.csv",
     "new_old_section.csv",
-    # _writer_lp_scaling — Phase E-b lifted (9-CSV monolith with chained
+    # _emit_lp_scaling — Phase E-b lifted (9-CSV monolith with chained
     # raw -> pow10 -> capacity -> inverse cascades; converted via
     # dict-of-frames adapter)
     #
@@ -376,7 +376,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # Utf8 cast in the parity test yields ``"0.0"``.  Disk byte-parity
     # is preserved; the captured frame is functionally usable (Phase D
     # consumers parse the Utf8 numerically) but the byte-string-compare
-    # parity test cannot validate it.  See _writer_lp_scaling for the
+    # parity test cannot validate it.  See _emit_lp_scaling for the
     # corresponding code note.
     "_node_cap_unitsize_sum.csv",
     "_node_cap_raw.csv",
@@ -386,7 +386,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "_group_cap_pow10.csv",
     "group_capacity_for_scaling.csv",
     "inv_group_cap.csv",
-    # _writer_solve_writers — Phase E-b7 (34 small per-solve CSVs that
+    # _emit_solve_writers — Phase E-b7 (34 small per-solve CSVs that
     # emit from in-memory WriterSnapshot/timeline records; converted
     # from csv.writer(newline="") + CRLF emit into the canonical
     # derive_X -> _write(derive_X(...), path) pattern.  The new
@@ -428,7 +428,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "ladder_cum_realized_mwh.csv",
     "ladder_cum_sim_hours.csv",
     # NB co2_cum_realized_tonnes.csv already captured by
-    # _writer_co2_accumulators above; the empty-seed variant from
+    # _emit_co2_accumulators above; the empty-seed variant from
     # write_empty_cumulative_files overwrites with the same header.
     "fix_storage_price.csv",
     "fix_storage_quantity.csv",
@@ -453,7 +453,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "rp_block_last.csv",
     "rp_block_start_last.csv",
     "rp_cost_weight.csv",
-    # _writer_period_calc — Phase E-b8 (write_period_calculated_params
+    # _emit_period_calc — Phase E-b8 (write_period_calculated_params
     # emits 12 CSVs, write_branch_weights emits 2).  All 14 captured;
     # the previous E-b8 _NO_CAPTURE workaround for
     # p_inflation_factor_operations_yearly.csv and
@@ -475,7 +475,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "f_d_k.csv",
     "pd_branch_weight.csv",
     "pdt_branch_weight.csv",
-    # _writer_per_solve — Phase E-b8 (write_per_solve_sets emits 30
+    # _emit_per_solve — Phase E-b8 (write_per_solve_sets emits 30
     # CSVs, write_invest_divest_sets emits 19, plus the singleton
     # ed_invest_forbidden_no_investment.csv).  All emits route
     # through ``_write_singles`` / ``_write_tuples`` which now
@@ -528,7 +528,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "gd_invest_period.csv",
     "gd_divest_period.csv",
     "ed_invest_forbidden_no_investment.csv",
-    # _writer_reserve — Phase E-b8 (write_pdtReserve_upDown_group +
+    # _emit_reserve — Phase E-b8 (write_pdtReserve_upDown_group +
     # write_process_reserve_upDown_node_active_and_prundt (2 CSVs) +
     # write_process_reserve_filters_and_reliability (4 CSVs); all
     # converted to derive_X -> _write(derive_X(...), path).)

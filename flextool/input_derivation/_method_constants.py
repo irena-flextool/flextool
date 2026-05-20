@@ -13,7 +13,7 @@ Step 2.5 note
 
 Moved here from ``flextool.flextoolrunner.preprocessing._method_constants``
 during Step 2.5 item 15 (preprocessing deletion).  The only cross-package
-consumer was :mod:`flextool.engine_polars._writer_dispatchers`.
+consumer was :mod:`flextool.engine_polars._emit_dispatchers`.
 """
 from __future__ import annotations
 

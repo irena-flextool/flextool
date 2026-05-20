@@ -85,7 +85,7 @@ from ._axis_enums import (
     get_global_axis_enums,
     schema_dtype,
 )
-from ._writer_provider_io import _provider_key
+from ._emit_provider_io import _provider_key
 
 
 def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
@@ -701,7 +701,7 @@ def _stoch_nodes_from_workdir(workdir: Path,
                                 *, provider=None) -> set[str]:
     """``stoch_node = { n : exists g ∈ groupIncludeStochastics with (g, n)
     ∈ group__node }`` — mirrors
-    :func:`_writer_period_params._read_stochastic_entities`.
+    :func:`_emit_period_params._read_stochastic_entities`.
 
     Provider-only; disk arms removed in Step 2.5.
     """

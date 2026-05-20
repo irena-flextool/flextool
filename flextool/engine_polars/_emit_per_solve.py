@@ -13,7 +13,7 @@ Native polars port of two preprocessing families called from
   ed_invest / ed_divest / edd_history family + the gd_* group
   projections + the no-investment-lifetime gate.
 
-Style mirrors :mod:`._writer_leaf_sets` / :mod:`._writer_mid_sets`:
+Style mirrors :mod:`._emit_leaf_sets` / :mod:`._emit_mid_sets`:
 eager polars CSV reads, expression chains, ``unique(maintain_order=True)``
 for legacy-bit-identical row order, missing files treated as empty
 frames.
@@ -45,7 +45,7 @@ _DIVEST_PERIOD_METHODS: frozenset[str] = frozenset((
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O helpers — same conventions as _writer_leaf_sets / _writer_mid_sets.
+# CSV I/O helpers — same conventions as _emit_leaf_sets / _emit_mid_sets.
 # ---------------------------------------------------------------------------
 
 
@@ -54,7 +54,7 @@ def _read_csv(path: Path, columns: list[str],
     """Provider-only — returns an empty all-Utf8 frame on Provider miss.
     Step 2.5 Phase C dropped the disk-fallback arm.
     """
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )
@@ -153,7 +153,7 @@ def write_per_solve_sets(solve_data_dir: Path,
     Step 1-g — *provider* threads the per-sub-solve Provider so the
     internal ``_read_csv`` / ``_read_singles`` / ``_read_pairs`` calls
     resolve via the in-memory Provider before falling back to disk.
-    The dispatcher ``_writer_solve_time.run`` forwards
+    The dispatcher ``_emit_solve_time.run`` forwards
     ``state.current_provider`` here when the writer's signature accepts
     it.
     """

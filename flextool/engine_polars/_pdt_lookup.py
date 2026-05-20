@@ -41,7 +41,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from flextool.engine_polars._writer_provider_io import (
+from flextool.engine_polars._emit_provider_io import (
     _provider_key,
     _provider_open,
 )

@@ -71,7 +71,7 @@ def _read_csv(path: Path, columns: list[str],
     upstream writer hasn't populated *path*'s key (legacy behaviour
     for a missing on-disk CSV).
     """
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )

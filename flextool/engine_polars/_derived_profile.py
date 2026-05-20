@@ -73,7 +73,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._writer_provider_io import _provider_key
+from ._emit_provider_io import _provider_key
 from ._axis_enums import (
     alias_to_axis,
     get_global_axis_enums,
@@ -583,7 +583,7 @@ def _read_pairs(path: Path, key_col: str, val_col: str,
         return {}
     out: dict[str, list[str]] = {}
     try:
-        from ._writer_provider_io import _provider_open
+        from ._emit_provider_io import _provider_open
         fh_ctx = _provider_open(provider, _provider_key(path), path)
         if fh_ctx is None:
             return {}
@@ -749,10 +749,10 @@ def p_profile_value_lf(source: "InputSource",
     # stochastic / averaged-time tiers consult.  The cascade modules
     # themselves remain disk-read-free (meta-test
     # ``test_meta_provider_invariants.py``); the disk reads happen in
-    # ``_writer_provider_io.workdir_provider_for_paths`` which is on the
+    # ``_emit_provider_io.workdir_provider_for_paths`` which is on the
     # PROVIDER_IMPL_ALLOWLIST.
     if workdir is not None and provider is None:
-        from ._writer_provider_io import workdir_provider_for_paths
+        from ._emit_provider_io import workdir_provider_for_paths
         provider = workdir_provider_for_paths(workdir, [
             "solve_data/period__branch.csv",
             "solve_data/solve_branch__time_branch.csv",

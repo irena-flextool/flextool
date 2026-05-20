@@ -23,14 +23,14 @@ import polars as pl
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O helpers — same conventions as ``_writer_per_solve``.
+# CSV I/O helpers — same conventions as ``_emit_per_solve``.
 # ---------------------------------------------------------------------------
 
 
 def _read_csv(path: Path, columns: list[str],
               *, provider: "object | None" = None) -> pl.DataFrame:
     """Provider-only — Step 2.5 Phase C dropped the disk-fallback arm."""
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )

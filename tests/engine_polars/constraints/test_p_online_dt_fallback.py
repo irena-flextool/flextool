@@ -1,7 +1,7 @@
 """Regression test for ``BUG p_online_dt_empty_no_blocks``
 (specs/model_bugs.md).
 
-Bug: ``_writer_per_solve.write_per_solve_sets`` derived ``p_online_dt``
+Bug: ``_emit_per_solve.write_per_solve_sets`` derived ``p_online_dt``
 strictly from ``process_block ⋈ block_step_duration``.  When the input
 data did not emit a ``process_block`` row for a UC process (true of the
 single-solve ``_native_input_writer`` path, which ships a header-only
@@ -43,7 +43,7 @@ def test_p_online_dt_fallback_for_uc_without_process_block(
 ) -> None:
     """``p_online_dt`` must be populated for UC processes whose input
     data has no ``process_block`` row — see fallback in
-    ``_writer_per_solve.write_per_solve_sets``.
+    ``_emit_per_solve.write_per_solve_sets``.
     """
     scenario = "coal_wind_min_uptime"
     with tempfile.TemporaryDirectory() as wd:
@@ -75,7 +75,7 @@ def test_p_online_dt_fallback_for_uc_without_process_block(
     assert fd.p_online_dt.height == n_online * n_dt, (
         f"p_online_dt rows {fd.p_online_dt.height} != "
         f"online_processes ({n_online}) × dt_size ({n_dt}) — the "
-        "fallback in _writer_per_solve.write_per_solve_sets has "
+        "fallback in _emit_per_solve.write_per_solve_sets has "
         "regressed.  See specs/model_bugs.md "
         "'BUG p_online_dt_empty_no_blocks'."
     )

@@ -44,10 +44,10 @@ Each ``write_*`` is a thin wrapper around a ``derive_*`` (or, where the
 legacy emits multiple CSVs from one shared computation, around a small
 ``_compute_*`` helper).  The ``derive_*`` returns a fresh
 ``pl.DataFrame`` in the same in-memory contract as
-:mod:`._writer_leaf_sets` / :mod:`._writer_mid_sets` /
-:mod:`._writer_calc_params`.
+:mod:`._emit_leaf_sets` / :mod:`._emit_mid_sets` /
+:mod:`._emit_calc_params`.
 
-Style mirrors :mod:`._writer_calc_params` — eager polars reads of tiny
+Style mirrors :mod:`._emit_calc_params` — eager polars reads of tiny
 CSVs with positional column renames, expression chains where natural,
 small python loops where the iteration order is precision-load-bearing
 (matches the legacy ``dict.fromkeys`` ordered-dedup pattern).
@@ -58,7 +58,7 @@ Precision-parity pattern
 ``write_pProcess_source_sink`` writes a value column.  Legacy formats
 it via ``f"{repr(v)}"`` with ``v`` already a python float — we mirror
 exactly by pre-stringifying with ``repr(float(v))``.  See
-:mod:`._writer_calc_params` module docstring for the precision-parity
+:mod:`._emit_calc_params` module docstring for the precision-parity
 rationale (round-trip-exactness of ``repr(float)`` and divergence
 from polars' default float formatting).
 """
@@ -70,14 +70,14 @@ import polars as pl
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O — same conventions as the sibling _writer_*.py modules.
+# CSV I/O — same conventions as the sibling _emit_*.py modules.
 # ---------------------------------------------------------------------------
 
 # Provider-aware open helper — re-exported from the shared module.
 # Step 2.5 Phase B collapsed the local copy that carried a disk-fallback
 # arm; cascade code uses the Provider-only shim.
 
-from flextool.engine_polars._writer_provider_io import (  # noqa: E402
+from flextool.engine_polars._emit_provider_io import (  # noqa: E402
     _provider_key,
     _provider_open,
 )
@@ -92,7 +92,7 @@ def _read_csv(path: Path, columns: list[str],
     rename; returns an empty all-Utf8 frame when the Provider misses
     the key (matches legacy missing-CSV behaviour).
     """
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_lookup_positional,
     )
     seeded = _provider_lookup_positional(
@@ -1020,7 +1020,7 @@ def derive_p_process_source_sink(
 
     Returns a 5-col frame; value column is pre-stringified with
     ``repr(float(v))`` to preserve bit-exact precision parity with
-    legacy code (see :mod:`._writer_calc_params` module docstring).
+    legacy code (see :mod:`._emit_calc_params` module docstring).
     """
     p_src = _read_value_lookup_3(
         input_dir / "p_process_source.csv", provider=provider,

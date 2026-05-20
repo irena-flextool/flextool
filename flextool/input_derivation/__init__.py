@@ -53,7 +53,7 @@ __all__ = ["run"]
 def _provider_key(filename: str) -> str:
     """Canonical Provider key for ``input/<stem>.csv`` style paths.
 
-    Matches the convention in :mod:`flextool.engine_polars._writer_provider_io`:
+    Matches the convention in :mod:`flextool.engine_polars._emit_provider_io`:
     ``"<parent_dir_name>/<stem>"``.
     """
     p = Path(filename)
@@ -86,7 +86,7 @@ def run(
        commodity ladder cumulative + annual + sets).
     4. **Native per-write_input preprocessing writers** — the dozen
        writer-port modules under
-       :mod:`flextool.engine_polars._writer_*` that produce the
+       :mod:`flextool.engine_polars._emit_*` that produce the
        ``solve_data/*.csv`` artefacts the cascade consumes pre-solve.
        Each is invoked directly with ``provider=`` so its frames flow
        into the Provider and disk emission is skipped (the
@@ -211,11 +211,11 @@ def run(
         # monkey-patches each ``_write(df, path)`` so frames land in
         # *provider* under their canonical key without touching disk.
         from flextool.engine_polars import (
-            _writer_leaf_sets as _leaf,
-            _writer_mid_sets as _mid,
-            _writer_calc_params as _calc,
-            _writer_arc_unions as _arc,
-            _writer_dispatchers as _disp,
+            _emit_leaf_sets as _leaf,
+            _emit_mid_sets as _mid,
+            _emit_calc_params as _calc,
+            _emit_arc_unions as _arc,
+            _emit_dispatchers as _disp,
         )
         input_dir = wf / "input"
         solve_data_dir = wf / "solve_data"

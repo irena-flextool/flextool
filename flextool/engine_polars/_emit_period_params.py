@@ -33,7 +33,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars._writer_provider_io import (
+from flextool.engine_polars._emit_provider_io import (
     _provider_key,
     _provider_open,
 )
@@ -41,7 +41,7 @@ from flextool.engine_polars._writer_provider_io import (
 
 # ---------------------------------------------------------------------------
 # Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
-# in :mod:`._writer_arc_unions` and the other patched modules.  All
+# in :mod:`._emit_arc_unions` and the other patched modules.  All
 # writers in this module funnel their derived frames through this helper
 # so :mod:`._flex_data_accumulator` can capture them via its monkey-patch.
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ def _utf8_frame(columns: dict[str, list[str]]) -> pl.DataFrame:
     All columns (including ``value``) are stored as ``Utf8`` so the
     legacy ``f"...,{repr(v)}\\n"`` byte-emission round-trips identically
     through ``pl.DataFrame.write_csv``.  See
-    :mod:`._writer_chain_params._ed_value_frame` for the rationale on
+    :mod:`._emit_chain_params._ed_value_frame` for the rationale on
     using ``repr(v)`` directly rather than coercing to ``float`` first.
     """
     schema = {name: pl.Utf8 for name in columns}

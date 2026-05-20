@@ -17,7 +17,7 @@ therefore the constraint) only materialises at ``(p, d, t)`` tuples in
 summed across the two suffixes.
 
 Bug fixed: ``BUG p_online_dt_empty_no_blocks`` (specs/model_bugs.md) —
-``_writer_per_solve.write_per_solve_sets`` now falls back to the
+``_emit_per_solve.write_per_solve_sets`` now falls back to the
 per-step timeline (``steps_in_use``) for UC processes without a
 ``process_block`` row, so ``p_online_dt`` is non-empty and the UC
 constraints (``minimum_uptime``, ``maxOnline_linear`` …) are

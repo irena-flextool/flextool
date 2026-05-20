@@ -116,7 +116,7 @@ def workdir_provider_for_paths(
     silently — the cascade modules tolerate missing keys by their own
     empty-frame contract.
 
-    This helper lives in ``_writer_provider_io.py`` (which is on the
+    This helper lives in ``_emit_provider_io.py`` (which is on the
     meta-test's ``PROVIDER_IMPL_ALLOWLIST``) so the cascade modules
     themselves remain free of disk reads.  The frames are stored under
     the parent-qualified Provider key (``"<parent>/<stem>"``) computed

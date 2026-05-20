@@ -44,7 +44,7 @@ from polar_high import Sum, Where, Param
 from polar_high.engine import Var
 
 from ._axis_enums import get_global_axis_enums, rename_to_axis, schema_dtype
-from ._writer_provider_io import _provider_key
+from ._emit_provider_io import _provider_key
 
 
 def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":

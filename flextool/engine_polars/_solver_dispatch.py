@@ -140,7 +140,7 @@ def run_one_solve(
     :class:`polar_high.solvers.SolverResult` into a
     :class:`flextool.engine_polars._solver_result_to_solution.LiteSolution`
     so downstream consumers (``input.py``,
-    ``_writer_co2_accumulators.py``, ``process_outputs/read_parameters.py``)
+    ``_emit_co2_accumulators.py``, ``process_outputs/read_parameters.py``)
     treat both shapes identically.
 
     Parameters

@@ -66,7 +66,7 @@ from ._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from ._writer_provider_io import _provider_key
+from ._emit_provider_io import _provider_key
 
 
 def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":

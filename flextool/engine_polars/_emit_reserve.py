@@ -50,7 +50,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars._writer_provider_io import (
+from flextool.engine_polars._emit_provider_io import (
     _provider_key,
     _provider_open,
 )
@@ -95,7 +95,7 @@ def _to_utf8_frame(
 
 
 # ---------------------------------------------------------------------------
-# Tiny CSV I/O — same shape as _writer_inflow_scaling helpers.  The legacy
+# Tiny CSV I/O — same shape as _emit_inflow_scaling helpers.  The legacy
 # emitter writes plain text with ``repr(v)`` and the parity surface is
 # small enough that a dict-of-rows pass is the simplest correct path.
 # ---------------------------------------------------------------------------

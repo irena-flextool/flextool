@@ -162,8 +162,8 @@ class SolveContext:
     )
 
     # ── Path B Cat B (WriterSnapshot top-7) extensions ──────────────────
-    # Per-solve preprocessing artefacts written by ``_writer_solve_writers``
-    # / ``_writer_period_calc`` and consumed by the cascade (audit
+    # Per-solve preprocessing artefacts written by ``_emit_solve_writers``
+    # / ``_emit_period_calc`` and consumed by the cascade (audit
     # `specs/in_cascade_csv_audit.md` §Category B).  Lazy-loaded on first
     # attribute access — same pattern as ``period_in_use`` /
     # ``period_branch`` above.  Schemas mirror the renamed canonical form
@@ -529,7 +529,7 @@ def _provider_fetch_or_raise(
     provider: "object", path: Path, consumer: str,
 ) -> pl.DataFrame:
     """Fetch *path*'s carrier from *provider* strictly; raise on miss."""
-    from ._writer_provider_io import _provider_key
+    from ._emit_provider_io import _provider_key
     key = _provider_key(path)
     if provider.has(key):
         df = provider.get(key)
@@ -575,7 +575,7 @@ def _read_active_solve(workdir: Path,
     Provider-first read; falls back to disk when the Provider is absent
     or doesn't carry the frame.
     """
-    from flextool.engine_polars._writer_provider_io import _provider_key
+    from flextool.engine_polars._emit_provider_io import _provider_key
     p = workdir / "solve_data" / "solve_current.csv"
     if provider is not None and provider.has(_provider_key(p)):
         df = provider.get(_provider_key(p))
@@ -603,7 +603,7 @@ def _read_solve_first(work_folder: Path,
     in order: ``solve_data/p_model.csv`` → ``input/p_model.csv`` → True.
     """
     import csv as _csv
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key, _provider_open,
     )
 
@@ -637,7 +637,7 @@ def _read_period_set(path: Path,
                       *, provider: "object | None" = None) -> set[str]:
     """Read a single-column period CSV (header row, then one period per row)."""
     import csv as _csv
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key, _provider_open,
     )
 
@@ -658,7 +658,7 @@ def _read_realized_dispatch_periods(path: Path,
                                      *, provider: "object | None" = None) -> set[str]:
     """Read distinct periods from ``realized_dispatch.csv``."""
     import csv as _csv
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key, _provider_open,
     )
 
@@ -846,7 +846,7 @@ def _load_period_share(solve_data_dir: Path,
         # Provider-strict: at least one of the canonical variants must
         # carry the frame.  We probe ``_calc`` first (the producer's
         # default), then the legacy non-``_calc`` name as a fallback.
-        from ._writer_provider_io import _provider_key
+        from ._emit_provider_io import _provider_key
         for path in cand_paths:
             key = _provider_key(path)
             if provider.has(key) or provider.has(path.stem):

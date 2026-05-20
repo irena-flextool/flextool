@@ -1091,7 +1091,7 @@ def ed_entity_annual_discounted_from_source(
 
     Returns the full ``entityInvest × period_invest`` frame, including
     zero-valued rows, to mirror the snapshot CSV produced by
-    :func:`._writer_entity_annual.write_entity_annual_calc_params`
+    :func:`._emit_entity_annual.write_entity_annual_calc_params`
     (which the loader's ``_read_e_d`` seed retains unfiltered).  The
     loader's ``apply_npv`` only overwrites the seed when this entry
     returns a non-None frame, so emitting the zero rows is required

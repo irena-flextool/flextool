@@ -71,7 +71,7 @@ def _backfill_group_indicator_sets(s, output_dir):
 
     Also backfills the 12 ``nodeGroupDispatch__*`` arc-union MultiIndex
     sets from the polars-LP writer's ``solve_data/*.csv`` artefacts
-    (see ``flextool/engine_polars/_writer_arc_unions.py``).  Without
+    (see ``flextool/engine_polars/_emit_arc_unions.py``).  Without
     these, ``calc_group_flows`` finds zero rows for the unit / connection
     aggregator joins, and ``out_group.nodeGroup_flows`` emits only the
     slack/inflow/loss column families — group_flows__dt loses its

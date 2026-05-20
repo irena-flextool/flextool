@@ -2,7 +2,7 @@
 
 Replaces the legacy ``flextool.flextoolrunner.preprocessing.solve_time.run``
 (deleted in Step 2.5 item 15).  Every sub-writer is now a native polars
-implementation in ``flextool.engine_polars._writer_*`` — the legacy
+implementation in ``flextool.engine_polars._emit_*`` — the legacy
 preprocessing package is gone, so we call the native writers directly
 rather than through the old monkey-patch on legacy module attributes.
 
@@ -81,18 +81,18 @@ def run(
 
     # Native writer modules.
     from flextool.engine_polars import (
-        _writer_arc_unions as _arc,
-        _writer_calc_params as _calc,
-        _writer_dispatchers as _disp,
-        _writer_entity_annual as _entity_annual,
-        _writer_inflow_scaling as _inflow_scaling,
-        _writer_leaf_sets as _leaf,
-        _writer_lp_scaling as _lp_scaling,
-        _writer_mid_sets as _mid,
-        _writer_per_solve as _per_solve,
-        _writer_period_calc as _period_calc,
-        _writer_period_params as _period,
-        _writer_reserve as _reserve,
+        _emit_arc_unions as _arc,
+        _emit_calc_params as _calc,
+        _emit_dispatchers as _disp,
+        _emit_entity_annual as _entity_annual,
+        _emit_inflow_scaling as _inflow_scaling,
+        _emit_leaf_sets as _leaf,
+        _emit_lp_scaling as _lp_scaling,
+        _emit_mid_sets as _mid,
+        _emit_per_solve as _per_solve,
+        _emit_period_calc as _period_calc,
+        _emit_period_params as _period,
+        _emit_reserve as _reserve,
     )
 
     # ── Refresh write_input-scope outputs (idempotent, no-DB) ─────────
@@ -164,7 +164,7 @@ def run(
     # ── L2 batch 25 ───────────────────────────────────────────────────
     _call(_arc.write_process_source_sink_param_t, input_dir, solve_data_dir)
     # ── L2 batch 26: p_entity_pre_existing ────────────────────────────
-    from flextool.engine_polars import _writer_chain_params as _chain
+    from flextool.engine_polars import _emit_chain_params as _chain
     _call(_chain.write_p_entity_pre_existing, input_dir, solve_data_dir)
     # ── L3 batch 27: ed_invest_forbidden_no_investment ────────────────
     _call(_per_solve.write_ed_invest_forbidden_no_investment, input_dir, solve_data_dir)
@@ -191,7 +191,7 @@ def run(
     _call(_arc.write_process_method_sources_sinks, input_dir, solve_data_dir)
     _call(_arc.write_peedt, input_dir, solve_data_dir)
     # ── L0 batches 42 / 43 ────────────────────────────────────────────
-    from flextool.engine_polars import _writer_pdt_params as _pdt
+    from flextool.engine_polars import _emit_pdt_params as _pdt
     _call(_pdt.write_pdtProcess, input_dir, solve_data_dir)
     _call(_reserve.write_pdtReserve_upDown_group, input_dir, solve_data_dir)
     # ── L1 batch 44 (needs pdtReserve from batch 43) ──────────────────

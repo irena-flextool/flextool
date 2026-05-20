@@ -98,7 +98,7 @@ from polar_high import Sum, Where, Param
 # Engine imports kept light — we don't introduce new variable types.
 
 from ._axis_enums import cast_dim
-from ._writer_provider_io import _provider_key
+from ._emit_provider_io import _provider_key
 
 
 def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":

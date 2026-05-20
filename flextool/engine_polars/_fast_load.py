@@ -580,7 +580,7 @@ def load_flextool_source_only(
     # building exactly one LP from a single Provider populated once.  The
     # preprocessing is the same code the slow path exercises
     # (``input_derivation.run`` + the per-solve writers in
-    # :mod:`._writer_solve_time` driven by :func:`._native_run_model`).
+    # :mod:`._emit_solve_time` driven by :func:`._native_run_model`).
     # We invoke that chain with a no-op solver that captures the populated
     # Provider and short-circuits before LP build.
     provider = _run_preprocessing_for_single_solve(

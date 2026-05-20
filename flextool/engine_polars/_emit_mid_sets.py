@@ -4,7 +4,7 @@ Native polars port of the next batch of preprocessing families invoked
 from :func:`flextool.flextoolrunner.input_writer.write_input` (lines
 1893-1945).  Each family reads a small handful of ``input/*.csv`` (and,
 occasionally, a leaf-level ``solve_data/*.csv`` written earlier by
-:mod:`._writer_leaf_sets`) and emits one or more ``solve_data/`` CSVs.
+:mod:`._emit_leaf_sets`) and emits one or more ``solve_data/`` CSVs.
 
 Ported legacy modules (preprocessing/):
 
@@ -22,7 +22,7 @@ fresh ``pl.DataFrame`` (the in-memory contract); ``write_*`` wrappers
 materialise the frame to the legacy ``solve_data/*.csv`` path so
 downstream consumers continue to read identical bytes.
 
-Style mirrors :mod:`._writer_leaf_sets`: eager polars reads of tiny
+Style mirrors :mod:`._emit_leaf_sets`: eager polars reads of tiny
 CSVs, expression chains, ``unique(maintain_order=True)`` for ordered
 dedup.  Constants mirror the legacy module's literals one-for-one.
 """
@@ -36,7 +36,7 @@ from flextool.engine_polars._axis_enums import rename_to_axis
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O — same conventions as _writer_leaf_sets:
+# CSV I/O — same conventions as _emit_leaf_sets:
 #   * eager read, missing file → empty frame with requested schema
 #   * positional column rename (handle legacy headers that differ in label)
 #   * empty frame still writes header line
@@ -59,7 +59,7 @@ def _read_csv(path: Path, columns: list[str],
     """
     # Step 2.5 Phase C — Provider-only.  Returns an empty all-Utf8
     # frame on Provider miss (matches legacy missing-CSV behaviour).
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )

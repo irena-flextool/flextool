@@ -69,7 +69,7 @@ from . import _dc_power_flow
 from . import _commodity_ladder
 from ._block_layout import BlockLayout
 from ._input_source import read_csv_fallback
-from ._writer_provider_io import _provider_key
+from ._emit_provider_io import _provider_key
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +368,7 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     # (including ``value``) as ``Utf8`` — values round-trip through
     # ``repr(v)`` so heterogeneous param leaf types (int methods + float
     # data) survive byte-identically (see
-    # :func:`flextool.engine_polars._writer_pdt_params.derive_pdtProcess`).
+    # :func:`flextool.engine_polars._emit_pdt_params.derive_pdtProcess`).
     # When a numeric param (e.g. ``availability``) is sliced out for use
     # as a polars-numeric Param ``value`` column, the Utf8 must be cast
     # back to ``Float64`` at the producer — otherwise downstream
@@ -441,7 +441,7 @@ class FlexData:
 
     # Per-period years-represented R (e.g. 5.0 for a 5-year invest period).
     # Mirrors ``solve_data/p_years_represented_d_calc.csv`` written by
-    # ``_writer_period_calc.write_period_calculated_params``.  None when
+    # ``_emit_period_calc.write_period_calculated_params``.  None when
     # the source carries no ``solve.years_represented`` rows (single-year
     # fixtures default each period to width 1).
     p_years_represented_d: Param | None = None  # (d,)
@@ -1450,7 +1450,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     noEff (p, source, sink, c, g) frames) but the gate set comes from
     ``solve_data/group_co2_max_total.csv`` (groups whose ``group__co2_method``
     is ``total`` / ``price_total`` / ``period_total`` — already projected
-    by :func:`_writer_leaf_sets.write_co2_method_sets`).  The cap value
+    by :func:`_emit_leaf_sets.write_co2_method_sets`).  The cap value
     is read from the canonical ``solve_data/pdGroup.csv`` slice
     (``param == 'co2_max_total'``); flextool preprocessing broadcasts the
     Spine scalar across periods, so we collapse to one row per group by
@@ -4085,7 +4085,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         #
         # Stochastic / output_horizon: prefer ``dt_realize_dispatch_set.csv``
         # when present.  That's the canonical "rows to emit" set built by
-        # ``_writer_per_solve.write_period_set_csvs`` — it includes all
+        # ``_emit_per_solve.write_period_set_csvs`` — it includes all
         # forecast-branch (period, step) pairs for stochastic scenarios
         # (where ``realized_dispatch.csv`` is anchor-only by design).  For
         # non-stochastic / non-output_horizon solves it collapses to the
@@ -5227,7 +5227,7 @@ def build_handoff_from_flexpy(
 
     # ---- cumulative_co2: per-(group, period) running total ----
     # Gap F final close-out — native compute via
-    # ``_writer_co2_accumulators.compute_co2_rolling_accumulator`` when
+    # ``_emit_co2_accumulators.compute_co2_rolling_accumulator`` when
     # ``flex_data`` + ``sol`` are available (cascade path).  Falls back to
     # the disk read for legacy / test callers that only pass ``sol``.
     cumulative_co2_df = None
@@ -5235,7 +5235,7 @@ def build_handoff_from_flexpy(
         cumulative_co2_df = prior_handoff.cumulative_co2
     used_native_co2 = False
     if flex_data is not None and sol is not None:
-        from flextool.engine_polars._writer_co2_accumulators import (
+        from flextool.engine_polars._emit_co2_accumulators import (
             compute_co2_rolling_accumulator,
         )
         prior_df = (prior_handoff.cumulative_co2

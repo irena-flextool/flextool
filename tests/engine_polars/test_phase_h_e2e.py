@@ -54,7 +54,7 @@ The multi-roll fixture under ``the in-memory cascade`` is currently
 broken (Phase H surfaced the regression: ``input.py::_load_process_topology``
 calls ``_read_p_flow_max``, ``_read_unitsize``, and ~30 other helpers
 that use ``if not path.exists(): return None`` — these are NOT
-seed-aware loaders, only the writer-side ``_writer_*`` modules were
+seed-aware loaders, only the writer-side ``_emit_*`` modules were
 seed-wired in Phase E-e).  The multi-roll csv-dump-mode case still
 passes; we keep that gate.  Lifting the loader-side reads onto the seed
 funnel is tracked as a follow-up — out of Phase H scope per the task
@@ -179,7 +179,7 @@ _DOCUMENTED_OUT_OF_SCOPE_SOLVE_DATA: frozenset[str] = frozenset({
 # ``flextool.flextoolrunner.input_writer.write_input`` keeps writing
 # the 132-CSV input bundle via direct ``csv.writer`` calls.  Phase E-c
 # commit notes call this out explicitly; the gate was applied only to
-# the ``engine_polars/_writer_*.py`` thin-wrapper writers.  Phase H test
+# the ``engine_polars/_emit_*.py`` thin-wrapper writers.  Phase H test
 # tolerates files in ``input/``; tightening is a follow-up.
 
 

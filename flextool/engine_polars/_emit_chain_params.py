@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine_polars._writer_provider_io import (
+from flextool.engine_polars._emit_provider_io import (
     _provider_key,
     _provider_open,
 )
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 # ---------------------------------------------------------------------------
 # Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
-# in :mod:`._writer_arc_unions` and the four other patched modules.  All
+# in :mod:`._emit_arc_unions` and the four other patched modules.  All
 # writers in this module funnel their derived ``(entity, period, value)``
 # frames through this helper so :mod:`._flex_data_accumulator` can capture
 # them in-memory via its monkey-patch.
@@ -70,7 +70,7 @@ def _ed_value_frame(
     byte-parity on either path — see commit notes for the symptom.
     Storing ``value`` as Utf8 preserves the bit-exact precision parity the
     legacy CSV writers achieved through ``repr`` (see
-    :mod:`._writer_arc_unions` docstring).
+    :mod:`._emit_arc_unions` docstring).
     """
     return pl.DataFrame(
         {

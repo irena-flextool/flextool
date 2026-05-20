@@ -153,7 +153,7 @@ def _write(df: pl.DataFrame, path: Path) -> None:
     """Emit *df* as a CRLF-terminated CSV at *path*.
 
     Identical I/O contract to the ``_write(df, path)`` helper in
-    :mod:`._writer_pdt_params`.  Phase E-b7 accumulator
+    :mod:`._emit_pdt_params`.  Phase E-b7 accumulator
     (:mod:`._flex_data_accumulator`) monkey-patches this name so every
     CSV emission also stashes ``(path.name → df)`` for the sub-solve.
 
@@ -812,7 +812,7 @@ def derive_time_branch_all(
     Provider supplies the seven frames in-cascade; the disk-fallback
     arm serves the off-cascade test harness only.
     """
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key, _provider_open,
     )
     time_branches: list[str] = []

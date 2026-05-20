@@ -150,7 +150,7 @@ def test_phase_g_per_iter_reads_drop(tmp_path: Path) -> None:
             name = str(filepath_or_buffer)
         # Only count reads originating from the process_outputs/* code
         # path (the Phase G scope).  Other callers (cumulative_handoffs,
-        # _writer_chain_params, ...) are out of scope here.
+        # _emit_chain_params, ...) are out of scope here.
         frame = sys._getframe(1)
         depth = 0
         in_scope = False

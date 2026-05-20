@@ -13,7 +13,7 @@ Post-Step-2.5 these helpers consume the canonical
 ``solve_data/*.csv`` frames exclusively through the
 :class:`FlexDataProvider`.  The disk-fallback arms that previously
 re-read ``<workdir>/solve_data/<name>.csv`` from disk are gone — the
-writer cascade (``_writer_per_solve.write_invest_csvs`` and friends)
+writer cascade (``_emit_per_solve.write_invest_csvs`` and friends)
 seeds every required key in the Provider before this loader runs.
 
 When the active solve **is** in Spine, the override chain
@@ -33,7 +33,7 @@ from ._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from ._writer_provider_io import _provider_key
+from ._emit_provider_io import _provider_key
 
 
 # Substrate handle for the cascade-wide axis enum vocabulary.

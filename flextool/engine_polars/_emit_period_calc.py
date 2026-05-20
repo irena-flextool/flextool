@@ -54,8 +54,8 @@ import polars as pl
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O helpers — same conventions as ``_writer_per_solve`` /
-# ``_writer_lp_scaling``.
+# CSV I/O helpers — same conventions as ``_emit_per_solve`` /
+# ``_emit_lp_scaling``.
 # ---------------------------------------------------------------------------
 
 
@@ -68,7 +68,7 @@ def _read_csv(path: Path, columns: list[str],
     misses the key.  Step 2.5 Phase C dropped the disk-fallback arm —
     cascade modules read the Provider only.
     """
-    from flextool.engine_polars._writer_provider_io import (
+    from flextool.engine_polars._emit_provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )
