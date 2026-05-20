@@ -64,17 +64,26 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "timeline.csv",
     "timeline_steps.csv",
     "commodity__tier_ann.csv",
-    # _emit_mid_sets — thin writers
+    # _emit_mid_sets — thin writers.
+    #
+    # Phase 4 audit (2026-05-21) corrected the spelling of seven
+    # entries below to match the actual emit keys produced by the
+    # cascade.  The legacy single-underscore names
+    # (``entity_lifetime_method.csv`` etc.) had been stale in this
+    # manifest since pre-Phase-1; the corresponding writers have
+    # always emitted the double-underscore (or camelCase) variant.
+    # Tests never consulted this manifest until Phase 4 introduced
+    # ``test_csv_dump_post_refactor`` so the drift was undetected.
     "group_entity.csv",
     "process_delayed__duration.csv",
     "process__sink_nonSync.csv",
-    "entity_lifetime_method.csv",
-    "process_ct_method.csv",
-    "process_startup_method.csv",
-    "node_inflow_method.csv",
-    "node_storage_binding_method.csv",
-    "connection_param.csv",
-    "nodegroup_dispatch_node.csv",
+    "entity__lifetime_method.csv",
+    "process__ct_method.csv",
+    "process__startup_method.csv",
+    "node__inflow_method.csv",
+    "node__storage_binding_method.csv",
+    "connection__param.csv",
+    "nodeGroupDispatch_node.csv",
     "commodity_node_co2.csv",
     "process__commodity__node.csv",
     # _emit_calc_params — thin writers
@@ -84,7 +93,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "node__TimeParam_in_use.csv",
     "process_source_delayed.csv",
     "process_source_undelayed.csv",
-    "process_source_sink_param.csv",
+    "process__source__sink__param.csv",
     "process__source__sink__profile__profile_method_connection.csv",
     "process_method_sources_sinks.csv",
     "ed_history_realized_first.csv",
@@ -92,11 +101,11 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process__source__sinkIsNode_2way1var.csv",
     "process__source__sinkIsNode_not2way1var.csv",
     "process__source__sinkIsNode_2way2var.csv",
-    "process_source_sink_ramp_method.csv",
+    "process__source__sink__ramp_method.csv",
     "process_source_sink_coeff_zero.csv",
     "process_source_sink_delayed.csv",
     "process_source_sink_undelayed.csv",
-    "p_process_source_sink.csv",
+    "pProcess_source_sink.csv",
     "nodeGroupDispatch__process_fully_inside.csv",
     # — ramp family + union (Phase E-b promoted)
     "process_source_sink_ramp_limit_source_up.csv",
