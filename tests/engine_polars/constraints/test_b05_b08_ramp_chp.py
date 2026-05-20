@@ -37,6 +37,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine_polars import build_flextool
+from flextool.engine_polars._pdt_join import compute_nodeBalance_dt
 from flextool.engine_polars.input import FlexData
 
 from .conftest import solver_options
@@ -84,7 +85,7 @@ def test_ramp_sink_up_with_uc_startup_tightening(toy_uc_3t):
     """
     d = toy_uc_3t
     # Demand: 0 at t01 (no penalty if off), 40 at t02/t03 → flow=[0, 0.4, 0.4].
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow = Param(("n", "d", "t"), nb_dt.with_columns(
         value=pl.when(pl.col("t") == "t01").then(0.0).otherwise(-40.0)
     ).select("n", "d", "t", "value"))
@@ -185,7 +186,7 @@ def test_indirect_two_input_source_flow_coef_tradeoff(toy_2node_chp):
         pl.DataFrame({"p": ["chp", "chp"], "source": ["coal", "biomass"],
                       "value": [1.0, 2.0]}))
     # Single-timestep demand: zero out t02 to keep hand-calc tight.
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow = Param(("n", "d", "t"), nb_dt.with_columns(
         value=pl.when(pl.col("t") != "t01").then(0.0)
               .when(pl.col("n") == "heat").then(-5.0)

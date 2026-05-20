@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import pytest
 
+from flextool.engine_polars._pdt_join import compute_pss_dt
 from tests.engine_polars.conftest import DATA_DIR
 from tests.engine_polars.emission._helpers import (
     assert_cstr_present,
@@ -41,7 +42,7 @@ def test_invest_tightening_present_when_invest_p_active() -> None:
 
     # Row count matches pss_dt — same LHS shape as the no-invest case;
     # the *additional* LHS term is what exposes invest tightening.
-    assert_cstr_row_count(pb, "maxToSink", data.pss_dt.height)
+    assert_cstr_row_count(pb, "maxToSink", compute_pss_dt(data).height)
     assert_cstr_present(pb, "maxToSink")
 
     # Inspect the LHS proto: we should see *more than one* additive

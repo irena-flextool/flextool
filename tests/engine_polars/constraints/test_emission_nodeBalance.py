@@ -25,6 +25,7 @@ import pytest
 from polar_high import Problem
 
 from flextool.engine_polars import build_flextool, run_chain_from_db
+from flextool.engine_polars._pdt_join import compute_nodeBalance_dt
 
 _TEST_DIR = Path(__file__).resolve().parents[2]
 if str(_TEST_DIR) not in sys.path:
@@ -48,7 +49,8 @@ def test_nodeBalance_emits_one_row_per_n_dt(test_db_url: str) -> None:
         build_flextool(pb, last.flex_data)
 
     fd = last.flex_data
-    expected_over = fd.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(fd)
+    expected_over = nb_dt
     if fd.nodeStateBlock is not None and fd.nodeStateBlock.height > 0:
         expected_over = expected_over.join(
             fd.nodeStateBlock, on="n", how="anti")
@@ -58,7 +60,7 @@ def test_nodeBalance_emits_one_row_per_n_dt(test_db_url: str) -> None:
     assert actual == expected, (
         f"nodeBalance_eq row count mismatch: actual={actual} "
         f"expected={expected} "
-        f"(|nodeBalance_dt|={fd.nodeBalance_dt.height} "
+        f"(|nodeBalance_dt|={nb_dt.height} "
         f"|nodeStateBlock|="
         f"{fd.nodeStateBlock.height if fd.nodeStateBlock is not None else 0})"
     )

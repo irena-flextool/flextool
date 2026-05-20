@@ -20,6 +20,7 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars import load_flextool
+from flextool.engine_polars._pdt_join import compute_pss_dt
 from flextool.engine_polars._region_filter import (
     HalfFlow,
     RegionSplit,
@@ -131,8 +132,9 @@ class TestLH2RegionA:
         )
         assert virtual_export.in_region_node == "lh2_A"
         assert virtual_import.in_region_node == "lh2_A"
-        # Half-flow virtual connections present in pss_dt.
-        assert sA.data.pss_dt.filter(
+        # Half-flow virtual connections present in pss_dt (computed on
+        # demand via the helper — see Phase E.3).
+        assert compute_pss_dt(sA.data).filter(
             pl.col("p") == virtual_export.virtual_p
         ).height == 168  # 168 timesteps in fixture
 

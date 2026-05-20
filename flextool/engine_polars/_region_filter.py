@@ -52,6 +52,7 @@ from flextool.engine_polars._axis_enums import (
     set_global_axis_enums,
 )
 from flextool.engine_polars._param_shapes import promote_param_to_dt
+from flextool.engine_polars._pdt_join import compute_pss_dt
 
 
 __all__ = [
@@ -377,7 +378,11 @@ def _build_region_data(
 
     # ---- Filter primary entity sets ----
     new.nodeBalance = _filter_frame(src.nodeBalance, "n", keep_nodes)
-    new.nodeBalance_dt = _filter_frame(src.nodeBalance_dt, "n", keep_nodes)
+    # Phase E.3: ``nodeBalance_dt`` is no longer materialised on src; the
+    # filtered ``new.nodeBalance`` is the only set we need, and
+    # ``_pdt_join.compute_nodeBalance_dt(new)`` produces the cross-join
+    # on demand downstream.
+    new.nodeBalance_dt = None
     new.p_inflow = _filter_param(src.p_inflow, "n", keep_nodes)
     new.p_penalty_up = _filter_param(src.p_penalty_up, "n", keep_nodes)
     new.p_penalty_down = _filter_param(src.p_penalty_down, "n", keep_nodes)
@@ -431,7 +436,12 @@ def _build_region_data(
     new.process_source_sink = _filter_arc_by_proc(src.process_source_sink)
     new.process_source_sink_eff = _filter_arc_by_proc(src.process_source_sink_eff)
     new.process_source_sink_noEff = _filter_arc_by_proc(src.process_source_sink_noEff)
-    new.pss_dt = _filter_arc_by_proc(src.pss_dt)
+    # Phase E.3: ``pss_dt`` is no longer materialised on src; the filtered
+    # ``new.process_source_sink`` is the only set we need, and
+    # ``_pdt_join.compute_pss_dt(new)`` produces the cross-join on demand
+    # downstream.  Half-flow injection below ALSO needs a pss_dt view; it
+    # builds one locally from src for the arc-dt extraction.
+    new.pss_dt = None
     new.flow_to_n = _filter_arc_by_proc(src.flow_to_n)
     new.flow_from_n = _filter_arc_by_proc(src.flow_from_n)
     new.flow_from_nodeBalance_eff = _filter_arc_by_proc(src.flow_from_nodeBalance_eff)
@@ -454,7 +464,12 @@ def _build_region_data(
 
     # ---- Storage / nodeState filtered to in-region nodes ----
     new.nodeState = _filter_frame(src.nodeState, "n", keep_nodes)
-    new.nodeState_dt = _filter_frame(src.nodeState_dt, "n", keep_nodes)
+    # Phase E.3: ``nodeState_dt`` is no longer materialised on src; the
+    # filtered ``new.nodeState`` is the only set we need, and
+    # ``_pdt_join.compute_nodeState_dt(new)`` produces the cross-join
+    # on demand downstream.  ``nodeState_first_dt`` is still
+    # materialised (small one-row-per-node slice; see ``_load_storage``).
+    new.nodeState_dt = None
     new.nodeState_first_dt = _filter_frame(src.nodeState_first_dt, "n", keep_nodes)
     new.storage_bind_within_timeset = _filter_frame(src.storage_bind_within_timeset, "n", keep_nodes)
     new.storage_bind_forward_only = _filter_frame(src.storage_bind_forward_only, "n", keep_nodes)
@@ -524,7 +539,11 @@ def _inject_half_flows(
     # Capture the original arc rows so we can pull their (d, t) shape and
     # flow_upper Param values.
     orig_pss = src.process_source_sink
-    orig_pss_dt = src.pss_dt
+    # Phase E.3: ``src.pss_dt`` is no longer materialised; build it on
+    # demand from the constituents.  Half-flow injection always touches
+    # the full arc-dt grid for the cross-region arcs, so a one-shot build
+    # here is fine.
+    orig_pss_dt = compute_pss_dt(src)
     orig_flow_upper = src.p_flow_upper
     orig_flow_upper_existing = src.p_flow_upper_existing
     orig_unitsize = src.p_unitsize
@@ -819,11 +838,22 @@ def _inject_half_flows(
     if new_pss_noEff_rows:
         rd.process_source_sink_noEff = _concat(
             rd.process_source_sink_noEff, new_pss_noEff_rows, _pss_schema)
-    rd.pss_dt = _concat(
-        rd.pss_dt, new_pss_dt_rows,
-        {**_pss_schema,
-         "d": schema_dtype(_enums_loc, "d"),
-         "t": schema_dtype(_enums_loc, "t")})
+    # Phase E.3: ``rd.pss_dt`` is no longer persisted; the half-flow
+    # virtual (p, source, sink) rows already appended to
+    # ``rd.process_source_sink`` will produce the matching cross-join
+    # rows when ``compute_pss_dt(rd)`` runs downstream.  We build a
+    # local ``virtual_pss_dt`` (just the half-flow rows) for the
+    # availability / existing_count promotion below.
+    _virtual_pss_dt_schema = {
+        **_pss_schema,
+        "d": schema_dtype(_enums_loc, "d"),
+        "t": schema_dtype(_enums_loc, "t"),
+    }
+    if new_pss_dt_rows:
+        virtual_pss_dt = pl.DataFrame(
+            new_pss_dt_rows, schema=_virtual_pss_dt_schema)
+    else:
+        virtual_pss_dt = pl.DataFrame(schema=_virtual_pss_dt_schema)
     if new_flow_to_n_rows:
         rd.flow_to_n = _concat(
             rd.flow_to_n, new_flow_to_n_rows, _pssn_schema)
@@ -895,27 +925,28 @@ def _inject_half_flows(
     # entries collapse to zero RHS.  We must add availability=1.0 and
     # existing_count=1.0 entries so the half-flow's bound stays at the
     # value we set in p_flow_upper_existing.
-    if rd.p_process_availability is not None and rd.pss_dt is not None:
-        # Add a (p, d, t) row for each (virtual_p, d, t) in pss_dt.
-        avail_rows = (rd.pss_dt
-                      .filter(cast_dim(pl.col("p"), None, "p").is_in([hf.virtual_p for hf in half_flows]))
+    if rd.p_process_availability is not None and virtual_pss_dt.height > 0:
+        # Add a (p, d, t) row for each (virtual_p, d, t) in
+        # virtual_pss_dt (Phase E.3: half-flow rows only, no need to
+        # filter the whole-region cross-join).
+        avail_rows = (virtual_pss_dt
                       .select("p", "d", "t")
                       .with_columns(value=pl.lit(1.0)))
         if avail_rows.height > 0:
             # Phase E.1: p_process_availability dims depend on authored
-            # shape — promote to (p, d, t) via rd.pss_dt's d/t axes so
-            # the concat lands at a uniform schema.
+            # shape — promote to (p, d, t) via virtual_pss_dt's d/t
+            # axes so the concat lands at a uniform schema.
             avail_pdt = promote_param_to_dt(
-                rd.p_process_availability, rd.pss_dt).collect()
+                rd.p_process_availability, virtual_pss_dt).collect()
             merged = pl.concat([_upcast_dims(avail_pdt, ("p", "d", "t"))
                                   .select("p", "d", "t", "value"),
                                 avail_rows], how="vertical")
             rd.p_process_availability = Param(
                 ("p", "d", "t"), merged,
                 name=rd.p_process_availability.name)
-    if rd.p_process_existing_count is not None and rd.pss_dt is not None:
+    if rd.p_process_existing_count is not None and virtual_pss_dt.height > 0:
         # (p, d) row for each virtual half-flow
-        ec_rows = (rd.pss_dt
+        ec_rows = (virtual_pss_dt
                    .filter(cast_dim(pl.col("p"), None, "p").is_in([hf.virtual_p for hf in half_flows]))
                    .select("p", "d").unique()
                    .with_columns(value=pl.lit(1.0)))

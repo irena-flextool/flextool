@@ -687,6 +687,26 @@ def _apply_warm_updates(warm: WarmProblem,
             else:
                 new_over = getattr(nxt, over_field, None)
                 if new_over is None:
+                    # Phase E.3: ``pss_dt`` / ``nodeBalance_dt`` /
+                    # ``nodeState_dt`` / ``process_indirect_dt`` are no
+                    # longer materialised on FlexData; build the cross-
+                    # join on demand from the constituents so warm RHS
+                    # alignment still works.
+                    from flextool.engine_polars._pdt_join import (
+                        compute_pss_dt,
+                        compute_nodeBalance_dt,
+                        compute_nodeState_dt,
+                        compute_process_indirect_dt,
+                    )
+                    _compute = {
+                        "pss_dt": compute_pss_dt,
+                        "nodeBalance_dt": compute_nodeBalance_dt,
+                        "nodeState_dt": compute_nodeState_dt,
+                        "process_indirect_dt": compute_process_indirect_dt,
+                    }.get(over_field)
+                    if _compute is not None:
+                        new_over = _compute(nxt)
+                if new_over is None:
                     raise _IncompatibleUpdate(
                         f"warm-update needs FlexData.{over_field}, but it "
                         f"is None on the new sub-solve")

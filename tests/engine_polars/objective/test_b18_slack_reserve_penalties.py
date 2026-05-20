@@ -35,6 +35,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine_polars import build_flextool
+from flextool.engine_polars._pdt_join import compute_nodeBalance_dt
 from flextool.engine_polars.input import FlexData
 
 from .conftest import solver_options
@@ -60,7 +61,7 @@ def _solve(data: FlexData):
 def _make_drain_data(base: FlexData, *, pen_down: float,
                       ncs: float | None) -> FlexData:
     """Inject positive inflow → vq_state_down active; set penalty / ncs."""
-    nb_dt = base.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(base)
     p_inflow_pos = Param(("n", "d", "t"),
         nb_dt.with_columns(value=pl.lit(5.0))
               .select("n", "d", "t", "value"))
@@ -213,7 +214,7 @@ def test_b18_6_vq_non_synchronous_penalty_isolated(toy_group_reserve):
     """
     d = toy_group_reserve
     # Force demand of 50 at n1 only (so v_flow at u = 0.5 of unitsize=100).
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow = Param(("n", "d", "t"), nb_dt.with_columns(
         value=pl.when(pl.col("n") == "n1").then(-50.0).otherwise(0.0)
     ).select("n", "d", "t", "value"))

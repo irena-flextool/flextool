@@ -31,6 +31,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine_polars import build_flextool
+from flextool.engine_polars._pdt_join import compute_nodeBalance_dt
 
 from .conftest import solver_options
 
@@ -195,7 +196,7 @@ def test_b13_non_sync_inside_exclusion(toy_group_reserve):
     p_process_existing_count = Param(("p", "d"),
         pl.DataFrame({"p": ["u", "u2"], "d": ["d1", "d1"], "value": [1.0, 1.0]}))
     # Demand 150 MW at n1, 0 at n2 — forces both u and u2 (each cap 100) to run.
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow = Param(("n", "d", "t"), nb_dt.with_columns(
         value=pl.when(pl.col("n") == "n1").then(-150.0).otherwise(0.0)
     ).select("n", "d", "t", "value"))
@@ -302,7 +303,7 @@ def test_b14_reserve_process_invest_tightening(toy_group_reserve):
         pl.DataFrame({"p": ["u"], "source": ["FUEL_n"], "sink": ["n1"],
                       "d": ["d1"], "value": [10.0]}))
     # Trim demand so flow penalty doesn't dominate.
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow = Param(("n", "d", "t"),
         nb_dt.with_columns(value=pl.lit(0.0))
             .select("n", "d", "t", "value"))

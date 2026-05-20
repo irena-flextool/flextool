@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+from flextool.engine_polars._pdt_join import compute_nodeBalance_dt
 from tests.engine_polars.conftest import DATA_DIR
 from tests.engine_polars.emission._helpers import (
     assert_cstr_present,
@@ -33,14 +34,16 @@ def test_nodeBalance_emits_one_row_per_n_dt() -> None:
     assert data.nodeBalance is not None and data.nodeBalance.height > 0, (
         "fixture invariant: nodeBalance must be non-empty"
     )
-    assert data.nodeBalance_dt is not None
     assert data.dt is not None
 
     # nodeBalance_dt = nodeBalance × dt; the constraint is one row per (n, d, t).
+    # Phase E.3: built on demand via the helper instead of pre-materialised.
+    nb_dt = compute_nodeBalance_dt(data)
     expected = data.nodeBalance.height * data.dt.height
-    assert data.nodeBalance_dt.height == expected, (
-        f"fixture invariant: nodeBalance_dt height should equal "
-        f"|nodeBalance| × |dt|; got {data.nodeBalance_dt.height} != {expected}"
+    assert nb_dt is not None and nb_dt.height == expected, (
+        f"helper invariant: compute_nodeBalance_dt height should equal "
+        f"|nodeBalance| × |dt|; got "
+        f"{nb_dt.height if nb_dt is not None else 'None'} != {expected}"
     )
 
     assert_cstr_row_count(pb, "nodeBalance_eq", expected)

@@ -36,6 +36,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine_polars import build_flextool
+from flextool.engine_polars._pdt_join import compute_pss_dt, compute_nodeBalance_dt
 
 from .conftest import solver_options
 
@@ -59,7 +60,7 @@ def test_max_to_sink_availability_multiplier(toy_1n1p_1d2t):
         t02: v_flow ≤ 1.0 ⇒ v_flow=1.0, vq_state_up = 10 − 1.0 = 9.0
     """
     d = toy_1n1p_1d2t
-    pss_dt = d.pss_dt
+    pss_dt = compute_pss_dt(d)
     p_flow_upper = Param(("p", "source", "sink", "d", "t"),
         pss_dt.with_columns(value=pl.lit(1.0))
               .select("p", "source", "sink", "d", "t", "value"))
@@ -91,13 +92,13 @@ def test_max_to_sink_neg_cap_forced_minimum(toy_1n1p_1d2t):
     above 1, so v_flow = 1 is the forced minimum.
     """
     d = toy_1n1p_1d2t
-    pss_dt = d.pss_dt
+    pss_dt = compute_pss_dt(d)
     # Tight capacity = 1 (the .mod's |existing|/|us| RHS for both halves).
     p_flow_upper = Param(("p", "source", "sink", "d", "t"),
         pss_dt.with_columns(value=pl.lit(1.0))
               .select("p", "source", "sink", "d", "t", "value"))
     # Zero demand and tiny dump-slack penalty so v_flow=1 is feasible cheaply.
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow_zero = Param(("n", "d", "t"),
         nb_dt.with_columns(value=pl.lit(0.0)).select("n", "d", "t", "value"))
     p_pen = Param(("n", "d", "t"),
@@ -171,7 +172,7 @@ def test_profile_lower_and_fixed(toy_1n1p_1d2t):
     # Zero inflow + small slack so the LP doesn't get pushed away from
     # the profile values; commodity price is cheap so paying for v_flow
     # is cheaper than the dump-slack we'd otherwise need.
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow_zero = Param(("n", "d", "t"),
         nb_dt.with_columns(value=pl.lit(0.0)).select("n", "d", "t", "value"))
     p_pen = Param(("n", "d", "t"),
@@ -223,7 +224,7 @@ def test_profile_upper_invest_lhs_tightening(toy_invest_3d):
     # invest cost (10/unit) wins over slack (the alternative would be
     # vq_state_up = 2 ⇒ slack-cost 2 vs invest 4·10 = 40, but the
     # profile-upper LHS forces invest ≥ 4 once we want v_flow > 0).
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow_new = Param(("n", "d", "t"),
         nb_dt.with_columns(value=pl.when(
             (pl.col("d") == "d1") & (pl.col("t") == "t01"))

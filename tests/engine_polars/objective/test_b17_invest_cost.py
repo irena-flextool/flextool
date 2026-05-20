@@ -26,6 +26,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine_polars import build_flextool
+from flextool.engine_polars._pdt_join import compute_pss_dt
 from flextool.engine_polars.input import FlexData
 
 from .conftest import solver_options
@@ -65,7 +66,7 @@ def _enable_divest(data: FlexData, *, lfd: float, annd: float) -> FlexData:
              .select("p", "source", "sink", "d", "value"))
     # Also widen p_flow_upper so the structural upper isn't tighter.
     p_flow_upper = Param(("p", "source", "sink", "d", "t"),
-        data.pss_dt.with_columns(value=pl.lit(5.0))
+        compute_pss_dt(data).with_columns(value=pl.lit(5.0))
             .select("p", "source", "sink", "d", "t", "value"))
 
     lfd_param = Param(("e", "d"),

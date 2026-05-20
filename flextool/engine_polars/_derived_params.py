@@ -2675,11 +2675,11 @@ def apply_derived_b(
                 pof_db if pof_db is not None and pof_db.height > 0
                 else None)
 
-        if dt_csv is not None and dt_csv.height > 0:
-            pid_db = process_indirect_dt(source, dt_csv, classified)
-            flex_data.process_indirect_dt = (
-                pid_db if pid_db is not None and pid_db.height > 0
-                else None)
+        # Phase E.3: ``process_indirect_dt`` is no longer materialised
+        # eagerly; consumers call
+        # ``_pdt_join.compute_process_indirect_dt`` on demand.  The
+        # field stays declared on ``FlexData`` for ``getattr`` defenders
+        # but defaults to ``None``.
 
     # flow_to_n / flow_from_n — Δ.9 closes the Δ.3 gap: the lazy
     # cluster E port now applies the block-aware filter on the source-

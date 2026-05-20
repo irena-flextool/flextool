@@ -137,20 +137,40 @@ class _MemoryRecorder:
         "rss_mb",
     )
 
-    def __init__(self, csv_path: Path, enabled: bool = True) -> None:
+    def __init__(self, csv_path: Path | None = None,
+                 enabled: bool = True,
+                 verbose: bool = True) -> None:
+        """Construct a phase-progress recorder.
+
+        Parameters
+        ----------
+        csv_path
+            Where to write the per-checkpoint CSV.  ``None`` skips CSV
+            emission (verbose log lines still fire).
+        enabled
+            Full diagnostic mode — starts tracemalloc on first checkpoint
+            so ``traced_peak`` becomes meaningful, and writes the CSV.
+            When ``False`` we still emit human-readable log lines with
+            RSS + section time + Δrss (RSS reads from ``/proc`` are
+            essentially free); ``peak`` shows as ``-`` since tracemalloc
+            isn't running.
+        verbose
+            Emit log lines (one per checkpoint).  Set ``False`` only if
+            you want a fully silent recorder (rare; debugging).
+        """
         self.enabled = enabled
+        self.verbose = verbose
         self.t0 = time.perf_counter()
         self._t_prev = self.t0
         self._rss_prev_mb: float = 0.0
         self._peak_prev_mb: float = 0.0
-        self._path = Path(csv_path)
+        self._path = Path(csv_path) if csv_path is not None else None
         self._started = False
-        if not self.enabled:
-            return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        import csv as _csv
-        with open(self._path, "w", newline="") as f:
-            _csv.writer(f).writerow(self._HEADER)
+        if self.enabled and self._path is not None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            import csv as _csv
+            with open(self._path, "w", newline="") as f:
+                _csv.writer(f).writerow(self._HEADER)
 
     @staticmethod
     def _read_rss_mb() -> float:
@@ -191,82 +211,96 @@ class _MemoryRecorder:
 
     def checkpoint(self, label: str, logger: logging.Logger,
                    user_label: str | None = None) -> None:
-        """Record a memory checkpoint.
+        """Record a phase checkpoint.
 
         ``label`` is the canonical machine-readable identifier persisted
-        to the CSV.  ``user_label`` (optional) is the human-friendly
-        phrasing emitted to the log; when absent, ``label`` is used.
+        to the CSV (when full diagnostics is enabled).  ``user_label``
+        (optional) is the human-friendly phrasing emitted to the log;
+        when absent, ``label`` is used.
 
-        Each log line includes the elapsed time, current RSS / traced
-        peak, and the section deltas (Δrss, Δpeak) since the previous
-        checkpoint so the user can attribute memory growth to phases.
+        Log lines always emit (RSS read from ``/proc`` is essentially
+        free).  When full diagnostics is enabled (env-var
+        ``FLEXTOOL_MEMORY_DIAGNOSTICS=1``) the ``traced_peak`` column
+        and the CSV emission are populated by tracemalloc; otherwise
+        the peak shows as ``-``.
         """
-        if not self.enabled:
-            return
-        import tracemalloc
-        if not self._started:
-            tracemalloc.start()
-            self._started = True
-        current, peak = tracemalloc.get_traced_memory()
+        peak_mb: float | None = None
+        current_mb: float | None = None
+        if self.enabled:
+            import tracemalloc
+            if not self._started:
+                tracemalloc.start()
+                self._started = True
+            current, peak = tracemalloc.get_traced_memory()
+            current_mb = current / (1024.0 * 1024.0)
+            peak_mb = peak / (1024.0 * 1024.0)
         rss_mb = self._read_rss_mb()
         t_elapsed = time.perf_counter() - self.t0
-        current_mb = current / (1024.0 * 1024.0)
-        peak_mb = peak / (1024.0 * 1024.0)
         # Section deltas relative to previous checkpoint.
         t_section = t_elapsed - (self._t_prev - self.t0)
         delta_rss = rss_mb - self._rss_prev_mb
-        delta_peak = peak_mb - self._peak_prev_mb
-        row = (
-            str(label),
-            f"{t_elapsed:.6f}",
-            f"{current_mb:.3f}",
-            f"{peak_mb:.3f}",
-            f"{rss_mb:.3f}",
-        )
-        import csv as _csv
-        try:
-            with open(self._path, "a", newline="") as f:
-                _csv.writer(f).writerow(row)
-        except OSError:
-            pass
-        display = user_label or label
-        # On the first checkpoint there's no prior section to report,
-        # so emit just the absolute values.
-        if self._t_prev == self.t0:
-            line = (
-                f"[mem] {display}  "
-                f"t={t_elapsed:.1f}s  "
-                f"rss={self._fmt_size(rss_mb)}  "
-                f"peak={self._fmt_size(peak_mb)}"
+        delta_peak = (peak_mb - self._peak_prev_mb) if peak_mb is not None else None
+        # CSV row — only when full diagnostics is enabled and a path was
+        # configured.
+        if self.enabled and self._path is not None and peak_mb is not None:
+            row = (
+                str(label),
+                f"{t_elapsed:.6f}",
+                f"{current_mb:.3f}",
+                f"{peak_mb:.3f}",
+                f"{rss_mb:.3f}",
             )
-        else:
-            line = (
-                f"[mem] {display}  "
-                f"section={t_section:.1f}s  "
-                f"Δrss={self._fmt_delta(delta_rss)}  "
-                f"Δpeak={self._fmt_delta(delta_peak)}  "
-                f"(rss={self._fmt_size(rss_mb)}, "
-                f"peak={self._fmt_size(peak_mb)})"
-            )
-        # Always emit one-liner so the user sees phase progress even when
-        # the inner runner's logger has been silenced.
-        logger.info(line)
-        try:
-            print(line, flush=True)
-        except OSError:
-            pass
+            import csv as _csv
+            try:
+                with open(self._path, "a", newline="") as f:
+                    _csv.writer(f).writerow(row)
+            except OSError:
+                pass
+        # Log line — emitted unconditionally so users following the run
+        # see phase progress.
+        if self.verbose:
+            display = user_label or label
+            peak_str = (self._fmt_size(peak_mb) if peak_mb is not None else "-")
+            if self._t_prev == self.t0:
+                # First checkpoint — no prior section to report.
+                line = (
+                    f"[mem] {display}  "
+                    f"t={t_elapsed:.1f}s  "
+                    f"rss={self._fmt_size(rss_mb)}  "
+                    f"peak={peak_str}"
+                )
+            else:
+                delta_peak_str = (
+                    self._fmt_delta(delta_peak) if delta_peak is not None else "-"
+                )
+                line = (
+                    f"[mem] {display}  "
+                    f"section={t_section:.1f}s  "
+                    f"Δrss={self._fmt_delta(delta_rss)}  "
+                    f"Δpeak={delta_peak_str}  "
+                    f"(rss={self._fmt_size(rss_mb)}, "
+                    f"peak={peak_str})"
+                )
+            logger.info(line)
+            try:
+                print(line, flush=True)
+            except OSError:
+                pass
         # Update prev-section bookkeeping for the next call.
         self._t_prev = time.perf_counter()
         self._rss_prev_mb = rss_mb
-        self._peak_prev_mb = peak_mb
+        if peak_mb is not None:
+            self._peak_prev_mb = peak_mb
 
 
 class _NoopMemoryRecorder:
     """Zero-overhead drop-in when ``FLEXTOOL_MEMORY_DIAGNOSTICS`` is unset.
 
-    Both attributes accessed by the rest of the module
-    (:meth:`checkpoint` and :attr:`enabled`) are present so callers don't
-    need to branch on ``is None`` at every site.
+    Retained for callers that explicitly want a fully silent recorder
+    (rare; debugging).  The default code path now uses
+    :class:`_MemoryRecorder` with ``enabled=False`` instead — that mode
+    still emits user-visible log lines (RSS + section time + Δrss)
+    while skipping CSV emission and tracemalloc startup.
     """
 
     enabled = False
@@ -274,6 +308,30 @@ class _NoopMemoryRecorder:
     def checkpoint(self, label: str, logger: logging.Logger,
                    user_label: str | None = None) -> None:  # noqa: D401, ARG002
         return None
+
+
+# Module-level recorder reference.  ``run_orchestration`` constructs the
+# per-run recorder and publishes it here so deeper-stack modules (e.g.
+# :mod:`flextool.engine_polars.input`'s ``_apply_db_overrides``) can
+# emit phase progress in the unified ``[mem]`` format without each
+# carrying a recorder kwarg.  Reset to ``None`` when the run completes
+# so a subsequent run starts clean.
+_PHASE_RECORDER: "_MemoryRecorder | None" = None
+
+
+def set_phase_recorder(rec: "_MemoryRecorder | None") -> None:
+    """Publish the current run's phase recorder so deeper callers can
+    emit checkpoints without explicit plumbing.  Pass ``None`` to clear.
+    """
+    global _PHASE_RECORDER
+    _PHASE_RECORDER = rec
+
+
+def get_phase_recorder() -> "_MemoryRecorder | None":
+    """Return the current run's phase recorder, or ``None`` when none
+    is active (e.g. unit tests that bypass ``run_orchestration``).
+    """
+    return _PHASE_RECORDER
 
 
 # ---------------------------------------------------------------------------
@@ -1429,20 +1487,24 @@ def run_chain_from_db(
         write_workdir_inputs,
     )
 
-    # Opt-in memory diagnostics (FLEXTOOL_MEMORY_DIAGNOSTICS=1).  Pin the
-    # CSV under ``solve_data/`` so it sits next to ``timings.csv`` and the
-    # other workdir artefacts.  When the env var is unset we still
-    # construct a no-op recorder so downstream sites can call
-    # ``.checkpoint(...)`` unconditionally — at zero cost.
+    # Phase-progress recorder.  Always emits user-visible log lines
+    # (RSS + section time + Δrss) so users following the run can see
+    # what each phase is doing.  Setting FLEXTOOL_MEMORY_DIAGNOSTICS=1
+    # additionally enables tracemalloc (so ``traced_peak`` is meaningful)
+    # and writes the per-checkpoint CSV under ``solve_data/`` for
+    # post-hoc analysis.
     _mem_enabled = os.environ.get("FLEXTOOL_MEMORY_DIAGNOSTICS") == "1"
     if _mem_enabled:
         (work_folder / "solve_data").mkdir(parents=True, exist_ok=True)
-        _memrec: _MemoryRecorder | _NoopMemoryRecorder = _MemoryRecorder(
+        _memrec = _MemoryRecorder(
             work_folder / "solve_data" / "memory_diagnostics.csv",
             enabled=True,
         )
     else:
-        _memrec = _NoopMemoryRecorder()
+        _memrec = _MemoryRecorder(csv_path=None, enabled=False)
+    # Publish so deeper modules (input.py's _apply_db_overrides) emit
+    # in the unified [mem] format.
+    set_phase_recorder(_memrec)
     _memrec.checkpoint("cascade_start", logger,
                        user_label="Run start")
 

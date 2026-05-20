@@ -39,6 +39,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine_polars import build_flextool
+from flextool.engine_polars._pdt_join import compute_nodeBalance_dt
 
 from .conftest import solver_options
 
@@ -117,7 +118,7 @@ def test_max_invest_and_divest_entity_period(toy_invest_3d):
         pl.DataFrame({"e": ["u"]*3, "d": periods,
                       "value": [1.0, 10.0, 10.0]}))
     # Demand at d1/t01 (10 units) so the d1 invest cap binds.
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow_new = Param(("n", "d", "t"),
         nb_dt.with_columns(value=pl.when(pl.col("d") == "d1")
                                   .then(-10.0).otherwise(0.0))
@@ -234,7 +235,7 @@ def test_group_invest_max_total(toy_invest_3d):
     p_group_invest_max_total = Param(("g",),
         pl.DataFrame({"g": ["g"], "value": [2.0]}))
     # High demand each step so total invest=2 binds (not 0).
-    nb_dt = d.nodeBalance_dt
+    nb_dt = compute_nodeBalance_dt(d)
     p_inflow_new = Param(("n", "d", "t"),
         nb_dt.with_columns(value=pl.lit(-100.0))
             .select("n", "d", "t", "value"))

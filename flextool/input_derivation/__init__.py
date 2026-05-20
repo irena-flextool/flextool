@@ -142,12 +142,16 @@ def run(
         raise TypeError("input_derivation.run requires a FlexDataProvider")
 
     def _mem(label: str, user_label: str) -> None:
-        """Emit a memory checkpoint when a recorder was supplied; no-op
+        """Emit a phase checkpoint when a recorder was supplied; no-op
         otherwise.  Lets the user follow input-pipeline phase progress
         with section-delta accounting matching the cascade/build
         checkpoints emitted by :mod:`_orchestration`.
+
+        The recorder's log lines are user-visible by default; full
+        tracemalloc-peak diagnostics and CSV emission are opt-in via
+        ``FLEXTOOL_MEMORY_DIAGNOSTICS=1`` (handled inside the recorder).
         """
-        if memory_recorder is not None and getattr(memory_recorder, "enabled", False):
+        if memory_recorder is not None:
             memory_recorder.checkpoint(label, logger, user_label=user_label)
 
     wf = work_folder if work_folder is not None else Path.cwd()

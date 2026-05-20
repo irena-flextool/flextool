@@ -120,11 +120,6 @@ def _empty_flex_data() -> "FlexData":
         "d": schema_dtype(_enums, "d"),
         "value": pl.Float64})
     empty_node = pl.DataFrame(schema={"n": schema_dtype(_enums, "n")})
-    empty_node_dt = pl.DataFrame(
-        schema={"n": schema_dtype(_enums, "n"),
-                "d": schema_dtype(_enums, "d"),
-                "t": schema_dtype(_enums, "t")}
-    )
     empty_ndt = pl.DataFrame(
         schema={"n": schema_dtype(_enums, "n"),
                 "d": schema_dtype(_enums, "d"),
@@ -139,7 +134,8 @@ def _empty_flex_data() -> "FlexData":
         p_inflation_op=Param(("d",), empty_d),
         p_period_share=Param(("d",), empty_d),
         nodeBalance=empty_node,
-        nodeBalance_dt=empty_node_dt,
+        # Phase E.3: ``nodeBalance_dt`` is no longer pre-materialised;
+        # consumers use ``_pdt_join.compute_nodeBalance_dt`` on demand.
         p_inflow=Param(("n", "d", "t"), empty_ndt),
         p_penalty_up=Param(("n", "d", "t"), empty_ndt),
         p_penalty_down=Param(("n", "d", "t"), empty_ndt),
@@ -281,14 +277,19 @@ def _populate_topology(flex_data: "FlexData",
 
 
 def _populate_pss_dt_and_balance_dt(flex_data: "FlexData") -> None:
-    """Build ``pss_dt`` (process_source_sink × dt) and ``nodeBalance_dt``
-    (nodeBalance × dt) from the now-populated ``dt`` + topology fields.
+    """Phase E.3: no-op.
 
-    ``pss_dt`` is required for ``v_flow``'s domain;
-    ``nodeBalance_dt`` for ``v_state_up`` / ``v_state_down`` slack
-    domains.  Both are simple cross-joins, mirroring ``input.py:898``
-    (``pss.join(dt, how="cross")``) and the cross-join inside
-    ``_load_node`` for ``nodeBalance_dt``.
+    Pre-E.3 this helper built ``pss_dt`` / ``nodeBalance_dt`` /
+    ``nodeState_dt`` / ``nodeState_first_dt`` eagerly into ``flex_data``
+    for the LP build to consume.  Those cross-products are now computed
+    lazily at the point of use via the helpers in
+    :mod:`flextool.engine_polars._pdt_join`.  The function is kept so
+    callers (``apply_*`` cascade orchestrator) still link, but it leaves
+    the fields at ``None``.
+
+    The ``dt`` non-empty invariant still has to hold for the fast path
+    to make sense; we keep that check so a misconfigured scenario fails
+    here rather than deep inside the LP build.
     """
     dt = getattr(flex_data, "dt", None)
     if dt is None or dt.height == 0:
@@ -299,31 +300,9 @@ def _populate_pss_dt_and_balance_dt(flex_data: "FlexData") -> None:
             "solve — check that `solve.realized_periods` and "
             "`solve.period_timeset` are populated for this scenario."
         )
-
-    pss = getattr(flex_data, "process_source_sink", None)
-    if pss is not None and pss.height > 0:
-        flex_data.pss_dt = pss.join(dt, how="cross")
-
-    nb = getattr(flex_data, "nodeBalance", None)
-    if nb is not None and nb.height > 0:
-        flex_data.nodeBalance_dt = nb.join(dt, how="cross")
-
-    # ``nodeState_dt`` — required by the storage feature.  Cross-join
-    # of nodeState (set by apply_projection_params) × dt.  Mirrors
-    # ``input.py:_load_storage`` lines that build it from the seed.
-    ns = getattr(flex_data, "nodeState", None)
-    if ns is not None and ns.height > 0:
-        flex_data.nodeState_dt = ns.join(dt, how="cross")
-        # ``nodeState_first_dt`` — first (d, t) per (n) for the
-        # storage-fix-start equality.  Lexicographically smallest
-        # period × smallest timestep within that period.  Mirrors
-        # ``input.py:_load_storage`` lines 1773-1783.
-        first_period = (dt.select("d").unique().sort("d").head(1))
-        flex_data.nodeState_first_dt = (flex_data.nodeState_dt
-            .join(first_period, on="d", how="inner")
-            .group_by("n", "d")
-            .agg(pl.col("t").min().alias("t"))
-            .select("n", "d", "t"))
+    # Phase E.3: intentionally no eager cross-joins.  Consumers call
+    # ``_pdt_join.compute_*`` on demand.
+    return
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ import pytest
 from polar_high import Problem
 
 from flextool.engine_polars import build_flextool, run_chain_from_db
+from flextool.engine_polars._pdt_join import compute_pss_dt
 
 _TEST_DIR = Path(__file__).resolve().parents[2]
 if str(_TEST_DIR) not in sys.path:
@@ -41,7 +42,8 @@ def test_maxToSink_emits_one_row_per_pss_dt(test_db_url: str) -> None:
         build_flextool(pb, last.flex_data)
 
     fd = last.flex_data
-    expected = fd.pss_dt.height
+    pss_dt = compute_pss_dt(fd)
+    expected = pss_dt.height
 
     actual = pb.cstr_row_count("maxToSink")
     # ``cstr_row_count`` is prefix-matched (covers maxToSink_negCap,
@@ -52,6 +54,6 @@ def test_maxToSink_emits_one_row_per_pss_dt(test_db_url: str) -> None:
     bare_count = len(bare.over) if bare is not None else 0
     assert bare_count == expected, (
         f"maxToSink row count mismatch: actual={bare_count} "
-        f"expected={expected} (|pss_dt|={fd.pss_dt.height}); "
+        f"expected={expected} (|pss_dt|={pss_dt.height}); "
         f"prefix-total (includes _negCap / _online_*): {actual}"
     )

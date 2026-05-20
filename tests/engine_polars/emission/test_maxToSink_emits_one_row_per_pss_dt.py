@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 
+from flextool.engine_polars._pdt_join import compute_pss_dt
 from tests.engine_polars.conftest import DATA_DIR
 from tests.engine_polars.emission._helpers import (
     assert_cstr_present,
@@ -26,11 +27,12 @@ from tests.engine_polars.emission._helpers import (
 def test_maxToSink_emits_one_row_per_pss_dt() -> None:
     pb, data = build(DATA_DIR / "work_coal")
 
-    assert data.pss_dt is not None and data.pss_dt.height > 0, (
+    pss_dt = compute_pss_dt(data)
+    assert pss_dt is not None and pss_dt.height > 0, (
         "fixture invariant: pss_dt must be non-empty"
     )
 
-    assert_cstr_row_count(pb, "maxToSink", data.pss_dt.height)
+    assert_cstr_row_count(pb, "maxToSink", pss_dt.height)
     assert_cstr_present(pb, "maxToSink")
 
     # The constraint should be a single record (no _linear/_integer split).

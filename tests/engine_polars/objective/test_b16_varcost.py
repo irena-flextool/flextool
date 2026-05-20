@@ -24,6 +24,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine_polars import build_flextool
+from flextool.engine_polars._pdt_join import compute_pss_dt
 from flextool.engine_polars.input import FlexData
 
 from .conftest import solver_options
@@ -60,7 +61,7 @@ def test_b16_3_eff_sink_varcost_isolated(toy_1n1p_1d2t):
     base_vc = 1.0
     pert_vc = 2.0
 
-    pss_dt = toy_1n1p_1d2t.pss_dt   # (p, source, sink, d, t) for the one arc
+    pss_dt = compute_pss_dt(toy_1n1p_1d2t)   # (p, source, sink, d, t) for the one arc
     # §5.3 expects an eff-unit-sink index keyed (p, source, sink, d, t).
     sink_idx = pss_dt.select("p", "source", "sink", "d", "t")
     # Param keyed (p, sink, d, t) — one row per (sink, d, t).

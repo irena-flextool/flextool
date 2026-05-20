@@ -18,6 +18,7 @@ preprocessing state directly, skipping the CSV roundtrip.
 from __future__ import annotations
 
 import csv
+import logging
 import os
 import sys
 import time
@@ -434,7 +435,6 @@ class FlexData:
 
     # ─── Nodes (always present in tested scenarios) ───────────────────────
     nodeBalance: pl.DataFrame                # set: (n,)
-    nodeBalance_dt: pl.DataFrame             # set: nodeBalance × dt
     p_inflow: Param                          # (n, d, t)
     p_penalty_up: Param                      # (n, d, t)
     p_penalty_down: Param                    # (n, d, t)
@@ -450,7 +450,15 @@ class FlexData:
     process_source_sink: pl.DataFrame | None = None
     process_source_sink_eff: pl.DataFrame | None = None
     process_source_sink_noEff: pl.DataFrame | None = None
+    # Phase E.3: ``pss_dt`` / ``nodeBalance_dt`` / ``nodeState_dt`` /
+    # ``nodeState_first_dt`` / ``process_indirect_dt`` are no longer
+    # eager-built up-front.  Consumers call the on-demand helpers in
+    # :mod:`flextool.engine_polars._pdt_join`.  Fields stay declared
+    # (defaulting to ``None``) so callers that defensively read them via
+    # ``getattr(d, ..., None)`` continue to work and the warm-update
+    # over_field plumbing can fall through to cold-rebuild cleanly.
     pss_dt: pl.DataFrame | None = None
+    nodeBalance_dt: pl.DataFrame | None = None
     # Canonical (p, source) / (p, sink) per process — one row per unit input
     # node / output node, and one row per connection using the original
     # connection__node__node direction (not the added reverse arc).
@@ -995,7 +1003,9 @@ def _load_node(sd: Path, dt: pl.DataFrame,
             if dn.height > 0:
                 pen_dn_df = dn
 
-    return (nb, nb.join(dt, how="cross"),
+    # Phase E.3: ``nodeBalance_dt`` no longer materialised; consumers
+    # call ``_pdt_join.compute_nodeBalance_dt`` on demand.
+    return (nb, None,
             Param(("n","d","t"), inflow_long.select("n","d","t","value")),
             Param(("n","d","t"), pen_up_df),
             Param(("n","d","t"), pen_dn_df))
@@ -1275,7 +1285,9 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         pss = pss,
         pss_eff = pss_eff,
         pss_noEff = pss_noEff,
-        pss_dt = pss.join(dt, how="cross"),
+        # Phase E.3: ``pss_dt`` is no longer materialised here; consumers
+        # call ``_pdt_join.compute_pss_dt`` on demand.
+        pss_dt = None,
         flow_to_n = flow_to_n,
         flow_from_n = flow_from_n,
         flow_from_commodity_eff = flow_from_commodity_eff,
@@ -1611,7 +1623,9 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
                                            .rename({"coef": "value"}))
                         p_sink_flow_coef = Param(("p", "sink"), merged)
 
-    return (indirect, inputs, outputs, indirect.join(dt, how="cross"),
+    # Phase E.3: ``process_indirect_dt`` no longer materialised;
+    # consumers call ``_pdt_join.compute_process_indirect_dt`` on demand.
+    return (indirect, inputs, outputs, None,
             p_source_flow_coef, p_sink_flow_coef)
 
 
@@ -2320,7 +2334,11 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     if nodeState.height == 0:
         return blank
 
-    nodeState_dt = nodeState.join(dt, how="cross")
+    # Phase E.3: ``nodeState_dt`` is no longer materialised here.
+    # Consumers call ``_pdt_join.compute_nodeState_dt`` on demand.
+    # ``nodeState_first_dt`` below stays materialised — it's a small
+    # one-row-per-node slice and the CSV-fallback resolution for
+    # ``first_period`` needs the slow-path provider context.
 
     # First (d, t) per period — used for storage_state_start_binding.
     # The .mod uses ``period_first_of_solve`` for the boundary tests in
@@ -2349,11 +2367,17 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         # Fallback: take the lexicographically smallest period.
         first_period = (dt.select("d").unique()
                           .sort("d").head(1))
-    first_dt = (nodeState_dt
-        .join(first_period, on="d", how="inner")
+    # Phase E.3: build ``first_dt`` lazily from ``nodeState`` × ``dt``
+    # without persisting the full cross-product on ``flex_data``.
+    first_dt = (
+        nodeState.lazy()
+        .join(dt.lazy(), how="cross")
+        .join(first_period.lazy(), on="d", how="inner")
         .group_by("n", "d")
         .agg(pl.col("t").min().alias("t"))
-        .select("n", "d", "t"))
+        .select("n", "d", "t")
+        .collect()
+    )
 
     # Δ.18 — restore CSV-fallback seeds for ``p_state_existing_capacity``
     # / ``p_state_unitsize`` / ``p_state_upper``.  They were dropped in
@@ -2718,7 +2742,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
     return dict(
         nodeState = nodeState,
-        nodeState_dt = nodeState_dt,
+        # Phase E.3: ``nodeState_dt`` no longer materialised; consumers
+        # call ``_pdt_join.compute_nodeState_dt`` on demand.
+        nodeState_dt = None,
         nodeState_first_dt = first_dt,
         p_state_upper = state_upper,
         p_state_unitsize = state_unitsize,
@@ -4176,10 +4202,27 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     from flextool.engine_polars import _projection_params as _pp
     from flextool.engine_polars import _derived_params as _drv
 
+    from flextool.engine_polars._orchestration import get_phase_recorder
+    _rec = get_phase_recorder()
+    _logger = logging.getLogger("flextool.engine_polars.input")
+
     def _timed(label, fn, *args, **kwargs):
         t0 = time.perf_counter()
         fn(*args, **kwargs)
-        print(f"  input pass {label}: {time.perf_counter() - t0:.3f}s")
+        elapsed = time.perf_counter() - t0
+        if _rec is not None:
+            # Emit via the phase recorder so the line carries RSS +
+            # Δrss + Δpeak (when full diagnostics is on) in the same
+            # format as the cascade/build checkpoints.
+            _rec.checkpoint(
+                f"input_pass_{label.split()[0]}",
+                _logger,
+                user_label=f"input pass {label}",
+            )
+        else:
+            # Fallback: legacy plain timer line (used by unit tests
+            # that don't go through run_orchestration).
+            print(f"  input pass {label}: {elapsed:.3f}s")
 
     # Pass 1a-2: source-only Params (no workdir needed).
     # Δ.28 — pass 1 splits into 1a (dt-independent) and 1b (dt-dependent).

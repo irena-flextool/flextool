@@ -30,6 +30,12 @@ from . import _dc_power_flow
 from . import _commodity_ladder
 from ._axis_enums import alias_to_axis, cast_dim, rename_to_axis, lit_axis
 from ._param_shapes import promote_param_to_dt
+from ._pdt_join import (
+    compute_pss_dt,
+    compute_nodeBalance_dt,
+    compute_nodeState_dt,
+    compute_process_indirect_dt,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -37,18 +43,23 @@ from ._param_shapes import promote_param_to_dt
 # *must* be populated for the corresponding feature block to be active.
 # ``ALWAYS`` is the floor — fields needed even on a slack-only run.
 ALWAYS: tuple[str, ...] = (
-    "dt", "nodeBalance", "nodeBalance_dt",
+    "dt", "nodeBalance",
+    # Phase E.3: ``nodeBalance_dt`` is no longer materialised eagerly;
+    # consumers call ``_pdt_join.compute_nodeBalance_dt`` on demand.
     "p_step_duration", "p_rp_cost_weight", "p_inflation_op", "p_period_share",
     "p_inflow", "p_penalty_up", "p_penalty_down",
 )
 PROCESSES: tuple[str, ...] = (
     "process_source_sink", "process_source_sink_eff", "process_source_sink_noEff",
-    "pss_dt", "flow_to_n", "flow_from_commodity_eff", "flow_from_commodity_noEff",
+    # Phase E.3: ``pss_dt`` is no longer materialised eagerly; consumers
+    # call ``_pdt_join.compute_pss_dt`` on demand.
+    "flow_to_n", "flow_from_commodity_eff", "flow_from_commodity_noEff",
     "p_unitsize", "p_flow_upper", "p_slope", "p_commodity_price",
 )
 INDIRECT: tuple[str, ...] = (
     "process_indirect", "process_input_flows", "process_output_flows",
-    "process_indirect_dt",
+    # Phase E.3: ``process_indirect_dt`` is no longer materialised; consumers
+    # call ``_pdt_join.compute_process_indirect_dt`` on demand.
 )
 CO2_PRICE: tuple[str, ...]   = ("flow_from_co2_priced", "p_co2_content", "p_co2_price")
 CO2_CAP:   tuple[str, ...]   = ("p_co2_content", "p_co2_max_period",
@@ -57,7 +68,9 @@ CO2_CAP_TOTAL: tuple[str, ...] = ("p_co2_content", "p_co2_max_total",
                                    "group_co2_max_total")
 USER_CSTR: tuple[str, ...]   = ("p_constraint_constant",)
 PROFILES:  tuple[str, ...]   = ("p_profile_value", "p_process_existing_count")
-STORAGE:   tuple[str, ...]   = ("nodeState", "nodeState_dt", "dtttdt",
+STORAGE:   tuple[str, ...]   = ("nodeState", "dtttdt",
+                                # Phase E.3: ``nodeState_dt`` lazy via
+                                # ``_pdt_join.compute_nodeState_dt``.
                                 "p_state_upper", "p_state_unitsize")
 ONLINE: tuple[str, ...] = (
     "process_online", "p_online_dt", "p_min_load",
@@ -453,17 +466,27 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     if has_startup_cost_lin: _check(d, STARTUP_COST_LINEAR,   "startup_cost_linear")
     if has_startup_cost_int: _check(d, STARTUP_COST_INTEGER,  "startup_cost_integer")
 
+    # Phase E.3: build the formerly-persistent cross-join scratch frames
+    # once here as locals, then re-use throughout build_flextool.  Each
+    # local is materialised only when its owning feature is active; in
+    # particular ``pss_dt`` is only built when ``has_proc`` is True.
+    pss_dt = compute_pss_dt(d) if has_proc else None
+    nodeBalance_dt = compute_nodeBalance_dt(d)
+    nodeState_dt = compute_nodeState_dt(d) if has_storage else None
+    process_indirect_dt = (compute_process_indirect_dt(d)
+                            if has_indirect else None)
+
     # ─── Variables ────────────────────────────────────────────────────────
     if has_proc:
         v_flow = m.add_var("v_flow",
-                           ("p","source","sink","d","t"), d.pss_dt, lower=0.0)
-    vq_up   = m.add_var("vq_state_up",   ("n","d","t"), d.nodeBalance_dt, lower=0.0)
-    vq_down = m.add_var("vq_state_down", ("n","d","t"), d.nodeBalance_dt, lower=0.0)
+                           ("p","source","sink","d","t"), pss_dt, lower=0.0)
+    vq_up   = m.add_var("vq_state_up",   ("n","d","t"), nodeBalance_dt, lower=0.0)
+    vq_down = m.add_var("vq_state_down", ("n","d","t"), nodeBalance_dt, lower=0.0)
     if has_storage:
         # Per-row upper bound is enforced via the maxState constraint
         # below; the var-level upper stays at +inf to avoid having to
         # carry per-row Var bounds (which the engine doesn't support yet).
-        v_state = m.add_var("v_state", ("n","d","t"), d.nodeState_dt, lower=0.0)
+        v_state = m.add_var("v_state", ("n","d","t"), nodeState_dt, lower=0.0)
     if has_online_lin:
         # v_online / v_startup / v_shutdown only exist at (p, d, t) tuples
         # in p_online_dt for processes in process_online_linear.
@@ -866,7 +889,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # ``nodeBalance_eq`` excludes ``n in nodeStateBlock`` (mod:2185-2187):
     # those nodes get the per-block ``nodeBalanceBlock_eq`` constraint
     # below instead of the per-(n,d,t) balance.
-    nb_over = d.nodeBalance_dt
+    nb_over = nodeBalance_dt
     has_nsb = (d.nodeStateBlock is not None
                and d.nodeStateBlock.height > 0)
     if has_nsb:
@@ -1434,7 +1457,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             flow_lhs["invest_neg"] = -invest_in_dispatch
         m.add_cstr(
             "maxToSink",
-            over      = d.pss_dt,
+            over      = pss_dt,
             sense     = "<=",
             lhs_terms = flow_lhs,
             rhs_terms = {"upper": flow_upper_rhs},
@@ -1460,7 +1483,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # because they enter the .mod RHS each multiplied by unitsize).
         pd_neg_cap = getattr(d, "pd_neg_cap", None)
         if pd_neg_cap is not None and pd_neg_cap.height > 0:
-            neg_pss_dt = d.pss_dt.join(pd_neg_cap, on=("p", "d"), how="inner")
+            neg_pss_dt = pss_dt.join(pd_neg_cap, on=("p", "d"), how="inner")
             if neg_pss_dt.height > 0:
                 m.add_cstr(
                     "maxToSink_negCap",
@@ -1898,7 +1921,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
 
         m.add_cstr(
             "conversion_indirect",
-            over      = d.process_indirect_dt,
+            over      = process_indirect_dt,
             sense     = "==",
             lhs_terms = lhs_terms,
             rhs_terms = {"output": Sum(Where(output_expr,
@@ -2177,7 +2200,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     Where(v_inv_n_at, edd_inv_n), over=("d_invest",))
         m.add_cstr(
             "maxState",
-            over      = d.nodeState_dt,
+            over      = nodeState_dt,
             sense     = "<=",
             lhs_terms = state_lhs,
             rhs_terms = {"upper": d.p_state_upper},
