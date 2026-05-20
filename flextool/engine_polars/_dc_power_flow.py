@@ -58,6 +58,8 @@ import polars as pl
 
 from polar_high import Param, Where
 
+from ._axis_enums import cast_dim
+
 
 if TYPE_CHECKING:
     from polar_high.engine import Var
@@ -237,10 +239,15 @@ def add_variables(m, d) -> "dict[str, Var]":
     if (d.process_source_sink is not None
             and d.connection_dc_power_flow is not None
             and d.connection_dc_power_flow.height > 0):
+        # source/sink carry the entity-union (``e``) Enum; ``n`` of
+        # node_dc_power_flow carries the node-only Enum.  Lift the latter
+        # to ``e`` so ``is_in`` matches dtypes.
+        _dc_n_e = d.node_dc_power_flow.with_columns(
+            cast_dim(pl.col("n"), None, "e"))["n"]
         dc_arcs = (d.process_source_sink
             .join(d.connection_dc_power_flow, on="p", how="inner")
-            .filter(pl.col("source").is_in(d.node_dc_power_flow["n"]))
-            .filter(pl.col("sink").is_in(d.node_dc_power_flow["n"])))
+            .filter(pl.col("source").is_in(_dc_n_e))
+            .filter(pl.col("sink").is_in(_dc_n_e)))
         if dc_arcs.height > 0:
             back_idx = dc_arcs.join(d.dt, how="cross").select(
                 "p", "source", "sink", "d", "t")

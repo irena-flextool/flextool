@@ -734,9 +734,12 @@ def _add_capacity_margin(m, d, vars: dict) -> None:
             return df
         # eff consumers
         if pss_eff is not None and pss_eff.height > 0:
-            consuming_eff = (_filter_unit(pss_eff)
-                              .rename({"source": "n"})
-                              .join(gn_src, on="n", how="inner")
+            # source carries the entity-union Enum; gn_src.n carries the
+            # node-only Enum.  align_join_dtypes upcasts to the wider Enum.
+            _eff_n = _filter_unit(pss_eff).rename({"source": "n"})
+            _eff_n, _gn_src_eff = align_join_dtypes(_eff_n, gn_src, ("n",))
+            consuming_eff = (_eff_n
+                              .join(_gn_src_eff, on="n", how="inner")
                               .rename({"n": "source"}))   # (p,source,sink,g)
             if consuming_eff.height > 0 and d.p_slope is not None:
                 term = -(Where(v_flow, consuming_eff) * p_us * d.p_slope * invc)
@@ -761,9 +764,10 @@ def _add_capacity_margin(m, d, vars: dict) -> None:
                                 t_sec, over=("p", "source", "sink"))
         # noEff consumers
         if pss_noEff is not None and pss_noEff.height > 0:
-            consuming_noEff = (_filter_unit(pss_noEff)
-                                .rename({"source": "n"})
-                                .join(gn_src, on="n", how="inner")
+            _noeff_n = _filter_unit(pss_noEff).rename({"source": "n"})
+            _noeff_n, _gn_src_noeff = align_join_dtypes(_noeff_n, gn_src, ("n",))
+            consuming_noEff = (_noeff_n
+                                .join(_gn_src_noeff, on="n", how="inner")
                                 .rename({"n": "source"}))
             if consuming_noEff.height > 0:
                 term = -(Where(v_flow, consuming_noEff) * p_us * invc)

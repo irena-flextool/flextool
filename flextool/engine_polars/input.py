@@ -1025,14 +1025,23 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         pss_noe_path = sd / "process_source_sink_noEff.csv"
         if not _provider_has(provider, "solve_data/process_source_sink", pss_path):
             return empty_return
+        from ._axis_enums import schema_dtype
         empty_pss = pl.DataFrame(
-            schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+            schema={
+                "p": schema_dtype(None, "p"),
+                "source": schema_dtype(None, "source"),
+                "sink": schema_dtype(None, "sink"),
+            })
 
         def _read_pss(p: Path) -> pl.DataFrame:
             df = _provider_read(provider, f"solve_data/{p.stem}", p)
             if df.height == 0 or "process" not in df.columns:
                 return empty_pss
             return (df.pipe(rename_to_axis, {"process": "p"})
+                      .with_columns(
+                          cast_dim(pl.col("source"), None, "source"),
+                          cast_dim(pl.col("sink"), None, "sink"),
+                      )
                       .select("p", "source", "sink")
                       .unique()
                       .sort("p", "source", "sink"))
@@ -1063,6 +1072,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
             if df.height == 0 or "process" not in df.columns or side not in df.columns:
                 return None
             return (df.pipe(rename_to_axis, {"process": "p"})
+                      .with_columns(cast_dim(pl.col(side), None, side))
                       .select("p", side)
                       .unique()
                       .sort("p", side))
