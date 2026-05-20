@@ -6,25 +6,17 @@ from pathlib import Path
 
 from flextool.flextoolrunner.db_reader import check_version
 from flextool.input_derivation import run as _input_derivation_run
-from flextool.flextoolrunner import orchestration
 from flextool.flextoolrunner.solve_config import SolveConfig
 from flextool.flextoolrunner.timeline_config import TimelineConfig
 from flextool.flextoolrunner.runner_state import PathConfig, RunnerState, FlexToolError, FlexToolConfigError
-from flextool.flextoolrunner.solver_runner import SolverRunner
 from flextool.flextoolrunner.timing_recorder import TimingRecorder
-
-#return_codes
-#0 : Success
-#-1: Failure (Defined in the Toolbox)
-#1: Infeasible or unbounded problem (not implemented in the toolbox, functionally same as -1. For a possiblity of a graphical depiction)
 
 
 class FlexToolRunner:
-    """Thin coordinator that builds RunnerState and delegates to submodules.
+    """Thin coordinator that builds RunnerState for the native cascade.
 
     Public API:
         write_input()  — reads DB, writes input/ CSV files (delegates to input_writer)
-        run_model()    — runs the full solve loop (delegates to orchestration)
 
     See ``flextool.flextoolrunner.__init__`` docstring for a full module navigation guide.
     """
@@ -129,14 +121,6 @@ class FlexToolRunner:
         except FlexToolError:
             sys.exit(-1)
 
-    def run_model(self) -> int:
-        """Run the full solve loop (delegates to orchestration.run_model)."""
-        try:
-            solver = SolverRunner(self.state)
-            return orchestration.run_model(self.state, solver)
-        except FlexToolError:
-            sys.exit(-1)
-
     def write_input(
         self,
         input_db_url,
@@ -147,16 +131,12 @@ class FlexToolRunner:
     ) -> None:
         """Write input/ CSVs to the runner's workdir.
 
-        Δ.22 deprecation note: the legacy ``runner.run_model()`` (glpsol
-        pipeline) was removed.  This method survives because the
-        regional-decomposition wrapper and a handful of debug callers
-        still want a freshly-staged ``input/`` directory.  As of Step
-        2.5, an ephemeral
+        Used by the regional-decomposition wrapper and a handful of
+        debug callers that want a freshly-staged ``input/`` directory.
+        When *provider* is None an ephemeral
         :class:`flextool.engine_polars._flex_data_provider.FlexDataProvider`
-        is constructed when *provider* is None, so existing call sites
-        keep working without forming a disk-fallback workaround at any
-        cascade-read site (the cascade itself constructs its own
-        Provider in ``_drive_cascade``).
+        is constructed; the cascade itself constructs its own Provider in
+        ``_drive_cascade``.
         """
         if provider is None:
             from flextool.engine_polars._flex_data_provider import FlexDataProvider
@@ -169,19 +149,8 @@ class FlexToolRunner:
             work_folder=self.state.paths.work_folder,
             precision_digits=precision_digits,
         )
-        # Step 2.5-G Phase A — persist the cascade-input Provider on
-        # ``self.state`` so the legacy ``orchestration.run_model`` path
-        # (and any other downstream Provider-aware reader) picks up the
-        # seeded ``input/<class>`` frames.  Mirrors the same handoff that
-        # ``engine_polars._orchestration.run_orchestration`` performs for
-        # the native cascade.
+        # Persist the cascade-input Provider on ``self.state`` so the
+        # native cascade picks up the seeded ``input/<class>`` frames.
+        # Mirrors the same handoff that
+        # ``engine_polars._orchestration.run_orchestration`` performs.
         self.state.cascade_input_provider = provider
-
-
-def main():
-    logging.basicConfig(level=logging.INFO)
-    logging.error("Run using run_flextool.py in the root of FlexTool")
-    sys.exit(-1)
-
-if __name__ == '__main__':
-    main()
