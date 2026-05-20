@@ -191,23 +191,42 @@ class _MemoryRecorder:
             pass
         return 0.0
 
-    @staticmethod
-    def _fmt_size(mb: float) -> str:
-        """Format an MB value as GB when ≥ 1024 MB, otherwise MB."""
-        if mb >= 1024.0:
-            return f"{mb / 1024.0:.2f} GB"
-        return f"{mb:.0f} MB"
+    # Fixed widths used to align the [mem] output into a table.
+    _LABEL_W = 42      # label column (left-aligned)
+    _SIZE_W = 10       # MB/GB column (right-aligned)
 
     @classmethod
-    def _fmt_delta(cls, delta_mb: float) -> str:
-        """Format a signed delta in MB / GB.  Returns '+0' for ~zero."""
+    def _fmt_size(cls, mb: float | None) -> str:
+        """Format an MB value as GB when ≥ 1024 MB, otherwise MB.
+        Right-aligned within ``_SIZE_W`` so a column of these stacks.
+        ``None`` renders as a dash placeholder of the same width.
+        """
+        if mb is None:
+            return f"{'-':>{cls._SIZE_W}}"
+        if mb >= 1024.0:
+            s = f"{mb / 1024.0:.2f} GB"
+        else:
+            s = f"{mb:.0f} MB"
+        return f"{s:>{cls._SIZE_W}}"
+
+    @classmethod
+    def _fmt_delta(cls, delta_mb: float | None) -> str:
+        """Format a signed delta in MB / GB, right-aligned to
+        ``_SIZE_W``.  ``None`` renders as a dash placeholder of the
+        same width.  Near-zero values render as ``+0`` rather than
+        signed-rounded noise.
+        """
+        if delta_mb is None:
+            return f"{'-':>{cls._SIZE_W}}"
         if abs(delta_mb) < 0.5:
-            return "+0"
+            return f"{'+0':>{cls._SIZE_W}}"
         sign = "+" if delta_mb >= 0 else "-"
         a = abs(delta_mb)
         if a >= 1024.0:
-            return f"{sign}{a / 1024.0:.2f} GB"
-        return f"{sign}{a:.0f} MB"
+            s = f"{sign}{a / 1024.0:.2f} GB"
+        else:
+            s = f"{sign}{a:.0f} MB"
+        return f"{s:>{cls._SIZE_W}}"
 
     def checkpoint(self, label: str, logger: logging.Logger,
                    user_label: str | None = None) -> None:
@@ -257,31 +276,35 @@ class _MemoryRecorder:
             except OSError:
                 pass
         # Log line — emitted unconditionally so users following the run
-        # see phase progress.
+        # see phase progress.  Aligned into a fixed-column table so a
+        # column of these stacks visually even when interspersed with
+        # other log lines.  Emitted via ``print`` only (not
+        # ``logger.info``) to avoid the doubled output most logger
+        # configs produce alongside the print stream.
         if self.verbose:
             display = user_label or label
-            peak_str = (self._fmt_size(peak_mb) if peak_mb is not None else "-")
+            label_col = f"{display:<{self._LABEL_W}}"
             if self._t_prev == self.t0:
-                # First checkpoint — no prior section to report.
+                # First checkpoint — no prior section to report, but
+                # still emit at the same column shape so subsequent
+                # lines align below.
                 line = (
-                    f"[mem] {display}  "
-                    f"t={t_elapsed:.1f}s  "
-                    f"rss={self._fmt_size(rss_mb)}  "
-                    f"peak={peak_str}"
+                    f"[mem] {label_col}  "
+                    f"section= {t_elapsed:5.1f}s  "
+                    f"Δrss={self._fmt_size(None)}  "  # n/a
+                    f"Δpeak={self._fmt_size(None)}  "  # n/a
+                    f"(rss={self._fmt_size(rss_mb)}, "
+                    f"peak={self._fmt_size(peak_mb)})"
                 )
             else:
-                delta_peak_str = (
-                    self._fmt_delta(delta_peak) if delta_peak is not None else "-"
-                )
                 line = (
-                    f"[mem] {display}  "
-                    f"section={t_section:.1f}s  "
+                    f"[mem] {label_col}  "
+                    f"section= {t_section:5.1f}s  "
                     f"Δrss={self._fmt_delta(delta_rss)}  "
-                    f"Δpeak={delta_peak_str}  "
+                    f"Δpeak={self._fmt_delta(delta_peak)}  "
                     f"(rss={self._fmt_size(rss_mb)}, "
-                    f"peak={peak_str})"
+                    f"peak={self._fmt_size(peak_mb)})"
                 )
-            logger.info(line)
             try:
                 print(line, flush=True)
             except OSError:
