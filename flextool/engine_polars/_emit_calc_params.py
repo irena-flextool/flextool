@@ -82,11 +82,6 @@ def _read_csv(path: Path, columns: list[str],
     )
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 def _drop_blank_rows(df: pl.DataFrame, required_cols: list[str]) -> pl.DataFrame:
     expr = pl.col(required_cols[0]) != ""
     for c in required_cols[1:]:
@@ -161,41 +156,6 @@ def derive_entity_total_cap(
         {"entity": entities, "value": values},
         schema={"entity": pl.Utf8, "value": pl.Utf8},
     )
-
-
-def write_entity_total_caps(input_dir: Path, solve_data_dir: Path,
-                              *, provider: "object | None" = None,
-                              ) -> None:
-    """Write all four ``e_*_total`` params keyed on entityInvest/Divest."""
-    process_set = frozenset(
-        _drop_blank_rows(_read_csv(input_dir / "process.csv", ["process"],
-                                     provider=provider), ["process"])
-        .get_column("process").to_list()
-    )
-    node_set = frozenset(
-        _drop_blank_rows(_read_csv(input_dir / "node.csv", ["node"],
-                                     provider=provider), ["node"])
-        .get_column("node").to_list()
-    )
-    p_process = _read_param_lookup(input_dir / "p_process.csv",
-                                     provider=provider)
-    p_node = _read_param_lookup(input_dir / "p_node.csv", provider=provider)
-
-    # Cache the entity-key lists per source CSV (entityInvest is reused
-    # by both invest_max and invest_min, same for entityDivest).
-    key_cache: dict[str, list[str]] = {}
-    for _, src, _ in _ENTITY_TOTAL_SPEC:
-        if src not in key_cache:
-            df = _read_csv(solve_data_dir / src, ["entity"], provider=provider)
-            df = _drop_blank_rows(df, ["entity"])
-            key_cache[src] = df.get_column("entity").to_list()
-
-    for fname, src, param in _ENTITY_TOTAL_SPEC:
-        out = derive_entity_total_cap(
-            key_cache[src], process_set, node_set,
-            p_process, p_node, param,
-        )
-        _write(out, solve_data_dir / fname)
 
 
 def emit_entity_total_caps(input_dir: Path, solve_data_dir: Path,
@@ -311,17 +271,6 @@ def derive_process_method_indirect(input_dir: Path,
     )
 
 
-def write_process_method_projections(input_dir: Path, solve_data_dir: Path,
-                                       *, provider: "object | None" = None,
-                                       ) -> None:
-    _write(derive_process_online_linear(input_dir, provider=provider),
-           solve_data_dir / "process_online_linear.csv")
-    _write(derive_process_online_integer(input_dir, provider=provider),
-           solve_data_dir / "process_online_integer.csv")
-    _write(derive_process_method_indirect(input_dir, provider=provider),
-           solve_data_dir / "process__method_indirect.csv")
-
-
 def emit_process_method_projections(input_dir: Path, solve_data_dir: Path,
                                      *, provider) -> None:
     """Provider-emitting twin of :func:`write_process_method_projections`."""
@@ -370,13 +319,6 @@ def derive_process_VRE(input_dir: Path,
         .select("process")
         .unique(maintain_order=True)
     )
-
-
-def write_process_VRE(input_dir: Path, solve_data_dir: Path,
-                        *, provider: "object | None" = None,
-                        ) -> None:
-    _write(derive_process_VRE(input_dir, provider=provider),
-           solve_data_dir / "process_VRE.csv")
 
 
 def emit_process_VRE(input_dir: Path, solve_data_dir: Path,
@@ -611,42 +553,6 @@ def derive_process_process_toSource_direct(input_dir: Path,
     return _to_frame(rows, ("process_outer", "process", "source"))
 
 
-def write_process_arc_method_joins(input_dir: Path, solve_data_dir: Path,
-                                     *, provider: "object | None" = None,
-                                     ) -> None:
-    """Emit the 10 method-gated process_*_to_* tables.
-
-    Iteration order mirrors the legacy module exactly so that the
-    deduped output preserves the same first-occurrence ordering.
-    Each emitted CSV goes through ``_write(derive_X(...), path)`` so
-    Phase E-b's accumulator captures every frame.
-    """
-    _write(derive_process_sink_toProcess(input_dir, provider=provider),
-           solve_data_dir / "process_sink_toProcess.csv")
-    _write(derive_process_process_toSource(input_dir, provider=provider),
-           solve_data_dir / "process_process_toSource.csv")
-    _write(derive_process_source_toSink(input_dir, provider=provider),
-           solve_data_dir / "process_source_toSink.csv")
-    _write(derive_process_source_toProcess_direct(input_dir,
-                                                    provider=provider),
-           solve_data_dir / "process_source_toProcess_direct.csv")
-    _write(derive_process_process_toSink_direct(input_dir, provider=provider),
-           solve_data_dir / "process_process_toSink_direct.csv")
-    _write(derive_process_sink_toProcess_direct(input_dir, provider=provider),
-           solve_data_dir / "process_sink_toProcess_direct.csv")
-    _write(derive_process_sink_toSource(input_dir, provider=provider),
-           solve_data_dir / "process_sink_toSource.csv")
-    _write(derive_process_process_toSink_noConversion(input_dir,
-                                                        provider=provider),
-           solve_data_dir / "process_process_toSink_noConversion.csv")
-    _write(derive_process_source_toProcess_noConversion(input_dir,
-                                                          provider=provider),
-           solve_data_dir / "process_source_toProcess_noConversion.csv")
-    _write(derive_process_process_toSource_direct(input_dir,
-                                                    provider=provider),
-           solve_data_dir / "process_process_toSource_direct.csv")
-
-
 def emit_process_arc_method_joins(input_dir: Path, solve_data_dir: Path,
                                    *, provider) -> None:
     """Provider-emitting twin of :func:`write_process_arc_method_joins`."""
@@ -813,29 +719,6 @@ def derive_process_source_toProfileProcess_profile_profile_method(
             "process": pl.Utf8, "source": pl.Utf8, "process_aux": pl.Utf8,
             "profile": pl.Utf8, "profile_method": pl.Utf8,
         },
-    )
-
-
-def write_process_profile_method_joins(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Two profile-method joins:
-
-    * ``process__profileProcess__toSink__profile__profile_method``
-    * ``process__source__toProfileProcess__profile__profile_method``
-    """
-    _write(
-        derive_process_profileProcess_toSink_profile_profile_method(
-            input_dir, provider=provider),
-        solve_data_dir
-        / "process__profileProcess__toSink__profile__profile_method.csv",
-    )
-    _write(
-        derive_process_source_toProfileProcess_profile_profile_method(
-            input_dir, provider=provider),
-        solve_data_dir
-        / "process__source__toProfileProcess__profile__profile_method.csv",
     )
 
 

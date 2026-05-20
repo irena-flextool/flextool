@@ -130,22 +130,6 @@ def _write_keyed_2(path: Path, header: tuple[str, str, str],
     )
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    """Polars-frame emission funnel — patched by Phase E-b accumulator.
-
-    Identical I/O contract to :mod:`._emit_dispatchers._write`: parents
-    created, ``df.write_csv`` does the byte emission.  Every CSV emitted
-    by this module flows through this single name so the accumulator
-    monkey-patch can intercept ``(path.name -> df)``.
-
-    When disabled, the helper returns without touching disk; the
-    accumulator hook still captures the frame because capture happens
-    in the wrapping monkey-patch BEFORE this real ``_write`` is invoked.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 def _rows_to_frame(rows: list[tuple[str, str, float]]) -> pl.DataFrame:
     """Materialise (entity, period, repr(value)) rows as an all-Utf8 frame.
 
@@ -494,43 +478,6 @@ def derive_ed_lifetime_fixed_cost_divest(
     p_inflation_factor_INVESTMENT_yearly per mod L1651 (asymmetric)."""
     return _rows_to_frame(_rows_lifetime_fixed_cost_divest(
         _entity_annual_inputs(input_dir, solve_data_dir, provider=provider)))
-
-
-def write_entity_annual_calc_params(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Native port of ``entity_annual_calc_params.write_entity_annual_calc_params``.
-
-    Reads ``input/`` immutables (``pd_process``, ``p_process``,
-    ``pd_node``, ``p_node``, ``entity__invest_method``, ``entity``,
-    ``process``, ``node``) and per-solve ``solve_data/`` files
-    (period sets, discount factors, lifetime / fixed-cost overrides).
-    Emits the six CSVs documented at module level.
-
-    Each output flows through ``_write(_rows_to_frame(...), path)`` so the
-    Phase E-b accumulator captures every emitted frame.  Shared scans
-    (``_ann_pair`` / ``_div_pair``) avoid recomputing per-method annuities
-    across the matched annual / annual_discounted CSV pairs.
-    """
-    inp = _entity_annual_inputs(input_dir, solve_data_dir, provider=provider)
-
-    rows_ann, rows_ann_disc = _ann_pair(inp)
-    _write(_rows_to_frame(rows_ann),
-           solve_data_dir / "ed_entity_annual.csv")
-    _write(_rows_to_frame(rows_ann_disc),
-           solve_data_dir / "ed_entity_annual_discounted.csv")
-
-    rows_div, rows_div_disc = _div_pair(inp)
-    _write(_rows_to_frame(rows_div),
-           solve_data_dir / "ed_entity_annual_divest.csv")
-    _write(_rows_to_frame(rows_div_disc),
-           solve_data_dir / "ed_entity_annual_divest_discounted.csv")
-
-    _write(_rows_to_frame(_rows_lifetime_fixed_cost(inp)),
-           solve_data_dir / "ed_lifetime_fixed_cost.csv")
-    _write(_rows_to_frame(_rows_lifetime_fixed_cost_divest(inp)),
-           solve_data_dir / "ed_lifetime_fixed_cost_divest.csv")
 
 
 def emit_entity_annual_calc_params(

@@ -50,11 +50,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 def _ed_value_frame(
     rows: list[tuple[str, str, object]],
 ) -> pl.DataFrame:
@@ -354,17 +349,6 @@ def derive_p_entity_pre_existing(
     return _ed_value_frame(rows)
 
 
-def write_p_entity_pre_existing(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Emit ``solve_data/p_entity_pre_existing.csv`` (see derive docstring)."""
-    _write(
-        derive_p_entity_pre_existing(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "p_entity_pre_existing.csv",
-    )
-
-
 def emit_p_entity_pre_existing(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -448,18 +432,6 @@ def derive_p_entity_divest_cumulative_max(
             rows.append((e, d, v))
 
     return _ed_value_frame(rows)
-
-
-def write_p_entity_divest_cumulative_max(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Emit ``solve_data/p_entity_divest_cumulative_max.csv`` (see derive)."""
-    _write(
-        derive_p_entity_divest_cumulative_max(input_dir, solve_data_dir,
-                                                provider=provider),
-        solve_data_dir / "p_entity_divest_cumulative_max.csv",
-    )
 
 
 def emit_p_entity_divest_cumulative_max(
@@ -681,59 +653,6 @@ def derive_p_entity_previously_invested_capacity(
         input_dir, solve_data_dir, prior_handoff,
     )
     return _ed_value_frame(prev_rows)
-
-
-def write_p_entity_existing_chain(
-    input_dir: Path, solve_data_dir: Path,
-    *, prior_handoff: "SolveHandoff | None" = None,
-    provider: "object | None" = None,
-) -> None:
-    """Five cascading entity-capacity params (mod L1680-1697):
-
-      * ``p_entity_existing_capacity_later_solves{e, d}`` —
-            0 on first solve; otherwise Σ over ``(e, d_history, d)
-            ∈ edd_history`` filtered to ``(e, d_history) ∈
-            ed_history_realized`` of
-            ``p_entity_period_existing_capacity[e, d_history]``.
-      * ``p_entity_all_existing{e, d}`` —
-            pre-existing on first solve, ``later_solves`` on others,
-            minus ``p_entity_divested[e]`` if not first solve and
-            ``e ∈ entityDivest``.
-      * ``p_entity_existing_count{e, d}``           = all_existing / unitsize.
-      * ``p_entity_existing_integer_count{e, d}``   = round(count).
-      * ``p_entity_previously_invested_capacity{e, d}`` —
-            same shape as ``later_solves`` but using
-            ``p_entity_period_invested_capacity`` from the handoff.
-
-    Path-collision: mod also writes wide-format
-    ``solve_data/p_entity_all_existing.csv``; the printf is retargeted
-    to ``solve_data/solve__p_entity_all_existing.csv``.
-    """
-    later_rows, all_rows, count_rows, int_rows, prev_rows = (
-        _compute_p_entity_existing_chain(
-            input_dir, solve_data_dir, prior_handoff, provider=provider,
-        )
-    )
-    _write(
-        _ed_value_frame(later_rows),
-        solve_data_dir / "p_entity_existing_capacity_later_solves.csv",
-    )
-    _write(
-        _ed_value_frame(all_rows),
-        solve_data_dir / "p_entity_all_existing.csv",
-    )
-    _write(
-        _ed_value_frame(count_rows),
-        solve_data_dir / "p_entity_existing_count.csv",
-    )
-    _write(
-        _ed_value_frame(int_rows),
-        solve_data_dir / "p_entity_existing_integer_count.csv",
-    )
-    _write(
-        _ed_value_frame(prev_rows),
-        solve_data_dir / "p_entity_previously_invested_capacity.csv",
-    )
 
 
 def emit_p_entity_existing_chain(
@@ -966,56 +885,6 @@ def derive_p_entity_dispatch_capacity_max(
 ) -> pl.DataFrame:
     _, _, _, dcm_rows = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
     return _ed_value_frame(dcm_rows)
-
-
-def write_p_entity_capacity_max_chain(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Four cascading entity-capacity ceiling params (mod L1699-1764):
-
-      * ``p_entity_max_capacity{e, d ∈ period_in_use}`` — 5-branch fork:
-            cumulative-cap if ``(e, d) ∈ ed_invest_cumulative``;
-            otherwise ``all_existing`` plus per-period / total /
-            max(per-period, total) extras + ``invest_no_limit`` slack.
-      * ``p_entity_max_units{e, d ∈ period}`` —
-            ``max_capacity / unitsize`` (0 outside ``period_in_use``).
-      * ``p_entity_invest_cumulative_max{e ∈ entityInvest, d}`` —
-            cumulative-cap minus existing, or per-period sum from
-            ``edd_invest`` (with ``invest_no_limit`` short-circuit).
-      * ``p_entity_dispatch_capacity_max{e, d}`` —
-            ``all_existing + (invest_cumulative_max if entityInvest else 0)``.
-
-    Reads ``p_entity_all_existing`` (just-written),
-    ``p_entity_unitsize``, ``ed_invest_cumulative``,
-    ``ed_cumulative_max_capacity``, ``ed_invest_period``, ``e_invest_total``,
-    ``ed_invest_max_period``, ``e_invest_max_total``,
-    ``ed_invest_forbidden_no_investment``, ``edd_invest``,
-    ``entityInvest``, ``entity__invest_method``,
-    ``p_max_flow_for_unconstrained_variables``.
-
-    Path-collision: mod's wide-format printf for ``p_entity_max_units``
-    is retargeted to ``solve__p_entity_max_units.csv``.
-    """
-    mc_rows, mu_rows, icm_rows, dcm_rows = _compute_p_entity_capacity_max_chain(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(
-        _ed_value_frame(mc_rows),
-        solve_data_dir / "p_entity_max_capacity.csv",
-    )
-    _write(
-        _ed_value_frame(mu_rows),
-        solve_data_dir / "p_entity_max_units.csv",
-    )
-    _write(
-        _ed_value_frame(icm_rows),
-        solve_data_dir / "p_entity_invest_cumulative_max.csv",
-    )
-    _write(
-        _ed_value_frame(dcm_rows),
-        solve_data_dir / "p_entity_dispatch_capacity_max.csv",
-    )
 
 
 def emit_p_entity_capacity_max_chain(

@@ -86,19 +86,6 @@ def _read_csv(path: Path, columns: list[str],
     )
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    """Write a tiny set CSV.  Empty frame still writes the header line.
-
-    Phase E-c — disk emission is gated behind the module-level
-    flag.  When disabled, the helper returns without touching disk; the
-    accumulator hook (installed by ``capture_frames``) still captures
-    the frame in-memory because capture happens BEFORE the wrapped
-    real ``_write`` is invoked.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 # ---------------------------------------------------------------------------
 # Family 1 — period_param_sets (legacy: preprocessing/period_param_sets.py)
 # ---------------------------------------------------------------------------
@@ -128,16 +115,6 @@ def derive_period_param_set(input_dir: Path, source_csv: str,
           .select("period")
           .unique(maintain_order=True)
     )
-
-
-def write_period_param_sets(input_dir: Path, solve_data_dir: Path,
-                             *, provider: "object | None" = None,
-                             ) -> None:
-    for source_csv, target_name in _PERIOD_PARAM_SOURCES:
-        _write(
-            derive_period_param_set(input_dir, source_csv, provider=provider),
-            solve_data_dir / target_name,
-        )
 
 
 def emit_period_param_sets(input_dir: Path, solve_data_dir: Path,
@@ -200,19 +177,6 @@ def derive_group_divest(input_dir: Path,
     return _project_entity_by_method(df, _DIVEST_METHOD_NOT_ALLOWED, "group")
 
 
-def write_invest_method_sets(input_dir: Path, solve_data_dir: Path,
-                              *, provider: "object | None" = None,
-                              ) -> None:
-    _write(derive_entity_invest(input_dir, provider=provider),
-           solve_data_dir / "entityInvest.csv")
-    _write(derive_entity_divest(input_dir, provider=provider),
-           solve_data_dir / "entityDivest.csv")
-    _write(derive_group_invest(input_dir, provider=provider),
-           solve_data_dir / "group_invest.csv")
-    _write(derive_group_divest(input_dir, provider=provider),
-           solve_data_dir / "group_divest.csv")
-
-
 def emit_invest_method_sets(input_dir: Path, solve_data_dir: Path,
                              *, provider) -> None:
     """Provider-emitting twin of :func:`write_invest_method_sets`."""
@@ -258,18 +222,6 @@ def derive_group_co2(input_dir: Path, kind: str,
     df = _read_csv(input_dir / "group__co2_method.csv",
                    ["group", "method"], provider=provider)
     return _project_group_by_method_in(df, allowed)
-
-
-def write_co2_method_sets(input_dir: Path, solve_data_dir: Path,
-                           *, provider: "object | None" = None,
-                           ) -> None:
-    for kind, target in (
-        ("price",      "group_co2_price.csv"),
-        ("max_period", "group_co2_max_period.csv"),
-        ("max_total",  "group_co2_max_total.csv"),
-    ):
-        _write(derive_group_co2(input_dir, kind, provider=provider),
-               solve_data_dir / target)
 
 
 def emit_co2_method_sets(input_dir: Path, solve_data_dir: Path,
@@ -526,109 +478,6 @@ def derive_commodity_tier_ann(input_dir: Path,
 
 
 # --- orchestrators for simple_projections (preserves legacy call order) ----
-
-def write_optional_yes(input_dir: Path, solve_data_dir: Path,
-                        *, provider: "object | None" = None,
-                        ) -> None:
-    _write(derive_optional_yes(input_dir, provider=provider),
-           solve_data_dir / "optional_yes.csv")
-
-
-def write_reserve_upDown_group(input_dir: Path, solve_data_dir: Path,
-                                *, provider: "object | None" = None,
-                                ) -> None:
-    _write(
-        derive_reserve_upDown_group(input_dir, provider=provider),
-        solve_data_dir / "reserve__upDown__group.csv",
-    )
-
-
-def write_group_loss_share(input_dir: Path, solve_data_dir: Path,
-                            *, provider: "object | None" = None,
-                            ) -> None:
-    _write(derive_group_loss_share(input_dir, provider=provider),
-           solve_data_dir / "group_loss_share.csv")
-
-
-def write_def_optional_yes(input_dir: Path, solve_data_dir: Path,
-                            *, provider: "object | None" = None,
-                            ) -> None:
-    _write(derive_def_optional_yes(input_dir, provider=provider),
-           solve_data_dir / "def_optional_yes.csv")
-
-
-def write_process_delayed(input_dir: Path, solve_data_dir: Path,
-                           *, provider: "object | None" = None,
-                           ) -> None:
-    # input_dir is unused — kept for legacy signature parity.
-    del input_dir
-    _write(derive_process_delayed(solve_data_dir, provider=provider),
-           solve_data_dir / "process_delayed.csv")
-
-
-def write_process_side(solve_data_dir: Path,
-                        *, provider: "object | None" = None,
-                        ) -> None:
-    # provider unused for the constant-set derivation; accepted for
-    # late-binding override-dispatch parity.
-    del provider
-    _write(derive_process_side(), solve_data_dir / "process_side.csv")
-
-
-def write_period_solve(solve_data_dir: Path,
-                        *, provider: "object | None" = None,
-                        ) -> None:
-    _write(derive_period_solve(solve_data_dir, provider=provider),
-           solve_data_dir / "period_solve.csv")
-
-
-def write_time_set(input_dir: Path, solve_data_dir: Path,
-                    *, provider: "object | None" = None,
-                    ) -> None:
-    _write(derive_time_set(input_dir, provider=provider),
-           solve_data_dir / "time.csv")
-
-
-def write_enable_optional_outputs(solve_data_dir: Path,
-                                   *, provider: "object | None" = None,
-                                   ) -> None:
-    _write(
-        derive_enable_optional_outputs(solve_data_dir, provider=provider),
-        solve_data_dir / "enable_optional_outputs.csv",
-    )
-
-
-def write_node_state_subsets(solve_data_dir: Path,
-                              *, provider: "object | None" = None,
-                              ) -> None:
-    rp = derive_node_state_subset(solve_data_dir, "bind_using_blended_weights",
-                                  provider=provider)
-    block = derive_node_state_subset(solve_data_dir, "bind_intraperiod_blocks",
-                                     provider=provider)
-    _write(rp, solve_data_dir / "nodeState_rp.csv")
-    _write(block, solve_data_dir / "nodeStateBlock.csv")
-
-
-def write_commodity_tier_sets(input_dir: Path, solve_data_dir: Path,
-                                *, provider: "object | None" = None,
-                                ) -> None:
-    ct = derive_commodity_tier(input_dir, solve_data_dir, provider=provider)
-    _write(ct, solve_data_dir / "commodity__tier.csv")
-    _write(derive_tier(ct), solve_data_dir / "tier.csv")
-
-
-def write_simple_setof_projections(input_dir: Path, solve_data_dir: Path,
-                                     *, provider: "object | None" = None,
-                                     ) -> None:
-    _write(derive_solve_period(input_dir, provider=provider),
-           solve_data_dir / "solve_period.csv")
-    _write(derive_timeline(input_dir, provider=provider),
-           solve_data_dir / "timeline.csv")
-    _write(derive_timeline_steps(input_dir, provider=provider),
-           solve_data_dir / "timeline_steps.csv")
-    _write(derive_commodity_tier_ann(input_dir, provider=provider),
-           solve_data_dir / "commodity__tier_ann.csv")
-
 
 # --- emit_* twins for the simple_projections orchestrators ---------------
 

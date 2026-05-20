@@ -72,11 +72,6 @@ from flextool.engine_polars._emit_provider_io import (
 # ---------------------------------------------------------------------------
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 def _to_utf8_frame(
     headers: tuple[str, ...],
     rows: list[tuple],
@@ -367,26 +362,6 @@ def derive_pdtReserve_upDown_group(
     )
 
 
-def write_pdtReserve_upDown_group(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Native port of
-    ``reserve_calc_params.write_pdtReserve_upDown_group``.
-
-    Emits ``pdtReserve_upDown_group.csv`` keyed on
-    ``(reserve, upDown, group, param, period, time)``.  Param domain
-    is fixed to ``reservation`` per ``flextool_base.dat`` L183;
-    stochastic gate is direct (``g in groupIncludeStochastics``).
-    """
-    _write(
-        derive_pdtReserve_upDown_group(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "pdtReserve_upDown_group.csv",
-    )
-
-
 def emit_pdtReserve_upDown_group(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -487,49 +462,6 @@ def derive_prundt(
             rows.append((p, r, ud, n, d, t))
     return _to_utf8_frame(
         ("process", "reserve", "upDown", "node", "period", "time"), rows,
-    )
-
-
-def write_process_reserve_upDown_node_active_and_prundt(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Native port of
-    ``reserve_calc_params.write_process_reserve_upDown_node_active_and_prundt``.
-
-    Emits two CSVs:
-
-    * ``process_reserve_upDown_node_active.csv`` —
-      ``{(p, r, ud, n) ∈ process_reserve_upDown_node :
-            Σ_{(r,ud,g) ∈ reserve__upDown__group, (d,t) ∈ dt}
-                pdtReserve_upDown_group[r,ud,g,'reservation',d,t] ≠ 0}``.
-    * ``prundt.csv`` — ``process_reserve_upDown_node_active × dt``.
-
-    GMPL semantics for the inner sum: in
-    ``sum{(r, ud, g) in reserve__upDown__group, ...}`` the outer
-    ``(r, ud)`` are pre-bound and filter ``reserve__upDown__group`` to
-    rows whose first two columns equal them; ``g`` is fresh.
-    """
-    # Compute once and split into two derive frames to avoid re-scanning.
-    active_rows, dt = _compute_process_reserve_active(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(
-        _to_utf8_frame(
-            ("process", "reserve", "upDown", "node"), active_rows,
-        ),
-        solve_data_dir / "process_reserve_upDown_node_active.csv",
-    )
-    prundt_rows: list[tuple[str, str, str, str, str, str]] = []
-    for (p, r, ud, n) in active_rows:
-        for (d, t) in dt:
-            prundt_rows.append((p, r, ud, n, d, t))
-    _write(
-        _to_utf8_frame(
-            ("process", "reserve", "upDown", "node", "period", "time"),
-            prundt_rows,
-        ),
-        solve_data_dir / "prundt.csv",
     )
 
 
@@ -679,56 +611,6 @@ def derive_process_large_failure(
         input_dir, solve_data_dir, provider=provider,
     )
     return _to_utf8_frame(("process",), process_lf)
-
-
-def write_process_reserve_filters_and_reliability(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Native port of
-    ``reserve_calc_params.write_process_reserve_filters_and_reliability``.
-
-    Emits four CSVs:
-
-    * ``p_process_reserve_upDown_node_reliability.csv`` — mod L1655:
-      ``if p_process_reserve_upDown_node[..,'reliability'] then ..
-      else 1``.  The legacy code reads with default 1 and then
-      additionally collapses zero to 1 (mod's else-1 branch).
-    * ``process_reserve_upDown_node_increase_reserve_ratio.csv`` — mod
-      L1660: ``{.. : p_process_reserve_upDown_node[..,
-      'increase_reserve_ratio'] > 0}``.
-    * ``process_reserve_upDown_node_large_failure_ratio.csv`` — mod
-      L1663: ``{.. : p_process_reserve_upDown_node[..,
-      'large_failure_ratio'] > 0}``.
-    * ``process_large_failure.csv`` — mod L1668: ``setof
-      {large_failure_ratio} p``.
-    """
-    # Single shared scan, four canonical emits.
-    rel_rows, incr_rows, lf_rows, process_lf = _compute_reserve_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(
-        _to_utf8_frame(
-            ("process", "reserve", "upDown", "node", "value"), rel_rows,
-        ),
-        solve_data_dir / "p_process_reserve_upDown_node_reliability.csv",
-    )
-    _write(
-        _to_utf8_frame(
-            ("process", "reserve", "upDown", "node"), incr_rows,
-        ),
-        solve_data_dir / "process_reserve_upDown_node_increase_reserve_ratio.csv",
-    )
-    _write(
-        _to_utf8_frame(
-            ("process", "reserve", "upDown", "node"), lf_rows,
-        ),
-        solve_data_dir / "process_reserve_upDown_node_large_failure_ratio.csv",
-    )
-    _write(
-        _to_utf8_frame(("process",), process_lf),
-        solve_data_dir / "process_large_failure.csv",
-    )
 
 
 def emit_process_reserve_filters_and_reliability(

@@ -48,11 +48,6 @@ from flextool.engine_polars._emit_provider_io import (
 # ---------------------------------------------------------------------------
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 def _utf8_frame(columns: dict[str, list[str]]) -> pl.DataFrame:
     """Build an all-Utf8 ``pl.DataFrame`` from column-name → string-list.
 
@@ -349,15 +344,6 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
     })
 
 
-def write_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
-                        *, provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdtNodeInflow.csv`` (see derive docstring)."""
-    _write(
-        derive_pdtNodeInflow(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdtNodeInflow.csv",
-    )
-
-
 def emit_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
                         *, provider) -> None:
     """Provider-emitting twin of :func:`write_pdtNodeInflow`."""
@@ -544,15 +530,6 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
     })
 
 
-def write_pdtProfile(input_dir: Path, solve_data_dir: Path,
-                     *, provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdtProfile.csv`` (see derive docstring)."""
-    _write(
-        derive_pdtProfile(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdtProfile.csv",
-    )
-
-
 def emit_pdtProfile(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
     """Provider-emitting twin of :func:`write_pdtProfile`."""
@@ -707,27 +684,6 @@ def derive_pdtProcess_slope(
         input_dir, solve_data_dir, provider=provider,
     )
     return slope
-
-
-def write_pdtConversion_rate_section_slope(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Emit ``pdtConversion_rate.csv``, ``pdtProcess_section.csv``,
-    ``pdtProcess_slope.csv``.
-
-    Each is per-(process, period, time) and derived from ``pdtProcess``
-    (efficiency / min_load / efficiency_at_min_load).  See the legacy
-    docstring at
-    :func:`flextool.flextoolrunner.preprocessing.entity_period_calc_params.write_pdtConversion_rate_section_slope`
-    for the exact formulas (mirrored here as-is).
-    """
-    conv, sec, slope = _derive_conversion_trio(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(conv, solve_data_dir / "pdtConversion_rate.csv")
-    _write(sec, solve_data_dir / "pdtProcess_section.csv")
-    _write(slope, solve_data_dir / "pdtProcess_slope.csv")
 
 
 def emit_pdtConversion_rate_section_slope(
@@ -1041,18 +997,6 @@ def derive_pdtProcess_source_sink(
     })
 
 
-def write_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path,
-                                 *, provider: "object | None" = None,
-                                 ) -> None:
-    """Emit ``solve_data/pdtProcess_source_sink.csv`` (see derive docstring)."""
-    _write(
-        derive_pdtProcess_source_sink(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "pdtProcess_source_sink.csv",
-    )
-
-
 def emit_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path,
                                  *, provider) -> None:
     """Provider-emitting twin of :func:`write_pdtProcess_source_sink`."""
@@ -1212,15 +1156,6 @@ def derive_pdGroup(input_dir: Path, solve_data_dir: Path,
     })
 
 
-def write_pdGroup(input_dir: Path, solve_data_dir: Path,
-                  *, provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdGroup.csv`` (see derive docstring)."""
-    _write(
-        derive_pdGroup(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdGroup.csv",
-    )
-
-
 def emit_pdGroup(input_dir: Path, solve_data_dir: Path,
                   *, provider) -> None:
     """Provider-emitting twin of :func:`write_pdGroup`."""
@@ -1271,15 +1206,6 @@ def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
         "group": g_col, "param": p_col, "period": d_col, "time": t_col,
         "value": v_col,
     })
-
-
-def write_pdtGroup(input_dir: Path, solve_data_dir: Path,
-                   *, provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdtGroup.csv`` (see derive docstring)."""
-    _write(
-        derive_pdtGroup(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdtGroup.csv",
-    )
 
 
 def emit_pdtGroup(input_dir: Path, solve_data_dir: Path,
@@ -1344,15 +1270,6 @@ def derive_pdCommodity(input_dir: Path, solve_data_dir: Path,
     })
 
 
-def write_pdCommodity(input_dir: Path, solve_data_dir: Path,
-                      *, provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdCommodity.csv`` (see derive docstring)."""
-    _write(
-        derive_pdCommodity(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdCommodity.csv",
-    )
-
-
 def emit_pdCommodity(input_dir: Path, solve_data_dir: Path,
                       *, provider) -> None:
     """Provider-emitting twin of :func:`write_pdCommodity`."""
@@ -1403,15 +1320,6 @@ def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
         "commodity": c_col, "param": p_col, "period": d_col, "time": t_col,
         "value": v_col,
     })
-
-
-def write_pdtCommodity(input_dir: Path, solve_data_dir: Path,
-                       *, provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdtCommodity.csv`` (see derive docstring)."""
-    _write(
-        derive_pdtCommodity(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdtCommodity.csv",
-    )
 
 
 def emit_pdtCommodity(input_dir: Path, solve_data_dir: Path,
@@ -1517,25 +1425,6 @@ def derive_p_negative_inflow(
         input_dir, solve_data_dir, provider=provider,
     )
     return neg
-
-
-def write_p_positive_negative_inflow(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Emit ``p_positive_inflow.csv`` and ``p_negative_inflow.csv``
-    from ``solve_data/pdtNodeInflow.csv`` (native, written upstream).
-
-    * ``p_positive_inflow`` is restricted to non-``no_inflow`` nodes;
-      ``value = max(pdtNodeInflow, 0)``.
-    * ``p_negative_inflow`` covers all nodes — ``no_inflow`` nodes emit
-      explicit ``0.0`` (matches the mod's all-nodes domain).
-    """
-    pos, neg = _derive_positive_negative_inflow(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(pos, solve_data_dir / "p_positive_inflow.csv")
-    _write(neg, solve_data_dir / "p_negative_inflow.csv")
 
 
 def emit_p_positive_negative_inflow(
@@ -1703,26 +1592,6 @@ def derive_pdtProcess__source__sink__dt_varCost_alwaysProcess(
     return always
 
 
-def write_pdtProcess__source__sink__dt_varCost_pair(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """flextool.mod L1493, L1502 — two ``varCost`` calc params keyed on
-    ``process_source_sink`` and ``process_source_sink_alwaysProcess``.
-
-    Both sum per-side ``other_operational_cost`` (gated by process_source
-    / process_sink membership) plus ``pdtProcess['OOC']``.  The
-    ``_alwaysProcess`` variant additionally gates the third term on
-    ``(p, sink) ∈ process_sink ∪ process_source``.
-    """
-    basic, always = _derive_varCost_pair(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(basic, solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv")
-    _write(always, solve_data_dir
-                   / "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv")
-
-
 def emit_pdtProcess__source__sink__dt_varCost_pair(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -1871,24 +1740,6 @@ def derive_pssdt_varCost_eff_connection(
     return _derive_pssdt_varCost_filters(
         input_dir, solve_data_dir, provider=provider,
     )[3]
-
-
-def write_pssdt_varCost_filters(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """flextool.mod L1498-1501 — four filter sets keyed on pdt-* OOC values.
-
-    Depends on ``pdtProcess__source__sink__dt_varCost.csv`` produced by
-    :func:`write_pdtProcess__source__sink__dt_varCost_pair`.
-    """
-    no_eff, eff_src, eff_snk, eff_conn = _derive_pssdt_varCost_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(no_eff, solve_data_dir / "pssdt_varCost_noEff.csv")
-    _write(eff_src, solve_data_dir / "pssdt_varCost_eff_unit_source.csv")
-    _write(eff_snk, solve_data_dir / "pssdt_varCost_eff_unit_sink.csv")
-    _write(eff_conn, solve_data_dir / "pssdt_varCost_eff_connection.csv")
 
 
 def emit_pssdt_varCost_filters(
@@ -2067,38 +1918,6 @@ def derive_p_shutdown_cap_reduction_source(
                                 pp, online, dtd)
 
 
-def write_cap_reduction_params(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """flextool.mod L1637-1663 — Morales-Espana startup/shutdown capacity
-    reduction params (4 calc params, 1 per side × startup/shutdown).
-    """
-    (pp, psrc, psnk, online, proc_src, proc_snk, dtd) = _cap_reduction_inputs(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(
-        _cap_reduction_frame(psnk, proc_snk, "ramp_speed_up", "sink",
-                             pp, online, dtd),
-        solve_data_dir / "p_startup_cap_reduction_sink.csv",
-    )
-    _write(
-        _cap_reduction_frame(psnk, proc_snk, "ramp_speed_down", "sink",
-                             pp, online, dtd),
-        solve_data_dir / "p_shutdown_cap_reduction_sink.csv",
-    )
-    _write(
-        _cap_reduction_frame(psrc, proc_src, "ramp_speed_up", "source",
-                             pp, online, dtd),
-        solve_data_dir / "p_startup_cap_reduction_source.csv",
-    )
-    _write(
-        _cap_reduction_frame(psrc, proc_src, "ramp_speed_down", "source",
-                             pp, online, dtd),
-        solve_data_dir / "p_shutdown_cap_reduction_source.csv",
-    )
-
-
 def emit_cap_reduction_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -2270,27 +2089,6 @@ def derive_ed_cumulative_min_capacity(
         input_dir, solve_data_dir, provider=provider,
     )
     return _ed_period_compute(inv, "cumulative_min_capacity", pp, pn, ps, ns)
-
-
-def write_ed_period_params(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """``ed_*_period`` / ``ed_cumulative_*`` family — six calc params
-    keyed on ``ed_invest`` / ``ed_divest``.
-
-    Must run AFTER ``invest_divest_sets`` has produced
-    ``solve_data/ed_invest.csv`` and ``ed_divest.csv``.  Processes and
-    nodes are disjoint by construction, so exactly one of the
-    ``PdLookup`` branches fires per entity row.
-    """
-    pp, pn, ps, ns, inv, div = _ed_period_inputs(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    pair_for = {"invest": inv, "divest": div}
-    for fname, tag, mod_param in _ED_PERIOD_PARAM_SPECS:
-        frame = _ed_period_compute(pair_for[tag], mod_param, pp, pn, ps, ns)
-        _write(frame, solve_data_dir / fname)
 
 
 def emit_ed_period_params(

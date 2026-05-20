@@ -175,19 +175,6 @@ def _write_keyed_2(path: Path, header: tuple[str, str, str],
     )
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    """Polars-frame emission funnel — patched by Phase E-b accumulator.
-
-    Identical I/O contract to the dispatcher / entity_annual ``_write``:
-    the patched variant in
-    :func:`._flex_data_accumulator.capture_frames` rebinds this name
-    to also stash ``(path.name -> df)`` into the accumulator.
-
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 def _rows_to_frame(
     header: tuple[str, str, str],
     rows: list[tuple[str, str, float]],
@@ -696,28 +683,6 @@ def derive_new_old_section(
 ) -> pl.DataFrame:
     """``new_old_section.csv`` — peak * nom."""
     return _derive(input_dir, solve_data_dir, "new_old_section.csv")
-
-
-def write_node_inflow_scaling_params(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Native port of
-    ``node_inflow_scaling_params.write_node_inflow_scaling_params``.
-
-    Emits 17 CSVs covering ``ptNode_inflow`` and the 16 per-(n, d)
-    inflow-scaling parameters (annual / proportional / peak families).
-    Each output flows through ``_write(frame, path)`` so the Phase E-b
-    accumulator captures every emitted frame.
-
-    Step 1-g — *provider* threads the per-sub-solve Provider so the
-    internal ``_read_*`` helpers resolve their frames in-memory before
-    falling back to disk.
-    """
-    frames = _compute_inflow_scaling_frames(input_dir, solve_data_dir,
-                                              provider=provider)
-    for basename, df in frames.items():
-        _write(df, solve_data_dir / basename)
 
 
 def emit_node_inflow_scaling_params(

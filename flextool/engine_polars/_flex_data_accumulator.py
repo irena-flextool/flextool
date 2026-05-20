@@ -1,109 +1,21 @@
-"""Per-sub-solve frame capture into :class:`FlexDataProvider`.
+"""Per-sub-solve frame capture coverage manifest.
 
-This module owns :func:`capture_frames`, the context manager the cascade
-wraps around its preprocessing pass to monkey-patch every participating
-writer's ``_write(df, path)`` helper so the emitted frame flows into the
-caller-supplied :class:`FlexDataProvider` instead of being written to
-disk.  Outside the context, ``_write`` falls back to its direct-to-disk
-behaviour — that is the path the ``test_writer_port_phase1.py`` byte-
-parity tests exercise.
+This module hosts :func:`expected_basenames` — the public-contract list
+of CSV basenames the cascade's emit_* functions push into the
+in-memory :class:`FlexDataProvider`.  Tests cross-check this manifest
+against the disk-resident frames produced by ``--csv-dump``.
 
-The 37 ``OK_thin_wrapper`` writers identified in
-``specs/phase_b_writer_audit.md`` all funnel their derived frames
-through their module's private ``_write(df, path)`` helper.  Subsequent
-phases promoted the streamed-writer family into the same canonical
-shape, expanding the set patched by :func:`capture_frames` (see
-:data:`_PATCH_MODULES`).
+Prior to the writer→emitter refactor this module also exposed a
+``capture_frames`` context manager that monkey-patched every
+participating writer's ``_write(df, path)`` helper to redirect frames
+into a Provider.  Phase 3 of the refactor migrated every call site to
+``emit_*(..., provider=...)``; the monkey-patch (and the ``_PATCH_MODULES``
+tuple it consumed) is gone.  Only the basename manifest remains.
 """
 from __future__ import annotations
 
-import contextlib
-from pathlib import Path
-from typing import Iterator
-
-import polars as pl
-
-
-# ---------------------------------------------------------------------------
-# Writer modules whose ``_write`` helper feeds the 37 thin-wrapper writers.
-# Patching these four modules' ``_write`` covers every OK_thin_wrapper entry
-# from the Phase B audit (writers in _emit_leaf_sets, _emit_mid_sets,
-# _emit_calc_params, _emit_arc_unions).
-# ---------------------------------------------------------------------------
-
-_PATCH_MODULES = (
-    "flextool.engine_polars._emit_leaf_sets",
-    "flextool.engine_polars._emit_mid_sets",
-    "flextool.engine_polars._emit_calc_params",
-    "flextool.engine_polars._emit_arc_unions",
-    "flextool.engine_polars._emit_chain_params",
-    "flextool.engine_polars._emit_co2_accumulators",
-    "flextool.engine_polars._emit_pdt_params",
-    "flextool.engine_polars._emit_period_params",
-    "flextool.engine_polars._emit_dispatchers",
-    "flextool.engine_polars._emit_entity_annual",
-    "flextool.engine_polars._emit_inflow_scaling",
-    "flextool.engine_polars._emit_lp_scaling",
-    "flextool.engine_polars._emit_solve_writers",
-    "flextool.engine_polars._emit_period_calc",
-    "flextool.engine_polars._emit_per_solve",
-    "flextool.engine_polars._emit_reserve",
-    "flextool.flextoolrunner.blocks",
-)
-
-
-# ---------------------------------------------------------------------------
-# Context manager — monkey-patches the writer modules' ``_write``
-# helper to capture frames into the supplied accumulator.
-# ---------------------------------------------------------------------------
-
-
-@contextlib.contextmanager
-def capture_frames(
-    provider: "object | None" = None,
-) -> Iterator[None]:
-    """Patch the participating writers' ``_write`` helper to push every
-    emitted frame into *provider* for the duration of the block, and
-    SKIP the underlying disk write.
-
-    The wrapped writers populate the Provider exclusively while this
-    context is active — disk emission is the responsibility of
-    :meth:`FlexDataProvider.snapshot_processed_inputs` (the
-    ``--csv-dump`` debug path).  Frames are stored under both the bare
-    basename and the parent-qualified key (``"<parent>/<stem>"``) so
-    callers can disambiguate ``input/`` vs ``solve_data/`` collisions.
-
-    Outside this context every writer's ``_write`` falls back to its
-    direct-to-disk behaviour — that is the path the
-    ``test_writer_port_phase1.py`` byte-parity gate exercises.
-    """
-    import importlib
-
-    modules = [importlib.import_module(name) for name in _PATCH_MODULES]
-    saved: list[tuple[object, object]] = [
-        (mod, getattr(mod, "_write")) for mod in modules
-    ]
-    try:
-        for mod, _original in saved:
-            def _make_wrapped():
-                def _wrapped(df: pl.DataFrame, path: Path) -> None:
-                    if provider is not None:
-                        p = Path(path)
-                        provider.put(p.name, df)
-                        parent = p.parent.name
-                        if parent:
-                            provider.put(f"{parent}/{p.name}", df)
-                    # Provider-only — no disk write while capture is active.
-                return _wrapped
-            setattr(mod, "_write", _make_wrapped())
-        yield None
-    finally:
-        for mod, original in saved:
-            setattr(mod, "_write", original)
-
 
 __all__ = [
-    "capture_frames",
     "expected_basenames",
 ]
 
@@ -112,15 +24,16 @@ __all__ = [
 # Coverage manifest
 # ---------------------------------------------------------------------------
 #
-# Basenames of CSVs that go through one of the patched ``_write`` helpers.
-# This list is the public contract Phase D / E-a consumers can read against
-# to know which solve_data/*.csv files the accumulator captures in-memory.
+# Basenames of CSVs the cascade's emit_* functions push into the
+# in-memory :class:`FlexDataProvider`.  This list is the public contract
+# Phase D / E-a consumers read against to know which solve_data/*.csv
+# files the cascade captures.
 #
-# When you lift another streamed writer into the canonical
-# ``derive_X → _write(derive_X(...), path)`` shape, add its target basename
-# below.  The matching test in
-# ``tests/engine_polars/test_phase_c_flex_data_accumulator.py`` cross-checks
-# the captured-vs-disk frames for each basename present in the cascade run.
+# When a new emit_* lands that adds a previously-uncaptured frame, add
+# its target basename below.  The matching test in
+# ``tests/engine_polars/test_phase_c_flex_data_accumulator.py`` cross-
+# checks the in-Provider-vs-disk frames for each basename present in
+# the cascade run.
 
 _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # _emit_leaf_sets — 27 thin writers
@@ -167,8 +80,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # _emit_calc_params — thin writers
     "process_VRE.csv",
     # _emit_arc_unions — thin writers + Phase E-b lifted streamed writers
-    # (this group expanded substantially when streamed writers were
-    # converted to the canonical derive_X → _write pattern)
     "process_source_sink_param_t.csv",
     "node__TimeParam_in_use.csv",
     "process_source_delayed.csv",
@@ -197,7 +108,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # — group_commodity_node co2 (Phase E-b)
     "group_commodity_node_period_co2_total.csv",
     "group_commodity_node_period_co2_period.csv",
-    # — param_in_use family (already _write; in audit scope)
+    # — param_in_use family
     "node__PeriodParam_in_use.csv",
     "process__PeriodParam_in_use.csv",
     "process_TimeParam_in_use.csv",
@@ -261,8 +172,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # _emit_co2_accumulators — Phase E-b lifted
     "co2_cum_realized_tonnes.csv",
     # _emit_pdt_params — Phase E-b lifted streamed writers
-    # (high-memory hot path; ~280k-row dense frames preserved for
-    # byte-parity, sparse-emit deferred per audit doc)
     "pdtProcess.csv",
     "pdtNode.csv",
     "pdtProcess_source.csv",
@@ -297,7 +206,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "ed_cumulative_max_capacity.csv",
     "ed_cumulative_min_capacity.csv",
     # _emit_calc_params — Phase E-b lifted streamed writers
-    # — write_process_arc_method_joins (10 CSVs, methodgated arc joins)
+    # — process_arc_method_joins (10 CSVs, methodgated arc joins)
     "process_sink_toProcess.csv",
     "process_process_toSource.csv",
     "process_source_toSink.csv",
@@ -308,20 +217,16 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_process_toSink_noConversion.csv",
     "process_source_toProcess_noConversion.csv",
     "process_process_toSource_direct.csv",
-    # — write_process_profile_method_joins (2 CSVs)
+    # — process_profile_method_joins (2 CSVs)
     "process__profileProcess__toSink__profile__profile_method.csv",
     "process__source__toProfileProcess__profile__profile_method.csv",
     # _emit_dispatchers — Phase E-b lifted entity_period_calc_params
-    # (5 CSVs from a single own-compute monolith; dispatcher module
-    # joined _PATCH_MODULES to expose its new _write helper)
     "pdProcess.csv",
     "pdNode.csv",
     "edEntity_lifetime.csv",
     "ed_fixed_cost.csv",
     "p_entity_unitsize.csv",
     # _emit_dispatchers — Phase E-b lifted process_arc_unions monolith
-    # (14 CSVs from a single own-compute dispatcher; convert _write_csv
-    # into _write(derive_X(...), path) per emission)
     "process__profileProcess__toSink.csv",
     "process__source__toProfileProcess.csv",
     "process_profile.csv",
@@ -336,18 +241,14 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_source_sink.csv",
     "process_source_sink_alwaysProcess.csv",
     "process__source__sink__profile__profile_method_direct.csv",
-    # _emit_entity_annual — Phase E-b lifted (6-CSV monolith;
-    # repr(float) precision preserved by the _rows_to_frame helper)
+    # _emit_entity_annual — Phase E-b lifted (6-CSV monolith)
     "ed_entity_annual.csv",
     "ed_entity_annual_discounted.csv",
     "ed_entity_annual_divest.csv",
     "ed_entity_annual_divest_discounted.csv",
     "ed_lifetime_fixed_cost.csv",
     "ed_lifetime_fixed_cost_divest.csv",
-    # _emit_inflow_scaling — Phase E-b lifted (17-CSV monolith, peak
-    # family heavy cross-CSV state — converted via dict-of-frames adapter
-    # since splitting into 17 standalone derive_* would re-walk the
-    # t-axis O(N) times per call)
+    # _emit_inflow_scaling — Phase E-b lifted (17-CSV monolith)
     "ptNode_inflow.csv",
     "_node_cap_inflow_fallback.csv",
     "orig_flow_sum.csv",
@@ -365,9 +266,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "new_old_multiplier.csv",
     "new_old_slope.csv",
     "new_old_section.csv",
-    # _emit_lp_scaling — Phase E-b lifted (9-CSV monolith with chained
-    # raw -> pow10 -> capacity -> inverse cascades; converted via
-    # dict-of-frames adapter)
+    # _emit_lp_scaling — Phase E-b lifted (9-CSV monolith)
     #
     # NB ``_group_cap_raw.csv`` is captured by the accumulator hook but
     # is NOT in this manifest: the legacy emitter writes ``"0"`` (int
@@ -386,15 +285,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "_group_cap_pow10.csv",
     "group_capacity_for_scaling.csv",
     "inv_group_cap.csv",
-    # _emit_solve_writers — Phase E-b7 (34 small per-solve CSVs that
-    # emit from in-memory WriterSnapshot/timeline records; converted
-    # from csv.writer(newline="") + CRLF emit into the canonical
-    # derive_X -> _write(derive_X(...), path) pattern.  The new
-    # ``_write`` helper uses polars ``line_terminator="\r\n"`` to
-    # preserve byte-identical parity with the legacy ``csv.writer``
-    # output the writer_port_phase1 gate compares.  Empty / header-
-    # only emitters use an all-Utf8 ``_empty_frame`` so the captured
-    # frame has the correct schema even when the body is empty.)
+    # _emit_solve_writers — Phase E-b7 (34 small per-solve CSVs)
     "steps_in_timeline.csv",
     "steps_in_use.csv",
     "steps_complete_solve.csv",
@@ -429,7 +320,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "ladder_cum_sim_hours.csv",
     # NB co2_cum_realized_tonnes.csv already captured by
     # _emit_co2_accumulators above; the empty-seed variant from
-    # write_empty_cumulative_files overwrites with the same header.
+    # the cumulative emitters overwrites with the same header.
     "fix_storage_price.csv",
     "fix_storage_quantity.csv",
     "fix_storage_usage.csv",
@@ -453,14 +344,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "rp_block_last.csv",
     "rp_block_start_last.csv",
     "rp_cost_weight.csv",
-    # _emit_period_calc — Phase E-b8 (write_period_calculated_params
-    # emits 12 CSVs, write_branch_weights emits 2).  All 14 captured;
-    # the previous E-b8 _NO_CAPTURE workaround for
-    # p_inflation_factor_operations_yearly.csv and
-    # complete_period_share_of_year_calc.csv was retired once
-    # input._read_long gained a uniform Float64 cast on the value
-    # column so seed-mode Utf8 frames coerce to Float64 in Param.frame
-    # exactly as the disk-read path does.
+    # _emit_period_calc — Phase E-b8 (12 + 2 CSVs)
     "p_inflation_factor_operations_yearly.csv",
     "complete_period_share_of_year_calc.csv",
     "p_timeline_duration_in_years.csv",
@@ -475,11 +359,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "f_d_k.csv",
     "pd_branch_weight.csv",
     "pdt_branch_weight.csv",
-    # _emit_per_solve — Phase E-b8 (write_per_solve_sets emits 30
-    # CSVs, write_invest_divest_sets emits 19, plus the singleton
-    # ed_invest_forbidden_no_investment.csv).  All emits route
-    # through ``_write_singles`` / ``_write_tuples`` which now
-    # delegate to ``_write(df, path)``.
+    # _emit_per_solve — Phase E-b8 (30 + 19 + 1 CSVs)
     "branch_set.csv",
     "year_set.csv",
     "period_from_period_time_set.csv",
@@ -528,10 +408,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "gd_invest_period.csv",
     "gd_divest_period.csv",
     "ed_invest_forbidden_no_investment.csv",
-    # _emit_reserve — Phase E-b8 (write_pdtReserve_upDown_group +
-    # write_process_reserve_upDown_node_active_and_prundt (2 CSVs) +
-    # write_process_reserve_filters_and_reliability (4 CSVs); all
-    # converted to derive_X -> _write(derive_X(...), path).)
+    # _emit_reserve — Phase E-b8 (1 + 2 + 4 CSVs)
     "pdtReserve_upDown_group.csv",
     "process_reserve_upDown_node_active.csv",
     "prundt.csv",
@@ -539,10 +416,8 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_reserve_upDown_node_increase_reserve_ratio.csv",
     "process_reserve_upDown_node_large_failure_ratio.csv",
     "process_large_failure.csv",
-    # flextoolrunner.blocks — Step 2.5 Phase A: write_block_data routed
-    # through the shared _write helper so the eight per-solve block
-    # frames (Agent 1.1 / 1.4 / 1.6) populate the Provider via
-    # capture_frames instead of staying disk-only.
+    # flextoolrunner.blocks — Step 2.5 Phase A: the eight per-solve
+    # block frames populated by emit_block_data into the Provider.
     "entity_block.csv",
     "process_side_block.csv",
     "process_block.csv",
@@ -555,11 +430,11 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
 
 
 def expected_basenames() -> tuple[str, ...]:
-    """Return the basenames the accumulator is expected to capture.
+    """Return the basenames the cascade is expected to capture.
 
     The list comes from the Phase B writer audit (every ``OK_thin_wrapper``
     entry, plus the streamed writers lifted into the canonical pattern by
-    Phase E-b).  Tests use this to cross-check disk-vs-accumulator parity
+    Phase E-b).  Tests use this to cross-check disk-vs-Provider parity
     without re-enumerating the list inline.
     """
     return _THIN_WRAPPER_BASENAMES

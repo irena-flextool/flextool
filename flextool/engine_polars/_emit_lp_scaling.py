@@ -119,19 +119,6 @@ def _write_keyed_2(path: Path, header: tuple[str, str, str],
     )
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    """Polars-frame emission funnel — patched by Phase E-b accumulator.
-
-    Identical I/O contract to the dispatcher / entity_annual ``_write``:
-    the patched variant in
-    :func:`._flex_data_accumulator.capture_frames` rebinds this name
-    to also stash ``(path.name -> df)`` into the accumulator.
-
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 def _rows_to_frame(
     header: tuple[str, str, str],
     rows: list[tuple[str, str, object]],
@@ -413,29 +400,6 @@ def derive_inv_group_cap(
 ) -> pl.DataFrame:
     """``inv_group_cap.csv`` — 1 / group_capacity_for_scaling."""
     return _derive(input_dir, solve_data_dir, "inv_group_cap.csv")
-
-
-def write_lp_scaling_params(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> None:
-    """Native port of ``lp_scaling_params.write_lp_scaling_params``.
-
-    Reads:
-      * ``input/node.csv`` / ``group.csv`` / ``group__node.csv``
-      * ``solve_data/`` — period_in_use_set, p_use_row_scaling,
-        solve_current, process_source_sink, p_entity_unitsize,
-        _node_cap_inflow_fallback
-
-    Emits 9 ``solve_data/`` CSVs covering node-level + group-level
-    capacity proxies and their reciprocals.  Each output flows through
-    ``_write(frame, path)`` so the Phase E-b accumulator captures every
-    emitted frame.
-    """
-    frames = _compute_lp_scaling_frames(input_dir, solve_data_dir,
-                                          provider=provider)
-    for basename, df in frames.items():
-        _write(df, solve_data_dir / basename)
 
 
 def emit_lp_scaling_params(

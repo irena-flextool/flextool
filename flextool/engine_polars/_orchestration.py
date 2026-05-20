@@ -512,9 +512,14 @@ def _write_scale_csv_and_report(
     if write_csv:
         try:
             from flextool.engine_polars._emit_solve_writers import (
-                write_scale_the_objective,
+                derive_scale_the_objective,
             )
-            write_scale_the_objective(solve_data_dir, effective_obj_scale)
+            sd = Path(solve_data_dir)
+            sd.mkdir(parents=True, exist_ok=True)
+            path = sd / "scale_the_objective.csv"
+            derive_scale_the_objective(effective_obj_scale).write_csv(
+                path, line_terminator="\r\n",
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "scale_the_objective.csv write failed for %s: %s",

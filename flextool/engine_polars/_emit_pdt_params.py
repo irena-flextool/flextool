@@ -71,11 +71,6 @@ from flextool.engine_polars._pdt_lookup import (
 # ---------------------------------------------------------------------------
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 def _read_pairs(path: Path,
                 *,
                 provider: "object | None" = None) -> list[tuple[str, str]]:
@@ -179,16 +174,6 @@ def derive_pdtProcess(input_dir: Path, solve_data_dir: Path,
     )
 
 
-def write_pdtProcess(input_dir: Path, solve_data_dir: Path,
-                      *,
-                      provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdtProcess.csv`` (see derive docstring)."""
-    _write(
-        derive_pdtProcess(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdtProcess.csv",
-    )
-
-
 def emit_pdtProcess(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
     """Provider-emitting twin of :func:`write_pdtProcess`."""
@@ -261,16 +246,6 @@ def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
             "time": pl.Utf8,
             "value": pl.Utf8,
         },
-    )
-
-
-def write_pdtNode(input_dir: Path, solve_data_dir: Path,
-                   *,
-                   provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdtNode.csv`` (see derive docstring)."""
-    _write(
-        derive_pdtNode(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdtNode.csv",
     )
 
 
@@ -381,16 +356,6 @@ def derive_pdtProcess_source(
     )
 
 
-def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path,
-                              *,
-                              provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdtProcess_source.csv`` (see derive docstring)."""
-    _write(
-        derive_pdtProcess_source(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdtProcess_source.csv",
-    )
-
-
 def emit_pdtProcess_source(input_dir: Path, solve_data_dir: Path,
                             *, provider) -> None:
     """Provider-emitting twin of :func:`write_pdtProcess_source`."""
@@ -424,16 +389,6 @@ def derive_pdtProcess_sink(
         dt_csv=solve_data_dir / "steps_in_use.csv",
         side_col="sink",
         provider=provider,
-    )
-
-
-def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path,
-                           *,
-                           provider: "object | None" = None) -> None:
-    """Emit ``solve_data/pdtProcess_sink.csv`` (see derive docstring)."""
-    _write(
-        derive_pdtProcess_sink(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "pdtProcess_sink.csv",
     )
 
 

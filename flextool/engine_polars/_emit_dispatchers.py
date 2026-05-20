@@ -75,11 +75,6 @@ from flextool.engine_polars._emit_provider_io import (
 # ---------------------------------------------------------------------------
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 # ---------------------------------------------------------------------------
 # CSV I/O — same helpers as the sibling legacy modules.
 # ---------------------------------------------------------------------------
@@ -643,72 +638,6 @@ def derive_process__source__sink__profile__profile_method_direct(
 # ---- Wrapper ---------------------------------------------------------------
 
 
-def write_process_arc_unions(input_dir: Path, solve_data_dir: Path,
-                              *, provider: "object | None" = None) -> None:
-    """Migrate the 14-set L1 arc-union batch in dependency order.
-
-    Byte-for-byte mirror of the legacy emitter.  Each output flows through
-    ``_write(_compute_X(inp, ...), path)`` so the Phase E-b accumulator
-    captures every emitted frame.
-
-    Step 1-g — *provider* threads the per-sub-solve Provider through
-    every ``_arc_unions_inputs`` / ``_disk_arc_lists`` / ``_compute_*``
-    call so internal ``_read_*`` helpers resolve their frames in-memory
-    before falling back to disk.
-    """
-    inp = _arc_unions_inputs(input_dir, solve_data_dir, provider=provider)
-
-    # 1
-    _write(_compute_process__profileProcess__toSink(inp),
-           solve_data_dir / "process__profileProcess__toSink.csv")
-    # 2
-    _write(_compute_process__source__toProfileProcess(inp),
-           solve_data_dir / "process__source__toProfileProcess.csv")
-    # 3
-    _write(_compute_process_profile(inp),
-           solve_data_dir / "process_profile.csv")
-    # 4
-    _write(_compute_process_source_toProcess(inp),
-           solve_data_dir / "process_source_toProcess.csv")
-    # 5
-    _write(_compute_process_process_toSink(inp),
-           solve_data_dir / "process_process_toSink.csv")
-    # 6
-    _write(_compute_process_source_sink_eff(solve_data_dir, provider=provider),
-           solve_data_dir / "process_source_sink_eff.csv")
-    # 7
-    disk = _disk_arc_lists(solve_data_dir, provider=provider)
-    _write(_compute_process_source_sink_noEff(inp, disk),
-           solve_data_dir / "process_source_sink_noEff.csv")
-    # 8
-    _write(_compute_process_online(solve_data_dir, provider=provider),
-           solve_data_dir / "process_online.csv")
-    # 9
-    _write(_compute_process_minload(inp, solve_data_dir, provider=provider),
-           solve_data_dir / "process_minload.csv")
-    # 10
-    _write(_compute_process__commodity__node_co2(inp, solve_data_dir,
-                                                   provider=provider),
-           solve_data_dir / "process__commodity__node_co2.csv")
-    # 11
-    _write(_compute_process_co2(inp, solve_data_dir, provider=provider),
-           solve_data_dir / "process_co2.csv")
-    # 12
-    _write(_compute_process_source_sink(inp, disk),
-           solve_data_dir / "process_source_sink.csv")
-    # 13
-    _write(_compute_process_source_sink_alwaysProcess(
-               inp, disk, solve_data_dir, provider=provider),
-           solve_data_dir / "process_source_sink_alwaysProcess.csv")
-    # 14
-    _write(
-        _compute_process__source__sink__profile__profile_method_direct(
-            inp, solve_data_dir, provider=provider),
-        solve_data_dir
-        / "process__source__sink__profile__profile_method_direct.csv",
-    )
-
-
 def emit_process_arc_unions(input_dir: Path, solve_data_dir: Path,
                              *, provider) -> None:
     """Provider-emitting twin of :func:`write_process_arc_unions`.
@@ -990,27 +919,6 @@ def derive_p_entity_unitsize(
         _entity_period_inputs(input_dir, solve_data_dir, provider=provider),
         provider=provider,
     )
-
-
-def write_entity_period_calc_params(input_dir: Path,
-                                    solve_data_dir: Path,
-                                    *, provider: "object | None" = None) -> None:
-    """Migrate pdProcess/pdNode + edEntity_lifetime + ed_fixed_cost +
-    p_entity_unitsize in one pass.
-
-    Byte-for-byte mirror of the legacy emitter.  Each output flows
-    through ``_write(derive_X(...), path)`` so Phase E-b's accumulator
-    captures every frame.
-    """
-    inp = _entity_period_inputs(input_dir, solve_data_dir, provider=provider)
-    _write(_compute_pdProcess(inp), solve_data_dir / "pdProcess.csv")
-    _write(_compute_pdNode(inp), solve_data_dir / "pdNode.csv")
-    _write(_compute_edEntity_lifetime(inp),
-           solve_data_dir / "edEntity_lifetime.csv")
-    _write(_compute_ed_fixed_cost(inp),
-           solve_data_dir / "ed_fixed_cost.csv")
-    _write(_compute_p_entity_unitsize(input_dir, inp, provider=provider),
-           solve_data_dir / "p_entity_unitsize.csv")
 
 
 def emit_entity_period_calc_params(input_dir: Path,

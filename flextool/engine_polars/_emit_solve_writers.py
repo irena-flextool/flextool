@@ -165,19 +165,6 @@ def _emit_path(provider, path: "Path | str", df: pl.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    """Emit *df* as a CRLF-terminated CSV at *path*.
-
-    Identical I/O contract to the ``_write(df, path)`` helper in
-    :mod:`._emit_pdt_params`.  Phase E-b7 accumulator
-    (:mod:`._flex_data_accumulator`) monkey-patches this name so every
-    CSV emission also stashes ``(path.name → df)`` for the sub-solve.
-
-    """
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(Path(path), line_terminator="\r\n")
-
-
 def _to_utf8_frame(
     headers: tuple[str, ...],
     rows: list[tuple[Any, ...]],
@@ -220,28 +207,6 @@ def derive_full_timelines(
     return _to_utf8_frame(("period", "step"), rows)
 
 
-def write_full_timelines(
-    stochastic_timesteps: list[tuple[str, str]],
-    period__timesets_in_this_solve: list[tuple[str, str]],
-    timesets__timeline: dict[str, str],
-    timelines: dict[str, list[tuple[str, ...]]],
-    filename: str,
-) -> None:
-    """Emit ``steps_in_timeline.csv`` — every timestep of the bundled
-    timelines (in the order they appear in the period→timeset →timeline
-    chain), followed by any extra stochastic timesteps for this solve.
-    """
-    _write(
-        derive_full_timelines(
-            stochastic_timesteps,
-            period__timesets_in_this_solve,
-            timesets__timeline,
-            timelines,
-        ),
-        Path(filename),
-    )
-
-
 def emit_full_timelines(
     stochastic_timesteps: list[tuple[str, str]],
     period__timesets_in_this_solve: list[tuple[str, str]],
@@ -275,19 +240,6 @@ def derive_active_timelines(
     return _to_utf8_frame(("period", "step", header_dur), rows)
 
 
-def write_active_timelines(
-    timeline: dict[str, list[tuple[str, ...]]],
-    filename: str,
-    complete: bool = False,
-) -> None:
-    """Emit ``steps_in_use.csv`` / ``steps_complete_solve.csv`` — the
-    active timestep + step-duration triples for this (or the complete)
-    solve.  ``complete=True`` swaps the duration column header to
-    ``complete_step_duration``.
-    """
-    _write(derive_active_timelines(timeline, complete), Path(filename))
-
-
 def emit_active_timelines(
     timeline: dict[str, list[tuple[str, ...]]],
     filename: str,
@@ -308,15 +260,6 @@ _STEP_JUMP_HEADERS = (
 def derive_step_jump(step_lengths: list[tuple[str, ...]]) -> pl.DataFrame:
     """Build the canonical ``step_previous`` frame (7 Utf8 columns)."""
     return _to_utf8_frame(_STEP_JUMP_HEADERS, list(step_lengths))
-
-
-def write_step_jump(
-    step_lengths: list[tuple[str, ...]],
-    work_folder: Path | None = None,
-) -> None:
-    """Emit ``solve_data/step_previous.csv``."""
-    wf = work_folder if work_folder is not None else Path.cwd()
-    _write(derive_step_jump(step_lengths), wf / "solve_data/step_previous.csv")
 
 
 def emit_step_jump(
@@ -348,22 +291,6 @@ def derive_period_block_succ(
         ("period", "block_first", "block_first_next"),
         list(period_block_succ),
     )
-
-
-def write_period_block(
-    period_block_time: list[tuple],
-    period_block_succ: list[tuple],
-    work_folder: Path | None = None,
-) -> None:
-    """Emit the two block-structure CSVs (``period_block_time.csv`` +
-    ``period_block_succ.csv``) used by ``bind_intraperiod_blocks``.
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    sd = wf / "solve_data"
-    _write(derive_period_block_time(period_block_time),
-           sd / "period_block_time.csv")
-    _write(derive_period_block_succ(period_block_succ),
-           sd / "period_block_succ.csv")
 
 
 def emit_period_block(
@@ -420,22 +347,6 @@ def derive_years_represented(
     )
 
 
-def write_years_represented(
-    period__branch: list[tuple[str, str]],
-    years_represented: list[tuple[str, str]],
-    filename: str,
-) -> None:
-    """Emit ``p_years_represented.csv`` — each period's
-    ``years_represented`` R is expanded into ``ceil(R)`` width-1 rows
-    plus a trailing fractional remainder row (sub-year periods emit a
-    single row of width R; R <= 0 → skip).
-    """
-    _write(
-        derive_years_represented(period__branch, years_represented),
-        Path(filename),
-    )
-
-
 def emit_years_represented(
     period__branch: list[tuple[str, str]],
     years_represented: list[tuple[str, str]],
@@ -465,20 +376,6 @@ def derive_period_years(
     return _to_utf8_frame(("period", "param"), rows)
 
 
-def write_period_years(
-    stochastic_branches: list[tuple[str, str]],
-    years_represented: list[tuple[str, str]],
-    filename: str,
-) -> None:
-    """Emit ``period_with_history.csv`` / ``p_discount_years.csv`` —
-    each period mapped to its cumulative ``year_count`` start.
-    """
-    _write(
-        derive_period_years(stochastic_branches, years_represented),
-        Path(filename),
-    )
-
-
 def emit_period_years(
     stochastic_branches: list[tuple[str, str]],
     years_represented: list[tuple[str, str]],
@@ -499,15 +396,6 @@ def derive_periods(
         (period_tuple[1],) for period_tuple in periods_dict.get(solve, [])
     ]
     return _to_utf8_frame(("period",), rows)
-
-
-def write_periods(
-    solve: str,
-    periods_dict: dict[str, list[tuple[str, str]]],
-    filename: str,
-) -> None:
-    """Emit a single-column ``period`` CSV for the given solve key."""
-    _write(derive_periods(solve, periods_dict), Path(filename))
 
 
 def emit_periods(
@@ -588,42 +476,6 @@ def derive_period_first(
     return _to_utf8_frame(("period",), [(p,) for p in period_first_list])
 
 
-def write_first_and_last_periods(
-    active_time_list: dict[str, list[tuple[str, ...]]],
-    period__timesets_in_this_solve: list[tuple[str, str]],
-    period__branch_list: list[tuple[str, str]],
-    work_folder: Path | None = None,
-) -> None:
-    """Emit ``period_last.csv``, ``period_first_of_solve.csv`` and
-    ``period_first.csv``.  Assumes ``active_time_list`` is in
-    chronological period order; multi-branch tail is included by
-    matching the final period's last timestep.
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    sd = wf / "solve_data"
-    period_last, period_first_of_solve_list, period_first_list = (
-        _compute_first_and_last_periods(
-            active_time_list,
-            period__timesets_in_this_solve,
-            period__branch_list,
-        )
-    )
-    _write(
-        _to_utf8_frame(("period",), [(p,) for p in period_last]),
-        sd / "period_last.csv",
-    )
-    _write(
-        _to_utf8_frame(
-            ("period",), [(p,) for p in period_first_of_solve_list],
-        ),
-        sd / "period_first_of_solve.csv",
-    )
-    _write(
-        _to_utf8_frame(("period",), [(p,) for p in period_first_list]),
-        sd / "period_first.csv",
-    )
-
-
 def emit_first_and_last_periods(
     active_time_list: dict[str, list[tuple[str, ...]]],
     period__timesets_in_this_solve: list[tuple[str, str]],
@@ -670,23 +522,6 @@ def derive_solve_status(
     return _to_utf8_frame(("modelParam", param_col), rows)
 
 
-def write_solve_status(
-    first_state: bool,
-    last_state: bool,
-    nested: bool = False,
-    work_folder: Path | None = None,
-) -> None:
-    """Emit ``p_model.csv`` (or ``p_nested_model.csv`` when
-    ``nested=True``) with ``solveFirst`` / ``solveLast`` integer flags.
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    if not nested:
-        path = wf / "solve_data/p_model.csv"
-    else:
-        path = wf / "solve_data/p_nested_model.csv"
-    _write(derive_solve_status(first_state, last_state, nested), path)
-
-
 def emit_solve_status(
     first_state: bool,
     last_state: bool,
@@ -704,11 +539,6 @@ def emit_solve_status(
 def derive_current_solve(solve: str) -> pl.DataFrame:
     """Build the ``solve_current`` frame (solve)."""
     return _to_utf8_frame(("solve",), [(solve,)])
-
-
-def write_current_solve(solve: str, filename: str) -> None:
-    """Emit ``solve_current.csv`` — single-row solve name file."""
-    _write(derive_current_solve(solve), Path(filename))
 
 
 def emit_current_solve(solve: str, filename: str, *, provider) -> None:
@@ -736,18 +566,6 @@ def derive_period_boundary_step(
     return _to_utf8_frame(("period", "step"), rows)
 
 
-def write_period_boundary_step(
-    timeline: dict[str, list[tuple[str, ...]]],
-    filename: str,
-    *,
-    last: bool = False,
-) -> None:
-    """Emit one (period, step) row per period — the first or last
-    timestep depending on ``last``.
-    """
-    _write(derive_period_boundary_step(timeline, last=last), Path(filename))
-
-
 def emit_period_boundary_step(
     timeline: dict[str, list[tuple[str, ...]]],
     filename: str,
@@ -760,14 +578,6 @@ def emit_period_boundary_step(
                derive_period_boundary_step(timeline, last=last))
 
 
-def write_first_steps(
-    timeline: dict[str, list[tuple[str, ...]]],
-    filename: str,
-) -> None:
-    """Thin wrapper — emit ``first_timesteps.csv``."""
-    write_period_boundary_step(timeline, filename, last=False)
-
-
 def emit_first_steps(
     timeline: dict[str, list[tuple[str, ...]]],
     filename: str,
@@ -775,14 +585,6 @@ def emit_first_steps(
 ) -> None:
     """Provider-emitting twin of :func:`write_first_steps`."""
     emit_period_boundary_step(timeline, filename, last=False, provider=provider)
-
-
-def write_last_steps(
-    timeline: dict[str, list[tuple[str, ...]]],
-    filename: str,
-) -> None:
-    """Thin wrapper — emit ``last_timesteps.csv``."""
-    write_period_boundary_step(timeline, filename, last=True)
 
 
 def emit_last_steps(
@@ -840,22 +642,6 @@ def derive_last_realized_step(
     return _to_utf8_frame(("period", "step"), rows)
 
 
-def write_last_realized_step(
-    realized_timeline: dict[str, list[tuple[str, ...]]],
-    solve: str,
-    realized_periods: list[tuple[str, str]],
-    filename: str,
-) -> None:
-    """Emit ``last_realized_timestep.csv`` — single row pointing at the
-    last step of the last period that appears in ``realized_periods``
-    (empty file when there is none).
-    """
-    _write(
-        derive_last_realized_step(realized_timeline, solve, realized_periods),
-        Path(filename),
-    )
-
-
 def emit_last_realized_step(
     realized_timeline: dict[str, list[tuple[str, ...]]],
     solve: str,
@@ -881,22 +667,6 @@ def derive_realized_dispatch(
             for i in realized_time:
                 rows.append((period, i.timestep))
     return _to_utf8_frame(("period", "step"), rows)
-
-
-def write_realized_dispatch(
-    realized_time_list: dict[str, list[tuple[str, ...]]],
-    solve: str,
-    realized_periods: list[tuple[str, str]],
-    work_folder: Path | None = None,
-) -> None:
-    """Emit ``realized_dispatch.csv`` — every step of every period whose
-    name appears in ``realized_periods``.
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    _write(
-        derive_realized_dispatch(realized_time_list, solve, realized_periods),
-        wf / "solve_data/realized_dispatch.csv",
-    )
 
 
 def emit_realized_dispatch(
@@ -927,24 +697,6 @@ def derive_fix_storage_timesteps(
     return _to_utf8_frame(("period", "step"), rows)
 
 
-def write_fix_storage_timesteps(
-    active_time_list: dict[str, list[tuple[str, ...]]],
-    solve: str,
-    fix_storage_periods: list[tuple[str, str]],
-    work_folder: Path | None = None,
-) -> None:
-    """Emit ``fix_storage_timesteps.csv`` — every step of every period
-    that appears in ``fix_storage_periods``.
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    _write(
-        derive_fix_storage_timesteps(
-            active_time_list, solve, fix_storage_periods,
-        ),
-        wf / "solve_data/fix_storage_timesteps.csv",
-    )
-
-
 def emit_fix_storage_timesteps(
     active_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,
@@ -973,16 +725,6 @@ def derive_branch__period_relationship(
     return _to_utf8_frame(
         ("period", "branch"),
         [(row[0], row[1]) for row in period__branch],
-    )
-
-
-def write_branch__period_relationship(
-    period__branch: list[tuple[str, str]],
-    filename: str,
-) -> None:
-    """Emit ``period__branch.csv`` (2-col verbatim copy)."""
-    _write(
-        derive_branch__period_relationship(period__branch), Path(filename),
     )
 
 
@@ -1070,36 +812,6 @@ def derive_time_branch_all(
     return _to_utf8_frame(("time_branch",), [(tb,) for tb in time_branches])
 
 
-def write_all_branches(
-    period__branch_list: dict[str, list[tuple[str, str]]],
-    solve_branch__time_branch_list: list[tuple[str, str]],
-    logger: logging.Logger,
-    work_folder: Path | None = None,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """Emit ``branch_all.csv`` (union of all branches across solves)
-    and ``time_branch_all.csv`` (union of branches from the seven
-    ``pbt_*`` input CSVs plus any extra time-branches from
-    ``solve_branch__time_branch_list``).
-
-    Aborts with ``sys.exit(-1)`` if any ``pbt_*`` row has an empty
-    branch name (matches legacy fatal behaviour).
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    _write(
-        derive_branch_all(period__branch_list),
-        wf / "solve_data/branch_all.csv",
-    )
-    _write(
-        derive_time_branch_all(
-            solve_branch__time_branch_list, logger, wf,
-            provider=provider,
-        ),
-        wf / "solve_data/time_branch_all.csv",
-    )
-
-
 def emit_all_branches(
     period__branch_list: dict[str, list[tuple[str, str]]],
     solve_branch__time_branch_list: list[tuple[str, str]],
@@ -1173,33 +885,6 @@ def derive_solve_branch__time_branch(
     )
 
 
-def write_branch_weights_and_map(
-    complete_solve: str,
-    active_time_list: dict[str, list[tuple[str, ...]]],
-    solve_branch__time_branch_list: list[tuple[str, str]],
-    branch_start_time: tuple[str, str] | None,
-    period__branch_lists: list[tuple[str, str]],
-    stochastic_branches: dict[str, list[Any]],
-    work_folder: Path | None = None,
-) -> None:
-    """Emit ``solve_branch_weight.csv`` (per-branch weight, defaulting
-    to ``1.0`` for self-pairings) and ``solve_branch__time_branch.csv``
-    (the relationship verbatim).
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    _write(
-        derive_solve_branch_weight(
-            complete_solve, active_time_list, solve_branch__time_branch_list,
-            branch_start_time, period__branch_lists, stochastic_branches,
-        ),
-        wf / "solve_data/solve_branch_weight.csv",
-    )
-    _write(
-        derive_solve_branch__time_branch(solve_branch__time_branch_list),
-        wf / "solve_data/solve_branch__time_branch.csv",
-    )
-
-
 def emit_branch_weights_and_map(
     complete_solve: str,
     active_time_list: dict[str, list[tuple[str, ...]]],
@@ -1234,28 +919,6 @@ def _empty_frame(headers: tuple[str, ...]) -> pl.DataFrame:
     return pl.DataFrame(schema={h: pl.Utf8 for h in headers})
 
 
-def write_empty_investment_file(work_folder: Path | None = None) -> None:
-    """Seed three header-only investment CSVs for the first solve."""
-    wf = work_folder if work_folder is not None else Path.cwd()
-    sd = wf / "solve_data"
-    _write(
-        _empty_frame(("entity", "p_entity_invested")),
-        sd / "p_entity_invested.csv",
-    )
-    _write(
-        _empty_frame(("entity", "p_entity_divested")),
-        sd / "p_entity_divested.csv",
-    )
-    _write(
-        _empty_frame((
-            "entity", "period",
-            "p_entity_period_existing_capacity",
-            "p_entity_period_invested_capacity",
-        )),
-        sd / "p_entity_period_existing_capacity.csv",
-    )
-
-
 def emit_empty_investment_file(work_folder: Path | None = None,
                                  *, provider) -> None:
     """Provider-emitting twin of :func:`write_empty_investment_file`."""
@@ -1270,29 +933,6 @@ def emit_empty_investment_file(work_folder: Path | None = None,
             "p_entity_period_existing_capacity",
             "p_entity_period_invested_capacity",
         )),
-    )
-
-
-def write_empty_cumulative_files(work_folder: Path | None = None) -> None:
-    """Seed three header-only rolling-accumulator CSVs (mod default 0
-    collapses every accumulator on a single-period single solve).
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    sd = wf / "solve_data"
-    sd.mkdir(exist_ok=True)
-    _write(
-        _empty_frame(
-            ("commodity", "tier", "period", "p_ladder_cum_realized_mwh"),
-        ),
-        sd / "ladder_cum_realized_mwh.csv",
-    )
-    _write(
-        _empty_frame(("period", "p_ladder_cum_sim_hours")),
-        sd / "ladder_cum_sim_hours.csv",
-    )
-    _write(
-        _empty_frame(("group", "period", "p_co2_cum_realized_tonnes")),
-        sd / "co2_cum_realized_tonnes.csv",
     )
 
 
@@ -1313,38 +953,6 @@ def emit_empty_cumulative_files(work_folder: Path | None = None,
     )
 
 
-def write_empty_storage_fix_file(work_folder: Path | None = None) -> None:
-    """Seed four header-only fix-storage CSVs for the first solve.
-
-    NOTE: legacy preserves the leading-space column names (e.g.
-    ``" period"``) — kept verbatim for byte parity.
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    sd = wf / "solve_data"
-    _write(
-        _empty_frame(
-            ("node", " period", " step", " ndt_fix_storage_price"),
-        ),
-        sd / "fix_storage_price.csv",
-    )
-    _write(
-        _empty_frame(
-            ("node", " period", " step", " ndt_fix_storage_quantity"),
-        ),
-        sd / "fix_storage_quantity.csv",
-    )
-    _write(
-        _empty_frame(
-            ("node", " period", " step", " ndt_fix_storage_usage"),
-        ),
-        sd / "fix_storage_usage.csv",
-    )
-    _write(
-        _empty_frame(("node", " p_roll_continue_state")),
-        sd / "p_roll_continue_state.csv",
-    )
-
-
 def emit_empty_storage_fix_file(work_folder: Path | None = None,
                                   *, provider) -> None:
     """Provider-emitting twin of :func:`write_empty_storage_fix_file`."""
@@ -1362,11 +970,6 @@ def emit_empty_storage_fix_file(work_folder: Path | None = None,
                    ))
     _emit_dual_key(provider, "solve_data/p_roll_continue_state.csv",
                    _empty_frame(("node", " p_roll_continue_state")))
-
-
-def write_headers_for_empty_output_files(filename: str, header: str) -> None:
-    """Emit a header-only output CSV given comma-separated column names."""
-    _write(_empty_frame(tuple(header.split(","))), Path(filename))
 
 
 def emit_headers_for_empty_output_files(filename: str, header: str,
@@ -1399,26 +1002,6 @@ def derive_timesets__timeline(
     return _to_utf8_frame(("timesets", "timeline"), rows)
 
 
-def write_timesets(
-    timesets_used_by_solves: dict[str, list[tuple[str, str]]],
-    timeset__timeline: dict[str, str],
-    work_folder: Path | None = None,
-) -> None:
-    """Emit ``input/timesets_in_use.csv`` (solve × period × timeset
-    long-form) and ``input/timesets__timeline.csv`` (timeset → timeline
-    mapping).
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    _write(
-        derive_timesets_in_use(timesets_used_by_solves),
-        wf / "input/timesets_in_use.csv",
-    )
-    _write(
-        derive_timesets__timeline(timeset__timeline),
-        wf / "input/timesets__timeline.csv",
-    )
-
-
 def emit_timesets(
     timesets_used_by_solves: dict[str, list[tuple[str, str]]],
     timeset__timeline: dict[str, str],
@@ -1443,17 +1026,6 @@ def derive_hole_multiplier(
     if hole_multipliers[solve]:
         rows.append((solve, hole_multipliers[solve]))
     return _to_utf8_frame(("solve", "p_hole_multiplier"), rows)
-
-
-def write_hole_multiplier(
-    solve: str,
-    hole_multipliers: dict[str, str],
-    filename: str,
-) -> None:
-    """Emit ``solve_hole_multiplier.csv`` — single row when the
-    multiplier is truthy, header-only otherwise.
-    """
-    _write(derive_hole_multiplier(solve, hole_multipliers), Path(filename))
 
 
 def emit_hole_multiplier(
@@ -1498,26 +1070,6 @@ def derive_p_use_row_scaling(
     )
 
 
-def write_p_use_row_scaling(
-    solve: str,
-    use_row_scaling: dict[str, str],
-    filename: str,
-) -> None:
-    """Emit ``p_use_row_scaling.csv`` — the Agent-5 row-scaling opt-in
-    flag as an integer 0/1.  Default is ``0`` (off) unless the user
-    explicitly sets the parameter to ``"yes"`` on the solve entity.
-    The row is always written so AMPL finds the current solve's value.
-
-    The ``FLEXTOOL_FORCE_ROW_SCALING`` env-var (``1`` / ``yes`` /
-    ``true`` / ``on``) forces ``flag=1`` regardless — Agent 9 test
-    hook for the Mode B un-scaling benchmark harness.  No effect in
-    production unless the env var is set.
-    """
-    _write(
-        derive_p_use_row_scaling(solve, use_row_scaling), Path(filename),
-    )
-
-
 def emit_p_use_row_scaling(
     solve: str,
     use_row_scaling: dict[str, str],
@@ -1557,28 +1109,6 @@ def derive_scale_the_state_header_only() -> pl.DataFrame:
     return _empty_frame(("key", "value"))
 
 
-def write_scale_the_objective(
-    solve_data_dir: Path | str,
-    value: float,
-) -> Path:
-    """Emit ``solve_data/scale_the_objective.csv`` — Agent-8 scaling
-    analyser's global objective scalar in a single keyed-row CSV.
-
-    GMPL ``table data IN`` requires a keyed read, so the row is stored
-    as ``("v", <scalar>)`` and pulled via
-    ``sum{k in _scale_obj_keys} _scale_obj_from_csv[k]`` on the
-    single-row file.  Value is formatted with ``%.17g`` for full
-    double precision round-trip.
-
-    See :func:`write_scale_the_objective_header_only` for the
-    default-mode header-only variant.
-    """
-    sd = Path(solve_data_dir)
-    path = sd / "scale_the_objective.csv"
-    _write(derive_scale_the_objective(value), path)
-    return path
-
-
 def emit_scale_the_objective(
     solve_data_dir: Path | str,
     value: float,
@@ -1588,21 +1118,6 @@ def emit_scale_the_objective(
     path = Path(solve_data_dir) / "scale_the_objective.csv"
     _emit_dual_key(provider, "solve_data/scale_the_objective.csv",
                    derive_scale_the_objective(value))
-    return path
-
-
-def write_scale_the_state(
-    solve_data_dir: Path | str,
-    value: float,
-) -> Path:
-    """Emit ``solve_data/scale_the_state.csv`` — companion to
-    :func:`write_scale_the_objective`.  Currently fixed at ``1.0`` in
-    the analyser; the field is reserved for future tuning.  Layout
-    matches the objective CSV verbatim.
-    """
-    sd = Path(solve_data_dir)
-    path = sd / "scale_the_state.csv"
-    _write(derive_scale_the_state(value), path)
     return path
 
 
@@ -1618,25 +1133,6 @@ def emit_scale_the_state(
     return path
 
 
-def write_scale_the_objective_header_only(
-    solve_data_dir: Path | str,
-) -> Path:
-    """Emit header-only ``solve_data/scale_the_objective.csv`` —
-    default-mode counterpart to :func:`write_scale_the_objective`.
-    The file exists (so ``table data IN`` does not fail) but has no
-    data rows; ``_scale_obj_keys`` stays empty and the
-    ``default 1e-6`` clause on ``param scale_the_objective`` applies.
-
-    Agent 21 rationale: the analyser's power-of-10 rounding is too
-    aggressive for models whose Matrix range is already wide; users
-    must opt in to auto-apply explicitly.
-    """
-    sd = Path(solve_data_dir)
-    path = sd / "scale_the_objective.csv"
-    _write(derive_scale_the_objective_header_only(), path)
-    return path
-
-
 def emit_scale_the_objective_header_only(
     solve_data_dir: Path | str,
     *, provider,
@@ -1645,19 +1141,6 @@ def emit_scale_the_objective_header_only(
     path = Path(solve_data_dir) / "scale_the_objective.csv"
     _emit_dual_key(provider, "solve_data/scale_the_objective.csv",
                    derive_scale_the_objective_header_only())
-    return path
-
-
-def write_scale_the_state_header_only(solve_data_dir: Path | str) -> Path:
-    """Emit header-only ``solve_data/scale_the_state.csv`` —
-    default-mode counterpart to :func:`write_scale_the_state`.  Same
-    rationale as :func:`write_scale_the_objective_header_only`: the
-    CSV exists but has no data rows, so the ``default 1`` clause on
-    ``param scale_the_state`` applies.
-    """
-    sd = Path(solve_data_dir)
-    path = sd / "scale_the_state.csv"
-    _write(derive_scale_the_state_header_only(), path)
     return path
 
 
@@ -1723,32 +1206,6 @@ def derive_dtt__delay_duration(
                 ))
     return _to_utf8_frame(
         ("period", "time_source", "time_sink", "delay_duration"), rows,
-    )
-
-
-def write_delayed_durations(
-    active_time_list: dict[str, list[tuple[str, ...]]],
-    solve: str,
-    delay_durations: dict[str, Any],
-    work_folder: Path | None = None,
-) -> None:
-    """Emit ``solve_data/delay_duration.csv`` (unique delay values used
-    by any delayed process) and ``solve_data/dtt__delay_duration.csv``
-    (source/sink offset map across every active timestep, with
-    end-of-period wrap-around to keep the relationship cyclic).
-
-    ``delay_durations`` may map an entity to either a scalar duration
-    or a list of ``(duration, ...)`` tuples — both shapes are
-    flattened into the unique duration set.
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    _write(
-        derive_delay_duration(delay_durations),
-        wf / "solve_data/delay_duration.csv",
-    )
-    _write(
-        derive_dtt__delay_duration(active_time_list, delay_durations),
-        wf / "solve_data/dtt__delay_duration.csv",
     )
 
 
@@ -1882,49 +1339,6 @@ def derive_rp_base_chain(
     )["rp_base_chain.csv"]
 
 
-def write_rp_data(
-    rp_weights: dict[str, dict[str, float]],
-    timeset_duration_entries: list[tuple[str, float]],
-    period_name: str,
-    work_folder: Path | None = None,
-) -> None:
-    """Emit the eight representative-period CSVs for the GMPL solver.
-
-    Args:
-        rp_weights: ``{base_start: {rep_start: weight}}`` — the full
-            weight matrix between base periods and representative
-            periods.
-        timeset_duration_entries: ``[(start_step, count), ...]`` for
-            the RP timeset; ``count`` is interpreted as a float (the
-            timeset CSV stores it as a stringified number).
-        period_name: FlexTool period name used as the ``period``
-            column on the per-step CSVs (e.g. ``"p2025"``).
-        work_folder: working directory containing ``solve_data/``.
-
-    Files written (all under ``solve_data/``):
-
-    * ``rp_weights.csv``         — (base, rep, weight) triples, with
-      a ``weight > 1e-10`` epsilon filter to drop numerical zeroes.
-    * ``rp_base_chain.csv``      — chronological predecessor chain
-      (excludes the very first base period).
-    * ``rp_base_first.csv``      — single-row first base period.
-    * ``rp_base_last.csv``       — single-row last base period.
-    * ``rp_block_first.csv`` / ``rp_block_last.csv`` — first/last
-      timestep of each RP block.
-    * ``rp_block_start_last.csv`` — start → last step mapping.
-    * ``rp_cost_weight.csv``     — per-timestep cost weight
-      ``w_r = (sum_d W[d,r]) * n_rp / n_base`` (so a uniform weight
-      input produces ``w_r = 1`` per step).
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    sd = wf / "solve_data"
-    frames = _compute_rp_frames(
-        rp_weights, timeset_duration_entries, period_name,
-    )
-    for basename, df in frames.items():
-        _write(df, sd / basename)
-
-
 def emit_rp_data(
     rp_weights: dict[str, dict[str, float]],
     timeset_duration_entries: list[tuple[str, float]],
@@ -1983,40 +1397,6 @@ def derive_timeset_cost_weight(
     return _to_utf8_frame(("period", "time", "weight"), rows)
 
 
-def write_timeset_cost_weight(
-    active_time_list: dict[str, list],
-    timesets_used_by_solve: list[tuple[str, str]],
-    timeset_weights: dict[str, dict[str, float]],
-    work_folder: Path | None = None,
-) -> bool:
-    """Emit ``rp_cost_weight.csv`` from user-supplied per-timestep
-    ``timeset_weights`` (non-RP pathway).
-
-    For each (period, timeset) pair, look up the timeset's weight map
-    and the period's active step list.  Per-step weights are
-    normalised to sum to 1 across the period, then scaled by the
-    number of active steps so that a uniform input reproduces the
-    default ``weight = 1`` per step.  Timesteps absent from the user
-    map are treated as ``0`` before normalisation.
-
-    Returns ``True`` if any rows were written, ``False`` when no
-    active timeset on the current solve has ``timeset_weights``
-    defined (orchestrator falls back to default unit weights).
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    sd = wf / "solve_data"
-    rows, any_written = _compute_timeset_cost_weight_rows(
-        active_time_list, timesets_used_by_solve, timeset_weights,
-    )
-    if not any_written:
-        return False
-    _write(
-        _to_utf8_frame(("period", "time", "weight"), rows),
-        sd / "rp_cost_weight.csv",
-    )
-    return True
-
-
 def emit_timeset_cost_weight(
     active_time_list: dict[str, list],
     timesets_used_by_solve: list[tuple[str, str]],
@@ -2045,17 +1425,6 @@ _EMPTY_RP_HEADERS: dict[str, tuple[str, ...]] = {
     "rp_block_start_last.csv": ("rep_start", "last_step"),
     "rp_cost_weight.csv": ("period", "time", "weight"),
 }
-
-
-def write_empty_rp_data(work_folder: Path | None = None) -> None:
-    """Seed the eight representative-period CSVs with header-only
-    files (used by non-RP models so ``table data IN`` declarations in
-    ``flextool.mod`` find the expected files).
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    sd = wf / "solve_data"
-    for filename, headers in _EMPTY_RP_HEADERS.items():
-        _write(_empty_frame(headers), sd / filename)
 
 
 def emit_empty_rp_data(work_folder: Path | None = None,

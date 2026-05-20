@@ -106,11 +106,6 @@ def _read_csv(path: Path, columns: list[str],
     )
 
 
-def _write(df: pl.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(path)
-
-
 def _drop_blank_rows(df: pl.DataFrame, required_cols: list[str]) -> pl.DataFrame:
     expr = pl.col(required_cols[0]) != ""
     for c in required_cols[1:]:
@@ -239,16 +234,6 @@ def derive_process_source_sink_param_t(solve_data_dir: Path,
     )
 
 
-def write_process_source_sink_param_t(input_dir: Path, solve_data_dir: Path,
-                                        *,
-                                        provider: "object | None" = None,
-                                        ) -> None:
-    _write(
-        derive_process_source_sink_param_t(solve_data_dir, provider=provider),
-        solve_data_dir / "process_source_sink_param_t.csv",
-    )
-
-
 def emit_process_source_sink_param_t(input_dir: Path, solve_data_dir: Path,
                                        *, provider) -> None:
     """Provider-emitting twin of :func:`write_process_source_sink_param_t`."""
@@ -327,18 +312,6 @@ def derive_node_time_param_in_use(
     )
 
 
-def write_node_time_param_in_use(input_dir: Path, solve_data_dir: Path,
-                                   *,
-                                   provider: "object | None" = None,
-                                   ) -> None:
-    _write(
-        derive_node_time_param_in_use(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "node__TimeParam_in_use.csv",
-    )
-
-
 def emit_node_time_param_in_use(input_dir: Path, solve_data_dir: Path,
                                   *, provider) -> None:
     """Provider-emitting twin of :func:`write_node_time_param_in_use`."""
@@ -376,18 +349,6 @@ def derive_process_source_delayed_partition(
     delayed = pairs.filter(pl.col("process").is_in(list(delayed_set)))
     undelayed = pairs.filter(~pl.col("process").is_in(list(delayed_set)))
     return delayed, undelayed
-
-
-def write_process_source_delayed_partition(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    delayed, undelayed = derive_process_source_delayed_partition(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(delayed, solve_data_dir / "process_source_delayed.csv")
-    _write(undelayed, solve_data_dir / "process_source_undelayed.csv")
 
 
 def emit_process_source_delayed_partition(
@@ -473,18 +434,6 @@ def derive_process_source_sink_param(
     )
 
 
-def write_process_source_sink_param(input_dir: Path, solve_data_dir: Path,
-                                      *,
-                                      provider: "object | None" = None,
-                                      ) -> None:
-    _write(
-        derive_process_source_sink_param(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "process__source__sink__param.csv",
-    )
-
-
 def emit_process_source_sink_param(input_dir: Path, solve_data_dir: Path,
                                      *, provider) -> None:
     """Provider-emitting twin of :func:`write_process_source_sink_param`."""
@@ -535,19 +484,6 @@ def derive_process_source_sink_profile_method_connection(
             "process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8,
             "profile": pl.Utf8, "profile_method": pl.Utf8,
         },
-    )
-
-
-def write_process_source_sink_profile_method_connection(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    _write(
-        derive_process_source_sink_profile_method_connection(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "process__source__sink__profile__profile_method_connection.csv",
     )
 
 
@@ -636,19 +572,6 @@ def derive_process_method_sources_sinks(
             "orig_source": pl.Utf8, "orig_sink": pl.Utf8,
             "always_source": pl.Utf8, "always_sink": pl.Utf8,
         },
-    )
-
-
-def write_process_method_sources_sinks(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    _write(
-        derive_process_method_sources_sinks(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "process_method_sources_sinks.csv",
     )
 
 
@@ -750,19 +673,6 @@ def derive_ed_history_realized_first(
     )
 
 
-def write_ed_history_realized_first(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    _write(
-        derive_ed_history_realized_first(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "ed_history_realized_first.csv",
-    )
-
-
 def emit_ed_history_realized_first(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -831,20 +741,6 @@ def derive_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
     )
 
 
-def write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    _write(
-        derive_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir
-        / "process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.csv",
-    )
-
-
 def emit_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -899,19 +795,6 @@ def derive_process_source_sink_ramp_method(
     )
 
 
-def write_process_source_sink_ramp_method(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    _write(
-        derive_process_source_sink_ramp_method(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "process__source__sink__ramp_method.csv",
-    )
-
-
 def emit_process_source_sink_ramp_method(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -957,17 +840,6 @@ def derive_process_source_sink_coeff_zero(
             "sink":    [r[2] for r in rows],
         },
         schema={"process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8},
-    )
-
-
-def write_process_source_sink_coeff_zero(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    _write(
-        derive_process_source_sink_coeff_zero(solve_data_dir, provider=provider),
-        solve_data_dir / "process_source_sink_coeff_zero.csv",
     )
 
 
@@ -1032,20 +904,6 @@ def derive_process_source_sink_is_node_family(
     )
 
 
-def write_process_source_sink_is_node_family(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    base, two1, not21, two2 = derive_process_source_sink_is_node_family(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _write(base, solve_data_dir / "process__source__sinkIsNode.csv")
-    _write(two1, solve_data_dir / "process__source__sinkIsNode_2way1var.csv")
-    _write(not21, solve_data_dir / "process__source__sinkIsNode_not2way1var.csv")
-    _write(two2, solve_data_dir / "process__source__sinkIsNode_2way2var.csv")
-
-
 def emit_process_source_sink_is_node_family(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -1096,18 +954,6 @@ def derive_process_source_sink_delayed_partition(
         )
 
     return _to_df(delayed_rows), _to_df(undelayed_rows)
-
-
-def write_process_source_sink_delayed_partition(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    delayed, undelayed = derive_process_source_sink_delayed_partition(
-        solve_data_dir, provider=provider,
-    )
-    _write(delayed, solve_data_dir / "process_source_sink_delayed.csv")
-    _write(undelayed, solve_data_dir / "process_source_sink_undelayed.csv")
 
 
 def emit_process_source_sink_delayed_partition(
@@ -1199,18 +1045,6 @@ def derive_p_process_source_sink(
             "process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8,
             "param": pl.Utf8, "value": pl.Utf8,
         },
-    )
-
-
-def write_pProcess_source_sink(input_dir: Path, solve_data_dir: Path,
-                                 *,
-                                 provider: "object | None" = None,
-                                 ) -> None:
-    _write(
-        derive_p_process_source_sink(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "pProcess_source_sink.csv",
     )
 
 
@@ -1328,17 +1162,6 @@ def _triples_frame(rows: list[tuple[str, str, str]]) -> pl.DataFrame:
     )
 
 
-def write_process_source_sink_ramp_family(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """5 per-arc ramp sets gated by method and (for limit variants) speed > 0."""
-    by_file = _compute_ramp_family(input_dir, solve_data_dir, provider=provider)
-    for fname, rows in by_file.items():
-        _write(_triples_frame(rows), solve_data_dir / fname)
-
-
 def emit_process_source_sink_ramp_family(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -1374,18 +1197,6 @@ def derive_process_source_sink_ramp_unions(
         ):
             seen.setdefault(r, None)
     return _triples_frame(list(seen.keys()))
-
-
-def write_process_source_sink_ramp_unions(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """Order-preserving union of the 5 ramp-family triple sets."""
-    _write(
-        derive_process_source_sink_ramp_unions(solve_data_dir, provider=provider),
-        solve_data_dir / "process_source_sink_ramp.csv",
-    )
 
 
 def emit_process_source_sink_ramp_unions(
@@ -1459,26 +1270,6 @@ def derive_group_commodity_node_period_co2_total(
             "node":      [r[2] for r in rows],
         },
         schema={"group": pl.Utf8, "commodity": pl.Utf8, "node": pl.Utf8},
-    )
-
-
-def write_group_commodity_node_period_co2_total(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """Join group_co2_max_total × group__node × commodity__node × p_commodity.
-
-    Emit rows ``(g, c, n)`` where:
-      * (g, n) ∈ group__node and g ∈ group_co2_max_total
-      * (c, n) ∈ commodity__node
-      * ``p_commodity[c, 'co2_content'] != 0``
-    """
-    _write(
-        derive_group_commodity_node_period_co2_total(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "group_commodity_node_period_co2_total.csv",
     )
 
 
@@ -1661,129 +1452,6 @@ def _rows_to_frame_3(rows: list[tuple[str, str, str]],
     )
 
 
-def write_param_in_use_sets(input_dir: Path, solve_data_dir: Path,
-                              *,
-                              provider: "object | None" = None,
-                              ) -> None:
-    """Emit the seven ``*_in_use`` CSVs that filter (entity, param) by
-    Required/Invest enum membership.
-
-    Outputs:
-      * ``node__PeriodParam_in_use.csv``
-      * ``process__PeriodParam_in_use.csv``
-      * ``process_TimeParam_in_use.csv``
-      * ``process_source_sourceSinkTimeParam_in_use.csv``
-      * ``process_sink_sourceSinkTimeParam_in_use.csv``
-      * ``process_source_sourceSinkPeriodParam_in_use.csv``
-      * ``process_sink_sourceSinkPeriodParam_in_use.csv``
-    """
-    nodes = _read_singles_list(input_dir / "node.csv", provider=provider)
-    processes = _read_singles_list(input_dir / "process.csv", provider=provider)
-    invest_set = frozenset(
-        _read_singles_list(
-            solve_data_dir / "entityInvest.csv", provider=provider,
-        )
-    )
-    divest_set = frozenset(
-        _read_singles_list(
-            solve_data_dir / "entityDivest.csv", provider=provider,
-        )
-    )
-    ctm = _read_n_col_rows(
-        solve_data_dir / "process__ct_method.csv", ["process", "method"],
-        provider=provider,
-    )
-    p_with_min_load = frozenset(
-        p for p, m in ctm if m == "min_load_efficiency"
-    )
-    process_online = frozenset(
-        _read_singles_list(
-            solve_data_dir / "process_online.csv", provider=provider,
-        )
-    )
-    sources = [
-        (p, src) for p, src in _read_n_col_rows(
-            input_dir / "process__source.csv", ["process", "source"],
-            provider=provider,
-        )
-    ]
-    sinks = [
-        (p, snk) for p, snk in _read_n_col_rows(
-            input_dir / "process__sink.csv", ["process", "sink"],
-            provider=provider,
-        )
-    ]
-
-    # node__PeriodParam_in_use
-    _write(
-        _rows_to_frame_2(
-            _derive_node_period_param_in_use(nodes, invest_set, divest_set),
-            ("node", "param"),
-        ),
-        solve_data_dir / "node__PeriodParam_in_use.csv",
-    )
-    # process__PeriodParam_in_use
-    _write(
-        _rows_to_frame_2(
-            _derive_process_period_param_in_use(
-                processes, invest_set, divest_set, process_online,
-            ),
-            ("process", "param"),
-        ),
-        solve_data_dir / "process__PeriodParam_in_use.csv",
-    )
-    # process_TimeParam_in_use
-    _write(
-        _rows_to_frame_2(
-            _derive_process_time_param_in_use(processes, p_with_min_load),
-            ("process", "param"),
-        ),
-        solve_data_dir / "process_TimeParam_in_use.csv",
-    )
-    # process_source / process_sink _sourceSinkTimeParam_in_use
-    _write(
-        _rows_to_frame_3(
-            _derive_pss_param_in_use(
-                sources, p_with_min_load,
-                _SOURCE_SINK_TIME_PARAM, _SOURCE_SINK_TIME_PARAM_REQUIRED,
-            ),
-            ("process", "source", "param"),
-        ),
-        solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv",
-    )
-    _write(
-        _rows_to_frame_3(
-            _derive_pss_param_in_use(
-                sinks, p_with_min_load,
-                _SOURCE_SINK_TIME_PARAM, _SOURCE_SINK_TIME_PARAM_REQUIRED,
-            ),
-            ("process", "sink", "param"),
-        ),
-        solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv",
-    )
-    # process_source / process_sink _sourceSinkPeriodParam_in_use
-    _write(
-        _rows_to_frame_3(
-            _derive_pss_param_in_use(
-                sources, p_with_min_load,
-                _SOURCE_SINK_PERIOD_PARAM, _SOURCE_SINK_PERIOD_PARAM_REQUIRED,
-            ),
-            ("process", "source", "param"),
-        ),
-        solve_data_dir / "process_source_sourceSinkPeriodParam_in_use.csv",
-    )
-    _write(
-        _rows_to_frame_3(
-            _derive_pss_param_in_use(
-                sinks, p_with_min_load,
-                _SOURCE_SINK_PERIOD_PARAM, _SOURCE_SINK_PERIOD_PARAM_REQUIRED,
-            ),
-            ("process", "sink", "param"),
-        ),
-        solve_data_dir / "process_sink_sourceSinkPeriodParam_in_use.csv",
-    )
-
-
 def emit_param_in_use_sets(input_dir: Path, solve_data_dir: Path,
                             *, provider) -> None:
     """Provider-emitting twin of :func:`write_param_in_use_sets`."""
@@ -1935,19 +1603,6 @@ def derive_node_group_dispatch_process_fully_inside(
             if (srcs & gnodes) and (snks & gnodes):
                 rows.append((g, p))
     return _rows_to_frame_2(rows, ("group", "process"))
-
-
-def write_node_group_dispatch_process_fully_inside(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    _write(
-        derive_node_group_dispatch_process_fully_inside(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "nodeGroupDispatch__process_fully_inside.csv",
-    )
 
 
 def emit_node_group_dispatch_process_fully_inside(
@@ -2207,46 +1862,6 @@ def derive_pdt_online_integer(solve_data_dir: Path,
     )
 
 
-def write_small_set_derivations(input_dir: Path, solve_data_dir: Path,
-                                  *,
-                                  provider: "object | None" = None) -> None:
-    """flextool.mod L999, L1061, L1132, L1174, L1222-3 — 6 small derived sets.
-
-    Emits ``ed_history_realized``,
-    ``process__source__sink__profile__profile_method``,
-    ``process_sinkIsNode_2way1var``, ``nodeSelfDischarge``,
-    ``pdt_online_linear``, ``pdt_online_integer``.
-
-    See the legacy docstring for the full set of math-prog derivations.
-    """
-    _write(
-        derive_ed_history_realized(solve_data_dir, provider=provider),
-        solve_data_dir / "ed_history_realized.csv",
-    )
-    _write(
-        derive_process_source_sink_profile_method(
-            solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "process__source__sink__profile__profile_method.csv",
-    )
-    _write(
-        derive_process_sinkIsNode_2way1var(solve_data_dir, provider=provider),
-        solve_data_dir / "process_sinkIsNode_2way1var.csv",
-    )
-    _write(
-        derive_nodeSelfDischarge(solve_data_dir, provider=provider),
-        solve_data_dir / "nodeSelfDischarge.csv",
-    )
-    _write(
-        derive_pdt_online_linear(solve_data_dir, provider=provider),
-        solve_data_dir / "pdt_online_linear.csv",
-    )
-    _write(
-        derive_pdt_online_integer(solve_data_dir, provider=provider),
-        solve_data_dir / "pdt_online_integer.csv",
-    )
-
-
 def emit_small_set_derivations(input_dir: Path, solve_data_dir: Path,
                                  *, provider) -> None:
     """Provider-emitting twin of :func:`write_small_set_derivations`."""
@@ -2342,27 +1957,6 @@ def derive_process_source_sink_param_with_time(
     return _rows_to_frame(rows, ("process", "source", "sink", "param"))
 
 
-def write_process_source_sink_param_with_time(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """flextool.mod L1187-1195 — process_source_sink × SOURCE_SINK_TIME_PARAM
-    gated by static or time-variant param membership on either side, or via
-    process_connection.
-
-    Distinct from the sibling ``write_process_source_sink_param`` (3-col
-    set, no _t variants).  This one is the double-underscore-named set
-    ``process__source__sink__param_t``.
-    """
-    _write(
-        derive_process_source_sink_param_with_time(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "process__source__sink__param_t.csv",
-    )
-
-
 def emit_process_source_sink_param_with_time(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -2425,29 +2019,6 @@ def derive_gdt_min_instant_flow(solve_data_dir: Path,
     return _rows_to_frame(min_rows, ("group", "period", "time"))
 
 
-def write_gdt_instant_flow_sets(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """flextool.mod L1131-1132 — gdt_maxInstantFlow + gdt_minInstantFlow.
-
-    Each row is included iff the corresponding ``pdtGroup[g, P, d, t]``
-    value is non-zero.  Both frames come from one scan of pdtGroup.csv.
-    """
-    max_rows, min_rows = _scan_gdt_instant_flow_rows(
-        solve_data_dir, provider=provider,
-    )
-    _write(
-        _rows_to_frame(max_rows, ("group", "period", "time")),
-        solve_data_dir / "gdt_maxInstantFlow.csv",
-    )
-    _write(
-        _rows_to_frame(min_rows, ("group", "period", "time")),
-        solve_data_dir / "gdt_minInstantFlow.csv",
-    )
-
-
 def emit_gdt_instant_flow_sets(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -2497,25 +2068,6 @@ def derive_p_process_delay_weight(
         v = 1.0 if (p, td) in delay_single else weighted.get((p, td), 0.0)
         rows.append((p, td, repr(v)))
     return _rows_to_frame(rows, ("process", "delay_duration", "value"))
-
-
-def write_p_process_delay_weight(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """flextool.mod L1096-1099 — ``p_process_delay_weight``.
-
-    For each (p, td) in ``process_delayed__duration``: 1 if
-    ``(p, td) in process_delay_single`` else ``p_process_delay_weighted``
-    (default 0).
-    """
-    _write(
-        derive_p_process_delay_weight(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "p_process_delay_weight.csv",
-    )
 
 
 def emit_p_process_delay_weight(
@@ -2605,16 +2157,6 @@ def derive_gcndt_co2_price(
     )
 
 
-def write_gcndt_co2_price(input_dir: Path, solve_data_dir: Path,
-                            *,
-                            provider: "object | None" = None) -> None:
-    """flextool.mod L1542-1548 — gcndt_co2_price 5-tuple set."""
-    _write(
-        derive_gcndt_co2_price(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "gcndt_co2_price.csv",
-    )
-
-
 def emit_gcndt_co2_price(input_dir: Path, solve_data_dir: Path,
                           *, provider) -> None:
     """Provider-emitting twin of :func:`write_gcndt_co2_price`."""
@@ -2682,20 +2224,6 @@ def derive_group_commodity_node_period_co2_period(
     return _rows_to_frame(rows, ("group", "commodity", "node", "period"))
 
 
-def write_group_commodity_node_period_co2_period(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """flextool.mod L1550-1555 — group_commodity_node_period_co2_period."""
-    _write(
-        derive_group_commodity_node_period_co2_period(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "group_commodity_node_period_co2_period.csv",
-    )
-
-
 def emit_group_commodity_node_period_co2_period(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -2747,19 +2275,6 @@ def derive_peedt(solve_data_dir: Path,
             "process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8,
             "period": pl.Utf8, "time": pl.Utf8,
         },
-    )
-
-
-def write_peedt(input_dir: Path, solve_data_dir: Path,
-                 *,
-                 provider: "object | None" = None) -> None:
-    """flextool.mod L1084 — peedt = process_source_sink × dt.
-
-    280k-row hot path for full-year fixtures.
-    """
-    _write(
-        derive_peedt(solve_data_dir, provider=provider),
-        solve_data_dir / "peedt.csv",
     )
 
 
@@ -2840,23 +2355,6 @@ def derive_p_flow_min(
         v = -dcm.get((p, d), 0.0) / us
         rows.append((p, src, sink, d, t, repr(v)))
     return _rows_to_frame(rows, cols)
-
-
-def write_p_flow_min(input_dir: Path, solve_data_dir: Path,
-                      *,
-                      provider: "object | None" = None,
-                      ) -> None:
-    """flextool.mod L1680-1684 — ``p_flow_min{(p,source,sink,d,t) in peedt}``.
-
-    Emits only the non-zero rows.  The value is
-    ``-(p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p])``
-    when ``(p, source, sink) in process__source__sinkIsNode_2way1var``,
-    else 0 (skipped — mod's bare-decl provides ``default 0``).
-    """
-    _write(
-        derive_p_flow_min(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "p_flow_min.csv",
-    )
 
 
 def emit_p_flow_min(input_dir: Path, solve_data_dir: Path,
@@ -3022,21 +2520,6 @@ def derive_p_flow_max(
     )
 
 
-def write_p_flow_max(input_dir: Path, solve_data_dir: Path,
-                      *,
-                      provider: "object | None" = None) -> None:
-    """flextool.mod L1661-1677 — ``p_flow_max{(p,source,sink,d,t) in peedt}``.
-
-    Two-branch value formula, see legacy docstring at
-    ``process_arc_unions.write_p_flow_max``.  Every peedt row gets a
-    value (mod's bare-decl has no default).
-    """
-    _write(
-        derive_p_flow_max(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "p_flow_max.csv",
-    )
-
-
 def emit_p_flow_max(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
     """Provider-emitting twin of :func:`write_p_flow_max`."""
@@ -3106,20 +2589,6 @@ def derive_p_state_slack_share(
                 rows.append((g, n, d, t, repr(v)))
     return _rows_to_frame(
         rows, ("group", "node", "period", "time", "value"),
-    )
-
-
-def write_p_state_slack_share(input_dir: Path, solve_data_dir: Path,
-                                *,
-                                provider: "object | None" = None) -> None:
-    """flextool.mod L1689-1691 — ``p_state_slack_share[g, n, d, t]``.
-
-    Inflow-weighted or equal share over the nodes of group ``g`` for
-    each ``(d, t) ∈ dt``, restricted to ``g ∈ group_loss_share``.
-    """
-    _write(
-        derive_p_state_slack_share(input_dir, solve_data_dir, provider=provider),
-        solve_data_dir / "p_state_slack_share.csv",
     )
 
 
@@ -3223,28 +2692,6 @@ def derive_p_storage_state_reference_price(
                 value = 0.0
             rows.append((n, d, repr(value)))
     return _rows_to_frame(rows, ("node", "period", "value"))
-
-
-def write_p_storage_state_reference_price(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """flextool.mod L1693-1698 — ``p_storage_state_reference_price[n, d]``.
-
-    Sum of ``p_fix_storage_price`` over the ``(d2, t2)`` matched by
-    ``period__branch`` + ``period__time_last`` + ``dtt_timeline_matching``
-    if any match exists, otherwise fall back to
-    ``pdNode[n, 'storage_state_reference_price', d]`` for nodes with
-    ``(n, 'use_reference_price') ∈ node__storage_solve_horizon_method``,
-    else 0.
-    """
-    _write(
-        derive_p_storage_state_reference_price(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-        solve_data_dir / "p_storage_state_reference_price.csv",
-    )
 
 
 def emit_p_storage_state_reference_price(
@@ -3417,29 +2864,6 @@ def _compute_node_group_dispatch_sets(
     }
 
 
-def write_node_group_dispatch_sets(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """flextool.mod L1596-1657 — 12 nodeGroupDispatch sets.
-
-    Joins ``process_source_sink_alwaysProcess`` with ``nodeGroupDispatch``
-    + ``group__node`` + ``group__process__node`` + ``flowAggregator`` +
-    ``process_unit`` / ``process_connection``.  Eight base sets partition
-    the (g, p, source, sink) space by side (sink-in-group vs source-in-
-    group), kind (unit vs connection) and aggregator presence (with-ga
-    vs no-ga).  Four projection sets project pairs (g, p) or (g, ga) from
-    the relevant base sets.  All sets share the prefilter
-    ``(g, p) ∉ nodeGroupDispatch__process_fully_inside``.
-    """
-    by_file = _compute_node_group_dispatch_sets(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    for fname, (header, rows) in by_file.items():
-        _write(_rows_to_frame(rows, header), solve_data_dir / fname)
-
-
 def emit_node_group_dispatch_sets(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -3561,140 +2985,6 @@ def _read_param_static_2(path: Path,
             if len(r) >= 2 and r[0] and r[1]:
                 out.add((r[0], r[1]))
     return out
-
-
-def write_param_t_projections_and_time_params(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> None:
-    """Native port of
-    :func:`flextool.flextoolrunner.preprocessing.process_arc_unions.write_param_t_projections_and_time_params`
-    (legacy line 1914).
-
-    Emits 8 ``solve_data/`` CSVs:
-
-    * Projections (drop the time column from each *__time set):
-        - ``process__param_t.csv``
-        - ``connection__param__time.csv``
-        - ``connection__param_t.csv``
-        - ``process__source__param_t.csv``
-        - ``process__sink__param_t.csv``
-
-    * Joins with ``SOURCE_SINK_TIME_PARAM``:
-        - ``process__source__timeParam.csv``
-        - ``process__sink__timeParam.csv``
-        - ``process__timeParam.csv``
-
-    Reads ``solve_data/pt_process{,_source,_sink}.csv`` and
-    ``input/p_process{,_source,_sink}.csv``,
-    ``input/process{,_connection,__source,__sink}.csv``.
-    """
-    proc_conn = frozenset(_read_singles_list(
-        input_dir / "process_connection.csv", provider=provider,
-    ))
-
-    # process__param__time → projection (process, param) [drop time]
-    pp_t_seen, conn_pt_rows, conn_pt_seen = _read_pt_pp_t_seen(
-        solve_data_dir / "pt_process.csv", proc_conn, provider=provider,
-    )
-    _write(
-        _rows_to_frame(list(pp_t_seen.keys()), ("process", "param")),
-        solve_data_dir / "process__param_t.csv",
-    )
-    _write(
-        _rows_to_frame(conn_pt_rows, ("connection", "param", "time")),
-        solve_data_dir / "connection__param__time.csv",
-    )
-    _write(
-        _rows_to_frame(list(conn_pt_seen.keys()), ("connection", "param")),
-        solve_data_dir / "connection__param_t.csv",
-    )
-
-    # process__source__param_t (drop time)
-    pps_t_seen = _read_pps_t_seen(
-        solve_data_dir / "pt_process_source.csv", provider=provider,
-    )
-    _write(
-        _rows_to_frame(
-            list(pps_t_seen.keys()), ("process", "source", "param"),
-        ),
-        solve_data_dir / "process__source__param_t.csv",
-    )
-
-    # process__sink__param_t
-    ppk_t_seen = _read_pps_t_seen(
-        solve_data_dir / "pt_process_sink.csv", provider=provider,
-    )
-    _write(
-        _rows_to_frame(
-            list(ppk_t_seen.keys()), ("process", "sink", "param"),
-        ),
-        solve_data_dir / "process__sink__param_t.csv",
-    )
-
-    # Static parameter sets from input/p_process_source.csv, p_process_sink.csv,
-    # p_process.csv.
-    src_param = _read_param_static_3(
-        input_dir / "p_process_source.csv", provider=provider,
-    )
-    sink_param = _read_param_static_3(
-        input_dir / "p_process_sink.csv", provider=provider,
-    )
-    proc_param = _read_param_static_2(
-        input_dir / "p_process.csv", provider=provider,
-    )
-
-    # process__source__timeParam
-    proc_sources = _read_n_col_rows(
-        input_dir / "process__source.csv", ["process", "source"],
-        provider=provider,
-    )
-    proc_sinks = _read_n_col_rows(
-        input_dir / "process__sink.csv", ["process", "sink"],
-        provider=provider,
-    )
-    pps_t_set = frozenset(pps_t_seen.keys())
-    ppk_t_set = frozenset(ppk_t_seen.keys())
-    pp_t_set = frozenset(pp_t_seen.keys())
-
-    rows_src_tp: list[tuple[str, str, str]] = []
-    for p, src in proc_sources:
-        for param in _SS_TIME_PARAM_ENUM:
-            if ((p, src, param) in src_param
-                    or (p, src, param) in pps_t_set):
-                rows_src_tp.append((p, src, param))
-    _write(
-        _rows_to_frame(rows_src_tp, ("process", "source", "param")),
-        solve_data_dir / "process__source__timeParam.csv",
-    )
-
-    rows_snk_tp: list[tuple[str, str, str]] = []
-    for p, snk in proc_sinks:
-        for param in _SS_TIME_PARAM_ENUM:
-            if ((p, snk, param) in sink_param
-                    or (p, snk, param) in ppk_t_set):
-                rows_snk_tp.append((p, snk, param))
-    _write(
-        _rows_to_frame(rows_snk_tp, ("process", "sink", "param")),
-        solve_data_dir / "process__sink__timeParam.csv",
-    )
-
-    # process__timeParam — only for processes that are connections.
-    processes = _read_singles_list(
-        input_dir / "process.csv", provider=provider,
-    )
-    rows_p_tp: list[tuple[str, str]] = []
-    for p in processes:
-        if p not in proc_conn:
-            continue
-        for param in _SS_TIME_PARAM_ENUM:
-            if (p, param) in proc_param or (p, param) in pp_t_set:
-                rows_p_tp.append((p, param))
-    _write(
-        _rows_to_frame(rows_p_tp, ("process", "param")),
-        solve_data_dir / "process__timeParam.csv",
-    )
 
 
 def emit_param_t_projections_and_time_params(

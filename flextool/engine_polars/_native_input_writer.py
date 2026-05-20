@@ -9,11 +9,10 @@ cascade's downstream readers consume.
 Pure in-memory
 --------------
 
-The function is wrapped in
-:func:`flextool.engine_polars._flex_data_accumulator.capture_frames`,
-which monkey-patches every participating writer's ``_write(df, path)``
-helper to push the frame into the Provider and skip the disk write.
-No CSVs land on disk through this path; downstream readers
+The :mod:`flextool.input_derivation` pipeline dispatches ``emit_*``
+functions that push every derived frame into the caller-supplied
+Provider directly — no monkey-patching, no disk I/O on this path.
+Downstream readers
 (:func:`flextool.engine_polars.input.load_flextool`,
 :func:`flextool.engine_polars._output_writer.write_outputs_for_solve`,
 the per-solve preprocessing dispatched by
@@ -163,9 +162,10 @@ def write_workdir_inputs(
     """Populate *provider* with every cascade-input frame derived from
     the Spine database.
 
-    Pure in-memory: :func:`capture_frames` is entered so each
-    participating writer's ``_write(df, path)`` push the frame into
-    *provider* under its canonical key without touching disk.
+    Pure in-memory: each ``emit_*`` in the
+    :mod:`flextool.input_derivation` pipeline pushes its derived
+    frame into *provider* directly under its canonical key — no
+    disk I/O on this path.
 
     Parameters
     ----------
@@ -199,17 +199,15 @@ def write_workdir_inputs(
     work_folder.mkdir(parents=True, exist_ok=True)
 
     from flextool.input_derivation import run as _input_derivation_run
-    from flextool.engine_polars._flex_data_accumulator import capture_frames
 
-    with capture_frames(provider=provider):
-        _input_derivation_run(
-            db_url,
-            provider,
-            logger,
-            scenario_name=scenario_name,
-            work_folder=work_folder,
-            precision_digits=precision_digits,
-            memory_recorder=memory_recorder,
-        )
+    _input_derivation_run(
+        db_url,
+        provider,
+        logger,
+        scenario_name=scenario_name,
+        work_folder=work_folder,
+        precision_digits=precision_digits,
+        memory_recorder=memory_recorder,
+    )
 
 

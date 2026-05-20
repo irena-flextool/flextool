@@ -27,8 +27,9 @@ from pathlib import Path
 import pytest
 
 from flextool.engine_polars._emit_period_calc import (
-    write_branch_weights,
+    emit_branch_weights,
 )
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
 
 
 # ---------------------------------------------------------------------------
@@ -66,24 +67,64 @@ def _write_solve_data(
     )
 
 
-def _read_pd_weights(solve_data_dir: Path) -> dict[str, float]:
-    text = (solve_data_dir / "pd_branch_weight.csv").read_text().splitlines()
-    out: dict[str, float] = {}
-    for line in text[1:]:
-        period, value = line.split(",")
-        out[period] = float(value)
-    return out
+def _read_pd_weights(provider: FlexDataProvider) -> dict[str, float]:
+    df = provider.get("solve_data/pd_branch_weight.csv")
+    if df is None or df.height == 0:
+        return {}
+    return {
+        str(p): float(v)
+        for p, v in zip(df["period"].to_list(), df["value"].to_list())
+    }
 
 
 def _read_pdt_weights(
-    solve_data_dir: Path,
+    provider: FlexDataProvider,
 ) -> dict[tuple[str, str], float]:
-    text = (solve_data_dir / "pdt_branch_weight.csv").read_text().splitlines()
-    out: dict[tuple[str, str], float] = {}
-    for line in text[1:]:
-        period, time, value = line.split(",")
-        out[(period, time)] = float(value)
-    return out
+    df = provider.get("solve_data/pdt_branch_weight.csv")
+    if df is None or df.height == 0:
+        return {}
+    return {
+        (str(p), str(t)): float(v)
+        for p, t, v in zip(
+            df["period"].to_list(),
+            df["time"].to_list(),
+            df["value"].to_list(),
+        )
+    }
+
+
+def _run_branch_weights(
+    tmp_path: Path,
+    solve_data: Path,
+) -> FlexDataProvider:
+    """Seed the Provider with the five solve_data/*.csv inputs the
+    emitter consumes, then invoke ``emit_branch_weights``.
+
+    The cascade's Provider-only reader contract (``_read_csv`` has no
+    disk-fallback arm; see :mod:`._emit_period_calc`) means the test
+    has to surface the on-disk CSVs in the Provider before the emitter
+    can find them.
+    """
+    import polars as pl
+
+    provider = FlexDataProvider()
+    for fname in (
+        "period__branch.csv",
+        "solve_branch_weight.csv",
+        "first_timesteps.csv",
+        "steps_in_use.csv",
+        "period_in_use_set.csv",
+    ):
+        path = solve_data / fname
+        if not path.exists():
+            continue
+        df = pl.read_csv(path, infer_schema_length=0)
+        provider.put(f"solve_data/{fname}", df)
+        provider.put(fname, df)
+    emit_branch_weights(
+        input_dir=tmp_path, solve_data_dir=solve_data, provider=provider,
+    )
+    return provider
 
 
 # ---------------------------------------------------------------------------
@@ -111,12 +152,12 @@ def test_single_branch_self_loop_weight_is_1(tmp_path: Path) -> None:
         period_in_use=["p2020"],
     )
 
-    write_branch_weights(input_dir=tmp_path, solve_data_dir=solve_data)
+    provider = _run_branch_weights(tmp_path, solve_data)
 
-    pd_w = _read_pd_weights(solve_data)
+    pd_w = _read_pd_weights(provider)
     assert pd_w == {"p2020": pytest.approx(1.0)}
 
-    pdt_w = _read_pdt_weights(solve_data)
+    pdt_w = _read_pdt_weights(provider)
     assert pdt_w == {
         ("p2020", "t01"): pytest.approx(1.0),
         ("p2020", "t02"): pytest.approx(1.0),
@@ -156,15 +197,15 @@ def test_two_equal_weight_branches_normalise_to_half(tmp_path: Path) -> None:
         period_in_use=["p2020", "p2020_alt"],
     )
 
-    write_branch_weights(input_dir=tmp_path, solve_data_dir=solve_data)
+    provider = _run_branch_weights(tmp_path, solve_data)
 
-    pd_w = _read_pd_weights(solve_data)
+    pd_w = _read_pd_weights(provider)
     assert pd_w == {
         "p2020": pytest.approx(0.5),
         "p2020_alt": pytest.approx(0.5),
     }
 
-    pdt_w = _read_pdt_weights(solve_data)
+    pdt_w = _read_pdt_weights(provider)
     assert pdt_w == {
         ("p2020", "t01"): pytest.approx(0.5),
         ("p2020", "t02"): pytest.approx(0.5),
@@ -204,15 +245,15 @@ def test_two_unequal_weight_branches_normalise_proportionally(
         period_in_use=["p2020", "p2020_alt"],
     )
 
-    write_branch_weights(input_dir=tmp_path, solve_data_dir=solve_data)
+    provider = _run_branch_weights(tmp_path, solve_data)
 
-    pd_w = _read_pd_weights(solve_data)
+    pd_w = _read_pd_weights(provider)
     assert pd_w == {
         "p2020": pytest.approx(0.25),
         "p2020_alt": pytest.approx(0.75),
     }
 
-    pdt_w = _read_pdt_weights(solve_data)
+    pdt_w = _read_pdt_weights(provider)
     assert pdt_w == {
         ("p2020", "t01"): pytest.approx(0.25),
         ("p2020_alt", "t01"): pytest.approx(0.75),
