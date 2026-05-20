@@ -169,10 +169,14 @@ def _co2_price_term(d, sol) -> float:
 
 
 def _capacity_margin_slack_term(d, sol) -> float:
-    """Σ vq_capacity_margin * group_capacity_for_scaling * penalty * inflation.
+    """Σ vq_capacity_margin * group_capacity_for_scaling * penalty * inflation
+    * 1000.
 
     Period-only: NO step_duration, NO rp_cost_weight, NO /period_share.
-    Mirrors _group_slack.py:1241-1249.
+    The × 1000 is the CUR/kW → CUR/MW unit conversion in
+    ``_group_slack.py:1233-1238`` (BUG A4 fix); mirrors
+    ``flextool.process_outputs.calc_slacks.costPenalty_capacity_margin_d``'s
+    ``.mul(1000.0)``.
     """
     try:
         vq = sol.value("vq_capacity_margin")
@@ -188,7 +192,7 @@ def _capacity_margin_slack_term(d, sol) -> float:
               on=["g", "d"])
         .join(d.p_inflation_op.frame.rename({"value": "infl"}), on="d")
         .with_columns(c=pl.col("vq") * pl.col("gcs") * pl.col("pen")
-                        * pl.col("infl"))
+                        * pl.col("infl") * 1000.0)
     )
     return float(df["c"].sum())
 
@@ -372,7 +376,9 @@ class TestCapacityMarginPeriodOnly:
         (state-slack-style) factor set including step_duration /
         rp_cost_weight / period_share, and verify it gives a *different*
         answer.  This directly pins the "period-only, no per-(d,t)
-        scaling" semantic.
+        scaling" semantic.  Both sides include the × 1000 unit conversion
+        (CUR/kW → CUR/MW) so the ratio cleanly isolates the
+        step_duration / period_share factor.
         """
         d, sol = _solve(DATA / "work_capacity_margin")
         df = (
@@ -388,7 +394,7 @@ class TestCapacityMarginPeriodOnly:
             .join(d.p_period_share.frame.rename({"value": "psh"}), on="d")
         )
         wrong = float((df["vq"] * df["gcs"] * df["pen"] * df["infl"]
-                       / df["psh"]).sum())
+                       / df["psh"] * 1000.0).sum())
         right = _capacity_margin_slack_term(d, sol)
         # 1/period_share is huge (~182) for the 2day fixture, so the wrong
         # variant must differ by at least 50× from the right one.

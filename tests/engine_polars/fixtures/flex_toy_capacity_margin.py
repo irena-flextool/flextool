@@ -126,10 +126,15 @@ def expected_obj() -> float:
     """Closed-form predicted objective.
 
     obj_cap = vq_cap (=90) × p_group_capacity_for_scaling (=1.0)
-                × penalty_cap (=1e6) × inflation_op (=1.0)
-            = 9.0e7
+                × penalty_cap (=1e6) × inflation_op (=1.0) × 1000
+            = 9.0e10
+    The × 1000 is the CUR/kW → CUR/MW unit conversion applied in
+    ``_group_slack.add_penalty_term`` (BUG A4 fix); mirrors
+    ``flextool.process_outputs.calc_slacks.costPenalty_capacity_margin_d``
+    ``.mul(1000.0)``.
+
     obj_slack = sum_{d,t} vq_state_down · pen_down · op_factor
               = 2 · 10 · 1.0 · 1.0 = 20.0
-    total = 9.0e7 + 20.0 = 90_000_020.0
+    total = 9.0e10 + 20.0 = 90_000_000_020.0
     """
-    return 9.0e7 + 20.0
+    return 9.0e10 + 20.0

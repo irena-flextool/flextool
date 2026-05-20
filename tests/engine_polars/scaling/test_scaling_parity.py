@@ -312,15 +312,6 @@ class TestBaselineParityWorkNet:
     use_row_scaling flips from 'yes' to 'no'.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "Bug A: p_unitsize excludes node unitsizes. For work_network_all_tech "
-            "the node 'water_sink' (1e6) and 'battery' (1e5) entries are missing, "
-            "dropping unitsize spread from 5.0 to 2.0 decades (below 3-decade "
-            "threshold). This causes use_row_scaling to flip 'yes' -> 'no'."
-        ),
-        strict=True,
-    )
     def test_use_row_scaling_matches_baseline(self, flex_net, tmp_path):
         table = analyze_solve(_SOLVE_NET, flex_net, work_folder=tmp_path)
         ref = _load_baseline(_BASELINE_NET)
@@ -341,27 +332,11 @@ class TestBaselineParityWorkNet:
             ref["scale_the_objective"], rel=1e-6
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "Bug A: row_scaling_trigger is 'none' (no trigger fires) instead of "
-            "'unitsize' because the unitsize spread is 2.0 decades (below "
-            "UNITSIZE_SPREAD_THRESHOLD=3.0) due to missing node entries."
-        ),
-        strict=True,
-    )
     def test_row_scaling_trigger_matches_baseline(self, flex_net, tmp_path):
         table = analyze_solve(_SOLVE_NET, flex_net, work_folder=tmp_path)
         ref = _load_baseline(_BASELINE_NET)
         assert table.row_scaling_trigger == ref["row_scaling_trigger"]
 
-    @pytest.mark.xfail(
-        reason=(
-            "Bug A: unitsize_spread_log10 is 2.0 in-memory vs 5.0 in baseline "
-            "because node unitsizes (water_sink=1e6, battery=1e5) are absent "
-            "from p_unitsize."
-        ),
-        strict=True,
-    )
     def test_unitsize_spread_matches_baseline(self, flex_net, tmp_path):
         table = analyze_solve(_SOLVE_NET, flex_net, work_folder=tmp_path)
         ref = _load_baseline(_BASELINE_NET)

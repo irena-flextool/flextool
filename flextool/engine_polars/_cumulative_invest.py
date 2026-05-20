@@ -752,10 +752,17 @@ def _emit_group_invest_total(m, d, vars: dict,
 
         # Process branch
         if v_p is not None and d.p_unitsize is not None:
-            ge_p = group_entity.rename({"e": "p"}).filter(
-                pl.col("p").is_in(v_p.frame["p"].unique()))
-            edd_p = edd_set.rename({"e": "p"}).filter(
-                pl.col("p").is_in(v_p.frame["p"].unique()))
+            # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); cast
+            # at the boundary, never let polars sort it out via List(Enum).
+            _p_dtype = v_p.frame.schema["p"]
+            ge_p = group_entity.rename({"e": "p"})
+            if ge_p.schema["p"] != _p_dtype:
+                ge_p = ge_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
+            ge_p = ge_p.filter(pl.col("p").is_in(v_p.frame["p"].unique()))
+            edd_p = edd_set.rename({"e": "p"})
+            if edd_p.schema["p"] != _p_dtype:
+                edd_p = edd_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
+            edd_p = edd_p.filter(pl.col("p").is_in(v_p.frame["p"].unique()))
             joined = ge_p.join(edd_p, on="p", how="inner")
             if joined.height > 0:
                 v_inv_at = Var(
@@ -778,10 +785,17 @@ def _emit_group_invest_total(m, d, vars: dict,
         # Node branch
         if v_n is not None and d.p_state_unitsize is not None:
             us_n = Param(("n",), d.p_state_unitsize.frame)
-            ge_n = group_entity.rename({"e": "n"}).filter(
-                pl.col("n").is_in(v_n.frame["n"].unique()))
-            edd_n = edd_set.rename({"e": "n"}).filter(
-                pl.col("n").is_in(v_n.frame["n"].unique()))
+            # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); cast
+            # at the boundary, never let polars sort it out via List(Enum).
+            _n_dtype = v_n.frame.schema["n"]
+            ge_n = group_entity.rename({"e": "n"})
+            if ge_n.schema["n"] != _n_dtype:
+                ge_n = ge_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
+            ge_n = ge_n.filter(pl.col("n").is_in(v_n.frame["n"].unique()))
+            edd_n = edd_set.rename({"e": "n"})
+            if edd_n.schema["n"] != _n_dtype:
+                edd_n = edd_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
+            edd_n = edd_n.filter(pl.col("n").is_in(v_n.frame["n"].unique()))
             joined = ge_n.join(edd_n, on="n", how="inner")
             if joined.height > 0:
                 v_inv_at = Var(
@@ -806,7 +820,13 @@ def _emit_group_invest_total(m, d, vars: dict,
         outer = g_set.select("g")
         # Process branch
         if v_p is not None and d.p_unitsize is not None:
-            ge_p = group_entity.rename({"e": "p"}).filter(
+            # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); cast
+            # at the boundary, never let polars sort it out via List(Enum).
+            _p_dtype = v_p.frame.schema["p"]
+            ge_p = group_entity.rename({"e": "p"})
+            if ge_p.schema["p"] != _p_dtype:
+                ge_p = ge_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
+            ge_p = ge_p.filter(
                 pl.col("p").is_in(v_p.frame["p"].unique())) \
                 .filter(pl.col("g").is_in(g_set["g"].unique()))
             if ge_p.height > 0:
@@ -824,7 +844,13 @@ def _emit_group_invest_total(m, d, vars: dict,
         # Node branch
         if v_n is not None and d.p_state_unitsize is not None:
             us_n = Param(("n",), d.p_state_unitsize.frame)
-            ge_n = group_entity.rename({"e": "n"}).filter(
+            # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); cast
+            # at the boundary, never let polars sort it out via List(Enum).
+            _n_dtype = v_n.frame.schema["n"]
+            ge_n = group_entity.rename({"e": "n"})
+            if ge_n.schema["n"] != _n_dtype:
+                ge_n = ge_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
+            ge_n = ge_n.filter(
                 pl.col("n").is_in(v_n.frame["n"].unique())) \
                 .filter(pl.col("g").is_in(g_set["g"].unique()))
             if ge_n.height > 0:
@@ -885,10 +911,19 @@ def _emit_group_invest_cumulative(m, d, vars: dict, sense: str) -> None:
 
     lhs_terms: dict = {}
     if v_inv_p is not None and d.p_unitsize is not None:
-        ge_p = group_entity.rename({"e": "p"}).filter(
+        # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); cast
+        # at the boundary, never let polars sort it out via List(Enum).
+        _p_dtype = v_inv_p.frame.schema["p"]
+        ge_p = group_entity.rename({"e": "p"})
+        if ge_p.schema["p"] != _p_dtype:
+            ge_p = ge_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
+        ge_p = ge_p.filter(
             pl.col("p").is_in(v_inv_p.frame["p"].unique())).filter(
             pl.col("g").is_in(g_set["g"].unique()))
-        edd_p = edd_set.rename({"e": "p"}).filter(
+        edd_p = edd_set.rename({"e": "p"})
+        if edd_p.schema["p"] != _p_dtype:
+            edd_p = edd_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
+        edd_p = edd_p.filter(
             pl.col("p").is_in(v_inv_p.frame["p"].unique()))
         joined = ge_p.join(edd_p, on="p", how="inner")
         if joined.height > 0:
@@ -904,10 +939,19 @@ def _emit_group_invest_cumulative(m, d, vars: dict, sense: str) -> None:
             )
     if v_inv_n is not None and d.p_state_unitsize is not None:
         us_n = Param(("n",), d.p_state_unitsize.frame)
-        ge_n = group_entity.rename({"e": "n"}).filter(
+        # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); cast
+        # at the boundary, never let polars sort it out via List(Enum).
+        _n_dtype = v_inv_n.frame.schema["n"]
+        ge_n = group_entity.rename({"e": "n"})
+        if ge_n.schema["n"] != _n_dtype:
+            ge_n = ge_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
+        ge_n = ge_n.filter(
             pl.col("n").is_in(v_inv_n.frame["n"].unique())).filter(
             pl.col("g").is_in(g_set["g"].unique()))
-        edd_n = edd_set.rename({"e": "n"}).filter(
+        edd_n = edd_set.rename({"e": "n"})
+        if edd_n.schema["n"] != _n_dtype:
+            edd_n = edd_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
+        edd_n = edd_n.filter(
             pl.col("n").is_in(v_inv_n.frame["n"].unique()))
         joined = ge_n.join(edd_n, on="n", how="inner")
         if joined.height > 0:

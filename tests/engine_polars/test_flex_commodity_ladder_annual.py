@@ -59,10 +59,11 @@ def test_commodity_ladder_annual_parity():
     # Catches regressions where v_trade routes correctly (so the per-tier
     # asserts above still pass) but ladder prices fail to flow into the
     # objective — e.g. a tier-index mismatch between writer and reader.
+    from flextool.engine_polars._axis_enums import cast_dim
     prices = pl.read_csv(WORK / "input" / "commodity_ladder_annual.csv").select(
-        pl.col("commodity").alias("c"),
-        pl.col("period").alias("d"),
-        pl.col("tier").cast(pl.Utf8).alias("i"),
+        cast_dim(pl.col("commodity"), None, "c").alias("c"),
+        cast_dim(pl.col("period"), None, "d").alias("d"),
+        cast_dim(pl.col("tier").cast(pl.Utf8), None, "i").alias("i"),
         pl.col("price"),
     )
     ladder_cost = (

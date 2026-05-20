@@ -498,9 +498,14 @@ def main():
                 _solver_cfg = _sc.solver_configs.get(_active_solve_name)
             except Exception:  # noqa: BLE001
                 _solver_cfg = None
+            # ``run_chain_from_db`` runs the cascade in-memory and does
+            # NOT write workdir input CSVs (per its docstring).  The
+            # decomposition_method dict can't be loaded from disk, so
+            # pass the regions discovered from the DB directly.
             result = solve_lagrangian(
                 flex_data,
                 work_dir=wf,
+                regions=regions_detected,
                 alpha=args.lagrangian_alpha,
                 max_iters=args.lagrangian_max_iter,
                 tol=args.lagrangian_tolerance,

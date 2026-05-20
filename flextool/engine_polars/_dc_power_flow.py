@@ -125,6 +125,7 @@ def load_data(
         connection_dc_power_flow = None,
         node_reference_angle     = None,
         p_connection_susceptance = None,
+        process_source_toSink_dc = None,
     )
 
     def _frame_for(key: str, path: Path) -> "pl.DataFrame | None":
@@ -174,11 +175,32 @@ def load_data(
     if nd is None and cd is None and rd is None and pcs_param is None:
         return blank
 
+    # Forward-direction (p, source, sink) for DC PF arcs.  The cascade's
+    # ``process_source_sink`` doubles up 2-way connections (both arc
+    # orientations), but the .mod's dc_flow_eq is indexed over
+    # ``process_source_toSink`` which is one direction per arc.  Read it
+    # from the Provider's ``solve_data/process_source_toSink`` key (the
+    # cascade writes it via _writer_calc_params.derive_process_source_toSink).
+    sst = None
+    if provider is not None and provider.has("solve_data/process_source_toSink"):
+        sst = provider.get("solve_data/process_source_toSink")
+        if sst is not None and sst.height > 0:
+            sst = sst.rename({
+                c: r for c, r in [
+                    ("process", "p"),
+                    ("source", "source"),
+                    ("sink", "sink"),
+                ] if c in sst.columns
+            }).select("p", "source", "sink")
+        else:
+            sst = None
+
     return dict(
         node_dc_power_flow       = nd,
         connection_dc_power_flow = cd,
         node_reference_angle     = rd,
         p_connection_susceptance = pcs_param,
+        process_source_toSink_dc = sst,
     )
 
 
@@ -244,7 +266,27 @@ def add_variables(m, d) -> "dict[str, Var]":
         # to ``e`` so ``is_in`` matches dtypes.
         _dc_n_e = d.node_dc_power_flow.with_columns(
             cast_dim(pl.col("n"), None, "e"))["n"]
-        dc_arcs = (d.process_source_sink
+        # Source: process_source_toSink_dc is the one-direction-per-arc
+        # mirror of the .mod's process_source_toSink (preferred), and
+        # process_source_sink is the cascade fallback (doubles up 2-way
+        # connections — incorrect for DC PF physics).  Use the toSink
+        # frame when available; otherwise fall back to the dual-direction
+        # frame (legacy off-cascade harnesses).
+        arcs_src = (getattr(d, "process_source_toSink_dc", None)
+                    if getattr(d, "process_source_toSink_dc", None) is not None
+                    else d.process_source_sink)
+        # The toSink frame is loaded raw from solve_data and may carry
+        # Utf8 (source, sink) columns; the cascade's process_source_sink
+        # carries entity-Enum.  Align before is_in by casting toSink to
+        # match process_source_sink's dtype if necessary.
+        if arcs_src is not d.process_source_sink:
+            for col in ("p", "source", "sink"):
+                target_dtype = d.process_source_sink.schema[col]
+                if arcs_src.schema[col] != target_dtype:
+                    arcs_src = arcs_src.with_columns(
+                        pl.col(col).cast(target_dtype, strict=False)
+                    )
+        dc_arcs = (arcs_src
             .join(d.connection_dc_power_flow, on="p", how="inner")
             .filter(pl.col("source").is_in(_dc_n_e))
             .filter(pl.col("sink").is_in(_dc_n_e)))

@@ -88,12 +88,9 @@ def test_spinedb_reader_entities_returns_enum_when_axis_enums_supplied(
     axis_enums: dict[str, pl.Enum],
 ) -> None:
     """Constructed with ``axis_enums``, :meth:`entities` casts the
-    ``node`` column of the ``node__profile`` multi-dim class.
-
-    The ``profile`` column has no axis synonym in the contract today
-    (only the bare axis name ``f`` is mapped), so it stays Utf8 —
-    pinning the contract-driven behaviour: only columns the contract
-    knows about get cast.
+    ``node`` AND ``profile`` columns of the ``node__profile`` multi-dim
+    class — both are recognised column synonyms in the contract
+    (``node → n``, ``profile → f``).
     """
     r = SpineDbReader(
         str(TEST_A_LOT_DB),
@@ -104,8 +101,8 @@ def test_spinedb_reader_entities_returns_enum_when_axis_enums_supplied(
     frame = r.entities("node__profile")
     # ``node`` IS a column synonym for the ``n`` axis → cast.
     assert frame.schema["node"] == axis_enums["n"]
-    # ``profile`` is NOT in the contract's column_synonyms → stays Utf8.
-    assert frame.schema["profile"] == pl.Utf8
+    # ``profile`` IS a column synonym for the ``f`` axis → cast (Phase 4).
+    assert frame.schema["profile"] == axis_enums["f"]
 
 
 def test_spinedb_reader_parameter_returns_enum_when_axis_enums_supplied(

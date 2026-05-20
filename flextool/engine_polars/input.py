@@ -792,6 +792,11 @@ class FlexData:
     connection_dc_power_flow: pl.DataFrame | None = None         # (p,)
     node_reference_angle: pl.DataFrame | None = None             # (n,)
     p_connection_susceptance: Param | None = None                # (p,)
+    # Forward-direction (p, source, sink) mirror of process_source_toSink,
+    # used to dedupe DC PF arcs.  process_source_sink doubles up 2-way
+    # connections; the .mod's dc_flow_eq indexes on process_source_toSink
+    # (one direction per arc).
+    process_source_toSink_dc: pl.DataFrame | None = None         # (p, source, sink)
 
     # ─── Commodity price ladder (read by _commodity_ladder) ─────────────
     # Populated only when at least one commodity has
@@ -1779,7 +1784,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
                                                 _resolve_synthetic_solve,
                                                 _solve_in_spine)
                 # workdir = sd.parent (sd is solve_data/)
-                active_solve = _read_active_solve(sd.parent)
+                active_solve = _read_active_solve(sd.parent, provider=provider)
                 if (active_solve is not None
                         and not _solve_in_spine(db_reader, active_solve)
                         and _resolve_synthetic_solve(db_reader, active_solve)
