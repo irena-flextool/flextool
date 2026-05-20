@@ -31,6 +31,7 @@ ouptut_plot_comparisons/
 solve_data/
 flextool-venv/
 .venv/
+venv/
 specs/
 test/expected/
 projects/

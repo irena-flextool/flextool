@@ -291,8 +291,8 @@ class _MemoryRecorder:
                 line = (
                     f"[mem] {label_col}  "
                     f"section= {t_elapsed:5.1f}s  "
-                    f"Δrss={self._fmt_size(None)}  "  # n/a
-                    f"Δpeak={self._fmt_size(None)}  "  # n/a
+                    f"delta_rss={self._fmt_size(None)}  "  # n/a
+                    f"delta_peak={self._fmt_size(None)}  "  # n/a
                     f"(rss={self._fmt_size(rss_mb)}, "
                     f"peak={self._fmt_size(peak_mb)})"
                 )
@@ -300,8 +300,8 @@ class _MemoryRecorder:
                 line = (
                     f"[mem] {label_col}  "
                     f"section= {t_section:5.1f}s  "
-                    f"Δrss={self._fmt_delta(delta_rss)}  "
-                    f"Δpeak={self._fmt_delta(delta_peak)}  "
+                    f"delta_rss={self._fmt_delta(delta_rss)}  "
+                    f"delta_peak={self._fmt_delta(delta_peak)}  "
                     f"(rss={self._fmt_size(rss_mb)}, "
                     f"peak={self._fmt_size(peak_mb)})"
                 )
