@@ -3720,6 +3720,22 @@ def load_flextool(source: "Path | str | FlexInputSource",
         set_global_axis_enums(axis_enums)
 
     try:
+        # Phase-progress checkpoints (only when a recorder is active —
+        # always-on for users following the run, full diagnostics when
+        # FLEXTOOL_MEMORY_DIAGNOSTICS=1).  Carve the load_flextool
+        # body into named sub-phases so multi-GB allocations are
+        # attributed to the specific CSV reader that emitted them
+        # rather than absorbed wholesale into the pass-1a delta.
+        from flextool.engine_polars._orchestration import get_phase_recorder
+        _rec = get_phase_recorder()
+        _load_logger = logging.getLogger("flextool.engine_polars.input")
+
+        def _load_mem(label: str, user_label: str) -> None:
+            if _rec is not None:
+                _rec.checkpoint(label, _load_logger, user_label=user_label)
+
+        _load_mem("load_flextool_start", "load_flextool start")
+
         # Δ.2: build the per-solve BlockLayout once from flextool's
         # solve_data/ block CSVs (still produced by flextool's
         # ``write_block_data_for_solve``).  Downstream block-aware helpers
@@ -3731,10 +3747,13 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         dt, step_dur, rp_cw, infl, psh = _load_time(sd, provider=provider)
         nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt, provider=provider)
+        _load_mem("load_node_end", "load_flextool: time + node loaded")
 
         proc = _load_process_topology(inp, sd, dt, block_layout=block_layout,
                                        source=db_reader,
                                        provider=provider)
+        _load_mem("load_process_topology_end",
+                  "load_flextool: process topology loaded")
 
         # base_cap_pd = (p, d, base) for profile RHS — recompute here; small.
         base_cap_pd = None
@@ -3844,6 +3863,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader,
                               provider=provider)
         varcost = _load_varcost(sd, proc["pss"], provider=provider)
+        _load_mem("load_varcost_end", "load_flextool: varcost loaded")
         fixed_cost = _load_fixed_cost(sd, provider=provider)
         capacity_for_scaling = _load_node_capacity_for_scaling(sd, nb,
                                                                 provider=provider)
@@ -3924,6 +3944,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         # ─── Multi-branch stochastic data (A6) ───────────────────────────────
         stoch_data = _load_stochastics(inp=inp, sd=sd, dt=dt, provider=provider)
+        _load_mem("load_stochastics_end",
+                  "load_flextool: stochastics + remaining CSV loaders done")
 
         flex_data = FlexData(
             dt = dt,
