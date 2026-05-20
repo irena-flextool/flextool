@@ -1,3 +1,55 @@
+## Release 3.41.1 (20.5.2026) — Toolbox/cascade bug-fix sweep
+
+Patch release on top of 3.41.0.  Clears four user-visible regressions that
+surface when running from Spine Toolbox or comparing many Rivendell scenarios.
+
+**Bug fixes**
+
+- `cmd_run_flextool`: default work folder to cwd in both code paths.  When
+  `--work-folder` was omitted the CLI kept two variables (`work_folder=None`
+  for the solver, `wf=cwd` for `write_outputs`), so `run_chain_from_db`
+  spun up its own `/tmp/flexpy_run_chain_*` while `write_outputs` looked
+  for `output_raw/` under cwd and tripped a `FileNotFoundError` on
+  `v_obj.csv` (`output_csv/`, `output_parquet/`, `output_excel/`,
+  `output_plots/` were skipped on the failure path).  Visible from
+  Toolbox runs as a `write_outputs failed` warning right after the solve
+  reported optimal.
+- Toolbox DB URL handling: six normalisation sites
+  (`_orchestration`, `_solve_config`, `_spinedb_reader`, `_timeline`,
+  `spinedb_backend._backend`) used to whitelist only `sqlite:` /
+  `postgresql:` schemes and prepended `sqlite:///` to anything else,
+  turning Toolbox's engine-server URLs (`http://127.0.0.1:<port>`) into
+  `sqlite:///http://...` and erroring with
+  `unable to open database file`.  The guard now passes through any URL
+  that already carries a scheme and only prepends `sqlite:///` for bare
+  filesystem paths — `spinedb_api`'s `DatabaseMapping` already resolves
+  Toolbox server URLs natively via `get_db_url_from_server`.
+- Scenario comparison: cross-scenario combine no longer fails with
+  `KeyError: '[nan] not in index'` in `prepare_plot_data` when some
+  scenarios produce empty result frames.  `calc_connections` used to
+  build empty `connection_d` / `connection_losses_d` without a column-
+  level name; once the per-scenario parquet writer wrapped them with
+  `pd.concat({name: df}, axis=1, names=['scenario'])` they shipped with
+  names `['scenario', None]`.  The cross-scenario combine then collided
+  with `['scenario', 'process']` from scenarios that *do* have
+  connections, pandas resolved the conflict to `NaN`, and the comparison
+  plotter blew up on the level-name lookup.  Empty connection frames
+  now carry the same `'process'` column name as the non-empty branch.
+- Same anti-pattern (empty / scalar result frames shipping without a
+  column-level name) cleared on four more producers that would have
+  hit the same `KeyError` under different comparison configs:
+  `out_ancillary.largest_flow` (`nodeGroup_inertia_largest_flow_dt_g`),
+  `out_ancillary.years_d` (`years_represented__d`),
+  `out_group.results_dt` (`nodeGroup_VRE_share_dt_g`, both empty and
+  non-empty branches), `out_costs.co2_summary` (`CO2__`).
+
+**Diagnostics**
+
+- `[mem]` phase log: align columns into a single table, drop the
+  duplicated `(rss=…, peak=…)` block, and split the `load_flextool`
+  entry into five then three sub-checkpoints so the cascade-load
+  breakdown is readable in the always-on output.
+
 ## Release 3.41.0 (20.5.2026) — Phase E: lazy broadcast cascade + always-on phase log
 
 Built on 3.40.0.  Lands Phase E of the Step 3 cascade-memory work —
