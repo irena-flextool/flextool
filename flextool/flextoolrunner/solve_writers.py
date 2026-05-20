@@ -680,10 +680,9 @@ def write_scale_the_objective(solve_data_dir: Path | str, value: float) -> Path:
 
     Agent 21: this writer emits the analyser's recommendation only when
     the caller has opted into auto-scale mode.  The gating lives in the
-    orchestrator (:mod:`flextool.flextoolrunner.orchestration`); callers
-    of this function unconditionally emit the value.  See
-    :func:`write_scale_the_objective_header_only` for the default-mode
-    fallback.
+    native orchestrator
+    (:func:`flextool.engine_polars._orchestration.run_orchestration`);
+    callers of this function unconditionally emit the value.
     """
     sd = Path(solve_data_dir)
     sd.mkdir(parents=True, exist_ok=True)

@@ -17,8 +17,8 @@ No CSVs land on disk through this path; downstream readers
 (:func:`flextool.engine_polars.input.load_flextool`,
 :func:`flextool.engine_polars._output_writer.write_outputs_for_solve`,
 the per-solve preprocessing dispatched by
-:func:`flextool.flextoolrunner.orchestration.run_model`) resolve every
-input through the Provider.
+:func:`flextool.engine_polars._native_run_model.native_run_model`)
+resolve every input through the Provider.
 
 For the ``--csv-dump`` debug path the cascade calls
 :meth:`FlexDataProvider.snapshot_processed_inputs` separately; that is

@@ -24,8 +24,8 @@ Design choices
 * **CSV writers are still flextool's** — replacing them is a separate
   phase (Γ.7 / Γ.9 in the audit numbering).  Γ.8.D's job is to run the
   master loop natively, not to retire CSVs.  This means the orchestrator
-  drives ``flextoolrunner.orchestration.run_model`` once per top-level
-  invocation, but with a **flexpy-as-inner-solver** wrapper that:
+  drives ``_native_run_model.native_run_model`` once per top-level
+  invocation, with a **flexpy-as-inner-solver** wrapper that:
     - Reads the per-solve snapshot via ``load_flextool``.
     - Builds the LP via ``build_flextool``.
     - Solves via ``polar_high`` (HiGHS).
@@ -1554,8 +1554,7 @@ def run_chain_from_db(
 
     # Construct the underlying FlexToolRunner — still needed to carry
     # the cross-cutting ``RunnerState`` (timeline, solve config, handoff
-    # dict) through ``flextool.flextoolrunner.orchestration.run_model``,
-    # which the native cascade still drives for the per-solve
+    # dict) into ``native_run_model``, which drives the per-solve
     # preprocessing chain (``preprocessing_solve_time``,
     # ``solve_writers``, ``handoff_writers``).  No write_input call.
     def _runner_factory() -> "FlexToolRunner":
