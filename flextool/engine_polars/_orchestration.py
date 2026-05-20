@@ -1486,7 +1486,7 @@ def run_chain_from_db(
         pass
 
     db_url = str(input_db_url)
-    if not db_url.startswith("sqlite:") and not db_url.startswith("postgresql"):
+    if "://" not in db_url:
         db_url = f"sqlite:///{db_url}"
 
     if work_folder is None:
@@ -1677,7 +1677,7 @@ def run_single_solve_from_db(
     import time as _time
 
     db_url = str(input_db_url)
-    if not db_url.startswith("sqlite:") and not db_url.startswith("postgresql"):
+    if "://" not in db_url:
         db_url = f"sqlite:///{db_url}"
 
     work_folder = Path(work_folder)

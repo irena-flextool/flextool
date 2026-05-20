@@ -250,7 +250,7 @@ class TimelineConfig:
         if logger is None:
             logger = logging.getLogger(f"flexpy.timeline[{scenario}]")
         url = str(db_url)
-        if not url.startswith("sqlite:") and not url.startswith("postgresql"):
+        if "://" not in url:
             url = f"sqlite:///{url}"
         with DatabaseMapping(url) as db:
             apply_scenario_filter_to_subqueries(db, scenario)

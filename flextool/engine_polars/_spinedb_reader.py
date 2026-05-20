@@ -117,7 +117,7 @@ class SpineDbReader:
         contract: AxisContract | None = None,
     ):
         url = str(db_url)
-        if not url.startswith("sqlite:") and not url.startswith("postgresql"):
+        if "://" not in url:
             url = f"sqlite:///{url}"
         self._db_url = url
         self._scenario = scenario
