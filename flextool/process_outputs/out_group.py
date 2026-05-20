@@ -192,12 +192,19 @@ def nodeGroup_VRE_share(par, s, v, r, debug):
 
     if not groups_with_inflow or not timesteps:
         index = pd.MultiIndex.from_tuples([], names=['period', 'time'])
-        results_dt = pd.DataFrame(index=index, columns=groups_with_inflow)
+        results_dt = pd.DataFrame(
+            index=index,
+            columns=pd.Index(groups_with_inflow, name='group'),
+        )
         return [(results_dt, 'nodeGroup_VRE_share_dt_g')]
 
     # Create index
     index = pd.MultiIndex.from_tuples(timesteps, names=['period', 'time'])
-    results_dt = pd.DataFrame(index=index, columns=groups_with_inflow, dtype=float)
+    results_dt = pd.DataFrame(
+        index=index,
+        columns=pd.Index(groups_with_inflow, name='group'),
+        dtype=float,
+    )
 
     # Get VRE processes
     vre_processes = s.process_VRE.unique()

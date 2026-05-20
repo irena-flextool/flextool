@@ -141,6 +141,7 @@ def CO2(par, s, v, r, debug):
     total_co2 = ((r.emissions_co2_d * par.years_represented_d) / 1000000).sum(axis=0)
     co2_summary = pd.DataFrame(index=["CO2 [Mt]"], columns=["model_wide"], data=total_co2)
     co2_summary.index.name = 'param_CO2'
+    co2_summary.columns.name = 'scope'
     results.append((co2_summary, 'CO2__'))
 
     # Process co2 emissions (annualized — plot rule 'y' weights by years_represented for horizon totals)

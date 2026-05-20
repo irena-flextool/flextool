@@ -309,6 +309,7 @@ def inertia_results(par, s, v, r, debug):
 
     # 4. Largest flow per group
     largest_flow = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+    largest_flow.columns.name = 'group'
 
     for g in s.groupInertia:
         group_nodes = s.group_node[s.group_node.get_level_values('group') == g].get_level_values('node')
@@ -401,6 +402,7 @@ def input_sets(par, s, v, r, debug):
     # annualized outputs to horizon totals or years-weighted averages.
     years_d = par.years_represented_d.rename('years_represented').to_frame()
     years_d.index.name = 'period'
+    years_d.columns.name = 'param'
     results.append((years_d, 'years_represented__d'))
 
     return results
