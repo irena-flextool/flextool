@@ -499,8 +499,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "d_realized_period_set.csv",
     "d_realize_dispatch_or_invest_set.csv",
     "dt_non_anticipativity_set.csv",
-    "pdt_uptime_set.csv",
-    "pdt_downtime_set.csv",
     "cnd_ladder_set.csv",
     "cndi_ladder_cum_set.csv",
     "cndi_ladder_ann_set.csv",

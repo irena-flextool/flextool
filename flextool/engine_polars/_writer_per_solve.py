@@ -426,30 +426,6 @@ def write_per_solve_sets(solve_data_dir: Path,
         ("period", "time"), list(dtna_seen.keys()),
     )
 
-    # pdt_uptime / pdt_downtime from {up,down}time_lookback (cols 0-2)
-    for src, dst in (
-        ("uptime_lookback.csv", "pdt_uptime_set.csv"),
-        ("downtime_lookback.csv", "pdt_downtime_set.csv"),
-    ):
-        df = _read_csv(solve_data_dir / src,
-                       ["process", "period", "time",
-                        "period_back", "time_back"], provider=provider)
-        triples = list(zip(
-            df["process"].to_list(),
-            df["period"].to_list(),
-            df["time"].to_list(),
-        ))
-        seen_t: dict[tuple[str, str, str], None] = {}
-        rows: list[tuple[str, str, str]] = []
-        for r in triples:
-            if all(r) and r not in seen_t:
-                seen_t[r] = None
-                rows.append(r)
-        _write_tuples(
-            solve_data_dir / dst,
-            ("process", "period", "time"), rows,
-        )
-
     # cnd_ladder family — period_in_use × commodity__node × commodity_with_ladder*.
     cn_df = _read_csv(input_dir / "commodity__node.csv",
                       ["commodity", "node"], provider=provider)

@@ -53,7 +53,6 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 
 from flextool.flextoolrunner.blocks import write_block_data_for_solve
-from flextool.flextoolrunner.minimum_time import write_minimum_time_data
 # Step 2.5 — legacy preprocessing package deleted (item 15).  The per-
 # solve orchestrator now lives natively at
 # :mod:`flextool.engine_polars._writer_solve_time`.
@@ -389,51 +388,6 @@ def native_run_model(state, solver) -> int:
         provider=cascade_input_provider_seed,
         work_folder=wf,
     )
-
-    # ------------------------------------------------------------------
-    # 4. Minimum up/down-time precomputation reads.
-    # ------------------------------------------------------------------
-    process_min_uptime: dict[str, float] = {}
-    process_min_downtime: dict[str, float] = {}
-    process_min_uptime_set: set[str] = set()
-    process_min_downtime_set: set[str] = set()
-
-    min_uptime_csv = wf / "input" / "process_min_uptime.csv"
-    if min_uptime_csv.exists():
-        with open(min_uptime_csv) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                process_min_uptime_set.add(row["process_min_uptime"])
-
-    min_downtime_csv = wf / "input" / "process_min_downtime.csv"
-    if min_downtime_csv.exists():
-        with open(min_downtime_csv) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                process_min_downtime_set.add(row["process_min_downtime"])
-
-    p_process_csv = wf / "input" / "p_process.csv"
-    if p_process_csv.exists() and (
-        process_min_uptime_set or process_min_downtime_set
-    ):
-        with open(p_process_csv) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                proc = row["process"]
-                param = row["processParam"]
-                val = float(row["p_process"]) if row["p_process"] else 0.0
-                if (
-                    param == "min_uptime"
-                    and proc in process_min_uptime_set
-                    and val > 0
-                ):
-                    process_min_uptime[proc] = val
-                elif (
-                    param == "min_downtime"
-                    and proc in process_min_downtime_set
-                    and val > 0
-                ):
-                    process_min_downtime[proc] = val
 
     # Step 1-f — cascade-wide Provider seeded once and re-used for every
     # sub-solve's pre-populated frames.  Captures the
@@ -899,23 +853,6 @@ def native_run_model(state, solver) -> int:
                 str(wf / "solve_data/period_capacity.csv"),
                 "period",
             )
-
-        # Minimum up/down-time lookback windows.
-        if process_min_uptime or process_min_downtime:
-            write_minimum_time_data(
-                active_time_list=active_time_lists[solve],
-                jump_list=jump_lists[solve],
-                process_min_uptime=process_min_uptime,
-                process_min_downtime=process_min_downtime,
-                work_folder=wf,
-            )
-        else:
-            # Empty header-only files so GMPL doesn't fail on missing files.
-            for fname in ("uptime_lookback.csv", "downtime_lookback.csv"):
-                with open(wf / "solve_data" / fname, "w", newline="") as f:
-                    csv.writer(f).writerow(
-                        ["process", "period", "time", "period_back", "time_back"]
-                    )
 
         # ---- Representative-period / timeset weights ----
         timesets_used = state.solve.timesets_used_by_solves.get(
