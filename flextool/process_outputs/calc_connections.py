@@ -88,7 +88,10 @@ def compute_connection_flows(par, s, v, r) -> None:
             r_conn_weighted.index.get_level_values('period').isin(s.d_realized_period)
         ].groupby(level='period').sum()
     else:
-        r.connection_d = pd.DataFrame(index=s.d_realized_period)
+        r.connection_d = pd.DataFrame(
+            index=s.d_realized_period,
+            columns=pd.Index([], name='process'),
+        )
 
     # connection_losses_d
     r_conn_losses_weighted = r.connection_losses_dt.mul(step_duration, axis=0)
@@ -97,7 +100,10 @@ def compute_connection_flows(par, s, v, r) -> None:
             r_conn_losses_weighted.index.get_level_values('period').isin(s.d_realized_period)
         ].groupby(level='period').sum()
     else:
-        r.connection_losses_d = pd.DataFrame(index=s.d_realized_period)
+        r.connection_losses_d = pd.DataFrame(
+            index=s.d_realized_period,
+            columns=pd.Index([], name='process'),
+        )
 
     # DC power flow: angle differences per connection
     if not v.angle.empty and not s.connection_dc_power_flow.empty:
