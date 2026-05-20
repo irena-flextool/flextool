@@ -826,17 +826,42 @@ def broadcast_to_period_time(
                   .collect())
     elif shape == Shape.MAP_PERIOD:
         # 1d_map(period) → broadcast across t per (entity, d).
-        out = (lf.pipe(rename_to_axis, {"period": "d"})
-                  .select(entity_dim_alias, "d", "value")
-                  .join(dt_lf, on="d", how="inner")
-                  .select(entity_dim_alias, "d", "t", "value")
-                  .collect())
+        #
+        # Mixed authoring: some entities may carry a scalar default
+        # (period column null) while others carry an explicit map.
+        # SpineDbReader unifies these into a single frame with a
+        # nullable index column; rows with null index represent the
+        # entity's scalar default and must be broadcast across the
+        # full (d, t) universe — INNER JOIN on a null index would
+        # drop them silently.  Split into scalar-default and explicit
+        # branches, broadcast independently, then concatenate.
+        lf_p = lf.pipe(rename_to_axis, {"period": "d"})
+        lf_scalar = (lf_p.filter(pl.col("d").is_null())
+                          .select(entity_dim_alias, "value")
+                          .join(dt_lf, how="cross")
+                          .select(entity_dim_alias, "d", "t", "value"))
+        lf_explicit = (lf_p.filter(pl.col("d").is_not_null())
+                            .select(entity_dim_alias, "d", "value")
+                            .join(dt_lf, on="d", how="inner")
+                            .select(entity_dim_alias, "d", "t", "value"))
+        out = pl.concat([lf_explicit, lf_scalar]).collect()
     elif shape == Shape.MAP_TIME:
         # 1d_map(time) → broadcast across d per (entity, t).
-        out = (lf.select(entity_dim_alias, "t", "value")
-                  .join(dt_lf, on="t", how="inner")
-                  .select(entity_dim_alias, "d", "t", "value")
-                  .collect())
+        # Same mixed-authoring guard as MAP_PERIOD above: rows whose
+        # ``t`` index is null are scalar defaults for that entity and
+        # must broadcast across the full (d, t) axis instead of being
+        # dropped by the inner-join on ``t``.  Covers fixtures like
+        # ``network_coal_wind_battery_co2_fullYear_availability`` where
+        # ``coal_plant`` is MAP_TIME but ``wind_plant`` is scalar 0.7.
+        lf_scalar = (lf.filter(pl.col("t").is_null())
+                          .select(entity_dim_alias, "value")
+                          .join(dt_lf, how="cross")
+                          .select(entity_dim_alias, "d", "t", "value"))
+        lf_explicit = (lf.filter(pl.col("t").is_not_null())
+                            .select(entity_dim_alias, "t", "value")
+                            .join(dt_lf, on="t", how="inner")
+                            .select(entity_dim_alias, "d", "t", "value"))
+        out = pl.concat([lf_explicit, lf_scalar]).collect()
     elif shape == Shape.SCALAR:
         # scalar → broadcast across (d, t) per entity.
         out = (lf.select(entity_dim_alias, "value")

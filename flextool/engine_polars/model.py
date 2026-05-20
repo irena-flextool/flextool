@@ -1340,8 +1340,43 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # network_coal_wind_battery_co2_fullYear_availability the
         # availability is non-trivial (0.003-0.99 across hours);
         # without it flexpy under-prices peak hours and runs ~35% low.
+        #
+        # ``Param * Param`` is an inner-join (polar_high contract), so a
+        # naive ``flow_upper_rhs * p_process_availability`` would DROP
+        # every (p, source, sink, d, t) row whose process is absent from
+        # ``p_process_availability`` (the cascade only populates explicit
+        # authored rows; missing processes default to 1.0).  That
+        # spuriously sets ``flow_upper_rhs = 0`` for connections like
+        # ``east_north`` / ``west_north`` and forces v_flow = 0 across
+        # the network → unmet demand → full-load slack at downstream
+        # nodes.  Densify by left-joining and filling missing
+        # availability with 1.0 so the inner-join above acts as the
+        # multiplicative overlay the .mod intends.
         if d.p_process_availability is not None:
-            flow_upper_rhs = flow_upper_rhs * d.p_process_availability
+            # Left-join availability onto flow_upper_rhs's (p, d[, t]) keys
+            # and fold the multiplication directly into the merged frame,
+            # filling missing availability with 1.0.  This avoids polar_high's
+            # inner-join ``Param * Param`` semantics (which would drop the
+            # missing-availability rows entirely — see network_coal_wind_
+            # battery_co2_fullYear_availability where ``east_north`` /
+            # ``west_north`` / ``battery_inverter`` have no DB-authored
+            # availability and would otherwise get RHS=0 → forced
+            # v_flow=0 → full-load slack at every downstream node).
+            fr = flow_upper_rhs.frame
+            if "t" not in fr.columns:
+                # ``p_flow_upper_existing`` is keyed (p, source, sink, d);
+                # broadcast across t via ``d.dt`` before applying the
+                # per-(d, t) availability factor.
+                fr = fr.join(d.dt, on="d", how="inner").select(
+                    "p", "source", "sink", "d", "t", "value")
+            merged_frame = (fr
+                .join(d.p_process_availability.frame,
+                      on=["p", "d", "t"], how="left", suffix="__a")
+                .with_columns(pl.col("value__a").fill_null(1.0))
+                .select("p", "source", "sink", "d", "t",
+                        value=pl.col("value") * pl.col("value__a")))
+            flow_upper_rhs = Param(("p", "source", "sink", "d", "t"),
+                                    merged_frame)
         if has_divest_p:
             v_div_at = Var(  # virtual rename: d → d_divest, same col_ids
                 name=v_divest_p.name + "__at_divest",

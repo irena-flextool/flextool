@@ -271,9 +271,15 @@ def add_constraints(m, d, vars: dict) -> None:
     forbid = getattr(d, "ed_invest_forbidden_no_investment", None)
     if forbid is not None and forbid.height > 0:
         if has_inv_p:
-            f_p = forbid.rename({"e": "p"}).join(
-                v_invest_p.frame.select("p", "d"),
-                on=["p", "d"], how="inner")
+            # ``forbid["e"]`` is the entity-union Enum; after renaming to
+            # ``p`` we must align it with ``v_invest_p``'s narrower
+            # process-only ``p`` Enum before joining (Phase 4 Enum
+            # cross-vocab guard — never cast back to Utf8).
+            from ._axis_enums import align_join_dtypes
+            f_p = forbid.rename({"e": "p"})
+            inv_p_idx = v_invest_p.frame.select("p", "d")
+            f_p, inv_p_idx = align_join_dtypes(f_p, inv_p_idx, ("p", "d"))
+            f_p = f_p.join(inv_p_idx, on=["p", "d"], how="inner")
             if f_p.height > 0:
                 m.add_cstr(
                     "fix_v_invest_no_investment_eq_p",
@@ -283,9 +289,11 @@ def add_constraints(m, d, vars: dict) -> None:
                     rhs_terms = {"zero":   0.0},
                 )
         if has_inv_n:
-            f_n = forbid.rename({"e": "n"}).join(
-                v_invest_n.frame.select("n", "d"),
-                on=["n", "d"], how="inner")
+            from ._axis_enums import align_join_dtypes
+            f_n = forbid.rename({"e": "n"})
+            inv_n_idx = v_invest_n.frame.select("n", "d")
+            f_n, inv_n_idx = align_join_dtypes(f_n, inv_n_idx, ("n", "d"))
+            f_n = f_n.join(inv_n_idx, on=["n", "d"], how="inner")
             if f_n.height > 0:
                 m.add_cstr(
                     "fix_v_invest_no_investment_eq_n",
