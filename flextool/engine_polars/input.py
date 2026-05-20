@@ -3675,6 +3675,20 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 axis_enums = None
                 contract = None
 
+    # Phase-progress checkpoints fire as early as the recorder is
+    # reachable so the entry-sequence cost (axis_enums build,
+    # SpineDbReader construction) is attributed to the right
+    # sub-phase rather than absorbed into "load_flextool start".
+    from flextool.engine_polars._orchestration import get_phase_recorder
+    _entry_rec = get_phase_recorder()
+    _entry_logger = logging.getLogger("flextool.engine_polars.input")
+    if _entry_rec is not None:
+        _entry_rec.checkpoint(
+            "load_flextool_axis_enums_done",
+            _entry_logger,
+            user_label="load_flextool: axis_enums built",
+        )
+
     # Auto-construct a SpineDbReader for the workdir-only entry path
     # (no explicit ``db_reader=``).  Phase 4.6: thread ``axis_enums`` +
     # ``contract`` so cast-on-emit at the SpineDbReader boundary
@@ -3704,6 +3718,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 )
             except Exception:  # noqa: BLE001 — best-effort auto-construction
                 db_reader = None
+            if _entry_rec is not None:
+                _entry_rec.checkpoint(
+                    "load_flextool_spinedb_reader_done",
+                    _entry_logger,
+                    user_label="load_flextool: SpineDbReader constructed",
+                )
 
     # Phase 4.6 — flip the cascade-wide global on.  Every cascade module
     # that uses ``rename_to_axis`` / ``alias_to_axis`` / ``lit_axis`` /
@@ -3720,15 +3740,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
         set_global_axis_enums(axis_enums)
 
     try:
-        # Phase-progress checkpoints (only when a recorder is active —
-        # always-on for users following the run, full diagnostics when
-        # FLEXTOOL_MEMORY_DIAGNOSTICS=1).  Carve the load_flextool
-        # body into named sub-phases so multi-GB allocations are
-        # attributed to the specific CSV reader that emitted them
-        # rather than absorbed wholesale into the pass-1a delta.
-        from flextool.engine_polars._orchestration import get_phase_recorder
-        _rec = get_phase_recorder()
-        _load_logger = logging.getLogger("flextool.engine_polars.input")
+        # Reuse the recorder bound at the function entry above so the
+        # sub-checkpoints (axis_enums / SpineDbReader / load_flextool
+        # start) share a single timeline.
+        _rec = _entry_rec
+        _load_logger = _entry_logger
 
         def _load_mem(label: str, user_label: str) -> None:
             if _rec is not None:
