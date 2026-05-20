@@ -1840,7 +1840,7 @@ def write_all_variables(
                 label, solve_name, exc,
             )
     _logger.info(
-        "Wrote %d output variables for solve '%s' → %s",
+        "Wrote %d output variables for solve '%s' -> %s",
         len(written), solve_name, output_dir,
     )
     return written
