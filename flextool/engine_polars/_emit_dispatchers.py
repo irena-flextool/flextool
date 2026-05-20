@@ -59,6 +59,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine_polars._emit_provider_io import (
+    _emit,
     _provider_key,
     _provider_open,
 )
@@ -708,6 +709,52 @@ def write_process_arc_unions(input_dir: Path, solve_data_dir: Path,
     )
 
 
+def emit_process_arc_unions(input_dir: Path, solve_data_dir: Path,
+                             *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_arc_unions`.
+
+    Emits the same 14 frames under ``solve_data/<basename>`` keys via
+    :func:`_emit` (dual-key registration).  *solve_data_dir* is retained
+    because the shared input bundle still consumes it for sister input
+    reads (``_read_n_col`` / ``_read_pairs``).
+    """
+    inp = _arc_unions_inputs(input_dir, solve_data_dir, provider=provider)
+
+    _emit(provider, "solve_data/process__profileProcess__toSink.csv",
+          _compute_process__profileProcess__toSink(inp))
+    _emit(provider, "solve_data/process__source__toProfileProcess.csv",
+          _compute_process__source__toProfileProcess(inp))
+    _emit(provider, "solve_data/process_profile.csv",
+          _compute_process_profile(inp))
+    _emit(provider, "solve_data/process_source_toProcess.csv",
+          _compute_process_source_toProcess(inp))
+    _emit(provider, "solve_data/process_process_toSink.csv",
+          _compute_process_process_toSink(inp))
+    _emit(provider, "solve_data/process_source_sink_eff.csv",
+          _compute_process_source_sink_eff(solve_data_dir, provider=provider))
+    disk = _disk_arc_lists(solve_data_dir, provider=provider)
+    _emit(provider, "solve_data/process_source_sink_noEff.csv",
+          _compute_process_source_sink_noEff(inp, disk))
+    _emit(provider, "solve_data/process_online.csv",
+          _compute_process_online(solve_data_dir, provider=provider))
+    _emit(provider, "solve_data/process_minload.csv",
+          _compute_process_minload(inp, solve_data_dir, provider=provider))
+    _emit(provider, "solve_data/process__commodity__node_co2.csv",
+          _compute_process__commodity__node_co2(inp, solve_data_dir,
+                                                  provider=provider))
+    _emit(provider, "solve_data/process_co2.csv",
+          _compute_process_co2(inp, solve_data_dir, provider=provider))
+    _emit(provider, "solve_data/process_source_sink.csv",
+          _compute_process_source_sink(inp, disk))
+    _emit(provider, "solve_data/process_source_sink_alwaysProcess.csv",
+          _compute_process_source_sink_alwaysProcess(
+              inp, disk, solve_data_dir, provider=provider))
+    _emit(provider,
+          "solve_data/process__source__sink__profile__profile_method_direct.csv",
+          _compute_process__source__sink__profile__profile_method_direct(
+              inp, solve_data_dir, provider=provider))
+
+
 # ---------------------------------------------------------------------------
 # write_entity_period_calc_params — top-level dispatcher own-compute.
 # Mirrors flextool.flextoolrunner.preprocessing.entity_period_calc_params
@@ -964,3 +1011,22 @@ def write_entity_period_calc_params(input_dir: Path,
            solve_data_dir / "ed_fixed_cost.csv")
     _write(_compute_p_entity_unitsize(input_dir, inp, provider=provider),
            solve_data_dir / "p_entity_unitsize.csv")
+
+
+def emit_entity_period_calc_params(input_dir: Path,
+                                   solve_data_dir: Path,
+                                   *, provider) -> None:
+    """Provider-emitting twin of :func:`write_entity_period_calc_params`.
+
+    Emits the same 5 frames under ``solve_data/<basename>`` keys via
+    :func:`_emit` (dual-key registration).
+    """
+    inp = _entity_period_inputs(input_dir, solve_data_dir, provider=provider)
+    _emit(provider, "solve_data/pdProcess.csv", _compute_pdProcess(inp))
+    _emit(provider, "solve_data/pdNode.csv", _compute_pdNode(inp))
+    _emit(provider, "solve_data/edEntity_lifetime.csv",
+          _compute_edEntity_lifetime(inp))
+    _emit(provider, "solve_data/ed_fixed_cost.csv",
+          _compute_ed_fixed_cost(inp))
+    _emit(provider, "solve_data/p_entity_unitsize.csv",
+          _compute_p_entity_unitsize(input_dir, inp, provider=provider))

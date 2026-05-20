@@ -51,6 +51,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine_polars._emit_provider_io import (
+    _emit,
     _provider_key,
     _provider_open,
 )
@@ -386,6 +387,19 @@ def write_pdtReserve_upDown_group(
     )
 
 
+def emit_pdtReserve_upDown_group(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_pdtReserve_upDown_group`."""
+    _emit(
+        provider, "solve_data/pdtReserve_upDown_group.csv",
+        derive_pdtReserve_upDown_group(
+            input_dir, solve_data_dir, provider=provider,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # write_process_reserve_upDown_node_active_and_prundt  (mod L1321-1322)
 # ---------------------------------------------------------------------------
@@ -516,6 +530,36 @@ def write_process_reserve_upDown_node_active_and_prundt(
             prundt_rows,
         ),
         solve_data_dir / "prundt.csv",
+    )
+
+
+def emit_process_reserve_upDown_node_active_and_prundt(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of
+    :func:`write_process_reserve_upDown_node_active_and_prundt`."""
+    active_rows, dt = _compute_process_reserve_active(
+        input_dir, solve_data_dir, provider=provider,
+    )
+    _emit(
+        provider,
+        "solve_data/process_reserve_upDown_node_active.csv",
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node"), active_rows,
+        ),
+    )
+    prundt_rows: list[tuple[str, str, str, str, str, str]] = []
+    for (p, r, ud, n) in active_rows:
+        for (d, t) in dt:
+            prundt_rows.append((p, r, ud, n, d, t))
+    _emit(
+        provider,
+        "solve_data/prundt.csv",
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node", "period", "time"),
+            prundt_rows,
+        ),
     )
 
 
@@ -684,4 +728,41 @@ def write_process_reserve_filters_and_reliability(
     _write(
         _to_utf8_frame(("process",), process_lf),
         solve_data_dir / "process_large_failure.csv",
+    )
+
+
+def emit_process_reserve_filters_and_reliability(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of
+    :func:`write_process_reserve_filters_and_reliability`."""
+    rel_rows, incr_rows, lf_rows, process_lf = _compute_reserve_filters(
+        input_dir, solve_data_dir, provider=provider,
+    )
+    _emit(
+        provider,
+        "solve_data/p_process_reserve_upDown_node_reliability.csv",
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node", "value"), rel_rows,
+        ),
+    )
+    _emit(
+        provider,
+        "solve_data/process_reserve_upDown_node_increase_reserve_ratio.csv",
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node"), incr_rows,
+        ),
+    )
+    _emit(
+        provider,
+        "solve_data/process_reserve_upDown_node_large_failure_ratio.csv",
+        _to_utf8_frame(
+            ("process", "reserve", "upDown", "node"), lf_rows,
+        ),
+    )
+    _emit(
+        provider,
+        "solve_data/process_large_failure.csv",
+        _to_utf8_frame(("process",), process_lf),
     )

@@ -78,6 +78,7 @@ from typing import TYPE_CHECKING, Iterable
 import polars as pl
 
 from flextool.flextoolrunner.runner_state import FlexToolConfigError
+from flextool.engine_polars._emit_provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
@@ -1275,6 +1276,47 @@ def write_block_data(
     )
 
 
+def emit_block_data(
+    block_assignments: BlockAssignments,
+    overlap_set: OverlapSet,
+    block_timelines: BlockTimelines | None,
+    solve_data_dir: Path,
+    block_predecessors: BlockPredecessors | None = None,
+    block_boundaries: BlockBoundaries | None = None,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_block_data`.
+
+    Emits the eight block frames under ``solve_data/<basename>`` keys
+    via :func:`_emit` (dual-key registration: basename and
+    parent/basename).  *solve_data_dir* is retained for signature parity
+    with :func:`write_block_data`; the Provider is the only sink.
+    """
+    del solve_data_dir
+    _emit(provider, "solve_data/entity_block.csv",
+          _entity_block_frame(block_assignments))
+    _emit(provider, "solve_data/process_side_block.csv",
+          _process_side_block_frame(block_assignments))
+    _emit(provider, "solve_data/process_block.csv",
+          _process_block_frame(block_assignments))
+    _emit(provider, "solve_data/block_step_duration.csv",
+          _block_step_duration_frame(block_timelines))
+    _emit(provider, "solve_data/overlap_set.csv",
+          _overlap_set_frame(overlap_set))
+    _emit(provider, "solve_data/block_step_previous.csv",
+          _block_step_previous_frame(block_predecessors))
+    first_rows = (
+        block_boundaries.first if block_boundaries is not None else []
+    )
+    last_rows = (
+        block_boundaries.last if block_boundaries is not None else []
+    )
+    _emit(provider, "solve_data/block_period_time_first.csv",
+          _block_period_time_frame(first_rows))
+    _emit(provider, "solve_data/block_period_time_last.csv",
+          _block_period_time_frame(last_rows))
+
+
 # ---------------------------------------------------------------------------
 # Orchestration hook
 # ---------------------------------------------------------------------------
@@ -1535,6 +1577,192 @@ def write_block_data_for_solve(
         solve_data_dir=wf / "solve_data",
         block_predecessors=block_predecessors,
         block_boundaries=block_boundaries,
+    )
+
+    return block_assignments
+
+
+def emit_block_data_for_solve(
+    solve: str,
+    solve_config: "SolveConfig",
+    timeline_config: "TimelineConfig",
+    work_folder: Path,
+    active_time_list: dict[str, list] | None = None,
+    default_jump_list: Iterable[tuple] | None = None,
+    provider: "object | None" = None,
+    *, emit_provider,
+) -> BlockAssignments:
+    """Provider-emitting twin of :func:`write_block_data_for_solve`.
+
+    Mirrors the orchestration hook end-to-end but routes the final
+    eight CSV emissions through :func:`emit_block_data` (Provider) rather
+    than :func:`write_block_data` (disk).
+
+    The ``provider`` keyword is retained as the *input* Provider —
+    :func:`_read_input_rows` consults it for ``input/*.csv`` lookups.
+    The new keyword-only ``emit_provider`` is the *output* Provider into
+    which the eight block frames are emitted.
+    """
+    wf = Path(work_folder)
+    inp = wf / "input"
+
+    nodes: list[str] = []
+    units: list[str] = []
+    connections: list[str] = []
+    for row in _read_input_rows(inp, "node.csv", provider):
+        if row:
+            nodes.append(row[0])
+    for row in _read_input_rows(inp, "process_unit.csv", provider):
+        if row:
+            units.append(row[0])
+    for row in _read_input_rows(inp, "process_connection.csv", provider):
+        if row:
+            connections.append(row[0])
+    if not nodes and not units and not connections:
+        for row in _read_input_rows(inp, "entity.csv", provider):
+            if row:
+                nodes.append(row[0])
+
+    resolution_groups: dict[str, float] = {}
+    p_group_rows = _read_input_rows(inp, "p_group.csv", provider)
+    p_group_csv = inp / "p_group.csv"
+    p_group_header: list[str] | None = None
+    if p_group_csv.exists() and p_group_csv.stat().st_size > 0:
+        with open(p_group_csv) as f:
+            p_group_header = next(csv.reader(f), None)
+    if p_group_header is None:
+        p_group_header = ["group", "groupParam", "p_group"]
+
+    def _row_dict(row: list[str], header: list[str]) -> dict[str, str]:
+        return {h: (row[i] if i < len(row) else "")
+                for i, h in enumerate(header)}
+
+    for row in p_group_rows:
+        r = _row_dict(row, p_group_header)
+        if r.get("groupParam") == "new_stepduration":
+            try:
+                resolution_groups[r["group"]] = float(r["p_group"])
+            except (TypeError, ValueError):
+                continue
+    decomposition_groups: dict[str, str] = {}
+    p_group_decomp_csv = inp / "p_group_decomposition.csv"
+    p_group_decomp_header: list[str] | None = None
+    if p_group_decomp_csv.exists() and p_group_decomp_csv.stat().st_size > 0:
+        with open(p_group_decomp_csv) as f:
+            p_group_decomp_header = next(csv.reader(f), None)
+    if p_group_decomp_header is None:
+        p_group_decomp_header = ["group", "groupParam", "p_group"]
+    for row in _read_input_rows(inp, "p_group_decomposition.csv", provider):
+        r = _row_dict(row, p_group_decomp_header)
+        if r.get("groupParam") == "decomposition_method":
+            decomposition_groups[r["group"]] = str(r["p_group"])
+    if not decomposition_groups:
+        for row in p_group_rows:
+            r = _row_dict(row, p_group_header)
+            if r.get("groupParam") == "decomposition_method":
+                decomposition_groups[r["group"]] = str(r["p_group"])
+
+    group_node: list[tuple[str, str]] = []
+    group_process: list[tuple[str, str]] = []
+    for row in _read_input_rows(inp, "group__node.csv", provider):
+        if len(row) >= 2:
+            group_node.append((row[0], row[1]))
+    for row in _read_input_rows(inp, "group__process.csv", provider):
+        if len(row) >= 2:
+            group_process.append((row[0], row[1]))
+
+    unit_set = set(units)
+    conn_set = set(connections)
+    group_unit = [(g, p) for g, p in group_process if p in unit_set]
+    group_connection = [(g, p) for g, p in group_process if p in conn_set]
+
+    reserve_upDown_group: list[tuple[str, str, str]] = []
+    for row in _read_input_rows(inp, "reserve__upDown__group__method.csv",
+                                provider):
+        if len(row) >= 4 and row[3] != "no_reserve":
+            reserve_upDown_group.append((row[0], row[1], row[2]))
+    process_reserve_upDown_node: list[tuple[str, str, str, str]] = []
+    for row in _read_input_rows(inp, "process__reserve__upDown__node.csv",
+                                provider):
+        if len(row) >= 4:
+            process_reserve_upDown_node.append(
+                (row[0], row[1], row[2], row[3])
+            )
+
+    validate_group_membership(
+        group_unit, group_connection, group_node,
+        resolution_groups, decomposition_groups,
+        reserve_upDown_group=reserve_upDown_group,
+        process_reserve_upDown_node=process_reserve_upDown_node,
+    )
+
+    process_source_sink: list[tuple[str, str, str]] = []
+    sources: dict[str, list[str]] = defaultdict(list)
+    sinks: dict[str, list[str]] = defaultdict(list)
+    for row in _read_input_rows(inp, "process__source.csv", provider):
+        if len(row) >= 2:
+            sources[row[0]].append(row[1])
+    for row in _read_input_rows(inp, "process__sink.csv", provider):
+        if len(row) >= 2:
+            sinks[row[0]].append(row[1])
+    for p in set(list(sources.keys()) + list(sinks.keys())):
+        src_list = sources.get(p, [""])
+        snk_list = sinks.get(p, [""])
+        process_source_sink.append((p, src_list[0], snk_list[0]))
+
+    process_ct_method: dict[str, str] = {}
+    for row in _read_input_rows(inp, "process__ct_method.csv", provider):
+        if len(row) >= 2:
+            process_ct_method[row[0]] = row[1]
+
+    block_assignments = derive_blocks(
+        solve=solve,
+        solve_config=solve_config,
+        timeline_config=timeline_config,
+        nodes=nodes,
+        units=units,
+        connections=connections,
+        resolution_groups=resolution_groups,
+        group_unit=group_unit,
+        group_connection=group_connection,
+        group_node=group_node,
+        process_source_sink=process_source_sink,
+        process_ct_method=process_ct_method,
+    )
+
+    block_timelines = _build_block_timelines(
+        solve=solve,
+        solve_config=solve_config,
+        timeline_config=timeline_config,
+        block_assignments=block_assignments,
+        active_time_list=active_time_list,
+    )
+
+    overlap = derive_overlap_set(
+        solve=solve,
+        block_assignments=block_assignments,
+        block_timelines=block_timelines,
+    )
+
+    block_predecessors = derive_block_predecessors(
+        solve=solve,
+        block_assignments=block_assignments,
+        block_timelines=block_timelines,
+        default_jump_list=default_jump_list,
+    )
+    block_boundaries = derive_block_boundaries(
+        block_assignments=block_assignments,
+        block_timelines=block_timelines,
+    )
+
+    emit_block_data(
+        block_assignments=block_assignments,
+        overlap_set=overlap,
+        block_timelines=block_timelines,
+        solve_data_dir=wf / "solve_data",
+        block_predecessors=block_predecessors,
+        block_boundaries=block_boundaries,
+        provider=emit_provider,
     )
 
     return block_assignments

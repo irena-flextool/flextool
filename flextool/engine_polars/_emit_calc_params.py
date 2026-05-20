@@ -49,6 +49,7 @@ from pathlib import Path
 import polars as pl
 
 from ._axis_enums import schema_dtype
+from ._emit_provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +198,38 @@ def write_entity_total_caps(input_dir: Path, solve_data_dir: Path,
         _write(out, solve_data_dir / fname)
 
 
+def emit_entity_total_caps(input_dir: Path, solve_data_dir: Path,
+                            *, provider) -> None:
+    """Provider-emitting twin of :func:`write_entity_total_caps`."""
+    process_set = frozenset(
+        _drop_blank_rows(_read_csv(input_dir / "process.csv", ["process"],
+                                     provider=provider), ["process"])
+        .get_column("process").to_list()
+    )
+    node_set = frozenset(
+        _drop_blank_rows(_read_csv(input_dir / "node.csv", ["node"],
+                                     provider=provider), ["node"])
+        .get_column("node").to_list()
+    )
+    p_process = _read_param_lookup(input_dir / "p_process.csv",
+                                     provider=provider)
+    p_node = _read_param_lookup(input_dir / "p_node.csv", provider=provider)
+
+    key_cache: dict[str, list[str]] = {}
+    for _, src, _ in _ENTITY_TOTAL_SPEC:
+        if src not in key_cache:
+            df = _read_csv(solve_data_dir / src, ["entity"], provider=provider)
+            df = _drop_blank_rows(df, ["entity"])
+            key_cache[src] = df.get_column("entity").to_list()
+
+    for fname, src, param in _ENTITY_TOTAL_SPEC:
+        out = derive_entity_total_cap(
+            key_cache[src], process_set, node_set,
+            p_process, p_node, param,
+        )
+        _emit(provider, f"solve_data/{fname}", out)
+
+
 # ===========================================================================
 # Family 14 — process_method_sets (legacy: preprocessing/process_method_sets.py)
 # ===========================================================================
@@ -289,6 +322,17 @@ def write_process_method_projections(input_dir: Path, solve_data_dir: Path,
            solve_data_dir / "process__method_indirect.csv")
 
 
+def emit_process_method_projections(input_dir: Path, solve_data_dir: Path,
+                                     *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_method_projections`."""
+    _emit(provider, "solve_data/process_online_linear.csv",
+          derive_process_online_linear(input_dir, provider=provider))
+    _emit(provider, "solve_data/process_online_integer.csv",
+          derive_process_online_integer(input_dir, provider=provider))
+    _emit(provider, "solve_data/process__method_indirect.csv",
+          derive_process_method_indirect(input_dir, provider=provider))
+
+
 # ---- process_VRE (mod L2248) ----------------------------------------------
 
 def derive_process_VRE(input_dir: Path,
@@ -333,6 +377,13 @@ def write_process_VRE(input_dir: Path, solve_data_dir: Path,
                         ) -> None:
     _write(derive_process_VRE(input_dir, provider=provider),
            solve_data_dir / "process_VRE.csv")
+
+
+def emit_process_VRE(input_dir: Path, solve_data_dir: Path,
+                      *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_VRE`."""
+    _emit(provider, "solve_data/process_VRE.csv",
+          derive_process_VRE(input_dir, provider=provider))
 
 
 # ---- process_*_to_* family (mod L993-L1052) -------------------------------
@@ -596,6 +647,35 @@ def write_process_arc_method_joins(input_dir: Path, solve_data_dir: Path,
            solve_data_dir / "process_process_toSource_direct.csv")
 
 
+def emit_process_arc_method_joins(input_dir: Path, solve_data_dir: Path,
+                                   *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_arc_method_joins`."""
+    _emit(provider, "solve_data/process_sink_toProcess.csv",
+          derive_process_sink_toProcess(input_dir, provider=provider))
+    _emit(provider, "solve_data/process_process_toSource.csv",
+          derive_process_process_toSource(input_dir, provider=provider))
+    _emit(provider, "solve_data/process_source_toSink.csv",
+          derive_process_source_toSink(input_dir, provider=provider))
+    _emit(provider, "solve_data/process_source_toProcess_direct.csv",
+          derive_process_source_toProcess_direct(input_dir,
+                                                   provider=provider))
+    _emit(provider, "solve_data/process_process_toSink_direct.csv",
+          derive_process_process_toSink_direct(input_dir, provider=provider))
+    _emit(provider, "solve_data/process_sink_toProcess_direct.csv",
+          derive_process_sink_toProcess_direct(input_dir, provider=provider))
+    _emit(provider, "solve_data/process_sink_toSource.csv",
+          derive_process_sink_toSource(input_dir, provider=provider))
+    _emit(provider, "solve_data/process_process_toSink_noConversion.csv",
+          derive_process_process_toSink_noConversion(input_dir,
+                                                       provider=provider))
+    _emit(provider, "solve_data/process_source_toProcess_noConversion.csv",
+          derive_process_source_toProcess_noConversion(input_dir,
+                                                         provider=provider))
+    _emit(provider, "solve_data/process_process_toSource_direct.csv",
+          derive_process_process_toSource_direct(input_dir,
+                                                   provider=provider))
+
+
 # ---- profile-method joins (mod L961, L969) --------------------------------
 
 def _profile_method_inputs(input_dir: Path,
@@ -756,4 +836,23 @@ def write_process_profile_method_joins(
             input_dir, provider=provider),
         solve_data_dir
         / "process__source__toProfileProcess__profile__profile_method.csv",
+    )
+
+
+def emit_process_profile_method_joins(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_process_profile_method_joins`."""
+    _emit(
+        provider,
+        "solve_data/process__profileProcess__toSink__profile__profile_method.csv",
+        derive_process_profileProcess_toSink_profile_profile_method(
+            input_dir, provider=provider),
+    )
+    _emit(
+        provider,
+        "solve_data/process__source__toProfileProcess__profile__profile_method.csv",
+        derive_process_source_toProfileProcess_profile_profile_method(
+            input_dir, provider=provider),
     )

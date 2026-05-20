@@ -31,6 +31,7 @@ from pathlib import Path
 import polars as pl
 
 from ._axis_enums import alias_to_axis
+from ._emit_provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,15 @@ def write_period_param_sets(input_dir: Path, solve_data_dir: Path,
         )
 
 
+def emit_period_param_sets(input_dir: Path, solve_data_dir: Path,
+                            *, provider) -> None:
+    """Provider-emitting twin of :func:`write_period_param_sets`."""
+    del solve_data_dir  # legacy signature parity; keys are static
+    for source_csv, target_name in _PERIOD_PARAM_SOURCES:
+        _emit(provider, f"solve_data/{target_name}",
+              derive_period_param_set(input_dir, source_csv, provider=provider))
+
+
 # ---------------------------------------------------------------------------
 # Family 2 — invest_method_sets (legacy: preprocessing/invest_method_sets.py)
 # ---------------------------------------------------------------------------
@@ -203,6 +213,20 @@ def write_invest_method_sets(input_dir: Path, solve_data_dir: Path,
            solve_data_dir / "group_divest.csv")
 
 
+def emit_invest_method_sets(input_dir: Path, solve_data_dir: Path,
+                             *, provider) -> None:
+    """Provider-emitting twin of :func:`write_invest_method_sets`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/entityInvest.csv",
+          derive_entity_invest(input_dir, provider=provider))
+    _emit(provider, "solve_data/entityDivest.csv",
+          derive_entity_divest(input_dir, provider=provider))
+    _emit(provider, "solve_data/group_invest.csv",
+          derive_group_invest(input_dir, provider=provider))
+    _emit(provider, "solve_data/group_divest.csv",
+          derive_group_divest(input_dir, provider=provider))
+
+
 # ---------------------------------------------------------------------------
 # Family 3 — co2_method_sets (legacy: preprocessing/co2_method_sets.py)
 # ---------------------------------------------------------------------------
@@ -246,6 +270,19 @@ def write_co2_method_sets(input_dir: Path, solve_data_dir: Path,
     ):
         _write(derive_group_co2(input_dir, kind, provider=provider),
                solve_data_dir / target)
+
+
+def emit_co2_method_sets(input_dir: Path, solve_data_dir: Path,
+                          *, provider) -> None:
+    """Provider-emitting twin of :func:`write_co2_method_sets`."""
+    del solve_data_dir
+    for kind, target in (
+        ("price",      "group_co2_price.csv"),
+        ("max_period", "group_co2_max_period.csv"),
+        ("max_total",  "group_co2_max_total.csv"),
+    ):
+        _emit(provider, f"solve_data/{target}",
+              derive_group_co2(input_dir, kind, provider=provider))
 
 
 # ---------------------------------------------------------------------------
@@ -591,3 +628,105 @@ def write_simple_setof_projections(input_dir: Path, solve_data_dir: Path,
            solve_data_dir / "timeline_steps.csv")
     _write(derive_commodity_tier_ann(input_dir, provider=provider),
            solve_data_dir / "commodity__tier_ann.csv")
+
+
+# --- emit_* twins for the simple_projections orchestrators ---------------
+
+def emit_optional_yes(input_dir: Path, solve_data_dir: Path,
+                       *, provider) -> None:
+    """Provider-emitting twin of :func:`write_optional_yes`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/optional_yes.csv",
+          derive_optional_yes(input_dir, provider=provider))
+
+
+def emit_reserve_upDown_group(input_dir: Path, solve_data_dir: Path,
+                               *, provider) -> None:
+    """Provider-emitting twin of :func:`write_reserve_upDown_group`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/reserve__upDown__group.csv",
+          derive_reserve_upDown_group(input_dir, provider=provider))
+
+
+def emit_group_loss_share(input_dir: Path, solve_data_dir: Path,
+                           *, provider) -> None:
+    """Provider-emitting twin of :func:`write_group_loss_share`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/group_loss_share.csv",
+          derive_group_loss_share(input_dir, provider=provider))
+
+
+def emit_def_optional_yes(input_dir: Path, solve_data_dir: Path,
+                           *, provider) -> None:
+    """Provider-emitting twin of :func:`write_def_optional_yes`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/def_optional_yes.csv",
+          derive_def_optional_yes(input_dir, provider=provider))
+
+
+def emit_process_delayed(input_dir: Path, solve_data_dir: Path,
+                          *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_delayed`."""
+    del input_dir
+    _emit(provider, "solve_data/process_delayed.csv",
+          derive_process_delayed(solve_data_dir, provider=provider))
+
+
+def emit_process_side(solve_data_dir: Path, *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_side`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/process_side.csv", derive_process_side())
+
+
+def emit_period_solve(solve_data_dir: Path, *, provider) -> None:
+    """Provider-emitting twin of :func:`write_period_solve`."""
+    _emit(provider, "solve_data/period_solve.csv",
+          derive_period_solve(solve_data_dir, provider=provider))
+
+
+def emit_time_set(input_dir: Path, solve_data_dir: Path,
+                   *, provider) -> None:
+    """Provider-emitting twin of :func:`write_time_set`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/time.csv",
+          derive_time_set(input_dir, provider=provider))
+
+
+def emit_enable_optional_outputs(solve_data_dir: Path,
+                                  *, provider) -> None:
+    """Provider-emitting twin of :func:`write_enable_optional_outputs`."""
+    _emit(provider, "solve_data/enable_optional_outputs.csv",
+          derive_enable_optional_outputs(solve_data_dir, provider=provider))
+
+
+def emit_node_state_subsets(solve_data_dir: Path,
+                             *, provider) -> None:
+    """Provider-emitting twin of :func:`write_node_state_subsets`."""
+    rp = derive_node_state_subset(solve_data_dir, "bind_using_blended_weights",
+                                  provider=provider)
+    block = derive_node_state_subset(solve_data_dir, "bind_intraperiod_blocks",
+                                     provider=provider)
+    _emit(provider, "solve_data/nodeState_rp.csv", rp)
+    _emit(provider, "solve_data/nodeStateBlock.csv", block)
+
+
+def emit_commodity_tier_sets(input_dir: Path, solve_data_dir: Path,
+                              *, provider) -> None:
+    """Provider-emitting twin of :func:`write_commodity_tier_sets`."""
+    ct = derive_commodity_tier(input_dir, solve_data_dir, provider=provider)
+    _emit(provider, "solve_data/commodity__tier.csv", ct)
+    _emit(provider, "solve_data/tier.csv", derive_tier(ct))
+
+
+def emit_simple_setof_projections(input_dir: Path, solve_data_dir: Path,
+                                    *, provider) -> None:
+    """Provider-emitting twin of :func:`write_simple_setof_projections`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/solve_period.csv",
+          derive_solve_period(input_dir, provider=provider))
+    _emit(provider, "solve_data/timeline.csv",
+          derive_timeline(input_dir, provider=provider))
+    _emit(provider, "solve_data/timeline_steps.csv",
+          derive_timeline_steps(input_dir, provider=provider))
+    _emit(provider, "solve_data/commodity__tier_ann.csv",
+          derive_commodity_tier_ann(input_dir, provider=provider))

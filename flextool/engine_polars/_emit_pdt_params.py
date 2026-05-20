@@ -50,6 +50,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine_polars._emit_provider_io import (
+    _emit,
     _provider_key,
     _provider_open,
 )
@@ -188,6 +189,13 @@ def write_pdtProcess(input_dir: Path, solve_data_dir: Path,
     )
 
 
+def emit_pdtProcess(input_dir: Path, solve_data_dir: Path,
+                     *, provider) -> None:
+    """Provider-emitting twin of :func:`write_pdtProcess`."""
+    _emit(provider, "solve_data/pdtProcess.csv",
+          derive_pdtProcess(input_dir, solve_data_dir, provider=provider))
+
+
 # ---------------------------------------------------------------------------
 # Family — pdtNode (mod L1176; time-first + class default).
 # ---------------------------------------------------------------------------
@@ -264,6 +272,13 @@ def write_pdtNode(input_dir: Path, solve_data_dir: Path,
         derive_pdtNode(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtNode.csv",
     )
+
+
+def emit_pdtNode(input_dir: Path, solve_data_dir: Path,
+                  *, provider) -> None:
+    """Provider-emitting twin of :func:`write_pdtNode`."""
+    _emit(provider, "solve_data/pdtNode.csv",
+          derive_pdtNode(input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +391,15 @@ def write_pdtProcess_source(input_dir: Path, solve_data_dir: Path,
     )
 
 
+def emit_pdtProcess_source(input_dir: Path, solve_data_dir: Path,
+                            *, provider) -> None:
+    """Provider-emitting twin of :func:`write_pdtProcess_source`."""
+    _emit(
+        provider, "solve_data/pdtProcess_source.csv",
+        derive_pdtProcess_source(input_dir, solve_data_dir, provider=provider),
+    )
+
+
 def derive_pdtProcess_sink(
     input_dir: Path, solve_data_dir: Path,
     *,
@@ -410,4 +434,13 @@ def write_pdtProcess_sink(input_dir: Path, solve_data_dir: Path,
     _write(
         derive_pdtProcess_sink(input_dir, solve_data_dir, provider=provider),
         solve_data_dir / "pdtProcess_sink.csv",
+    )
+
+
+def emit_pdtProcess_sink(input_dir: Path, solve_data_dir: Path,
+                          *, provider) -> None:
+    """Provider-emitting twin of :func:`write_pdtProcess_sink`."""
+    _emit(
+        provider, "solve_data/pdtProcess_sink.csv",
+        derive_pdtProcess_sink(input_dir, solve_data_dir, provider=provider),
     )

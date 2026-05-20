@@ -31,6 +31,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine_polars._pdt_lookup import PdLookup
+from flextool.engine_polars._emit_provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
@@ -530,3 +531,32 @@ def write_entity_annual_calc_params(
            solve_data_dir / "ed_lifetime_fixed_cost.csv")
     _write(_rows_to_frame(_rows_lifetime_fixed_cost_divest(inp)),
            solve_data_dir / "ed_lifetime_fixed_cost_divest.csv")
+
+
+def emit_entity_annual_calc_params(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_entity_annual_calc_params`.
+
+    Emits the same six frames under ``solve_data/<basename>`` keys via
+    :func:`_emit` (dual-key registration: basename and parent/basename).
+    """
+    inp = _entity_annual_inputs(input_dir, solve_data_dir, provider=provider)
+
+    rows_ann, rows_ann_disc = _ann_pair(inp)
+    _emit(provider, "solve_data/ed_entity_annual.csv",
+          _rows_to_frame(rows_ann))
+    _emit(provider, "solve_data/ed_entity_annual_discounted.csv",
+          _rows_to_frame(rows_ann_disc))
+
+    rows_div, rows_div_disc = _div_pair(inp)
+    _emit(provider, "solve_data/ed_entity_annual_divest.csv",
+          _rows_to_frame(rows_div))
+    _emit(provider, "solve_data/ed_entity_annual_divest_discounted.csv",
+          _rows_to_frame(rows_div_disc))
+
+    _emit(provider, "solve_data/ed_lifetime_fixed_cost.csv",
+          _rows_to_frame(_rows_lifetime_fixed_cost(inp)))
+    _emit(provider, "solve_data/ed_lifetime_fixed_cost_divest.csv",
+          _rows_to_frame(_rows_lifetime_fixed_cost_divest(inp)))

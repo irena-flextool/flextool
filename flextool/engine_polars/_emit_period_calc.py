@@ -52,6 +52,8 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine_polars._emit_provider_io import _emit
+
 
 # ---------------------------------------------------------------------------
 # CSV I/O helpers — same conventions as ``_emit_per_solve`` /
@@ -149,6 +151,16 @@ def _write_keyed(path: Path, header: tuple[str, str],
 def _write_keyed_2(path: Path, header: tuple[str, str, str],
                    rows: list[tuple[str, str, float]]) -> None:
     _write(_keyed_frame_2(header, rows), path)
+
+
+def _emit_keyed(provider, key: str, header: tuple[str, str],
+                rows: list[tuple[str, float]]) -> None:
+    _emit(provider, key, _keyed_frame(header, rows))
+
+
+def _emit_keyed_2(provider, key: str, header: tuple[str, str, str],
+                  rows: list[tuple[str, str, float]]) -> None:
+    _emit(provider, key, _keyed_frame_2(header, rows))
 
 
 def _read_step_duration(
@@ -481,6 +493,249 @@ def write_period_calculated_params(
     )
 
 
+def emit_period_calculated_params(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_period_calculated_params`.
+
+    Emits the same 12 frames under ``solve_data/<basename>`` keys via
+    :func:`_emit` (dual-key registration).
+    """
+    # ── Sources ────────────────────────────────────────────────────────
+    step_duration, _period_set = _read_step_duration(
+        solve_data_dir / "steps_in_use.csv", provider=provider,
+    )
+    complete_step_duration, _ = _read_step_duration(
+        solve_data_dir / "steps_complete_solve.csv", provider=provider,
+    )
+
+    pb_rows = _read_pb_pairs(solve_data_dir / "period__branch.csv",
+                             provider=provider)
+    branches_for_d: dict[str, list[str]] = {}
+    for d, b in pb_rows:
+        branches_for_d.setdefault(d, []).append(b)
+
+    timeline_step_duration, timelines = _read_step_duration(
+        input_dir / "timeline.csv", provider=provider,
+    )
+
+    pwh_df = _read_csv(solve_data_dir / "period_with_history.csv",
+                       ["period", "value"], provider=provider)
+    p_period_from_solve: dict[str, float] = {}
+    period_with_history: list[str] = []
+    for d, v in zip(pwh_df["period"].to_list(),
+                    pwh_df["value"].to_list()):
+        if not d:
+            continue
+        period_with_history.append(d)
+        try:
+            p_period_from_solve[d] = float(v)
+        except (ValueError, TypeError):
+            continue
+
+    pyr_df = _read_csv(
+        solve_data_dir / "p_years_represented.csv",
+        ["period", "year", "p_years_from_solve", "value"],
+        provider=provider,
+    )
+    p_years_represented: dict[tuple[str, str], float] = {}
+    years_for_period: dict[str, list[str]] = {}
+    for d, y, v in zip(pyr_df["period"].to_list(),
+                       pyr_df["year"].to_list(),
+                       pyr_df["value"].to_list()):
+        if not d or not y:
+            continue
+        try:
+            p_years_represented[(d, y)] = float(v)
+            years_for_period.setdefault(d, []).append(y)
+        except (ValueError, TypeError):
+            continue
+
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
+    periodAll = _read_singles(solve_data_dir / "periodAll_set.csv",
+                              provider=provider)
+
+    sum_step_dur_by_period: dict[str, float] = {}
+    for (d, _t), v in step_duration.items():
+        sum_step_dur_by_period[d] = sum_step_dur_by_period.get(d, 0.0) + v
+
+    sum_timeline_dur: dict[str, float] = {}
+    for (tl, _t), v in timeline_step_duration.items():
+        sum_timeline_dur[tl] = sum_timeline_dur.get(tl, 0.0) + v
+
+    pb_pairs_set = frozenset(pb_rows)
+
+    sum_complete_by_d2: dict[str, float] = {}
+    for (d2, _t), v in complete_step_duration.items():
+        sum_complete_by_d2[d2] = sum_complete_by_d2.get(d2, 0.0) + v
+
+    p_tdy = [(tl, sum_timeline_dur.get(tl, 0.0) / 8760.0) for tl in timelines]
+    _emit_keyed(provider, "solve_data/p_timeline_duration_in_years.csv",
+                ("timeline", "value"), p_tdy)
+
+    hours_in_period = [
+        (d, sum_step_dur_by_period.get(d, 0.0)) for d in period_in_use
+    ]
+    _emit_keyed(provider, "solve_data/hours_in_period.csv",
+                ("period", "value"), hours_in_period)
+
+    period_share = [(d, h / 8760.0) for d, h in hours_in_period]
+    _emit_keyed(provider, "solve_data/period_share_of_year.csv",
+                ("period", "value"), period_share)
+
+    p_years_d_rows = [
+        (d, p_period_from_solve.get(d, 0.0)) for d in period_with_history
+    ]
+    _emit_keyed(provider, "solve_data/p_years_d.csv",
+                ("period", "value"), p_years_d_rows)
+
+    p_years_rep_d: list[tuple[str, float]] = []
+    for d in periodAll:
+        years = years_for_period.get(d, ())
+        s = sum(p_years_represented.get((d, y), 1.0) for y in years)
+        p_years_rep_d.append((d, s))
+    _emit_keyed(provider, "solve_data/p_years_represented_d_calc.csv",
+                ("period", "value"), p_years_rep_d)
+
+    branches_for_period: dict[str, list[str]] = {}
+    for d2, d in pb_pairs_set:
+        branches_for_period.setdefault(d, []).append(d2)
+    complete_hours: list[tuple[str, float]] = []
+    for d in period_in_use:
+        total = sum(
+            sum_complete_by_d2.get(d2, 0.0)
+            for d2 in branches_for_period.get(d, ())
+        )
+        complete_hours.append((d, total))
+    _emit_keyed(provider, "solve_data/complete_hours_in_period.csv",
+                ("period", "value"), complete_hours)
+
+    complete_share = [(d, h / 8760.0) for d, h in complete_hours]
+    _emit_keyed(provider, "solve_data/complete_period_share_of_year_calc.csv",
+                ("period", "value"), complete_share)
+
+    def _scalar_max(csv_path: Path, default: float) -> float:
+        rows_df = _read_csv(csv_path, ["key", "value"], provider=provider)
+        vals: list[float] = []
+        for v in rows_df["value"].to_list():
+            if v is None or v == "":
+                continue
+            try:
+                vals.append(float(v))
+            except ValueError:
+                continue
+        return max(vals) if vals else default
+
+    p_inflation = _scalar_max(input_dir / "p_inflation_rate.csv", 0.0)
+    p_infl_offset_investment = _scalar_max(
+        input_dir / "p_inflation_offset_investment.csv", 0.0,
+    )
+    p_infl_offset_operations = _scalar_max(
+        input_dir / "p_inflation_offset_operations.csv", 0.5,
+    )
+
+    global_years_set: dict[str, None] = {}
+    for years_list in years_for_period.values():
+        for y in years_list:
+            global_years_set.setdefault(y, None)
+    try:
+        sorted_global_years = sorted(
+            global_years_set.keys(), key=lambda y: float(y),
+        )
+    except ValueError:
+        sorted_global_years = sorted(global_years_set.keys())
+
+    pyy_invest: list[tuple[str, str, float]] = []
+    pyy_dispatch: list[tuple[str, str, float]] = []
+    inflation_invest: dict[str, float] = {}
+    inflation_ops: dict[str, float] = {}
+    one_plus_inflation_inv = (
+        1.0 / (1.0 + p_inflation) if p_inflation != -1.0 else 1.0
+    )
+
+    for d in periodAll:
+        years_for_d = years_for_period.get(d, ())
+        try:
+            sorted_d_years = sorted(years_for_d, key=lambda y: float(y))
+        except ValueError:
+            sorted_d_years = sorted(years_for_d)
+
+        cumulative = 0.0
+        global_pos: dict[str, float] = {}
+        for y2 in sorted_global_years:
+            global_pos[y2] = cumulative
+            cumulative += p_years_represented.get((d, y2), 1.0)
+
+        per_year: list[tuple[str, float, float]] = []
+        for y in sorted_d_years:
+            pyr = p_years_represented.get((d, y), 1.0)
+            base = global_pos.get(y, 0.0)
+            until_invest = base + pyr * p_infl_offset_investment
+            until_dispatch = base + pyr * p_infl_offset_operations
+            pyy_invest.append((d, y, until_invest))
+            pyy_dispatch.append((d, y, until_dispatch))
+            per_year.append((y, until_invest, until_dispatch))
+
+        sum_p_years_for_d = sum(
+            p_years_represented.get((d, y), 1.0) for y in sorted_d_years
+        )
+        if sum_p_years_for_d > 0:
+            inv_factor = 0.0
+            ops_factor = 0.0
+            for y, until_inv, until_op in per_year:
+                pyr = p_years_represented.get((d, y), 1.0)
+                inv_factor += pyr * (one_plus_inflation_inv ** until_inv)
+                ops_factor += pyr * (one_plus_inflation_inv ** until_op)
+            inflation_invest[d] = inv_factor
+            inflation_ops[d] = ops_factor
+        else:
+            inflation_invest[d] = 1.0
+            inflation_ops[d] = 1.0
+
+    _emit_keyed_2(provider, "solve_data/p_years_until_invest.csv",
+                  ("period", "year", "value"), pyy_invest)
+    _emit_keyed_2(provider, "solve_data/p_years_until_dispatch.csv",
+                  ("period", "year", "value"), pyy_dispatch)
+
+    period_universe = _read_singles(solve_data_dir / "period_set.csv",
+                                     provider=provider)
+    inv_yearly = [
+        (d, inflation_invest.get(d, 1.0)) for d in period_universe
+    ]
+    ops_yearly = [
+        (d, inflation_ops.get(d, 1.0)) for d in period_in_use
+    ]
+    _emit_keyed(provider, "solve_data/p_inflation_factor_investment_yearly.csv",
+                ("period", "value"), inv_yearly)
+    _emit_keyed(provider, "solve_data/p_inflation_factor_operations_yearly.csv",
+                ("period", "value"), ops_yearly)
+
+    ladder_df = _read_csv(
+        solve_data_dir / "ladder_cum_sim_hours.csv",
+        ["period", "value"],
+        provider=provider,
+    )
+    p_ladder_cum: dict[str, float] = {}
+    for d, v in zip(ladder_df["period"].to_list(),
+                    ladder_df["value"].to_list()):
+        if not d:
+            continue
+        try:
+            p_ladder_cum[d] = float(v)
+        except (ValueError, TypeError):
+            continue
+    complete_share_lookup = dict(complete_share)
+    f_d_k_rows: list[tuple[str, float]] = []
+    for d in period_in_use:
+        num = p_ladder_cum.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0)
+        denom = complete_share_lookup.get(d, 0.0) * 8760.0
+        f_d_k_rows.append((d, num / denom))
+    _emit_keyed(provider, "solve_data/f_d_k.csv",
+                ("period", "value"), f_d_k_rows)
+
+
 # ---------------------------------------------------------------------------
 # Family B — write_branch_weights
 # ---------------------------------------------------------------------------
@@ -589,3 +844,98 @@ def write_branch_weights(input_dir: Path, solve_data_dir: Path,
         solve_data_dir / "pdt_branch_weight.csv",
         ("period", "time", "value"), pdt_rows,
     )
+
+
+def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
+                         *, provider) -> None:
+    """Provider-emitting twin of :func:`write_branch_weights`.
+
+    Emits ``pd_branch_weight.csv`` and ``pdt_branch_weight.csv`` under
+    ``solve_data/<basename>`` keys via :func:`_emit`.
+    """
+    del input_dir  # legacy signature parity; no input/ reads here.
+
+    pb_rows = _read_pb_pairs(solve_data_dir / "period__branch.csv",
+                             provider=provider)
+    pb_set = frozenset(pb_rows)
+
+    sbw_df = _read_csv(
+        solve_data_dir / "solve_branch_weight.csv",
+        ["branch", "value"],
+        provider=provider,
+    )
+    branch_weight: dict[str, float] = {}
+    for b, v in zip(sbw_df["branch"].to_list(), sbw_df["value"].to_list()):
+        if not b:
+            continue
+        try:
+            branch_weight[b] = float(v)
+        except (ValueError, TypeError):
+            continue
+
+    def w(b: str) -> float:
+        return branch_weight.get(b, 1.0)
+
+    ft_df = _read_csv(
+        solve_data_dir / "first_timesteps.csv",
+        ["period", "step"],
+        provider=provider,
+    )
+    times_with_first_set: dict[str, set[str]] = {}
+    first_time_for_d: dict[str, str] = {}
+    for d, t in zip(ft_df["period"].to_list(), ft_df["step"].to_list()):
+        if not d or not t:
+            continue
+        first_time_for_d[d] = t
+        times_with_first_set.setdefault(t, set()).add(d)
+
+    su_df = _read_csv(
+        solve_data_dir / "steps_in_use.csv",
+        ["period", "step"],
+        provider=provider,
+    )
+    dt_pairs: list[tuple[str, str]] = []
+    branches_for_t: dict[str, set[str]] = {}
+    for d, t in zip(su_df["period"].to_list(), su_df["step"].to_list()):
+        if not d or not t:
+            continue
+        dt_pairs.append((d, t))
+        branches_for_t.setdefault(t, set()).add(d)
+
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
+
+    pd_rows: list[tuple[str, float]] = []
+    for d in period_in_use:
+        ts = first_time_for_d.get(d)
+        if ts is None:
+            continue
+        branches_at_ts = times_with_first_set.get(ts, set())
+        denom = 0.0
+        for d2, b in pb_rows:
+            if b not in branches_at_ts:
+                continue
+            if (d2, d) not in pb_set:
+                continue
+            denom += w(b)
+        if denom == 0.0:
+            continue
+        pd_rows.append((d, w(d) / denom))
+    _emit_keyed(provider, "solve_data/pd_branch_weight.csv",
+                ("period", "value"), pd_rows)
+
+    pdt_rows: list[tuple[str, str, float]] = []
+    for d, t in dt_pairs:
+        branches_with_t = branches_for_t.get(t, set())
+        denom = 0.0
+        for d2, b in pb_rows:
+            if b not in branches_with_t:
+                continue
+            if (d2, d) not in pb_set:
+                continue
+            denom += w(b)
+        if denom == 0.0:
+            continue
+        pdt_rows.append((d, t, w(d) / denom))
+    _emit_keyed_2(provider, "solve_data/pdt_branch_weight.csv",
+                  ("period", "time", "value"), pdt_rows)

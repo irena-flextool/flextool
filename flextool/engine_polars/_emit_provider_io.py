@@ -20,9 +20,24 @@ sites can keep using the canonical ``input/<stem>.csv`` /
 from __future__ import annotations
 
 import io
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import polars as pl
+
+
+def _emit(provider, key: str, df: pl.DataFrame) -> None:
+    """Register *df* in *provider* under both forms of *key* so existing
+    Provider lookups continue to work.
+
+    *key* must be of the form 'parent/basename' (e.g. 'solve_data/foo.csv').
+    Mirrors the dual-key registration in
+    :func:`_flex_data_accumulator.capture_frames` — basename AND
+    parent/basename — so downstream readers that consult either form keep
+    working.
+    """
+    p = PurePosixPath(key)
+    provider.put(p.name, df)
+    provider.put(str(p), df)
 
 
 def _provider_key(path: "Path | str") -> str:
@@ -141,6 +156,7 @@ def workdir_provider_for_paths(
 
 
 __all__ = [
+    "_emit",
     "_provider_key",
     "_provider_open",
     "_provider_lookup_positional",

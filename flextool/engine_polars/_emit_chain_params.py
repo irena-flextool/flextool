@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flextool.engine_polars._emit_provider_io import (
+    _emit,
     _provider_key,
     _provider_open,
 )
@@ -364,6 +365,16 @@ def write_p_entity_pre_existing(
     )
 
 
+def emit_p_entity_pre_existing(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_p_entity_pre_existing`."""
+    _emit(provider, "solve_data/p_entity_pre_existing.csv",
+          derive_p_entity_pre_existing(input_dir, solve_data_dir,
+                                         provider=provider))
+
+
 # ---------------------------------------------------------------------------
 # write_p_entity_divest_cumulative_max — mod L1920-1933 (3-branch sum,
 # cumulative ceiling on v_divest by dispatch period).
@@ -449,6 +460,16 @@ def write_p_entity_divest_cumulative_max(
                                                 provider=provider),
         solve_data_dir / "p_entity_divest_cumulative_max.csv",
     )
+
+
+def emit_p_entity_divest_cumulative_max(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_p_entity_divest_cumulative_max`."""
+    _emit(provider, "solve_data/p_entity_divest_cumulative_max.csv",
+          derive_p_entity_divest_cumulative_max(input_dir, solve_data_dir,
+                                                  provider=provider))
 
 
 # ---------------------------------------------------------------------------
@@ -715,6 +736,31 @@ def write_p_entity_existing_chain(
     )
 
 
+def emit_p_entity_existing_chain(
+    input_dir: Path, solve_data_dir: Path,
+    *, prior_handoff: "SolveHandoff | None" = None,
+    provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_p_entity_existing_chain`."""
+    later_rows, all_rows, count_rows, int_rows, prev_rows = (
+        _compute_p_entity_existing_chain(
+            input_dir, solve_data_dir, prior_handoff, provider=provider,
+        )
+    )
+    _emit(provider,
+          "solve_data/p_entity_existing_capacity_later_solves.csv",
+          _ed_value_frame(later_rows))
+    _emit(provider, "solve_data/p_entity_all_existing.csv",
+          _ed_value_frame(all_rows))
+    _emit(provider, "solve_data/p_entity_existing_count.csv",
+          _ed_value_frame(count_rows))
+    _emit(provider, "solve_data/p_entity_existing_integer_count.csv",
+          _ed_value_frame(int_rows))
+    _emit(provider,
+          "solve_data/p_entity_previously_invested_capacity.csv",
+          _ed_value_frame(prev_rows))
+
+
 # ---------------------------------------------------------------------------
 # write_p_entity_capacity_max_chain — mod L1699-1764 (4 cascading entity-
 # capacity ceiling params).
@@ -970,3 +1016,21 @@ def write_p_entity_capacity_max_chain(
         _ed_value_frame(dcm_rows),
         solve_data_dir / "p_entity_dispatch_capacity_max.csv",
     )
+
+
+def emit_p_entity_capacity_max_chain(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_p_entity_capacity_max_chain`."""
+    mc_rows, mu_rows, icm_rows, dcm_rows = _compute_p_entity_capacity_max_chain(
+        input_dir, solve_data_dir, provider=provider,
+    )
+    _emit(provider, "solve_data/p_entity_max_capacity.csv",
+          _ed_value_frame(mc_rows))
+    _emit(provider, "solve_data/p_entity_max_units.csv",
+          _ed_value_frame(mu_rows))
+    _emit(provider, "solve_data/p_entity_invest_cumulative_max.csv",
+          _ed_value_frame(icm_rows))
+    _emit(provider, "solve_data/p_entity_dispatch_capacity_max.csv",
+          _ed_value_frame(dcm_rows))

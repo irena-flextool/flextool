@@ -50,6 +50,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine_polars._emit_provider_io import (
+    _emit,
     _provider_key,
     _provider_open,
 )
@@ -717,3 +718,18 @@ def write_node_inflow_scaling_params(
                                               provider=provider)
     for basename, df in frames.items():
         _write(df, solve_data_dir / basename)
+
+
+def emit_node_inflow_scaling_params(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_node_inflow_scaling_params`.
+
+    Emits the same 17 frames under ``solve_data/<basename>`` keys via
+    :func:`_emit` (dual-key registration).
+    """
+    frames = _compute_inflow_scaling_frames(input_dir, solve_data_dir,
+                                              provider=provider)
+    for basename, df in frames.items():
+        _emit(provider, f"solve_data/{basename}", df)

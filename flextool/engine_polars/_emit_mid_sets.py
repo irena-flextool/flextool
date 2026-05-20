@@ -33,6 +33,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine_polars._axis_enums import rename_to_axis
+from flextool.engine_polars._emit_provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,19 @@ def write_node_type_sets(input_dir: Path, solve_data_dir: Path,
         _write(out, solve_data_dir / fname)
 
 
+def emit_node_type_sets(input_dir: Path, solve_data_dir: Path,
+                         *, provider) -> None:
+    """Provider-emitting twin of :func:`write_node_type_sets`."""
+    del solve_data_dir
+    effective = derive_node_effective_type(input_dir, provider=provider)
+    for fname, types in _NODE_TYPE_PARTITIONS:
+        out = (
+            effective.filter(pl.col("type").is_in(list(types)))
+                     .select("node")
+        )
+        _emit(provider, f"solve_data/{fname}", out)
+
+
 # ===========================================================================
 # Family 6 — union_sets (legacy: preprocessing/union_sets.py)
 # ===========================================================================
@@ -180,6 +194,14 @@ def write_group_entity(input_dir: Path, solve_data_dir: Path,
            solve_data_dir / "group_entity.csv")
 
 
+def emit_group_entity(input_dir: Path, solve_data_dir: Path,
+                       *, provider) -> None:
+    """Provider-emitting twin of :func:`write_group_entity`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/group_entity.csv",
+          derive_group_entity(input_dir, provider=provider))
+
+
 def write_process_delayed__duration(input_dir: Path, solve_data_dir: Path,
                                      *, provider: "object | None" = None,
                                      ) -> None:
@@ -187,6 +209,14 @@ def write_process_delayed__duration(input_dir: Path, solve_data_dir: Path,
         derive_process_delayed__duration(input_dir, provider=provider),
         solve_data_dir / "process_delayed__duration.csv",
     )
+
+
+def emit_process_delayed__duration(input_dir: Path, solve_data_dir: Path,
+                                    *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_delayed__duration`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/process_delayed__duration.csv",
+          derive_process_delayed__duration(input_dir, provider=provider))
 
 
 # ===========================================================================
@@ -225,6 +255,15 @@ def write_dc_angle_bounds(input_dir: Path, solve_data_dir: Path,
     lower, upper = derive_dc_angle_bounds(input_dir, provider=provider)
     _write(lower, solve_data_dir / "p_angle_lower.csv")
     _write(upper, solve_data_dir / "p_angle_upper.csv")
+
+
+def emit_dc_angle_bounds(input_dir: Path, solve_data_dir: Path,
+                          *, provider) -> None:
+    """Provider-emitting twin of :func:`write_dc_angle_bounds`."""
+    del solve_data_dir
+    lower, upper = derive_dc_angle_bounds(input_dir, provider=provider)
+    _emit(provider, "solve_data/p_angle_lower.csv", lower)
+    _emit(provider, "solve_data/p_angle_upper.csv", upper)
 
 
 # ===========================================================================
@@ -287,6 +326,22 @@ def write_reserve_partitions(input_dir: Path, solve_data_dir: Path,
                                             provider=provider),
             solve_data_dir / fname,
         )
+
+
+def emit_reserve_partitions(input_dir: Path, solve_data_dir: Path,
+                             *, provider) -> None:
+    """Provider-emitting twin of :func:`write_reserve_partitions`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/reserve.csv",
+          derive_reserve_universe(input_dir, provider=provider))
+    for fname, allowed in (
+        ("reserve__upDown__group__method_timeseries.csv", _RESERVE_TIMESERIES_METHODS),
+        ("reserve__upDown__group__method_dynamic.csv",    _RESERVE_DYNAMIC_METHODS),
+        ("reserve__upDown__group__method_n_1.csv",        _RESERVE_N_1_METHODS),
+    ):
+        _emit(provider, f"solve_data/{fname}",
+              derive_reserve_method_partition(input_dir, allowed,
+                                              provider=provider))
 
 
 # ===========================================================================
@@ -422,6 +477,14 @@ def write_process__sink_nonSync(input_dir: Path, solve_data_dir: Path,
     )
 
 
+def emit_process__sink_nonSync(input_dir: Path, solve_data_dir: Path,
+                                 *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process__sink_nonSync`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/process__sink_nonSync.csv",
+          derive_process__sink_nonSync(input_dir, provider=provider))
+
+
 def write_process_group_inside_group_nonsync(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
@@ -431,6 +494,17 @@ def write_process_group_inside_group_nonsync(
                                                     provider=provider),
         solve_data_dir / "process__group_inside_group_nonSync.csv",
     )
+
+
+def emit_process_group_inside_group_nonsync(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_process_group_inside_group_nonsync`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/process__group_inside_group_nonSync.csv",
+          derive_process__group_inside_group_nonSync(input_dir,
+                                                       provider=provider))
 
 
 # ===========================================================================
@@ -637,6 +711,46 @@ def write_node_storage_binding_method(input_dir: Path, solve_data_dir: Path,
     )
 
 
+def emit_entity_lifetime_method(input_dir: Path, solve_data_dir: Path,
+                                 *, provider) -> None:
+    """Provider-emitting twin of :func:`write_entity_lifetime_method`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/entity__lifetime_method.csv",
+          derive_entity_lifetime_method(input_dir, provider=provider))
+
+
+def emit_process_ct_method(input_dir: Path, solve_data_dir: Path,
+                            *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_ct_method`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/process__ct_method.csv",
+          derive_process_ct_method(input_dir, provider=provider))
+
+
+def emit_process_startup_method(input_dir: Path, solve_data_dir: Path,
+                                 *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_startup_method`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/process__startup_method.csv",
+          derive_process_startup_method(input_dir, provider=provider))
+
+
+def emit_node_inflow_method(input_dir: Path, solve_data_dir: Path,
+                             *, provider) -> None:
+    """Provider-emitting twin of :func:`write_node_inflow_method`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/node__inflow_method.csv",
+          derive_node_inflow_method(input_dir, provider=provider))
+
+
+def emit_node_storage_binding_method(input_dir: Path, solve_data_dir: Path,
+                                       *, provider) -> None:
+    """Provider-emitting twin of :func:`write_node_storage_binding_method`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/node__storage_binding_method.csv",
+          derive_node_storage_binding_method(input_dir, provider=provider))
+
+
 # ===========================================================================
 # Family 11 — invest_total_sets (legacy: preprocessing/invest_total_sets.py)
 # ===========================================================================
@@ -717,6 +831,40 @@ def write_invest_total_sets(input_dir: Path, solve_data_dir: Path,
     )
 
 
+def emit_invest_total_sets(input_dir: Path, solve_data_dir: Path,
+                            *, provider) -> None:
+    """Provider-emitting twin of :func:`write_invest_total_sets`."""
+    entity_methods_csv = input_dir / "entity__invest_method.csv"
+    group_methods_csv = input_dir / "group__invest_method.csv"
+
+    e_with_invest = _entities_with_method_in(
+        entity_methods_csv, _INVEST_TOTAL_METHODS, "entity", provider=provider)
+    e_with_retire = _entities_with_method_in(
+        entity_methods_csv, _RETIRE_TOTAL_METHODS, "entity", provider=provider)
+    g_with_invest = _entities_with_method_in(
+        group_methods_csv,  _INVEST_TOTAL_METHODS, "group", provider=provider)
+    g_with_retire = _entities_with_method_in(
+        group_methods_csv,  _RETIRE_TOTAL_METHODS, "group", provider=provider)
+    g_with_cum    = _entities_with_method_in(
+        group_methods_csv,  _CUMULATIVE_METHODS,   "group", provider=provider)
+
+    _emit(provider, "solve_data/e_invest_total.csv",
+          _filter_singles(solve_data_dir / "entityInvest.csv", e_with_invest,
+                           "entity", provider=provider))
+    _emit(provider, "solve_data/e_divest_total.csv",
+          _filter_singles(solve_data_dir / "entityDivest.csv", e_with_retire,
+                           "entity", provider=provider))
+    _emit(provider, "solve_data/g_invest_total.csv",
+          _filter_singles(solve_data_dir / "group_invest.csv", g_with_invest,
+                           "group", provider=provider))
+    _emit(provider, "solve_data/g_divest_total.csv",
+          _filter_singles(solve_data_dir / "group_divest.csv", g_with_retire,
+                           "group", provider=provider))
+    _emit(provider, "solve_data/g_invest_cumulative.csv",
+          _filter_singles(solve_data_dir / "group_invest.csv", g_with_cum,
+                           "group", provider=provider))
+
+
 def write_ci_ladder_cumulative(input_dir: Path, solve_data_dir: Path,
                                 *, provider: "object | None" = None,
                                 ) -> None:
@@ -739,6 +887,29 @@ def write_ci_ladder_cumulative(input_dir: Path, solve_data_dir: Path,
            .unique(maintain_order=True)
     )
     _write(filtered, solve_data_dir / "ci_ladder_cumulative.csv")
+
+
+def emit_ci_ladder_cumulative(input_dir: Path, solve_data_dir: Path,
+                               *, provider) -> None:
+    """Provider-emitting twin of :func:`write_ci_ladder_cumulative`."""
+    cum = _read_csv(
+        input_dir / "commodity_ladder_cumulative.csv", ["commodity", "tier"],
+        provider=provider,
+    )
+    cum = _drop_blank_rows(cum, ["commodity", "tier"])
+    with_cum = _read_csv(
+        solve_data_dir / "commodity_with_ladder_cumulative.csv", ["commodity"],
+        provider=provider,
+    )
+    with_cum_set = (
+        with_cum.filter(pl.col("commodity") != "")
+                .get_column("commodity").to_list()
+    )
+    filtered = (
+        cum.filter(pl.col("commodity").is_in(with_cum_set))
+           .unique(maintain_order=True)
+    )
+    _emit(provider, "solve_data/ci_ladder_cumulative.csv", filtered)
 
 
 # ===========================================================================
@@ -959,3 +1130,45 @@ def write_process_coeff_zero_sets(input_dir: Path, solve_data_dir: Path,
         derive_process_sink_coeff_zero(input_dir, provider=provider),
         solve_data_dir / "process_sink_coeff_zero.csv",
     )
+
+
+def emit_connection_param(input_dir: Path, solve_data_dir: Path,
+                           *, provider) -> None:
+    """Provider-emitting twin of :func:`write_connection_param`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/connection__param.csv",
+          derive_connection_param(input_dir, provider=provider))
+
+
+def emit_nodegroup_dispatch_node(input_dir: Path, solve_data_dir: Path,
+                                   *, provider) -> None:
+    """Provider-emitting twin of :func:`write_nodegroup_dispatch_node`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/nodeGroupDispatch_node.csv",
+          derive_nodegroup_dispatch_node(input_dir, provider=provider))
+
+
+def emit_commodity_node_co2(input_dir: Path, solve_data_dir: Path,
+                             *, provider) -> None:
+    """Provider-emitting twin of :func:`write_commodity_node_co2`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/commodity_node_co2.csv",
+          derive_commodity_node_co2(input_dir, provider=provider))
+
+
+def emit_process__commodity__node(input_dir: Path, solve_data_dir: Path,
+                                    *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process__commodity__node`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/process__commodity__node.csv",
+          derive_process__commodity__node(input_dir, provider=provider))
+
+
+def emit_process_coeff_zero_sets(input_dir: Path, solve_data_dir: Path,
+                                   *, provider) -> None:
+    """Provider-emitting twin of :func:`write_process_coeff_zero_sets`."""
+    del solve_data_dir
+    _emit(provider, "solve_data/process_source_coeff_zero.csv",
+          derive_process_source_coeff_zero(input_dir, provider=provider))
+    _emit(provider, "solve_data/process_sink_coeff_zero.csv",
+          derive_process_sink_coeff_zero(input_dir, provider=provider))

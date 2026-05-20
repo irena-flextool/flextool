@@ -26,6 +26,7 @@ from flextool.engine_polars._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
+from flextool.engine_polars._emit_provider_io import _emit
 
 if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
@@ -450,6 +451,37 @@ def write_co2_rolling_accumulator(
     return frame
 
 
+def emit_co2_rolling_accumulator(
+    flex_data,
+    sol,
+    *,
+    provider,
+    solve_name: str,
+    work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
+) -> pl.DataFrame:
+    """Provider-emitting twin of :func:`write_co2_rolling_accumulator`.
+
+    Emits the formatted ``co2_cum_realized_tonnes`` frame under the
+    ``solve_data/co2_cum_realized_tonnes.csv`` key via :func:`_emit`
+    (dual-key registration).  *work_folder* is retained because the
+    underlying compute helper still consumes it for input lookups.
+    """
+    prior_df = (prior_handoff.cumulative_co2
+                if prior_handoff is not None else None)
+    frame = compute_co2_rolling_accumulator(
+        flex_data, sol,
+        work_folder=work_folder,
+        prior_cumulative_co2=prior_df,
+        provider=provider,
+    )
+    _emit(provider, "solve_data/co2_cum_realized_tonnes.csv",
+          _format_co2_cum_frame(frame))
+    _logger.info("emitted solve_data/co2_cum_realized_tonnes.csv (%d rows)",
+                 frame.height)
+    return frame
+
+
 # ---------------------------------------------------------------------------
 # Legacy-signature shim (monkey-patch target).
 # ---------------------------------------------------------------------------
@@ -476,9 +508,36 @@ def write_co2_rolling_accumulators_native(
               prior_handoff=prior_handoff)
 
 
+def emit_co2_rolling_accumulators_native(
+    h, *, provider, solve_name: str, work_folder: Path,
+    prior_handoff=None, flex_data=None, sol=None,
+):
+    """Provider-emitting twin of :func:`write_co2_rolling_accumulators_native`.
+
+    When *flex_data* and *sol* are supplied, dispatches to
+    :func:`emit_co2_rolling_accumulator` (Provider path).  Otherwise falls
+    back to the legacy disk-reading impl, which still writes to disk
+    (no Provider plumbing on the legacy path).
+    """
+    work_folder = Path(work_folder)
+    out_path = work_folder / "solve_data" / "co2_cum_realized_tonnes.csv"
+    if flex_data is not None and sol is not None:
+        emit_co2_rolling_accumulator(
+            flex_data, sol, provider=provider, solve_name=solve_name,
+            work_folder=work_folder, prior_handoff=prior_handoff)
+        return [out_path]
+    from flextool.process_outputs import cumulative_handoffs as _legacy
+    fn = getattr(_legacy, "_legacy_write_co2_rolling_accumulators",
+                 _legacy.write_co2_rolling_accumulators)
+    return fn(h, solve_name=solve_name, work_folder=work_folder,
+              prior_handoff=prior_handoff)
+
+
 __all__ = [
     "compute_co2_rolling_accumulator",
     "derive_co2_cum_realized_tonnes",
+    "emit_co2_rolling_accumulator",
+    "emit_co2_rolling_accumulators_native",
     "write_co2_rolling_accumulator",
     "write_co2_rolling_accumulators_native",
 ]
