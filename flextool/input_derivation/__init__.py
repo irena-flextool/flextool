@@ -201,15 +201,13 @@ def run(
         derive_commodity_ladder_sets(backend, provider)
         _mem("db_derivations_end", "DB-driven derivations done")
 
-        # Step 3 — write_input-time native preprocessing writers.
+        # Step 3 — write_input-time native preprocessing emitters.
         #
         # Pre-Step-2.5 these helpers lived in ``flextoolrunner/preprocessing/*``
         # and were monkey-patched into native polars implementations.
-        # Step 2.5 deleted the legacy package; we now call the native
-        # writers directly.  ``capture_frames(provider=...)`` (entered by
-        # the cascade caller in :mod:`flextool.engine_polars._native_input_writer`)
-        # monkey-patches each ``_write(df, path)`` so frames land in
-        # *provider* under their canonical key without touching disk.
+        # Step 2.5 deleted the legacy package; Phase 3a of the
+        # writer→emitter refactor now threads the Provider directly into
+        # every emit_* call (no capture_frames monkey-patch).
         from flextool.engine_polars import (
             _emit_leaf_sets as _leaf,
             _emit_mid_sets as _mid,
@@ -220,50 +218,50 @@ def run(
         input_dir = wf / "input"
         solve_data_dir = wf / "solve_data"
         os.makedirs(solve_data_dir, exist_ok=True)
-        _leaf.write_period_param_sets(input_dir, solve_data_dir, provider=provider)
-        _leaf.write_invest_method_sets(input_dir, solve_data_dir, provider=provider)
-        _leaf.write_co2_method_sets(input_dir, solve_data_dir, provider=provider)
-        _leaf.write_optional_yes(input_dir, solve_data_dir, provider=provider)
-        _leaf.write_reserve_upDown_group(input_dir, solve_data_dir, provider=provider)
-        _leaf.write_group_loss_share(input_dir, solve_data_dir, provider=provider)
-        _mid.write_node_type_sets(input_dir, solve_data_dir, provider=provider)
-        _mid.write_entity_lifetime_method(input_dir, solve_data_dir, provider=provider)
-        _mid.write_process_ct_method(input_dir, solve_data_dir, provider=provider)
-        _mid.write_process_startup_method(input_dir, solve_data_dir, provider=provider)
-        _mid.write_node_inflow_method(input_dir, solve_data_dir, provider=provider)
-        _mid.write_node_storage_binding_method(input_dir, solve_data_dir, provider=provider)
-        _mid.write_process_group_inside_group_nonsync(input_dir, solve_data_dir, provider=provider)
-        _mid.write_process__sink_nonSync(input_dir, solve_data_dir, provider=provider)
-        _mid.write_group_entity(input_dir, solve_data_dir, provider=provider)
-        _mid.write_process_delayed__duration(input_dir, solve_data_dir, provider=provider)
-        _calc.write_entity_total_caps(input_dir, solve_data_dir, provider=provider)
-        _calc.write_process_method_projections(input_dir, solve_data_dir, provider=provider)
-        _calc.write_process_VRE(input_dir, solve_data_dir, provider=provider)
-        _calc.write_process_arc_method_joins(input_dir, solve_data_dir, provider=provider)
-        _calc.write_process_profile_method_joins(input_dir, solve_data_dir, provider=provider)
-        _mid.write_reserve_partitions(input_dir, solve_data_dir, provider=provider)
-        _mid.write_connection_param(input_dir, solve_data_dir, provider=provider)
-        _mid.write_nodegroup_dispatch_node(input_dir, solve_data_dir, provider=provider)
-        _mid.write_commodity_node_co2(input_dir, solve_data_dir, provider=provider)
-        _mid.write_process__commodity__node(input_dir, solve_data_dir, provider=provider)
-        _mid.write_process_coeff_zero_sets(input_dir, solve_data_dir, provider=provider)
-        _leaf.write_def_optional_yes(input_dir, solve_data_dir, provider=provider)
-        _leaf.write_process_delayed(input_dir, solve_data_dir, provider=provider)
-        _leaf.write_process_side(solve_data_dir, provider=provider)
-        _leaf.write_simple_setof_projections(input_dir, solve_data_dir, provider=provider)
-        # write_period_solve depends on solve_data outputs from
-        # write_simple_setof_projections, so must run after.
-        _leaf.write_period_solve(solve_data_dir, provider=provider)
-        _leaf.write_time_set(input_dir, solve_data_dir, provider=provider)
-        _leaf.write_enable_optional_outputs(solve_data_dir, provider=provider)
-        _leaf.write_node_state_subsets(solve_data_dir, provider=provider)
-        _leaf.write_commodity_tier_sets(input_dir, solve_data_dir, provider=provider)
-        _mid.write_dc_angle_bounds(input_dir, solve_data_dir, provider=provider)
-        _mid.write_invest_total_sets(input_dir, solve_data_dir, provider=provider)
-        _mid.write_ci_ladder_cumulative(input_dir, solve_data_dir, provider=provider)
-        _disp.write_process_arc_unions(input_dir, solve_data_dir, provider=provider)
-        _arc.write_group_commodity_node_period_co2_total(input_dir, solve_data_dir, provider=provider)
-        _arc.write_param_in_use_sets(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_period_param_sets(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_invest_method_sets(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_co2_method_sets(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_optional_yes(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_reserve_upDown_group(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_group_loss_share(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_node_type_sets(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_entity_lifetime_method(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_process_ct_method(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_process_startup_method(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_node_inflow_method(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_node_storage_binding_method(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_process_group_inside_group_nonsync(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_process__sink_nonSync(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_group_entity(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_process_delayed__duration(input_dir, solve_data_dir, provider=provider)
+        _calc.emit_entity_total_caps(input_dir, solve_data_dir, provider=provider)
+        _calc.emit_process_method_projections(input_dir, solve_data_dir, provider=provider)
+        _calc.emit_process_VRE(input_dir, solve_data_dir, provider=provider)
+        _calc.emit_process_arc_method_joins(input_dir, solve_data_dir, provider=provider)
+        _calc.emit_process_profile_method_joins(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_reserve_partitions(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_connection_param(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_nodegroup_dispatch_node(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_commodity_node_co2(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_process__commodity__node(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_process_coeff_zero_sets(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_def_optional_yes(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_process_delayed(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_process_side(solve_data_dir, provider=provider)
+        _leaf.emit_simple_setof_projections(input_dir, solve_data_dir, provider=provider)
+        # emit_period_solve depends on solve_data outputs from
+        # emit_simple_setof_projections, so must run after.
+        _leaf.emit_period_solve(solve_data_dir, provider=provider)
+        _leaf.emit_time_set(input_dir, solve_data_dir, provider=provider)
+        _leaf.emit_enable_optional_outputs(solve_data_dir, provider=provider)
+        _leaf.emit_node_state_subsets(solve_data_dir, provider=provider)
+        _leaf.emit_commodity_tier_sets(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_dc_angle_bounds(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_invest_total_sets(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_ci_ladder_cumulative(input_dir, solve_data_dir, provider=provider)
+        _disp.emit_process_arc_unions(input_dir, solve_data_dir, provider=provider)
+        _arc.emit_group_commodity_node_period_co2_total(input_dir, solve_data_dir, provider=provider)
+        _arc.emit_param_in_use_sets(input_dir, solve_data_dir, provider=provider)
 
         _mem("preprocessing_writers_end", "Preprocessing writers done")
 

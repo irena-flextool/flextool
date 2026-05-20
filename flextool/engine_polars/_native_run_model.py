@@ -52,7 +52,7 @@ from collections import defaultdict
 # remaining writers.
 # ---------------------------------------------------------------------------
 
-from flextool.flextoolrunner.blocks import write_block_data_for_solve
+from flextool.flextoolrunner.blocks import emit_block_data_for_solve
 # Step 2.5 — legacy preprocessing package deleted (item 15).  The per-
 # solve orchestrator now lives natively at
 # :mod:`flextool.engine_polars._emit_solve_time`.
@@ -74,7 +74,6 @@ from flextool.flextoolrunner.scaling_report import write_scaling_report
 # but is no longer called from the cascade.
 from flextool.engine_polars import _emit_solve_writers as solve_writers
 
-from flextool.engine_polars._flex_data_accumulator import capture_frames
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
 
 # Native solve-tree expansion + stochastic branching + timeline helpers.
@@ -391,7 +390,7 @@ def native_run_model(state, solver) -> int:
 
     # Step 1-f — cascade-wide Provider seeded once and re-used for every
     # sub-solve's pre-populated frames.  Captures the
-    # ``solve_writers.write_timesets`` output (``input/timesets_in_use.csv``
+    # ``solve_writers.emit_timesets`` output (``input/timesets_in_use.csv``
     # + ``input/timesets__timeline.csv``) so the per-sub-solve preprocessing
     # readers can find them via ``provider.get`` without touching disk.
     cascade_input_provider: "FlexDataProvider | None" = getattr(
@@ -402,12 +401,12 @@ def native_run_model(state, solver) -> int:
         state.cascade_input_provider = cascade_input_provider
 
     # Solve-loop-invariant timesets — hoisted out of the per-solve loop.
-    with capture_frames(provider=cascade_input_provider):
-        solve_writers.write_timesets(
-            state.solve.timesets_used_by_solves,
-            state.timeline.timesets__timeline,
-            work_folder=wf,
-        )
+    solve_writers.emit_timesets(
+        state.solve.timesets_used_by_solves,
+        state.timeline.timesets__timeline,
+        work_folder=wf,
+        provider=cascade_input_provider,
+    )
 
     # ------------------------------------------------------------------
     # 5. Per-solve loop.
@@ -451,8 +450,8 @@ def native_run_model(state, solver) -> int:
                     )
                     current_periods.add(history_period)
 
-        # Per-sub-solve Provider.  Writers populate this via
-        # ``capture_frames(provider=...)``; the Provider is the sole
+        # Per-sub-solve Provider.  Emit writers thread it via
+        # ``provider=sub_solve_provider``; the Provider is the sole
         # in-memory carrier across the cascade.  Pre-seeded from the
         # cascade-input frames, the cross-sub-solve carriers (rolling-
         # cascade fix_storage_* propagation), and the nesting-parent
@@ -488,12 +487,6 @@ def native_run_model(state, solver) -> int:
             for _key, _frame in carriers[_parent_complete_for_carriers].items():
                 sub_solve_provider.put(_key, _frame)
 
-        # Manual enter on ``capture_frames``.  We exit AFTER
-        # preprocessing_solve_time.run completes (search ``# capture
-        # exit`` below); the iteration body in between behaves exactly
-        # as before.
-        _capture_ctx = capture_frames(provider=sub_solve_provider)
-        _capture_ctx.__enter__()
         # S1-g-3 — expose the per-sub-solve Provider to writer entry
         # points BEFORE preprocessing runs, so native writers threaded
         # with ``provider=`` (via :func:`_emit_solve_time.run`) can
@@ -515,42 +508,53 @@ def native_run_model(state, solver) -> int:
                     _rec.checkpoint(label, _log, user_label=user_label)
         if _mem_cp is not None:
             _mem_cp("prep_seeded",
-                    "prep: provider seeded + capture_frames open")
+                    "prep: provider seeded")
 
-        solve_writers.write_full_timelines(
+        solve_writers.emit_full_timelines(
             state.timeline.stochastic_timesteps[solve],
             period__timesets_with_history,
             state.timeline.timesets__timeline,
             state.timeline.timelines,
             str(wf / "solve_data/steps_in_timeline.csv"),
+            provider=sub_solve_provider,
         )
-        solve_writers.write_active_timelines(
+        solve_writers.emit_active_timelines(
             active_time_lists[solve],
             str(wf / "solve_data/steps_in_use.csv"),
+            provider=sub_solve_provider,
         )
-        solve_writers.write_active_timelines(
+        solve_writers.emit_active_timelines(
             complete_active_time_lists,
             str(wf / "solve_data/steps_complete_solve.csv"),
             complete=True,
+            provider=sub_solve_provider,
         )
-        solve_writers.write_step_jump(jump_lists[solve], work_folder=wf)
+        solve_writers.emit_step_jump(
+            jump_lists[solve], work_folder=wf,
+            provider=sub_solve_provider,
+        )
         pb_time, pb_succ = make_period_block(active_time_lists[solve])
-        solve_writers.write_period_block(pb_time, pb_succ, work_folder=wf)
+        solve_writers.emit_period_block(
+            pb_time, pb_succ, work_folder=wf,
+            provider=sub_solve_provider,
+        )
 
         if _mem_cp is not None:
             _mem_cp("prep_timeline_writers_done",
                     "prep: timeline writers done")
 
         state.logger.debug("Creating period data")
-        solve_writers.write_period_years(
+        solve_writers.emit_period_years(
             period__branch_lists[solve],
             solve_period_history[complete_solve[solve]],
             str(wf / "solve_data/period_with_history.csv"),
+            provider=sub_solve_provider,
         )
-        solve_writers.write_periods(
+        solve_writers.emit_periods(
             complete_solve[solve],
             state.solve.realized_invest_periods,
             str(wf / "solve_data/realized_invest_periods_of_current_solve.csv"),
+            provider=sub_solve_provider,
         )
         # If realized_invest_periods is empty but both invest_periods and
         # realized_periods are defined, fall back to realized_periods.
@@ -559,18 +563,20 @@ def native_run_model(state, solver) -> int:
             and state.solve.invest_periods[complete_solve[solve]]
             and state.solve.realized_periods[complete_solve[solve]]
         ):
-            solve_writers.write_periods(
+            solve_writers.emit_periods(
                 complete_solve[solve],
                 state.solve.realized_periods,
                 str(
                     wf
                     / "solve_data/realized_invest_periods_of_current_solve.csv"
                 ),
+                provider=sub_solve_provider,
             )
-        solve_writers.write_periods(
+        solve_writers.emit_periods(
             complete_solve[solve],
             state.solve.invest_periods,
             str(wf / "solve_data/invest_periods_of_current_solve.csv"),
+            provider=sub_solve_provider,
         )
 
         years_rep = state.solve.solve_period_years_represented[
@@ -583,23 +589,27 @@ def native_run_model(state, solver) -> int:
                     complete_solve[solve]
                 ]
             ]
-        solve_writers.write_years_represented(
+        solve_writers.emit_years_represented(
             period__branch_lists[solve],
             years_rep,
             str(wf / "solve_data/p_years_represented.csv"),
+            provider=sub_solve_provider,
         )
-        solve_writers.write_period_years(
+        solve_writers.emit_period_years(
             period__branch_lists[solve],
             years_rep,
             str(wf / "solve_data/p_discount_years.csv"),
+            provider=sub_solve_provider,
         )
-        solve_writers.write_current_solve(
-            solve, str(wf / "solve_data/solve_current.csv")
+        solve_writers.emit_current_solve(
+            solve, str(wf / "solve_data/solve_current.csv"),
+            provider=sub_solve_provider,
         )
-        solve_writers.write_hole_multiplier(
+        solve_writers.emit_hole_multiplier(
             solve,
             state.solve.hole_multipliers,
             str(wf / "solve_data/solve_hole_multiplier.csv"),
+            provider=sub_solve_provider,
         )
 
         if _mem_cp is not None:
@@ -628,64 +638,75 @@ def native_run_model(state, solver) -> int:
         if applied is not None:
             state.solve.use_row_scaling[solve] = applied
 
-        solve_writers.write_p_use_row_scaling(
+        solve_writers.emit_p_use_row_scaling(
             solve,
             state.solve.use_row_scaling,
             str(wf / "solve_data/p_use_row_scaling.csv"),
+            provider=sub_solve_provider,
         )
         if auto_scale:
-            solve_writers.write_scale_the_objective(
+            solve_writers.emit_scale_the_objective(
                 wf / "solve_data",
                 scale_table.scale_the_objective,
+                provider=sub_solve_provider,
             )
-            solve_writers.write_scale_the_state(
+            solve_writers.emit_scale_the_state(
                 wf / "solve_data",
                 scale_table.scale_the_state,
+                provider=sub_solve_provider,
             )
         else:
-            solve_writers.write_scale_the_objective_header_only(
+            solve_writers.emit_scale_the_objective_header_only(
                 wf / "solve_data",
+                provider=sub_solve_provider,
             )
-            solve_writers.write_scale_the_state_header_only(
+            solve_writers.emit_scale_the_state_header_only(
                 wf / "solve_data",
+                provider=sub_solve_provider,
             )
 
         if _mem_cp is not None:
             _mem_cp("prep_scaling_done", "prep: scaling done")
 
-        solve_writers.write_first_steps(
+        solve_writers.emit_first_steps(
             active_time_lists[solve],
             str(wf / "solve_data/first_timesteps.csv"),
+            provider=sub_solve_provider,
         )
-        solve_writers.write_last_steps(
+        solve_writers.emit_last_steps(
             active_time_lists[solve],
             str(wf / "solve_data/last_timesteps.csv"),
+            provider=sub_solve_provider,
         )
-        solve_writers.write_last_realized_step(
+        solve_writers.emit_last_realized_step(
             active_time_lists[solve],
             complete_solve[solve],
             state.solve.realized_periods.get(complete_solve[solve], []),
             str(wf / "solve_data/last_realized_timestep.csv"),
+            provider=sub_solve_provider,
         )
 
         state.logger.debug("Create realized timeline")
-        solve_writers.write_realized_dispatch(
+        solve_writers.emit_realized_dispatch(
             realized_time_lists[solve],
             complete_solve[solve],
             state.solve.realized_periods.get(complete_solve[solve], []),
             work_folder=wf,
+            provider=sub_solve_provider,
         )
-        solve_writers.write_fix_storage_timesteps(
+        solve_writers.emit_fix_storage_timesteps(
             fix_storage_time_lists[solve],
             complete_solve[solve],
             state.solve.fix_storage_periods.get(complete_solve[solve], []),
             work_folder=wf,
+            provider=sub_solve_provider,
         )
-        solve_writers.write_delayed_durations(
+        solve_writers.emit_delayed_durations(
             active_time_lists[solve],
             complete_solve[solve],
             state.solve.delay_durations,
             work_folder=wf,
+            provider=sub_solve_provider,
         )
 
         if _mem_cp is not None:
@@ -693,18 +714,19 @@ def native_run_model(state, solver) -> int:
                     "prep: step + realized + fix_storage + delayed writers done")
 
         state.logger.debug("Possible stochastics")
-        solve_writers.write_branch__period_relationship(
+        solve_writers.emit_branch__period_relationship(
             period__branch_lists[solve],
             str(wf / "solve_data/period__branch.csv"),
+            provider=sub_solve_provider,
         )
-        solve_writers.write_all_branches(
+        solve_writers.emit_all_branches(
             period__branch_lists,
             solve_branch__time_branch_lists[solve],
             state.logger,
             work_folder=wf,
             provider=sub_solve_provider,
         )
-        solve_writers.write_branch_weights_and_map(
+        solve_writers.emit_branch_weights_and_map(
             complete_solve[solve],
             active_time_lists[solve],
             solve_branch__time_branch_lists[solve],
@@ -712,12 +734,14 @@ def native_run_model(state, solver) -> int:
             period__branch_lists[solve],
             state.solve.stochastic_branches,
             work_folder=wf,
+            provider=sub_solve_provider,
         )
-        solve_writers.write_first_and_last_periods(
+        solve_writers.emit_first_and_last_periods(
             active_time_lists[solve],
             state.solve.timesets_used_by_solves[complete_solve[solve]],
             period__branch_lists[solve],
             work_folder=wf,
+            provider=sub_solve_provider,
         )
 
         if _mem_cp is not None:
@@ -790,7 +814,7 @@ def native_run_model(state, solver) -> int:
         # collapsing every coarse-block fixture (e.g. lh2_three_region)
         # to the default block and breaking the daily-block aggregation.
         try:
-            write_block_data_for_solve(
+            emit_block_data_for_solve(
                 solve=complete_solve[solve],
                 solve_config=state.solve,
                 timeline_config=state.timeline,
@@ -798,6 +822,7 @@ def native_run_model(state, solver) -> int:
                 active_time_list=active_time_lists[solve],
                 default_jump_list=jump_lists[solve],
                 provider=sub_solve_provider,
+                emit_provider=sub_solve_provider,
             )
         except FlexToolConfigError:
             raise
@@ -864,28 +889,41 @@ def native_run_model(state, solver) -> int:
                                 f"solve_data/{_bn}", _src,
                             )
 
-        solve_writers.write_solve_status(
+        solve_writers.emit_solve_status(
             first_of_nested_level, last_of_nested_level,
             nested=True, work_folder=wf,
+            provider=sub_solve_provider,
         )
         last = i == len(solves) - 1
-        solve_writers.write_solve_status(first, last, work_folder=wf)
+        solve_writers.emit_solve_status(
+            first, last, work_folder=wf,
+            provider=sub_solve_provider,
+        )
         if i == 0:
             first = False
-            solve_writers.write_empty_investment_file(work_folder=wf)
-            solve_writers.write_empty_storage_fix_file(work_folder=wf)
-            solve_writers.write_empty_cumulative_files(work_folder=wf)
-            solve_writers.write_headers_for_empty_output_files(
+            solve_writers.emit_empty_investment_file(
+                work_folder=wf, provider=sub_solve_provider,
+            )
+            solve_writers.emit_empty_storage_fix_file(
+                work_folder=wf, provider=sub_solve_provider,
+            )
+            solve_writers.emit_empty_cumulative_files(
+                work_folder=wf, provider=sub_solve_provider,
+            )
+            solve_writers.emit_headers_for_empty_output_files(
                 str(wf / "solve_data/costs_discounted.csv"),
                 "param_costs,costs_discounted",
+                provider=sub_solve_provider,
             )
-            solve_writers.write_headers_for_empty_output_files(
+            solve_writers.emit_headers_for_empty_output_files(
                 str(wf / "solve_data/co2.csv"),
                 "param_co2,model_wide",
+                provider=sub_solve_provider,
             )
-            solve_writers.write_headers_for_empty_output_files(
+            solve_writers.emit_headers_for_empty_output_files(
                 str(wf / "solve_data/period_capacity.csv"),
                 "period",
+                provider=sub_solve_provider,
             )
 
         # ---- Representative-period / timeset weights ----
@@ -917,23 +955,27 @@ def native_run_model(state, solver) -> int:
                         period_name = p
                         break
                 if period_name:
-                    solve_writers.write_rp_data(
+                    solve_writers.emit_rp_data(
                         rp_weights=state.timeline.rp_weights[ts_name],
                         timeset_duration_entries=state.timeline.timeset_durations[
                             ts_name
                         ],
                         period_name=period_name,
                         work_folder=wf,
+                        provider=sub_solve_provider,
                     )
                     rp_written = True
                     break
         if not rp_written:
-            solve_writers.write_empty_rp_data(work_folder=wf)
-            solve_writers.write_timeset_cost_weight(
+            solve_writers.emit_empty_rp_data(
+                work_folder=wf, provider=sub_solve_provider,
+            )
+            solve_writers.emit_timeset_cost_weight(
                 active_time_list=active_time_lists[solve],
                 timesets_used_by_solve=timesets_used,
                 timeset_weights=state.timeline.timeset_weights,
                 work_folder=wf,
+                provider=sub_solve_provider,
             )
 
         state.logger.debug("Starting model creation")
@@ -969,18 +1011,13 @@ def native_run_model(state, solver) -> int:
         if _mem_cp is not None:
             _mem_cp("prep_before_solve_time_dispatcher",
                     "prep: block + rp/timeset + status + empty writers done")
-        # Step 1-f — preprocessing runs inside the ``capture_frames``
-        # context active for this iteration (entered above); its writer
-        # emissions stream into ``sub_solve_provider``.  The accumulator
-        # is no longer populated — the Provider is the sole in-memory
-        # carrier.
-        try:
-            preprocessing_solve_time.run(
-                state, complete_solve[solve], prior_handoff=prior_handoff,
-            )
-        finally:
-            # ---- capture exit ----
-            _capture_ctx.__exit__(None, None, None)
+        # Step 1-f — preprocessing emits directly into
+        # ``sub_solve_provider`` via the threaded ``provider=`` keyword;
+        # the Provider is the sole in-memory carrier.
+        preprocessing_solve_time.run(
+            state, complete_solve[solve], prior_handoff=prior_handoff,
+            provider=sub_solve_provider,
+        )
         if _mem_cp is not None:
             _mem_cp("prep_solve_time_dispatcher_done",
                     "prep: _emit_solve_time.run (per-solve sets + params dispatcher) done")

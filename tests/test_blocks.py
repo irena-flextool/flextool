@@ -1,15 +1,14 @@
 """Unit tests for ``flextool.flextoolrunner.blocks`` (Agent 1.1).
 
 The module's public surface: ``derive_blocks``, ``derive_overlap_set``,
-``validate_group_membership``, ``write_block_data`` and the end-to-end
-``write_block_data_for_solve`` helper.  These tests cover the pure
+``validate_group_membership``, ``emit_block_data`` and the end-to-end
+``emit_block_data_for_solve`` helper.  These tests cover the pure
 Python layer only — integration with the full solve loop is exercised
 by the regression suite (which should remain bit-identical because the
 emitted CSVs are inert in Agent 1.1).
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import pytest
@@ -25,9 +24,10 @@ from flextool.flextoolrunner.blocks import (
     derive_block_predecessors,
     derive_blocks,
     derive_overlap_set,
+    emit_block_data,
     validate_group_membership,
-    write_block_data,
 )
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
 from flextool.flextoolrunner.runner_state import FlexToolConfigError
 
 
@@ -544,12 +544,12 @@ class TestBlockBoundaries:
 
 
 # ---------------------------------------------------------------------------
-# write_block_data — CSV shape
+# emit_block_data — Provider-emit shape
 # ---------------------------------------------------------------------------
 
 
-class TestWriteBlockData:
-    def test_emits_all_csvs(self, tmp_path: Path) -> None:
+class TestEmitBlockData:
+    def test_emits_all_keys(self, tmp_path: Path) -> None:
         ba = BlockAssignments(
             node_block={"n1": "coarse", "n2": DEFAULT_BLOCK},
             process_block_in={"u1": "coarse"},
@@ -574,15 +574,19 @@ class TestWriteBlockData:
             last=[(DEFAULT_BLOCK, "p", "t01"), ("coarse", "p", "t00")],
         )
 
-        write_block_data(
+        provider = FlexDataProvider()
+        emit_block_data(
             block_assignments=ba,
             overlap_set=overlap,
             block_timelines=bt,
             solve_data_dir=tmp_path,
             block_predecessors=bp,
             block_boundaries=bb,
+            provider=provider,
         )
 
+        # Each emit_* registers under both ``basename`` and
+        # ``parent/basename`` (dual-key invariant — see spec §2.3).
         for fname in [
             "entity_block.csv",
             "process_side_block.csv",
@@ -592,25 +596,26 @@ class TestWriteBlockData:
             "block_period_time_first.csv",
             "block_period_time_last.csv",
         ]:
-            assert (tmp_path / fname).exists(), fname
+            assert provider.get(fname) is not None, fname
+            assert provider.get(f"solve_data/{fname}") is not None, fname
 
         # process_side_block emits two rows per process.
-        with open(tmp_path / "process_side_block.csv") as f:
-            rows = list(csv.reader(f))
-        assert rows[0] == ["process", "side", "block"]
-        assert ["u1", "source", "coarse"] in rows
-        assert ["u1", "sink", DEFAULT_BLOCK] in rows
+        psb = provider.get("process_side_block.csv")
+        psb_rows = [list(r) for r in psb.rows()]
+        assert psb.columns == ["process", "side", "block"]
+        assert ["u1", "source", "coarse"] in psb_rows
+        assert ["u1", "sink", DEFAULT_BLOCK] in psb_rows
 
-        with open(tmp_path / "block_step_previous.csv") as f:
-            rows = list(csv.reader(f))
-        assert rows[0] == [
+        bsp = provider.get("block_step_previous.csv")
+        assert bsp.columns == [
             "block", "period", "step", "step_previous",
             "step_previous_within_timeset", "period_previous",
             "step_previous_within_solve",
         ]
-        assert [DEFAULT_BLOCK, "p", "t00", "t01", "t01", "p", "t01"] in rows
+        bsp_rows = [list(r) for r in bsp.rows()]
+        assert [DEFAULT_BLOCK, "p", "t00", "t01", "t01", "p", "t01"] in bsp_rows
 
-        with open(tmp_path / "block_period_time_first.csv") as f:
-            rows = list(csv.reader(f))
-        assert rows[0] == ["block", "period", "step"]
-        assert [DEFAULT_BLOCK, "p", "t00"] in rows
+        bpf = provider.get("block_period_time_first.csv")
+        assert bpf.columns == ["block", "period", "step"]
+        bpf_rows = [list(r) for r in bpf.rows()]
+        assert [DEFAULT_BLOCK, "p", "t00"] in bpf_rows
