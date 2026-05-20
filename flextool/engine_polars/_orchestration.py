@@ -140,6 +140,9 @@ class _MemoryRecorder:
     def __init__(self, csv_path: Path, enabled: bool = True) -> None:
         self.enabled = enabled
         self.t0 = time.perf_counter()
+        self._t_prev = self.t0
+        self._rss_prev_mb: float = 0.0
+        self._peak_prev_mb: float = 0.0
         self._path = Path(csv_path)
         self._started = False
         if not self.enabled:
@@ -168,7 +171,36 @@ class _MemoryRecorder:
             pass
         return 0.0
 
-    def checkpoint(self, label: str, logger: logging.Logger) -> None:
+    @staticmethod
+    def _fmt_size(mb: float) -> str:
+        """Format an MB value as GB when ≥ 1024 MB, otherwise MB."""
+        if mb >= 1024.0:
+            return f"{mb / 1024.0:.2f} GB"
+        return f"{mb:.0f} MB"
+
+    @classmethod
+    def _fmt_delta(cls, delta_mb: float) -> str:
+        """Format a signed delta in MB / GB.  Returns '+0' for ~zero."""
+        if abs(delta_mb) < 0.5:
+            return "+0"
+        sign = "+" if delta_mb >= 0 else "-"
+        a = abs(delta_mb)
+        if a >= 1024.0:
+            return f"{sign}{a / 1024.0:.2f} GB"
+        return f"{sign}{a:.0f} MB"
+
+    def checkpoint(self, label: str, logger: logging.Logger,
+                   user_label: str | None = None) -> None:
+        """Record a memory checkpoint.
+
+        ``label`` is the canonical machine-readable identifier persisted
+        to the CSV.  ``user_label`` (optional) is the human-friendly
+        phrasing emitted to the log; when absent, ``label`` is used.
+
+        Each log line includes the elapsed time, current RSS / traced
+        peak, and the section deltas (Δrss, Δpeak) since the previous
+        checkpoint so the user can attribute memory growth to phases.
+        """
         if not self.enabled:
             return
         import tracemalloc
@@ -180,6 +212,10 @@ class _MemoryRecorder:
         t_elapsed = time.perf_counter() - self.t0
         current_mb = current / (1024.0 * 1024.0)
         peak_mb = peak / (1024.0 * 1024.0)
+        # Section deltas relative to previous checkpoint.
+        t_section = t_elapsed - (self._t_prev - self.t0)
+        delta_rss = rss_mb - self._rss_prev_mb
+        delta_peak = peak_mb - self._peak_prev_mb
         row = (
             str(label),
             f"{t_elapsed:.6f}",
@@ -193,23 +229,36 @@ class _MemoryRecorder:
                 _csv.writer(f).writerow(row)
         except OSError:
             pass
-        # Always emit one-liner so the user sees phase progress even when
-        # the inner runner's logger has been silenced (run_orchestration
-        # sets ``runner.state.logger.setLevel(ERROR)``).  The caller's
-        # logger gets the INFO record (cheap when level filters it out);
-        # the unconditional stdout write is what surfaces in the GUI.
-        logger.info(
-            "[mem] %s @ t=%.1fs  rss=%.0f MB  traced_peak=%.0f MB",
-            label, t_elapsed, rss_mb, peak_mb,
-        )
-        try:
-            print(
-                f"[mem] {label} @ t={t_elapsed:.1f}s  "
-                f"rss={rss_mb:.0f} MB  traced_peak={peak_mb:.0f} MB",
-                flush=True,
+        display = user_label or label
+        # On the first checkpoint there's no prior section to report,
+        # so emit just the absolute values.
+        if self._t_prev == self.t0:
+            line = (
+                f"[mem] {display}  "
+                f"t={t_elapsed:.1f}s  "
+                f"rss={self._fmt_size(rss_mb)}  "
+                f"peak={self._fmt_size(peak_mb)}"
             )
+        else:
+            line = (
+                f"[mem] {display}  "
+                f"section={t_section:.1f}s  "
+                f"Δrss={self._fmt_delta(delta_rss)}  "
+                f"Δpeak={self._fmt_delta(delta_peak)}  "
+                f"(rss={self._fmt_size(rss_mb)}, "
+                f"peak={self._fmt_size(peak_mb)})"
+            )
+        # Always emit one-liner so the user sees phase progress even when
+        # the inner runner's logger has been silenced.
+        logger.info(line)
+        try:
+            print(line, flush=True)
         except OSError:
             pass
+        # Update prev-section bookkeeping for the next call.
+        self._t_prev = time.perf_counter()
+        self._rss_prev_mb = rss_mb
+        self._peak_prev_mb = peak_mb
 
 
 class _NoopMemoryRecorder:
@@ -222,7 +271,8 @@ class _NoopMemoryRecorder:
 
     enabled = False
 
-    def checkpoint(self, label: str, logger: logging.Logger) -> None:  # noqa: D401, ARG002
+    def checkpoint(self, label: str, logger: logging.Logger,
+                   user_label: str | None = None) -> None:  # noqa: D401, ARG002
         return None
 
 
@@ -761,6 +811,7 @@ def _drive_cascade(
             if _memrec_local is not None and not self._mem_first_load_done:
                 _memrec_local.checkpoint(
                     "first_load_flextool_end", self.state.logger,
+                    user_label="Model cascade built",
                 )
 
             # --- LP scaling -------------------------------------------------
@@ -878,6 +929,7 @@ def _drive_cascade(
                     ):
                         _memrec_local.checkpoint(
                             "first_lp_build_end", self.state.logger,
+                            user_label="LP problem built",
                         )
                     inner_pb = self._warm_problem.problem
                     lp_ranges = inner_pb.peek_lp_ranges()
@@ -913,6 +965,7 @@ def _drive_cascade(
                 ):
                     _memrec_local.checkpoint(
                         "first_lp_build_end", self.state.logger,
+                        user_label="LP problem built",
                     )
                 lp_ranges = pb.peek_lp_ranges()
                 highs_options = _finalise_highs_options(
@@ -948,6 +1001,7 @@ def _drive_cascade(
             if _memrec_local is not None and not self._mem_first_load_done:
                 _memrec_local.checkpoint(
                     "first_solve_end", self.state.logger,
+                    user_label="Solver finished",
                 )
                 self._mem_first_load_done = True
             # Emit per-iter lp_build / solve / warm_used rows now that
@@ -1389,7 +1443,8 @@ def run_chain_from_db(
         )
     else:
         _memrec = _NoopMemoryRecorder()
-    _memrec.checkpoint("cascade_start", logger)
+    _memrec.checkpoint("cascade_start", logger,
+                       user_label="Run start")
 
     # Construct the cascade-input Provider and let
     # ``write_workdir_inputs`` populate it from the Spine DB.  The
@@ -1406,13 +1461,15 @@ def run_chain_from_db(
         work_folder,
         logger=logger,
         provider=cascade_input_provider,
+        memory_recorder=_memrec,
     )
     # input_derivation allocates and frees a lot of polars scratch
     # state; glibc's heap retains the freed pages.  Release them
     # before the polars-heavy ``load_flextool`` starts so the heap
     # watermark doesn't compound.
     _try_malloc_trim()
-    _memrec.checkpoint("write_workdir_inputs_end", logger)
+    _memrec.checkpoint("write_workdir_inputs_end", logger,
+                       user_label="Input data prepared (after malloc_trim)")
 
     # Construct the underlying FlexToolRunner — still needed to carry
     # the cross-cutting ``RunnerState`` (timeline, solve config, handoff

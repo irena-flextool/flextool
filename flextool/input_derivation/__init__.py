@@ -68,6 +68,7 @@ def run(
     scenario_name: "str | None" = None,
     work_folder: "Path | None" = None,
     precision_digits: int = 0,
+    memory_recorder=None,
 ) -> None:
     """Populate *provider* with the canonical ``input/`` + derivation
     frames produced from the Spine database.
@@ -140,6 +141,15 @@ def run(
     if provider is None:
         raise TypeError("input_derivation.run requires a FlexDataProvider")
 
+    def _mem(label: str, user_label: str) -> None:
+        """Emit a memory checkpoint when a recorder was supplied; no-op
+        otherwise.  Lets the user follow input-pipeline phase progress
+        with section-delta accounting matching the cascade/build
+        checkpoints emitted by :mod:`_orchestration`.
+        """
+        if memory_recorder is not None and getattr(memory_recorder, "enabled", False):
+            memory_recorder.checkpoint(label, logger, user_label=user_label)
+
     wf = work_folder if work_folder is not None else Path.cwd()
 
     def _do(db) -> None:
@@ -173,6 +183,7 @@ def run(
             kwargs = {k: v for k, v in spec.items() if k != "filename"}
             frame = backend.parameter_values(**kwargs)
             provider.put(_provider_key(spec["filename"]), frame)
+        _mem("spine_db_read_end", "Spine DB loaded")
 
         # Step 2 — DB-driven derivations.
         ct_method_overrides = derive_dc_power_flow(backend, provider, logger)
@@ -184,6 +195,7 @@ def run(
         derive_commodity_ladder_cumulative(backend, provider, logger)
         derive_commodity_ladder_annual(backend, provider, logger)
         derive_commodity_ladder_sets(backend, provider)
+        _mem("db_derivations_end", "DB-driven derivations done")
 
         # Step 3 — write_input-time native preprocessing writers.
         #
@@ -248,6 +260,8 @@ def run(
         _disp.write_process_arc_unions(input_dir, solve_data_dir, provider=provider)
         _arc.write_group_commodity_node_period_co2_total(input_dir, solve_data_dir, provider=provider)
         _arc.write_param_in_use_sets(input_dir, solve_data_dir, provider=provider)
+
+        _mem("preprocessing_writers_end", "Preprocessing writers done")
 
         # Step 4 — validators that need DB access.
         validate_capacity_margin_groups(db, logger)

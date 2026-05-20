@@ -158,6 +158,7 @@ def write_workdir_inputs(
     provider: "FlexDataProvider",
     logger: logging.Logger | None = None,
     precision_digits: int = 0,
+    memory_recorder=None,
 ) -> None:
     """Populate *provider* with every cascade-input frame derived from
     the Spine database.
@@ -208,6 +209,7 @@ def write_workdir_inputs(
             scenario_name=scenario_name,
             work_folder=work_folder,
             precision_digits=precision_digits,
+            memory_recorder=memory_recorder,
         )
 
 
