@@ -1407,7 +1407,7 @@ def apply_derived_a(
     # (which always emits a row per process for ``base_cap_pd`` from the
     # CSV preprocessing) survives in that degenerate case.
     ec = p_process_existing_count_from_source(
-        source, usable_dt, active_solve, workdir)
+        source, usable_dt, active_solve, workdir, provider=provider)
     if ec is not None:
         flex_data.p_process_existing_count = ec
 
@@ -2036,7 +2036,8 @@ def p_flow_upper_existing_from_source(source: "InputSource",
     # Γ.6.D — prefer the canonical ``p_entity_all_existing.csv`` when
     # available (carries chained existing + lifetime gate from the
     # multi-solve handoff).
-    chained = _flow_upper_existing_from_chained_csv(source, pss, workdir)
+    chained = _flow_upper_existing_from_chained_csv(
+        source, pss, workdir, provider=provider)
     if chained is not None:
         return chained
 
@@ -2751,7 +2752,8 @@ def apply_derived_b(
     # for fixtures without entity-existing-capacity.
     if pss_frame is not None and pss_frame.height > 0:
         flex_data.p_flow_upper_existing = p_flow_upper_existing_from_source(
-            source, pss_frame, active_solve, workdir, ctx=ctx)
+            source, pss_frame, active_solve, workdir,
+            ctx=ctx, provider=provider)
 
     # ─── §3.5.1 p_flow_constraint_coef ─────────────────────────────────
     # Δ.12b: unconditional when pss is non-empty.
