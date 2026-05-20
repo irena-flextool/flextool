@@ -1,3 +1,183 @@
+## Release 3.40.0 (20.5.2026) — Step 3 cascade memory (Tracks A + B.1) + post-Phase-4 bug-fix sweep
+
+Built on 3.39.0.  Lands the first two Step 3 memory tracks
+(SpineDBBackend `parsed_value` eviction + chunked row accumulator;
+`FlexDataProvider` lifetime + eviction infrastructure) plus the
+post-Phase-4 bug-fix follow-on that cleared ~30+ tests across
+Phase 4 dtype reconciliation, profile cluster parity, anchor-window
+nested-Map indexing, capacity-margin × 1000 stale goldens, and the
+fast-path / synthetic-solve cascade.
+
+The remaining Step 3 broadcast-cascade peak (the `~3.3 GB`
+`first_load_flextool_end` checkpoint on `test_24h`) is addressed by
+Phase E in the next release — see `specs/phase_e_handoff.md`.
+
+**Step 3 Track A — SpineDBBackend memory (`spinedb_backend/_backend.py`)**
+- Track A: `SpineDBBackend.parameter_values` drops each
+  `MappedItem`'s cached `parsed_value` (Map / TimeSeries / Array
+  Python object) as the materialiser advances through `params`.
+  Spinedb-api's `parsed_value` is a lazy property; setting
+  `_parsed_value=None` releases the parsed object while keeping the
+  raw value/type for any defensive re-access.  Each (class, param)
+  is touched once per `input_derivation` pass, so the
+  generator-wrapped eviction achieves the full win at zero
+  re-parse cost.
+- Track A.5: `row_origins` is only consulted by `_maybe_cast` on
+  axis-enum cast failure.  When `axis_enums is None` (the default
+  `input_derivation` path) the list is pure waste — replaced raw
+  `list.append` with a bound `_origin_append` that no-ops when no
+  cast is requested.
+- Track A.6: chunked row accumulator — some specs (notably
+  `('profile', 'profile')` on H2_trade.sqlite) flatten into
+  multi-million Python row-lists.  Flush `rows` into a polars
+  sub-frame every `_ROWS_FLUSH_THRESHOLD` (default 200 000) entries
+  and clear the list.  Sub-frames are concatenated before
+  `_maybe_cast` runs.  Gated to `axis_enums is None`; the
+  axis-enum-supplied callsites are tests with small fixtures where
+  the peak doesn't bind.
+
+**Step 3 Track B.1 — `FlexDataProvider` lifetime + eviction infrastructure**
+- `EvictedFrameError(KeyError)` — raised by `get()` on a name that
+  `release_unused()` has dropped.  Carries frame name +
+  responsible item-group token.  Deliberately not caught silently
+  anywhere; a hit signals an incomplete READS declaration or a
+  handler reading outside its declared scope.
+- `FlexDataProvider(rss_budget_mb=, retain_all=)` — constructor
+  takes the threshold budget and the CSV-dump retention flag;
+  budget also reads from `FLEXTOOL_RSS_BUDGET_MB` env var.
+- `register_handler(handler_id, *, reads, groups=None)` — handler
+  declares its frame reads and (optionally) the item-groups at
+  which it fires.  `groups=None` = pinned to the last group
+  (conservative).
+- `precompute_lifetimes(item_groups)` — walks registered handlers;
+  computes `_last_needed[name] = (group_token, group_idx)` per
+  frame.  Re-running resets the evicted-frame markers.
+- `release_unused(*, after=group)` — drops frames whose
+  `_last_needed` is at or before `after` in iteration order.
+  No-op when `retain_all=True`, when the threshold gate is closed
+  (`rss_estimate_mb() <= rss_budget_mb`), or when
+  `precompute_lifetimes` hasn't been called.
+- `rss_estimate_mb()`, `is_evicted()`, `reset_lifetimes()` —
+  helpers.
+- `get()` checks the evicted set first and raises
+  `EvictedFrameError` (with the correct breadcrumb) on a hit; the
+  bare/qualified key promotion logic in the existing lookup path
+  is extended to also recognise an evicted qualified key.
+- No production-call sites plumb the new API yet — Phase B.2 will
+  declare READS on the cascade handlers; Phase B.4 will wire
+  `release_unused` into the LP build loop (deferred — Phase E
+  removes the underlying broadcast-cascade peak that motivated the
+  eviction; Track B.2-B.8 becomes regression-protection rather
+  than peak-reduction).
+
+**Measured impact on H2_trade test_24h (Tracks A + A.5 + A.6 + B.1)**
+
+| Checkpoint | Pre-Track-A | Post | Δ |
+|---|---:|---:|---:|
+| `input_derivation` peak (probe) | 3447 MB | 1091 MB | −2356 MB (−68 %) |
+| process maxrss (probe) | 3625 MB | 1091 MB | −2534 MB (−70 %) |
+| `write_workdir_inputs_end` (post-trim) | 4796 MB | 1284 MB | −3512 MB (−73 %) |
+| traced_peak @ `write_workdir_inputs_end` | (high) | 516 MB | −82 % |
+
+Wall-clock cost +4 s / +16 % on test_24h `input_derivation`
+(25 → 29 s) — chunking adds a small fixed cost per spec.
+
+**Bug fixes (post-Phase-4 sweep)**
+
+- *Stochastic profile lazy cascade — forecast-branch period
+  handling* (`_derived_profile.py` + `_writer_provider_io.py`).
+  Cleared 4 stochastic-fixture test_profile_cluster_parity
+  failures (max-abs-diff 0.987 → 0).  Lazy cascade now correctly
+  handles `period1_upper / _realized / _lower / _mid` forecast
+  branch rows.
+- *autouse fixture resets global `axis_enums` ContextVar between
+  tests.*  `load_flextool`'s finally clause sets the ContextVar on
+  success so post-load consumers see the live vocabulary, but the
+  ContextVar persisted across tests in the same pytest worker —
+  pinning Enum dtypes that differ from the next test's fixture's
+  vocabulary, surfacing as `enum on left does not match enum on
+  right` SchemaError.  Autouse fixture in
+  `tests/engine_polars/conftest.py` clears it before/after each
+  test.  Unblocked ~20 previously-flaky tests across
+  `test_warm_chain_runner`, `test_orchestration_parity`,
+  `test_axis_rename_helpers`, Rivendell scaling, synthetic toys,
+  loaders.
+- *pbt_node_inflow + dump_csvs_roundtrip + anchor-window (10
+  tests).*  Cluster A (3): cascade uses `capture_frames` so disk
+  CSVs the pbt parity tests assumed weren't written — rebuilt the
+  tests on top of a provider from the captured frames.  Cluster B
+  (3): `apply_branch_cluster` overwrote five `flex_data` fields
+  with provider-only reads, nuking seeds that
+  `_load_branch_artefacts` had populated via disk fallback for
+  static fixtures.  Made overlay seed-preserving (only overwrite
+  when override yields non-None OR the seed is already None).
+  Cluster C (3 invest_5weeks_p* sub-solves): examples.sqlite's
+  `invest_5weeks.invest_periods` Map has BOTH levels named `"x"`
+  so `SpineDbReader._discover_index_cols` emitted `["x", "x"]` and
+  `_emit_leaf` collapsed them deepest-wins, silently dropping the
+  outer anchor index.  Disambiguate colliding nested-Map index
+  names by suffixing deeper levels with `_<depth+1>` (`x` outer +
+  `x` inner → `x` + `x_2`).
+- *network coal-wind capacity-margin + multi-year-no-invest (4
+  tests).*  Sub-cluster A: capacity-margin × 1000 stale parquet
+  goldens (cascade `_group_slack.py:1233` correctly applies the
+  unit conversion per the canonical model spec; legacy GMPL
+  parquet goldens missed it).  Regenerated.  Sub-cluster B:
+  availability 1.44× real cascade bug in `_param_shapes.py` and
+  `model.py` — producer-side fix applied.  Sub-cluster C:
+  multi-year wind no-invest — `_cumulative_invest.py` join-key
+  mismatch on `p` Enum (cross-vocab); applied
+  `align_join_dtypes / cast_dim` pattern.
+- *Phase-4 dtype reconciliation in `_load_process_topology`,
+  `_group_slack`, `_dc_power_flow`.*  Three cascade producer-side
+  fixes surfaced by post-Phase-4 enum activation, all following
+  the established `cast_dim / align_join_dtypes` pattern.
+  Cleared ~30 tests across `test_warm_chain_runner`,
+  `test_warm_param_autoupdate`, Rivendell, `test_scaling_bench`,
+  toys, `test_orchestration_parity`, `test_native_cascade_parity`,
+  `test_output_writer`, emission, capacity-margin, loaders.
+- *Phase-4 omnibus cleanup (15 tests).*  3 obsolete
+  `@pytest.mark.xfail(strict=True)` on `test_scaling_parity`
+  removed (the `p_unitsize` excludes-node-unitsizes bug was fixed
+  by Phase 4 vocab union).  `_cumulative_invest.py` Phase 4.8h
+  boundary-cast pattern applied to 4 more emit sites.  New
+  `FlexData.process_source_toSink_dc` field carries the
+  one-direction toSink frame for DC arcs.  `input.py:1787`
+  threaded `provider=` to `_read_active_solve` in `_load_invest`
+  synthetic-solve gate detection.  `cmd_run_flextool.py` passes
+  `regions=regions_detected` to `solve_lagrangian`.  Various
+  test-side `cast_dim` reads to match production Enum.
+- *`rename_to_axis` entity→f wide-CSV cast + synthetic-solve dtt
+  seeds.*  Two bugs in block-aware multi-fullYear storage —
+  `_read_wide_per_entity`'s long-CSV branch and the synthetic-solve
+  `dtt` seed routing.
+- *Threaded `provider=` to chained-existing-capacity readers.*
+  Restored the cross-solve handoff chain for
+  `p_entity_all_existing` (similar shape to v3.39.0's
+  `apply_derived_f` fix).
+- *Unscale `sol.obj` in place so `step.solution.obj` matches
+  `v_obj` parquet.*  Objective values written to parquet were
+  unscaled but the in-memory `step.solution.obj` was left scaled,
+  surfacing as a parity gap downstream of the solver step.
+- *Lazy NPV port — add missing `ed_lifetime_fixed_cost` arms.*
+  Three arms missing from the lazy NPV port (task #17).
+- *Widen Enum vocab at injection in `_inject_half_flows`.*  Half-flow
+  injection produced Enum dtypes with narrower vocabularies than
+  their union axis, breaking downstream `is_in` semi-joins.
+- *Fast path runs preprocessing in-memory, unifies with slow path.*
+  The fast load path previously bypassed
+  `input_derivation.run` — unified so fast + slow paths share the
+  same preprocessing semantics.
+
+**Test infrastructure**
+- Cherry-picked Track A + B.1 commits from the `step-3-memory`
+  worktree onto `new-outputs` (linear history, no conflicts).
+  `tests/engine_polars/test_provider_lifetime.py` (15 tests),
+  `tests/spinedb_backend/test_parsed_value_eviction.py` (4 tests),
+  `tests/spinedb_backend/test_memory_budget.py` (1 test) added.
+
+---
+
 ## Release 3.39.0 (19.5.2026) — `enum dtype` refactor + cascade perf
 
 Built on 3.38.0.  Completes the `enum dtype` refactor (Phase 0 → 4.9
