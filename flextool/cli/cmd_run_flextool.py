@@ -356,10 +356,9 @@ def main():
     scenario_name = args.scenario_name
     DEBUG = args.debug
     output_path = Path(args.flextool_location).resolve().parent.parent
-    work_folder = Path(args.work_folder) if args.work_folder else None
-    if work_folder is not None:
-        work_folder.mkdir(parents=True, exist_ok=True)
-    wf = work_folder if work_folder is not None else Path.cwd()
+    work_folder = Path(args.work_folder) if args.work_folder else Path.cwd()
+    work_folder.mkdir(parents=True, exist_ok=True)
+    wf = work_folder
 
     logging.basicConfig(
         level=logging.DEBUG if DEBUG else logging.INFO,
