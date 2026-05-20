@@ -744,6 +744,29 @@ def p_profile_value_lf(source: "InputSource",
                 .select(alias_to_axis("d", "d"), alias_to_axis("t", "t"))
                 .unique())
 
+    # Provider-less workdir callers (e.g. cluster C parity tests) get an
+    # auto-built ephemeral Provider for the per-solve scaffolding the
+    # stochastic / averaged-time tiers consult.  The cascade modules
+    # themselves remain disk-read-free (meta-test
+    # ``test_meta_provider_invariants.py``); the disk reads happen in
+    # ``_writer_provider_io.workdir_provider_for_paths`` which is on the
+    # PROVIDER_IMPL_ALLOWLIST.
+    if workdir is not None and provider is None:
+        from ._writer_provider_io import workdir_provider_for_paths
+        provider = workdir_provider_for_paths(workdir, [
+            "solve_data/period__branch.csv",
+            "solve_data/solve_branch__time_branch.csv",
+            "solve_data/first_timesteps.csv",
+            "solve_data/pt_profile.csv",
+            "input/pbt_profile.csv",
+            "input/groupIncludeStochastics.csv",
+            "input/group__process.csv",
+            "input/group__node.csv",
+            "input/process__profile__profile_method.csv",
+            "input/node__profile__profile_method.csv",
+            "input/process__node__profile__profile_method.csv",
+        ])
+
     tiers = _classify_profile_rows(source)
     scalar_profiles = sorted(p for p, t in tiers.items() if t == "scalar")
     period_profiles = sorted(p for p, t in tiers.items() if t == "period")
