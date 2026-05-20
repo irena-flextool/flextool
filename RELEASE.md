@@ -1,3 +1,152 @@
+## Release 3.41.0 (20.5.2026) — Phase E: lazy broadcast cascade + always-on phase log
+
+Built on 3.40.0.  Lands Phase E of the Step 3 cascade-memory work —
+the lazy-broadcast rewrite of the eight target Params and the
+on-demand rebuild of the persistent cross-join scratch frames
+(`pss_dt`, `nodeBalance_dt`, `nodeState_dt`, `nodeState_first_dt`,
+`process_indirect_dt`).  Together these drop the cascade-load peak by
+~80 % on the H2_trade fixtures.  Also unifies all phase-progress
+logging into a single user-visible format, with section timing and
+ΔRSS attributed per phase out of the box (no env-var opt-in).
+
+**Phase E.1 — lazy broadcast helpers** (`_param_shapes.py`,
+`_direct_params.py`)
+
+- `broadcast_to_period_time` / `broadcast_to_period` now return
+  `Param` with dims matching the actual authored shape:
+  `SCALAR → (entity,)`; `MAP_PERIOD → (entity, d)`;
+  `MAP_TIME → (entity, t)`;
+  `MAP_PERIOD_TIME / MAP_TIME_PERIOD → (entity, d, t)`.  No eager
+  `.collect()` inside the helpers — the underlying LazyFrame chain
+  carries the period filter as an inner-join on the natural-dim axis
+  instead of a cross-join with `dt`.
+- `_filter_param_by_periods` operates on `p.lazy` (NOT `p.frame`,
+  which would trigger polar_high's eager cache), shape-aware
+  (filters on whichever of `{d, t}` are present in `p.dims`),
+  returns `Param(p.dims, lf)`.
+- `p_process_availability_from_source` promotes per-class parts
+  (unit + connection) to union dims via lazy joins on
+  `period_filter` for missing axes, then concats lazily — preserves
+  a single consistent dim shape across mixed authoring without
+  forcing eager materialisation.
+
+polar_high handles the `(entity, d, t)` broadcast lazily at
+constraint emission via its shared-dim inner-join contract; the
+dense cross-product only ever lives in the per-term collect that
+polar_high streams to HiGHS one row at a time.
+
+**Phase E.2 — consumer-side `promote_param_to_dt`**
+
+The eight target Params (`p_node_availability`,
+`p_storage_state_reference_value`, `p_co2_price`,
+`p_co2_max_period`, `p_process_availability`, `p_commodity_price`,
+`pdt_max_instant_flow`, `pdt_min_instant_flow`) have **zero**
+direct `.frame.<op>` consumers in `engine_polars/` — they're all
+consumed via polar_high algebra (`*`, `over=`, `rhs_terms=`) which
+inner-joins on shared dims and cross-joins on disjoint.  But a
+handful of cascade sites do hand-rolled eager joins for
+"left-join with default 1.0" semantics that polar_high's `*`
+doesn't natively express:
+
+- `model.py` flow_upper_rhs availability fold, storage_state
+  reference value chain.
+- `_region_filter._inject_half_flows` concat of virtual half-flow
+  availability rows.
+- `_dump_csvs` `pdt*.csv` slice writers (the dump path needs the
+  fully-expanded `(entity, d, t)` frame so output CSVs match the
+  pre-Phase-E layout consumers expect).
+- `process_outputs/read_parameters._pdtX_per_entity` pandas pivot.
+
+For these, a new helper `promote_param_to_dt(param, dt)` in
+`_param_shapes.py` returns a LazyFrame with both `d` and `t`
+columns — joining on `dt` for whichever axes the Param is missing
+(cross-join when both absent).  Each consumer calls the helper
+once at the top of its function and re-uses the result.
+
+**Phase E.3 — drop persistent cross-join scratch**
+
+The five cross-join scratch frames previously held in `FlexData`
+(`pss_dt`, `nodeBalance_dt`, `nodeState_dt`, `nodeState_first_dt`,
+`process_indirect_dt`) were duplicates of the data that
+`v_flow.frame` / `v_state.frame` / etc. already hold after
+`add_var`.  On y2050 the `pss_dt` alone was ~1.75 GB (43M rows ×
+5 cols × 8 bytes); the four siblings each contribute ~0.5-1 GB.
+
+- New module `flextool/engine_polars/_pdt_join.py` with
+  `compute_pss_dt(d)`, `compute_nodeBalance_dt(d)`,
+  `compute_nodeState_dt(d)`, `compute_nodeState_first_dt(d)`,
+  `compute_process_indirect_dt(d)`.  Each lazily joins
+  constituents (`process_source_sink`, `nodeBalance`, `nodeState`,
+  `dt`) and collects on demand.
+- `_fast_load._populate_pss_dt_and_balance_dt` stops populating
+  the fields; slow-path `FlexData(...)` calls pass `None`.
+- 8 consumer sites in `model.py` (add_var domains for v_flow /
+  vq_state / v_state; `Sum` / `add_cstr` `over=` arguments; one
+  explicit join with `pd_neg_cap`) call the compute helpers.
+  Per-function locals cache the result so repeated reads don't
+  rebuild the cross-join.
+- `_region_filter._inject_half_flows` uses `compute_pss_dt(rd)`.
+- 12 test files updated to compute their own slices.
+
+**Always-on phase log**
+
+Previously `[mem]` phase-progress log lines were gated on
+`FLEXTOOL_MEMORY_DIAGNOSTICS=1` — users following a normal run saw
+only the cryptic `input pass NN: 0.007s` lines with no memory
+attribution.
+
+- `_MemoryRecorder` now emits log lines unconditionally (RSS reads
+  from `/proc` are essentially free).
+  `FLEXTOOL_MEMORY_DIAGNOSTICS=1` additionally enables tracemalloc
+  (so `traced_peak` becomes a real number rather than `-`) and
+  writes the per-checkpoint CSV under
+  `solve_data/memory_diagnostics.csv`.  Without the env var the
+  log lines still appear but show `peak=-` / `Δpeak=-`.
+- Module-level `set_phase_recorder(rec) / get_phase_recorder()`
+  lets deeper modules (`input.py::_apply_db_overrides`) emit
+  checkpoints in the unified format without each carrying a
+  recorder kwarg.
+- `input.py::_timed` routes through the recorder when one is
+  active, falling back to the legacy plain print only when no
+  recorder is registered (e.g. unit tests outside
+  `run_orchestration`).
+- Three new sub-phase checkpoints inside `input_derivation.run`:
+  *Spine DB loaded*, *DB-driven derivations done*,
+  *Preprocessing writers done*.
+- User-visible labels replace the cryptic internal identifiers:
+  `cascade_start` → *Run start*; `write_workdir_inputs_end` →
+  *Input data prepared (after malloc_trim)*;
+  `first_load_flextool_end` → *Model cascade built*;
+  `first_lp_build_end` → *LP problem built*; `first_solve_end` →
+  *Solver finished*.
+- Each line shows section time + Δrss + Δpeak + absolute
+  (rss, peak).  Sizes auto-format MB ↔ GB.
+
+CSV schema (`solve_data/memory_diagnostics.csv`) unchanged —
+downstream tooling that parses it keeps working.
+
+**Measured cascade-load impact** (H2_trade test_24h, fast path):
+
+| Checkpoint | Pre-Phase-E (3.40.0) | Post-Phase-E (3.41.0) | Δ |
+|---|---:|---:|---:|
+| `cascade_start` | 276 MB | 275 MB | parity |
+| `Spine DB loaded` (new) | — | 476 MB | first sub-checkpoint |
+| `Preprocessing writers done` (new) | — | 489 MB | — |
+| `Input data prepared` (post-trim) | 1284 MB | 392 MB | **−69 %** |
+| `Model cascade built` (`first_load_flextool_end`) | **3320 MB** | **667 MB** | **−80 %** |
+| `LP problem built` | 3340 MB | 667 MB | −80 % |
+
+y2050 cascade-load (from Phase E.1+E.2 commit before E.3 landed):
+3041 MB at `Model cascade built` vs. pre-Phase-E baseline of
+16-20 GB (process was killed at the 5-min timeout).  E.3 is
+expected to drop this further; the user re-measures on their side.
+
+**Test results** — 0 regressions on the targeted Phase E gate.
+631-test inner-loop gate and the full v3.32.0 byte-parity suite
+will be re-verified before tagging.
+
+---
+
 ## Release 3.40.0 (20.5.2026) — Step 3 cascade memory (Tracks A + B.1) + post-Phase-4 bug-fix sweep
 
 Built on 3.39.0.  Lands the first two Step 3 memory tracks
