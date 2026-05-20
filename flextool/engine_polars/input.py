@@ -3599,6 +3599,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
         if Path(sd).exists():
             seed_provider_from_dir(provider, sd, "solve_data")
 
+    from flextool.engine_polars._orchestration import get_phase_recorder
+    _entry_rec = get_phase_recorder()
+    _entry_logger = logging.getLogger("flextool.engine_polars.input")
+    if _entry_rec is not None:
+        _entry_rec.checkpoint(
+            "load_flextool_provider_seeded",
+            _entry_logger,
+            user_label="load_flextool: provider seeded",
+        )
+
     # Δ.12a — build the per-solve in-memory state (typed fields +
     # process-level CSV cache) up front, then activate the cache so
     # every ``_read_csv_file`` call inside the loader (``_load_time``,
@@ -3624,6 +3634,13 @@ def load_flextool(source: "Path | str | FlexInputSource",
             ctx = None
     if ctx is not None:
         ctx.activate()
+
+    if _entry_rec is not None:
+        _entry_rec.checkpoint(
+            "load_flextool_solve_context_ready",
+            _entry_logger,
+            user_label="load_flextool: SolveContext ready",
+        )
 
     # ── Phase 4 — axis enum vocabulary activation ────────────────────
     # Production path (input_derivation.run) populates
@@ -3675,13 +3692,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 axis_enums = None
                 contract = None
 
-    # Phase-progress checkpoints fire as early as the recorder is
-    # reachable so the entry-sequence cost (axis_enums build,
-    # SpineDbReader construction) is attributed to the right
-    # sub-phase rather than absorbed into "load_flextool start".
-    from flextool.engine_polars._orchestration import get_phase_recorder
-    _entry_rec = get_phase_recorder()
-    _entry_logger = logging.getLogger("flextool.engine_polars.input")
     if _entry_rec is not None:
         _entry_rec.checkpoint(
             "load_flextool_axis_enums_done",
