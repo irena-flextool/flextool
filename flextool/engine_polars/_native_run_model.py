@@ -966,6 +966,9 @@ def native_run_model(state, solver) -> int:
             and timing_recorder is not None
         )
         _t_preproc_start = time.perf_counter() if _phase_timing else 0.0
+        if _mem_cp is not None:
+            _mem_cp("prep_before_solve_time_dispatcher",
+                    "prep: block + rp/timeset + status + empty writers done")
         # Step 1-f — preprocessing runs inside the ``capture_frames``
         # context active for this iteration (entered above); its writer
         # emissions stream into ``sub_solve_provider``.  The accumulator
@@ -978,6 +981,9 @@ def native_run_model(state, solver) -> int:
         finally:
             # ---- capture exit ----
             _capture_ctx.__exit__(None, None, None)
+        if _mem_cp is not None:
+            _mem_cp("prep_solve_time_dispatcher_done",
+                    "prep: _writer_solve_time.run (per-solve sets + params dispatcher) done")
         # Step 1-f — Provider stash on state.  Read by
         # ``_FlexpyCascadeSolver.run`` to thread through into
         # ``load_flextool`` / ``write_outputs_for_solve`` /
