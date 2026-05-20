@@ -695,17 +695,28 @@ def apply_branch_cluster(
     dt = getattr(flex_data, "dt", None)
 
     # 1-2. Set frames — None == "no branches / no realized periods" is
-    # the legitimate inactive-feature signal.
-    flex_data.period_branch_full = period_branch_full_df(workdir, provider=provider)
-    flex_data.period_in_use_set = period_in_use_set_df(
+    # the legitimate inactive-feature signal.  Seed-preserving overlay:
+    # when this lazy override yields nothing (no provider + no workdir
+    # CSVs reachable, e.g. fixture-only ``load_flextool`` paths), keep
+    # the seed value set by ``_load_branch_artefacts`` — the override is
+    # the cascade-side producer, not a forced reset.
+    _new_pbf = period_branch_full_df(workdir, provider=provider)
+    if _new_pbf is not None or getattr(flex_data, "period_branch_full", None) is None:
+        flex_data.period_branch_full = _new_pbf
+    _new_piu = period_in_use_set_df(
         workdir, source, active_solve, ctx=ctx, provider=provider)
-    flex_data.dt_non_anticipativity = dt_non_anticipativity_df(workdir,
-                                                                 provider=provider)
+    if _new_piu is not None or getattr(flex_data, "period_in_use_set", None) is None:
+        flex_data.period_in_use_set = _new_piu
+    _new_dtn = dt_non_anticipativity_df(workdir, provider=provider)
+    if _new_dtn is not None or getattr(flex_data, "dt_non_anticipativity", None) is None:
+        flex_data.dt_non_anticipativity = _new_dtn
 
     # 3-4. Branch-weight Params (lazy ports of the previous eager
     # helpers in ``_derived_params.py``).
-    flex_data.pd_branch_weight = pd_branch_weight_param(
+    _new_pd_bw = pd_branch_weight_param(
         workdir, source, active_solve, ctx=ctx, provider=provider)
+    if _new_pd_bw is not None or getattr(flex_data, "pd_branch_weight", None) is None:
+        flex_data.pd_branch_weight = _new_pd_bw
 
     pdt_bw = pdt_branch_weight_param(workdir, source, active_solve, dt,
                                           ctx=ctx, provider=provider)
@@ -730,8 +741,12 @@ def apply_branch_cluster(
                     .select("d", "t", "value")
                     .collect())
         pdt_bw = Param(("d", "t"), joined)
-    # Δ.12b — assign unconditionally (None == "no branch weight" signal).
-    flex_data.pdt_branch_weight = pdt_bw
+    # Seed-preserving overlay (same rationale as the set frames above):
+    # only overwrite the seed when this cascade-side path produces a
+    # value.  Fixture-only loads (no provider, no workdir scaffolding)
+    # rely on ``_load_branch_artefacts``' disk-fallback seed.
+    if pdt_bw is not None or getattr(flex_data, "pdt_branch_weight", None) is None:
+        flex_data.pdt_branch_weight = pdt_bw
 
 
 __all__ = [

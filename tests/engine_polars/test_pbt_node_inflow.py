@@ -71,14 +71,60 @@ def stochastic_pbt_inflow_workdir(
     cwd = os.getcwd()
     try:
         os.chdir(workdir)
-        run_chain_from_db(
+        steps = run_chain_from_db(
             stochastic_pbt_inflow_db_url,
             "2_day_stochastic_dispatch",
             work_folder=workdir,
+            keep_solutions=True,
         )
+        # The native cascade keeps every solve_data/ frame in-memory on
+        # the per-sub-solve Provider (see ``capture_frames``); snapshot
+        # them to disk so the parity test can read the same CSVs the
+        # legacy preprocessing wrote.
+        last_step = next(reversed(steps.values()))
+        provider = getattr(last_step, "flex_data_provider", None)
+        if provider is not None:
+            provider.snapshot_processed_inputs(workdir)
     finally:
         os.chdir(cwd)
     return workdir
+
+
+def _provider_from_workdir(workdir: Path) -> "object":
+    """Build a fresh :class:`FlexDataProvider` populated with the workdir
+    CSVs the fold-in helper consults.
+
+    After the native cascade snapshots its in-memory Provider via
+    :meth:`FlexDataProvider.snapshot_processed_inputs`, the per-sub-solve
+    ``solve_data/*.csv`` frames are on disk; we reload them here so the
+    parity test can hand a Provider to
+    :func:`apply_p_inflow_with_scaling` (which is provider-only after
+    the Step 2.5 disk-fallback removal).
+    """
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+    needed = [
+        ("solve_data", "first_timesteps.csv"),
+        ("solve_data", "solve_branch__time_branch.csv"),
+        ("solve_data", "period__branch.csv"),
+        ("solve_data", "steps_in_use.csv"),
+        ("solve_data", "nodeBalance.csv"),
+        ("input", "groupIncludeStochastics.csv"),
+        ("input", "group__node.csv"),
+    ]
+    for parent, name in needed:
+        p = workdir / parent / name
+        if not p.exists():
+            continue
+        try:
+            df = pl.read_csv(p)
+        except Exception:
+            continue
+        stem = name[:-4]  # strip ``.csv``
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+    return provider
 
 
 def _load_golden_hydro_reservoir() -> pl.DataFrame:
@@ -141,8 +187,10 @@ def test_pbt_node_inflow_branch1_parity_hydro_reservoir(
         except Exception:
             flex_data.nodeBalance = None
 
+    provider = _provider_from_workdir(workdir)
     ok = apply_p_inflow_with_scaling(
         flex_data, source, workdir, dt, per_solve_aggs=None,
+        provider=provider,
     )
     assert ok, "apply_p_inflow_with_scaling returned False on pbt fixture"
     p_inflow = flex_data.p_inflow
@@ -210,14 +258,23 @@ def _prepare_workdir(json_fixture: Path, tmp_path: Path) -> tuple[str, Path]:
     try:
         os.chdir(workdir)
         try:
-            run_chain_from_db(
+            steps = run_chain_from_db(
                 url, "2_day_stochastic_dispatch", work_folder=workdir,
+                keep_solutions=True,
             )
         except Exception:
             # Preprocessing has already written ``solve_data/`` by the
             # time the model build runs; downstream failures are fine
             # for our purposes (we only inspect the workdir CSVs).
-            pass
+            steps = None
+        # The native cascade keeps every solve_data/ frame in-memory on
+        # the per-sub-solve Provider (see ``capture_frames``); snapshot
+        # them to disk so the fold-in helper can read them.
+        if steps:
+            last_step = next(reversed(steps.values()))
+            provider = getattr(last_step, "flex_data_provider", None)
+            if provider is not None:
+                provider.snapshot_processed_inputs(workdir)
     finally:
         os.chdir(cwd)
     return url, workdir
@@ -264,8 +321,10 @@ def _invoke_fold(db_url: str, workdir: Path, dt: pl.DataFrame) -> pl.DataFrame:
         except Exception:
             flex_data.nodeBalance = None
 
+    provider = _provider_from_workdir(workdir)
     ok = apply_p_inflow_with_scaling(
         flex_data, source, workdir, dt, per_solve_aggs=None,
+        provider=provider,
     )
     assert ok, "apply_p_inflow_with_scaling returned False"
     p_inflow = flex_data.p_inflow

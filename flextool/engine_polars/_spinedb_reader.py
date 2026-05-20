@@ -745,6 +745,19 @@ class SpineDbReader:
                 # Map's "time" index is conventionally 't' in flextool.
                 if name == "time":
                     name = "t"
+                # Disambiguate when this level's index_name collides
+                # with one already produced at an outer level — e.g.
+                # ``examples.sqlite::invest_5weeks.invest_periods`` is
+                # a 2D Map where BOTH levels carry ``index_name='x'``.
+                # Without disambiguation the outer (anchor) and inner
+                # (period) indexes both land in a single ``x`` column
+                # and the outer is silently overwritten (deepest-wins
+                # in _emit_leaf).  That loses the anchor → window
+                # mapping the synthetic per-sub-solve cascade needs
+                # (see ``_derived_params._solve_periods``).  Append a
+                # depth suffix to keep both levels addressable.
+                if name in cols:
+                    name = f"{name}_{depth + 1}"
                 cols.append(name)
                 depth += 1
                 # Probe the first child value to continue.
