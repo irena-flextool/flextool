@@ -180,9 +180,17 @@ def _read_wide_per_entity(path: Path, value_col: str = "value",
     if "value" in df.columns and "solve" not in df.columns:
         # Long format from new Python preprocessing.  Entity column is
         # the first; rename to "entity" to keep the downstream contract.
+        # Use a plain ``.rename`` (not ``rename_to_axis``) for the
+        # entity column: the entity_col may carry values that belong to
+        # a non-``e`` axis (e.g. ``profile`` → ``f``-axis names like
+        # ``wind_profile``), and casting via ``rename_to_axis`` to the
+        # synonym ``entity`` would coerce the column to the e-axis Enum
+        # — nulling every value that isn't in the entity-union vocab.
+        # The caller's ``rename={"entity": <target>}`` below performs the
+        # correct axis cast in one step.
         entity_col = df.columns[0]
-        out = (df.pipe(rename_to_axis, {entity_col: "entity",
-                           "period": "d", "time": "t"})
+        out = (df.rename({entity_col: "entity"})
+                 .pipe(rename_to_axis, {"period": "d", "time": "t"})
                  .with_columns(value=pl.col(value_col).cast(pl.Float64,
                                                             strict=False))
                  .select("entity", "d", "t", "value"))
@@ -2609,8 +2617,38 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         n_fix_storage_quantity = fsq_frame.select("n").unique()
         ndt_fix_storage_quantity = fsq_frame.select("n", "d", "t").unique()
 
+    # ``dtt_timeline_matching`` (d, t, t_upper) and ``period_branch``
+    # (d_upper, d) — seed from the snapshot CSVs.  ``apply_derived_e``
+    # (the override-chain producer) is bypassed entirely for
+    # *synthetic* per-sub-solve workdirs (their ``solve_current`` names a
+    # solve that doesn't exist in Spine — the multi_fullYear_battery_nested
+    # rolling-handoff snapshots are the canonical case), so without this
+    # seed both fields stay ``None`` and ``node_balance_fix_quantity_eq_lower``
+    # never fires for the upper-level anchor pin at the last timestep —
+    # leaving the LP severely under-constrained at the rolling-handoff
+    # boundary (vq_state_up slack lights up, objective explodes).
     dtt_timeline_matching = None
+    tlm_path = sd / "timeline_matching_map.csv"
+    if _provider_has(provider, "solve_data/timeline_matching_map", tlm_path):
+        df_tlm = _provider_read(provider, "solve_data/timeline_matching_map", tlm_path)
+        if df_tlm.height > 0:
+            dtt_timeline_matching = (df_tlm
+                .pipe(rename_to_axis,
+                      {"period": "d", "step": "t", "upper_step": "t_upper"})
+                .select("d", "t", "t_upper").unique())
+            if dtt_timeline_matching.height == 0:
+                dtt_timeline_matching = None
+
     period_branch = None
+    pb_path = sd / "period__branch.csv"
+    if _provider_has(provider, "solve_data/period__branch", pb_path):
+        df_pb = _provider_read(provider, "solve_data/period__branch", pb_path)
+        if df_pb.height > 0:
+            period_branch = (df_pb
+                .pipe(rename_to_axis, {"period": "d", "branch": "d_upper"})
+                .select("d_upper", "d").unique())
+            if period_branch.height == 0:
+                period_branch = None
 
     # period_last: (d,).
     # TODO(Δ.18+): no canonical helper yet for ``period_last`` — this is
