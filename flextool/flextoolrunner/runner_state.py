@@ -73,12 +73,6 @@ class RunnerState:
     solve: SolveConfig
     timeline: TimelineConfig
     logger: logging.Logger
-    # When True, keep only the legacy glpsol-phase-3 CSV output pathway
-    # (``output_raw/*.csv``) and skip the HiGHS → parquet extractor.  When
-    # False (default) the parquet extractor runs alongside glpsol phase 3
-    # during the PoC migration; glpsol phase 3 will itself be made optional
-    # once variable coverage is complete.
-    use_old_raw_csv: bool = False
     # Agent 8 (LP-scaling): opt-in flag — when True the Python
     # ScaleAnalyzer's recommendations are auto-applied (currently only
     # to ``solve.use_row_scaling`` when the user hasn't set it).
@@ -101,14 +95,6 @@ class RunnerState:
     # solve rows in ``timings.csv`` indistinguishable from each other.
     # ``None`` outside an active solve iteration.
     current_roll_index: int | None = None
-    # Agent 18d (LP-scaling): user-facing solver-option knobs.
-    # ``relax_feasibility`` is the explicit tolerance (e.g. ``1e-5``)
-    # applied to HiGHS' primal + dual feasibility tolerance when the
-    # user passed ``--relax-feasibility``; ``None`` means "keep HiGHS
-    # defaults".  ``use_ipm`` switches HiGHS to interior-point when
-    # True.  Both are set by the CLI layer; neither has DB precedence.
-    relax_feasibility: float | None = None
-    use_ipm: bool = False
     # In-memory solve-to-solve handoff (PoC, opt-in).  Default ``None``
     # leaves flextool's behavior bit-identical to pre-handoff (file-based)
     # operation.  Set to ``{}`` to enable: the post-solve hook in

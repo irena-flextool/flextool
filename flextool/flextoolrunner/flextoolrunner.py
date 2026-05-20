@@ -21,7 +21,7 @@ class FlexToolRunner:
     See ``flextool.flextoolrunner.__init__`` docstring for a full module navigation guide.
     """
 
-    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False, highs_threads=None, auto_scale=False, relax_feasibility=None, use_ipm=False, glpsol_timing=False, timing_recorder: "TimingRecorder | None" = None):
+    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, highs_threads=None, auto_scale=False, timing_recorder: "TimingRecorder | None" = None):
         try:
             logger = logging.getLogger(__name__)
             # Resolve work_folder: default to cwd for backward compatibility
@@ -82,7 +82,6 @@ class FlexToolRunner:
             # Assemble RunnerState — the single cross-cutting state container
             self.state = RunnerState(
                 paths=paths, solve=solve, timeline=timeline, logger=logger,
-                use_old_raw_csv=use_old_raw_csv,
             )
             # HiGHS thread count (CLI override; solver_runner defaults to 4 when None).
             self.state.highs_threads = highs_threads
@@ -92,17 +91,6 @@ class FlexToolRunner:
             # Analysis itself runs unconditionally (writes JSON); this
             # flag only gates auto-application.
             self.state.auto_scale = auto_scale
-            # Agent 18d (LP-scaling): user-facing solver knobs — plumbed
-            # onto RunnerState so SolverRunner._run_highs can read them.
-            # Both default to off; the CLI fills them in from
-            # ``--relax-feasibility`` / ``--ipm`` (or env vars).
-            self.state.relax_feasibility = relax_feasibility
-            self.state.use_ipm = use_ipm
-            self.state.glpsol_timing = glpsol_timing
-            if glpsol_timing:
-                stale_timing = resolved_work_folder / "solve_data" / "glpsol_constraint_timing.csv"
-                if stale_timing.exists():
-                    stale_timing.unlink()
             # Phase-timing recorder.  The CLI constructs one earlier and
             # passes it in; direct callers (tests) get a fresh recorder
             # bootstrapped here so timings.csv coverage is consistent
