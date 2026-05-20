@@ -18,6 +18,7 @@ results/
 bin/highs.opt
 __pycache__
 .idea/
+.claude/
 site/
 example_input.xlsx 
 *.xls*
