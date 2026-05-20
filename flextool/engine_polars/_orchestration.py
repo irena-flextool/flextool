@@ -1360,7 +1360,7 @@ def _drive_cascade(
             return 0
 
     # Drive the cascade via the native ``native_run_model``.  Native
-    # writers run inside ``capture_frames(provider=sub_solve_provider)``;
+    # emitters thread ``sub_solve_provider`` through every emit_* call;
     # the legacy ``capture_post_solve`` hook is no longer reachable.
     native_run_model(runner.state, _FlexpyCascadeSolver(runner.state))
     # Mirror the in-memory handoff dict back onto our state in case
@@ -1508,7 +1508,8 @@ def run_chain_from_db(
 
     # Cascade-input Provider population from the Spine DB.  Pure
     # in-memory: ``write_workdir_inputs`` runs the input_derivation
-    # pipeline under ``capture_frames``, so no CSVs hit disk.
+    # pipeline whose emitters populate the Provider directly, so no
+    # CSVs hit disk.
     from flextool.engine_polars._native_input_writer import (
         write_workdir_inputs,
     )

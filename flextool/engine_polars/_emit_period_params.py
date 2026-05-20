@@ -40,14 +40,6 @@ from flextool.engine_polars._emit_provider_io import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
-# in :mod:`._emit_arc_unions` and the other patched modules.  All
-# writers in this module funnel their derived frames through this helper
-# so :mod:`._flex_data_accumulator` can capture them via its monkey-patch.
-# ---------------------------------------------------------------------------
-
-
 def _utf8_frame(columns: dict[str, list[str]]) -> pl.DataFrame:
     """Build an all-Utf8 ``pl.DataFrame`` from column-name → string-list.
 
@@ -346,7 +338,7 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
 
 def emit_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
                         *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdtNodeInflow`."""
+    """Emit ``pdtNodeInflow`` to the Provider."""
     _emit(provider, "solve_data/pdtNodeInflow.csv",
           derive_pdtNodeInflow(input_dir, solve_data_dir, provider=provider))
 
@@ -532,7 +524,7 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
 
 def emit_pdtProfile(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdtProfile`."""
+    """Emit ``pdtProfile`` to the Provider."""
     _emit(provider, "solve_data/pdtProfile.csv",
           derive_pdtProfile(input_dir, solve_data_dir, provider=provider))
 
@@ -690,8 +682,7 @@ def emit_pdtConversion_rate_section_slope(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_pdtConversion_rate_section_slope`."""
+    """Emit ``pdtConversion_rate_section_slope`` to the Provider."""
     conv, sec, slope = _derive_conversion_trio(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -999,7 +990,7 @@ def derive_pdtProcess_source_sink(
 
 def emit_pdtProcess_source_sink(input_dir: Path, solve_data_dir: Path,
                                  *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdtProcess_source_sink`."""
+    """Emit ``pdtProcess_source_sink`` to the Provider."""
     _emit(provider, "solve_data/pdtProcess_source_sink.csv",
           derive_pdtProcess_source_sink(
               input_dir, solve_data_dir, provider=provider))
@@ -1158,7 +1149,7 @@ def derive_pdGroup(input_dir: Path, solve_data_dir: Path,
 
 def emit_pdGroup(input_dir: Path, solve_data_dir: Path,
                   *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdGroup`."""
+    """Emit ``pdGroup`` to the Provider."""
     _emit(provider, "solve_data/pdGroup.csv",
           derive_pdGroup(input_dir, solve_data_dir, provider=provider))
 
@@ -1210,7 +1201,7 @@ def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
 
 def emit_pdtGroup(input_dir: Path, solve_data_dir: Path,
                    *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdtGroup`."""
+    """Emit ``pdtGroup`` to the Provider."""
     _emit(provider, "solve_data/pdtGroup.csv",
           derive_pdtGroup(input_dir, solve_data_dir, provider=provider))
 
@@ -1272,7 +1263,7 @@ def derive_pdCommodity(input_dir: Path, solve_data_dir: Path,
 
 def emit_pdCommodity(input_dir: Path, solve_data_dir: Path,
                       *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdCommodity`."""
+    """Emit ``pdCommodity`` to the Provider."""
     _emit(provider, "solve_data/pdCommodity.csv",
           derive_pdCommodity(input_dir, solve_data_dir, provider=provider))
 
@@ -1324,7 +1315,7 @@ def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
 
 def emit_pdtCommodity(input_dir: Path, solve_data_dir: Path,
                        *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdtCommodity`."""
+    """Emit ``pdtCommodity`` to the Provider."""
     _emit(provider, "solve_data/pdtCommodity.csv",
           derive_pdtCommodity(input_dir, solve_data_dir, provider=provider))
 
@@ -1431,7 +1422,7 @@ def emit_p_positive_negative_inflow(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_p_positive_negative_inflow`."""
+    """Emit ``p_positive_negative_inflow`` to the Provider."""
     pos, neg = _derive_positive_negative_inflow(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -1484,12 +1475,6 @@ def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
                 except ValueError:
                     continue
     return out
-
-
-def _write_5col(path: Path, header: tuple[str, ...], rows: list[tuple]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(",".join(header) + "\n"
-                    + "".join(",".join(r) + "\n" for r in rows))
 
 
 # ---- write_pdtProcess__source__sink__dt_varCost_pair (mod L1493, L1502) ----
@@ -1596,8 +1581,7 @@ def emit_pdtProcess__source__sink__dt_varCost_pair(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_pdtProcess__source__sink__dt_varCost_pair`."""
+    """Emit ``pdtProcess__source__sink__dt_varCost_pair`` to the Provider."""
     basic, always = _derive_varCost_pair(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -1613,7 +1597,7 @@ def emit_pdtProcess__source__sink__dt_varCost_pair(
 def _filter_rows_to_frame(
     rows: list[tuple[str, str, str, str, str]],
 ) -> pl.DataFrame:
-    """5-column key-only Utf8 frame matching legacy ``_write_5col`` output."""
+    """5-column key-only Utf8 frame for the pssdt_varCost filter outputs."""
     return _utf8_frame({
         "process": [r[0] for r in rows],
         "source":  [r[1] for r in rows],
@@ -1746,7 +1730,7 @@ def emit_pssdt_varCost_filters(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_pssdt_varCost_filters`."""
+    """Emit ``pssdt_varCost_filters`` to the Provider."""
     no_eff, eff_src, eff_snk, eff_conn = _derive_pssdt_varCost_filters(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -1922,7 +1906,7 @@ def emit_cap_reduction_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_cap_reduction_params`."""
+    """Emit ``cap_reduction_params`` to the Provider."""
     (pp, psrc, psnk, online, proc_src, proc_snk, dtd) = _cap_reduction_inputs(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -1956,13 +1940,6 @@ def _read_ed_pairs(path: Path,
             if len(row) >= 2 and row[0] and row[1]:
                 out.append((row[0], row[1]))
     return out
-
-
-def _write_keyed_2(path: Path, header: tuple[str, str, str],
-                   rows: list[tuple[str, str, float]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(",".join(header) + "\n"
-                    + "".join(f"{a},{b},{repr(v)}\n" for a, b, v in rows))
 
 
 def _ed_period_compute(
@@ -2095,7 +2072,7 @@ def emit_ed_period_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_ed_period_params`."""
+    """Emit ``ed_period_params`` to the Provider."""
     pp, pn, ps, ns, inv, div = _ed_period_inputs(
         input_dir, solve_data_dir, provider=provider,
     )

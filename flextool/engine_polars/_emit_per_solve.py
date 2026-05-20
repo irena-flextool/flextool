@@ -83,23 +83,6 @@ def _to_utf8_frame(
     return pl.DataFrame(cols, schema={h: pl.Utf8 for h in headers})
 
 
-def _write_singles(path: Path, header: str, values: list[str]) -> None:
-    """Emit a one-column header + rows file.
-
-    Routes through ``_write`` so the accumulator captures the frame.
-    """
-    _write(_to_utf8_frame((header,), [(v,) for v in values]), path)
-
-
-def _write_tuples(path: Path, header: tuple[str, ...],
-                  rows: list[tuple[str, ...]]) -> None:
-    """Emit a multi-column header + tuple rows file.
-
-    Routes through ``_write`` so the accumulator captures the frame.
-    """
-    _write(_to_utf8_frame(header, rows), path)
-
-
 def _emit_singles(provider, key: str, header: str, values: list[str]) -> None:
     """Provider-emit a one-column header + rows frame under *key*."""
     _emit(provider, key, _to_utf8_frame((header,), [(v,) for v in values]))
@@ -146,8 +129,7 @@ def _project_column(df: pl.DataFrame, col_idx: int) -> list[str]:
 
 
 def emit_per_solve_sets(solve_data_dir: Path, *, provider) -> None:
-    """Provider-emitting twin of :func:`write_per_solve_sets`.
-
+    """Emit ``per_solve_sets`` to the Provider.
     Emits the same ~24 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).  *solve_data_dir* is retained
     because the function still reads sister CSVs from disk via the
@@ -558,8 +540,7 @@ def _read_pdv(path: Path,
 
 def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
                              *, provider) -> None:
-    """Provider-emitting twin of :func:`write_invest_divest_sets`.
-
+    """Emit ``invest_divest_sets`` to the Provider.
     Emits the same 15 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).
     """
@@ -741,8 +722,7 @@ def emit_ed_invest_forbidden_no_investment(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_ed_invest_forbidden_no_investment`."""
+    """Emit ``ed_invest_forbidden_no_investment`` to the Provider."""
     del input_dir  # legacy signature parity; no input/ reads here.
     ed_invest_pairs = _read_pairs(solve_data_dir / "ed_invest.csv", provider=provider)
     elm = _read_pairs(solve_data_dir / "entity__lifetime_method.csv", provider=provider)

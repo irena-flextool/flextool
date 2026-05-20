@@ -234,9 +234,9 @@ def derive_process_source_sink_param_t(solve_data_dir: Path,
     )
 
 
-def emit_process_source_sink_param_t(input_dir: Path, solve_data_dir: Path,
+def emit_process_source_sink_param_t(solve_data_dir: Path,
                                        *, provider) -> None:
-    """Provider-emitting twin of :func:`write_process_source_sink_param_t`."""
+    """Emit ``process_source_sink_param_t``."""
     _emit(provider, "solve_data/process_source_sink_param_t.csv",
           derive_process_source_sink_param_t(solve_data_dir, provider=provider))
 
@@ -314,7 +314,7 @@ def derive_node_time_param_in_use(
 
 def emit_node_time_param_in_use(input_dir: Path, solve_data_dir: Path,
                                   *, provider) -> None:
-    """Provider-emitting twin of :func:`write_node_time_param_in_use`."""
+    """Emit ``node_time_param_in_use`` to the Provider."""
     _emit(provider, "solve_data/node__TimeParam_in_use.csv",
           derive_node_time_param_in_use(
               input_dir, solve_data_dir, provider=provider,
@@ -355,7 +355,7 @@ def emit_process_source_delayed_partition(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_process_source_delayed_partition`."""
+    """Emit ``process_source_delayed_partition`` to the Provider."""
     delayed, undelayed = derive_process_source_delayed_partition(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -436,7 +436,7 @@ def derive_process_source_sink_param(
 
 def emit_process_source_sink_param(input_dir: Path, solve_data_dir: Path,
                                      *, provider) -> None:
-    """Provider-emitting twin of :func:`write_process_source_sink_param`."""
+    """Emit ``process_source_sink_param`` to the Provider."""
     _emit(provider, "solve_data/process__source__sink__param.csv",
           derive_process_source_sink_param(
               input_dir, solve_data_dir, provider=provider,
@@ -491,8 +491,7 @@ def emit_process_source_sink_profile_method_connection(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_process_source_sink_profile_method_connection`."""
+    """Emit ``process_source_sink_profile_method_connection`` to the Provider."""
     _emit(
         provider,
         "solve_data/process__source__sink__profile__profile_method_connection.csv",
@@ -579,7 +578,7 @@ def emit_process_method_sources_sinks(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_process_method_sources_sinks`."""
+    """Emit ``process_method_sources_sinks`` to the Provider."""
     _emit(provider, "solve_data/process_method_sources_sinks.csv",
           derive_process_method_sources_sinks(
               input_dir, solve_data_dir, provider=provider,
@@ -677,7 +676,7 @@ def emit_ed_history_realized_first(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_ed_history_realized_first`."""
+    """Emit ``ed_history_realized_first`` to the Provider."""
     _emit(provider, "solve_data/ed_history_realized_first.csv",
           derive_ed_history_realized_first(
               input_dir, solve_data_dir, provider=provider,
@@ -745,8 +744,7 @@ def emit_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source`."""
+    """Emit ``process_source_is_node_sink_1way_no_sink_or_more_than_1_source`` to the Provider."""
     _emit(
         provider,
         "solve_data/process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.csv",
@@ -799,7 +797,7 @@ def emit_process_source_sink_ramp_method(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_process_source_sink_ramp_method`."""
+    """Emit ``process_source_sink_ramp_method`` to the Provider."""
     _emit(provider, "solve_data/process__source__sink__ramp_method.csv",
           derive_process_source_sink_ramp_method(
               input_dir, solve_data_dir, provider=provider,
@@ -844,10 +842,10 @@ def derive_process_source_sink_coeff_zero(
 
 
 def emit_process_source_sink_coeff_zero(
-    input_dir: Path, solve_data_dir: Path,
+    solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_process_source_sink_coeff_zero`."""
+    """Emit ``process_source_sink_coeff_zero``."""
     _emit(provider, "solve_data/process_source_sink_coeff_zero.csv",
           derive_process_source_sink_coeff_zero(solve_data_dir,
                                                   provider=provider))
@@ -908,7 +906,7 @@ def emit_process_source_sink_is_node_family(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_process_source_sink_is_node_family`."""
+    """Emit ``process_source_sink_is_node_family`` to the Provider."""
     base, two1, not21, two2 = derive_process_source_sink_is_node_family(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -957,11 +955,10 @@ def derive_process_source_sink_delayed_partition(
 
 
 def emit_process_source_sink_delayed_partition(
-    input_dir: Path, solve_data_dir: Path,
+    solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_process_source_sink_delayed_partition`."""
+    """Emit the ``process_source_sink_delayed``/``_undelayed`` partition."""
     delayed, undelayed = derive_process_source_sink_delayed_partition(
         solve_data_dir, provider=provider,
     )
@@ -1050,7 +1047,7 @@ def derive_p_process_source_sink(
 
 def emit_pProcess_source_sink(input_dir: Path, solve_data_dir: Path,
                                 *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pProcess_source_sink`."""
+    """Emit ``pProcess_source_sink`` to the Provider."""
     _emit(provider, "solve_data/pProcess_source_sink.csv",
           derive_p_process_source_sink(
               input_dir, solve_data_dir, provider=provider,
@@ -1166,7 +1163,7 @@ def emit_process_source_sink_ramp_family(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_process_source_sink_ramp_family`."""
+    """Emit ``process_source_sink_ramp_family`` to the Provider."""
     by_file = _compute_ramp_family(input_dir, solve_data_dir, provider=provider)
     for fname, rows in by_file.items():
         _emit(provider, f"solve_data/{fname}", _triples_frame(rows))
@@ -1200,10 +1197,10 @@ def derive_process_source_sink_ramp_unions(
 
 
 def emit_process_source_sink_ramp_unions(
-    input_dir: Path, solve_data_dir: Path,
+    solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_process_source_sink_ramp_unions`."""
+    """Emit ``process_source_sink_ramp``."""
     _emit(provider, "solve_data/process_source_sink_ramp.csv",
           derive_process_source_sink_ramp_unions(solve_data_dir,
                                                    provider=provider))
@@ -1277,7 +1274,7 @@ def emit_group_commodity_node_period_co2_total(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_group_commodity_node_period_co2_total`."""
+    """Emit ``group_commodity_node_period_co2_total`` to the Provider."""
     _emit(provider, "solve_data/group_commodity_node_period_co2_total.csv",
           derive_group_commodity_node_period_co2_total(
               input_dir, solve_data_dir, provider=provider,
@@ -1454,7 +1451,7 @@ def _rows_to_frame_3(rows: list[tuple[str, str, str]],
 
 def emit_param_in_use_sets(input_dir: Path, solve_data_dir: Path,
                             *, provider) -> None:
-    """Provider-emitting twin of :func:`write_param_in_use_sets`."""
+    """Emit ``param_in_use_sets`` to the Provider."""
     nodes = _read_singles_list(input_dir / "node.csv", provider=provider)
     processes = _read_singles_list(input_dir / "process.csv", provider=provider)
     invest_set = frozenset(
@@ -1609,8 +1606,7 @@ def emit_node_group_dispatch_process_fully_inside(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_node_group_dispatch_process_fully_inside`."""
+    """Emit ``node_group_dispatch_process_fully_inside`` to the Provider."""
     _emit(provider, "solve_data/nodeGroupDispatch__process_fully_inside.csv",
           derive_node_group_dispatch_process_fully_inside(
               input_dir, solve_data_dir, provider=provider,
@@ -1675,19 +1671,12 @@ def _read_n_col_csv(path: Path, n: int,
     return out
 
 
-def _write_csv_rows(path: Path, header: tuple[str, ...], rows) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(",".join(header) + "\n"
-                    + "".join(",".join(r) + "\n" for r in rows))
-
-
 def _rows_to_frame(rows, header: tuple[str, ...]) -> pl.DataFrame:
     """Build an all-Utf8 ``pl.DataFrame`` from rows + a header tuple.
 
-    Mirrors the byte shape of :func:`_write_csv_rows` exactly: header
-    becomes column names; each tuple element a string cell.  Uses
-    column-of-tuples projection so empty-row frames still carry the
-    requested schema.
+    Header becomes column names; each tuple element a string cell.
+    Uses column-of-tuples projection so empty-row frames still carry
+    the requested schema.
     """
     n = len(header)
     cols: list[list[str]] = [[] for _ in range(n)]
@@ -1862,9 +1851,9 @@ def derive_pdt_online_integer(solve_data_dir: Path,
     )
 
 
-def emit_small_set_derivations(input_dir: Path, solve_data_dir: Path,
+def emit_small_set_derivations(solve_data_dir: Path,
                                  *, provider) -> None:
-    """Provider-emitting twin of :func:`write_small_set_derivations`."""
+    """Emit the small per-solve set derivations consumed downstream."""
     _emit(provider, "solve_data/ed_history_realized.csv",
           derive_ed_history_realized(solve_data_dir, provider=provider))
     _emit(provider,
@@ -1961,8 +1950,7 @@ def emit_process_source_sink_param_with_time(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_process_source_sink_param_with_time`."""
+    """Emit ``process_source_sink_param_with_time`` to the Provider."""
     _emit(provider, "solve_data/process__source__sink__param_t.csv",
           derive_process_source_sink_param_with_time(
               input_dir, solve_data_dir, provider=provider,
@@ -2020,10 +2008,10 @@ def derive_gdt_min_instant_flow(solve_data_dir: Path,
 
 
 def emit_gdt_instant_flow_sets(
-    input_dir: Path, solve_data_dir: Path,
+    solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_gdt_instant_flow_sets`."""
+    """Emit ``gdt_maxInstantFlow`` and ``gdt_minInstantFlow``."""
     max_rows, min_rows = _scan_gdt_instant_flow_rows(
         solve_data_dir, provider=provider,
     )
@@ -2074,7 +2062,7 @@ def emit_p_process_delay_weight(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_p_process_delay_weight`."""
+    """Emit ``p_process_delay_weight`` to the Provider."""
     _emit(provider, "solve_data/p_process_delay_weight.csv",
           derive_p_process_delay_weight(
               input_dir, solve_data_dir, provider=provider,
@@ -2159,7 +2147,7 @@ def derive_gcndt_co2_price(
 
 def emit_gcndt_co2_price(input_dir: Path, solve_data_dir: Path,
                           *, provider) -> None:
-    """Provider-emitting twin of :func:`write_gcndt_co2_price`."""
+    """Emit ``gcndt_co2_price`` to the Provider."""
     _emit(provider, "solve_data/gcndt_co2_price.csv",
           derive_gcndt_co2_price(input_dir, solve_data_dir, provider=provider))
 
@@ -2228,8 +2216,7 @@ def emit_group_commodity_node_period_co2_period(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_group_commodity_node_period_co2_period`."""
+    """Emit ``group_commodity_node_period_co2_period`` to the Provider."""
     _emit(provider, "solve_data/group_commodity_node_period_co2_period.csv",
           derive_group_commodity_node_period_co2_period(
               input_dir, solve_data_dir, provider=provider,
@@ -2278,9 +2265,9 @@ def derive_peedt(solve_data_dir: Path,
     )
 
 
-def emit_peedt(input_dir: Path, solve_data_dir: Path,
+def emit_peedt(solve_data_dir: Path,
                 *, provider) -> None:
-    """Provider-emitting twin of :func:`write_peedt`."""
+    """Emit ``peedt`` — period×entity×entity×dt index frame."""
     _emit(provider, "solve_data/peedt.csv",
           derive_peedt(solve_data_dir, provider=provider))
 
@@ -2359,7 +2346,7 @@ def derive_p_flow_min(
 
 def emit_p_flow_min(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
-    """Provider-emitting twin of :func:`write_p_flow_min`."""
+    """Emit ``p_flow_min`` to the Provider."""
     _emit(provider, "solve_data/p_flow_min.csv",
           derive_p_flow_min(input_dir, solve_data_dir, provider=provider))
 
@@ -2522,7 +2509,7 @@ def derive_p_flow_max(
 
 def emit_p_flow_max(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
-    """Provider-emitting twin of :func:`write_p_flow_max`."""
+    """Emit ``p_flow_max`` to the Provider."""
     _emit(provider, "solve_data/p_flow_max.csv",
           derive_p_flow_max(input_dir, solve_data_dir, provider=provider))
 
@@ -2594,7 +2581,7 @@ def derive_p_state_slack_share(
 
 def emit_p_state_slack_share(input_dir: Path, solve_data_dir: Path,
                               *, provider) -> None:
-    """Provider-emitting twin of :func:`write_p_state_slack_share`."""
+    """Emit ``p_state_slack_share`` to the Provider."""
     _emit(provider, "solve_data/p_state_slack_share.csv",
           derive_p_state_slack_share(input_dir, solve_data_dir,
                                        provider=provider))
@@ -2698,7 +2685,7 @@ def emit_p_storage_state_reference_price(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_p_storage_state_reference_price`."""
+    """Emit ``p_storage_state_reference_price`` to the Provider."""
     _emit(provider, "solve_data/p_storage_state_reference_price.csv",
           derive_p_storage_state_reference_price(
               input_dir, solve_data_dir, provider=provider,
@@ -2868,7 +2855,7 @@ def emit_node_group_dispatch_sets(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_node_group_dispatch_sets`."""
+    """Emit ``node_group_dispatch_sets`` to the Provider."""
     by_file = _compute_node_group_dispatch_sets(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -2991,8 +2978,7 @@ def emit_param_t_projections_and_time_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_param_t_projections_and_time_params`."""
+    """Emit ``param_t_projections_and_time_params`` to the Provider."""
     proc_conn = frozenset(_read_singles_list(
         input_dir / "process_connection.csv", provider=provider,
     ))

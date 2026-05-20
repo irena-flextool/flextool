@@ -1,55 +1,28 @@
-"""Writer-port Phase 1 closeout — top-level dispatcher own-compute.
+"""Top-level dispatcher own-compute emitters (arc-unions + entity_period).
 
-Native ports of the two remaining top-level "dispatcher" functions in
-the legacy preprocessing tree.  Both functions are *own-compute*: they
-contain inline derivations (loops, projections, unions, gated
-constructions) rather than delegating to sibling ``write_*`` helpers.
+This module owns the two top-level "dispatcher" preprocessing functions
+that contain inline derivations (loops, projections, unions, gated
+constructions) rather than delegating to sibling emitters.
 
-* :func:`write_process_arc_unions` — mirrors
-  ``flextool.flextoolrunner.preprocessing.process_arc_unions
-  .write_process_arc_unions`` (~216 LOC).
-
-  Migrates the 14-set L1 arc-union batch in dependency order:
-  ``process__profileProcess__toSink``,
-  ``process__source__toProfileProcess``,
-  ``process_profile``,
-  ``process_source_toProcess``,
-  ``process_process_toSink``,
-  ``process_source_sink_eff``,
-  ``process_source_sink_noEff``,
-  ``process_online``,
-  ``process_minload``,
-  ``process__commodity__node_co2``,
-  ``process_co2``,
-  ``process_source_sink``,
-  ``process_source_sink_alwaysProcess``,
+* :func:`emit_process_arc_unions` — emits the 14-set L1 arc-union
+  batch in dependency order: ``process__profileProcess__toSink``,
+  ``process__source__toProfileProcess``, ``process_profile``,
+  ``process_source_toProcess``, ``process_process_toSink``,
+  ``process_source_sink_eff``, ``process_source_sink_noEff``,
+  ``process_online``, ``process_minload``,
+  ``process__commodity__node_co2``, ``process_co2``,
+  ``process_source_sink``, ``process_source_sink_alwaysProcess``,
   ``process__source__sink__profile__profile_method_direct``.
 
-* :func:`write_entity_period_calc_params` — mirrors
-  ``flextool.flextoolrunner.preprocessing.entity_period_calc_params
-  .write_entity_period_calc_params`` (~138 LOC).
+* :func:`emit_entity_period_calc_params` — emits ``pdProcess``,
+  ``pdNode``, ``edEntity_lifetime``, ``ed_fixed_cost``,
+  ``p_entity_unitsize`` via the ``PdLookup`` machinery (native shim in
+  :mod:`._pdt_lookup`).
 
-  Emits ``pdProcess.csv``, ``pdNode.csv``, ``edEntity_lifetime.csv``,
-  ``ed_fixed_cost.csv``, ``p_entity_unitsize.csv`` via the
-  ``PdLookup`` machinery (native shim in :mod:`._pdt_lookup`).
-
-These are byte-for-byte mirrors of the legacy emitters — same CSV
-header, same per-row formatting, same iteration order.  The parity
-tests under ``tests/engine_polars/test_writer_port_phase1.py`` assert
-the file-level equivalence with ``filecmp``.
-
-Note on Phase 1 vs Phase 2 boundary
------------------------------------
-
-``write_process_arc_unions`` is called from BOTH the Phase 1
-top-level chain (``input_writer.write_input``) AND the Phase 2
-per-solve chain (``preprocessing.solve_time``); the override hook
-intercepts both call sites because they bind the same module attribute.
-
-``write_entity_period_calc_params`` is currently only called from the
-Phase 2 ``preprocessing.solve_time.preprocessing_solve_time`` chain
-(no top-level call).  Porting it here keeps the dispatcher symmetric
-and primes Phase 2 with a native implementation.
+Parity contract: same CSV header, same per-row formatting, same
+iteration order as the historical preprocessing chain — verified at
+the file level via ``filecmp.cmp(shallow=False)`` in
+``tests/engine_polars/test_writer_port_phase1.py``.
 """
 from __future__ import annotations
 
@@ -63,16 +36,6 @@ from flextool.engine_polars._emit_provider_io import (
     _provider_key,
     _provider_open,
 )
-
-
-# ---------------------------------------------------------------------------
-# Polars-frame _write helper — patched by Phase E-b accumulator.
-#
-# This is the single emission funnel for the converted derive_* family in
-# this module.  The patched variant in
-# :mod:`._flex_data_accumulator.capture_frames` rebinds this name to also
-# capture (path.name -> df) into the per-sub-solve accumulator.
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -121,11 +84,6 @@ def _read_singles(path: Path,
         return [r[0] for r in reader if r and r[0]]
 
 
-def _write_csv(path: Path, header: tuple[str, ...], rows) -> None:
-    path.write_text(",".join(header) + "\n"
-                    + "".join(",".join(r) + "\n" for r in rows))
-
-
 # ---------------------------------------------------------------------------
 # Method-constant frozensets — re-exported from
 # :mod:`flextool.input_derivation._method_constants`.  These are model
@@ -139,13 +97,10 @@ from flextool.input_derivation._method_constants import (  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# write_process_arc_unions — top-level dispatcher own-compute.
-# Mirrors flextool.flextoolrunner.preprocessing.process_arc_unions
-# .write_process_arc_unions lines 80-293 of the legacy module.
+# emit_process_arc_unions — top-level dispatcher own-compute.
 #
-# Phase E-b lift: each of the 14 emitted CSVs flows through ``_write``
-# (via a private ``_compute_*`` helper) so the accumulator monkey-patch
-# captures every frame.  Public ``derive_*`` functions are exposed for
+# Each of the 14 emitted CSVs flows through ``_emit`` (via a private
+# ``_compute_*`` helper).  Public ``derive_*`` functions are exposed for
 # standalone seed lookups; the wrapper builds the shared input bundle
 # once and threads intermediate frames so dependent CSVs don't re-scan.
 # ---------------------------------------------------------------------------
@@ -640,8 +595,7 @@ def derive_process__source__sink__profile__profile_method_direct(
 
 def emit_process_arc_unions(input_dir: Path, solve_data_dir: Path,
                              *, provider) -> None:
-    """Provider-emitting twin of :func:`write_process_arc_unions`.
-
+    """Emit ``process_arc_unions`` to the Provider.
     Emits the same 14 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).  *solve_data_dir* is retained
     because the shared input bundle still consumes it for sister input
@@ -924,8 +878,7 @@ def derive_p_entity_unitsize(
 def emit_entity_period_calc_params(input_dir: Path,
                                    solve_data_dir: Path,
                                    *, provider) -> None:
-    """Provider-emitting twin of :func:`write_entity_period_calc_params`.
-
+    """Emit ``entity_period_calc_params`` to the Provider.
     Emits the same 5 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).
     """

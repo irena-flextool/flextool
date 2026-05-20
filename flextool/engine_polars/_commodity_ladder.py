@@ -190,13 +190,11 @@ def load_data(
     #     :func:`flextool.input_derivation._commodity_ladder_sets.derive_commodity_ladder_sets`
     #     into the cascade-input Provider under the parent-qualified key.
     #   * ``solve_data/cnd_ladder_set.csv`` & ``solve_data/cndi_ladder_*_set.csv``
-    #     — written by :func:`_emit_per_solve.write_per_solve_sets` under
-    #     ``capture_frames`` which stores both the bare ``basename.csv`` and
-    #     ``solve_data/basename.csv`` keys (see
-    #     :func:`_flex_data_accumulator.capture_frames`).
-    #   * ``solve_data/ci_ladder_cumulative.csv`` — written by
-    #     :func:`_emit_mid_sets.write_ci_ladder_cumulative`.
-    #   * ``solve_data/commodity__tier_ann.csv`` — written by
+    #     — emitted by :func:`_emit_per_solve.emit_per_solve_sets` under both
+    #     the bare ``basename.csv`` and ``solve_data/basename.csv`` keys.
+    #   * ``solve_data/ci_ladder_cumulative.csv`` — emitted by
+    #     :func:`_emit_mid_sets.emit_ci_ladder_cumulative`.
+    #   * ``solve_data/commodity__tier_ann.csv`` — emitted by
     #     :func:`_emit_leaf_sets`.
     # In cascade mode (``csv_dump=False``) these files never reach disk; the
     # Provider is the authoritative source.  The disk arm survives for

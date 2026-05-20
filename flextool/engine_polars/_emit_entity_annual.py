@@ -115,21 +115,6 @@ def _read_pdv(path: Path,
     return out
 
 
-def _write_keyed_2(path: Path, header: tuple[str, str, str],
-                   rows: list[tuple[str, str, float]]) -> None:
-    """Emit (entity, period, value) CSV with ``repr(float)`` precision.
-
-    Retained for compatibility with the legacy direct-text path; new code
-    in this module routes through :func:`_write` (which feeds the
-    accumulator hook).
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        ",".join(header) + "\n"
-        + "".join(f"{a},{b},{repr(float(v))}\n" for a, b, v in rows)
-    )
-
-
 def _rows_to_frame(rows: list[tuple[str, str, float]]) -> pl.DataFrame:
     """Materialise (entity, period, repr(value)) rows as an all-Utf8 frame.
 
@@ -484,8 +469,7 @@ def emit_entity_annual_calc_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_entity_annual_calc_params`.
-
+    """Emit ``entity_annual_calc_params`` to the Provider.
     Emits the same six frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration: basename and parent/basename).
     """

@@ -500,9 +500,8 @@ def _carrier_miss(path: Path, consumer: str) -> "FlexDataError":
     return FlexDataError(
         f"FlexDataProvider has no carrier for '{path.name}' "
         f"(consumer: {consumer}).  This per-solve frame must be "
-        f"populated by its writer before SolveContext consumes it.  "
-        f"In cascade mode the producer routes through capture_frames; "
-        f"check that the writer ran and emitted under the canonical "
+        f"populated by its emitter before SolveContext consumes it.  "
+        f"Check that the producer ran and registered under the canonical "
         f"key '{_provider_key_for(path)}'."
     )
 

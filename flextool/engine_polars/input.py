@@ -99,8 +99,8 @@ def _provider_read(provider: "object | None", name: str,
     """Return the frame for *name* from *provider*.
 
     Cascade callers always thread a Provider seeded by the cascade-input
-    writers (``input_derivation.run`` plus :func:`capture_frames` for
-    preprocessing).  Off-cascade callers (the loader-unit tests in
+    emitters (``input_derivation.run`` and the per-solve preprocessing
+    chain).  Off-cascade callers (the loader-unit tests in
     ``tests/engine_polars/loaders``) pass ``provider=None``; for those
     the residual disk-read goes through
     :func:`flextool.engine_polars._input_source.read_csv_fallback` so
@@ -315,10 +315,10 @@ def _read_p_flow_max(
     redundant (kept for the dual-write window — it is removed in a
     cleanup commit once every reader is migrated).  The lookup key
     ``"solve_data/p_flow_max"`` is the parent-qualified, suffix-stripped
-    form of *path* — it mirrors what the writer puts under (the
-    dual-write in ``capture_frames`` stores both bare and qualified
-    keys); using the qualified form keeps the read disambiguated even
-    if a same-basename frame appears under another parent dir later.
+    form of *path* — it matches the emitter's dual-key registration
+    (basename + parent/basename); using the qualified form keeps the
+    read disambiguated even if a same-basename frame appears under
+    another parent dir later.
 
     When *provider* is ``None`` the legacy seed funnel path runs
     unchanged.
@@ -4434,7 +4434,7 @@ def _read_realize_invest_periods(path: Path,
                                    *,
                                    provider: "object | None" = None) -> set[str]:
     """Read ``realized_invest_periods_of_current_solve.csv`` (single
-    ``period`` column written by ``solve_writers.write_periods``).
+    ``period`` column emitted per-solve by the periods emitter).
 
     Empty file or missing → empty set (treat as: nothing realized this solve).
     """
@@ -5176,9 +5176,8 @@ def build_handoff_from_flexpy(
         )
     # Gap F final — prefer the in-memory fix_storage_timesteps carriers:
     # ``parent_handoff.fix_storage_timesteps`` deposits the (period, step)
-    # set for child solves; otherwise this solve writes its own set as
-    # part of ``solve_writers.write_fix_storage_timesteps`` which we then
-    # read from disk.
+    # set for child solves; otherwise this solve emits its own set via
+    # ``emit_fix_storage_timesteps`` and we read it back from the Provider.
     fs_steps_df = None
     if parent_handoff is not None and getattr(
             parent_handoff, "fix_storage_timesteps", None) is not None:

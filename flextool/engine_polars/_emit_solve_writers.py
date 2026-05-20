@@ -1,120 +1,43 @@
-"""Writer-port Phase 2 (sub-dispatch 6 + 7) — ``solve_writers.py`` port.
+"""Per-solve preprocessing emitters — timeline / period / branch / RP frames.
 
-Native re-implementation of the ~36 functions in
-``flextool.flextoolrunner.solve_writers`` (legacy 948 LOC total).
-Sub-dispatch 6 ported the first 26 helpers (~542 LOC); sub-dispatch 7
-extends this module with the remaining nine writers (~406 LOC):
-the scaling-flag writer (``write_p_use_row_scaling``), the four
-``scale_the_objective`` / ``scale_the_state`` keyed-value writers
-(``write_scale_the_*`` + their header-only variants), the
-``write_delayed_durations`` chain emitter, and the three
-representative-period writers (``write_rp_data``,
-``write_timeset_cost_weight``, ``write_empty_rp_data``).  Two
-functional groups originally:
+This module owns the ~36 ``emit_*`` functions that build the
+``solve_data/*.csv`` artefacts each sub-solve consumes:
 
-Group A — timeline / period writers
------------------------------------
+* Timeline & period: ``steps_in_timeline``, ``steps_in_use``,
+  ``steps_complete_solve``, ``step_previous``, ``period_block_time``,
+  ``period_block_succ``, ``p_years_represented``,
+  ``period_with_history``, ``p_discount_years``,
+  ``realized_invest_periods_of_current_solve``,
+  ``invest_periods_of_current_solve``, ``period_last``,
+  ``period_first_of_solve``, ``period_first``, ``p_model``,
+  ``p_nested_model``, ``solve_current``, ``first_timesteps``,
+  ``last_timesteps``, ``last_realized_timestep``,
+  ``realized_dispatch``, ``fix_storage_timesteps``.
+* Branch: ``period__branch``, ``branch_all``, ``time_branch_all``,
+  ``solve_branch_weight``, ``solve_branch__time_branch``.
+* Empty / seed: ``p_entity_invested``, ``p_entity_divested``,
+  ``p_entity_period_existing_capacity``, the three
+  rolling-accumulator seeds, the four fix-storage seeds.
+* Headers / timesets: header-only seeds, ``timesets_in_use``,
+  ``timesets__timeline``, ``solve_hole_multiplier``.
+* Scaling / delay / RP: ``p_use_row_scaling``,
+  ``scale_the_objective``, ``scale_the_state``, ``delay_duration``,
+  ``dtt__delay_duration``, and the eight representative-period CSVs
+  (``rp_weights``, ``rp_base_chain``, ``rp_base_first``,
+  ``rp_base_last``, ``rp_block_first``, ``rp_block_last``,
+  ``rp_block_start_last``, ``rp_cost_weight``).
 
-* :func:`write_full_timelines` — ``steps_in_timeline.csv``
-* :func:`write_active_timelines` — ``steps_in_use.csv`` /
-  ``steps_complete_solve.csv`` (the ``complete=True`` variant emits the
-  ``complete_step_duration`` header)
-* :func:`write_step_jump` — ``step_previous.csv``
-* :func:`write_period_block` — ``period_block_time.csv`` +
-  ``period_block_succ.csv``
-* :func:`write_years_represented` — ``p_years_represented.csv``
-* :func:`write_period_years` — ``period_with_history.csv`` /
-  ``p_discount_years.csv``
-* :func:`write_periods` — ``realized_invest_periods_of_current_solve.csv``
-  / ``invest_periods_of_current_solve.csv``
-* :func:`write_first_and_last_periods` — ``period_last.csv``,
-  ``period_first_of_solve.csv``, ``period_first.csv``
-* :func:`write_solve_status` — ``p_model.csv`` / ``p_nested_model.csv``
-* :func:`write_current_solve` — ``solve_current.csv``
-* :func:`write_period_boundary_step` (+ :func:`write_first_steps` /
-  :func:`write_last_steps` shims) — ``first_timesteps.csv`` /
-  ``last_timesteps.csv``
-* :func:`get_first_steps` — pure helper (returns dict, no CSV)
-* :func:`write_last_realized_step` — ``last_realized_timestep.csv``
-* :func:`write_realized_dispatch` — ``realized_dispatch.csv``
-* :func:`write_fix_storage_timesteps` — ``fix_storage_timesteps.csv``
+Each emitter builds an all-``Utf8`` polars frame via a companion
+``derive_*`` helper and registers it on the Provider with the dual
+``basename`` + ``parent/basename`` keys downstream readers expect.
+When the cascade later flushes to disk (``--csv-dump``), the CRLF line
+terminator preserved through the snapshot path matches the legacy
+``csv.writer`` + ``newline=""`` byte shape exactly.
 
-Group B — branch / empty / header writers
-------------------------------------------
-
-* :func:`write_branch__period_relationship` — ``period__branch.csv``
-* :func:`write_all_branches` — ``branch_all.csv`` +
-  ``time_branch_all.csv``
-* :func:`write_branch_weights_and_map` — ``solve_branch_weight.csv``
-  + ``solve_branch__time_branch.csv``
-* :func:`write_empty_investment_file` — ``p_entity_invested.csv`` /
-  ``p_entity_divested.csv`` /
-  ``p_entity_period_existing_capacity.csv``
-* :func:`write_empty_cumulative_files` — three rolling-accumulator
-  seed files
-* :func:`write_empty_storage_fix_file` — four fix-storage seed files
-* :func:`write_headers_for_empty_output_files` — generic
-  comma-split header writer
-* :func:`write_timesets` — ``input/timesets_in_use.csv`` +
-  ``input/timesets__timeline.csv``
-* :func:`write_hole_multiplier` — ``solve_hole_multiplier.csv``
-
-Implementation
---------------
-
-These are pure CSV writers — no preprocessing logic, no polars
-operations, no data derivation.  Phase E-b7 converted every
-``write_*`` into the canonical ``derive_X -> _write(derive_X(...),
-path)`` pattern: a :func:`derive_X` companion returns the full
-``Utf8`` polars frame and :func:`_write` emits it via
-``df.write_csv(path, line_terminator="\r\n")`` — the CRLF terminator
-matches the legacy ``csv.writer`` + ``newline=""`` output byte-for-
-byte.  This lets the Phase E-b accumulator
-(:mod:`._flex_data_accumulator`) capture every CSV through the
-shared ``_write`` monkey-patch.
-
-Byte-identical parity is still verified via
-``filecmp.cmp(shallow=False)`` in
-``tests/engine_polars/test_writer_port_phase1.py``.
-
-Function signatures match the legacy module verbatim because
-:mod:`._native_input_writer._native_leaf_set_override` monkey-patches
-the legacy module's attributes by name; ``_native_run_model.py``
-imports the legacy module once and dispatches via attribute access.
-
-Sub-dispatch 7 group — scaling / delay / representative period
-----------------------------------------------------------------
-
-* :func:`write_p_use_row_scaling` — ``p_use_row_scaling.csv`` (Agent-5
-  row-scaling opt-in flag, with the
-  ``FLEXTOOL_FORCE_ROW_SCALING`` env-var test hook preserved verbatim)
-* :func:`write_scale_the_objective` /
-  :func:`write_scale_the_objective_header_only` —
-  ``solve_data/scale_the_objective.csv`` (auto-scale value-or-header
-  variants; ``%.17g`` precision)
-* :func:`write_scale_the_state` /
-  :func:`write_scale_the_state_header_only` —
-  ``solve_data/scale_the_state.csv`` (companion to the objective
-  scalar, currently fixed at ``1.0``)
-* :func:`write_delayed_durations` — ``solve_data/delay_duration.csv``
-  + ``solve_data/dtt__delay_duration.csv`` (source/sink offset map
-  with wrap-around at end-of-period)
-* :func:`write_rp_data` — eight representative-period CSVs
-  (``rp_weights.csv``, ``rp_base_chain.csv``,
-  ``rp_base_first.csv`` / ``rp_base_last.csv``,
-  ``rp_block_first.csv`` / ``rp_block_last.csv``,
-  ``rp_block_start_last.csv``, ``rp_cost_weight.csv``)
-* :func:`write_timeset_cost_weight` — ``rp_cost_weight.csv`` from
-  per-timestep ``timeset_weights`` (non-RP normalised pathway)
-* :func:`write_empty_rp_data` — header-only seeds for the eight
-  representative-period CSVs (non-RP models)
-
-The scaling CSVs use ``%.17g`` repr formatting (so that
-``writerow([..., f"{float(v):.17g}"])`` produces a value that
-round-trips through GMPL's ``table data IN``).  ``write_rp_data``
-preserves the legacy ordering and the ``weight > 1e-10`` epsilon
-filter.  ``write_timeset_cost_weight`` uses ``%.10g`` for the
-normalised float (matches legacy).
+The scaling CSVs use ``%.17g`` repr formatting for round-tripping
+through GMPL's ``table data IN``.  ``emit_rp_data`` preserves the
+legacy ordering and the ``weight > 1e-10`` epsilon filter.
+``emit_timeset_cost_weight`` uses ``%.10g`` for the normalised float.
 """
 from __future__ import annotations
 
@@ -132,12 +55,10 @@ from flextool.engine_polars._emit_provider_io import _emit as _emit_dual_key
 
 
 def _emit_path(provider, path: "Path | str", df: pl.DataFrame) -> None:
-    """Provider-emit *df* keyed by the same conventions as
-    :func:`._flex_data_accumulator.capture_frames`: register under both
-    ``basename`` and ``parent/basename`` (when *path* has a parent dir).
+    """Provider-emit *df* under both ``basename`` and ``parent/basename``.
 
-    Mirrors the dual-key registration that the now-bypassed monkey-patch
-    performed for every ``_write(df, path)`` call site in this module.
+    The dual-key registration matches downstream readers' lookup
+    conventions; either form resolves to the same frame.
     """
     p = Path(path)
     parent = p.parent.name
@@ -146,22 +67,13 @@ def _emit_path(provider, path: "Path | str", df: pl.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Canonical writer-port emitter — Phase E-b7 accumulator funnel.
-#
-# All writers in this module funnel their derived frames through
-# :func:`_write` so :mod:`._flex_data_accumulator` can capture them via
-# its monkey-patch.  Byte parity with the legacy ``csv.writer`` emission
-# is preserved by using ``line_terminator="\r\n"`` (the same CRLF
-# terminator the ``newline=""`` open + ``csv.writer`` combination
-# produces on every platform).
-#
-# The companion :func:`_to_utf8_frame` builds an all-``Utf8`` polars
-# frame from a header tuple and a row list.  Every value is taken
+# Frame construction — :func:`_to_utf8_frame` builds an all-``Utf8``
+# polars frame from a header tuple and a row list.  Every value is taken
 # verbatim if already a string, otherwise stringified via ``str(v)`` —
-# this matches ``csv.writer``'s behaviour exactly for the types this
-# module emits (``int`` 0/1 flags, ``float`` weights, plain strings).
-# Schema is locked to ``Utf8`` per column so polars' write_csv does not
-# attempt numeric formatting / quoting.
+# matching ``csv.writer``'s behaviour for the types this module emits
+# (``int`` 0/1 flags, ``float`` weights, plain strings).  Schema is
+# locked to ``Utf8`` per column so polars' ``write_csv`` does no extra
+# numeric formatting or quoting at flush time.
 # ---------------------------------------------------------------------------
 
 
@@ -215,7 +127,7 @@ def emit_full_timelines(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_full_timelines`."""
+    """Emit ``full_timelines`` to the Provider."""
     _emit_path(provider, filename,
                derive_full_timelines(
                    stochastic_timesteps,
@@ -246,7 +158,7 @@ def emit_active_timelines(
     complete: bool = False,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_active_timelines`."""
+    """Emit ``active_timelines`` to the Provider."""
     _emit_path(provider, filename,
                derive_active_timelines(timeline, complete))
 
@@ -264,10 +176,9 @@ def derive_step_jump(step_lengths: list[tuple[str, ...]]) -> pl.DataFrame:
 
 def emit_step_jump(
     step_lengths: list[tuple[str, ...]],
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_step_jump`."""
+    """Emit ``step_jump`` to the Provider."""
     _emit_dual_key(provider, "solve_data/step_previous.csv",
                    derive_step_jump(step_lengths))
 
@@ -296,10 +207,9 @@ def derive_period_block_succ(
 def emit_period_block(
     period_block_time: list[tuple],
     period_block_succ: list[tuple],
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_period_block`."""
+    """Emit ``period_block`` to the Provider."""
     _emit_dual_key(provider, "solve_data/period_block_time.csv",
                    derive_period_block_time(period_block_time))
     _emit_dual_key(provider, "solve_data/period_block_succ.csv",
@@ -353,7 +263,7 @@ def emit_years_represented(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_years_represented`."""
+    """Emit ``years_represented`` to the Provider."""
     _emit_path(provider, filename,
                derive_years_represented(period__branch, years_represented))
 
@@ -382,7 +292,7 @@ def emit_period_years(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_period_years`."""
+    """Emit ``period_years`` to the Provider."""
     _emit_path(provider, filename,
                derive_period_years(stochastic_branches, years_represented))
 
@@ -404,7 +314,7 @@ def emit_periods(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_periods`."""
+    """Emit ``periods`` to the Provider."""
     _emit_path(provider, filename, derive_periods(solve, periods_dict))
 
 
@@ -480,10 +390,9 @@ def emit_first_and_last_periods(
     active_time_list: dict[str, list[tuple[str, ...]]],
     period__timesets_in_this_solve: list[tuple[str, str]],
     period__branch_list: list[tuple[str, str]],
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_first_and_last_periods`."""
+    """Emit ``first_and_last_periods`` to the Provider."""
     period_last, period_first_of_solve_list, period_first_list = (
         _compute_first_and_last_periods(
             active_time_list,
@@ -526,10 +435,9 @@ def emit_solve_status(
     first_state: bool,
     last_state: bool,
     nested: bool = False,
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_solve_status`."""
+    """Emit ``solve_status`` to the Provider."""
     key = ("solve_data/p_nested_model.csv" if nested
            else "solve_data/p_model.csv")
     _emit_dual_key(provider, key,
@@ -542,7 +450,7 @@ def derive_current_solve(solve: str) -> pl.DataFrame:
 
 
 def emit_current_solve(solve: str, filename: str, *, provider) -> None:
-    """Provider-emitting twin of :func:`write_current_solve`."""
+    """Emit ``current_solve`` to the Provider."""
     _emit_path(provider, filename, derive_current_solve(solve))
 
 
@@ -573,7 +481,7 @@ def emit_period_boundary_step(
     last: bool = False,
     provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_period_boundary_step`."""
+    """Emit ``period_boundary_step`` to the Provider."""
     _emit_path(provider, filename,
                derive_period_boundary_step(timeline, last=last))
 
@@ -583,7 +491,7 @@ def emit_first_steps(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_first_steps`."""
+    """Emit ``first_steps`` to the Provider."""
     emit_period_boundary_step(timeline, filename, last=False, provider=provider)
 
 
@@ -592,7 +500,7 @@ def emit_last_steps(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_last_steps`."""
+    """Emit ``last_steps`` to the Provider."""
     emit_period_boundary_step(timeline, filename, last=True, provider=provider)
 
 
@@ -649,7 +557,7 @@ def emit_last_realized_step(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_last_realized_step`."""
+    """Emit ``last_realized_step`` to the Provider."""
     _emit_path(provider, filename,
                derive_last_realized_step(realized_timeline, solve,
                                            realized_periods))
@@ -673,10 +581,9 @@ def emit_realized_dispatch(
     realized_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,
     realized_periods: list[tuple[str, str]],
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_realized_dispatch`."""
+    """Emit ``realized_dispatch`` to the Provider."""
     _emit_dual_key(
         provider, "solve_data/realized_dispatch.csv",
         derive_realized_dispatch(realized_time_list, solve, realized_periods),
@@ -701,10 +608,9 @@ def emit_fix_storage_timesteps(
     active_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,
     fix_storage_periods: list[tuple[str, str]],
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_fix_storage_timesteps`."""
+    """Emit ``fix_storage_timesteps`` to the Provider."""
     _emit_dual_key(
         provider, "solve_data/fix_storage_timesteps.csv",
         derive_fix_storage_timesteps(
@@ -733,7 +639,7 @@ def emit_branch__period_relationship(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_branch__period_relationship`."""
+    """Emit ``branch__period_relationship`` to the Provider."""
     _emit_path(provider, filename,
                derive_branch__period_relationship(period__branch))
 
@@ -819,8 +725,7 @@ def emit_all_branches(
     work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_all_branches`.
-
+    """Emit ``all_branches`` to the Provider.
     *work_folder* is still needed because :func:`derive_time_branch_all`
     walks the ``<work>/input/`` directory for ``pbt_*`` CSVs via the
     Provider.
@@ -892,10 +797,9 @@ def emit_branch_weights_and_map(
     branch_start_time: tuple[str, str] | None,
     period__branch_lists: list[tuple[str, str]],
     stochastic_branches: dict[str, list[Any]],
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_branch_weights_and_map`."""
+    """Emit ``branch_weights_and_map`` to the Provider."""
     _emit_dual_key(
         provider, "solve_data/solve_branch_weight.csv",
         derive_solve_branch_weight(
@@ -919,9 +823,9 @@ def _empty_frame(headers: tuple[str, ...]) -> pl.DataFrame:
     return pl.DataFrame(schema={h: pl.Utf8 for h in headers})
 
 
-def emit_empty_investment_file(work_folder: Path | None = None,
-                                 *, provider) -> None:
-    """Provider-emitting twin of :func:`write_empty_investment_file`."""
+def emit_empty_investment_file(
+    *, provider) -> None:
+    """Emit ``empty_investment_file`` to the Provider."""
     _emit_dual_key(provider, "solve_data/p_entity_invested.csv",
                    _empty_frame(("entity", "p_entity_invested")))
     _emit_dual_key(provider, "solve_data/p_entity_divested.csv",
@@ -936,9 +840,9 @@ def emit_empty_investment_file(work_folder: Path | None = None,
     )
 
 
-def emit_empty_cumulative_files(work_folder: Path | None = None,
-                                  *, provider) -> None:
-    """Provider-emitting twin of :func:`write_empty_cumulative_files`."""
+def emit_empty_cumulative_files(
+    *, provider) -> None:
+    """Emit ``empty_cumulative_files`` to the Provider."""
     _emit_dual_key(
         provider, "solve_data/ladder_cum_realized_mwh.csv",
         _empty_frame(
@@ -953,9 +857,9 @@ def emit_empty_cumulative_files(work_folder: Path | None = None,
     )
 
 
-def emit_empty_storage_fix_file(work_folder: Path | None = None,
-                                  *, provider) -> None:
-    """Provider-emitting twin of :func:`write_empty_storage_fix_file`."""
+def emit_empty_storage_fix_file(
+    *, provider) -> None:
+    """Emit ``empty_storage_fix_file`` to the Provider."""
     _emit_dual_key(provider, "solve_data/fix_storage_price.csv",
                    _empty_frame(
                        ("node", " period", " step", " ndt_fix_storage_price"),
@@ -974,7 +878,7 @@ def emit_empty_storage_fix_file(work_folder: Path | None = None,
 
 def emit_headers_for_empty_output_files(filename: str, header: str,
                                           *, provider) -> None:
-    """Provider-emitting twin of :func:`write_headers_for_empty_output_files`."""
+    """Emit ``headers_for_empty_output_files`` to the Provider."""
     _emit_path(provider, filename, _empty_frame(tuple(header.split(","))))
 
 
@@ -1005,10 +909,9 @@ def derive_timesets__timeline(
 def emit_timesets(
     timesets_used_by_solves: dict[str, list[tuple[str, str]]],
     timeset__timeline: dict[str, str],
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_timesets`."""
+    """Emit ``timesets`` to the Provider."""
     _emit_dual_key(provider, "input/timesets_in_use.csv",
                    derive_timesets_in_use(timesets_used_by_solves))
     _emit_dual_key(provider, "input/timesets__timeline.csv",
@@ -1034,7 +937,7 @@ def emit_hole_multiplier(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_hole_multiplier`."""
+    """Emit ``hole_multiplier`` to the Provider."""
     _emit_path(provider, filename,
                derive_hole_multiplier(solve, hole_multipliers))
 
@@ -1076,7 +979,7 @@ def emit_p_use_row_scaling(
     filename: str,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_p_use_row_scaling`."""
+    """Emit ``p_use_row_scaling`` to the Provider."""
     _emit_path(provider, filename,
                derive_p_use_row_scaling(solve, use_row_scaling))
 
@@ -1114,7 +1017,7 @@ def emit_scale_the_objective(
     value: float,
     *, provider,
 ) -> Path:
-    """Provider-emitting twin of :func:`write_scale_the_objective`."""
+    """Emit ``scale_the_objective`` to the Provider."""
     path = Path(solve_data_dir) / "scale_the_objective.csv"
     _emit_dual_key(provider, "solve_data/scale_the_objective.csv",
                    derive_scale_the_objective(value))
@@ -1126,7 +1029,7 @@ def emit_scale_the_state(
     value: float,
     *, provider,
 ) -> Path:
-    """Provider-emitting twin of :func:`write_scale_the_state`."""
+    """Emit ``scale_the_state`` to the Provider."""
     path = Path(solve_data_dir) / "scale_the_state.csv"
     _emit_dual_key(provider, "solve_data/scale_the_state.csv",
                    derive_scale_the_state(value))
@@ -1137,7 +1040,7 @@ def emit_scale_the_objective_header_only(
     solve_data_dir: Path | str,
     *, provider,
 ) -> Path:
-    """Provider-emitting twin of :func:`write_scale_the_objective_header_only`."""
+    """Emit ``scale_the_objective_header_only`` to the Provider."""
     path = Path(solve_data_dir) / "scale_the_objective.csv"
     _emit_dual_key(provider, "solve_data/scale_the_objective.csv",
                    derive_scale_the_objective_header_only())
@@ -1146,7 +1049,7 @@ def emit_scale_the_objective_header_only(
 
 def emit_scale_the_state_header_only(solve_data_dir: Path | str,
                                        *, provider) -> Path:
-    """Provider-emitting twin of :func:`write_scale_the_state_header_only`."""
+    """Emit ``scale_the_state_header_only`` to the Provider."""
     path = Path(solve_data_dir) / "scale_the_state.csv"
     _emit_dual_key(provider, "solve_data/scale_the_state.csv",
                    derive_scale_the_state_header_only())
@@ -1213,10 +1116,9 @@ def emit_delayed_durations(
     active_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,
     delay_durations: dict[str, Any],
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_delayed_durations`."""
+    """Emit ``delayed_durations`` to the Provider."""
     _emit_dual_key(provider, "solve_data/delay_duration.csv",
                    derive_delay_duration(delay_durations))
     _emit_dual_key(provider, "solve_data/dtt__delay_duration.csv",
@@ -1343,10 +1245,9 @@ def emit_rp_data(
     rp_weights: dict[str, dict[str, float]],
     timeset_duration_entries: list[tuple[str, float]],
     period_name: str,
-    work_folder: Path | None = None,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_rp_data`."""
+    """Emit ``rp_data`` to the Provider."""
     frames = _compute_rp_frames(
         rp_weights, timeset_duration_entries, period_name,
     )
@@ -1401,10 +1302,9 @@ def emit_timeset_cost_weight(
     active_time_list: dict[str, list],
     timesets_used_by_solve: list[tuple[str, str]],
     timeset_weights: dict[str, dict[str, float]],
-    work_folder: Path | None = None,
     *, provider,
 ) -> bool:
-    """Provider-emitting twin of :func:`write_timeset_cost_weight`."""
+    """Emit ``timeset_cost_weight`` to the Provider."""
     rows, any_written = _compute_timeset_cost_weight_rows(
         active_time_list, timesets_used_by_solve, timeset_weights,
     )
@@ -1427,9 +1327,9 @@ _EMPTY_RP_HEADERS: dict[str, tuple[str, ...]] = {
 }
 
 
-def emit_empty_rp_data(work_folder: Path | None = None,
-                         *, provider) -> None:
-    """Provider-emitting twin of :func:`write_empty_rp_data`."""
+def emit_empty_rp_data(
+    *, provider) -> None:
+    """Emit ``empty_rp_data`` to the Provider."""
     for filename, headers in _EMPTY_RP_HEADERS.items():
         _emit_dual_key(provider, f"solve_data/{filename}",
                        _empty_frame(headers))

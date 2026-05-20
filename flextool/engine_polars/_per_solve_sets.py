@@ -15,9 +15,8 @@ flextool's preprocessing emits to ``solve_data/*.csv``.  Specifically:
 * ``period_in_use`` — the ``[d]`` set of periods active in the current
   solve.  Mirrors ``per_solve_sets.write_per_solve_sets`` line 95-101
   (``setof d from dt`` projected from ``steps_in_use.csv``).
-* ``dt_complete`` — the ``[d, t]`` set of complete-time-in-use pairs.
-  Mirrors ``solve_writers.write_active_timelines`` for
-  ``steps_complete_solve.csv``.
+* ``dt_complete`` — the ``[d, t]`` set of complete-time-in-use pairs,
+  matching ``steps_complete_solve.csv``.
 * ``period__timeline`` — the ``[d, timeline]`` mapping.  Mirrors
   ``per_solve_sets.write_per_solve_sets`` line 205-225 + the timeset →
   timeline lookup.

@@ -412,10 +412,9 @@ def _run_preprocessing_for_single_solve(
         Used for ``db_url`` + ``scenario`` only — the FlexToolRunner
         opens its own DatabaseMapping.
     work_folder : Path
-        Workdir the slow path expects to exist; preprocessing writers
-        consult its ``input/`` + ``solve_data/`` subdirs (which the
-        cascade-input writers populate in memory under
-        ``capture_frames``, NOT on disk).
+        Workdir the slow path expects to exist; preprocessing emitters
+        consult its ``input/`` + ``solve_data/`` subdirs (kept in
+        memory on the Provider, NOT on disk).
     active_solve : str
         Name of the single solve to drive preprocessing for.  Must
         match ``model.solves[0]`` on the source.
@@ -450,8 +449,8 @@ def _run_preprocessing_for_single_solve(
     runner.state.logger.setLevel(logging.ERROR)
 
     # 2. Cascade-input Provider — populated by ``write_workdir_inputs``
-    # (input_derivation.run under capture_frames).  Stashed on
-    # ``state.cascade_input_provider`` so per-sub-solve Providers seed
+    # (input_derivation.run emits directly into the Provider).  Stashed
+    # on ``state.cascade_input_provider`` so per-sub-solve Providers seed
     # from it inside ``native_run_model``.
     cascade_input_provider = FlexDataProvider()
     write_workdir_inputs(

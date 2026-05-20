@@ -41,15 +41,6 @@ if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
 
 
-# ---------------------------------------------------------------------------
-# Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
-# in :mod:`._emit_arc_unions` and the four other patched modules.  All
-# writers in this module funnel their derived ``(entity, period, value)``
-# frames through this helper so :mod:`._flex_data_accumulator` can capture
-# them in-memory via its monkey-patch.
-# ---------------------------------------------------------------------------
-
-
 def _ed_value_frame(
     rows: list[tuple[str, str, object]],
 ) -> pl.DataFrame:
@@ -353,7 +344,7 @@ def emit_p_entity_pre_existing(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_p_entity_pre_existing`."""
+    """Emit ``p_entity_pre_existing`` to the Provider."""
     _emit(provider, "solve_data/p_entity_pre_existing.csv",
           derive_p_entity_pre_existing(input_dir, solve_data_dir,
                                          provider=provider))
@@ -438,7 +429,7 @@ def emit_p_entity_divest_cumulative_max(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_p_entity_divest_cumulative_max`."""
+    """Emit ``p_entity_divest_cumulative_max`` to the Provider."""
     _emit(provider, "solve_data/p_entity_divest_cumulative_max.csv",
           derive_p_entity_divest_cumulative_max(input_dir, solve_data_dir,
                                                   provider=provider))
@@ -660,7 +651,7 @@ def emit_p_entity_existing_chain(
     *, prior_handoff: "SolveHandoff | None" = None,
     provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_p_entity_existing_chain`."""
+    """Emit ``p_entity_existing_chain`` to the Provider."""
     later_rows, all_rows, count_rows, int_rows, prev_rows = (
         _compute_p_entity_existing_chain(
             input_dir, solve_data_dir, prior_handoff, provider=provider,
@@ -891,7 +882,7 @@ def emit_p_entity_capacity_max_chain(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_p_entity_capacity_max_chain`."""
+    """Emit ``p_entity_capacity_max_chain`` to the Provider."""
     mc_rows, mu_rows, icm_rows, dcm_rows = _compute_p_entity_capacity_max_chain(
         input_dir, solve_data_dir, provider=provider,
     )

@@ -160,7 +160,7 @@ def derive_entity_total_cap(
 
 def emit_entity_total_caps(input_dir: Path, solve_data_dir: Path,
                             *, provider) -> None:
-    """Provider-emitting twin of :func:`write_entity_total_caps`."""
+    """Emit ``entity_total_caps`` to the Provider."""
     process_set = frozenset(
         _drop_blank_rows(_read_csv(input_dir / "process.csv", ["process"],
                                      provider=provider), ["process"])
@@ -271,9 +271,9 @@ def derive_process_method_indirect(input_dir: Path,
     )
 
 
-def emit_process_method_projections(input_dir: Path, solve_data_dir: Path,
+def emit_process_method_projections(input_dir: Path,
                                      *, provider) -> None:
-    """Provider-emitting twin of :func:`write_process_method_projections`."""
+    """Emit ``process_online_linear``/``_integer``/``__method_indirect``."""
     _emit(provider, "solve_data/process_online_linear.csv",
           derive_process_online_linear(input_dir, provider=provider))
     _emit(provider, "solve_data/process_online_integer.csv",
@@ -321,9 +321,9 @@ def derive_process_VRE(input_dir: Path,
     )
 
 
-def emit_process_VRE(input_dir: Path, solve_data_dir: Path,
+def emit_process_VRE(input_dir: Path,
                       *, provider) -> None:
-    """Provider-emitting twin of :func:`write_process_VRE`."""
+    """Emit ``process_VRE`` = process_unit ∩ no-source ∩ has-upper-limit-profile."""
     _emit(provider, "solve_data/process_VRE.csv",
           derive_process_VRE(input_dir, provider=provider))
 
@@ -553,9 +553,9 @@ def derive_process_process_toSource_direct(input_dir: Path,
     return _to_frame(rows, ("process_outer", "process", "source"))
 
 
-def emit_process_arc_method_joins(input_dir: Path, solve_data_dir: Path,
+def emit_process_arc_method_joins(input_dir: Path,
                                    *, provider) -> None:
-    """Provider-emitting twin of :func:`write_process_arc_method_joins`."""
+    """Emit the three process×arc method-join derivations."""
     _emit(provider, "solve_data/process_sink_toProcess.csv",
           derive_process_sink_toProcess(input_dir, provider=provider))
     _emit(provider, "solve_data/process_process_toSource.csv",
@@ -723,10 +723,10 @@ def derive_process_source_toProfileProcess_profile_profile_method(
 
 
 def emit_process_profile_method_joins(
-    input_dir: Path, solve_data_dir: Path,
+    input_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_process_profile_method_joins`."""
+    """Emit the process×profile-method join frames."""
     _emit(
         provider,
         "solve_data/process__profileProcess__toSink__profile__profile_method.csv",

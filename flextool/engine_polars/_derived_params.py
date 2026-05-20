@@ -248,10 +248,10 @@ def _ctx_read(
 
     BUG A4 / A2-followup fix: when *provider* is supplied alongside
     *ctx*, consult it before falling back to ``ctx.read_csv``.  In
-    cascade mode :func:`capture_frames` SKIPS the on-disk write
-    (writes live in the Provider only); ``ctx.read_csv`` then returns
-    ``None`` for every cascade-internal artefact and the caller misses
-    files that have just been produced upstream this iteration
+    cascade mode every emitter writes into the Provider only (no disk
+    flush during a solve); ``ctx.read_csv`` then returns ``None`` for
+    every cascade-internal artefact and the caller misses files that
+    have just been produced upstream this iteration
     (``period__branch.csv`` is the canonical regression case — the
     stochastic-branch periods would be silently dropped from the
     timeline).
@@ -268,9 +268,9 @@ def _ctx_read(
     else:
         path = None
 
-    # Provider-first when supplied: in cascade mode the writer emits
-    # into the Provider only (capture_frames skips disk), so the
-    # Provider is the authoritative carrier this iteration.
+    # Provider-first when supplied: in cascade mode every emitter
+    # writes into the Provider only (no disk flush during a solve), so
+    # the Provider is the authoritative carrier this iteration.
     if provider is not None and path is not None and _provider_has_key(
         provider, path,
     ):
@@ -282,10 +282,10 @@ def _ctx_read(
     # Phase 3 — provider-strict for ctx.read_csv path.  When the caller
     # passes a *provider*, the Provider is the authoritative source for
     # this carrier; falling through to ``ctx.read_csv`` would re-read
-    # the stale on-disk CSV (when one even exists; in cascade mode
-    # capture_frames skips disk emission).  Return ``None`` so the
-    # caller's "no frame" branch runs — same semantics as the disk
-    # path's absent-file → None contract that ctx.read_csv preserved.
+    # the stale on-disk CSV (when one even exists; cascade mode skips
+    # disk emission entirely).  Return ``None`` so the caller's "no
+    # frame" branch runs — same semantics as the disk path's
+    # absent-file → None contract that ctx.read_csv preserved.
     if provider is not None:
         return None
 
@@ -705,11 +705,9 @@ def p_rp_cost_weight_from_source(
     non-RP) and ``representative_period_weights`` (nested base→rep
     Map, RP scenarios) in flextool.
 
-    Algorithm (mirrors flextool's
-    :func:`flextool.flextoolrunner.solve_writers.write_timeset_cost_weight`
-    for the non-RP path and
-    :func:`flextool.flextoolrunner.solve_writers.write_rp_data` for the
-    RP path):
+    Algorithm (mirrors
+    :func:`._emit_solve_writers.emit_timeset_cost_weight` for the non-RP
+    path and :func:`._emit_solve_writers.emit_rp_data` for the RP path):
 
     Non-RP path (``timeset_weights`` set on a timeset):
       1. For each ``(period, timeset)`` pair from
@@ -3186,9 +3184,9 @@ def _read_period_first(source: "InputSource",
                           ) -> list[str]:
     """Return ``period_first`` for the active solve (Γ.6.D).
 
-    Mirrors flextool's ``solve_writers.write_periods`` (line 216-226):
-    the first period of the first timeset on the active solve, plus any
-    stochastic-branch siblings.
+    The first period of the first timeset on the active solve, plus any
+    stochastic-branch siblings (matching the legacy ``write_periods``
+    output).
 
     Resolution order:
       1. ``solve_data/period_first.csv`` if present (canonical).
@@ -7708,11 +7706,11 @@ def _years_for_period_from_source(source: "InputSource",
                                     active_solve: str | None,
                                     period_set: list[str],
                                     ) -> dict[str, list[tuple[str, float]]]:
-    """Reproduce ``solve_writers.write_years_represented`` to derive the
-    per-period ``(year_label, width)`` list flextool's preprocessing
-    builds in ``solve_data/p_years_represented.csv``.
+    """Derive the per-period ``(year_label, width)`` list emitted into
+    ``solve_data/p_years_represented.csv`` (matches the
+    ``emit_years_represented`` output line-for-line).
 
-    Algorithm (mirror of solve_writers.py:112-144):
+    Algorithm:
       For each (period, R) in solve.years_represented[active_solve],
       with R > 0:
         rows = ceil(R), remaining = R, year_count starts at solve-global 0.
@@ -8287,8 +8285,8 @@ def _per_method_annuity(e: str, d: str,
 def _p_discount_years_from_source(source: "InputSource",
                                        active_solve: str | None,
                                        ) -> dict[str, float]:
-    """Reproduce ``solve_data/p_discount_years.csv`` —
-    ``solve_writers.write_period_years``.
+    """Derive ``solve_data/p_discount_years.csv`` (matches the
+    ``emit_period_years`` output).
 
     Algorithm: for each period in solve.years_represented[active_solve]
     (iteration order = Spine Map order = canonical period_set order),

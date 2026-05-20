@@ -189,10 +189,9 @@ def capture_post_solve(state, solve_name: str) -> None:
         p = sd / name
         if provider is not None:
             # Note: capture_post_solve must run AFTER the post-solve
-            # writers have populated the Provider with the freshly-
+            # emitters have populated the Provider with the freshly-
             # computed handoff carriers.  A miss here is a wiring bug:
-            # the producer didn't run, or the writer wasn't routed
-            # through capture_frames this iteration.
+            # the producer didn't run for this iteration.
             try:
                 df = _provider_fetch_or_raise(
                     provider, p, "capture_post_solve",

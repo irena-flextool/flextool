@@ -1,22 +1,18 @@
-"""Writer-port Phase 2 (sub-dispatch 5) — reserve calculated params.
+"""Reserve calculated params — per-solve emitters.
 
-Native port of
-``flextool.flextoolrunner.preprocessing.reserve_calc_params`` (legacy
-337 LOC).  Fired per-solve from
-``flextool.flextoolrunner.preprocessing.solve_time.run`` at batches 43,
-44 and 49.
+Fired per-solve from ``_emit_solve_time.run`` at batches 43, 44 and 49.
 
-Three public entry points (mirroring the legacy module):
+Three public entry points:
 
-* :func:`write_pdtReserve_upDown_group` — mod L1319.  4-branch hourly
+* :func:`emit_pdtReserve_upDown_group` — mod L1319.  4-branch hourly
   resolution for reserve groups, emitting ``pdtReserve_upDown_group.csv``
   ``(reserve, upDown, group, param, period, time, value)``.
-* :func:`write_process_reserve_upDown_node_active_and_prundt` — mod
+* :func:`emit_process_reserve_upDown_node_active_and_prundt` — mod
   L1321-1322.  Filters ``process_reserve_upDown_node`` by nonzero summed
   reservation across the matching ``reserve__upDown__group`` × ``dt``
   cross product, then emits ``prundt = process_reserve_upDown_node_active
   × dt``.
-* :func:`write_process_reserve_filters_and_reliability` — mod L1655 /
+* :func:`emit_process_reserve_filters_and_reliability` — mod L1655 /
   L1660-1668.  Emits the reliability fallback (default 1) and two
   ``> 0`` filter sets (``increase_reserve_ratio`` /
   ``large_failure_ratio``) plus the ``process_large_failure`` projection.
@@ -58,17 +54,12 @@ from flextool.engine_polars._emit_provider_io import (
 
 
 # ---------------------------------------------------------------------------
-# Canonical emitter — mirrors the ``_write(df, path)`` idiom in the other
-# patched writer modules.  All public ``write_*`` entry points in this
-# module funnel their derived frames through this helper so
-# :mod:`._flex_data_accumulator` can capture them via its monkey-patch.
-#
-# I/O contract: legacy emitters here use ``path.open("w") + fh.write(...)``
-# with plain ``\n`` line terminators (no CRLF), so the default polars
-# ``write_csv`` line ending matches byte-for-byte.  Float cells are
-# pre-rendered with ``repr(float(v))`` by the ``derive_*`` builders, so
-# the underlying frame is all-``Utf8`` and polars does no extra numeric
-# formatting at write time.
+# I/O contract: legacy emitters in this family used
+# ``path.open("w") + fh.write(...)`` with plain ``\n`` line terminators
+# (no CRLF), so the default polars ``write_csv`` line ending matches
+# byte-for-byte.  Float cells are pre-rendered with ``repr(float(v))``
+# by the ``derive_*`` builders, so the underlying frame is all-``Utf8``
+# and polars does no extra numeric formatting at emission time.
 # ---------------------------------------------------------------------------
 
 
@@ -366,7 +357,7 @@ def emit_pdtReserve_upDown_group(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_pdtReserve_upDown_group`."""
+    """Emit ``pdtReserve_upDown_group`` to the Provider."""
     _emit(
         provider, "solve_data/pdtReserve_upDown_group.csv",
         derive_pdtReserve_upDown_group(
@@ -469,8 +460,7 @@ def emit_process_reserve_upDown_node_active_and_prundt(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_process_reserve_upDown_node_active_and_prundt`."""
+    """Emit ``process_reserve_upDown_node_active_and_prundt`` to the Provider."""
     active_rows, dt = _compute_process_reserve_active(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -617,8 +607,7 @@ def emit_process_reserve_filters_and_reliability(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of
-    :func:`write_process_reserve_filters_and_reliability`."""
+    """Emit ``process_reserve_filters_and_reliability`` to the Provider."""
     rel_rows, incr_rows, lf_rows, process_lf = _compute_reserve_filters(
         input_dir, solve_data_dir, provider=provider,
     )

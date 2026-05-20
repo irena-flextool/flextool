@@ -119,7 +119,7 @@ def derive_period_param_set(input_dir: Path, source_csv: str,
 
 def emit_period_param_sets(input_dir: Path, solve_data_dir: Path,
                             *, provider) -> None:
-    """Provider-emitting twin of :func:`write_period_param_sets`."""
+    """Emit ``period_param_sets`` to the Provider."""
     del solve_data_dir  # legacy signature parity; keys are static
     for source_csv, target_name in _PERIOD_PARAM_SOURCES:
         _emit(provider, f"solve_data/{target_name}",
@@ -179,7 +179,7 @@ def derive_group_divest(input_dir: Path,
 
 def emit_invest_method_sets(input_dir: Path, solve_data_dir: Path,
                              *, provider) -> None:
-    """Provider-emitting twin of :func:`write_invest_method_sets`."""
+    """Emit ``invest_method_sets`` to the Provider."""
     del solve_data_dir
     _emit(provider, "solve_data/entityInvest.csv",
           derive_entity_invest(input_dir, provider=provider))
@@ -226,7 +226,7 @@ def derive_group_co2(input_dir: Path, kind: str,
 
 def emit_co2_method_sets(input_dir: Path, solve_data_dir: Path,
                           *, provider) -> None:
-    """Provider-emitting twin of :func:`write_co2_method_sets`."""
+    """Emit ``co2_method_sets`` to the Provider."""
     del solve_data_dir
     for kind, target in (
         ("price",      "group_co2_price.csv"),
@@ -483,7 +483,7 @@ def derive_commodity_tier_ann(input_dir: Path,
 
 def emit_optional_yes(input_dir: Path, solve_data_dir: Path,
                        *, provider) -> None:
-    """Provider-emitting twin of :func:`write_optional_yes`."""
+    """Emit ``optional_yes`` to the Provider."""
     del solve_data_dir
     _emit(provider, "solve_data/optional_yes.csv",
           derive_optional_yes(input_dir, provider=provider))
@@ -491,7 +491,7 @@ def emit_optional_yes(input_dir: Path, solve_data_dir: Path,
 
 def emit_reserve_upDown_group(input_dir: Path, solve_data_dir: Path,
                                *, provider) -> None:
-    """Provider-emitting twin of :func:`write_reserve_upDown_group`."""
+    """Emit ``reserve_upDown_group`` to the Provider."""
     del solve_data_dir
     _emit(provider, "solve_data/reserve__upDown__group.csv",
           derive_reserve_upDown_group(input_dir, provider=provider))
@@ -499,7 +499,7 @@ def emit_reserve_upDown_group(input_dir: Path, solve_data_dir: Path,
 
 def emit_group_loss_share(input_dir: Path, solve_data_dir: Path,
                            *, provider) -> None:
-    """Provider-emitting twin of :func:`write_group_loss_share`."""
+    """Emit ``group_loss_share`` to the Provider."""
     del solve_data_dir
     _emit(provider, "solve_data/group_loss_share.csv",
           derive_group_loss_share(input_dir, provider=provider))
@@ -507,7 +507,7 @@ def emit_group_loss_share(input_dir: Path, solve_data_dir: Path,
 
 def emit_def_optional_yes(input_dir: Path, solve_data_dir: Path,
                            *, provider) -> None:
-    """Provider-emitting twin of :func:`write_def_optional_yes`."""
+    """Emit ``def_optional_yes`` to the Provider."""
     del solve_data_dir
     _emit(provider, "solve_data/def_optional_yes.csv",
           derive_def_optional_yes(input_dir, provider=provider))
@@ -515,27 +515,27 @@ def emit_def_optional_yes(input_dir: Path, solve_data_dir: Path,
 
 def emit_process_delayed(input_dir: Path, solve_data_dir: Path,
                           *, provider) -> None:
-    """Provider-emitting twin of :func:`write_process_delayed`."""
+    """Emit ``process_delayed`` to the Provider."""
     del input_dir
     _emit(provider, "solve_data/process_delayed.csv",
           derive_process_delayed(solve_data_dir, provider=provider))
 
 
 def emit_process_side(solve_data_dir: Path, *, provider) -> None:
-    """Provider-emitting twin of :func:`write_process_side`."""
+    """Emit ``process_side`` to the Provider."""
     del solve_data_dir
     _emit(provider, "solve_data/process_side.csv", derive_process_side())
 
 
 def emit_period_solve(solve_data_dir: Path, *, provider) -> None:
-    """Provider-emitting twin of :func:`write_period_solve`."""
+    """Emit ``period_solve`` to the Provider."""
     _emit(provider, "solve_data/period_solve.csv",
           derive_period_solve(solve_data_dir, provider=provider))
 
 
 def emit_time_set(input_dir: Path, solve_data_dir: Path,
                    *, provider) -> None:
-    """Provider-emitting twin of :func:`write_time_set`."""
+    """Emit ``time_set`` to the Provider."""
     del solve_data_dir
     _emit(provider, "solve_data/time.csv",
           derive_time_set(input_dir, provider=provider))
@@ -543,14 +543,14 @@ def emit_time_set(input_dir: Path, solve_data_dir: Path,
 
 def emit_enable_optional_outputs(solve_data_dir: Path,
                                   *, provider) -> None:
-    """Provider-emitting twin of :func:`write_enable_optional_outputs`."""
+    """Emit ``enable_optional_outputs`` to the Provider."""
     _emit(provider, "solve_data/enable_optional_outputs.csv",
           derive_enable_optional_outputs(solve_data_dir, provider=provider))
 
 
 def emit_node_state_subsets(solve_data_dir: Path,
                              *, provider) -> None:
-    """Provider-emitting twin of :func:`write_node_state_subsets`."""
+    """Emit ``node_state_subsets`` to the Provider."""
     rp = derive_node_state_subset(solve_data_dir, "bind_using_blended_weights",
                                   provider=provider)
     block = derive_node_state_subset(solve_data_dir, "bind_intraperiod_blocks",
@@ -561,7 +561,7 @@ def emit_node_state_subsets(solve_data_dir: Path,
 
 def emit_commodity_tier_sets(input_dir: Path, solve_data_dir: Path,
                               *, provider) -> None:
-    """Provider-emitting twin of :func:`write_commodity_tier_sets`."""
+    """Emit ``commodity_tier_sets`` to the Provider."""
     ct = derive_commodity_tier(input_dir, solve_data_dir, provider=provider)
     _emit(provider, "solve_data/commodity__tier.csv", ct)
     _emit(provider, "solve_data/tier.csv", derive_tier(ct))
@@ -569,7 +569,7 @@ def emit_commodity_tier_sets(input_dir: Path, solve_data_dir: Path,
 
 def emit_simple_setof_projections(input_dir: Path, solve_data_dir: Path,
                                     *, provider) -> None:
-    """Provider-emitting twin of :func:`write_simple_setof_projections`."""
+    """Emit ``simple_setof_projections`` to the Provider."""
     del solve_data_dir
     _emit(provider, "solve_data/solve_period.csv",
           derive_solve_period(input_dir, provider=provider))

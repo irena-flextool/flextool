@@ -1,10 +1,7 @@
-"""Writer-port Phase 2 (sub-dispatch 2) — LP row-scaling capacity proxies.
+"""LP row-scaling capacity proxies — per-solve emitters.
 
-Native polars port of
-``flextool.flextoolrunner.preprocessing.lp_scaling_params``
-(legacy ~245 LOC).  Called per-solve from
-``flextool.flextoolrunner.preprocessing.solve_time.run`` via
-``write_lp_scaling_params``.
+Called per-solve from ``_emit_solve_time.run`` via
+:func:`emit_lp_scaling_params`.
 
 The 9 CSVs compute a power-of-10 capacity proxy per (node, period) and
 (group, period) so the LP solver sees coefficient ranges compressed
@@ -100,25 +97,6 @@ def _read_node_period_value(path: Path,
     return out
 
 
-def _write_keyed_2(path: Path, header: tuple[str, str, str],
-                   rows: list[tuple[str, str, object]]) -> None:
-    """Emit a 3-col CSV with ``repr(v)`` (legacy-faithful).
-
-    Legacy emits ``f"{a},{b},{repr(v)}"`` — so an empty ``sum(())`` lands
-    as ``"0"`` (int) while a float arithmetic result lands as ``"1.0"``.
-    We do NOT pre-cast values to float here; callers must hand us values
-    with the *same* runtime type the legacy emitter would have produced.
-
-    Retained for backward compatibility; new emissions in this module
-    flow through :func:`_write` (which feeds the Phase E-b accumulator).
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        ",".join(header) + "\n"
-        + "".join(f"{a},{b},{repr(v)}\n" for a, b, v in rows)
-    )
-
-
 def _rows_to_frame(
     header: tuple[str, str, str],
     rows: list[tuple[str, str, object]],
@@ -128,7 +106,7 @@ def _rows_to_frame(
     Pre-stringifies values via ``repr(v)`` (NOT ``repr(float(v))``) so
     that an empty ``sum(())`` -> int 0 round-trips as ``"0"`` and a
     float arithmetic result round-trips as ``"1.0"`` — matching the
-    legacy ``_write_keyed_2`` byte shape exactly.
+    legacy 3-col emitter's byte shape exactly.
     """
     return pl.DataFrame(
         {
@@ -406,8 +384,7 @@ def emit_lp_scaling_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_lp_scaling_params`.
-
+    """Emit ``lp_scaling_params`` to the Provider.
     Emits the same 9 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).
     """

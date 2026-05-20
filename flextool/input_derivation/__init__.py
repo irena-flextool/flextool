@@ -84,14 +84,11 @@ def run(
        capacity margin storage exclusion, group output memberships).
     3. **DB-driven derivations** (DC power flow, process method,
        commodity ladder cumulative + annual + sets).
-    4. **Native per-write_input preprocessing writers** — the dozen
-       writer-port modules under
+    4. **Native preprocessing emitters** — the dozen modules under
        :mod:`flextool.engine_polars._emit_*` that produce the
        ``solve_data/*.csv`` artefacts the cascade consumes pre-solve.
        Each is invoked directly with ``provider=`` so its frames flow
-       into the Provider and disk emission is skipped (the
-       ``_flex_data_accumulator`` monkey-patches ``_write`` to call
-       ``provider.put(...)``).
+       into the Provider and disk emission is skipped.
 
     Parameters
     ----------
@@ -202,12 +199,8 @@ def run(
         _mem("db_derivations_end", "DB-driven derivations done")
 
         # Step 3 — write_input-time native preprocessing emitters.
-        #
-        # Pre-Step-2.5 these helpers lived in ``flextoolrunner/preprocessing/*``
-        # and were monkey-patched into native polars implementations.
-        # Step 2.5 deleted the legacy package; Phase 3a of the
-        # writer→emitter refactor now threads the Provider directly into
-        # every emit_* call (no capture_frames monkey-patch).
+        # Each emit_* threads the Provider directly so frames flow into
+        # memory rather than disk.
         from flextool.engine_polars import (
             _emit_leaf_sets as _leaf,
             _emit_mid_sets as _mid,
@@ -235,10 +228,10 @@ def run(
         _mid.emit_group_entity(input_dir, solve_data_dir, provider=provider)
         _mid.emit_process_delayed__duration(input_dir, solve_data_dir, provider=provider)
         _calc.emit_entity_total_caps(input_dir, solve_data_dir, provider=provider)
-        _calc.emit_process_method_projections(input_dir, solve_data_dir, provider=provider)
-        _calc.emit_process_VRE(input_dir, solve_data_dir, provider=provider)
-        _calc.emit_process_arc_method_joins(input_dir, solve_data_dir, provider=provider)
-        _calc.emit_process_profile_method_joins(input_dir, solve_data_dir, provider=provider)
+        _calc.emit_process_method_projections(input_dir, provider=provider)
+        _calc.emit_process_VRE(input_dir, provider=provider)
+        _calc.emit_process_arc_method_joins(input_dir, provider=provider)
+        _calc.emit_process_profile_method_joins(input_dir, provider=provider)
         _mid.emit_reserve_partitions(input_dir, solve_data_dir, provider=provider)
         _mid.emit_connection_param(input_dir, solve_data_dir, provider=provider)
         _mid.emit_nodegroup_dispatch_node(input_dir, solve_data_dir, provider=provider)

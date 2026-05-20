@@ -63,14 +63,6 @@ from flextool.engine_polars._pdt_lookup import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
-# in :mod:`._emit_arc_unions` and the other patched modules.  All
-# writers in this module funnel their derived frames through this helper
-# so :mod:`._flex_data_accumulator` can capture them via its monkey-patch.
-# ---------------------------------------------------------------------------
-
-
 def _read_pairs(path: Path,
                 *,
                 provider: "object | None" = None) -> list[tuple[str, str]]:
@@ -176,7 +168,7 @@ def derive_pdtProcess(input_dir: Path, solve_data_dir: Path,
 
 def emit_pdtProcess(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdtProcess`."""
+    """Emit ``pdtProcess`` to the Provider."""
     _emit(provider, "solve_data/pdtProcess.csv",
           derive_pdtProcess(input_dir, solve_data_dir, provider=provider))
 
@@ -251,7 +243,7 @@ def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
 
 def emit_pdtNode(input_dir: Path, solve_data_dir: Path,
                   *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdtNode`."""
+    """Emit ``pdtNode`` to the Provider."""
     _emit(provider, "solve_data/pdtNode.csv",
           derive_pdtNode(input_dir, solve_data_dir, provider=provider))
 
@@ -358,7 +350,7 @@ def derive_pdtProcess_source(
 
 def emit_pdtProcess_source(input_dir: Path, solve_data_dir: Path,
                             *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdtProcess_source`."""
+    """Emit ``pdtProcess_source`` to the Provider."""
     _emit(
         provider, "solve_data/pdtProcess_source.csv",
         derive_pdtProcess_source(input_dir, solve_data_dir, provider=provider),
@@ -394,7 +386,7 @@ def derive_pdtProcess_sink(
 
 def emit_pdtProcess_sink(input_dir: Path, solve_data_dir: Path,
                           *, provider) -> None:
-    """Provider-emitting twin of :func:`write_pdtProcess_sink`."""
+    """Emit ``pdtProcess_sink`` to the Provider."""
     _emit(
         provider, "solve_data/pdtProcess_sink.csv",
         derive_pdtProcess_sink(input_dir, solve_data_dir, provider=provider),

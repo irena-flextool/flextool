@@ -126,24 +126,6 @@ def _keyed_frame_2(header: tuple[str, str, str],
     )
 
 
-# Thin compatibility wrappers — funnel every emit through ``_write`` so
-# :mod:`._flex_data_accumulator` captures the polars frame via its
-# monkey-patched ``_write`` hook.  Kept as named helpers so the call
-# sites read as ``_write_keyed(path, header, rows)`` (matches the
-# legacy emitter's intent) while still routing through the canonical
-# ``_write(df, path)`` shape.
-
-
-def _write_keyed(path: Path, header: tuple[str, str],
-                 rows: list[tuple[str, float]]) -> None:
-    _write(_keyed_frame(header, rows), path)
-
-
-def _write_keyed_2(path: Path, header: tuple[str, str, str],
-                   rows: list[tuple[str, str, float]]) -> None:
-    _write(_keyed_frame_2(header, rows), path)
-
-
 def _emit_keyed(provider, key: str, header: tuple[str, str],
                 rows: list[tuple[str, float]]) -> None:
     _emit(provider, key, _keyed_frame(header, rows))
@@ -193,8 +175,7 @@ def emit_period_calculated_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_period_calculated_params`.
-
+    """Emit ``period_calculated_params`` to the Provider.
     Emits the same 12 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).
     """
@@ -439,8 +420,7 @@ def emit_period_calculated_params(
 
 def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
                          *, provider) -> None:
-    """Provider-emitting twin of :func:`write_branch_weights`.
-
+    """Emit ``branch_weights`` to the Provider.
     Emits ``pd_branch_weight.csv`` and ``pdt_branch_weight.csv`` under
     ``solve_data/<basename>`` keys via :func:`_emit`.
     """

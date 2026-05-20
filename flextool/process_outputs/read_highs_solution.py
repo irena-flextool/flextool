@@ -1198,10 +1198,10 @@ def _load_entity_block_map(
     else:
         return {}
     # Δ.31 — provider-first: the cascade keeps block frames in-memory
-    # because ``write_block_data_for_solve`` runs inside
-    # ``capture_frames``, which routes ``_write`` to the Provider rather
-    # than disk.  Without this lookup the output writer would broadcast
-    # nothing for daily-block fixtures (lh2_three_region).
+    # because ``emit_block_data_for_solve`` registers them on the
+    # Provider rather than flushing to disk.  Without this lookup the
+    # output writer would broadcast nothing for daily-block fixtures
+    # (lh2_three_region).
     pframe = _provider_lookup(provider, path)
     if pframe is not None and pframe.height > 0:
         cols = pframe.columns

@@ -1,4 +1,4 @@
-"""Native port of ``write_co2_rolling_accumulators`` — Gap F close-out.
+"""Per-roll CO2 rolling accumulator emission (Gap F close-out).
 
 Mirrors ``_co2_tonnes_this_roll``: for each realized ``(d, t)``
 (``flex_data.realized_dispatch``), per ``v_flow[p, source, sink, d, t]``
@@ -32,14 +32,6 @@ if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
 
 _logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Canonical writer-port emitter — mirrors the ``_write(df, path)`` idiom
-# in :mod:`._emit_arc_unions` and the four other patched modules.  Every
-# CSV emission in this module is funnelled through here so the per-sub-solve
-# :mod:`._flex_data_accumulator` monkey-patch can stash the frame.
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -424,8 +416,7 @@ def emit_co2_rolling_accumulator(
     work_folder: Path,
     prior_handoff: "SolveHandoff | None" = None,
 ) -> pl.DataFrame:
-    """Provider-emitting twin of :func:`write_co2_rolling_accumulator`.
-
+    """Emit ``co2_rolling_accumulator`` to the Provider.
     Emits the formatted ``co2_cum_realized_tonnes`` frame under the
     ``solve_data/co2_cum_realized_tonnes.csv`` key via :func:`_emit`
     (dual-key registration).  *work_folder* is retained because the
@@ -447,7 +438,8 @@ def emit_co2_rolling_accumulator(
 
 
 # ---------------------------------------------------------------------------
-# Legacy-signature shim (monkey-patch target).
+# Legacy-signature shim — preserves the (h, provider, ...) call-shape
+# expected by the post-handoff Provider routing.
 # ---------------------------------------------------------------------------
 
 

@@ -404,7 +404,6 @@ def native_run_model(state, solver) -> int:
     solve_writers.emit_timesets(
         state.solve.timesets_used_by_solves,
         state.timeline.timesets__timeline,
-        work_folder=wf,
         provider=cascade_input_provider,
     )
 
@@ -530,12 +529,12 @@ def native_run_model(state, solver) -> int:
             provider=sub_solve_provider,
         )
         solve_writers.emit_step_jump(
-            jump_lists[solve], work_folder=wf,
+            jump_lists[solve],
             provider=sub_solve_provider,
         )
         pb_time, pb_succ = make_period_block(active_time_lists[solve])
         solve_writers.emit_period_block(
-            pb_time, pb_succ, work_folder=wf,
+            pb_time, pb_succ,
             provider=sub_solve_provider,
         )
 
@@ -691,21 +690,18 @@ def native_run_model(state, solver) -> int:
             realized_time_lists[solve],
             complete_solve[solve],
             state.solve.realized_periods.get(complete_solve[solve], []),
-            work_folder=wf,
             provider=sub_solve_provider,
         )
         solve_writers.emit_fix_storage_timesteps(
             fix_storage_time_lists[solve],
             complete_solve[solve],
             state.solve.fix_storage_periods.get(complete_solve[solve], []),
-            work_folder=wf,
             provider=sub_solve_provider,
         )
         solve_writers.emit_delayed_durations(
             active_time_lists[solve],
             complete_solve[solve],
             state.solve.delay_durations,
-            work_folder=wf,
             provider=sub_solve_provider,
         )
 
@@ -733,14 +729,12 @@ def native_run_model(state, solver) -> int:
             branch_start_time_lists[solve],
             period__branch_lists[solve],
             state.solve.stochastic_branches,
-            work_folder=wf,
             provider=sub_solve_provider,
         )
         solve_writers.emit_first_and_last_periods(
             active_time_lists[solve],
             state.solve.timesets_used_by_solves[complete_solve[solve]],
             period__branch_lists[solve],
-            work_folder=wf,
             provider=sub_solve_provider,
         )
 
@@ -891,24 +885,24 @@ def native_run_model(state, solver) -> int:
 
         solve_writers.emit_solve_status(
             first_of_nested_level, last_of_nested_level,
-            nested=True, work_folder=wf,
+            nested=True,
             provider=sub_solve_provider,
         )
         last = i == len(solves) - 1
         solve_writers.emit_solve_status(
-            first, last, work_folder=wf,
+            first, last,
             provider=sub_solve_provider,
         )
         if i == 0:
             first = False
             solve_writers.emit_empty_investment_file(
-                work_folder=wf, provider=sub_solve_provider,
+                provider=sub_solve_provider,
             )
             solve_writers.emit_empty_storage_fix_file(
-                work_folder=wf, provider=sub_solve_provider,
+                provider=sub_solve_provider,
             )
             solve_writers.emit_empty_cumulative_files(
-                work_folder=wf, provider=sub_solve_provider,
+                provider=sub_solve_provider,
             )
             solve_writers.emit_headers_for_empty_output_files(
                 str(wf / "solve_data/costs_discounted.csv"),
@@ -961,20 +955,18 @@ def native_run_model(state, solver) -> int:
                             ts_name
                         ],
                         period_name=period_name,
-                        work_folder=wf,
                         provider=sub_solve_provider,
                     )
                     rp_written = True
                     break
         if not rp_written:
             solve_writers.emit_empty_rp_data(
-                work_folder=wf, provider=sub_solve_provider,
+                provider=sub_solve_provider,
             )
             solve_writers.emit_timeset_cost_weight(
                 active_time_list=active_time_lists[solve],
                 timesets_used_by_solve=timesets_used,
                 timeset_weights=state.timeline.timeset_weights,
-                work_folder=wf,
                 provider=sub_solve_provider,
             )
 

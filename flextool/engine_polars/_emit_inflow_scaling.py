@@ -1,9 +1,6 @@
-"""Writer-port Phase 2 (sub-dispatch 4) — node inflow scaling params.
+"""Node inflow scaling params — per-solve emitters.
 
-Native port of
-``flextool.flextoolrunner.preprocessing.node_inflow_scaling_params``
-(legacy ~428 LOC).  Called per-solve from
-``flextool.flextoolrunner.preprocessing.solve_time.run`` (batch 17).
+Called per-solve from ``_emit_solve_time.run`` (batch 17).
 
 Output CSVs (17 total):
 
@@ -159,20 +156,6 @@ def _read_keyed_float(path: Path,
                 except ValueError:
                     continue
     return out
-
-
-def _write_keyed_2(path: Path, header: tuple[str, str, str],
-                   rows: list[tuple[str, str, float]]) -> None:
-    """Emit a 3-col CSV with ``repr(v)`` (legacy-faithful).
-
-    Retained for backward compatibility; new emissions in this module
-    flow through :func:`_write` (which feeds the Phase E-b accumulator).
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        ",".join(header) + "\n"
-        + "".join(f"{a},{b},{repr(v)}\n" for a, b, v in rows)
-    )
 
 
 def _rows_to_frame(
@@ -689,8 +672,7 @@ def emit_node_inflow_scaling_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Provider-emitting twin of :func:`write_node_inflow_scaling_params`.
-
+    """Emit ``node_inflow_scaling_params`` to the Provider.
     Emits the same 17 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).
     """

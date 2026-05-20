@@ -26,14 +26,11 @@ import polars as pl
 
 
 def _emit(provider, key: str, df: pl.DataFrame) -> None:
-    """Register *df* in *provider* under both forms of *key* so existing
-    Provider lookups continue to work.
+    """Register *df* in *provider* under both forms of *key*.
 
     *key* must be of the form 'parent/basename' (e.g. 'solve_data/foo.csv').
-    Mirrors the dual-key registration in
-    :func:`_flex_data_accumulator.capture_frames` — basename AND
-    parent/basename — so downstream readers that consult either form keep
-    working.
+    The dual registration (``basename`` and ``parent/basename``) lets
+    downstream readers consult either form interchangeably.
     """
     p = PurePosixPath(key)
     provider.put(p.name, df)
@@ -44,8 +41,8 @@ def _provider_key(path: "Path | str") -> str:
     """Build the canonical Provider key for *path*.
 
     Returns ``"<parent>/<stem>"`` when *path* has a parent dir, else the
-    bare stem.  Mirrors the parent-qualified dual-key semantics used by
-    the writers when populating the Provider via ``capture_frames``.
+    bare stem.  Matches the parent-qualified dual-key semantics that
+    :func:`_emit` registers each frame under.
     """
     p = Path(path)
     parent = p.parent.name
