@@ -62,6 +62,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    # Materialize canonical example/template SQLites (templates/examples.sqlite,
+    # how to example databases/*.sqlite, ...) from their JSON sources so tests
+    # that reference these paths directly work on a fresh clone.  Idempotent —
+    # skips files already present in the working tree.
+    from flextool.update_flextool.canonical_databases import materialize
+    materialize(overwrite=False)
+
     config.addinivalue_line(
         "markers", "smoke: fast Layer-1 scenarios for the per-commit gate"
     )

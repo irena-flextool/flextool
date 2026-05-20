@@ -9,6 +9,7 @@ except ModuleNotFoundError:
 from spinedb_api.exception import NothingToCommit
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
+from flextool.update_flextool import canonical_databases
 
 
 def _reinstall_if_needed():
@@ -120,23 +121,28 @@ def update_flextool(skip_git):
         os.remove("templates/comparison_settings.sqlite")
     initialize_database("./version/comparison_settings_template.json", "templates/comparison_settings.sqlite")
 
-    db_to_update = []
-    db_to_update.append("templates/examples.sqlite")
-    db_to_update.append("input_data.sqlite")
-    db_to_update.append("templates/input_data_template.sqlite")
-    db_to_update.append("templates/time_settings_only.sqlite")
+    # Materialize canonical example/template SQLites from their JSON
+    # sources (``version/canonical_databases/*.json``).  Skips files
+    # that already exist so user edits in the working tree survive.
+    # The canonical JSONs are kept current by
+    # ``python -m flextool.update_flextool.canonical_databases migrate-all``
+    # which is part of the schema-migration workflow — see
+    # CONTRIBUTING.md.
+    canonical_databases.materialize(overwrite=False)
+
+    # Migrate user-owned SQLites (canonical ones are already at current
+    # version because they were just materialized from the canonical
+    # JSONs, which migrate-all keeps at FLEXTOOL_DB_VERSION).
+    db_to_update = [
+        "input_data.sqlite",
+        "templates/input_data_template.sqlite",
+    ]
 
     # add the database used in the input_data tool
     with open("./.spinetoolbox/project.json") as json_file:
         specifications = json.load(json_file)
     path = specifications["items"]["Input data"]["url"]["database"]["path"]
     db_to_update.append(path)
-
-    # add the databases in the example folder
-    dir_list = os.listdir("./how to example databases")
-    for i in dir_list:
-        if i.endswith(".sqlite"):
-            db_to_update.append("how to example databases/" + i)
 
     # migrate the databases to new version
     for i in db_to_update:
