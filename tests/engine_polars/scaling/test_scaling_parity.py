@@ -167,31 +167,31 @@ class TestJsonFileOutput:
     """JSON file is written to solve_data/scaling_analysis.json."""
 
     def test_json_written_for_work_all(self, flex_all, tmp_path):
-        analyze_solve(_SOLVE_ALL, flex_all, work_folder=tmp_path)
+        analyze_solve(_SOLVE_ALL, flex_all, work_folder=tmp_path, write_json=True)
         out = tmp_path / "solve_data" / "scaling_analysis.json"
         assert out.exists(), f"JSON not written: {out}"
         assert out.stat().st_size > 0
 
     def test_json_written_for_work_net(self, flex_net, tmp_path):
-        analyze_solve(_SOLVE_NET, flex_net, work_folder=tmp_path)
+        analyze_solve(_SOLVE_NET, flex_net, work_folder=tmp_path, write_json=True)
         out = tmp_path / "solve_data" / "scaling_analysis.json"
         assert out.exists(), f"JSON not written: {out}"
         assert out.stat().st_size > 0
 
     def test_json_parseable_work_all(self, flex_all, tmp_path):
-        analyze_solve(_SOLVE_ALL, flex_all, work_folder=tmp_path)
+        analyze_solve(_SOLVE_ALL, flex_all, work_folder=tmp_path, write_json=True)
         out = tmp_path / "solve_data" / "scaling_analysis.json"
         data = json.loads(out.read_text())
         assert isinstance(data, dict)
 
     def test_json_parseable_work_net(self, flex_net, tmp_path):
-        analyze_solve(_SOLVE_NET, flex_net, work_folder=tmp_path)
+        analyze_solve(_SOLVE_NET, flex_net, work_folder=tmp_path, write_json=True)
         out = tmp_path / "solve_data" / "scaling_analysis.json"
         data = json.loads(out.read_text())
         assert isinstance(data, dict)
 
     def test_json_fields_match_scale_table_work_all(self, flex_all, tmp_path):
-        table = analyze_solve(_SOLVE_ALL, flex_all, work_folder=tmp_path)
+        table = analyze_solve(_SOLVE_ALL, flex_all, work_folder=tmp_path, write_json=True)
         out = tmp_path / "solve_data" / "scaling_analysis.json"
         data = json.loads(out.read_text())
         assert data["use_row_scaling"] == table.use_row_scaling

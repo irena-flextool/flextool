@@ -920,6 +920,7 @@ def _drive_cascade(
                 flex_data=data,
                 work_folder=self.state.paths.work_folder,
                 logger=self.state.logger,
+                write_json=getattr(self.state, "csv_dump", False),
             )
             user_row_scaling = state.solve.use_row_scaling.get(complete_solve_name)
             user_obj_scale = state.solve.scale_the_objective.get(complete_solve_name)
@@ -1633,6 +1634,7 @@ def run_single_solve_from_db(
     *,
     logger: logging.Logger | None = None,
     emit_output: bool = True,
+    csv_dump: bool = False,
 ) -> "OrchestrationStep":
     """Δ.25 — Surgical fast-path single-solve from a Spine DB.
 
@@ -1760,6 +1762,7 @@ def run_single_solve_from_db(
         flex_data=flex_data,
         work_folder=work_folder,
         logger=logger,
+        write_json=csv_dump,
     )
     user_row_scaling = sc.use_row_scaling.get(scenario_name)
     user_obj_scale = sc.scale_the_objective.get(scenario_name)

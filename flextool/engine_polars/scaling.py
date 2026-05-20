@@ -844,6 +844,8 @@ def analyze_solve(
     flex_data: "FlexData",
     work_folder: Path | str | None = None,
     logger: logging.Logger | None = None,
+    *,
+    write_json: bool = False,
 ) -> ScaleTable:
     """Analyse the inputs of *solve_name* and return a :class:`ScaleTable`.
 
@@ -856,12 +858,15 @@ def analyze_solve(
         bag produced by :func:`~flextool.engine_polars.input.load_flextool`
         (or the equivalent in-memory pipeline).
     work_folder:
-        Optional path to the solve's working directory.  When provided,
-        the scaling analysis JSON is written to
-        ``<work_folder>/solve_data/scaling_analysis.json`` (mirroring the
-        original module's behaviour).  When ``None`` no file is written.
+        Optional path to the solve's working directory.  Only consulted
+        when *write_json* is True — then the scaling analysis JSON is
+        written to ``<work_folder>/solve_data/scaling_analysis.json``.
     logger:
         Optional logger for one-line debug summaries.
+    write_json:
+        Diagnostic-only opt-in.  When True (and *work_folder* is set),
+        emit ``scaling_analysis.json``.  Callers gate this on
+        ``--csv-dump``; the file is never read back on the solve path.
 
     Returns
     -------
@@ -1008,8 +1013,8 @@ def analyze_solve(
     )
     _scale_cache[solve_name] = table
 
-    # ---- Optional JSON write to disk -------------------------------------
-    if work_folder is not None:
+    # ---- Optional JSON write to disk (diagnostic; --csv-dump only) -------
+    if work_folder is not None and write_json:
         try:
             write_scaling_analysis_json(table, Path(work_folder) / "solve_data")
         except OSError as exc:

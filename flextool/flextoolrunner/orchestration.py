@@ -307,10 +307,11 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             input_dir=wf / 'input',
             logger=state.logger,
         )
-        write_scaling_analysis_json(
-            table=scale_table,
-            solve_data_dir=wf / 'solve_data',
-        )
+        if getattr(state, "csv_dump", False):
+            write_scaling_analysis_json(
+                table=scale_table,
+                solve_data_dir=wf / 'solve_data',
+            )
         auto_scale = getattr(state, 'auto_scale', False)
         applied = maybe_auto_apply_row_scaling(
             solve_name=solve,

@@ -108,6 +108,7 @@ def test_scaling_bench(
         db_url,
         scenario_name=scenario,
         work_folder=work,
+        csv_dump=True,
     )
 
     analysis = _print_artifacts(label, work, step)
