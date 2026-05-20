@@ -1358,27 +1358,10 @@ def _drive_cascade(
             _try_malloc_trim()
             return 0
 
-    # Phase 3 — drive the cascade via the native ``native_run_model``.
-    # The legacy ``flextoolrunner.orchestration.run_model`` is no longer
-    # invoked from the engine_polars cascade.  ``native_run_model``
-    # deliberately omits the ``capture_post_solve`` call after each
-    # ``solver.run`` — equivalent to the previous monkey-patch-to-no-op
-    # but cleaner.  Belt-and-suspenders: also patch the legacy hook in
-    # ``flextool.flextoolrunner.orchestration`` so any other consumer
-    # that may still reference it via that module keeps the no-op
-    # semantic for the duration of the cascade.
-    from flextool.flextoolrunner import orchestration as _flx_orch
-    _real_capture = _flx_orch.capture_post_solve
-    _flx_orch.capture_post_solve = lambda state, solve_name: None
-    # Step 2.5 item 16 — per-sub-solve override removed.  Native writers
-    # run directly inside ``native_run_model`` and route through
-    # ``capture_frames(provider=sub_solve_provider)`` without any
-    # monkey-patch.  Per-writer Provider threading happens inside
-    # :func:`flextool.engine_polars._writer_solve_time.run` (state-aware).
-    try:
-        native_run_model(runner.state, _FlexpyCascadeSolver(runner.state))
-    finally:
-        _flx_orch.capture_post_solve = _real_capture
+    # Drive the cascade via the native ``native_run_model``.  Native
+    # writers run inside ``capture_frames(provider=sub_solve_provider)``;
+    # the legacy ``capture_post_solve`` hook is no longer reachable.
+    native_run_model(runner.state, _FlexpyCascadeSolver(runner.state))
     # Mirror the in-memory handoff dict back onto our state in case
     # callers want to inspect it.
     state.handoffs = runner.state.handoffs
