@@ -502,6 +502,21 @@ def native_run_model(state, solver) -> int:
         # bridge installed above; Step 2 deletes both paths.
         state.current_provider = sub_solve_provider
 
+        # Memory checkpoints — fire only on the first sub-solve so the
+        # output stays readable on multi-roll scenarios.  Used to
+        # attribute the pre-load_flextool preprocessing-chain memory
+        # spike across writer groups.
+        _mem_cp = None
+        if i == 0:
+            _memrec_native = getattr(state, "_memory_recorder", None)
+            if _memrec_native is not None:
+                def _mem_cp(label: str, user_label: str,
+                            _rec=_memrec_native, _log=state.logger) -> None:
+                    _rec.checkpoint(label, _log, user_label=user_label)
+        if _mem_cp is not None:
+            _mem_cp("prep_seeded",
+                    "prep: provider seeded + capture_frames open")
+
         solve_writers.write_full_timelines(
             state.timeline.stochastic_timesteps[solve],
             period__timesets_with_history,
@@ -521,6 +536,10 @@ def native_run_model(state, solver) -> int:
         solve_writers.write_step_jump(jump_lists[solve], work_folder=wf)
         pb_time, pb_succ = make_period_block(active_time_lists[solve])
         solve_writers.write_period_block(pb_time, pb_succ, work_folder=wf)
+
+        if _mem_cp is not None:
+            _mem_cp("prep_timeline_writers_done",
+                    "prep: timeline writers done")
 
         state.logger.debug("Creating period data")
         solve_writers.write_period_years(
@@ -583,6 +602,10 @@ def native_run_model(state, solver) -> int:
             str(wf / "solve_data/solve_hole_multiplier.csv"),
         )
 
+        if _mem_cp is not None:
+            _mem_cp("prep_period_writers_done",
+                    "prep: period writers done")
+
         # ---- LP scaling analyser (cached per solve name) ----
         scale_table = analyze_solve(
             solve_name=solve,
@@ -627,6 +650,9 @@ def native_run_model(state, solver) -> int:
                 wf / "solve_data",
             )
 
+        if _mem_cp is not None:
+            _mem_cp("prep_scaling_done", "prep: scaling done")
+
         solve_writers.write_first_steps(
             active_time_lists[solve],
             str(wf / "solve_data/first_timesteps.csv"),
@@ -662,6 +688,10 @@ def native_run_model(state, solver) -> int:
             work_folder=wf,
         )
 
+        if _mem_cp is not None:
+            _mem_cp("prep_step_writers_done",
+                    "prep: step + realized + fix_storage + delayed writers done")
+
         state.logger.debug("Possible stochastics")
         solve_writers.write_branch__period_relationship(
             period__branch_lists[solve],
@@ -689,6 +719,10 @@ def native_run_model(state, solver) -> int:
             period__branch_lists[solve],
             work_folder=wf,
         )
+
+        if _mem_cp is not None:
+            _mem_cp("prep_branch_writers_done",
+                    "prep: branch + first_and_last_periods writers done")
 
         # ---- Storage fixing from upper level ----
         if (
