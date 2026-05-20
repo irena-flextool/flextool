@@ -51,6 +51,7 @@ from flextool.engine_polars._axis_enums import (
     schema_dtype,
     set_global_axis_enums,
 )
+from flextool.engine_polars._param_shapes import promote_param_to_dt
 
 
 __all__ = [
@@ -901,8 +902,12 @@ def _inject_half_flows(
                       .select("p", "d", "t")
                       .with_columns(value=pl.lit(1.0)))
         if avail_rows.height > 0:
-            merged = pl.concat([_upcast_dims(rd.p_process_availability.frame,
-                                             ("p", "d", "t"))
+            # Phase E.1: p_process_availability dims depend on authored
+            # shape — promote to (p, d, t) via rd.pss_dt's d/t axes so
+            # the concat lands at a uniform schema.
+            avail_pdt = promote_param_to_dt(
+                rd.p_process_availability, rd.pss_dt).collect()
+            merged = pl.concat([_upcast_dims(avail_pdt, ("p", "d", "t"))
                                   .select("p", "d", "t", "value"),
                                 avail_rows], how="vertical")
             rd.p_process_availability = Param(

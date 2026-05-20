@@ -53,6 +53,7 @@ import polars as pl
 from polar_high import Param
 
 from ._axis_enums import rename_to_axis, schema_dtype
+from ._param_shapes import promote_param_to_dt
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +210,31 @@ def _frame_of(value: Any) -> pl.DataFrame | None:
         return None
     if isinstance(value, Param):
         f = value.frame
+    elif isinstance(value, pl.DataFrame):
+        f = value
+    elif isinstance(value, pl.LazyFrame):
+        f = value.collect()
+    else:
+        return None
+    if f.height == 0:
+        return None
+    return f
+
+
+def _frame_of_pdt(value: Any, dt: pl.DataFrame | None) -> pl.DataFrame | None:
+    """Return an eager (entity, d, t, value)-shaped frame for a Param.
+
+    Phase E.1: flex_data Params keep their authored dims (``(entity,)``
+    / ``(entity, d)`` / ``(entity, t)`` / ``(entity, d, t)``).  The CSV
+    dump path needs the fully-expanded (entity, d, t) frame so the
+    output CSVs match the pre-Phase-E layout that downstream consumers
+    (GUI inspection, parity tests) expect.  Promote via lazy joins on
+    ``dt`` when the Param is narrower than (entity, d, t).
+    """
+    if value is None or dt is None or dt.height == 0:
+        return _frame_of(value)
+    if isinstance(value, Param):
+        f = promote_param_to_dt(value, dt).collect()
     elif isinstance(value, pl.DataFrame):
         f = value
     elif isinstance(value, pl.LazyFrame):
@@ -542,7 +568,7 @@ def _write_pdt_sliced(data: "FlexData", sd_dir: Path,
     if heavy_on or "pdtNode.csv" not in _HEAVY_CSV_FILES:
         rows: list[pl.DataFrame] = []
         for param_value, field in _PDT_NODE_SLICES.items():
-            f = _frame_of(getattr(data, field, None))
+            f = _frame_of_pdt(getattr(data, field, None), getattr(data, "dt", None))
             if f is None:
                 continue
             # Expected schema: (n, d, t, value) — rename to canonical and add
@@ -560,7 +586,7 @@ def _write_pdt_sliced(data: "FlexData", sd_dir: Path,
     if heavy_on or "pdtProcess.csv" not in _HEAVY_CSV_FILES:
         rows = []
         for param_value, field in _PDT_PROCESS_SLICES.items():
-            f = _frame_of(getattr(data, field, None))
+            f = _frame_of_pdt(getattr(data, field, None), getattr(data, "dt", None))
             if f is None:
                 continue
             ren = {"p": "process", "d": "period", "t": "time"}
@@ -575,7 +601,7 @@ def _write_pdt_sliced(data: "FlexData", sd_dir: Path,
     # pdtCommodity.csv columns: commodity, param, period, time, value
     rows = []
     for param_value, field in _PDT_COMMODITY_SLICES.items():
-        f = _frame_of(getattr(data, field, None))
+        f = _frame_of_pdt(getattr(data, field, None), getattr(data, "dt", None))
         if f is None:
             continue
         ren = {"c": "commodity", "d": "period", "t": "time"}
@@ -590,7 +616,7 @@ def _write_pdt_sliced(data: "FlexData", sd_dir: Path,
     # pdtGroup.csv columns: group, param, period, time, value
     rows = []
     for param_value, field in _PDT_GROUP_SLICES.items():
-        f = _frame_of(getattr(data, field, None))
+        f = _frame_of_pdt(getattr(data, field, None), getattr(data, "dt", None))
         if f is None:
             continue
         ren = {"g": "group", "d": "period", "t": "time"}

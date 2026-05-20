@@ -523,40 +523,61 @@ def p_commodity_unitsize_from_source(source: "InputSource") -> Param | None:
 def _filter_param_by_periods(p: Param | None,
                                 period_filter: pl.DataFrame | None
                                 ) -> Param | None:
-    """If ``period_filter`` is non-empty, restrict ``p.frame`` to rows
-    whose ``d`` column is in ``period_filter['d'].unique()``.  Returns
-    ``None`` when no rows survive (or when input is None).
+    """Restrict ``p`` to rows whose ``d`` (and optionally ``t``) column
+    matches the active solve's ``period_filter``.  Returns the Param
+    with the join chained onto its existing LazyFrame — no eager
+    collect.  Returns ``p`` unchanged when there's nothing to filter
+    on (``p`` is None, filter is empty, or the Param has no ``d``/
+    ``t`` axes to restrict).
 
-    When the param has both ``d`` and ``t`` index columns AND the
-    ``period_filter`` carries both ``d`` and ``t`` (i.e. it's the
-    ``dt`` frame), the join is on the (d, t) pair — mirroring the CSV
-    path's `solve_data/pdtNode.csv inner-join with steps_in_use`
-    semantic.  Otherwise we fall back to a period-only restriction.
+    Shape-aware (Phase E.1): the join is on whichever of ``d`` / ``t``
+    are present in ``p.dims``.  Under the lazified broadcast contract
+    a MAP_TIME-authored field is ``(entity, t)`` and a SCALAR-authored
+    field is ``(entity,)``; both are handled — the former joins on
+    ``t``, the latter passes through unchanged.
+
+    Mirrors the CSV path's ``solve_data/pdtNode.csv inner-join with
+    steps_in_use`` semantic when both ``d`` and ``t`` are present.
+
+    Reads ``p.lazy`` directly — does NOT trigger ``polar_high.Param``'s
+    eager ``.frame`` cache.
     """
     if p is None or period_filter is None or period_filter.height == 0:
         return p
-    fr = p.frame
-    if "d" not in fr.columns:
+    p_dims = set(p.dims)
+    has_d = "d" in p_dims
+    has_t = "t" in p_dims
+    if not has_d and not has_t:
+        # SCALAR-shape Param (e.g. ``(entity,)``) — nothing to filter on.
         return p
-    # Phase 4.8g: ``p.frame`` may carry Utf8 ``d`` / ``t`` columns from the
-    # Direct-Param CSV/scalar path while ``period_filter`` (the ``dt``
-    # frame) is fully Enum-cast under activation.  Defensively cast both
-    # frames to the live axis enums so the join keys match — without this
-    # the joins at line 545 / 542 raise ``SchemaError`` (Utf8 ↔ Enum).
+    # Phase 4.8g: the Param's underlying LazyFrame may carry Utf8
+    # ``d`` / ``t`` columns from the Direct-Param CSV/scalar path while
+    # ``period_filter`` (the ``dt`` frame) is fully Enum-cast under
+    # activation.  Defensively cast both sides to the live axis enums
+    # so the join keys match — without this the join raises
+    # ``SchemaError`` (Utf8 ↔ Enum).
+    lf = p.lazy
     _enums = get_global_axis_enums()
     if _enums is not None:
-        fr = cast_frame_axes(fr, _enums)
+        lf = cast_frame_axes(lf, _enums)
         period_filter = cast_frame_axes(period_filter, _enums)
     pf_cols = set(period_filter.columns)
-    if "t" in fr.columns and {"d", "t"}.issubset(pf_cols):
-        keep = period_filter.select("d", "t").unique()
-        out = fr.lazy().join(keep.lazy(), on=["d", "t"], how="inner").collect()
+    if has_d and has_t and {"d", "t"}.issubset(pf_cols):
+        keep = period_filter.lazy().select("d", "t").unique()
+        out_lf = lf.join(keep, on=["d", "t"], how="inner")
+    elif has_d and "d" in pf_cols:
+        keep = period_filter.lazy().select("d").unique()
+        out_lf = lf.join(keep, on="d", how="inner")
+    elif has_t and "t" in pf_cols:
+        # Phase E.1: MAP_TIME-authored field is ``(entity, t)`` — no
+        # ``d`` to filter on.  Restrict by ``t`` instead.
+        keep = period_filter.lazy().select("t").unique()
+        out_lf = lf.join(keep, on="t", how="inner")
     else:
-        keep = period_filter.select("d").unique()
-        out = fr.lazy().join(keep.lazy(), on="d", how="inner").collect()
-    if out.height == 0:
-        return None
-    return Param(p.dims, out)
+        # Param has a d/t axis but the period_filter doesn't carry the
+        # matching column — nothing to filter on.
+        return p
+    return Param(p.dims, out_lf)
 
 
 def _entity_period_scalar(source: "InputSource", entity_class: str,
@@ -1450,7 +1471,9 @@ def _entity_scalar_with_default(source: "InputSource", entity_class: str,
 def p_process_availability_from_source(source: "InputSource",
                                         period_filter: pl.DataFrame | None = None,
                                         ) -> Param | None:
-    """``unit/connection.availability`` → ``Param(("p", "d", "t"))``.
+    """``unit/connection.availability`` → Param keyed on ``"p"`` plus
+    whichever of ``"d"`` / ``"t"`` the union of unit + connection
+    authoring requires.
 
     Δ.17c — uses :func:`._param_shapes.resolve_param_shape` for each of
     ``unit.availability`` and ``connection.availability`` independently
@@ -1458,21 +1481,52 @@ def p_process_availability_from_source(source: "InputSource",
     Allowed shapes per class: scalar / 1d_map[period] / 1d_map[time] /
     2d_map[period,time].  CSV path slices ``pdtProcess.csv``
     (param='availability') and emits explicit rows only.
+
+    Phase E.1 — each per-class Param keeps its authored dims under the
+    lazified broadcast helpers.  When the two classes carry different
+    shapes (e.g. one SCALAR, one MAP_TIME) we promote each part to the
+    union of their dims via lazy joins on ``period_filter`` before the
+    concat, so the output Param has a single consistent dim shape but
+    the upstream LazyFrames remain unmaterialised.
     """
-    parts: list[pl.LazyFrame] = []
+    parts: list[Param] = []
     for cls in ("unit", "connection"):
         resolved = resolve_param_shape(
             source, cls, "availability", period_filter=period_filter)
         param = broadcast_to_period_time(resolved, "p", period_filter)
         if param is None:
             continue
-        parts.append(param.frame.lazy())
+        parts.append(param)
     if not parts:
         return None
-    out = pl.concat(parts).collect()
-    if out.height == 0:
-        return None
-    return Param(("p", "d", "t"), out.lazy().sort("p", "d", "t"))
+    # Union of all per-part dims preserving order: always starts with
+    # "p"; "d" / "t" appear only when at least one part authored them.
+    union_dims: tuple[str, ...] = ("p",)
+    if any("d" in pt.dims for pt in parts):
+        union_dims = union_dims + ("d",)
+    if any("t" in pt.dims for pt in parts):
+        union_dims = union_dims + ("t",)
+    # Promote each part to the union dims via lazy joins on
+    # period_filter.  No-op when the part already carries union_dims.
+    pf_lf = (period_filter.lazy() if period_filter is not None
+                                  and period_filter.height > 0 else None)
+    part_lfs: list[pl.LazyFrame] = []
+    for pt in parts:
+        lf = pt.lazy
+        missing = [d for d in union_dims if d not in pt.dims]
+        if missing:
+            if pf_lf is None:
+                # Cannot promote without a period_filter to source the
+                # missing axis values — defensive guard, the helper's
+                # contract requires a non-empty filter for any broadcast.
+                return None
+            # Build the (missing-dim) universe from period_filter.
+            uni = pf_lf.select(missing).unique()
+            lf = lf.join(uni, how="cross")
+        lf = lf.select(*union_dims, "value")
+        part_lfs.append(lf)
+    out_lf = pl.concat(part_lfs).sort(*union_dims)
+    return Param(union_dims, out_lf)
 
 
 def p_commodity_price_from_source(source: "InputSource",

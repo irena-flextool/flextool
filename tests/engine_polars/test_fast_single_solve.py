@@ -230,9 +230,15 @@ def test_fast_single_solve_p_commodity_price_lh2(tmp_path: Path) -> None:
         "regression?  Spine carries commodity.price=30 (scalar) for "
         "coal on this fixture."
     )
-    assert fd.p_commodity_price.frame.height == 168, (
+    # Phase E.1: scalar source stays (c,) — one row per commodity.
+    # polar_high broadcasts to (c, d, t) lazily at constraint emission.
+    assert fd.p_commodity_price.dims == ("c",), (
+        f"fast path: p_commodity_price dims={fd.p_commodity_price.dims}, "
+        "expected (c,) for scalar commodity.price=30."
+    )
+    assert fd.p_commodity_price.frame.height == 1, (
         f"fast path: p_commodity_price height={fd.p_commodity_price.frame.height}, "
-        "expected 168 (1 commodity × 168 timesteps in lh2_week)."
+        "expected 1 (single commodity scalar) under Phase E.1."
     )
     assert (fd.p_commodity_price.frame["value"]
             == 30.0).all(), (
@@ -271,11 +277,17 @@ def test_fast_single_solve_p_process_availability_lh2(tmp_path: Path) -> None:
         "fast path: p_process_availability is None — Δ.28 "
         "default-broadcast fall-through regression?"
     )
-    # 20 processes (15 unit + 5 connection) × 168 timesteps = 3360.
-    assert fd.p_process_availability.frame.height == 3360, (
+    # Phase E.1: scalar-default source stays (p,) — one row per process
+    # (15 unit + 5 connection = 20).  polar_high broadcasts to (p, d, t)
+    # lazily at constraint emission.
+    assert fd.p_process_availability.dims == ("p",), (
+        f"fast path: p_process_availability dims="
+        f"{fd.p_process_availability.dims}, expected (p,) for scalar default."
+    )
+    assert fd.p_process_availability.frame.height == 20, (
         f"fast path: p_process_availability height="
-        f"{fd.p_process_availability.frame.height}, expected 3360 "
-        "(20 processes × 168 timesteps)."
+        f"{fd.p_process_availability.frame.height}, expected 20 "
+        "(20 processes, scalar default) under Phase E.1."
     )
 
 

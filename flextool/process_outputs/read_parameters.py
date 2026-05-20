@@ -122,7 +122,22 @@ def _pdtX_per_entity(
             solve_name=solve_name,
             col_name=col_name or entity_dim,
         )
-    pl_df = with_solve_column(param.frame, solve_name)
+    # Phase E.1: Param dims may be narrower than (entity, d, t) when
+    # the source was authored as scalar / 1d_map.  The pandas pivot
+    # below requires explicit "d" and "t" columns, so promote via
+    # flex_data.dt when needed.
+    if "d" not in param.dims or "t" not in param.dims:
+        from flextool.engine_polars._param_shapes import promote_param_to_dt
+        if flex_data is None or flex_data.dt is None:
+            return _empty_pdtX_per_entity(
+                flex_data=flex_data,
+                solve_name=solve_name,
+                col_name=col_name or entity_dim,
+            )
+        pdt_frame = promote_param_to_dt(param, flex_data.dt).collect()
+    else:
+        pdt_frame = param.frame
+    pl_df = with_solve_column(pdt_frame, solve_name)
     return wide_per_entity(
         pl_df,
         row_dims=("solve", "d", "t"),

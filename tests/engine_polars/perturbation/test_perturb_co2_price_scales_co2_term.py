@@ -25,6 +25,7 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars import load_flextool
+from flextool.engine_polars._param_shapes import promote_param_to_dt
 
 from tests.engine_polars.perturbation._harness import (
     scale_param,
@@ -50,7 +51,8 @@ def _co2_term(d, sol) -> float:
         .join(d.p_unitsize.frame.rename({"value": "us"}), on="p")
         .join(d.p_slope.frame.rename({"value": "slope"}), on=["p", "d", "t"])
         .join(d.p_co2_content.frame.rename({"value": "cc"}), on="c")
-        .join(d.p_co2_price.frame.rename({"value": "cprice"}),
+        .join(promote_param_to_dt(d.p_co2_price, d.dt)
+                  .rename({"value": "cprice"}).collect(),
               on=["g", "d", "t"])
         .join(d.p_step_duration.frame.rename({"value": "dur"}), on=["d", "t"])
         .join(d.p_rp_cost_weight.frame.rename({"value": "rpcw"}),

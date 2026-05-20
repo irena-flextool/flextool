@@ -19,6 +19,8 @@ from typing import Optional
 
 import polars as pl
 
+from flextool.engine_polars._param_shapes import promote_param_to_dt
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -151,7 +153,7 @@ def commodity_buy_eff_obj(data, sol) -> float:
             .join(data.p_unitsize.frame.rename({"value": "us"}), on="p")
             .join(data.p_slope.frame.rename({"value": "slope"}),
                   on=["p", "d", "t"])
-            .join(data.p_commodity_price.frame.rename({"value": "cp"}),
+            .join(promote_param_to_dt(data.p_commodity_price, data.dt).rename({"value": "cp"}).collect(),
                   on=["c", "d", "t"])
             .join(op, on=["d", "t"]))
     return float(df.select(
@@ -177,7 +179,7 @@ def commodity_buy_noEff_obj(data, sol) -> float:
     df = (fcn.join(vf.rename({"value": "flow"}),
                    on=["p", "source", "sink"])
             .join(data.p_unitsize.frame.rename({"value": "us"}), on="p")
-            .join(data.p_commodity_price.frame.rename({"value": "cp"}),
+            .join(promote_param_to_dt(data.p_commodity_price, data.dt).rename({"value": "cp"}).collect(),
                   on=["c", "d", "t"])
             .join(op, on=["d", "t"]))
     return float(df.select(
@@ -203,7 +205,7 @@ def commodity_sell_obj(data, sol) -> float:
     df = (ftc.join(vf.rename({"value": "flow"}),
                    on=["p", "source", "sink"])
             .join(data.p_unitsize.frame.rename({"value": "us"}), on="p")
-            .join(data.p_commodity_price.frame.rename({"value": "cp"}),
+            .join(promote_param_to_dt(data.p_commodity_price, data.dt).rename({"value": "cp"}).collect(),
                   on=["c", "d", "t"])
             .join(op, on=["d", "t"]))
     return -float(df.select(
@@ -233,7 +235,7 @@ def commodity_section_obj(data, sol) -> float:
         return 0.0
     section = data.p_section.frame.rename({"value": "section"})
     us = data.p_unitsize.frame.rename({"value": "us"})
-    cp = data.p_commodity_price.frame.rename({"value": "cp"})
+    cp = promote_param_to_dt(data.p_commodity_price, data.dt).rename({"value": "cp"}).collect()
     total = 0.0
     for var_name in ("v_online_linear", "v_online_integer"):
         vo = _sol_value_or_empty(sol, var_name)
@@ -276,7 +278,7 @@ def co2_price_eff_obj(data, sol) -> float:
                   on=["p", "d", "t"])
             .join(data.p_co2_content.frame.rename({"value": "co2c"}),
                   on="c")
-            .join(data.p_co2_price.frame.rename({"value": "co2p"}),
+            .join(promote_param_to_dt(data.p_co2_price, data.dt).rename({"value": "co2p"}).collect(),
                   on=["g", "d", "t"])
             .join(op, on=["d", "t"]))
     return float(df.select(
@@ -305,7 +307,7 @@ def co2_price_noEff_obj(data, sol) -> float:
               .join(data.p_unitsize.frame.rename({"value": "us"}), on="p")
               .join(data.p_co2_content.frame.rename({"value": "co2c"}),
                     on="c")
-              .join(data.p_co2_price.frame.rename({"value": "co2p"}),
+              .join(promote_param_to_dt(data.p_co2_price, data.dt).rename({"value": "co2p"}).collect(),
                     on=["g", "d", "t"])
               .join(op, on=["d", "t"]))
     return float(df.select(
@@ -331,7 +333,7 @@ def co2_section_obj(data, sol) -> float:
     section = data.p_section.frame.rename({"value": "section"})
     us = data.p_unitsize.frame.rename({"value": "us"})
     co2c = data.p_co2_content.frame.rename({"value": "co2c"})
-    co2p = data.p_co2_price.frame.rename({"value": "co2p"})
+    co2p = promote_param_to_dt(data.p_co2_price, data.dt).rename({"value": "co2p"}).collect()
     total = 0.0
     for var_name in ("v_online_linear", "v_online_integer"):
         vo = _sol_value_or_empty(sol, var_name)

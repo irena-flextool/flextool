@@ -249,8 +249,15 @@ def test_s07_p_co2_price_from_source_is_populated(
         "'co2_price feature active but p_co2_price is None'."
     )
     frame = result.frame.collect() if hasattr(result.frame, "collect") else result.frame
-    assert {"g", "d", "t", "value"}.issubset(set(frame.columns)), (
+    # Phase E.1: MAP_PERIOD source stays (g, d); no `t` axis is
+    # broadcast at the helper — polar_high handles that lazily at
+    # constraint emission.
+    assert {"g", "d", "value"}.issubset(set(frame.columns)), (
         f"Param frame columns: {frame.columns}"
+    )
+    assert result.dims == ("g", "d"), (
+        f"Expected (g, d) dims under Phase E.1 for MAP_PERIOD source; "
+        f"got {result.dims}"
     )
     assert frame.height > 0
     assert (frame.select(pl.col("g") == "co2_group").to_series().any())

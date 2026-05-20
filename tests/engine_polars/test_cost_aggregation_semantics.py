@@ -65,6 +65,7 @@ import pytest
 
 from polar_high import Problem
 from flextool.engine_polars import build_flextool, load_flextool
+from flextool.engine_polars._param_shapes import promote_param_to_dt
 
 
 DATA = Path(__file__).resolve().parent / "data"
@@ -122,7 +123,8 @@ def _commodity_buy_eff_term(d, sol) -> float:
         .join(d.p_unitsize.frame.rename({"value": "us"}), on="p", how="left")
         .join(d.p_slope.frame.rename({"value": "sl"}),
               on=["p", "d", "t"], how="left")
-        .join(d.p_commodity_price.frame.rename({"value": "price"}),
+        .join(promote_param_to_dt(d.p_commodity_price, d.dt)
+                  .rename({"value": "price"}).collect(),
               on=["c", "d", "t"], how="left")
         .join(d.p_step_duration.frame.rename({"value": "dur"}),
               on=["d", "t"])
@@ -152,7 +154,8 @@ def _co2_price_term(d, sol) -> float:
               on=["p", "d", "t"], how="left")
         .join(d.p_co2_content.frame.rename({"value": "co2c"}),
               on="c", how="left")
-        .join(d.p_co2_price.frame.rename({"value": "co2p"}),
+        .join(promote_param_to_dt(d.p_co2_price, d.dt)
+                  .rename({"value": "co2p"}).collect(),
               on=["g", "d", "t"], how="left")
         .join(d.p_step_duration.frame.rename({"value": "dur"}),
               on=["d", "t"])

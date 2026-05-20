@@ -749,16 +749,37 @@ def broadcast_to_period_time(
     *,
     filter_zero: bool = False,
 ) -> "Param | None":
-    """Materialise ``Param((entity_dim_alias, "d", "t"), ...)`` from the
-    resolved shape, broadcasting as needed against ``period_filter``'s
-    ``(d, t)`` axis.
+    """Resolve a source frame into a ``Param`` whose dims match the
+    authored shape — **without** materialising the (entity, d, t)
+    cross-product for sources that don't carry that axis natively.
+
+    Phase E.1: the returned Param's dims depend on the resolved shape:
+
+    ============================  ========================
+    Source shape                  Returned Param dims
+    ============================  ========================
+    ``Shape.SCALAR``              ``(entity_dim_alias,)``
+    ``Shape.MAP_PERIOD``          ``(entity_dim_alias, "d")``
+    ``Shape.MAP_TIME``            ``(entity_dim_alias, "t")``
+    ``Shape.MAP_PERIOD_TIME``     ``(entity_dim_alias, "d", "t")``
+    ``Shape.MAP_TIME_PERIOD``     ``(entity_dim_alias, "d", "t")``
+    ============================  ========================
+
+    The returned Param is fully lazy — no ``.collect()`` happens inside
+    this helper.  ``polar_high.Param`` broadcasts the smaller-dim Params
+    against ``(entity, d, t)``-keyed Vars at constraint-emission time
+    via shared-dim inner joins on LazyFrames, so the dense cross-product
+    only ever lives in the per-term collect that polar_high already
+    streams to HiGHS one row at a time.
 
     *period_filter* must carry ``[d, t]`` columns (typically the active
-    solve's ``flex_data.dt`` frame).  When the resolved shape requires
-    a broadcast (scalar, 1d_map[period], 1d_map[time]) but
-    ``period_filter`` is missing or empty, returns ``None`` — the
-    caller falls through to whatever non-broadcast pathway it used
-    before.
+    solve's ``flex_data.dt`` frame).  For the two-axis shapes
+    (``MAP_PERIOD_TIME`` / ``MAP_TIME_PERIOD``) it restricts to active
+    ``(d, t)`` pairs.  For ``MAP_PERIOD`` / ``MAP_TIME`` it restricts to
+    the active periods / times respectively.  For ``SCALAR`` the filter
+    is consulted only as the *gating* signal: when no period is active
+    we return ``None`` (no Params produced for an empty solve), but no
+    join is needed since SCALAR doesn't carry a d/t axis.
 
     *filter_zero* mirrors the CSV cascade's "drop rows where the
     explicit value is 0" semantic for fields like ``co2_price``
@@ -767,9 +788,8 @@ def broadcast_to_period_time(
 
     Returns ``None`` when:
 
-    * *resolved* is ``None``,
-    * the broadcast produces an empty frame,
-    * a required ``period_filter`` is missing.
+    * *resolved* is ``None`` or its frame is empty,
+    * a required ``period_filter`` is missing or empty.
     """
     if resolved is None or resolved.frame is None:
         return None
@@ -806,74 +826,85 @@ def broadcast_to_period_time(
     _enums = get_global_axis_enums()
     if _enums is not None:
         lf = cast_frame_axes(lf, _enums)
-    dt_lf = period_filter.lazy().select("d", "t").unique()
 
     shape = resolved.shape
     if shape == Shape.MAP_PERIOD_TIME:
         # Direct fill — already (d, t)-keyed.  Inner-join on dt to
         # restrict to the active solve's periods.
-        out = (lf.pipe(rename_to_axis, {"period": "d"})
-                  .select(entity_dim_alias, "d", "t", "value")
-                  .join(dt_lf, on=["d", "t"], how="inner")
-                  .collect())
+        dt_lf = period_filter.lazy().select("d", "t").unique()
+        out_lf = (lf.pipe(rename_to_axis, {"period": "d"})
+                    .select(entity_dim_alias, "d", "t", "value")
+                    .join(dt_lf, on=["d", "t"], how="inner"))
+        return Param((entity_dim_alias, "d", "t"), out_lf)
     elif shape == Shape.MAP_TIME_PERIOD:
         # Same as MAP_PERIOD_TIME — column renames.  The frame already
         # has both ``period`` and ``t`` columns regardless of authoring
         # order (the SpineDbReader unrolls a 2d_map into a flat frame).
-        out = (lf.pipe(rename_to_axis, {"period": "d"})
-                  .select(entity_dim_alias, "d", "t", "value")
-                  .join(dt_lf, on=["d", "t"], how="inner")
-                  .collect())
+        dt_lf = period_filter.lazy().select("d", "t").unique()
+        out_lf = (lf.pipe(rename_to_axis, {"period": "d"})
+                    .select(entity_dim_alias, "d", "t", "value")
+                    .join(dt_lf, on=["d", "t"], how="inner"))
+        return Param((entity_dim_alias, "d", "t"), out_lf)
     elif shape == Shape.MAP_PERIOD:
-        # 1d_map(period) → broadcast across t per (entity, d).
+        # 1d_map(period) → (entity, d) Param.  Phase E.1: do NOT
+        # broadcast across ``t``; polar_high handles the (entity, d) →
+        # (entity, d, t) broadcast lazily at constraint emission.
         #
         # Mixed authoring: some entities may carry a scalar default
         # (period column null) while others carry an explicit map.
         # SpineDbReader unifies these into a single frame with a
         # nullable index column; rows with null index represent the
-        # entity's scalar default and must be broadcast across the
-        # full (d, t) universe — INNER JOIN on a null index would
-        # drop them silently.  Split into scalar-default and explicit
-        # branches, broadcast independently, then concatenate.
+        # entity's scalar default and must be broadcast across all
+        # active periods — INNER JOIN on a null index would drop them
+        # silently.  Split into scalar-default and explicit branches,
+        # broadcast independently across the active-period universe,
+        # then concatenate.
+        d_lf = period_filter.lazy().select("d").unique()
         lf_p = lf.pipe(rename_to_axis, {"period": "d"})
         lf_scalar = (lf_p.filter(pl.col("d").is_null())
                           .select(entity_dim_alias, "value")
-                          .join(dt_lf, how="cross")
-                          .select(entity_dim_alias, "d", "t", "value"))
+                          .join(d_lf, how="cross")
+                          .select(entity_dim_alias, "d", "value"))
         lf_explicit = (lf_p.filter(pl.col("d").is_not_null())
                             .select(entity_dim_alias, "d", "value")
-                            .join(dt_lf, on="d", how="inner")
-                            .select(entity_dim_alias, "d", "t", "value"))
-        out = pl.concat([lf_explicit, lf_scalar]).collect()
+                            .join(d_lf, on="d", how="inner")
+                            .select(entity_dim_alias, "d", "value"))
+        out_lf = pl.concat([lf_explicit, lf_scalar])
+        return Param((entity_dim_alias, "d"), out_lf)
     elif shape == Shape.MAP_TIME:
-        # 1d_map(time) → broadcast across d per (entity, t).
+        # 1d_map(time) → (entity, t) Param.  Phase E.1: do NOT
+        # broadcast across ``d``; polar_high handles the (entity, t) →
+        # (entity, d, t) broadcast lazily at constraint emission.
+        #
         # Same mixed-authoring guard as MAP_PERIOD above: rows whose
         # ``t`` index is null are scalar defaults for that entity and
-        # must broadcast across the full (d, t) axis instead of being
+        # must broadcast across all active times instead of being
         # dropped by the inner-join on ``t``.  Covers fixtures like
         # ``network_coal_wind_battery_co2_fullYear_availability`` where
         # ``coal_plant`` is MAP_TIME but ``wind_plant`` is scalar 0.7.
+        t_lf = period_filter.lazy().select("t").unique()
         lf_scalar = (lf.filter(pl.col("t").is_null())
                           .select(entity_dim_alias, "value")
-                          .join(dt_lf, how="cross")
-                          .select(entity_dim_alias, "d", "t", "value"))
+                          .join(t_lf, how="cross")
+                          .select(entity_dim_alias, "t", "value"))
         lf_explicit = (lf.filter(pl.col("t").is_not_null())
                             .select(entity_dim_alias, "t", "value")
-                            .join(dt_lf, on="t", how="inner")
-                            .select(entity_dim_alias, "d", "t", "value"))
-        out = pl.concat([lf_explicit, lf_scalar]).collect()
+                            .join(t_lf, on="t", how="inner")
+                            .select(entity_dim_alias, "t", "value"))
+        out_lf = pl.concat([lf_explicit, lf_scalar])
+        return Param((entity_dim_alias, "t"), out_lf)
     elif shape == Shape.SCALAR:
-        # scalar → broadcast across (d, t) per entity.
-        out = (lf.select(entity_dim_alias, "value")
-                  .join(dt_lf, how="cross")
-                  .select(entity_dim_alias, "d", "t", "value")
-                  .collect())
+        # Phase E.1: scalar stays scalar — one row per entity, no
+        # cross-join with (d, t).  polar_high broadcasts the (entity,)
+        # Param against (entity, d, t)-keyed Vars at constraint
+        # emission via a shared-dim inner-join on ``entity``.
+        # ``period_filter`` already gated us above as the active-solve
+        # signal; no further join needed here.
+        out_lf = lf.select(entity_dim_alias, "value")
+        return Param((entity_dim_alias,), out_lf)
     else:  # pragma: no cover — guarded by allow-list check.
         raise FlexToolConfigError(
             f"broadcast_to_period_time: unhandled shape {shape!r}")
-    if out.height == 0:
-        return None
-    return Param((entity_dim_alias, "d", "t"), out.lazy())
 
 
 def broadcast_to_period(
@@ -884,14 +915,25 @@ def broadcast_to_period(
     filter_zero: bool = False,
     filter_null: bool = True,
 ) -> "Param | None":
-    """Materialise ``Param((entity_dim_alias, "d"), ...)`` from the
-    resolved shape — for parameters whose allow-list excludes time.
+    """Resolve a source frame into a ``Param`` for parameters whose
+    allow-list excludes time — keeping dims at the authored level.
 
-    Handles ``Shape.SCALAR`` (broadcast across periods in
-    *period_filter*) and ``Shape.MAP_PERIOD`` (direct fill, optionally
-    filtered to the active periods).  Other shapes raise
-    :class:`FlexToolConfigError` (the resolver should have rejected
-    them already; this is a defensive guard).
+    Phase E.1:
+
+    ====================  ========================
+    Source shape          Returned Param dims
+    ====================  ========================
+    ``Shape.SCALAR``      ``(entity_dim_alias,)``
+    ``Shape.MAP_PERIOD``  ``(entity_dim_alias, "d")``
+    ====================  ========================
+
+    The returned Param is fully lazy.  For ``MAP_PERIOD`` we inner-join
+    on ``period_filter['d']`` to restrict to the active solve's periods.
+    For ``SCALAR`` the filter is only consulted as the gating signal —
+    no join is needed since a scalar doesn't carry a ``d`` axis.
+
+    Other shapes raise :class:`FlexToolConfigError` (the resolver should
+    have rejected them already; this is a defensive guard).
     """
     if resolved is None or resolved.frame is None:
         return None
@@ -920,27 +962,65 @@ def broadcast_to_period(
 
     shape = resolved.shape
     if shape == Shape.SCALAR:
+        # Phase E.1: scalar stays scalar — one row per entity, no
+        # cross-join with periods.  polar_high broadcasts the (entity,)
+        # Param against (entity, d)-keyed Vars / Params at constraint
+        # emission.  ``period_filter`` is still consulted as the gating
+        # signal: when no period is active we don't emit a Param.
         if period_filter is None or period_filter.height == 0:
             return None
-        periods = period_filter.lazy().select("d").unique()
-        out = (lf.select(entity_dim_alias, "value")
-                  .join(periods, how="cross")
-                  .select(entity_dim_alias, "d", "value")
-                  .collect())
+        out_lf = lf.select(entity_dim_alias, "value")
+        return Param((entity_dim_alias,), out_lf)
     elif shape == Shape.MAP_PERIOD:
-        out = (lf.pipe(rename_to_axis, {"period": "d"})
-                  .select(entity_dim_alias, "d", "value"))
+        out_lf = (lf.pipe(rename_to_axis, {"period": "d"})
+                    .select(entity_dim_alias, "d", "value"))
         if period_filter is not None and period_filter.height > 0:
-            out = out.join(
+            out_lf = out_lf.join(
                 period_filter.lazy().select("d").unique(),
                 on="d", how="inner",
             )
-        out = out.collect()
+        return Param((entity_dim_alias, "d"), out_lf)
     else:
         raise FlexToolConfigError(
             f"broadcast_to_period: shape {shape.value} is not supported "
             f"for (entity, period) parameters.  Allowed: "
             f"{_allowed_shape_names(_PERIOD_ONLY_SHAPES)}")
-    if out.height == 0:
-        return None
-    return Param((entity_dim_alias, "d"), out.lazy())
+
+
+def promote_param_to_dt(
+    param: "Param",
+    dt: "pl.DataFrame | pl.LazyFrame",
+) -> "pl.LazyFrame":
+    """Return a LazyFrame view of ``param`` whose columns include both
+    ``"d"`` and ``"t"`` — promoting via lazy joins on ``dt`` when the
+    Param's authored shape is narrower.
+
+    Phase E.1 makes flex_data Params keep their authored dims
+    (``(entity,)`` / ``(entity, d)`` / ``(entity, t)`` / ``(entity, d,
+    t)``).  Polar_high algebra handles the broadcast lazily at
+    constraint emission, but a small number of consumers in the cascade
+    do eager ``.frame.join(..., on=["x", "d", "t"], how="left")`` style
+    densification (e.g. ``model.py`` flow_upper_rhs availability fold,
+    ``_region_filter.py`` half-flow injection).  Those consumers need a
+    (entity, d, t)-shaped LazyFrame on the right-hand side; this helper
+    gives it to them without forcing the source Param to materialise
+    eagerly.
+
+    * ``(entity, d, t)`` Params — returned unchanged.
+    * ``(entity, d)`` — inner-join on ``d`` against ``dt[d, t].unique()``.
+    * ``(entity, t)`` — inner-join on ``t`` against ``dt[d, t].unique()``.
+    * ``(entity,)`` — cross-join against ``dt[d, t].unique()``.
+    """
+    lf = param.lazy
+    has_d = "d" in param.dims
+    has_t = "t" in param.dims
+    dt_lf = dt.lazy() if isinstance(dt, pl.DataFrame) else dt
+    if has_d and has_t:
+        return lf
+    dt_sel = dt_lf.select("d", "t").unique()
+    if has_d:  # missing t
+        return lf.join(dt_sel, on="d", how="inner")
+    if has_t:  # missing d
+        return lf.join(dt_sel, on="t", how="inner")
+    # missing both — scalar-per-entity broadcast over (d, t).
+    return lf.join(dt_sel, how="cross")

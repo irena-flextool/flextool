@@ -29,6 +29,7 @@ from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
 from ._axis_enums import alias_to_axis, cast_dim, rename_to_axis, lit_axis
+from ._param_shapes import promote_param_to_dt
 
 
 # ---------------------------------------------------------------------------
@@ -1369,12 +1370,18 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 # per-(d, t) availability factor.
                 fr = fr.join(d.dt, on="d", how="inner").select(
                     "p", "source", "sink", "d", "t", "value")
-            merged_frame = (fr
-                .join(d.p_process_availability.frame,
+            # Phase E.1: p_process_availability may be authored as scalar
+            # / 1d_map[period] / 1d_map[time] / 2d_map, so its dims can be
+            # (p,) / (p, d) / (p, t) / (p, d, t).  Promote lazily to
+            # (p, d, t) before the eager left-join.
+            avail_lf = promote_param_to_dt(d.p_process_availability, d.dt)
+            merged_frame = (fr.lazy()
+                .join(avail_lf,
                       on=["p", "d", "t"], how="left", suffix="__a")
                 .with_columns(pl.col("value__a").fill_null(1.0))
                 .select("p", "source", "sink", "d", "t",
-                        value=pl.col("value") * pl.col("value__a")))
+                        value=pl.col("value") * pl.col("value__a"))
+                .collect())
             flow_upper_rhs = Param(("p", "source", "sink", "d", "t"),
                                     merged_frame)
         if has_divest_p:
@@ -2486,18 +2493,23 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             if ssrv_over.height > 0:
                 # RHS: reference_value[n, d, t] · existing[n, d] / unitsize[n].
                 # Build as a single Param keyed (n, d, t).
-                ssrv_frame = (d.p_storage_state_reference_value.frame
+                # Phase E.1: p_storage_state_reference_value may be
+                # narrower than (n, d, t).  Promote lazily.
+                ssrv_lf = promote_param_to_dt(
+                    d.p_storage_state_reference_value, d.dt)
+                ssrv_frame = (ssrv_lf
                     .rename({"value": "rv"})
-                    .join(d.p_state_existing_capacity.frame
+                    .join(d.p_state_existing_capacity.frame.lazy()
                             .rename({"value": "exist"}),
                           on=["n", "d"], how="inner")
-                    .join(d.p_state_unitsize.frame
+                    .join(d.p_state_unitsize.frame.lazy()
                             .rename({"value": "us"}),
                           on="n", how="inner")
                     .with_columns(value=pl.col("rv")
                                           * pl.col("exist")
                                           / pl.col("us"))
-                    .select("n", "d", "t", "value"))
+                    .select("n", "d", "t", "value")
+                    .collect())
                 rhs_param_ssrv = Param(("n", "d", "t"), ssrv_frame)
                 m.add_cstr(
                     "storage_state_solve_horizon_reference_value",
