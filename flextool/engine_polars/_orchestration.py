@@ -766,7 +766,14 @@ def _drive_cascade(
             "the underlying FlexToolRunner.  Use run_chain_from_db for "
             "the canonical end-to-end path that wires this for you."
         )
+    _drive_rec = get_phase_recorder()
+    _drive_logger = state.logger
     runner = runner_factory()
+    if _drive_rec is not None:
+        _drive_rec.checkpoint(
+            "flextool_runner_constructed", _drive_logger,
+            user_label="FlexToolRunner constructed (legacy DB fetch_all)",
+        )
     # Push our state's handoff slot onto the runner's state so flextool's
     # consume hooks (preprocessing_solve_time + capture_post_solve) read
     # from the same dict.
@@ -812,6 +819,11 @@ def _drive_cascade(
             )
         except Exception:  # noqa: BLE001
             cascade_db_reader = None
+        if _drive_rec is not None:
+            _drive_rec.checkpoint(
+                "cascade_spinedb_reader_constructed", _drive_logger,
+                user_label="cascade SpineDbReader constructed",
+            )
 
     class _FlexpyCascadeSolver(SolverRunner):
         def __init__(self, runner_state):
@@ -1581,9 +1593,13 @@ def run_chain_from_db(
     from flextool.engine_polars._timeline import TimelineConfig
 
     sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
+    _memrec.checkpoint("solve_config_loaded", logger,
+                       user_label="SolveConfig loaded (from DB)")
     tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)
     tc.create_assumptive_parts(sc)
     tc.create_timeline_from_timestep_duration(sc)
+    _memrec.checkpoint("timeline_constructed", logger,
+                       user_label="TimelineConfig constructed (from DB)")
 
     state = RunnerState(
         paths=PathConfig(work_folder=work_folder),
