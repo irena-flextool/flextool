@@ -17,6 +17,7 @@ populated" from "no prior carrier".  This matches the
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -24,6 +25,7 @@ import polars as pl
 from flextool.engine_polars import _provider_keys as K
 
 if TYPE_CHECKING:
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
     from flextool.engine_polars._solve_handoff import SolveHandoff
 
 
@@ -178,8 +180,43 @@ def read_handoff_frame(provider, key: str) -> "pl.DataFrame | None":
     return frame
 
 
+def dump_provider_sources(
+    provider: "FlexDataProvider",
+    dump_path: "str | Path",
+    solve_name: str,
+) -> None:
+    """Append every source-tagged Provider key to *dump_path*.
+
+    Phase 6b of ``specs/provider_consolidation.md``.  Iterates the
+    Provider's keys; for each key whose :meth:`get_source` returns a
+    non-``None`` tag, appends one tab-separated line in the format::
+
+        <solve_name>\\t<key>\\t<source>\\n
+
+    The file is opened in append mode so multiple sub-solves
+    accumulate in a single log.  The parent directory is created if
+    missing.
+
+    Untagged (natural-cascade) keys are skipped — the dump is a
+    minimal audit trail of writes whose origin differs from the
+    default preprocessing chain, not a snapshot of the full Provider.
+    """
+    path = Path(dump_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Sorted iteration keeps the log deterministic across runs so the
+    # audit trail diffs cleanly between cascades that differ only in
+    # dict-iteration order.
+    with path.open("a", encoding="utf-8") as fh:
+        for key in sorted(provider.keys()):
+            source = provider.get_source(key)
+            if source is None:
+                continue
+            fh.write(f"{solve_name}\t{key}\t{source}\n")
+
+
 __all__ = [
     "translate_handoff_to_provider",
     "translate_overrides_to_provider",
     "read_handoff_frame",
+    "dump_provider_sources",
 ]

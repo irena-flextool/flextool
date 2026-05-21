@@ -213,3 +213,112 @@ def test_external_override_shadows_handoff_realized_invest(tmp_path) -> None:
             f"(Phase 5a/5b plumbing gap) or the scale was lost in "
             f"transit."
         )
+
+
+def test_audit_sources_dump_records_external_override(
+    tmp_path, monkeypatch
+) -> None:
+    """Phase 6b — when ``FLEXTOOL_AUDIT_SOURCES=1`` is set, the
+    orchestrator dumps every source-tagged Provider key to
+    ``<work_folder>/audit_sources.log``.
+
+    Strategy
+    --------
+
+    Set the env var via monkeypatch, attach an override_provider that
+    returns one whitelisted handoff override after the first sub-solve,
+    and run the cascade.  Then read the audit log and assert:
+
+    * The log file exists in the work folder.
+    * It contains at least one row tagged ``external_override``.
+    * The tagged key is the override slot for
+      ``K.HANDOFF_REALIZED_INVEST`` (``K.OVERRIDE_REALIZED_INVEST``).
+    * The ``solve_name`` column matches one of the post-first sub-solves
+      (the first iteration has no prior carrier and the override
+      provider returned ``{}``).
+
+    ``monkeypatch.setenv`` reverts the env var automatically after the
+    test so concurrent tests in the same session aren't affected.
+    """
+    if not WORK.exists():
+        pytest.skip(f"fixture {WORK} not present")
+    db_path = WORK / "tests.sqlite"
+    if not db_path.exists():
+        pytest.skip(f"DB {db_path} not present")
+
+    monkeypatch.setenv("FLEXTOOL_AUDIT_SOURCES", "1")
+
+    # Run 1 just to capture a real realized_invest frame to override
+    # with (mirrors the strategy of the shadow test above).  Keep this
+    # small — we don't need to assert anything on the baseline cascade
+    # here.
+    baseline_work = tmp_path / "baseline"
+    baseline_work.mkdir()
+    baseline = run_chain_from_db(
+        db_path,
+        scenario_name=SCENARIO_NAME,
+        work_folder=baseline_work,
+        keep_solutions=True,
+    )
+    solve1_natural = baseline["y2020_5week"].handoff.realized_invest
+    assert solve1_natural is not None and solve1_natural.height > 0
+
+    scaled = solve1_natural.with_columns(
+        (pl.col("value") * OVERRIDE_SCALE).alias("value")
+    )
+
+    invocations: list[int] = []
+
+    def _override() -> dict[str, pl.DataFrame]:
+        call_idx = len(invocations)
+        invocations.append(call_idx)
+        if call_idx == 0:
+            return {}
+        return {K.HANDOFF_REALIZED_INVEST: scaled}
+
+    audit_work = tmp_path / "audit"
+    audit_work.mkdir()
+    run_chain_from_db(
+        db_path,
+        scenario_name=SCENARIO_NAME,
+        work_folder=audit_work,
+        keep_solutions=True,
+        override_provider=_override,
+    )
+
+    # ── Audit log assertions ───────────────────────────────────────
+    audit_log = audit_work / "audit_sources.log"
+    assert audit_log.exists(), (
+        f"FLEXTOOL_AUDIT_SOURCES=1 was set but {audit_log} was not "
+        f"created — orchestrator wire missing or work_folder mismatch."
+    )
+
+    lines = [
+        ln for ln in audit_log.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert lines, f"audit log {audit_log} is empty; expected at least one row."
+
+    rows = [ln.split("\t") for ln in lines]
+    for r in rows:
+        assert len(r) == 3, (
+            f"audit row {r!r} does not have 3 tab-separated fields "
+            f"(solve_name, key, source)."
+        )
+
+    override_rows = [
+        r for r in rows
+        if r[1] == K.OVERRIDE_REALIZED_INVEST and r[2] == "external_override"
+    ]
+    assert override_rows, (
+        f"expected at least one row tagged external_override under "
+        f"key {K.OVERRIDE_REALIZED_INVEST!r}; observed rows: {rows!r}."
+    )
+
+    # The override returns {} on the first call, so the first sub-solve
+    # (``y2020_5week``) must NOT appear as an external_override row.
+    assert all(r[0] != "y2020_5week" for r in override_rows), (
+        f"override returned {{}} for the first sub-solve, so "
+        f"y2020_5week should not appear with an external_override "
+        f"tag; observed: {override_rows!r}."
+    )

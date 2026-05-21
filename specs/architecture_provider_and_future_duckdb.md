@@ -270,10 +270,18 @@ emits an INFO record `[override] applied N keys at iter=<i> solve=<name>`
 followed by a DEBUG line listing the keys. This is the audit signal users
 follow to confirm an override reached the iteration they expected.
 
-**Forward-looking (Phase 6).** Source-tagging will tag override entries
-with `external_override:<id>` so the optional end-of-preprocessing audit
-dump distinguishes override-driven writes from natural handoff carriers.
-That work is additive and does not change the precedence rules above.
+**Source-tagging audit dump (Phase 6).** Override entries are tagged with
+`source="external_override"` at write time (Phase 6a — `provider.put`
+accepts an optional `source` kwarg; `provider.get_source(key)` surfaces it).
+When the environment variable `FLEXTOOL_AUDIT_SOURCES=1` is set, the
+orchestrator dumps every source-tagged Provider key at the end of each
+sub-solve's preprocessing (Phase 6b) to `<work_folder>/audit_sources.log`.
+The format is tab-separated lines `<solve_name>\t<key>\t<source>` and the
+file is opened in append mode so a multi-roll cascade accumulates one
+record per overridden key per sub-solve.  Natural cascade writes leave
+`source=None` and are skipped, so the log is a minimal audit trail of
+externally-injected entries — not a Provider snapshot.  This is additive
+and does not change the precedence rules above.
 
 ---
 

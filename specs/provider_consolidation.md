@@ -30,7 +30,8 @@ gated by `tests/engine_polars/...` (~3 min).
 | 5b — wire override translator into orchestrator | **DONE** | `f5224217` | Third translator call in `native_run_model` iteration setup; `state.override_provider: Callable[[], dict] \| None` is the orchestrator hook; INFO log on apply, DEBUG lists keys. |
 | 5c — end-to-end override test | **DONE** | `4ef17539` | `tests/engine_polars/test_override_provider.py` asserts an override of `K.HANDOFF_REALIZED_INVEST` reaches `p_entity_previously_invested_capacity`; `run_chain_from_db` gains `override_provider=` kwarg threaded onto `RunnerState`. |
 | 5d — document precedence + transport | **DONE** | (this commit) | External Overrides section in `architecture_provider_and_future_duckdb.md`; spec status table + Phase 5 narrative reflect what shipped. |
-| 6 — source-tagging | open | — | Independent of Phase 5; additive. Phase-6 dump will tag override entries with `external_override:<id>` source. |
+| 6a — source tag on `provider.put` | **DONE** | `64d8697f` | `provider.put(key, frame, *, source=None)` records a free-form tag; `provider.get_source(key)` reads it.  Override translator tags writes with `source="external_override"`. |
+| 6b — env-gated audit dump | **DONE** | (this commit) | `dump_provider_sources(provider, path, solve_name)` in `_provider_translators.py`; orchestrator calls it at end of per-iteration preprocessing when `FLEXTOOL_AUDIT_SOURCES=1`.  Log path `<work_folder>/audit_sources.log`; tab-separated `solve_name\tkey\tsource` per line, append mode. |
 
 The dead-key cleanup that preceded this spec landed in `752dff3f`
 (`rp_base/rp_block` writers) and `3c51404d` (`p_years_represented_d_calc`
@@ -299,23 +300,35 @@ program's design lands).
 
 ---
 
-### Phase 6 — Source-tagging (opt-in provenance)
+### Phase 6 — Source-tagging (opt-in provenance, landed)
 
 **Goal:** make non-default writes traceable end-to-end.
 
-**Steps:**
-1. Add `source: str | None = None` to `provider.put`'s signature.
-2. The override-translator (Phase 5) passes `source=<override_source_id>`.
-   Other callers default to `None`.
-3. Add `provider.get_source(name)` returning the source string or
-   `None`. Used by the audit dump.
-4. At end of preprocessing, optionally dump keys where source != None
-   to a log file or audit table.
+**Phase 6a (`64d8697f`).** `provider.put(name, frame, *, source=None)`
+records a free-form tag alongside the frame; `provider.get_source(name)`
+surfaces it.  Entries with `source=None` (the natural-cascade default)
+leave no record so memory overhead stays zero.  Eviction by
+`release_unused` clears the matching source entry alongside the frame.
+The override translator (Phase 5) passes `source="external_override"`
+for every override write; all other callers leave the kwarg unset.
 
-**Verification:** part of Phase 5's audit-log test. Independent
-otherwise.
+**Phase 6b (this commit).** `dump_provider_sources(provider, path,
+solve_name)` in `_provider_translators.py` iterates Provider keys (via
+`provider.keys()`) and appends one tab-separated line per
+source-tagged key: `<solve_name>\t<key>\t<source>\n`.  The orchestrator
+invokes the helper at the end of per-iteration preprocessing — after
+the override translator + per-iter emits, before `solver.run` — when
+`FLEXTOOL_AUDIT_SOURCES=1` is set in the environment.  The log path is
+`<work_folder>/audit_sources.log`; the file is opened in append mode
+so multiple sub-solves accumulate.  Sorted iteration keeps the line
+order deterministic.
 
-**Risk:** trivial. Additive.
+**Verification:** `tests/engine_polars/test_override_provider.py::test_audit_sources_dump_records_external_override`
+sets the env var + an override provider, runs the cascade, and asserts
+the override key appears in the log tagged `external_override`.
+
+**Risk:** trivial.  Additive — env var off by default, no behaviour
+change for production runs.
 
 ---
 
@@ -393,7 +406,7 @@ Status as of 2026-05-22:
 | 3 — delete `capture_post_solve` + `.csv` retirement | small (shrunk; was rewrite) | low | independent | DONE |
 | 4 — retire `CROSS_SOLVE_KEYS` (LayeredProvider dropped) | medium–high (shipped without LayeredProvider) | medium | Phases 0–3 | DONE |
 | 5 — external overrides (override/* namespace, not a layer) | small | low | Phase 4 | DONE |
-| **6 — source-tagging** | trivial | trivial | Phase 5 (or independent) | **NEXT** |
+| 6 — source-tagging (put-side tag + env-gated audit dump) | trivial | trivial | Phase 5 (or independent) | DONE |
 
 ---
 

@@ -916,6 +916,21 @@ def native_run_model(state, solver) -> int:
                 t_start=_t_preproc_start,
             )
 
+        # Phase 6b — opt-in source-tagging audit dump.  When
+        # ``FLEXTOOL_AUDIT_SOURCES=1`` is set in the environment, append
+        # every Provider key carrying a non-None source tag to
+        # ``<work_folder>/audit_sources.log``.  The override translator
+        # tags its writes with ``source="external_override"`` (Phase 6a);
+        # other writes leave the source slot empty, so the log captures
+        # exactly the externally-injected entries for the just-completed
+        # preprocessing pass.  Append mode accumulates across sub-solves.
+        if os.environ.get("FLEXTOOL_AUDIT_SOURCES") == "1":
+            _provider_translators.dump_provider_sources(
+                sub_solve_provider,
+                wf / "audit_sources.log",
+                complete_solve[solve],
+            )
+
         # Phase 4 (Gap F) — expose the upper-level (nesting) parent's
         # complete solve name so ``_FlexpyCascadeSolver.run`` can look the
         # parent's :class:`SolveHandoff` up out of ``state.handoffs`` and
