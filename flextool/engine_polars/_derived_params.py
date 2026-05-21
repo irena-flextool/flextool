@@ -8016,19 +8016,64 @@ def p_entity_previously_invested_capacity_from_workdir(
         workdir, "p_entity_previously_invested_capacity", provider=provider)
 
 
-def p_entity_invested_from_workdir(workdir: Path, *, provider: "object | None" = None) -> "Param | None":
+def p_entity_invested_from_handoff(
+        *,
+        provider: "object | None" = None,
+        ) -> "Param | None":
     """Per-entity scalar of cumulative prior-solve invest (§3.7.8).
 
-    Read from ``solve_data/p_entity_invested.csv`` (a 2-column
-    ``entity, p_entity_invested`` wide CSV).  Single-solve fixtures
-    leave this header-only; reads as ``None``.
+    Phase 4.2-1a — read the realized-invest carrier from the canonical
+    ``handoff/realized_invest`` Provider key (schema
+    ``[entity, period, value]``) and sum over period to produce the
+    per-entity scalar ``Param(("e",), [(e, value)])``.  The translator
+    populates this key from :pyattr:`SolveHandoff.realized_invest` at
+    iteration start; absent / header-only / all-zero collapses to
+    ``None``.  Mirrors the overlay logic at ``input.py:5464-5476``.
     """
-    return _read_handoff_e_from_workdir(workdir, "p_entity_invested", provider=provider)
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
+    df = read_handoff_frame(provider, K.HANDOFF_REALIZED_INVEST)
+    if df is None or df.height == 0:
+        return None
+    df = (df
+          .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
+                                .fill_null(0.0))
+          .group_by("entity").agg(pl.col("value").sum())
+          .pipe(rename_to_axis, {"entity": "e"})
+          .filter(pl.col("value") != 0.0)
+          .select("e", "value"))
+    if df.height == 0:
+        return None
+    return Param(("e",), df)
 
 
-def p_entity_divested_from_workdir(workdir: Path, *, provider: "object | None" = None) -> "Param | None":
-    """Per-entity scalar of cumulative prior-solve divest (§3.7.8)."""
-    return _read_handoff_e_from_workdir(workdir, "p_entity_divested", provider=provider)
+def p_entity_divested_from_handoff(
+        *,
+        provider: "object | None" = None,
+        ) -> "Param | None":
+    """Per-entity scalar of cumulative prior-solve divest (§3.7.8).
+
+    Phase 4.2-1a — read the divest-cumulative carrier from the canonical
+    ``handoff/divest_cumulative`` Provider key (schema
+    ``[entity, value]``).  The translator populates this key from
+    :pyattr:`SolveHandoff.divest_cumulative` at iteration start;
+    absent / header-only / all-zero collapses to ``None``.  Mirrors
+    the overlay logic at ``input.py:5478-5487``.
+    """
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
+    df = read_handoff_frame(provider, K.HANDOFF_DIVEST_CUMULATIVE)
+    if df is None or df.height == 0:
+        return None
+    df = (df
+          .pipe(rename_to_axis, {"entity": "e"})
+          .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
+                                .fill_null(0.0))
+          .filter(pl.col("value") != 0.0)
+          .select("e", "value"))
+    if df.height == 0:
+        return None
+    return Param(("e",), df)
 
 
 # ---------------------------------------------------------------------------
@@ -8606,10 +8651,10 @@ def apply_derived_f(
     flex_data.p_entity_previously_invested_capacity = (
         p_entity_previously_invested_capacity_from_workdir(
             workdir, provider=provider))
-    flex_data.p_entity_invested = p_entity_invested_from_workdir(
-        workdir, provider=provider)
-    flex_data.p_entity_divested = p_entity_divested_from_workdir(
-        workdir, provider=provider)
+    flex_data.p_entity_invested = p_entity_invested_from_handoff(
+        provider=provider)
+    flex_data.p_entity_divested = p_entity_divested_from_handoff(
+        provider=provider)
 
 
 
