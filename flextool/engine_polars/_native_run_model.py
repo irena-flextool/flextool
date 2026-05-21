@@ -74,6 +74,7 @@ from flextool.flextoolrunner.scaling_report import write_scaling_report
 # but is no longer called from the cascade.
 from flextool.engine_polars import _emit_solve_writers as solve_writers
 from flextool.engine_polars import _provider_keys
+from flextool.engine_polars import _provider_translators
 
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
 
@@ -982,13 +983,21 @@ def native_run_model(state, solver) -> int:
         state.current_roll_index = i
 
         # Per-solve preprocessing chain (still authoritative — the
-        # override hook intercepts already-ported helpers).  Feeds
-        # ``prior_handoff`` from the most-recent capture so consume-side
-        # reads come from the in-memory handoff dict when present.
+        # override hook intercepts already-ported helpers).  The prior
+        # SolveHandoff is fanned into ``handoff/<field>`` Provider keys
+        # via :func:`_provider_translators.translate_handoff_to_provider`
+        # so consumer reads can go through ``provider.get(K.HANDOFF_X)``
+        # without the ``prior_handoff`` parameter threading the cascade
+        # (Phase 2 of specs/provider_consolidation.md).  The parameter
+        # is still threaded into ``preprocessing_solve_time.run`` below
+        # while consumers are migrated one module at a time.
         prior_handoff = (
             state.handoffs.get(last_captured_solve)
             if state.handoffs is not None and last_captured_solve is not None
             else None
+        )
+        _provider_translators.translate_handoff_to_provider(
+            prior_handoff, sub_solve_provider,
         )
         _phase_timing = (
             os.environ.get("FLEXTOOL_PHASE_TIMING") == "1"

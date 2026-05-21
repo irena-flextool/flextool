@@ -129,3 +129,21 @@ INPUT_PROCESS_METHOD = "input/process_method.csv"
 # ---------------------------------------------------------------------------
 
 DERIVED_CT_METHOD_OVERRIDES = "derived/ct_method_overrides.csv"
+
+
+# ---------------------------------------------------------------------------
+# handoff/ keys — populated by ``_provider_translators.translate_handoff_to_provider``
+# at iteration start, from the previous sub-solve's ``SolveHandoff``.
+# One key per consumed handoff field; empty header-only frame written
+# when the corresponding handoff field is ``None`` (first sub-solve, or
+# carrier not active for the previous solve).  Consumers should treat
+# ``provider.get(K.HANDOFF_X).height == 0`` as the "no prior carrier"
+# signal instead of checking the SolveHandoff object directly.
+# ---------------------------------------------------------------------------
+
+HANDOFF_REALIZED_INVEST = "handoff/realized_invest.csv"
+HANDOFF_REALIZED_EXISTING = "handoff/realized_existing.csv"
+HANDOFF_DIVEST_CUMULATIVE = "handoff/divest_cumulative.csv"
+HANDOFF_CUMULATIVE_CO2 = "handoff/cumulative_co2.csv"
+HANDOFF_CUMULATIVE_COMMODITY = "handoff/cumulative_commodity.csv"
+HANDOFF_CUM_SIM_HOURS = "handoff/cum_sim_hours.csv"
