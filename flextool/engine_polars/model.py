@@ -958,6 +958,153 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 rhs_terms = {"target": rhs_param},
             )
 
+    # ─── node_storage_usage_fix_le (mod:2775-2800) ───────────────────────
+    # Storage-usage fix: the net energy drawn from the storage node n
+    # across the dispatch window must not exceed the storage-solve
+    # target usage handed off via ``p_fix_storage_usage``.
+    #
+    #   - Σ_{(p, source, n) ∈ pss, (d, t3) ∈ dt}
+    #         v_flow[p, source, n, d, t3] * unitsize * step_dur[d, t3]
+    #   + Σ_{(p, n, sink) ∈ pss_eff, (d, t3) ∈ dt}
+    #         (v_flow * unitsize * slope
+    #          + (if min_load_efficiency) v_online * pdtProcess_section
+    #                                       * unitsize) * step_dur
+    #   + Σ_{(p, n, sink) ∈ pss_noEff, (d, t3) ∈ dt}
+    #         v_flow * unitsize * step_dur
+    #   ≤   Σ_{(n, d2, t2) ∈ ndt_fix_storage_usage,
+    #          (d, t3, t2) ∈ dtt_timeline_matching}
+    #         p_fix_storage_usage[n, d2, t2]
+    #
+    # for nodes n ∈ n_fix_storage_usage at the last (d, t) of each
+    # node's block, restricted to d ∈ period_last.
+    #
+    # The LHS is the FULL legacy formula with efficiency corrections on
+    # sink flows (slope, plus min_load_efficiency section term).  The
+    # per-process sink/source flow-coefficient RATIO from the .mod
+    # (line 2786) is DEFERRED here, matching the engine's existing
+    # treatment of the same ratio in §5.2 var-cost (model.py:2742-2744):
+    # every current fixture has both coefficients = 1, so the ratio
+    # collapses to 1 and we follow the prevailing convention.  When a
+    # fixture exercises non-unit coefficients, both this constraint and
+    # §5.2 var-cost need the ratio wired in tandem.
+    #
+    # No fixture today exercises fix_storage_usage, so the populated
+    # constraint domain is empty everywhere; the LP machinery is wired
+    # for when B3's producer + B4-pre's loader populate the inputs.
+    if (has_proc
+            and has_storage
+            and d.n_fix_storage_usage is not None
+            and d.n_fix_storage_usage.height > 0
+            and d.ndt_fix_storage_usage is not None
+            and d.ndt_fix_storage_usage.height > 0
+            and d.dtt_timeline_matching is not None
+            and d.dtt_timeline_matching.height > 0
+            and d.period_branch is not None
+            and d.period_last is not None
+            and d.p_fix_storage_usage is not None
+            and d.nodeState_last_dt is not None):
+        # RHS rows (n, d, t, value): sum p_fix_storage_usage[n, d2, t2]
+        # along (d2, d) ∈ period__branch and (d, t, t2) ∈
+        # dtt_timeline_matching, restricted to d ∈ period_last and
+        # n ∈ n_fix_storage_usage, pinned to nodeState_last_dt.  Mirror
+        # of the node_balance_fix_quantity_eq_lower RHS build.
+        fix_u_long = d.p_fix_storage_usage.frame.pipe(
+            rename_to_axis, {"d": "d_upper", "t": "t_upper"}
+        )
+        rhs_rows = (d.n_fix_storage_usage
+            .join(fix_u_long, on="n", how="inner")
+            .join(d.period_branch, on="d_upper", how="inner")
+            .join(d.dtt_timeline_matching,
+                  left_on=["d", "t_upper"],
+                  right_on=["d", "t_upper"],
+                  how="inner")
+            .join(d.period_last, on="d", how="inner")
+            .join(d.nodeState_last_dt, on=["n", "d", "t"], how="inner")
+            .group_by(["n", "d", "t"])
+            .agg(pl.col("value").sum())
+            .select("n", "d", "t", "value"))
+        if rhs_rows.height > 0:
+            cstr_over = rhs_rows.select("n", "d", "t").unique()
+            rhs_param = Param(("n", "d", "t"), rhs_rows)
+
+            # ── Build LHS: composite flow sum, indexed only by n ──
+            # Each piece sums over (p, source, sink, d, t3) leaving the
+            # n dim open; the constraint's (n, d, t) ``over`` broadcasts
+            # the same per-n value onto the single anchor row.
+            #
+            # n-as-sink: every (p, source, n) row in process_source_sink.
+            n_set = d.n_fix_storage_usage.select("n")
+            sink_idx = (d.process_source_sink
+                .join(n_set.pipe(rename_to_axis, {"n": "sink"}),
+                      on="sink", how="inner")
+                .with_columns(n=pl.col("sink")))
+            # n-as-source (eff partition): process_source_sink_eff.
+            src_eff_idx = None
+            if (d.process_source_sink_eff is not None
+                    and d.process_source_sink_eff.height > 0):
+                src_eff_idx = (d.process_source_sink_eff
+                    .join(n_set.pipe(rename_to_axis, {"n": "source"}),
+                          on="source", how="inner")
+                    .with_columns(n=pl.col("source")))
+            # n-as-source (noEff partition): process_source_sink_noEff.
+            src_noEff_idx = None
+            if (d.process_source_sink_noEff is not None
+                    and d.process_source_sink_noEff.height > 0):
+                src_noEff_idx = (d.process_source_sink_noEff
+                    .join(n_set.pipe(rename_to_axis, {"n": "source"}),
+                          on="source", how="inner")
+                    .with_columns(n=pl.col("source")))
+
+            lhs_terms: dict = {}
+            # n-as-sink: subtract (flows INTO n).
+            if sink_idx.height > 0:
+                lhs_terms["sink_flow"] = -Sum(
+                    Where(v_flow * d.p_unitsize, sink_idx)
+                    * d.p_step_duration,
+                    over=("p", "source", "sink", "d", "t"))
+            # n-as-source (eff): add v_flow * unitsize * slope * step_dur.
+            if (src_eff_idx is not None and src_eff_idx.height > 0
+                    and d.p_slope is not None):
+                lhs_terms["source_eff"] = Sum(
+                    Where(v_flow * d.p_unitsize * d.p_slope, src_eff_idx)
+                    * d.p_step_duration,
+                    over=("p", "source", "sink", "d", "t"))
+                # min_load_efficiency section term (n-as-source side).
+                if has_minload_eff and d.p_section is not None:
+                    section_idx = (src_eff_idx
+                                   .join(d.process_min_load_eff,
+                                         on="p", how="inner"))
+                    if section_idx.height > 0:
+                        if has_online_lin:
+                            lhs_terms["source_section_lin"] = Sum(
+                                Where(Where(v_online_lin, d.process_min_load_eff)
+                                      * d.p_section * d.p_unitsize,
+                                      section_idx)
+                                * d.p_step_duration,
+                                over=("p", "source", "sink", "d", "t"))
+                        if has_online_int:
+                            lhs_terms["source_section_int"] = Sum(
+                                Where(Where(v_online_int, d.process_min_load_eff)
+                                      * d.p_section * d.p_unitsize,
+                                      section_idx)
+                                * d.p_step_duration,
+                                over=("p", "source", "sink", "d", "t"))
+            # n-as-source (noEff): add v_flow * unitsize * step_dur.
+            if src_noEff_idx is not None and src_noEff_idx.height > 0:
+                lhs_terms["source_noEff"] = Sum(
+                    Where(v_flow * d.p_unitsize, src_noEff_idx)
+                    * d.p_step_duration,
+                    over=("p", "source", "sink", "d", "t"))
+
+            if lhs_terms:
+                m.add_cstr(
+                    "node_storage_usage_fix_le",
+                    over      = cstr_over,
+                    sense     = "<=",
+                    lhs_terms = lhs_terms,
+                    rhs_terms = {"target": rhs_param},
+                )
+
     # ─── stateConstantWithinBlock_eq + nodeBalanceBlock_eq ────────────────
     # For nodes in ``nodeStateBlock`` (binding method
     # ``bind_intraperiod_blocks``), v_state is constant across the interior
