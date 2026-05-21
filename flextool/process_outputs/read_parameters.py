@@ -1290,6 +1290,28 @@ def read_parameters(
 
     # group_penalty_inertia / group_penalty_non_synchronous /
     # group_penalty_capacity_margin / group_inertia_limit / group_capacity_margin.
+    #
+    # SCEN-6: ``pdGroup_penalty_capacity_margin`` is derived via
+    # ``_entity_period_scalar`` which drops null rows.  When a group has
+    # ``capacity_margin > 0`` but ``penalty_capacity_margin`` left blank
+    # (a common template pattern — e.g. xlsx ``Commodity_nodes``), the
+    # group lands in ``groupCapacityMargin`` (built from non-empty
+    # ``capacity_margin`` rows) but is absent from the penalty frame.
+    # ``calc_slacks.py`` indexes ``par.group_penalty_capacity_margin
+    # [s.groupCapacityMargin]`` and raises ``KeyError`` on the gap.
+    # Densify here with the same zero-fill convention used elsewhere for
+    # parity emitters: missing penalty ⇒ 0 (no slack-cost contribution,
+    # matching the LP: the slack term in
+    # ``_group_slack.compute_slack_costs`` is itself gated on a
+    # non-null ``pdGroup_penalty_capacity_margin``).
+    if (flex_data.groupCapacityMargin is not None
+            and flex_data.groupCapacityMargin.height > 0):
+        _group_cap_margin_universe = (
+            flex_data.groupCapacityMargin.select("g").unique()
+                .to_pandas()["g"].tolist()
+        )
+    else:
+        _group_cap_margin_universe = []
     p.group_penalty_inertia = _pdX_per_entity(
         flex_data.pdGroup_penalty_inertia, solve_name=solve_name,
         entity_dim="g", col_name="group", flex_data=flex_data,
@@ -1301,6 +1323,7 @@ def read_parameters(
     p.group_penalty_capacity_margin = _pdX_per_entity(
         flex_data.pdGroup_penalty_capacity_margin, solve_name=solve_name,
         entity_dim="g", col_name="group", flex_data=flex_data,
+        densify_entities=_group_cap_margin_universe,
     )
     p.group_inertia_limit = _pdX_per_entity(
         flex_data.pdGroup_inertia_limit, solve_name=solve_name,
