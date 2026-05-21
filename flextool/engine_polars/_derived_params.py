@@ -7188,27 +7188,31 @@ def storage_use_reference_value_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
-def p_roll_continue_state_from_workdir(workdir: Path | None,
-                                            *,
-                                            provider: "object | None" = None,
-                                            ) -> "Param | None":
+def p_roll_continue_state_from_handoff(
+    *,
+    provider: "object | None" = None,
+) -> "Param | None":
     """Read the rolling-handoff ``p_roll_continue_state`` from the
-    on-disk CSV (written by a prior solve via
-    ``fn_p_roll_continue_state``).  No Spine source — pure handoff
-    artefact per audit §3.9.7.
+    canonical ``handoff/roll_end_state`` Provider key
+    (schema ``[node, value]``).
+
+    Phase 4.2-1b — the legacy ``solve_data/p_roll_continue_state``
+    CSV read path is gone; the typed handoff translator pipeline
+    (extended in Phase 4.2-0) populates the handoff key from
+    :pyattr:`SolveHandoff.roll_end_state` at iteration start.
     """
-    if workdir is None:
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
+    df = read_handoff_frame(provider, K.HANDOFF_ROLL_END_STATE)
+    if df is None or df.height == 0:
         return None
-    p = Path(workdir) / "solve_data" / "p_roll_continue_state.csv"
-    if not _provider_has_key(provider, p):  # Phase E-h — seed-aware
-        return None
-    df = _provider_read(provider, p)
-    df.columns = [c.strip() for c in df.columns]
+    df = (df.pipe(rename_to_axis, {"node": "n"})
+            .with_columns(value=pl.col("value")
+                                    .cast(pl.Float64, strict=False)
+                                    .fill_null(0.0))
+            .select("n", "value"))
     if df.height == 0:
         return None
-    df = (df.pipe(rename_to_axis, {"node": "n", "p_roll_continue_state": "value"})
-            .with_columns(value=pl.col("value").cast(pl.Float64))
-            .select("n", "value"))
     return Param(("n",), df)
 
 
@@ -7603,7 +7607,7 @@ def apply_derived_e(
     # at seed time but produced later by a prior solve).
     if has_state:
         if getattr(flex_data, "p_roll_continue_state", None) is None:
-            flex_data.p_roll_continue_state = p_roll_continue_state_from_workdir(workdir, provider=provider)
+            flex_data.p_roll_continue_state = p_roll_continue_state_from_handoff(provider=provider)
         if getattr(flex_data, "p_fix_storage_quantity", None) is None:
             flex_data.p_fix_storage_quantity = p_fix_storage_quantity_from_handoff(provider=provider)
         flex_data.dtt_timeline_matching = dtt_timeline_matching_from_workdir(workdir, provider=provider)
