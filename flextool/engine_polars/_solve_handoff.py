@@ -38,7 +38,6 @@ carriers, named metric columns for multi-value):
     realized_existing      [entity, period, value]
     divest_cumulative      [entity, value]
     roll_end_state         [node, value]
-    fix_storage            [node, period, time, quantity, price, usage]
     fix_storage_quantity   [node, period, step, p_fix_storage_quantity]
     fix_storage_price      [node, period, step, p_fix_storage_price]
     fix_storage_usage      [node, period, step, p_fix_storage_usage]
@@ -56,11 +55,10 @@ frames straight through to ``handoff/cumulative_commodity`` /
 moved to ``_output_writer.OutputWriterState`` since it gates writer-
 side emission and isn't a true solver-handoff carrier.)
 
-``fix_storage`` collapses the three file-based carriers
-(``fix_storage_quantity.csv``, ``..._price.csv``, ``..._usage.csv``)
-into one wide row with NULL columns for unused metrics.  Per the
-design discussion: less files is good, the trio is independent so
-NULL-columns cleanly express which metric is active per (n, d, t).
+The three ``fix_storage_*`` narrow carriers replaced the legacy
+single wide ``fix_storage`` field (retired in Phase 4.1l).  Each
+metric is independent, so a separate per-metric carrier matches the
+producer/consumer reality without NULL-padding columns.
 
 ``realized_invest`` and ``realized_existing`` together cover the two
 columns of ``solve_data/p_entity_period_existing_capacity.csv``:
@@ -114,18 +112,13 @@ class SolveHandoff:
     # File equivalent: solve_data/p_roll_continue_state.csv.
     roll_end_state: pl.DataFrame | None = None
 
-    # Storage quota imposed by parent solve on child solve.  Wide row:
-    # NULL columns mark inactive metrics (the trio is independent —
-    # parent may set quantity-only, price-only, or any combination).
+    # Storage quota imposed by parent solve on child solve — narrow
+    # per-metric carriers in canonical column schema.  The trio is
+    # independent (parent may set quantity-only, price-only, or any
+    # combination); each metric travels in its own field.
     # Producer: parent solve's v_state + cost duals.
     # Consumer: child's fix_storage_* constraints.
     # File equivalents: solve_data/fix_storage_{quantity,price,usage}.csv
-    fix_storage: pl.DataFrame | None = None
-
-    # Phase 4.1c — narrow per-metric carriers (canonical column schema).
-    # Populated alongside the wide ``fix_storage`` field; consumers will
-    # be migrated to read these in later phases, then the wide field is
-    # retired.
     # Each schema: ``[node, period, step, p_fix_storage_<metric>]``.
     fix_storage_quantity: pl.DataFrame | None = None
     fix_storage_price: pl.DataFrame | None = None
@@ -146,7 +139,7 @@ class SolveHandoff:
 
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
-        "roll_end_state", "fix_storage",
+        "roll_end_state",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
     )

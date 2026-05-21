@@ -84,9 +84,10 @@ def test_chain_cumulative_handoffs_accumulate_monotonically() -> None:
         assert h.divest_cumulative is None, (
             f"{sub}: divest_cumulative populated unexpectedly "
             f"(fixture has no divest)")
-        assert h.fix_storage is None, (
-            f"{sub}: fix_storage populated unexpectedly "
-            f"(fixture has no nested storage fixing)")
+        assert not hasattr(h, "fix_storage"), (
+            f"{sub}: wide fix_storage field unexpectedly resurrected — "
+            f"Phase 4.1l retired it; data now flows via the three narrow "
+            f"fix_storage_{{quantity,price,usage}} fields")
 
         ri = h.realized_invest
         re = h.realized_existing

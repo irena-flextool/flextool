@@ -86,38 +86,6 @@ from flextool.engine_polars._timeline import (
 )
 
 
-def _fan_out_fix_storage(fix_storage):
-    """Phase E-d — fan a wide ``SolveHandoff.fix_storage`` frame
-    (``[node, period, time, quantity, price, usage]``) back into the
-    three per-metric long frames the in-memory cross-solve carrier
-    holds (and the on-disk ``solve_data/fix_storage_*.csv`` files
-    expose).  Returns ``{basename: pl.DataFrame}`` for the three
-    metrics; metrics with no rows are omitted.
-
-    Mirrors the disk fan-out in
-    ``_solve_handoff.write_fix_storage_files_from_handoff`` but keeps
-    the result in-memory so the next sub-solve's Provider can be
-    pre-seeded with them.
-    """
-    import polars as pl
-    out: dict[str, "pl.DataFrame"] = {}
-    for metric, on_disk_col, fname in (
-        ("quantity", "p_fix_storage_quantity", "solve_data/fix_storage_quantity.csv"),
-        ("price",    "p_fix_storage_price",    "solve_data/fix_storage_price.csv"),
-        ("usage",    "p_fix_storage_usage",    "solve_data/fix_storage_usage.csv"),
-    ):
-        if metric not in fix_storage.columns:
-            continue
-        sub = (
-            fix_storage
-            .filter(pl.col(metric).is_not_null())
-            .rename({"time": "step", metric: on_disk_col})
-            .select("node", "period", "step", on_disk_col)
-        )
-        out[fname] = sub
-    return out
-
-
 def native_run_model(state, solver) -> int:
     """Drive the per-solve cascade natively.
 
@@ -1077,32 +1045,13 @@ def native_run_model(state, solver) -> int:
                     f"scaling_report generation failed (non-fatal): {exc}"
                 )
 
-        # Save this level's storage fix for child solves to consume.
-        # Phase E-d — also refresh the in-memory cross-solve carrier
-        # slot from the post-solve fix_storage frames produced by the
-        # solver (via SolveHandoff.fix_storage when populated, or via
-        # the on-disk file written by ``data.dump_csvs`` when emission
-        # is enabled).  The carriers feed the next sub-solve's
-        # accumulator (see top of iteration body).
-        if complete_solve[solve] in state.solve.fix_storage_periods:
-            # Phase 4.1j — the per-parent on-disk archive
-            # (``solve_data/fix_storage_*_{complete_solve}.csv``) that
-            # used to be produced here had its sole consumer deleted at
-            # the iteration-start hand-off point above.  The typed
-            # ``handoff/*`` Provider keys (seeded by the parent-handoff
-            # translator) are now the canonical cross-solve carrier.
-            # Refresh the in-memory carrier from the SolveHandoff (the
-            # canonical post-solve carrier).  When the handoff carries
-            # ``fix_storage``, fan it out into the per-metric carrier
-            # slots so the next iteration's seed lookup succeeds.
-            _hf = (
-                state.handoffs.get(complete_solve[solve])
-                if state.handoffs is not None else None
-            )
-            if _hf is not None and _hf.fix_storage is not None:
-                _per_metric = carriers.setdefault(complete_solve[solve], {})
-                _per_metric.update(_fan_out_fix_storage(_hf.fix_storage))
-                carriers["__last__"] = _per_metric
+        # Phase 4.1l — the post-solve fix_storage carrier refresh that
+        # used to fan the wide ``SolveHandoff.fix_storage`` frame into
+        # per-metric ``solve_data/fix_storage_*`` Provider keys is
+        # retired.  The narrow ``handoff/fix_storage_{quantity,price,
+        # usage}`` keys are seeded directly by the iteration-start
+        # parent-handoff translator from the three narrow SolveHandoff
+        # fields; no post-solve fan-out is required.
 
         # Phase 4.1a — the ladder rolling accumulators
         # (``cumulative_commodity`` / ``cum_sim_hours``) cross sub-solves
