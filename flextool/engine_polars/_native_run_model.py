@@ -73,6 +73,7 @@ from flextool.flextoolrunner.scaling_report import write_scaling_report
 # implementations.  The legacy disk-writing module remains in the tree
 # but is no longer called from the cascade.
 from flextool.engine_polars import _emit_solve_writers as solve_writers
+from flextool.engine_polars import _provider_keys
 
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
 
@@ -1023,25 +1024,8 @@ def native_run_model(state, solver) -> int:
         # The per-parent slot (keyed by complete-solve name) is also
         # refreshed for nested cascades whose child solves consume an
         # upper-level parent's fix_storage_*.
-        _CROSS_SOLVE_KEYS = (
-            "solve_data/fix_storage_quantity.csv",
-            "solve_data/fix_storage_price.csv",
-            "solve_data/fix_storage_usage.csv",
-            "solve_data/p_entity_pre_existing.csv",
-            "solve_data/p_entity_divest_cumulative_max.csv",
-            "solve_data/p_entity_invested.csv",
-            "solve_data/p_entity_divested.csv",
-            "solve_data/p_entity_period_existing_capacity.csv",
-            "solve_data/p_roll_continue_state.csv",
-            "solve_data/co2_cum_realized_tonnes.csv",
-            "solve_data/ladder_cum_sim_hours.csv",
-            "solve_data/ladder_cum_realized_mwh.csv",
-            "solve_data/ed_history_realized.csv",
-            "solve_data/ed_history_realized_first.csv",
-            "solve_data/edd_history.csv",
-        )
         _last_carriers: dict[str, "pl.DataFrame"] = {}
-        for _key in _CROSS_SOLVE_KEYS:
+        for _key in _provider_keys.CROSS_SOLVE_KEYS:
             _frame = sub_solve_provider.get(_key)
             if _frame is not None:
                 _last_carriers[_key] = _frame

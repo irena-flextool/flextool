@@ -585,8 +585,7 @@ class TestEmitBlockData:
             provider=provider,
         )
 
-        # Each emit_* registers under both ``basename`` and
-        # ``parent/basename`` (dual-key invariant — see spec §2.3).
+        # Each emit_* registers under the canonical qualified key.
         for fname in [
             "entity_block.csv",
             "process_side_block.csv",
@@ -596,7 +595,6 @@ class TestEmitBlockData:
             "block_period_time_first.csv",
             "block_period_time_last.csv",
         ]:
-            assert provider.get(fname) is not None, fname
             assert provider.get(f"solve_data/{fname}") is not None, fname
 
         # process_side_block emits two rows per process.

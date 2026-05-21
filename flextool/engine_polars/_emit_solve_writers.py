@@ -49,7 +49,7 @@ from typing import Any
 
 import polars as pl
 
-from flextool.engine_polars._emit_provider_io import _emit as _emit_dual_key
+from flextool.engine_polars._emit_provider_io import _emit
 
 
 def _emit_path(provider, path: "Path | str", df: pl.DataFrame) -> None:
@@ -61,7 +61,7 @@ def _emit_path(provider, path: "Path | str", df: pl.DataFrame) -> None:
     p = Path(path)
     parent = p.parent.name
     key = f"{parent}/{p.name}" if parent else p.name
-    _emit_dual_key(provider, key, df)
+    _emit(provider, key, df)
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ def emit_step_jump(
     *, provider,
 ) -> None:
     """Emit ``step_jump`` to the Provider."""
-    _emit_dual_key(provider, "solve_data/step_previous.csv",
+    _emit(provider, "solve_data/step_previous.csv",
                    derive_step_jump(step_lengths))
 
 
@@ -208,9 +208,9 @@ def emit_period_block(
     *, provider,
 ) -> None:
     """Emit ``period_block`` to the Provider."""
-    _emit_dual_key(provider, "solve_data/period_block_time.csv",
+    _emit(provider, "solve_data/period_block_time.csv",
                    derive_period_block_time(period_block_time))
-    _emit_dual_key(provider, "solve_data/period_block_succ.csv",
+    _emit(provider, "solve_data/period_block_succ.csv",
                    derive_period_block_succ(period_block_succ))
 
 
@@ -398,12 +398,12 @@ def emit_first_and_last_periods(
             period__branch_list,
         )
     )
-    _emit_dual_key(provider, "solve_data/period_last.csv",
+    _emit(provider, "solve_data/period_last.csv",
                    _to_utf8_frame(("period",), [(p,) for p in period_last]))
-    _emit_dual_key(provider, "solve_data/period_first_of_solve.csv",
+    _emit(provider, "solve_data/period_first_of_solve.csv",
                    _to_utf8_frame(("period",),
                                   [(p,) for p in period_first_of_solve_list]))
-    _emit_dual_key(provider, "solve_data/period_first.csv",
+    _emit(provider, "solve_data/period_first.csv",
                    _to_utf8_frame(("period",),
                                   [(p,) for p in period_first_list]))
 
@@ -438,7 +438,7 @@ def emit_solve_status(
     """Emit ``solve_status`` to the Provider."""
     key = ("solve_data/p_nested_model.csv" if nested
            else "solve_data/p_model.csv")
-    _emit_dual_key(provider, key,
+    _emit(provider, key,
                    derive_solve_status(first_state, last_state, nested))
 
 
@@ -582,7 +582,7 @@ def emit_realized_dispatch(
     *, provider,
 ) -> None:
     """Emit ``realized_dispatch`` to the Provider."""
-    _emit_dual_key(
+    _emit(
         provider, "solve_data/realized_dispatch.csv",
         derive_realized_dispatch(realized_time_list, solve, realized_periods),
     )
@@ -609,7 +609,7 @@ def emit_fix_storage_timesteps(
     *, provider,
 ) -> None:
     """Emit ``fix_storage_timesteps`` to the Provider."""
-    _emit_dual_key(
+    _emit(
         provider, "solve_data/fix_storage_timesteps.csv",
         derive_fix_storage_timesteps(
             active_time_list, solve, fix_storage_periods,
@@ -729,9 +729,9 @@ def emit_all_branches(
     Provider.
     """
     wf = work_folder if work_folder is not None else Path.cwd()
-    _emit_dual_key(provider, "solve_data/branch_all.csv",
+    _emit(provider, "solve_data/branch_all.csv",
                    derive_branch_all(period__branch_list))
-    _emit_dual_key(
+    _emit(
         provider, "solve_data/time_branch_all.csv",
         derive_time_branch_all(
             solve_branch__time_branch_list, logger, wf,
@@ -798,14 +798,14 @@ def emit_branch_weights_and_map(
     *, provider,
 ) -> None:
     """Emit ``branch_weights_and_map`` to the Provider."""
-    _emit_dual_key(
+    _emit(
         provider, "solve_data/solve_branch_weight.csv",
         derive_solve_branch_weight(
             complete_solve, active_time_list, solve_branch__time_branch_list,
             branch_start_time, period__branch_lists, stochastic_branches,
         ),
     )
-    _emit_dual_key(
+    _emit(
         provider, "solve_data/solve_branch__time_branch.csv",
         derive_solve_branch__time_branch(solve_branch__time_branch_list),
     )
@@ -824,11 +824,11 @@ def _empty_frame(headers: tuple[str, ...]) -> pl.DataFrame:
 def emit_empty_investment_file(
     *, provider) -> None:
     """Emit ``empty_investment_file`` to the Provider."""
-    _emit_dual_key(provider, "solve_data/p_entity_invested.csv",
+    _emit(provider, "solve_data/p_entity_invested.csv",
                    _empty_frame(("entity", "p_entity_invested")))
-    _emit_dual_key(provider, "solve_data/p_entity_divested.csv",
+    _emit(provider, "solve_data/p_entity_divested.csv",
                    _empty_frame(("entity", "p_entity_divested")))
-    _emit_dual_key(
+    _emit(
         provider, "solve_data/p_entity_period_existing_capacity.csv",
         _empty_frame((
             "entity", "period",
@@ -841,15 +841,15 @@ def emit_empty_investment_file(
 def emit_empty_cumulative_files(
     *, provider) -> None:
     """Emit ``empty_cumulative_files`` to the Provider."""
-    _emit_dual_key(
+    _emit(
         provider, "solve_data/ladder_cum_realized_mwh.csv",
         _empty_frame(
             ("commodity", "tier", "period", "p_ladder_cum_realized_mwh"),
         ),
     )
-    _emit_dual_key(provider, "solve_data/ladder_cum_sim_hours.csv",
+    _emit(provider, "solve_data/ladder_cum_sim_hours.csv",
                    _empty_frame(("period", "p_ladder_cum_sim_hours")))
-    _emit_dual_key(
+    _emit(
         provider, "solve_data/co2_cum_realized_tonnes.csv",
         _empty_frame(("group", "period", "p_co2_cum_realized_tonnes")),
     )
@@ -858,19 +858,19 @@ def emit_empty_cumulative_files(
 def emit_empty_storage_fix_file(
     *, provider) -> None:
     """Emit ``empty_storage_fix_file`` to the Provider."""
-    _emit_dual_key(provider, "solve_data/fix_storage_price.csv",
+    _emit(provider, "solve_data/fix_storage_price.csv",
                    _empty_frame(
                        ("node", " period", " step", " ndt_fix_storage_price"),
                    ))
-    _emit_dual_key(provider, "solve_data/fix_storage_quantity.csv",
+    _emit(provider, "solve_data/fix_storage_quantity.csv",
                    _empty_frame(
                        ("node", " period", " step", " ndt_fix_storage_quantity"),
                    ))
-    _emit_dual_key(provider, "solve_data/fix_storage_usage.csv",
+    _emit(provider, "solve_data/fix_storage_usage.csv",
                    _empty_frame(
                        ("node", " period", " step", " ndt_fix_storage_usage"),
                    ))
-    _emit_dual_key(provider, "solve_data/p_roll_continue_state.csv",
+    _emit(provider, "solve_data/p_roll_continue_state.csv",
                    _empty_frame(("node", " p_roll_continue_state")))
 
 
@@ -910,9 +910,9 @@ def emit_timesets(
     *, provider,
 ) -> None:
     """Emit ``timesets`` to the Provider."""
-    _emit_dual_key(provider, "input/timesets_in_use.csv",
+    _emit(provider, "input/timesets_in_use.csv",
                    derive_timesets_in_use(timesets_used_by_solves))
-    _emit_dual_key(provider, "input/timesets__timeline.csv",
+    _emit(provider, "input/timesets__timeline.csv",
                    derive_timesets__timeline(timeset__timeline))
 
 
@@ -1017,7 +1017,7 @@ def emit_scale_the_objective(
 ) -> Path:
     """Emit ``scale_the_objective`` to the Provider."""
     path = Path(solve_data_dir) / "scale_the_objective.csv"
-    _emit_dual_key(provider, "solve_data/scale_the_objective.csv",
+    _emit(provider, "solve_data/scale_the_objective.csv",
                    derive_scale_the_objective(value))
     return path
 
@@ -1029,7 +1029,7 @@ def emit_scale_the_state(
 ) -> Path:
     """Emit ``scale_the_state`` to the Provider."""
     path = Path(solve_data_dir) / "scale_the_state.csv"
-    _emit_dual_key(provider, "solve_data/scale_the_state.csv",
+    _emit(provider, "solve_data/scale_the_state.csv",
                    derive_scale_the_state(value))
     return path
 
@@ -1040,7 +1040,7 @@ def emit_scale_the_objective_header_only(
 ) -> Path:
     """Emit ``scale_the_objective_header_only`` to the Provider."""
     path = Path(solve_data_dir) / "scale_the_objective.csv"
-    _emit_dual_key(provider, "solve_data/scale_the_objective.csv",
+    _emit(provider, "solve_data/scale_the_objective.csv",
                    derive_scale_the_objective_header_only())
     return path
 
@@ -1049,7 +1049,7 @@ def emit_scale_the_state_header_only(solve_data_dir: Path | str,
                                        *, provider) -> Path:
     """Emit ``scale_the_state_header_only`` to the Provider."""
     path = Path(solve_data_dir) / "scale_the_state.csv"
-    _emit_dual_key(provider, "solve_data/scale_the_state.csv",
+    _emit(provider, "solve_data/scale_the_state.csv",
                    derive_scale_the_state_header_only())
     return path
 
@@ -1117,9 +1117,9 @@ def emit_delayed_durations(
     *, provider,
 ) -> None:
     """Emit ``delayed_durations`` to the Provider."""
-    _emit_dual_key(provider, "solve_data/delay_duration.csv",
+    _emit(provider, "solve_data/delay_duration.csv",
                    derive_delay_duration(delay_durations))
-    _emit_dual_key(provider, "solve_data/dtt__delay_duration.csv",
+    _emit(provider, "solve_data/dtt__delay_duration.csv",
                    derive_dtt__delay_duration(active_time_list,
                                                 delay_durations))
 
@@ -1209,7 +1209,7 @@ def emit_rp_data(
         rp_weights, timeset_duration_entries, period_name,
     )
     for basename, df in frames.items():
-        _emit_dual_key(provider, f"solve_data/{basename}", df)
+        _emit(provider, f"solve_data/{basename}", df)
 
 
 def _compute_timeset_cost_weight_rows(
@@ -1267,7 +1267,7 @@ def emit_timeset_cost_weight(
     )
     if not any_written:
         return False
-    _emit_dual_key(provider, "solve_data/rp_cost_weight.csv",
+    _emit(provider, "solve_data/rp_cost_weight.csv",
                    _to_utf8_frame(("period", "time", "weight"), rows))
     return True
 
@@ -1282,5 +1282,5 @@ def emit_empty_rp_data(
     *, provider) -> None:
     """Emit ``empty_rp_data`` to the Provider."""
     for filename, headers in _EMPTY_RP_HEADERS.items():
-        _emit_dual_key(provider, f"solve_data/{filename}",
+        _emit(provider, f"solve_data/{filename}",
                        _empty_frame(headers))
