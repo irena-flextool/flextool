@@ -78,4 +78,20 @@ def translate_handoff_to_provider(
         provider.put(key, frame)
 
 
-__all__ = ["translate_handoff_to_provider"]
+def read_handoff_frame(provider, key: str) -> "pl.DataFrame | None":
+    """Return a populated handoff frame from the Provider, or ``None``.
+
+    The translator writes an empty header-only frame when the
+    corresponding handoff field is ``None``; this helper collapses the
+    ``height == 0`` empty back to ``None`` so consumers can preserve
+    their existing ``if frame is not None`` guard pattern.
+    """
+    if provider is None:
+        return None
+    frame = provider.get(key)
+    if frame is None or frame.height == 0:
+        return None
+    return frame
+
+
+__all__ = ["translate_handoff_to_provider", "read_handoff_frame"]

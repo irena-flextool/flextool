@@ -6,8 +6,9 @@ whose ``source`` is a CO2 commodity node — add
 ``content/1000 * value * us * dur * rpw`` (noEff) or that × ``slope``
 × ``fc_sink/fc_source`` (eff, ``p`` ∈ ``process_unit``); per row whose
 ``sink`` is a CO2 node — subtract the same flow piece (no slope).
-Attribute to groups via ``group_node``; combine with
-``prior_handoff.cumulative_co2``.
+Attribute to groups via ``group_node``; combine with the prior roll's
+accumulator carried in the Provider under ``K.HANDOFF_CUMULATIVE_CO2``
+(populated by ``_provider_translators.translate_handoff_to_provider``).
 
 ``min_load_efficiency``'s section term is deferred (same MVP as legacy
 — warn and under-report).
@@ -27,6 +28,8 @@ from flextool.engine_polars._axis_enums import (
     schema_dtype,
 )
 from flextool.engine_polars._emit_provider_io import _emit
+from flextool.engine_polars import _provider_keys as K
+from flextool.engine_polars._provider_translators import read_handoff_frame
 
 if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff
@@ -386,7 +389,6 @@ def derive_co2_cum_realized_tonnes(
     sol,
     *,
     work_folder: Path,
-    prior_handoff: "SolveHandoff | None" = None,
     provider: "object | None" = None,
 ) -> pl.DataFrame:
     """Return the canonical formatted ``co2_cum_realized_tonnes`` CSV frame.
@@ -395,9 +397,11 @@ def derive_co2_cum_realized_tonnes(
     :func:`_format_co2_cum_frame`.  Used by both
     :func:`write_co2_rolling_accumulator` (which funnels through
     :func:`_write` so the accumulator captures the frame) and tests.
+    The prior-roll CO2 accumulator is sourced from the Provider key
+    ``K.HANDOFF_CUMULATIVE_CO2`` (populated at iteration start by
+    ``_provider_translators.translate_handoff_to_provider``).
     """
-    prior_df = (prior_handoff.cumulative_co2
-                if prior_handoff is not None else None)
+    prior_df = read_handoff_frame(provider, K.HANDOFF_CUMULATIVE_CO2)
     frame = compute_co2_rolling_accumulator(
         flex_data, sol,
         work_folder=work_folder,
@@ -414,16 +418,15 @@ def emit_co2_rolling_accumulator(
     provider,
     solve_name: str,
     work_folder: Path,
-    prior_handoff: "SolveHandoff | None" = None,
 ) -> pl.DataFrame:
     """Emit ``co2_rolling_accumulator`` to the Provider.
     Emits the formatted ``co2_cum_realized_tonnes`` frame under the
-    ``solve_data/co2_cum_realized_tonnes.csv`` key via :func:`_emit`
-    (dual-key registration).  *work_folder* is retained because the
-    underlying compute helper still consumes it for input lookups.
+    ``solve_data/co2_cum_realized_tonnes.csv`` key via :func:`_emit`.
+    *work_folder* is retained because the underlying compute helper
+    still consumes it for input lookups.  The prior-roll accumulator
+    is sourced from the Provider's ``K.HANDOFF_CUMULATIVE_CO2`` key.
     """
-    prior_df = (prior_handoff.cumulative_co2
-                if prior_handoff is not None else None)
+    prior_df = read_handoff_frame(provider, K.HANDOFF_CUMULATIVE_CO2)
     frame = compute_co2_rolling_accumulator(
         flex_data, sol,
         work_folder=work_folder,
@@ -459,7 +462,7 @@ def emit_co2_rolling_accumulators_native(
     if flex_data is not None and sol is not None:
         emit_co2_rolling_accumulator(
             flex_data, sol, provider=provider, solve_name=solve_name,
-            work_folder=work_folder, prior_handoff=prior_handoff)
+            work_folder=work_folder)
         return [out_path]
     from flextool.process_outputs import cumulative_handoffs as _legacy
     fn = getattr(_legacy, "_legacy_write_co2_rolling_accumulators",
