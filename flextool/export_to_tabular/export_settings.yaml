@@ -83,7 +83,10 @@ split_params:
     solve:
       params: ["solve_mode", "solver", "highs_method", "highs_parallel",
                "highs_presolve", "contains_solves", "solver_precommand",
-               "solver_arguments", "new_stepduration", "use_row_scaling"]
+               "solver_arguments", "new_stepduration", "use_row_scaling",
+               "solver_io_api", "solver_log_level", "solver_mip_gap",
+               "solver_options", "solver_threads", "solver_time_limit",
+               "timeline_hole_multiplier"]
     solve_period:
       params: ["period_timeset", "years_represented", "realized_periods",
                "invest_periods", "realized_invest_periods", "fix_storage_periods"]
