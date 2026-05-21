@@ -37,7 +37,6 @@ from __future__ import annotations
 import copy
 import csv
 import os
-import shutil
 import time
 from collections import defaultdict
 
@@ -766,51 +765,14 @@ def native_run_model(state, solver) -> int:
         first_of_nested_level = solve in state.solve.first_of_complete_solve
         last_of_nested_level = solve in state.solve.last_of_solve
 
-        # Storage fix copy-from-parent (upper-level handoff).
-        if storage_fix_values_exist:
-            state.logger.info("Fetching storage parameters from the upper solve")
-            parent_complete = complete_solve[parent_roll[solve]]
-            # Phase 4.1i — the wide → narrow CSV fan-out from
-            # ``parent_handoff.fix_storage`` is retired; all readers now
-            # consult the per-metric ``handoff/*`` Provider keys seeded
-            # by the iteration-start translator.  The shutil.copy
-            # archive path and the in-memory carrier fallback below
-            # remain (scheduled for retirement in Phases 4.1j / 4.1k).
-            # Phase E-d — when the parent's archived per-parent
-            # CSVs don't exist on disk (csv-emission disabled),
-            # fall back to the in-memory cross-solve carrier slot
-            # populated at the end of the parent's iteration.
-            _parent_carriers = carriers.get(parent_complete, {})
-            _parent_archive = (
-                wf / f"solve_data/fix_storage_quantity_{parent_complete}.csv"
-            )
-            if _parent_archive.exists():
-                shutil.copy(
-                    str(wf / f"solve_data/fix_storage_quantity_{parent_complete}.csv"),
-                    str(wf / "solve_data/fix_storage_quantity.csv"),
-                )
-                shutil.copy(
-                    str(wf / f"solve_data/fix_storage_price_{parent_complete}.csv"),
-                    str(wf / "solve_data/fix_storage_price.csv"),
-                )
-                shutil.copy(
-                    str(wf / f"solve_data/fix_storage_usage_{parent_complete}.csv"),
-                    str(wf / "solve_data/fix_storage_usage.csv"),
-                )
-            else:
-                # Step 1-f — seed the per-sub-solve Provider from
-                # the parent's carrier slot.  Readers consult the
-                # Provider (or, transitionally, the seed funnel
-                # adapter that delegates to the Provider) so the
-                # on-disk copy is unneeded.
-                for _key in (
-                    "solve_data/fix_storage_quantity.csv",
-                    "solve_data/fix_storage_price.csv",
-                    "solve_data/fix_storage_usage.csv",
-                ):
-                    _src = _parent_carriers.get(_key)
-                    if _src is not None:
-                        sub_solve_provider.put(_key, _src)
+        # Phase 4.1j — the parent-to-child fix_storage hand-off is now
+        # carried exclusively by the typed ``handoff/*`` Provider keys
+        # seeded at iteration start by the parent-handoff translator
+        # (Phase 4.1e).  The legacy shutil.copy archive path and the
+        # in-memory carrier fallback that wrote to the now-dead
+        # ``solve_data/fix_storage_*`` Provider keys have been deleted;
+        # all downstream consumers (input.py, _derived_params.py,
+        # _emit_arc_unions.py, _emit_per_solve.py) consult ``handoff/*``.
 
         solve_writers.emit_solve_status(
             first_of_nested_level, last_of_nested_level,
@@ -1123,31 +1085,12 @@ def native_run_model(state, solver) -> int:
         # is enabled).  The carriers feed the next sub-solve's
         # accumulator (see top of iteration body).
         if complete_solve[solve] in state.solve.fix_storage_periods:
-            _q = wf / "solve_data/fix_storage_quantity.csv"
-            _p = wf / "solve_data/fix_storage_price.csv"
-            _u = wf / "solve_data/fix_storage_usage.csv"
-            if _q.exists():
-                shutil.copy(
-                    str(_q),
-                    str(
-                        wf
-                        / f"solve_data/fix_storage_quantity_{complete_solve[solve]}.csv"
-                    ),
-                )
-                shutil.copy(
-                    str(_p),
-                    str(
-                        wf
-                        / f"solve_data/fix_storage_price_{complete_solve[solve]}.csv"
-                    ),
-                )
-                shutil.copy(
-                    str(_u),
-                    str(
-                        wf
-                        / f"solve_data/fix_storage_usage_{complete_solve[solve]}.csv"
-                    ),
-                )
+            # Phase 4.1j — the per-parent on-disk archive
+            # (``solve_data/fix_storage_*_{complete_solve}.csv``) that
+            # used to be produced here had its sole consumer deleted at
+            # the iteration-start hand-off point above.  The typed
+            # ``handoff/*`` Provider keys (seeded by the parent-handoff
+            # translator) are now the canonical cross-solve carrier.
             # Refresh the in-memory carrier from the SolveHandoff (the
             # canonical post-solve carrier).  When the handoff carries
             # ``fix_storage``, fan it out into the per-metric carrier
