@@ -3535,7 +3535,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
       * ``p_entity_invested`` ← ``realized_invest`` summed over period.
       * ``p_entity_divested`` ← ``divest_cumulative``.
       * ``p_roll_continue_state`` ← ``roll_end_state``.
-      * ``p_fix_storage_quantity`` ← ``fix_storage.quantity``.
+      * ``p_fix_storage_quantity`` ← ``fix_storage_quantity``.
 
     Construct-with-handoff replaces the old overlay-after-load pattern
     so the in-memory carriers flow into the build as inputs, no separate
@@ -5436,7 +5436,7 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
     * ``p_entity_invested (e,)``  ← ``realized_invest`` summed over period.
     * ``p_entity_divested (e,)``  ← ``divest_cumulative``.
     * ``p_roll_continue_state (n,)``  ← ``roll_end_state``.
-    * ``p_fix_storage_quantity (n, d, t)``  ← ``fix_storage.quantity``.
+    * ``p_fix_storage_quantity (n, d, t)``  ← ``fix_storage_quantity``.
 
     For each carrier, ``None`` on the handoff side leaves the FlexData
     field untouched (snapshot wins).  Non-None replaces the entire
@@ -5545,14 +5545,16 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
         overrides["p_roll_continue_state"] = (
             Param(("n",), df) if df.height > 0 else None)
 
-    # --- fix_storage → p_fix_storage_quantity (n, d, t) ---
-    # Only the ``quantity`` metric is consumed today; price/usage extractors
-    # are out of scope for this session (see SolveHandoff docstring).
-    if handoff.fix_storage is not None and "quantity" in handoff.fix_storage.columns:
-        df = (handoff.fix_storage
-            .filter(pl.col("quantity").is_not_null())
-            .pipe(rename_to_axis, {"node": "n", "period": "d", "time": "t",
-                     "quantity": "value"})
+    # --- fix_storage_quantity → p_fix_storage_quantity (n, d, t) ---
+    # Phase 4.1k — read the canonical narrow field
+    # ``SolveHandoff.fix_storage_quantity`` (schema
+    # ``[node, period, step, p_fix_storage_quantity]``) populated by
+    # ``build_handoff_from_flexpy`` (4.1c).  Mirrors the Provider-key
+    # consumer at L2620-2641.
+    if handoff.fix_storage_quantity is not None:
+        df = (handoff.fix_storage_quantity
+            .pipe(rename_to_axis, {"node": "n", "period": "d", "step": "t",
+                     "p_fix_storage_quantity": "value"})
             .with_columns(value=pl.col("value").cast(pl.Float64, strict=False))
             .select("n", "d", "t", "value"))
         overrides["p_fix_storage_quantity"] = (
