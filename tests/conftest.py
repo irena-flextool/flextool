@@ -29,6 +29,7 @@ import os
 # before any flextool / polar_high import.
 os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
 
+import importlib.util
 import shutil
 import sys
 from pathlib import Path
@@ -38,6 +39,32 @@ import pytest
 
 TEST_DIR = Path(__file__).parent
 FIXTURES_DIR = TEST_DIR / "fixtures"
+
+# ---------------------------------------------------------------------------
+# Re-export the engine_polars constraint conftest as a top-level plugin so
+# the engine_polars/objective conftest can reuse its fixtures.  pytest 8.x
+# forbids ``pytest_plugins`` in non-top-level conftests, so the registration
+# lives here.  The constraint conftest itself is loaded by file path because
+# ``tests/`` is not a package.  pytest also tries to import the plugin by
+# the same name during its plugin-discovery phase; pre-registering in
+# ``sys.modules`` short-circuits that lookup.  (The "Module already imported
+# so cannot be rewritten" warning is benign — the constraints conftest is
+# fixtures, not assertion-heavy test code.)
+# ---------------------------------------------------------------------------
+_CONSTRAINTS_CONFTEST = (
+    TEST_DIR / "engine_polars" / "constraints" / "conftest.py"
+)
+if _CONSTRAINTS_CONFTEST.exists() and (
+    "_engine_polars_constraints_conftest" not in sys.modules
+):
+    _spec = importlib.util.spec_from_file_location(
+        "_engine_polars_constraints_conftest", _CONSTRAINTS_CONFTEST,
+    )
+    _constraints_module = importlib.util.module_from_spec(_spec)
+    sys.modules["_engine_polars_constraints_conftest"] = _constraints_module
+    _spec.loader.exec_module(_constraints_module)
+
+pytest_plugins = ["_engine_polars_constraints_conftest"]
 REPO_ROOT = TEST_DIR.parent
 
 # Make db_utils importable from this directory

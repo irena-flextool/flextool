@@ -13,9 +13,7 @@ duplicating construction.  Adds:
 """
 from __future__ import annotations
 
-import importlib
 import sys
-from pathlib import Path
 
 import polars as pl
 import pytest
@@ -25,19 +23,12 @@ from flextool.engine_polars import build_flextool
 from flextool.engine_polars.input import FlexData
 
 
-# Re-export every fixture from the sibling ``constraints/conftest.py``.
-# ``tests/`` is not a package (no __init__.py), so a relative import
-# fails — load the module by file path and stash it under a stable
-# top-level name so ``pytest_plugins`` can find it.
-_CONSTRAINTS_CONFTEST = (
-    Path(__file__).resolve().parent.parent / "constraints" / "conftest.py")
-_spec = importlib.util.spec_from_file_location(
-    "_engine_polars_constraints_conftest", _CONSTRAINTS_CONFTEST)
-_constraints_module = importlib.util.module_from_spec(_spec)
-sys.modules["_engine_polars_constraints_conftest"] = _constraints_module
-_spec.loader.exec_module(_constraints_module)
-
-pytest_plugins = ["_engine_polars_constraints_conftest"]
+# The sibling ``constraints/conftest.py`` is loaded as a top-level pytest
+# plugin (``_engine_polars_constraints_conftest``) by the root
+# ``tests/conftest.py``; pytest 8.x forbids declaring ``pytest_plugins`` in
+# non-top-level conftests.  We still need a direct module handle here to
+# re-export ``solver_options``.
+_constraints_module = sys.modules["_engine_polars_constraints_conftest"]
 
 solver_options = _constraints_module.solver_options
 
