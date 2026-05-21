@@ -2590,32 +2590,24 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             if row.height > 0:
                 p_nested_solve_first = bool(int(row[value_col][0]))
 
-    # Δ.18 — CSV-fallback seed for ``p_roll_continue_state`` and
-    # ``p_fix_storage_quantity``.  Override chain (``apply_derived_e``)
-    # overlays these when active; for synthetic per-sub-solve fixtures
-    # the snapshot CSV is the only source.
+    # Phase 4.2-0 — read the rolling end-state carrier from the canonical
+    # handoff Provider key (``handoff/roll_end_state``, schema
+    # ``[node, value]``).  The translator populates the key from
+    # ``SolveHandoff.roll_end_state`` at iteration start; the legacy
+    # ``solve_data/p_roll_continue_state`` CSV-fallback path is gone.
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
     p_roll_continue_state = None
-    rcs_path = sd / "p_roll_continue_state.csv"
-    if _provider_has(provider, "solve_data/p_roll_continue_state", rcs_path):
-        df_rcs = _provider_read(provider, "solve_data/p_roll_continue_state", rcs_path)
-        if df_rcs.height > 0 and "node" in df_rcs.columns:
-            value_col = ("p_roll_continue_state"
-                         if "p_roll_continue_state" in df_rcs.columns
-                         else "value" if "value" in df_rcs.columns else None)
-            # Tolerate leading-space column "p_roll_continue_state"
-            if value_col is None:
-                for c in df_rcs.columns:
-                    if c.strip() == "p_roll_continue_state":
-                        value_col = c
-                        break
-            if value_col is not None:
-                df_rcs = (df_rcs.pipe(rename_to_axis, {"node": "n", value_col: "value"})
-                                  .with_columns(value=pl.col("value")
-                                                          .cast(pl.Float64, strict=False)
-                                                          .fill_null(0.0))
-                                  .select("n", "value"))
-                if df_rcs.height > 0:
-                    p_roll_continue_state = Param(("n",), df_rcs)
+    df_rcs = read_handoff_frame(provider, K.HANDOFF_ROLL_END_STATE)
+    if df_rcs is not None and df_rcs.height > 0:
+        df_rcs = (df_rcs
+                  .pipe(rename_to_axis, {"node": "n"})
+                  .with_columns(value=pl.col("value")
+                                          .cast(pl.Float64, strict=False)
+                                          .fill_null(0.0))
+                  .select("n", "value"))
+        if df_rcs.height > 0:
+            p_roll_continue_state = Param(("n",), df_rcs)
 
     # Phase 4.1d — read the rolling-handoff fix_storage_quantity carrier
     # from the canonical handoff Provider key
