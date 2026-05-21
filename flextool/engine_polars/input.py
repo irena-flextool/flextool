@@ -5331,72 +5331,19 @@ def build_handoff_from_flexpy(
     # ``solve_data/period_capacity.csv`` is unchanged (handoff_writers
     # still bumps it post-solve).
 
-    # ---- fix_storage_price / fix_storage_usage extraction ----
-    # Phase 4 (Gap F) — the parent-deposited price/usage rows are sourced
-    # in-memory from ``parent_handoff.fix_storage`` (the carrier the
-    # orchestrator already threads via
-    # :func:`write_fix_storage_files_from_handoff`).  The two on-disk
-    # ``fix_storage_{price,usage}.csv`` reads are retired: when
-    # ``parent_handoff`` is supplied (cascade path) we pick price + usage
-    # columns straight off its wide frame.  When ``parent_handoff`` is
-    # None (single-solve or test paths) we fall back to the disk read so
-    # external fixtures that drop these CSVs into the workdir still work.
-    def _read_fix_csv(name: str, value_col: str, out_col: str) -> "pl.DataFrame | None":
-        # Parent-handoff path (in-memory, preferred).
-        if parent_handoff is not None and parent_handoff.fix_storage is not None:
-            fs = parent_handoff.fix_storage
-            if out_col in fs.columns:
-                sub = fs.filter(pl.col(out_col).is_not_null()) \
-                        .select("node", "period", "time",
-                                pl.col(out_col).alias(value_col))
-                if sub.height > 0:
-                    return sub
-            return None
-        # Disk fallback for callers without parent_handoff.
-        p = sd / name
-        key = f"solve_data/{Path(name).stem}"
-        if not _provider_has(provider, key, p):
-            return None
-        try:
-            df = _provider_read(provider, key, p)
-        except pl.exceptions.NoDataError:
-            return None
-        if df.height == 0 or value_col not in df.columns:
-            return None
-        # On-disk schema is (period, step, node, value_col).  Rename to
-        # the carrier convention (node, period, time, metric).
-        return (df
-            .rename({"step": "time"})
-            .select("node", "period", "time", value_col))
-
-    fp = _read_fix_csv("fix_storage_price.csv", "p_fix_storage_price", "price")
-    fu = _read_fix_csv("fix_storage_usage.csv", "p_fix_storage_usage", "usage")
-    if fp is not None or fu is not None:
-        merged = fix_storage_df  # may be None if no v_state quantity rows
-        for src, value_col, out_col in (
-            (fp, "p_fix_storage_price", "price"),
-            (fu, "p_fix_storage_usage", "usage"),
-        ):
-            if src is None:
-                continue
-            renamed = src.rename({value_col: out_col})
-            if merged is None:
-                merged = renamed
-            else:
-                merged = merged.join(
-                    renamed, on=["node", "period", "time"],
-                    how="full", coalesce=True,
-                )
-        # Backfill NULL columns for any of the three metrics still missing.
-        if merged is not None:
-            for c in ("quantity", "price", "usage"):
-                if c not in merged.columns:
-                    merged = merged.with_columns(
-                        pl.lit(None).cast(pl.Float64).alias(c)
-                    )
-            fix_storage_df = merged.select(
-                "node", "period", "time", "quantity", "price", "usage"
-            )
+    # Phase 4.1h — parent's split fix_storage_{price,usage} narrow fields
+    # pass straight through to this solve's narrow fields when nested.
+    # The legacy parent-overlay merge that read price + usage columns
+    # from ``parent_handoff.fix_storage`` (the wide frame) is retired:
+    # after Phases 4.1f–g, no consumer reads the wide frame's price or
+    # usage columns, so the wide ``fix_storage_df`` built above from
+    # ``v_state × unitsize`` keeps its NULL price/usage columns and the
+    # 4.1c slicing block below produces only the quantity narrow.  The
+    # parent's narrow price/usage carriers are deposited directly onto
+    # this solve's handoff narrow fields at the end of this function.
+    # The disk-fallback read of ``fix_storage_{price,usage}.csv`` is
+    # also retired: after 4.1f–g no consumer of the wide frame's
+    # price/usage columns remains, so loading them from disk is moot.
 
     # Phase 4.1c — narrow per-metric carriers, sliced from the wide
     # ``fix_storage_df`` that has already been fully assembled above.
@@ -5429,6 +5376,18 @@ def build_handoff_from_flexpy(
                     fix_storage_price_df = narrow
                 else:
                     fix_storage_usage_df = narrow
+
+    # Phase 4.1h — parent's split fix_storage_{price,usage} pass straight
+    # through to this solve's narrow fields when nested.  After 4.1f–g
+    # consumers read the narrow carriers directly; the wide frame's
+    # price/usage columns stay null on this solve (no overlay merge).
+    if parent_handoff is not None:
+        if (fix_storage_price_df is None
+                and parent_handoff.fix_storage_price is not None):
+            fix_storage_price_df = parent_handoff.fix_storage_price
+        if (fix_storage_usage_df is None
+                and parent_handoff.fix_storage_usage is not None):
+            fix_storage_usage_df = parent_handoff.fix_storage_usage
 
     return SolveHandoff(
         realized_invest=pl.DataFrame(
