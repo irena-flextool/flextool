@@ -305,7 +305,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "period_with_history.csv",
     "p_discount_years.csv",
     "realized_invest_periods_of_current_solve.csv",
-    "invest_periods_of_current_solve.csv",
     "period_last.csv",
     "period_first_of_solve.csv",
     "period_first.csv",

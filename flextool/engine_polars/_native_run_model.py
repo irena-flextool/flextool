@@ -572,11 +572,11 @@ def native_run_model(state, solver) -> int:
                 ),
                 provider=sub_solve_provider,
             )
-        solve_writers.emit_periods(
-            complete_solve[solve],
-            state.solve.invest_periods,
-            str(wf / "solve_data/invest_periods_of_current_solve.csv"),
-            provider=sub_solve_provider,
+        sub_solve_provider.put(
+            _provider_keys.SOLVE_DATA_INVEST_PERIODS_OF_CURRENT_SOLVE,
+            solve_writers.derive_periods(
+                complete_solve[solve], state.solve.invest_periods,
+            ),
         )
 
         years_rep = state.solve.solve_period_years_represented[
