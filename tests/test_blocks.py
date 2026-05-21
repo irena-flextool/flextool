@@ -598,13 +598,13 @@ class TestEmitBlockData:
             assert provider.get(f"solve_data/{fname}") is not None, fname
 
         # process_side_block emits two rows per process.
-        psb = provider.get("process_side_block.csv")
+        psb = provider.get("solve_data/process_side_block")
         psb_rows = [list(r) for r in psb.rows()]
         assert psb.columns == ["process", "side", "block"]
         assert ["u1", "source", "coarse"] in psb_rows
         assert ["u1", "sink", DEFAULT_BLOCK] in psb_rows
 
-        bsp = provider.get("block_step_previous.csv")
+        bsp = provider.get("solve_data/block_step_previous")
         assert bsp.columns == [
             "block", "period", "step", "step_previous",
             "step_previous_within_timeset", "period_previous",
@@ -613,7 +613,7 @@ class TestEmitBlockData:
         bsp_rows = [list(r) for r in bsp.rows()]
         assert [DEFAULT_BLOCK, "p", "t00", "t01", "t01", "p", "t01"] in bsp_rows
 
-        bpf = provider.get("block_period_time_first.csv")
+        bpf = provider.get("solve_data/block_period_time_first")
         assert bpf.columns == ["block", "period", "step"]
         bpf_rows = [list(r) for r in bpf.rows()]
         assert [DEFAULT_BLOCK, "p", "t00"] in bpf_rows

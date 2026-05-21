@@ -244,15 +244,20 @@ def test_unregistered_frame_not_evicted() -> None:
     assert "not_declared" in p._frames
 
 
-def test_qualified_and_bare_keys_share_eviction() -> None:
-    """A frame put under ``"solve_data/foo"`` evicted by name → bare
-    ``"foo"`` lookup also raises EvictedFrameError."""
+def test_eviction_raises_on_exact_key_only() -> None:
+    """Phase 4.2-2 contract: an evicted ``"solve_data/foo"`` raises
+    ``EvictedFrameError`` only on the exact qualified key.  Bare-form
+    queries return ``None`` (the Phase 0a-era bare↔qualified fallback
+    was dropped); they neither raise nor silently re-fetch.
+    """
     p = FlexDataProvider(rss_budget_mb=0.0)
     p.put("solve_data/foo", _frame())
     p.register_handler("H", reads=["solve_data/foo"], groups=["g0"])
     p.precompute_lifetimes(["g0", "g1"])
     p.release_unused(after="g0")
     with pytest.raises(EvictedFrameError):
-        p.get("foo")  # bare lookup picks up the qualified eviction
-    with pytest.raises(EvictedFrameError):
         p.get("solve_data/foo")
+    # Bare lookup is a plain miss after Phase 4.2-2.
+    assert p.get("foo") is None
+    assert p.is_evicted("foo") is False
+    assert p.is_evicted("solve_data/foo") is True

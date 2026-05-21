@@ -516,11 +516,6 @@ def _provider_fetch_or_raise(
         df = provider.get(key)
         if df is not None:
             return df
-    bare = path.stem
-    if provider.has(bare):
-        df = provider.get(bare)
-        if df is not None:
-            return df
     raise _carrier_miss(path, consumer)
 
 
@@ -830,9 +825,8 @@ def _load_period_share(solve_data_dir: Path,
         from ._emit_provider_io import _provider_key
         for path in cand_paths:
             key = _provider_key(path)
-            if provider.has(key) or provider.has(path.stem):
-                df = (provider.get(key) if provider.has(key)
-                      else provider.get(path.stem))
+            if provider.has(key):
+                df = provider.get(key)
                 if df is None or df.height == 0:
                     continue
                 out = df

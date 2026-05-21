@@ -27,7 +27,7 @@ This module provides:
   structurally absent from ``work_base`` and ``work_fullYear_roll``.
 
 * **R2** — Frame-level equality assertion on
-  ``provider.get("p_entity_all_existing")`` against a checked-in
+  ``provider.get("solve_data/p_entity_all_existing")`` against a checked-in
   expected snapshot.  This catches the kind of single-row shift that
   feasibly produces a different LP but masks behind objective parity
   at ``rel_tol=1e-6``.  Per the post-mortem, the original Rivendell
@@ -177,10 +177,10 @@ def test_invest_chain_pae_frame_equality(invest_chain_steps, sub_solve):
         f"sub-solve {sub_solve!r}: flex_data_provider unexpectedly None "
         f"(keep_solutions=True should retain it)"
     )
-    frame = provider.get("p_entity_all_existing")
+    frame = provider.get("solve_data/p_entity_all_existing")
     assert frame is not None, (
         f"sub-solve {sub_solve!r}: provider has no "
-        f"'p_entity_all_existing' key — invest-chain cascade did not "
+        f"'solve_data/p_entity_all_existing' key — invest-chain cascade did not "
         f"populate it"
     )
 

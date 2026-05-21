@@ -1313,18 +1313,18 @@ class BlockLayout:
 
         def _read(name: str, schema: dict) -> pl.DataFrame:
             stem = name.removesuffix(".csv")
-            for k in (f"solve_data/{stem}", stem):
-                if provider.has(k):
-                    df = provider.get(k)
-                    # Coerce dtypes — Provider may carry Utf8 for
-                    # numeric columns when the writer's _empty_frame
-                    # shortcut hits.
-                    for col, dt in schema.items():
-                        if col in df.columns and df.schema[col] != dt:
-                            df = df.with_columns(
-                                pl.col(col).cast(dt, strict=False),
-                            )
-                    return df
+            k = f"solve_data/{stem}"
+            if provider.has(k):
+                df = provider.get(k)
+                # Coerce dtypes — Provider may carry Utf8 for
+                # numeric columns when the writer's _empty_frame
+                # shortcut hits.
+                for col, dt in schema.items():
+                    if col in df.columns and df.schema[col] != dt:
+                        df = df.with_columns(
+                            pl.col(col).cast(dt, strict=False),
+                        )
+                return df
             if missing_ok:
                 return pl.DataFrame(schema=schema)
             raise KeyError(

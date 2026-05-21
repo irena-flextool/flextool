@@ -78,34 +78,8 @@ def test_keys_lists_stored_names_without_csv_suffix():
 
 
 # ---------------------------------------------------------------------------
-# Parent-qualified lookup — bidirectional fallback mirroring the seed funnel
+# Parent-qualified lookup — exact-match contract (Phase 4.2-2)
 # ---------------------------------------------------------------------------
-
-def test_bare_put_resolves_qualified_get():
-    """``put('p_flow_max', df)`` then ``get('solve_data/p_flow_max')``
-    returns the same frame.  Mirrors the seed funnel's
-    the Provider-style behaviour: callers that pass a qualified
-    path fall back to the bare basename when only that was stashed.
-    """
-    p = FlexDataProvider()
-    df = _df()
-    p.put("p_flow_max", df)
-    assert p.get("solve_data/p_flow_max") is df
-    assert p.has("solve_data/p_flow_max") is True
-
-
-def test_qualified_put_resolves_bare_get():
-    """Inverse: ``put('solve_data/p_flow_max', df)`` then
-    ``get('p_flow_max')`` returns the frame.  Step 1 needs the bare
-    form to resolve too because loaders that haven't been migrated yet
-    call ``provider.get(name)`` without a parent qualifier.
-    """
-    p = FlexDataProvider()
-    df = _df()
-    p.put("solve_data/p_flow_max", df)
-    assert p.get("p_flow_max") is df
-    assert p.has("p_flow_max") is True
-
 
 def test_qualified_put_resolves_exact_qualified_get():
     p = FlexDataProvider()
@@ -135,18 +109,30 @@ def test_two_qualified_puts_keep_distinct_frames():
     assert p.get("solve_data/timeline") is df_solve
 
 
-def test_bare_get_finds_first_qualified_match():
-    """When only qualified puts exist, a bare ``get`` returns the
-    first stored match (insertion order).  This is the
-    the Provider-flavoured permissive fallback used by callers
-    that haven't been migrated to qualified lookups yet.
+def test_bare_get_does_not_resolve_qualified_put():
+    """Phase 4.2-2 contract: a bare ``get`` does NOT fall back to a
+    qualified-key match.  The Phase 0a-era bare↔qualified fallback was
+    dropped to give one canonical key form and one lookup path; a typo
+    or unqualified key returns ``None`` rather than silently grabbing
+    the wrong frame.
     """
     p = FlexDataProvider()
-    df_input = _df(2)
-    p.put("input/timeline", df_input)
+    p.put("input/timeline", _df(2))
     p.put("solve_data/timeline", _df(3))
-    # First insertion wins.
-    assert p.get("timeline") is df_input
+    assert p.get("timeline") is None
+    assert p.has("timeline") is False
+
+
+def test_qualified_get_does_not_resolve_bare_put():
+    """Phase 4.2-2 contract: a qualified ``get`` does NOT fall back to
+    a bare-key match.  All real producers emit qualified keys; this
+    test pins the contract so a producer regression that puts bare
+    surfaces as a miss, not as a silent qualified-form hit.
+    """
+    p = FlexDataProvider()
+    p.put("p_flow_max", _df())
+    assert p.get("solve_data/p_flow_max") is None
+    assert p.has("solve_data/p_flow_max") is False
 
 
 # ---------------------------------------------------------------------------

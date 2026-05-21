@@ -3,29 +3,27 @@
 The Provider is the single abstraction by which loaders, writers,
 post-processing readers, and orchestration exchange preprocessing
 artefacts.  Dict-backed: ``put(name, frame)`` stores a frame;
-``get(name)`` / ``has(name)`` look it up by basename (without the
-``.csv`` suffix) or by parent-qualified key (``"<parent>/<stem>"``).
+``get(name)`` / ``has(name)`` look it up by exact-match key.
 
 Name conventions
 ----------------
 
-* The Provider keys frames by *name*: the CSV basename **without** the
-  ``.csv`` suffix (e.g. ``"p_flow_max"``, ``"pdtNode"``,
-  ``"realized_dispatch"``).
-* Parent-qualified variants (``"solve_data/p_flow_max"``,
-  ``"input/timeline"``) are supported.  When the same basename appears
-  in two source directories (the canonical example is ``timeline.csv``
-  which exists in both ``input/`` and ``solve_data/``), the caller can
-  disambiguate by passing the qualified key.
-* Lookup is bidirectional.  ``get`` first tries the exact key; failing
-  that:
-
-  * If the supplied key is *bare* (no ``/``), it falls back to scanning
-    for any stored qualified key whose tail matches.
-  * If the supplied key is *qualified*, it falls back to the bare tail.
-
+* The Provider keys frames by their **parent-qualified key**
+  (``"<parent>/<stem>"``).  Producers emit qualified keys
+  (``"solve_data/p_flow_max"``, ``"input/timeline"``, ``"derived/..."``,
+  ``"handoff/..."``) and consumers query the same form — typically via
+  the typed constants in ``_provider_keys.py`` (``K.SOLVE_DATA_...``)
+  or via ``_emit_provider_io._provider_key(path)``.
+* The same basename can appear under multiple parents (the canonical
+  example is ``timeline.csv`` which exists in both ``input/`` and
+  ``solve_data/``); each is stored under its qualified key and looked
+  up by the same.
+* ``get`` is an exact-match lookup against the stored key (after
+  ``.csv``-suffix stripping).  A typo or unqualified key returns
+  ``None`` — the Phase 0a-era bare↔qualified fallback was dropped in
+  Phase 4.2-2 to give one canonical key form and one lookup path.
 * ``has(name)`` returns ``True`` iff ``get(name)`` would return a
-  non-``None`` frame, and uses the same lookup logic.
+  non-``None`` frame.
 
 Suffix handling
 ---------------
@@ -76,19 +74,6 @@ def _strip_csv(name: str) -> str:
     if name.endswith(".csv"):
         return name[: -len(".csv")]
     return name
-
-
-def _split_qualified(key: str) -> tuple[str, str]:
-    """Return ``(parent, tail)`` for *key*.
-
-    ``parent`` is ``""`` for a bare key.  ``tail`` is always the
-    basename without parent.  Only the rightmost ``/`` is used so deeper
-    paths (uncommon in this codebase) collapse to ``parent`` ≠ ``""``.
-    """
-    if "/" in key:
-        parent, _, tail = key.rpartition("/")
-        return parent, tail
-    return "", key
 
 
 class FlexDataProvider:
@@ -198,37 +183,17 @@ class FlexDataProvider:
            READS-declaration drift or a handler reading outside its
            declared scope.
         2. Exact match on the supplied (suffix-stripped) key.
-        3. If the supplied key is bare, scan for any stored qualified
-           key whose tail matches.  Returns the first match in
-           insertion order.
-        4. If the supplied key is qualified, fall back to the bare
-           tail.
 
-        Returns ``None`` if no candidate matches.
+        Returns ``None`` if no candidate matches.  The Phase 0a-era
+        bare↔qualified fallback was dropped in Phase 4.2-2 — callers
+        must pass the canonical parent-qualified key (typically a
+        ``K.*`` constant from ``_provider_keys.py`` or the result of
+        ``_emit_provider_io._provider_key(path)``).
         """
         key = _strip_csv(name)
         if key in self._evicted:
             raise EvictedFrameError(key, self._evicted[key])
-        if key in self._frames:
-            return self._frames[key]
-        parent, tail = _split_qualified(key)
-        if parent == "":
-            # Bare lookup — promote to whatever qualified frame matches
-            # by tail.
-            for stored_key, frame in self._frames.items():
-                stored_parent, stored_tail = _split_qualified(stored_key)
-                if stored_parent and stored_tail == key:
-                    return frame
-            # Evicted-set scan for bare lookup parity.
-            for evicted_key, marker in self._evicted.items():
-                _, e_tail = _split_qualified(evicted_key)
-                if e_tail == key:
-                    raise EvictedFrameError(evicted_key, marker)
-            return None
-        # Qualified lookup — fall back to bare tail.
-        if tail in self._evicted:
-            raise EvictedFrameError(tail, self._evicted[tail])
-        return self._frames.get(tail)
+        return self._frames.get(key)
 
     def has(self, name: str) -> bool:
         """Return ``True`` iff :meth:`get` would return a non-``None``
@@ -404,23 +369,13 @@ class FlexDataProvider:
         return total / (1024.0 * 1024.0)
 
     def is_evicted(self, name: str) -> bool:
-        """Return True iff *name* (or its qualified / bare alternate)
-        has been evicted by :meth:`release_unused`.
+        """Return True iff *name* has been evicted by
+        :meth:`release_unused`.
 
         Test helper; production callers use :meth:`get` and let
         :class:`EvictedFrameError` surface naturally.
         """
-        key = _strip_csv(name)
-        if key in self._evicted:
-            return True
-        parent, tail = _split_qualified(key)
-        if parent == "" and any(
-            _split_qualified(k)[1] == key for k in self._evicted
-        ):
-            return True
-        if parent != "" and tail in self._evicted:
-            return True
-        return False
+        return _strip_csv(name) in self._evicted
 
     def reset_lifetimes(self) -> None:
         """Clear the registered READS, item-group order, lifetime map,
