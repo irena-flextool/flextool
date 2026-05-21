@@ -71,14 +71,20 @@ def cost_summaries(par, s, v, r, debug):
     )
 
     # 3. Discounted and inflation adjusted (with years represented) investment costs.
-    # Indexed by d_realize_invest ∪ d_realized_period: invest/divest and
-    # fixed_invested/fixed_divested only have rows in d_realize_invest, but
-    # fixed-cost-pre-existing applies in every realized period (its r-series
-    # is per-period).  A bare d_realize_invest index would silently drop
-    # fixed-pre-existing for any realized period that isn't an invest period
-    # (e.g. y2020_2029_2x5y has p2020 invest + p2025 dispatch-only, and the
-    # 50/period fixed-pre-existing for p2025 was being dropped on assignment).
-    investment_index = s.d_realize_invest.union(s.d_realized_period)
+    # Indexed by d_realize_invest ∪ d_realized_period ∪ period_in_use:
+    # invest/divest and fixed_invested/fixed_divested only have rows in
+    # d_realize_invest, but fixed-cost-pre-existing applies in every period
+    # that the LP objective sees — which is ``period_in_use`` (every period
+    # carrying a non-zero ``complete_period_share_of_year``).  Excluding
+    # ``period_in_use`` periods that are NOT in d_realized_period dropped
+    # fixed_pre_existing rows that the LP DID charge for (e.g. the ``all``
+    # scenario realizes p2020 dispatch but charges fixed_pre_existing for
+    # p2020+p2025 via ``years_represented``; bare
+    # ``d_realize_invest ∪ d_realized_period`` discarded p2025's row on
+    # assignment to ``investment_costs``, leaving the per-category sum 1000
+    # M-CUR below summary's full-horizon total).
+    period_in_use = par.complete_period_share_of_year.index
+    investment_index = s.d_realize_invest.union(s.d_realized_period).union(period_in_use)
     investment_costs = pd.DataFrame(index=investment_index, dtype=float)
     investment_costs.columns.name = 'category'
     investment_costs['unit investment & retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / to_millions
