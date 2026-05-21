@@ -5463,6 +5463,124 @@ def build_handoff_from_flexpy(
                 if normalized.height > 0:
                     fix_storage_price_df = normalized
 
+    # ── deferred-B Phase B3: fix_storage_usage from v_flow primals ──────
+    # For each storage node n with
+    #   node__storage_nested_fix_method[n] == 'fix_usage'
+    # and each (period, step) in fix_storage_timesteps, sum v_flow primals
+    # of arcs touching n, weighted by p_entity_unitsize[process] and
+    # p_step_duration[d, t]:
+    #
+    #   p_fix_storage_usage[n, d, t]
+    #     = ( Σ_{(p, n, sink)} v_flow * unitsize[p]
+    #       - Σ_{(p, source, n)} v_flow * unitsize[p] )
+    #       × step_duration[d, t]
+    #
+    # Mirrors the v3.32.0 ``write_fix_storage_usage`` *simplified*
+    # form (handoff_writers.py:694-766) — sign convention matches the
+    # legacy (n-as-source adds, n-as-sink subtracts).  The producer
+    # uses the simplified formula even though the full LP slope/section
+    # corrections (mod lines 5389-5429) are omitted; B4's LP constraint
+    # must mirror this so the round-trip closes.  Models pairing
+    # fix_usage with min_load_efficiency or non-unity coefficients are
+    # out of scope here (legacy advises ``--use-old-raw-csv`` for those).
+    # Overrides the parent passthrough whenever this solve has any
+    # fix_usage node × fix-step pair with extractable flows.
+    fu_nodes: set[str] = set()
+    if nsfm_df is not None and nsfm_df.height > 0 and "method" in nsfm_df.columns:
+        fu_nodes = set(
+            nsfm_df.filter(pl.col("method") == "fix_usage")["node"]
+            .cast(pl.Utf8).to_list()
+        )
+    if (fu_nodes
+            and fs_steps_df is not None
+            and fs_steps_df.height > 0
+            and {"period", "step"}.issubset(fs_steps_df.columns)
+            and sol is not None
+            and flex_data is not None
+            and "v_flow" in getattr(sol, "_vars", {})):
+        v_flow_long = sol.value("v_flow")
+        if v_flow_long is not None and v_flow_long.height > 0:
+            fs_steps_fu = (fs_steps_df
+                .select(alias_to_axis("period", "d"),
+                         alias_to_axis("step", "t"))
+                .unique()
+                .with_columns(pl.col("d").cast(pl.Utf8),
+                              pl.col("t").cast(pl.Utf8)))
+
+            us_param = (getattr(flex_data, "p_all_entity_unitsize", None)
+                        or getattr(flex_data, "p_unitsize", None))
+            if us_param is not None:
+                unitsize_frame = (us_param.frame
+                    .select("p", pl.col("value").alias("us"))
+                    .with_columns(pl.col("p").cast(pl.Utf8)))
+            else:
+                unitsize_frame = pl.DataFrame(
+                    schema={"p": pl.Utf8, "us": pl.Float64})
+
+            step_dur_param = getattr(flex_data, "p_step_duration", None)
+            if step_dur_param is not None:
+                step_dur_frame = (step_dur_param.frame
+                    .select("d", "t", pl.col("value").alias("dur"))
+                    .with_columns(pl.col("d").cast(pl.Utf8),
+                                  pl.col("t").cast(pl.Utf8)))
+            else:
+                step_dur_frame = pl.DataFrame(
+                    schema={"d": pl.Utf8, "t": pl.Utf8, "dur": pl.Float64})
+
+            fu_node_df = pl.DataFrame(
+                {"n": sorted(fu_nodes)}, schema={"n": pl.Utf8},
+            )
+
+            flows = (v_flow_long
+                .with_columns(
+                    pl.col("p").cast(pl.Utf8),
+                    pl.col("source").cast(pl.Utf8),
+                    pl.col("sink").cast(pl.Utf8),
+                    pl.col("d").cast(pl.Utf8),
+                    pl.col("t").cast(pl.Utf8),
+                )
+                .join(fs_steps_fu, on=["d", "t"], how="inner")
+                .join(unitsize_frame, on="p", how="left")
+                .with_columns(pl.col("us").fill_null(1.0)))
+
+            # n-as-source: outflow contribution (positive).
+            source_side = (flows
+                .join(fu_node_df, left_on="source", right_on="n", how="inner")
+                .with_columns(
+                    contrib=pl.col("value") * pl.col("us"),
+                    n=pl.col("source"),
+                )
+                .select("n", "d", "t", "contrib"))
+            # n-as-sink: inflow contribution (negative).
+            sink_side = (flows
+                .join(fu_node_df, left_on="sink", right_on="n", how="inner")
+                .with_columns(
+                    contrib=-pl.col("value") * pl.col("us"),
+                    n=pl.col("sink"),
+                )
+                .select("n", "d", "t", "contrib"))
+
+            net = (pl.concat([source_side, sink_side], how="vertical")
+                .group_by(["n", "d", "t"])
+                .agg(pl.col("contrib").sum().alias("net")))
+
+            if net.height > 0:
+                weighted = (net
+                    .join(step_dur_frame, on=["d", "t"], how="left")
+                    .with_columns(pl.col("dur").fill_null(1.0))
+                    .with_columns(
+                        p_fix_storage_usage=pl.col("net") * pl.col("dur"),
+                    )
+                    .filter(pl.col("p_fix_storage_usage") != 0.0)
+                    .select(
+                        alias_to_axis("n", "node"),
+                        alias_to_axis("d", "period"),
+                        alias_to_axis("t", "step"),
+                        pl.col("p_fix_storage_usage"),
+                    ))
+                if weighted.height > 0:
+                    fix_storage_usage_df = weighted
+
     return SolveHandoff(
         realized_invest=pl.DataFrame(
             inv_rows, schema=["entity", "period", "value"], orient="row",
