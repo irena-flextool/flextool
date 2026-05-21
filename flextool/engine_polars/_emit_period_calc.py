@@ -9,13 +9,12 @@ Native polars port of
 
 Output CSVs:
 
-* ``write_period_calculated_params`` (12 CSVs):
+* ``write_period_calculated_params`` (11 CSVs):
 
   - ``p_timeline_duration_in_years.csv``        — sum_t dur / 8760
   - ``hours_in_period.csv``                     — sum_t step_duration
   - ``period_share_of_year.csv``                — hours / 8760
   - ``p_years_d.csv``                           — period_with_history scan
-  - ``p_years_represented_d_calc.csv``          — sum across years
   - ``complete_hours_in_period.csv``            — branch-summed complete hours
   - ``complete_period_share_of_year_calc.csv``  — complete hours / 8760
   - ``p_years_until_invest.csv``                — cumulative years + invest offset
@@ -42,9 +41,7 @@ authoritative byte-for-byte parity surface) and keep the formula
 expression aligned with ``PerSolveAggregates``.
 
 Float values formatted with ``repr(float(v))`` for byte-identical
-parity with the legacy emitter.  Where the legacy ``sum(())`` lands as
-``int 0`` we mirror by not pre-casting to float (see
-``p_years_represented_d_calc`` empty-domain branch in the legacy code).
+parity with the legacy emitter.
 """
 from __future__ import annotations
 
@@ -267,14 +264,6 @@ def emit_period_calculated_params(
     ]
     _emit_keyed(provider, "solve_data/p_years_d.csv",
                 ("period", "value"), p_years_d_rows)
-
-    p_years_rep_d: list[tuple[str, float]] = []
-    for d in periodAll:
-        years = years_for_period.get(d, ())
-        s = sum(p_years_represented.get((d, y), 1.0) for y in years)
-        p_years_rep_d.append((d, s))
-    _emit_keyed(provider, "solve_data/p_years_represented_d_calc.csv",
-                ("period", "value"), p_years_rep_d)
 
     branches_for_period: dict[str, list[str]] = {}
     for d2, d in pb_pairs_set:

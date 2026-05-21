@@ -551,13 +551,9 @@ def p_years_represented_d_from_source(
     ``solve.years_represented`` Map carries — e.g. 5.0 for a 5-year
     investment period).
 
-    Mirrors ``_emit_period_calc.write_period_calculated_params``
-    (the ``p_years_represented_d_calc`` block) but builds the value
-    directly from the source rather than from the CSV round-trip.
-
     Returns ``None`` when no period set is available; otherwise emits
     one row per period (width-1 default when the source omits the
-    period, matching the CSV legacy behaviour).
+    period).
     """
     if not period_set:
         return None
@@ -1347,10 +1343,8 @@ def apply_derived_a(
             source, usable_dt, sd_for_share)
 
     # 2b. p_years_represented_d — per-period R width sum (e.g. 5.0 for a
-    # 5-year invest period).  Mirrors
-    # ``_emit_period_calc.write_period_calculated_params``'s
-    # ``p_years_represented_d_calc.csv`` writer; consumed by
-    # ``process_outputs.read_parameters`` to scale annualised
+    # 5-year invest period).  Built directly from the source; consumed
+    # by ``process_outputs.read_parameters`` to scale annualised
     # per-period costs / CO2 to absolute totals.
     pad = _periodAll_from_source(source, active_solve, workdir=workdir, provider=provider)
     flex_data.p_years_represented_d = p_years_represented_d_from_source(

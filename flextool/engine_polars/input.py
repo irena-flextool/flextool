@@ -440,10 +440,10 @@ class FlexData:
     p_penalty_down: Param                    # (n, d, t)
 
     # Per-period years-represented R (e.g. 5.0 for a 5-year invest period).
-    # Mirrors ``solve_data/p_years_represented_d_calc.csv`` written by
-    # ``_emit_period_calc.write_period_calculated_params``.  None when
-    # the source carries no ``solve.years_represented`` rows (single-year
-    # fixtures default each period to width 1).
+    # Built from ``solve.years_represented`` via
+    # ``p_years_represented_d_from_source``.  None when the source
+    # carries no ``solve.years_represented`` rows (single-year fixtures
+    # default each period to width 1).
     p_years_represented_d: Param | None = None  # (d,)
 
     # ─── Process topology  ───────────────────────────────────────────────

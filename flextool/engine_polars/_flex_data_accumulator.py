@@ -354,7 +354,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "hours_in_period.csv",
     "period_share_of_year.csv",
     "p_years_d.csv",
-    "p_years_represented_d_calc.csv",
     "complete_hours_in_period.csv",
     "p_years_until_invest.csv",
     "p_years_until_dispatch.csv",
