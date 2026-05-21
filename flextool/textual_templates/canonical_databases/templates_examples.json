@@ -2869,7 +2869,7 @@
       null,
       "is_active",
       "Can the connection provide this reserve to the selected node. Empty indicates not allowed. Use 'yes' to indicate true.",
-      null
+      "reserve"
     ],
     [
       "reserve__upDown__connection__node",
@@ -2956,7 +2956,7 @@
       null,
       "is_active",
       "Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.",
-      null
+      "reserve"
     ],
     [
       "reserve__upDown__unit__node",
