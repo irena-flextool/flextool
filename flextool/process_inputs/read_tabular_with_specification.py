@@ -644,14 +644,23 @@ class TabularReader:
             df_work.index = pd.MultiIndex.from_arrays(row_index_arrays, names=row_index_names)
 
         # Step 5: Apply column type conversions to data columns
+        # Use `isetitem` so that the underlying dtype of the column is REPLACED
+        # rather than the existing (possibly string-arrow) backing being
+        # asked to accept a value of an incompatible dtype.  Also skip columns
+        # the mapping doesn't consume (skip_cols, label columns, ent_alt) — the
+        # sheet-wide declared column type may not apply to those cells, and
+        # they aren't part of the data the mapping reads anyway.
         if table_column_types:
+            type_skip = skip_cols.union(label_column_indices).union(ent_alt_col)
             for orig_col_idx, col_type in table_column_types.items():
                 orig_col_idx = int(orig_col_idx)
+                if orig_col_idx in type_skip:
+                    continue
                 if orig_col_idx < len(df_work.columns):
                     # Check if this original column is still in the dataframe
                     if col_type == "float":
                         try:
-                            df_work.iloc[:, orig_col_idx] = pd.to_numeric(
+                            new_col = pd.to_numeric(
                                 df_work.iloc[:, orig_col_idx], errors='raise')
                         except (ValueError, TypeError) as e:
                             sheet_info = f"Sheet '{table_name}'" if table_name else "Sheet"
@@ -659,10 +668,14 @@ class TabularReader:
                                 f" {sheet_info}, column {orig_col_idx} contains non-numeric values: {e}. "
                                 f"Converting invalid values to NaN and continuing.\n{' ':<30}"
                             )
-                            df_work.iloc[:, orig_col_idx] = pd.to_numeric(
+                            new_col = pd.to_numeric(
                                 df_work.iloc[:, orig_col_idx], errors='coerce')
+                        df_work.isetitem(orig_col_idx, new_col)
                     elif col_type == "string":
-                        df_work.iloc[:, orig_col_idx] = df_work.iloc[:, orig_col_idx].astype('string')
+                        df_work.isetitem(
+                            orig_col_idx,
+                            df_work.iloc[:, orig_col_idx].astype('string'),
+                        )
                 else:
                     continue
 
