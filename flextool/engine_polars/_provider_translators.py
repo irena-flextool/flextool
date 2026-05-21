@@ -87,20 +87,95 @@ def translate_handoff_to_provider(
         provider.put(key, frame)
 
 
+# Mapping from user-facing handoff Provider keys to their override
+# siblings.  Phase 5 of specs/provider_consolidation.md: external code
+# supplies overrides keyed by ``K.HANDOFF_X`` (the user-facing identity);
+# ``translate_overrides_to_provider`` writes each frame under the
+# corresponding ``K.OVERRIDE_X`` key, and ``read_handoff_frame`` checks
+# the override slot before falling back to the natural handoff carrier.
+# Only the existing handoff carriers are overridable.
+_HANDOFF_TO_OVERRIDE: dict[str, str] = {
+    K.HANDOFF_REALIZED_INVEST:      K.OVERRIDE_REALIZED_INVEST,
+    K.HANDOFF_REALIZED_EXISTING:    K.OVERRIDE_REALIZED_EXISTING,
+    K.HANDOFF_DIVEST_CUMULATIVE:    K.OVERRIDE_DIVEST_CUMULATIVE,
+    K.HANDOFF_ROLL_END_STATE:       K.OVERRIDE_ROLL_END_STATE,
+    K.HANDOFF_CUMULATIVE_CO2:       K.OVERRIDE_CUMULATIVE_CO2,
+    K.HANDOFF_CUMULATIVE_COMMODITY: K.OVERRIDE_CUMULATIVE_COMMODITY,
+    K.HANDOFF_CUM_SIM_HOURS:        K.OVERRIDE_CUM_SIM_HOURS,
+    K.HANDOFF_FIX_STORAGE_QUANTITY: K.OVERRIDE_FIX_STORAGE_QUANTITY,
+    K.HANDOFF_FIX_STORAGE_PRICE:    K.OVERRIDE_FIX_STORAGE_PRICE,
+    K.HANDOFF_FIX_STORAGE_USAGE:    K.OVERRIDE_FIX_STORAGE_USAGE,
+}
+
+
+def translate_overrides_to_provider(
+    overrides: "dict[str, pl.DataFrame] | None", provider,
+) -> None:
+    """Write external overrides under ``override/<field>`` Provider keys.
+
+    Phase 5 of ``specs/provider_consolidation.md``.  External code provides
+    overrides keyed by ``K.HANDOFF_X`` constants (the user-facing identity);
+    this translator writes each frame under the corresponding ``K.OVERRIDE_X``
+    Provider key.  Existing :func:`read_handoff_frame` consumers automatically
+    pick up overrides because the helper checks ``override/<field>`` before
+    falling back to ``handoff/<field>``.
+
+    When *overrides* is ``None`` or empty, no writes are made — the override
+    layer simply isn't present.
+
+    Raises
+    ------
+    ValueError
+        If *overrides* contains a key that is not one of the whitelisted
+        ``K.HANDOFF_*`` constants.  Arbitrary Provider-key writes through
+        this translator are rejected so the override surface stays
+        explicit.
+    """
+    if not overrides:
+        return
+    for handoff_key, frame in overrides.items():
+        override_key = _HANDOFF_TO_OVERRIDE.get(handoff_key)
+        if override_key is None:
+            raise ValueError(
+                f"translate_overrides_to_provider: key {handoff_key!r} is not "
+                f"a whitelisted handoff carrier; only K.HANDOFF_* keys are "
+                f"overridable.  Allowed keys: "
+                f"{sorted(_HANDOFF_TO_OVERRIDE.keys())!r}"
+            )
+        provider.put(override_key, frame)
+
+
 def read_handoff_frame(provider, key: str) -> "pl.DataFrame | None":
     """Return a populated handoff frame from the Provider, or ``None``.
+
+    Phase 5: checks ``override/<field>`` first, falls back to
+    ``handoff/<field>``.  External overrides written via
+    :func:`translate_overrides_to_provider` shadow the natural handoff
+    carrier; consumers stay key-stable.
 
     The translator writes an empty header-only frame when the
     corresponding handoff field is ``None``; this helper collapses the
     ``height == 0`` empty back to ``None`` so consumers can preserve
-    their existing ``if frame is not None`` guard pattern.
+    their existing ``if frame is not None`` guard pattern.  The same
+    ``height == 0 → None`` semantics apply to the override slot: an
+    empty override frame is treated as "no override present" and we
+    fall through to the handoff carrier.
     """
     if provider is None:
         return None
+    override_key = _HANDOFF_TO_OVERRIDE.get(key)
+    if override_key is not None:
+        frame = provider.get(override_key)
+        if frame is not None and frame.height > 0:
+            return frame
     frame = provider.get(key)
     if frame is None or frame.height == 0:
         return None
     return frame
 
 
-__all__ = ["translate_handoff_to_provider", "read_handoff_frame"]
+__all__ = [
+    "translate_handoff_to_provider",
+    "translate_overrides_to_provider",
+    "read_handoff_frame",
+]

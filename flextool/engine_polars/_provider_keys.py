@@ -130,3 +130,26 @@ HANDOFF_CUM_SIM_HOURS = "handoff/cum_sim_hours"
 HANDOFF_FIX_STORAGE_QUANTITY = "handoff/fix_storage_quantity"
 HANDOFF_FIX_STORAGE_PRICE = "handoff/fix_storage_price"
 HANDOFF_FIX_STORAGE_USAGE = "handoff/fix_storage_usage"
+
+
+# ---------------------------------------------------------------------------
+# override/ keys — parallel to handoff/* and populated by
+# ``_provider_translators.translate_overrides_to_provider`` from an
+# external overrides dict (Phase 5 of specs/provider_consolidation.md).
+# When present, ``read_handoff_frame`` returns the override frame in
+# preference to the natural handoff carrier, so existing consumers pick
+# up overrides without code changes.  Each override key shadows the
+# correspondingly-named ``HANDOFF_*`` key; only the existing handoff
+# carriers are overridable.
+# ---------------------------------------------------------------------------
+
+OVERRIDE_REALIZED_INVEST = "override/realized_invest"
+OVERRIDE_REALIZED_EXISTING = "override/realized_existing"
+OVERRIDE_DIVEST_CUMULATIVE = "override/divest_cumulative"
+OVERRIDE_ROLL_END_STATE = "override/roll_end_state"
+OVERRIDE_CUMULATIVE_CO2 = "override/cumulative_co2"
+OVERRIDE_CUMULATIVE_COMMODITY = "override/cumulative_commodity"
+OVERRIDE_CUM_SIM_HOURS = "override/cum_sim_hours"
+OVERRIDE_FIX_STORAGE_QUANTITY = "override/fix_storage_quantity"
+OVERRIDE_FIX_STORAGE_PRICE = "override/fix_storage_price"
+OVERRIDE_FIX_STORAGE_USAGE = "override/fix_storage_usage"
