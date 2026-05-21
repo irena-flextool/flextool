@@ -2597,20 +2597,27 @@ def derive_p_storage_state_reference_price(
 ) -> pl.DataFrame:
     """``p_storage_state_reference_price`` 3-col frame; see writer docstring."""
     import csv
-    # (n, d2, t2) → value, keyed by (node, period, step) from fix_storage_price.
+    # (n, d2, t2) → value, keyed by (node, period, step) from
+    # ``handoff/fix_storage_price`` (canonical schema
+    # ``[node, period, step, p_fix_storage_price]``).  Phase 4.1f —
+    # replaces the legacy ``solve_data/fix_storage_price.csv`` Provider
+    # read; the translator seeds the handoff key at iteration start
+    # (parent's data shadowing sequential when nested).
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import (
+        read_handoff_frame,
+    )
     fix_price: dict[tuple[str, str, str], float] = {}
-    fsp_path = solve_data_dir / "fix_storage_price.csv"
-    _fh = _provider_open(provider, _provider_key(fsp_path), fsp_path)
-    if _fh is not None:
-        with _fh as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for r in reader:
-                if len(r) >= 4 and r[0] and r[1] and r[2]:
-                    try:
-                        fix_price[(r[2], r[0], r[1])] = float(r[3])
-                    except ValueError:
-                        continue
+    fsp_df = read_handoff_frame(provider, K.HANDOFF_FIX_STORAGE_PRICE)
+    if fsp_df is not None and fsp_df.height > 0:
+        for n_, d_, t_, v_ in fsp_df.select(
+            "node", "period", "step", "p_fix_storage_price",
+        ).iter_rows():
+            if n_ and d_ and t_ and v_ is not None and v_ != "":
+                try:
+                    fix_price[(n_, d_, t_)] = float(v_)
+                except (ValueError, TypeError):
+                    continue
 
     ptl = _read_pairs_csv(
         solve_data_dir / "last_timesteps.csv", provider=provider,
