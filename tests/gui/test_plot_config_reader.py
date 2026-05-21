@@ -6,6 +6,7 @@ from textwrap import dedent
 import pytest
 import yaml
 
+from flextool._resources import package_data_path
 from flextool.gui.plot_config_reader import (
     PlotEntry,
     PlotGroup,
@@ -13,9 +14,10 @@ from flextool.gui.plot_config_reader import (
     parse_plot_config,
 )
 
-# Resolve template paths relative to the repository root
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_PLOTS = _REPO_ROOT / "templates" / "default_plots.yaml"
+# After commit ``ec3c95af`` the YAML templates were moved into the
+# ``flextool`` package (``flextool/textual_templates/``) and are reached
+# via :mod:`importlib.resources`; the historical repo-root location is gone.
+_DEFAULT_PLOTS = package_data_path("textual_templates/default_plots.yaml")
 
 
 class TestParseDefaultPlots:

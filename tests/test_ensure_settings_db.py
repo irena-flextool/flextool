@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from flextool._resources import package_data_path
 from flextool.update_flextool.ensure_settings_db import (
     SETTINGS_TEMPLATES,
     _sqlite_url_to_path,
@@ -19,8 +20,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 @pytest.mark.parametrize("basename", list(SETTINGS_TEMPLATES))
 def test_template_files_exist(basename: str) -> None:
-    """Each mapped JSON template must actually be present in the repo."""
-    template = REPO_ROOT / SETTINGS_TEMPLATES[basename]
+    """Each mapped JSON template must actually be present in the package.
+
+    After commit ``ec3c95af`` the JSON templates were moved into the
+    ``flextool`` package (``flextool/version/``) and are reached via
+    :mod:`importlib.resources`; the historical repo-root location is gone.
+    """
+    template = package_data_path(f"version/{SETTINGS_TEMPLATES[basename]}")
     assert template.is_file(), f"Template {template} is missing"
 
 
