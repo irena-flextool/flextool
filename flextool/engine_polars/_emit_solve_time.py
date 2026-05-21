@@ -21,27 +21,25 @@ Function-signature parity
 
 * positional ``state: RunnerState``
 * positional ``solve_name: str``
-* keyword-only ``prior_handoff: SolveHandoff | None = None``
 * keyword-only ``provider: object`` — required; every cascade caller
   (``_native_run_model.native_run_model``) supplies the per-sub-solve
   Provider.  No fallback to ``state.current_provider`` — direct
   threading is now the only path.
+
+Phase 2 of ``specs/provider_consolidation.md`` retired the
+``prior_handoff`` parameter — handoff-aware preprocessing sub-emitters
+read the prior carrier via ``provider.get(K.HANDOFF_*)``, populated at
+iteration start by ``_provider_translators.translate_handoff_to_provider``.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from flextool.flextoolrunner.runner_state import RunnerState
-
-if TYPE_CHECKING:
-    from flextool.flextoolrunner.solve_handoff import SolveHandoff
 
 
 def run(
     state: RunnerState,
     solve_name: str,
     *,
-    prior_handoff: "SolveHandoff | None" = None,
     provider: object,
 ) -> None:
     """Native per-solve preprocessing orchestrator.
@@ -209,9 +207,12 @@ def run(
     _period.emit_pdtConversion_rate_section_slope(input_dir, solve_data_dir, provider=provider)
     # ── L8 batch 58 ───────────────────────────────────────────────────
     _period.emit_p_positive_negative_inflow(input_dir, solve_data_dir, provider=provider)
-    # ── L6/L7 batch 59: p_entity existing-capacity chain (handoff-aware)
+    # ── L6/L7 batch 59: p_entity existing-capacity chain — reads
+    # ``K.HANDOFF_REALIZED_EXISTING`` / ``K.HANDOFF_REALIZED_INVEST``
+    # via the Provider (Phase 2 of provider_consolidation.md retired
+    # the ``prior_handoff`` parameter threading).
     _chain.emit_p_entity_existing_chain(
-        input_dir, solve_data_dir, prior_handoff=prior_handoff, provider=provider,
+        input_dir, solve_data_dir, provider=provider,
     )
     # ── L9/L10 batch 60: capacity max chain ───────────────────────────
     _chain.emit_p_entity_capacity_max_chain(input_dir, solve_data_dir, provider=provider)

@@ -986,11 +986,9 @@ def native_run_model(state, solver) -> int:
         # override hook intercepts already-ported helpers).  The prior
         # SolveHandoff is fanned into ``handoff/<field>`` Provider keys
         # via :func:`_provider_translators.translate_handoff_to_provider`
-        # so consumer reads can go through ``provider.get(K.HANDOFF_X)``
-        # without the ``prior_handoff`` parameter threading the cascade
-        # (Phase 2 of specs/provider_consolidation.md).  The parameter
-        # is still threaded into ``preprocessing_solve_time.run`` below
-        # while consumers are migrated one module at a time.
+        # so cascade consumers go through ``provider.get(K.HANDOFF_X)``
+        # — no ``prior_handoff`` parameter is threaded through the
+        # cascade (Phase 2 of specs/provider_consolidation.md).
         prior_handoff = (
             state.handoffs.get(last_captured_solve)
             if state.handoffs is not None and last_captured_solve is not None
@@ -1011,7 +1009,7 @@ def native_run_model(state, solver) -> int:
         # ``sub_solve_provider`` via the threaded ``provider=`` keyword;
         # the Provider is the sole in-memory carrier.
         preprocessing_solve_time.run(
-            state, complete_solve[solve], prior_handoff=prior_handoff,
+            state, complete_solve[solve],
             provider=sub_solve_provider,
         )
         if _mem_cp is not None:

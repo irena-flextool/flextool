@@ -36,9 +36,11 @@ from flextool.engine_polars._emit_provider_io import (
     _provider_key,
     _provider_open,
 )
+from flextool.engine_polars import _provider_keys as K
+from flextool.engine_polars._provider_translators import read_handoff_frame
 
 if TYPE_CHECKING:
-    from ._solve_handoff import SolveHandoff
+    from ._solve_handoff import SolveHandoff  # noqa: F401 — retained for legacy callers
 
 
 def _ed_value_frame(
@@ -443,35 +445,32 @@ def emit_p_entity_divest_cumulative_max(
 
 def _load_handoff_or_csv_realized(
     solve_data_dir: Path,
-    prior_handoff: "SolveHandoff | None",
     *, provider: "object | None" = None,
 ) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float], bool]:
     """Resolve (realized_existing, realized_invest) from either the
-    in-memory ``SolveHandoff`` carriers (when populated) or the
-    file-based ``p_entity_period_existing_capacity.csv`` left by the
-    parent solve's output writer.
+    Provider's ``handoff/realized_*`` carriers (populated by the
+    iteration-start translator) or the file-based
+    ``p_entity_period_existing_capacity.csv`` left by the parent
+    solve's output writer.
 
     Returns ``(ppec, ppic, used_handoff)`` where ``ppec`` maps
     ``(entity, period) → realized_existing`` and ``ppic`` maps
-    ``(entity, period) → realized_invest``.  ``used_handoff`` mirrors
-    the legacy ``used_handoff_existing`` flag — true when at least one
-    of the two carriers was supplied in-memory.
+    ``(entity, period) → realized_invest``.  ``used_handoff`` is true
+    when at least one of the two carriers held populated rows (i.e.
+    ``height > 0``) — empty/None handoff frames fall through to the
+    CSV path, matching the legacy ``prior_handoff is not None`` check.
     """
     ppec: dict[tuple[str, str], float] = {}
     ppic: dict[tuple[str, str], float] = {}
-    used_handoff = (
-        prior_handoff is not None
-        and (
-            prior_handoff.realized_existing is not None
-            or prior_handoff.realized_invest is not None
-        )
-    )
+    realized_existing = read_handoff_frame(provider, K.HANDOFF_REALIZED_EXISTING)
+    realized_invest = read_handoff_frame(provider, K.HANDOFF_REALIZED_INVEST)
+    used_handoff = realized_existing is not None or realized_invest is not None
     if used_handoff:
-        if prior_handoff.realized_existing is not None:
-            for r in prior_handoff.realized_existing.iter_rows(named=True):
+        if realized_existing is not None:
+            for r in realized_existing.iter_rows(named=True):
                 ppec[(str(r["entity"]), str(r["period"]))] = float(r["value"])
-        if prior_handoff.realized_invest is not None:
-            for r in prior_handoff.realized_invest.iter_rows(named=True):
+        if realized_invest is not None:
+            for r in realized_invest.iter_rows(named=True):
                 ppic[(str(r["entity"]), str(r["period"]))] = float(r["value"])
         return ppec, ppic, True
 
@@ -495,7 +494,6 @@ def _load_handoff_or_csv_realized(
 
 def _compute_p_entity_existing_chain(
     input_dir: Path, solve_data_dir: Path,
-    prior_handoff: "SolveHandoff | None",
     *, provider: "object | None" = None,
 ) -> tuple[
     list[tuple[str, str, float]],  # later_solves rows
@@ -533,7 +531,7 @@ def _compute_p_entity_existing_chain(
         edd_by_ed.setdefault((e, d), []).append(d_h)
 
     ppec, ppic, _ = _load_handoff_or_csv_realized(
-        solve_data_dir, prior_handoff, provider=provider,
+        solve_data_dir, provider=provider,
     )
 
     ed_history_realized: set[tuple[str, str]] = set(ppec.keys())
@@ -546,8 +544,9 @@ def _compute_p_entity_existing_chain(
         solve_data_dir / "entityDivest.csv", provider=provider,
     ))
     p_divested: dict[str, float] = {}
-    if prior_handoff is not None and prior_handoff.divest_cumulative is not None:
-        for r in prior_handoff.divest_cumulative.iter_rows(named=True):
+    divest_cumulative = read_handoff_frame(provider, K.HANDOFF_DIVEST_CUMULATIVE)
+    if divest_cumulative is not None:
+        for r in divest_cumulative.iter_rows(named=True):
             p_divested[str(r["entity"])] = float(r["value"])
     else:
         p_divested = _load_e_value_csv(
@@ -598,63 +597,62 @@ def _compute_p_entity_existing_chain(
 
 def derive_p_entity_existing_capacity_later_solves(
     input_dir: Path, solve_data_dir: Path,
-    prior_handoff: "SolveHandoff | None" = None,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     later_rows, _, _, _, _ = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, prior_handoff,
+        input_dir, solve_data_dir, provider=provider,
     )
     return _ed_value_frame(later_rows)
 
 
 def derive_p_entity_all_existing(
     input_dir: Path, solve_data_dir: Path,
-    prior_handoff: "SolveHandoff | None" = None,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     _, all_rows, _, _, _ = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, prior_handoff,
+        input_dir, solve_data_dir, provider=provider,
     )
     return _ed_value_frame(all_rows)
 
 
 def derive_p_entity_existing_count(
     input_dir: Path, solve_data_dir: Path,
-    prior_handoff: "SolveHandoff | None" = None,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     _, _, count_rows, _, _ = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, prior_handoff,
+        input_dir, solve_data_dir, provider=provider,
     )
     return _ed_value_frame(count_rows)
 
 
 def derive_p_entity_existing_integer_count(
     input_dir: Path, solve_data_dir: Path,
-    prior_handoff: "SolveHandoff | None" = None,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     _, _, _, int_rows, _ = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, prior_handoff,
+        input_dir, solve_data_dir, provider=provider,
     )
     return _ed_value_frame(int_rows)
 
 
 def derive_p_entity_previously_invested_capacity(
     input_dir: Path, solve_data_dir: Path,
-    prior_handoff: "SolveHandoff | None" = None,
+    *, provider: "object | None" = None,
 ) -> pl.DataFrame:
     _, _, _, _, prev_rows = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, prior_handoff,
+        input_dir, solve_data_dir, provider=provider,
     )
     return _ed_value_frame(prev_rows)
 
 
 def emit_p_entity_existing_chain(
     input_dir: Path, solve_data_dir: Path,
-    *, prior_handoff: "SolveHandoff | None" = None,
-    provider,
+    *, provider,
 ) -> None:
     """Emit ``p_entity_existing_chain`` to the Provider."""
     later_rows, all_rows, count_rows, int_rows, prev_rows = (
         _compute_p_entity_existing_chain(
-            input_dir, solve_data_dir, prior_handoff, provider=provider,
+            input_dir, solve_data_dir, provider=provider,
         )
     )
     _emit(provider,
