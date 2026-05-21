@@ -770,53 +770,47 @@ def native_run_model(state, solver) -> int:
         if storage_fix_values_exist:
             state.logger.info("Fetching storage parameters from the upper solve")
             parent_complete = complete_solve[parent_roll[solve]]
-            parent_handoff = (
-                state.handoffs.get(parent_complete)
-                if state.handoffs is not None else None
+            # Phase 4.1i — the wide → narrow CSV fan-out from
+            # ``parent_handoff.fix_storage`` is retired; all readers now
+            # consult the per-metric ``handoff/*`` Provider keys seeded
+            # by the iteration-start translator.  The shutil.copy
+            # archive path and the in-memory carrier fallback below
+            # remain (scheduled for retirement in Phases 4.1j / 4.1k).
+            # Phase E-d — when the parent's archived per-parent
+            # CSVs don't exist on disk (csv-emission disabled),
+            # fall back to the in-memory cross-solve carrier slot
+            # populated at the end of the parent's iteration.
+            _parent_carriers = carriers.get(parent_complete, {})
+            _parent_archive = (
+                wf / f"solve_data/fix_storage_quantity_{parent_complete}.csv"
             )
-            if parent_handoff is not None and parent_handoff.fix_storage is not None:
-                from flextool.flextoolrunner.solve_handoff import (
-                    write_fix_storage_files_from_handoff,
+            if _parent_archive.exists():
+                shutil.copy(
+                    str(wf / f"solve_data/fix_storage_quantity_{parent_complete}.csv"),
+                    str(wf / "solve_data/fix_storage_quantity.csv"),
                 )
-                write_fix_storage_files_from_handoff(
-                    parent_handoff.fix_storage, wf / "solve_data",
+                shutil.copy(
+                    str(wf / f"solve_data/fix_storage_price_{parent_complete}.csv"),
+                    str(wf / "solve_data/fix_storage_price.csv"),
+                )
+                shutil.copy(
+                    str(wf / f"solve_data/fix_storage_usage_{parent_complete}.csv"),
+                    str(wf / "solve_data/fix_storage_usage.csv"),
                 )
             else:
-                # Phase E-d — when the parent's archived per-parent
-                # CSVs don't exist on disk (csv-emission disabled),
-                # fall back to the in-memory cross-solve carrier slot
-                # populated at the end of the parent's iteration.
-                _parent_carriers = carriers.get(parent_complete, {})
-                _parent_archive = (
-                    wf / f"solve_data/fix_storage_quantity_{parent_complete}.csv"
-                )
-                if _parent_archive.exists():
-                    shutil.copy(
-                        str(wf / f"solve_data/fix_storage_quantity_{parent_complete}.csv"),
-                        str(wf / "solve_data/fix_storage_quantity.csv"),
-                    )
-                    shutil.copy(
-                        str(wf / f"solve_data/fix_storage_price_{parent_complete}.csv"),
-                        str(wf / "solve_data/fix_storage_price.csv"),
-                    )
-                    shutil.copy(
-                        str(wf / f"solve_data/fix_storage_usage_{parent_complete}.csv"),
-                        str(wf / "solve_data/fix_storage_usage.csv"),
-                    )
-                else:
-                    # Step 1-f — seed the per-sub-solve Provider from
-                    # the parent's carrier slot.  Readers consult the
-                    # Provider (or, transitionally, the seed funnel
-                    # adapter that delegates to the Provider) so the
-                    # on-disk copy is unneeded.
-                    for _key in (
-                        "solve_data/fix_storage_quantity.csv",
-                        "solve_data/fix_storage_price.csv",
-                        "solve_data/fix_storage_usage.csv",
-                    ):
-                        _src = _parent_carriers.get(_key)
-                        if _src is not None:
-                            sub_solve_provider.put(_key, _src)
+                # Step 1-f — seed the per-sub-solve Provider from
+                # the parent's carrier slot.  Readers consult the
+                # Provider (or, transitionally, the seed funnel
+                # adapter that delegates to the Provider) so the
+                # on-disk copy is unneeded.
+                for _key in (
+                    "solve_data/fix_storage_quantity.csv",
+                    "solve_data/fix_storage_price.csv",
+                    "solve_data/fix_storage_usage.csv",
+                ):
+                    _src = _parent_carriers.get(_key)
+                    if _src is not None:
+                        sub_solve_provider.put(_key, _src)
 
         solve_writers.emit_solve_status(
             first_of_nested_level, last_of_nested_level,

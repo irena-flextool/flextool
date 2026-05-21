@@ -156,40 +156,13 @@ class SolveHandoff:
         return all(getattr(self, f) is None for f in self._FIELDS)
 
 
-def write_fix_storage_files_from_handoff(
-    fix_storage: "pl.DataFrame", solve_data_dir,
-) -> None:
-    """Write the three ``solve_data/fix_storage_*.csv`` files from the
-    in-memory wide handoff frame.
-
-    Replaces the file-based ``shutil.copy`` propagation of the parent
-    solve's archived ``fix_storage_*_<parent>.csv`` to the current
-    solve's ``fix_storage_*.csv``.  The .mod still reads CSV at run
-    time (per ``flextool.mod``'s ``table data IN`` blocks); the source
-    becomes the in-memory handoff frame instead of the parent's
-    archived copy.
-
-    The handoff frame's schema is wide ``[node, period, time, quantity,
-    price, usage]`` with NULLs for inactive metrics; this writer fans
-    it back out to per-metric files in long format.  The on-disk
-    column name for the time axis is ``step`` (not ``time``) — renamed
-    accordingly.
-    """
-    for metric, on_disk_col, fname in (
-        ("quantity", "p_fix_storage_quantity", "fix_storage_quantity.csv"),
-        ("price",    "p_fix_storage_price",    "fix_storage_price.csv"),
-        ("usage",    "p_fix_storage_usage",    "fix_storage_usage.csv"),
-    ):
-        out = (
-            fix_storage
-            .filter(pl.col(metric).is_not_null())
-            .rename({"time": "step", metric: on_disk_col})
-            .select("node", "period", "step", on_disk_col)
-        )
-        out.write_csv(solve_data_dir / fname)
+# Phase 4.1i — ``write_fix_storage_files_from_handoff`` was retired
+# once all readers of ``solve_data/fix_storage_*`` migrated to the
+# per-metric ``handoff/*`` Provider keys seeded by the
+# iteration-start translator (Phases 4.1f–4.1h).  The wide → narrow
+# CSV fan-out has no consumers.
 
 
 __all__ = [
     "SolveHandoff",
-    "write_fix_storage_files_from_handoff",
 ]

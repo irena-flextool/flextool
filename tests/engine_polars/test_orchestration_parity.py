@@ -82,17 +82,22 @@ def test_solve_handoff_reexport_shim() -> None:
 
 
 def test_solve_handoff_capture_helpers_reexported() -> None:
-    """``write_fix_storage_files_from_handoff`` must re-export from the
-    legacy path so external callers that import from
-    ``flextool.flextoolrunner.solve_handoff`` keep resolving to the
-    same function."""
-    from flextool.engine_polars._solve_handoff import (
-        write_fix_storage_files_from_handoff as native_write,
-    )
-    from flextool.flextoolrunner.solve_handoff import (
-        write_fix_storage_files_from_handoff as legacy_write,
-    )
-    assert native_write is legacy_write
+    """Inverse-regression guard.
+
+    Phase 4.1i of ``specs/provider_consolidation.md`` retired
+    ``write_fix_storage_files_from_handoff`` — every reader of
+    ``solve_data/fix_storage_*`` migrated to the per-metric
+    ``handoff/*`` Provider keys seeded by the iteration-start
+    translator (Phases 4.1f–4.1h).  This guard asserts the helper
+    stays gone on both the native module and the legacy re-export
+    shim, so a regression that resurrects it lands a test failure
+    rather than silently reintroducing dead disk-fan-out code.
+    """
+    from flextool.engine_polars import _solve_handoff as native_mod
+    from flextool.flextoolrunner import solve_handoff as legacy_mod
+
+    assert not hasattr(native_mod, "write_fix_storage_files_from_handoff")
+    assert not hasattr(legacy_mod, "write_fix_storage_files_from_handoff")
 
 
 # ---------------------------------------------------------------------------
@@ -477,41 +482,12 @@ def test_native_orchestration_obj_parity(work_name: str, scenario: str) -> None:
 # ---------------------------------------------------------------------------
 # Storage-fixing handoff: in-memory write helper.
 # ---------------------------------------------------------------------------
-
-
-def test_write_fix_storage_files_from_handoff_in_memory(tmp_path) -> None:
-    """``write_fix_storage_files_from_handoff`` writes the three
-    fix_storage_*.csv files from a wide handoff frame.
-
-    This is the consume-side helper invoked from the orchestrator
-    when a parent solve fixes storage on a child (R-O2 in-memory
-    behaviour divergence).  Unit-level test ensuring the helper still
-    works after the engine_polars port + the legacy re-export shim.
-    """
-    from flextool.engine_polars._solve_handoff import (
-        write_fix_storage_files_from_handoff,
-    )
-
-    sd = tmp_path / "solve_data"
-    sd.mkdir()
-    fix_storage = pl.DataFrame({
-        "node":     ["battery", "battery", "tank"],
-        "period":   ["p2025",   "p2025",   "p2030"],
-        "time":     ["t0001",   "t0002",   "t0001"],
-        "quantity": [10.0, 20.0, None],
-        "price":    [None, 5.0,  None],
-        "usage":    [None, None, 0.7],
-    })
-    write_fix_storage_files_from_handoff(fix_storage, sd)
-    qty = pl.read_csv(sd / "fix_storage_quantity.csv")
-    assert qty.columns == ["node", "period", "step", "p_fix_storage_quantity"]
-    assert qty.height == 2
-    price = pl.read_csv(sd / "fix_storage_price.csv")
-    assert price.height == 1
-    assert price["step"][0] == "t0002"
-    usage = pl.read_csv(sd / "fix_storage_usage.csv")
-    assert usage.height == 1
-    assert usage["node"][0] == "tank"
+#
+# Phase 4.1i — the unit-level disk-fan-out test for
+# ``write_fix_storage_files_from_handoff`` was deleted alongside the
+# helper itself.  No equivalent test on the ``handoff/*`` Provider
+# path lives here: end-to-end coverage of the per-metric handoff
+# routing belongs in the rolling/chain handoff suites.
 
 
 # ---------------------------------------------------------------------------

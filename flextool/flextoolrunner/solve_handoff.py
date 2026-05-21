@@ -32,11 +32,9 @@ from __future__ import annotations
 
 from flextool.engine_polars._solve_handoff import (
     SolveHandoff,
-    write_fix_storage_files_from_handoff,
 )
 
 
 __all__ = [
     "SolveHandoff",
-    "write_fix_storage_files_from_handoff",
 ]
