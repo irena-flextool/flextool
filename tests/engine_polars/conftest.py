@@ -22,6 +22,12 @@ HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
 if str(FIXTURES) not in sys.path:
     sys.path.insert(0, str(FIXTURES))
+# Under pytest --import-mode=importlib, the directory of a test file is not
+# automatically prepended to sys.path.  We host ``_golden.py`` and a couple
+# of other private helpers next to the test files, and they're imported by
+# bare name (``from _golden import ...``).  Make those resolvable.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
 DATA_DIR = HERE / "data"
 

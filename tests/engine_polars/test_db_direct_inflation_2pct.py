@@ -62,10 +62,7 @@ from flextool.engine_polars import (
     load_flextool,
 )
 
-# ``tests/`` is not a package, so import ``_golden`` from the sibling
-# module by file path; pytest's importlib import mode does not extend
-# ``sys.path`` with the test file's directory.  Other engine_polars
-# tests defer the import to function scope; we mirror that here.
+from _golden import assert_obj_within
 
 pytestmark = pytest.mark.solver
 
@@ -274,7 +271,6 @@ def test_solve_parity_2pct():
     build_flextool(pb, data)
     sol = pb.solve()
     assert sol.optimal, f"solve not optimal: {sol}"
-    from _golden import assert_obj_within
     assert_obj_within(sol.obj, WORK)
 
 
@@ -295,5 +291,4 @@ def test_solve_parity_2pct_db_direct():
     build_flextool(pb, data)
     sol = pb.solve()
     assert sol.optimal, f"DB-direct solve not optimal: {sol}"
-    from _golden import assert_obj_within
     assert_obj_within(sol.obj, WORK)
