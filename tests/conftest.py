@@ -217,6 +217,39 @@ def test_bin_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _reset_global_axis_enums() -> None:
+    """Reset the cascade-wide axis_enums ContextVar before every test.
+
+    ``flextool.engine_polars.input.load_flextool`` sets the global
+    ``axis_enums`` ContextVar on success (input.py finally block
+    ~line 4216).  The ContextVar persists into the next test in the
+    same pytest worker, pinning Enum dtypes that may differ from the
+    next test's fixture vocabulary — surfacing as "enum on left does
+    not match enum on right" SchemaError in joins, OR (more subtly)
+    as test-order-dependent flakes where a downstream test inherits
+    a polluted vocabulary and silently produces wrong-shape output.
+
+    The ``tests/engine_polars/conftest.py`` already has a local
+    ``autouse=True`` version of this fixture covering tests in that
+    subtree.  SCEN-3 (``test_examples_scenario_solves[test_a_lot]``
+    passes alone, fails in full sweep) hypothesised that polluters
+    from OUTSIDE ``tests/engine_polars/`` (e.g. ``test_scenarios.py``,
+    ``test_xlsx_workflow.py``, ``model/test_examples_e2e.py``) leak
+    axis_enums state into subsequent tests because the local fixture
+    didn't cover them.  Lifting the reset to the top-level conftest
+    closes that gap for ALL tests, not just the engine_polars
+    subtree.
+
+    Cheap (a single ContextVar assignment) and harmless to run
+    between every test.
+    """
+    from flextool.engine_polars._axis_enums import set_global_axis_enums
+    set_global_axis_enums(None)
+    yield
+    set_global_axis_enums(None)
+
+
+@pytest.fixture(autouse=True)
 def _reset_flextool_module_caches() -> None:
     """Clear FlexTool module-level caches before every test.
 
