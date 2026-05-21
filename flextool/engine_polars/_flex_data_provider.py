@@ -31,6 +31,19 @@ Suffix handling
 The Provider stores keys *without* the ``.csv`` suffix.  ``get`` /
 ``has`` / ``put`` accept either form — a trailing ``.csv`` is stripped
 before keying.
+
+Source tagging
+--------------
+
+``put(key, frame, *, source=None)`` accepts an optional free-form
+``source`` string that is retained alongside the frame and surfaced by
+:meth:`FlexDataProvider.get_source`.  The natural cascade leaves
+``source`` unset; external-override writes (see
+:func:`flextool.engine_polars._provider_translators.translate_overrides_to_provider`)
+tag their entries with ``"external_override"`` so downstream audit
+tooling can distinguish overridden keys from naturally-produced ones.
+Eviction by :meth:`release_unused` drops the source entry alongside the
+frame.
 """
 from __future__ import annotations
 
@@ -96,6 +109,12 @@ class FlexDataProvider:
         retain_all: bool = False,
     ) -> None:
         self._frames: dict[str, pl.DataFrame] = {}
+        # Phase 6a — opt-in source-tagging.  ``put(key, frame, source=...)``
+        # records the tag here; ``get_source(key)`` looks it up.  Entries
+        # with ``source=None`` (the default) are *not* added to this map
+        # so the natural cascade pays zero memory overhead.  Eviction
+        # clears the matching entry alongside the frame.
+        self._sources: dict[str, str] = {}
         # Phase 4 — axis enum vocabulary + contract.  Populated by
         # ``input_derivation.run`` against the active SpineDBBackend, or
         # lazy-built by ``load_flextool`` against the workdir sqlite when
@@ -157,15 +176,37 @@ class FlexDataProvider:
     # Mutation
     # ------------------------------------------------------------------
 
-    def put(self, name: str, frame: pl.DataFrame) -> None:
+    def put(
+        self,
+        name: str,
+        frame: pl.DataFrame,
+        *,
+        source: str | None = None,
+    ) -> None:
         """Store *frame* under *name*.
 
         *name* may be bare (``"p_flow_max"``), qualified
         (``"solve_data/p_flow_max"``), and may include the ``.csv``
         suffix in either form — the suffix is stripped before keying.
+
+        Parameters
+        ----------
+        source:
+            Optional free-form tag retained alongside the frame and
+            surfaced via :meth:`get_source`.  ``None`` (the default)
+            leaves no source entry — the natural-cascade case.  Phase 6a
+            of ``specs/provider_consolidation.md`` adds this so the
+            external-override layer can mark its writes with a stable
+            ``"external_override"`` tag for downstream audit.
         """
         key = _strip_csv(name)
         self._frames[key] = frame
+        if source is None:
+            # Overwriting a previously-tagged entry with an untagged put
+            # must clear the stale tag — the new frame is the new truth.
+            self._sources.pop(key, None)
+        else:
+            self._sources[key] = source
 
     # ------------------------------------------------------------------
     # Lookup
@@ -199,6 +240,16 @@ class FlexDataProvider:
         """Return ``True`` iff :meth:`get` would return a non-``None``
         frame for *name*."""
         return self.get(name) is not None
+
+    def get_source(self, name: str) -> str | None:
+        """Return the source tag recorded for *name*, or ``None``.
+
+        Phase 6a — opt-in source-tagging.  ``None`` is returned both for
+        keys that were ``put`` without a ``source`` argument and for
+        keys that have never been ``put`` (or have been evicted).  This
+        accessor never raises.
+        """
+        return self._sources.get(_strip_csv(name))
 
     # ------------------------------------------------------------------
     # Iteration helpers (handy for tests + future snapshot impls).
@@ -346,6 +397,9 @@ class FlexDataProvider:
             _, idx = ln
             if idx <= after_idx:
                 del self._frames[name]
+                # Phase 6a — the source tag is per-frame metadata, so it
+                # must vacate when the frame does.
+                self._sources.pop(name, None)
                 self._evicted[name] = ln[0]
                 evicted.append(name)
         return evicted

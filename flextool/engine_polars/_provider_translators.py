@@ -142,7 +142,11 @@ def translate_overrides_to_provider(
                 f"overridable.  Allowed keys: "
                 f"{sorted(_HANDOFF_TO_OVERRIDE.keys())!r}"
             )
-        provider.put(override_key, frame)
+        # Phase 6a — tag every override write so the audit dump can
+        # distinguish externally-supplied keys from natural-cascade
+        # writes.  The override key itself is the discriminator at the
+        # dump site, so a single stable tag is sufficient.
+        provider.put(override_key, frame, source="external_override")
 
 
 def read_handoff_frame(provider, key: str) -> "pl.DataFrame | None":
