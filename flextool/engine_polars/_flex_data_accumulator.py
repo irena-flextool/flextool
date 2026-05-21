@@ -178,8 +178,13 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "p_entity_max_units.csv",
     "p_entity_invest_cumulative_max.csv",
     "p_entity_dispatch_capacity_max.csv",
-    # _emit_co2_accumulators — Phase E-b lifted
-    "co2_cum_realized_tonnes.csv",
+    # _emit_co2_accumulators — Phase E-b lifted.  ``co2_cum_realized_tonnes.csv``
+    # used to live here as a guaranteed empty-seed contract; Phase 1b of
+    # specs/provider_consolidation.md retired the empty seed.  The
+    # post-solve ``emit_co2_rolling_accumulator`` still writes the key
+    # when it fires, but single-solve scenarios never run that path —
+    # so the basename is conditional, not part of the
+    # expected_basenames contract.
     # _emit_pdt_params — Phase E-b lifted streamed writers
     "pdtProcess.csv",
     "pdtNode.csv",
@@ -324,11 +329,16 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "p_entity_invested.csv",
     "p_entity_divested.csv",
     "p_entity_period_existing_capacity.csv",
-    "ladder_cum_realized_mwh.csv",
-    "ladder_cum_sim_hours.csv",
-    # NB co2_cum_realized_tonnes.csv already captured by
-    # _emit_co2_accumulators above; the empty-seed variant from
-    # the cumulative emitters overwrites with the same header.
+    # NB ladder_cum_realized_mwh.csv, ladder_cum_sim_hours.csv, and
+    # co2_cum_realized_tonnes.csv used to live here as header-only
+    # empty seeds emitted by ``emit_empty_cumulative_files``.  Phase 1b
+    # of specs/provider_consolidation.md dropped the empty-seed writer
+    # — consumers fall through to ``_read_csv``'s empty-frame default
+    # on first-roll Provider miss, and subsequent rolls receive
+    # populated frames via ``_fan_out_ladder_accumulators`` /
+    # ``emit_co2_rolling_accumulator``.  Listing those basenames in
+    # ``expected_basenames`` would re-introduce the contract surface
+    # we just retired.
     "fix_storage_price.csv",
     "fix_storage_quantity.csv",
     "fix_storage_usage.csv",

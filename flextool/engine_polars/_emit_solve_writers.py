@@ -838,23 +838,6 @@ def emit_empty_investment_file(
     )
 
 
-def emit_empty_cumulative_files(
-    *, provider) -> None:
-    """Emit ``empty_cumulative_files`` to the Provider."""
-    _emit(
-        provider, "solve_data/ladder_cum_realized_mwh.csv",
-        _empty_frame(
-            ("commodity", "tier", "period", "p_ladder_cum_realized_mwh"),
-        ),
-    )
-    _emit(provider, "solve_data/ladder_cum_sim_hours.csv",
-                   _empty_frame(("period", "p_ladder_cum_sim_hours")))
-    _emit(
-        provider, "solve_data/co2_cum_realized_tonnes.csv",
-        _empty_frame(("group", "period", "p_co2_cum_realized_tonnes")),
-    )
-
-
 def emit_empty_storage_fix_file(
     *, provider) -> None:
     """Emit ``empty_storage_fix_file`` to the Provider."""

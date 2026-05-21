@@ -899,9 +899,6 @@ def native_run_model(state, solver) -> int:
             solve_writers.emit_empty_storage_fix_file(
                 provider=sub_solve_provider,
             )
-            solve_writers.emit_empty_cumulative_files(
-                provider=sub_solve_provider,
-            )
             solve_writers.emit_headers_for_empty_output_files(
                 str(wf / "solve_data/costs_discounted.csv"),
                 "param_costs,costs_discounted",
