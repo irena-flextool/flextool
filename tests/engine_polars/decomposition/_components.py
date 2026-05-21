@@ -19,6 +19,7 @@ from typing import Optional
 
 import polars as pl
 
+from flextool.engine_polars._axis_enums import align_join_dtypes
 from flextool.engine_polars._param_shapes import promote_param_to_dt
 
 
@@ -534,13 +535,23 @@ def section_obj(data, sol) -> float:
 # §7 Investment / divestment
 
 
-def _ed_param_for(data, attr: str, e_alias: str):
+def _ed_param_for(data, attr: str, e_alias: str, ref=None):
     """Return ``data.<attr>`` re-aliased so its ``e`` column becomes
-    ``e_alias`` (one of ``p`` or ``n``)."""
+    ``e_alias`` (one of ``p`` or ``n``).
+
+    When ``ref`` is supplied, the returned frame's ``e_alias`` and
+    ``d`` columns are dtype-aligned against ``ref`` via
+    :func:`align_join_dtypes`.  Bridges the cross-vocab Enum boundary
+    between the entity-wide ``e`` axis on ``data.ed_*`` parameters and
+    the narrower process/node-only vocab on ``sol.value("v_invest_*")``.
+    """
     p = getattr(data, attr, None)
     if p is None:
         return None
-    return p.frame.rename({"e": e_alias, "value": attr})
+    out = p.frame.rename({"e": e_alias, "value": attr})
+    if ref is not None:
+        _, out = align_join_dtypes(ref, out, (e_alias, "d"))
+    return out
 
 
 def invest_p_annuity_obj(data, sol) -> float:
@@ -551,7 +562,7 @@ def invest_p_annuity_obj(data, sol) -> float:
     vip = _sol_value_or_empty(sol, "v_invest_p")
     if _is_empty(vip) or data.p_unitsize is None:
         return 0.0
-    annu = _ed_param_for(data, "ed_entity_annual_discounted", "p")
+    annu = _ed_param_for(data, "ed_entity_annual_discounted", "p", ref=vip)
     if annu is None:
         return 0.0
     df = (vip.rename({"value": "iv"})
@@ -570,7 +581,7 @@ def invest_n_annuity_obj(data, sol) -> float:
     vin = _sol_value_or_empty(sol, "v_invest_n")
     if _is_empty(vin) or data.p_state_unitsize is None:
         return 0.0
-    annu = _ed_param_for(data, "ed_entity_annual_discounted", "n")
+    annu = _ed_param_for(data, "ed_entity_annual_discounted", "n", ref=vin)
     if annu is None:
         return 0.0
     df = (vin.rename({"value": "iv"})
@@ -590,7 +601,7 @@ def lifetime_fixed_cost_p_obj(data, sol) -> float:
     vip = _sol_value_or_empty(sol, "v_invest_p")
     if _is_empty(vip) or data.p_unitsize is None:
         return 0.0
-    lf = _ed_param_for(data, "ed_lifetime_fixed_cost", "p")
+    lf = _ed_param_for(data, "ed_lifetime_fixed_cost", "p", ref=vip)
     if lf is None:
         return 0.0
     df = (vip.rename({"value": "iv"})
@@ -609,7 +620,7 @@ def lifetime_fixed_cost_n_obj(data, sol) -> float:
     vin = _sol_value_or_empty(sol, "v_invest_n")
     if _is_empty(vin) or data.p_state_unitsize is None:
         return 0.0
-    lf = _ed_param_for(data, "ed_lifetime_fixed_cost", "n")
+    lf = _ed_param_for(data, "ed_lifetime_fixed_cost", "n", ref=vin)
     if lf is None:
         return 0.0
     df = (vin.rename({"value": "iv"})
@@ -629,7 +640,7 @@ def divest_p_savings_obj(data, sol) -> float:
     vdp = _sol_value_or_empty(sol, "v_divest_p")
     if _is_empty(vdp) or data.p_unitsize is None:
         return 0.0
-    lfd = _ed_param_for(data, "ed_lifetime_fixed_cost_divest", "p")
+    lfd = _ed_param_for(data, "ed_lifetime_fixed_cost_divest", "p", ref=vdp)
     if lfd is None:
         return 0.0
     df = (vdp.rename({"value": "dv"})
@@ -648,7 +659,7 @@ def divest_n_savings_obj(data, sol) -> float:
     vdn = _sol_value_or_empty(sol, "v_divest_n")
     if _is_empty(vdn) or data.p_state_unitsize is None:
         return 0.0
-    lfd = _ed_param_for(data, "ed_lifetime_fixed_cost_divest", "n")
+    lfd = _ed_param_for(data, "ed_lifetime_fixed_cost_divest", "n", ref=vdn)
     if lfd is None:
         return 0.0
     df = (vdn.rename({"value": "dv"})
@@ -668,7 +679,7 @@ def divest_p_salvage_obj(data, sol) -> float:
     vdp = _sol_value_or_empty(sol, "v_divest_p")
     if _is_empty(vdp) or data.p_unitsize is None:
         return 0.0
-    annd = _ed_param_for(data, "ed_entity_annual_divest_discounted", "p")
+    annd = _ed_param_for(data, "ed_entity_annual_divest_discounted", "p", ref=vdp)
     if annd is None:
         return 0.0
     df = (vdp.rename({"value": "dv"})
@@ -688,7 +699,7 @@ def divest_n_salvage_obj(data, sol) -> float:
     vdn = _sol_value_or_empty(sol, "v_divest_n")
     if _is_empty(vdn) or data.p_state_unitsize is None:
         return 0.0
-    annd = _ed_param_for(data, "ed_entity_annual_divest_discounted", "n")
+    annd = _ed_param_for(data, "ed_entity_annual_divest_discounted", "n", ref=vdn)
     if annd is None:
         return 0.0
     df = (vdn.rename({"value": "dv"})
