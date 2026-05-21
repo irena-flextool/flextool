@@ -1267,12 +1267,10 @@ def apply_existing_chain(flex_data: object,
     if ctx is not None:
         active_solve = ctx.solve_name
         solve_first = ctx.solveFirst
-        ppec_csv_df = ctx.p_entity_period_existing_capacity
         edd_hist_df_raw = ctx.edd_history
     else:
         active_solve = _read_active_solve(workdir, provider=provider)
         solve_first = _read_solve_first(workdir, provider=provider)
-        ppec_csv_df = None
         edd_hist_df_raw = None
     period_in_use = _period_in_use_set(source, active_solve, workdir,
                                          ctx=ctx, provider=provider)
@@ -1282,11 +1280,12 @@ def apply_existing_chain(flex_data: object,
     ppic = getattr(flex_data, "p_entity_previously_invested_capacity", None)
     ped = getattr(flex_data, "p_entity_divested", None)
 
-    # Δ.11 — chain-summation inputs.  Prefer the in-memory handoff
-    # ``realized_existing`` carrier when supplied; else fall back to the
-    # workdir's ``p_entity_period_existing_capacity.csv`` (which carries
-    # the same data after flextool's preprocessing).  ``edd_history.csv``
-    # is always sourced from the workdir.
+    # Δ.11 / Phase 4.2-1e — chain-summation inputs.  The in-memory
+    # handoff ``realized_existing`` carrier is the sole source for the
+    # cumulative realized-existing capacity; the workdir CSV fallback
+    # was retired once the handoff translator started populating the
+    # carrier at iteration start.  ``edd_history.csv`` is still sourced
+    # from the workdir.
     ppec_param: "Param | None" = None
     if handoff is not None and getattr(handoff, "realized_existing", None) is not None:
         re_frame = handoff.realized_existing
@@ -1295,24 +1294,11 @@ def apply_existing_chain(flex_data: object,
                                   re_frame.pipe(rename_to_axis, {"entity": "e",
                                                        "period": "d"})
                                           .select("e", "d", "value"))
-    if ppec_param is None:
-        # Δ.12a — prefer the typed SolveContext field; otherwise consult
-        # the Provider (no disk fallback — Step 2.5).
-        if ctx is not None and ppec_csv_df is not None and ppec_csv_df.height > 0:
-            df = ppec_csv_df
-        else:
-            ppec_path = workdir / "solve_data" / "p_entity_period_existing_capacity.csv"
-            df = _provider_get(ppec_path)
-        if (df is not None and df.height > 0
-                and "p_entity_period_existing_capacity" in df.columns):
-            ppec_param = _Param(("e", "d"),
-                                  df.pipe(rename_to_axis, {"entity": "e",
-                                               "period": "d"})
-                                    .select("e", "d",
-                                              pl.col("p_entity_period_existing_capacity")
-                                                .cast(pl.Float64, strict=False)
-                                                .fill_null(0.0)
-                                                .alias("value")))
+    # Phase 4.2-1e — the handoff/realized_existing branch above is the
+    # sole source of the cumulative realized-existing capacity now that
+    # the handoff translator always populates the carrier at iteration
+    # start.  When the handoff is absent or empty, ``ppec_param`` stays
+    # None and the helper returns None (no-existing-capacity outcome).
 
     edd_hist_df: "pl.DataFrame | None" = None
     if ctx is not None:

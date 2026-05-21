@@ -40,7 +40,6 @@ def _seed_workdir_provider(wd: Path) -> FlexDataProvider:
     # Empty placeholders for the SolveContext lazy carriers — only
     # seeded when the on-disk seed didn't supply them.
     for stem in ("period_in_use_set", "period__branch", "edd_history",
-                  "p_entity_period_existing_capacity",
                   "p_entity_pre_existing"):
         key = f"solve_data/{stem}"
         if not provider.has(key):
@@ -98,12 +97,6 @@ def workdir(tmp_path: Path) -> Path:
         [["wind", "p2020", "p2025"]],
     )
     _write_csv(
-        sd / "p_entity_period_existing_capacity.csv",
-        ["entity", "period", "p_entity_period_existing_capacity",
-         "p_entity_period_invested_capacity"],
-        [["wind", "p2020", 100, 0], ["wind", "p2025", 100, 0]],
-    )
-    _write_csv(
         sd / "p_entity_pre_existing.csv",
         ["entity", "period", "value"],
         [["wind", "p2020", 100]],
@@ -127,7 +120,6 @@ def test_solve_context_typed_fields_loaded(workdir: Path) -> None:
     assert set(ctx.period_in_use["d"].to_list()) == {"p2020", "p2025"}
     assert ctx.period_branch.height == 2
     assert ctx.edd_history.height == 1
-    assert ctx.p_entity_period_existing_capacity.height == 2
     assert ctx.p_entity_pre_existing.height == 1
 
 

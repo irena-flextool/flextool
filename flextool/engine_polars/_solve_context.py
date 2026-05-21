@@ -99,10 +99,6 @@ class SolveContext:
         invest-decision-date → apply-date map used by handoff-derived
         ``p_entity_previously_invested_capacity``.  Empty frame when the
         file is missing.
-    p_entity_period_existing_capacity : pl.DataFrame
-        ``[entity, period, p_entity_period_existing_capacity,
-        p_entity_period_invested_capacity]`` from
-        ``p_entity_period_existing_capacity.csv``.  Empty when missing.
     p_entity_pre_existing : pl.DataFrame
         ``[entity, period, value]`` from ``p_entity_pre_existing.csv``.
         Empty when missing.
@@ -125,9 +121,9 @@ class SolveContext:
     # Phase 4 activation).
     provider: "object | None" = field(default=None, repr=False)
     # ``period_in_use`` / ``period_branch`` / ``edd_history`` /
-    # ``p_entity_period_existing_capacity`` / ``p_entity_pre_existing``
-    # are populated on first access via the descriptor machinery below —
-    # they're DataFrame-shaped fields and each requires a CSV read.  Most
+    # ``p_entity_pre_existing`` are populated on first access via the
+    # descriptor machinery below — they're DataFrame-shaped fields and
+    # each requires a CSV read.  Most
     # parity tests only consume one or two of them, so deferring the
     # reads until an attribute access asks for them avoids paying the
     # IO cost upfront.
@@ -150,10 +146,6 @@ class SolveContext:
     )
     _edd_history_loaded: bool = field(default=False, repr=False)
     _edd_history: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
-    )
-    _ppec_loaded: bool = field(default=False, repr=False)
-    _ppec: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(schema={}), repr=False,
     )
     _ppe_loaded: bool = field(default=False, repr=False)
@@ -233,9 +225,9 @@ class SolveContext:
         checks that gate the rest of the cascade.
 
         The DataFrame-shaped fields (``period_in_use``, ``period_branch``,
-        ``edd_history``, ``p_entity_period_existing_capacity``,
-        ``p_entity_pre_existing``) are loaded **lazily** on first
-        attribute access.  Most parity tests only consume one or two,
+        ``edd_history``, ``p_entity_pre_existing``) are loaded **lazily**
+        on first attribute access.  Most parity tests only consume one or
+        two,
         so paying the IO cost upfront for a bag of frames the test
         never touches dominates the cache savings on small fixtures.
 
@@ -379,16 +371,6 @@ class SolveContext:
             )
             self._edd_history_loaded = True
         return self._edd_history
-
-    @property
-    def p_entity_period_existing_capacity(self) -> pl.DataFrame:
-        if not self._ppec_loaded:
-            self._ppec = _maybe_read(
-                self.solve_data_dir / "p_entity_period_existing_capacity.csv",
-                provider=self.provider,
-            )
-            self._ppec_loaded = True
-        return self._ppec
 
     @property
     def p_entity_pre_existing(self) -> pl.DataFrame:
