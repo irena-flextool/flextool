@@ -20,21 +20,21 @@ sites can keep using the canonical ``input/<stem>.csv`` /
 from __future__ import annotations
 
 import io
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import polars as pl
 
 
 def _emit(provider, key: str, df: pl.DataFrame) -> None:
-    """Register *df* in *provider* under both forms of *key*.
+    """Register *df* in *provider* under *key* (canonical form).
 
     *key* must be of the form 'parent/basename' (e.g. 'solve_data/foo.csv').
-    The dual registration (``basename`` and ``parent/basename``) lets
-    downstream readers consult either form interchangeably.
+    The Provider's bidirectional lookup (see
+    :class:`FlexDataProvider.get`) resolves bare-basename consumer
+    queries to the qualified key, so a single registration is
+    sufficient for every consumer.
     """
-    p = PurePosixPath(key)
-    provider.put(p.name, df)
-    provider.put(str(p), df)
+    provider.put(key, df)
 
 
 def _provider_key(path: "Path | str") -> str:

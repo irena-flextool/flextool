@@ -142,7 +142,6 @@ def seed_provider_from_dir(
     for p in targets:
         try:
             df = _read_csv_file(p)
-            provider.put(p.stem, df)
             provider.put(f"{kind}/{p.stem}", df)
         except (pl_exc.ComputeError, pl_exc.NoDataError) as exc:
             _LOGGER.warning(

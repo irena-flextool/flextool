@@ -2,28 +2,28 @@
 
 After Phase 3 the cascade no longer writes any CSV during execution.
 Every ``emit_*`` function pushes its frame into a
-:class:`FlexDataProvider` via ``_emit(provider, key, df)`` which
-dual-registers under both the bare basename and the parent-qualified
-key (see :mod:`flextool.engine_polars._emit_provider_io`).  Disk
+:class:`FlexDataProvider` via ``_emit(provider, key, df)`` which —
+since Phase 0a of ``specs/provider_consolidation.md`` —
+single-registers under the parent-qualified key only (see
+:mod:`flextool.engine_polars._emit_provider_io`).  Consumer queries
+against the bare basename are resolved by the Provider's
+bidirectional lookup (see :meth:`FlexDataProvider.get`).  Disk
 emission happens only via
 :meth:`FlexDataProvider.snapshot_processed_inputs` (invoked by the
 ``--csv-dump`` CLI flow in
 :mod:`flextool.cli.cmd_run_flextool`) and per-solve
 :meth:`FlexData.dump_csvs` (orchestrator-side).
 
-This module locks in three invariants that Phase 4 of the refactor
-must preserve:
+This module locks in three invariants:
 
 1. **Coverage** — every basename listed in
    :func:`expected_basenames()` materialises in the snapshot.  If a
-   Phase 3a/3b call-site migration silently drops a key, this catches
-   it.
-2. **Dual-key parity (§2.3)** — when ``_emit`` registers a frame under
-   both ``foo.csv`` and ``solve_data/foo.csv`` from a single emit
-   site, the two files on disk are byte-identical.  (When two
-   different parents collide on the same basename, the bare key
-   inherits whichever was emitted last; that collision case is
-   excluded from this assertion.)
+   call-site migration silently drops a key, this catches it.
+2. **Single-key registration (Phase 0a)** — every emitted basename
+   appears under its parent-qualified path only; no bare top-level
+   duplicate exists.  A regression to dual-key registration (or a
+   stray ``provider.put(<bare_name>, df)`` from a producer site) shows
+   up here as a duplicate file.
 3. **No off-flag leakage** — running the same cascade WITHOUT
    ``csv_dump=True`` must NOT populate the ``solve_data/`` directory
    on disk.  This proves the Phase 3b deletion of the legacy
@@ -116,21 +116,21 @@ def test_snapshot_covers_expected_basenames(
     )
 
 
-def test_snapshot_dual_key_byte_parity(
+def test_snapshot_single_key_invariant(
     small_db_url: str, tmp_path: Path,
 ) -> None:
-    """For every basename emitted from a single parent dir, the bare and
-    parent-qualified CSVs on disk are byte-identical.
+    """Every emitted basename appears under exactly one parent dir; no
+    bare top-level duplicate.
 
-    The :func:`_emit` helper registers each frame under both
-    ``provider.put(p.name, df)`` and ``provider.put(str(p), df)`` so
-    Phase-3 readers consulting either form get the same data.  The
-    snapshot writer must preserve that parity on disk.
+    Phase 0a of ``specs/provider_consolidation.md`` retired the
+    dual-key registration in :func:`_emit`.  Producers now store each
+    frame under its parent-qualified key only; the Provider's
+    bidirectional lookup resolves bare-form consumer queries to the
+    qualified key.
 
-    When two distinct parent dirs (e.g. ``input/`` and ``solve_data/``)
-    emit the same basename the bare key only retains the last-written
-    frame, so this test excludes those collision cases — they're a
-    documented intrinsic of the dual-key scheme, not a refactor bug.
+    A regression would manifest as a basename appearing both at the
+    snapshot root AND under a parent dir — that's the signal this
+    test catches.
     """
     workdir = tmp_path / "wd"
     workdir.mkdir(parents=True, exist_ok=True)
@@ -141,10 +141,8 @@ def test_snapshot_dual_key_byte_parity(
     snap = tmp_path / "snap"
     provider.snapshot_processed_inputs(snap)
 
-    # Group every produced CSV by basename so we can detect collisions
-    # vs. single-parent basenames.
-    nested_by_basename: dict[str, list[Path]] = defaultdict(list)
     bare_by_basename: dict[str, Path] = {}
+    nested_by_basename: dict[str, list[Path]] = defaultdict(list)
     for p in snap.rglob("*.csv"):
         rel = p.relative_to(snap)
         if rel.parent == Path("."):
@@ -152,44 +150,19 @@ def test_snapshot_dual_key_byte_parity(
         else:
             nested_by_basename[rel.name].append(p)
 
-    # Known-tolerated exception: the per-roll ladder cross-solve
-    # accumulator fan-out at ``_native_run_model._fan_out_ladder_accumulators``
-    # updates only the BARE Provider key (via a direct
-    # ``provider.put(_basename, _frame)``) so the populated cross-roll
-    # carrier can be read by ``_commodity_ladder.load_data`` on the
-    # next roll, while leaving the empty header-only seed under the
-    # ``solve_data/`` qualified key.  Pre-existing pre-Phase-3
-    # behaviour (commit f7efe452), preserved by the refactor.  Audit
-    # it separately if/when the dual-key semantics there get tightened.
-    _DUAL_KEY_EXEMPT = {"ladder_cum_sim_hours.csv"}
-
-    mismatches: list[str] = []
-    checked = 0
+    duplicates: list[str] = []
     for basename, bare_path in bare_by_basename.items():
-        if basename in _DUAL_KEY_EXEMPT:
-            continue
         nested = nested_by_basename.get(basename, [])
-        if len(nested) != 1:
-            # Either no parent twin (cascade-side seeded raw input
-            # without ``_emit``) or two-plus parents colliding on the
-            # same basename — both excluded from the strict-parity
-            # assertion per §2.3.
-            continue
-        bare_bytes = bare_path.read_bytes()
-        nested_bytes = nested[0].read_bytes()
-        if bare_bytes != nested_bytes:
-            mismatches.append(
-                f"{basename}: bare vs {nested[0].relative_to(snap)}"
+        if nested:
+            duplicates.append(
+                f"{basename}: appears at {bare_path.relative_to(snap)} "
+                f"AND {[str(p.relative_to(snap)) for p in nested]}"
             )
-        checked += 1
 
-    assert checked > 0, (
-        "expected at least one dual-keyed pair in the snapshot; the "
-        "Provider may not be wiring _emit correctly"
-    )
-    assert not mismatches, (
-        f"dual-key byte-parity failed on {len(mismatches)} pair(s):\n"
-        + "\n".join(mismatches)
+    assert not duplicates, (
+        f"dual-key registration regression — {len(duplicates)} basename(s) "
+        f"appear under both bare and parent-qualified paths:\n"
+        + "\n".join(duplicates)
     )
 
 

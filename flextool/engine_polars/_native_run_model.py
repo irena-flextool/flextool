@@ -105,9 +105,9 @@ def _fan_out_fix_storage(fix_storage):
     import polars as pl
     out: dict[str, "pl.DataFrame"] = {}
     for metric, on_disk_col, fname in (
-        ("quantity", "p_fix_storage_quantity", "fix_storage_quantity.csv"),
-        ("price",    "p_fix_storage_price",    "fix_storage_price.csv"),
-        ("usage",    "p_fix_storage_usage",    "fix_storage_usage.csv"),
+        ("quantity", "p_fix_storage_quantity", "solve_data/fix_storage_quantity.csv"),
+        ("price",    "p_fix_storage_price",    "solve_data/fix_storage_price.csv"),
+        ("usage",    "p_fix_storage_usage",    "solve_data/fix_storage_usage.csv"),
     ):
         if metric not in fix_storage.columns:
             continue
@@ -126,18 +126,18 @@ def _fan_out_ladder_accumulators(handoff):
     back into the on-disk schema expected by the next sub-solve's
     ``_commodity_ladder.load_data`` / ``_derived_params`` consumers.
 
-    Returns ``{basename: pl.DataFrame}`` for the two ladder rolling
-    accumulators; entries with no populated handoff field are omitted.
-    The in-memory schema (``[commodity, tier, period, mwh]`` for
-    ``cumulative_commodity``; ``[period, value]`` for ``cum_sim_hours``)
-    is renamed to the on-disk schema
+    Returns ``{qualified_key: pl.DataFrame}`` for the two ladder
+    rolling accumulators; entries with no populated handoff field are
+    omitted.  The in-memory schema (``[commodity, tier, period, mwh]``
+    for ``cumulative_commodity``; ``[period, value]`` for
+    ``cum_sim_hours``) is renamed to the on-disk schema
     (``[commodity, tier, period, p_ladder_cum_realized_mwh]`` /
     ``[period, p_ladder_cum_sim_hours]``) so loaders that consult the
-    Provider under the bare basename (``ladder_cum_realized_mwh.csv``
-    / ``ladder_cum_sim_hours.csv``) — or its qualified
-    ``solve_data/<name>`` form — receive the populated cross-roll
-    carrier instead of the empty header-only seed written at the start
-    of the cascade by ``write_empty_cumulative_files``.
+    Provider under the canonical
+    ``solve_data/ladder_cum_*_*.csv`` key (Phase 0a single-key
+    convention) receive the populated cross-roll carrier instead of
+    the empty header-only seed written at the start of the cascade by
+    ``write_empty_cumulative_files``.
 
     Without this fan-out the SolveHandoff carries the right
     cumulative_commodity but it never reaches the next roll's
@@ -155,7 +155,7 @@ def _fan_out_ladder_accumulators(handoff):
         # the carrier's ``mwh``; the on-disk variant only appears when a
         # caller already pre-renamed.
         if "mwh" in cc.columns:
-            out["ladder_cum_realized_mwh.csv"] = (
+            out["solve_data/ladder_cum_realized_mwh.csv"] = (
                 cc.rename({"mwh": "p_ladder_cum_realized_mwh"})
                   .select(
                       "commodity", "tier", "period",
@@ -163,19 +163,19 @@ def _fan_out_ladder_accumulators(handoff):
                   )
             )
         elif "p_ladder_cum_realized_mwh" in cc.columns:
-            out["ladder_cum_realized_mwh.csv"] = cc.select(
+            out["solve_data/ladder_cum_realized_mwh.csv"] = cc.select(
                 "commodity", "tier", "period",
                 "p_ladder_cum_realized_mwh",
             )
     csh = getattr(handoff, "cum_sim_hours", None)
     if csh is not None and csh.height > 0:
         if "value" in csh.columns:
-            out["ladder_cum_sim_hours.csv"] = (
+            out["solve_data/ladder_cum_sim_hours.csv"] = (
                 csh.rename({"value": "p_ladder_cum_sim_hours"})
                    .select("period", "p_ladder_cum_sim_hours")
             )
         elif "p_ladder_cum_sim_hours" in csh.columns:
-            out["ladder_cum_sim_hours.csv"] = csh.select(
+            out["solve_data/ladder_cum_sim_hours.csv"] = csh.select(
                 "period", "p_ladder_cum_sim_hours",
             )
     return out
@@ -871,17 +871,14 @@ def native_run_model(state, solver) -> int:
                     # Provider (or, transitionally, the seed funnel
                     # adapter that delegates to the Provider) so the
                     # on-disk copy is unneeded.
-                    for _bn in (
-                        "fix_storage_quantity.csv",
-                        "fix_storage_price.csv",
-                        "fix_storage_usage.csv",
+                    for _key in (
+                        "solve_data/fix_storage_quantity.csv",
+                        "solve_data/fix_storage_price.csv",
+                        "solve_data/fix_storage_usage.csv",
                     ):
-                        _src = _parent_carriers.get(_bn)
+                        _src = _parent_carriers.get(_key)
                         if _src is not None:
-                            sub_solve_provider.put(_bn, _src)
-                            sub_solve_provider.put(
-                                f"solve_data/{_bn}", _src,
-                            )
+                            sub_solve_provider.put(_key, _src)
 
         solve_writers.emit_solve_status(
             first_of_nested_level, last_of_nested_level,
@@ -1026,28 +1023,28 @@ def native_run_model(state, solver) -> int:
         # The per-parent slot (keyed by complete-solve name) is also
         # refreshed for nested cascades whose child solves consume an
         # upper-level parent's fix_storage_*.
-        _CROSS_SOLVE_BASENAMES = (
-            "fix_storage_quantity.csv",
-            "fix_storage_price.csv",
-            "fix_storage_usage.csv",
-            "p_entity_pre_existing.csv",
-            "p_entity_divest_cumulative_max.csv",
-            "p_entity_invested.csv",
-            "p_entity_divested.csv",
-            "p_entity_period_existing_capacity.csv",
-            "p_roll_continue_state.csv",
-            "co2_cum_realized_tonnes.csv",
-            "ladder_cum_sim_hours.csv",
-            "ladder_cum_realized_mwh.csv",
-            "ed_history_realized.csv",
-            "ed_history_realized_first.csv",
-            "edd_history.csv",
+        _CROSS_SOLVE_KEYS = (
+            "solve_data/fix_storage_quantity.csv",
+            "solve_data/fix_storage_price.csv",
+            "solve_data/fix_storage_usage.csv",
+            "solve_data/p_entity_pre_existing.csv",
+            "solve_data/p_entity_divest_cumulative_max.csv",
+            "solve_data/p_entity_invested.csv",
+            "solve_data/p_entity_divested.csv",
+            "solve_data/p_entity_period_existing_capacity.csv",
+            "solve_data/p_roll_continue_state.csv",
+            "solve_data/co2_cum_realized_tonnes.csv",
+            "solve_data/ladder_cum_sim_hours.csv",
+            "solve_data/ladder_cum_realized_mwh.csv",
+            "solve_data/ed_history_realized.csv",
+            "solve_data/ed_history_realized_first.csv",
+            "solve_data/edd_history.csv",
         )
         _last_carriers: dict[str, "pl.DataFrame"] = {}
-        for _basename in _CROSS_SOLVE_BASENAMES:
-            _frame = sub_solve_provider.get(_basename)
+        for _key in _CROSS_SOLVE_KEYS:
+            _frame = sub_solve_provider.get(_key)
             if _frame is not None:
-                _last_carriers[_basename] = _frame
+                _last_carriers[_key] = _frame
         if _last_carriers:
             carriers["__last__"] = _last_carriers
             carriers[complete_solve[solve]] = _last_carriers
