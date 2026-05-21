@@ -1,3 +1,293 @@
+## Release 3.42.1 (21.5.2026) — bug-fix sweep + provider-consolidation groundwork
+
+Patch release on top of 3.42.0.  Clears the test-suite fallout from the
+writer→emitter refactor, lays the groundwork for the next refactor
+(provider-key consolidation), and fixes a small batch of preprocessing
+and reader bugs uncovered while scoring the cascade against the
+`tests/test_scenarios.py` suite.
+
+**Bug fixes**
+
+- `process_outputs.write_outputs`: provider-aware backfill for
+  `nodeGroupDispatch__*` / `nodeGroup*` indicator sets.  After the
+  writer→emitter refactor (3.42.0) the per-sub-solve cascade keeps
+  these 15 frames in the `FlexDataProvider` and only flushes to disk
+  under `--csv-dump`.  Toolbox runs and the test suite (which drive
+  the cascade via `run_chain_from_db`) ended up with an empty
+  `workdir/input/` and partial `workdir/solve_data/`, so the
+  `_backfill_group_indicator_sets` loop tripped `FileNotFoundError`
+  before emitting `group_flows__dt.csv`.  Lookups now consult the
+  Provider first via the parent-qualified
+  `"<parent>/<stem>"` keys used by every `_emit_*` call site, and
+  fall back to the on-disk CSV so `--csv-dump` and other
+  disk-emitting paths still work.
+- `engine_polars.spinedb_backend.tabular_reader`: column-type
+  assignment for `Solve` sequence parameters.  The tabular reader
+  was applying the wrong dtype to `Solve`'s ordered-sequence columns
+  during ingest, causing downstream Enum vocab cast mismatches.
+- Objective-decomposition invest/divest joins: align Enum vocabs on
+  both sides of the join so the union-axis cast doesn't silently
+  drop rows.
+- `tests/test_b18_7` hand-calculation refreshed after the
+  earlier BUG A4 unit-conversion fix flowed through.
+
+**Pre-refactor groundwork — provider consolidation Phase 0**
+
+Two preparatory commits that re-shape how cascade producers
+register their output keys, ahead of the full Phase 1 consolidation
+(scheduled for 3.43.0):
+
+- Phase 0a: drop dual-key registration.  Every producer that used
+  to register both a parent-qualified key and a bare-stem key now
+  registers only the parent-qualified key.  Bare-stem lookups never
+  worked (they were always a fallback for callers that didn't yet
+  know the parent), and removing the dual-write shrinks the
+  registry by ~30 %.
+- Phase 0b: introduce the `_provider_keys` module — a single source
+  of truth for the parent-qualified key strings, replacing
+  scattered `f"{parent}/{stem}"` literals across the emitters and
+  callers.
+
+**Preprocessing fixes**
+
+- `pdGroup_penalty_capacity_margin`: densify against
+  `groupCapacityMargin` so the row coverage matches the constraint
+  emission (closes SCEN-6).
+- `investment_index`: include `period_in_use` in the index so
+  `capacity_margin` golden joins on the full (entity, period) grid
+  (closes SCEN-1 + SCEN-2 — golden regenerated).
+- `reserve__upDown__*.is_active` orphans get assigned the `reserve`
+  parameter_group instead of `null`, which was failing the
+  export-to-tabular YAML round-trip.
+- `solve_advanced` export-to-tabular YAML extended with the
+  `v44` + `v52` params it was missing.
+
+**Test infrastructure**
+
+- `tests/engine_polars/conftest.py`: lift
+  `_reset_global_axis_enums` to the top-level `conftest.py` so the
+  Enum reset fires between every test (not just within
+  `engine_polars/`).  Closes SCEN-3 — the global-axis Enum cache
+  was carrying state across test modules.
+- pytest collection collisions cleared via `importlib` mode +
+  top-level `pytest_plugins` (closes WF-1).
+- Test-path bumps to track the 3.41.3 file move (closes WF-8).
+- Dead-test cleanup: six `execution_manager_wrap` retired-cap
+  paths (closes WF-2); `test_base_dat_declares_unidirectional`
+  (closes WF-4).
+- `_reset_global_axis_enums` lifted to top-level conftest (closes
+  SCEN-3).
+
+**Dead-key cleanup**
+
+- Drop the unread `p_years_represented_d_calc.csv` writer.
+- Drop six unread `rp_base_*` / `rp_block_*` writer paths.
+
+**Cascade & golden regen**
+
+- 9 of 10 remaining SCEN-1 goldens regenerated for the alternate-
+  optima drift + post-fix cascade output (the 10th lands as the
+  `nodeGroupDispatch` Provider backfill above).
+
+---
+
+## Release 3.42.0 (21.5.2026) — `writer → emitter` refactor (Provider-first preprocessing emission)
+
+Major refactor on top of 3.41.3.  Renames and re-cuts the entire
+preprocessing-writer surface so that every cascade producer emits
+into the in-memory `FlexDataProvider` first, with disk writes
+gated behind `--csv-dump`.  This is the architectural step that
+makes the always-in-memory cascade (started in 3.37.0 / 3.40.0 /
+3.41.0) the *only* path; the on-disk CSV chain is now a
+diagnostic-only side channel.
+
+**Phase 1 — rename `_writer_*.py → _emit_*.py`**
+
+Pure rename, no behaviour change.  Every preprocessing-writer
+module under `flextool/engine_polars/` gets the new `_emit_` prefix,
+matching the verb used by the call-site contract.  Updates
+~50 import sites across the cascade and the test suite.
+
+**Phase 2 — add `emit_*(provider=..., ...)` parallel to `write_*`**
+
+Each preprocessing writer gains a sibling `emit_*` function with
+the same compute body but writing to `provider.put(key, frame)`
+instead of `df.write_csv(path)`.  The original `write_*` stays in
+place; both paths run side-by-side during Phase 2 so the
+transition is bisectable per call site.
+
+**Phase 3a — migrate call sites to `emit_*(provider=...)`**
+
+Every live call to a `write_*` in the cascade flips to its
+`emit_*` sibling, threading `provider` and the parent-qualified
+key prefix.  ~70 call sites across `_native_run_model.py`,
+`_orchestration.py`, `_emit_solve_time.py`, `_emit_dispatchers.py`,
+and the chain-cluster path.
+
+**Phase 3b — delete `write_*`, `_write`, `capture_frames`, `_PATCH_MODULES`**
+
+With every call site migrated, the legacy write surface is gone:
+the `write_*` functions, the shared `_write` helper, the
+`capture_frames` decorator that wired CSV-snapshot diagnostics,
+and the `_PATCH_MODULES` monkey-patch table all delete.  Disk
+emission still happens — but only via the Provider's
+`--csv-dump` path, which iterates the registry once at the end of
+each sub-solve.
+
+**Phase 4 — csv-dump round-trip test + snapshot audit**
+
+A new `tests/engine_polars/test_csv_dump_round_trip.py` runs a
+fixture through the cascade twice — once with `--csv-dump`, once
+without — and asserts that every key landing in `output/` matches
+the corresponding `solve_data/` path byte-for-byte.  Plus a
+snapshot audit catches drift on the 174 registered emitter keys.
+
+**Phase 5 — strip vestigial paths, dead helpers, stale docs**
+
+Closeout cleanup, three classes:
+
+(a) 11 orphan disk-write helpers (`_write_keyed`, `_write_keyed_2`,
+    `_write_csv`, `_write_singles`, `_write_tuples`,
+    `_write_csv_rows`, `_write_5col`) — every one a dead
+    `_write(df, path)` consumer that became a NameError after
+    Phase 3b deleted `_write` itself.
+(b) 26 vestigial `Path` parameters on `emit_*` signatures, plus
+    the 32 call sites that still passed them.  Each was confirmed
+    unused via AST walk of the function body.
+(c) Stale docstrings, header comments, and `specs/` references
+    that still pointed at the `write_*` surface.
+
+**User-visible impact**
+
+- Cascade memory footprint drops further (no per-key
+  `df.write_csv` round-trip).
+- `--csv-dump` is the only way to materialise the preprocessing
+  CSVs to disk; that contract is now load-bearing for the test
+  suite via the round-trip test.
+- The `_writer_*.py` filenames + `write_*` symbols are gone from
+  the public API surface of `flextool.engine_polars`.  Downstream
+  code calling them directly needs to switch to the `emit_*`
+  siblings (no backwards-compat shim).
+
+---
+
+## Release 3.41.3 (21.5.2026) — PyPI-readiness (package data + canonical-DB materialization)
+
+Patch release on top of 3.41.2.  Lands the two structural changes
+needed before FlexTool can ship to PyPI: package data moves into
+`flextool/` so it survives a wheel install, and the canonical
+`.sqlite` blobs are no longer tracked in git but materialised from
+JSON at runtime.
+
+**PyPI Blocker 1 — package data via `importlib.resources`**
+
+Runtime path walks like
+``Path(__file__).parent.parent.parent / "templates"`` only worked
+from a source checkout.  After ``pip install flextool`` from PyPI
+those walks resolved to ``site-packages/`` and broke.  Layout
+changes:
+
+- **Ships in the wheel:**
+  `flextool/textual_templates/{default_plots,default_colors,flextool_location}.yaml`,
+  `flextool/textual_templates/canonical_databases/*.json`,
+  `flextool/version/*.json`,
+  `flextool/bin/highs.opt.template`.
+- **Gitignored, materialised in CWD at first run** (Spine Toolbox
+  refs + user-editable files):
+  `./templates/*.sqlite` (from `version/*.json` +
+  `canonical_databases/*.json`),
+  `./templates/*.xlsx` (NEW — derived via `export_to_tabular`),
+  `./how to example databases/*.sqlite`,
+  `./bin/highs.opt` (seeded from package template).
+
+Mechanism: new `flextool/_resources.py` exposes
+`package_data_path(rel)` / `package_data_text(rel)` — thin
+wrappers over `importlib.resources.files(flextool)` that work in
+both editable and wheel installs.  Every consumer of the moved
+data was switched over (color_template, write_outputs, the GUI
+YAML/JSON lookups, the CLI commands, the canonical-DB tooling).
+
+`flextoolrunner.PathConfig` and `engine_polars._orchestration`
+drop the hardcoded ``_REPO_ROOT = /home/jkiviluo/sources/flextool``
+fallback; default `flextool_dir` is now the installed package,
+`bin_dir` and `root_dir` default to CWD.  GUI `flextool_root`
+(used as subprocess cwd) becomes `Path.cwd()`.  Top-level
+subprocess calls switched from `python run_flextool.py` /
+`python write_outputs.py` to
+`[sys.executable, '-m', 'flextool.cli.cmd_...']` so the wheel
+install (no top-level scripts) still works.
+
+**Canonical-DB JSON-as-source**
+
+Ten committed `.sqlite` blobs in `version/` and
+`canonical_databases/` retired from git history; the canonical
+source is now the matching JSON file.  `f694f35a` adds the
+`migrate-all` JSON-canonical export/materialize helpers and
+`e7c2bb7d` documents the workflow in `CONTRIBUTING.md`.  The
+`.sqlite` files are materialised on first use into
+`./templates/` and `./how to example databases/` (gitignored)
+from the bundled JSON.
+
+**Diagnostics**
+
+- `[mem]` phase log: also bracket the per-sub-solve preprocessing
+  writer chain and the `preprocessing_solve_time.run` dispatcher,
+  so the cascade-load checkpoints cover the new emitter chain.
+
+---
+
+## Release 3.41.2 (20.5.2026) — GMPL retirement + canonical-DB hardening + scaling-output gate
+
+Patch release on top of 3.41.1.  Closes out the GMPL-pipeline
+retirement (started in 3.33.0) by deleting the last stub modules
+that survived the backend swap, gates `scaling_analysis.json`
+behind `--csv-dump`, and threads more sub-checkpoints through the
+`[mem]` phase log.
+
+**GMPL retirement closeout**
+
+Ten cleanup commits — every one removes a file or symbol that the
+3.33.0 backend swap left orphaned.  Deleted (or trimmed):
+
+- `flextool/flextoolrunner/lagrangian.py` and three other fully-
+  dead legacy modules — the GMPL stubs left in place at 3.33.0 as
+  placeholders for the native rewire (now landed via
+  `engine_polars._lagrangian`).
+- `FlexToolRunner.run_model` + the legacy `main` entry point +
+  the `orchestration` import — only reachable via the deleted
+  `--engine=gmpl` path.
+- `solver_runner.resolve_relax_feasibility` /
+  `resolve_ipm` helpers + their env-var constants — both mapped
+  the removed `--relax-feasibility` / `--ipm` CLI flags onto
+  HiGHS options.  Only consumer was `tests/test_solver_options.py`,
+  which deletes alongside.
+- Dead-letter GMPL solver knobs in `FlexToolRunner`.
+- The uptime/downtime lookback + pdt-set CSV machinery (was the
+  GMPL pipeline's pre-solve scratchpad; the native cascade
+  computes these in memory).
+- `flextool/flextoolrunner/solve_writers.py` — legacy preprocessing
+  writers shadowed by the native `_writer_*` ports.  The one
+  remaining live caller was repointed at the native module.
+- The `capture_post_solve` monkey-patch — belt-and-suspenders
+  diagnostic from the GMPL→polars transition.
+- Two retired test modules: `legacy-vs-polars` parity tests + the
+  broken manual fixture-regeneration scripts.
+- Untracked-but-committed harness/scratchpad files cleared.
+
+**Scaling output**
+
+- `scaling_analysis.json` gated behind `--csv-dump`.  Was always-on
+  diagnostic noise on production runs; users who want it can opt
+  in via the existing dump flag.
+
+**Diagnostics**
+
+- `[mem]` phase log: bracket the pre-`load_flextool` entry
+  sequence, and split the `load_flextool` entry into five
+  sub-checkpoints (then refined to three in 3.41.1 follow-ups).
+
+---
+
 ## Release 3.41.1 (20.5.2026) — Toolbox/cascade bug-fix sweep
 
 Patch release on top of 3.41.0.  Clears four user-visible regressions that
