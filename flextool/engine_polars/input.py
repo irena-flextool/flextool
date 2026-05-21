@@ -5331,12 +5331,13 @@ def build_handoff_from_flexpy(
     # ``solve_data/period_capacity.csv`` is unchanged (handoff_writers
     # still bumps it post-solve).
 
-    # Phase 4.1h / 4.1l — parent's narrow fix_storage_{price,usage}
-    # fields pass straight through to this solve's narrow fields when
-    # nested.  This solve only produces fix_storage_quantity directly
-    # from v_state × unitsize (built above); the parent's narrow
-    # price/usage carriers are deposited onto this solve's handoff
-    # narrow fields when present.
+    # Phase 4.1h / 4.1l — parent's narrow fix_storage_usage field passes
+    # straight through to this solve's narrow field when nested.  The
+    # fix_storage_quantity carrier is produced above from v_state ×
+    # unitsize; deferred-B Phase B2 (below) produces fix_storage_price
+    # from ``nodeBalance_eq`` row duals at this solve's fix_price
+    # storage timesteps.  The parent's narrow price carrier remains the
+    # fallback when this solve declares no fix_price-method nodes.
     fix_storage_price_df = None
     fix_storage_usage_df = None
     if parent_handoff is not None:
@@ -5344,6 +5345,123 @@ def build_handoff_from_flexpy(
             fix_storage_price_df = parent_handoff.fix_storage_price
         if parent_handoff.fix_storage_usage is not None:
             fix_storage_usage_df = parent_handoff.fix_storage_usage
+
+    # ── deferred-B Phase B2: fix_storage_price from nodeBalance_eq duals ─
+    # For each storage node n with
+    #   node__storage_nested_fix_method[n] == 'fix_price'
+    # and each (period, step) in fix_storage_timesteps, take the row
+    # dual of ``nodeBalance_eq[n, d, t]`` and normalize:
+    #
+    #   p_fix_storage_price[n, d, t]
+    #     = -dual / p_inflation_op[d]
+    #              * p_period_share[d]
+    #              / scale_the_objective
+    #
+    # Mirrors v3.32.0 ``write_fix_storage_price`` (handoff_writers.py
+    # :594-691) — same minus sign / same factor product.
+    # ``scale_the_objective`` comes from
+    # ``solve_data/scale_the_objective.csv`` (emitted by the native
+    # input writer; defaults to 1.0 when absent/unreadable).  This
+    # overrides the parent passthrough above whenever this solve has
+    # any fix_price node × fix-step pair with extractable duals.
+    fp_nodes: set[str] = set()
+    if nsfm_df is not None and nsfm_df.height > 0 and "method" in nsfm_df.columns:
+        fp_nodes = set(
+            nsfm_df.filter(pl.col("method") == "fix_price")["node"]
+            .cast(pl.Utf8).to_list()
+        )
+    if (fp_nodes
+            and fs_steps_df is not None
+            and fs_steps_df.height > 0
+            and {"period", "step"}.issubset(fs_steps_df.columns)
+            and sol is not None
+            and flex_data is not None):
+        try:
+            duals_df = sol.constraint_dual("nodeBalance_eq")
+        except KeyError:
+            duals_df = None
+        if duals_df is not None and duals_df.height > 0 and "key" in duals_df.columns:
+            # Row names are formatted as ``"nodeBalance_eq[n,d,t]"`` —
+            # ``constraint_dual`` strips the prefix/brackets and exposes
+            # the comma-joined dims as a single ``key`` string column.
+            # Split into the over=(n, d, t) axis triple.
+            parsed = duals_df.with_columns(
+                pl.col("key").str.split_exact(",", 2).alias("_parts"),
+            )
+            parsed = parsed.with_columns(
+                n=pl.col("_parts").struct.field("field_0"),
+                d=pl.col("_parts").struct.field("field_1"),
+                t=pl.col("_parts").struct.field("field_2"),
+            ).drop(["_parts", "key"])
+
+            fs_steps_fp = (fs_steps_df
+                .select(alias_to_axis("period", "d"),
+                         alias_to_axis("step", "t"))
+                .unique())
+            fp_node_df = pl.DataFrame(
+                {"n": sorted(fp_nodes)},
+                schema={"n": pl.Utf8},
+            )
+
+            picked = (parsed
+                .with_columns(
+                    pl.col("n").cast(pl.Utf8),
+                    pl.col("d").cast(pl.Utf8),
+                    pl.col("t").cast(pl.Utf8),
+                )
+                .join(fp_node_df, on="n", how="inner")
+                .join(fs_steps_fp.with_columns(
+                          pl.col("d").cast(pl.Utf8),
+                          pl.col("t").cast(pl.Utf8),
+                      ),
+                      on=["d", "t"], how="inner"))
+
+            if picked.height > 0:
+                # Per-period inflation_op / period_share dictionaries.
+                infl_frame = flex_data.p_inflation_op.frame.select(
+                    "d", pl.col("value").alias("infl"),
+                ).with_columns(pl.col("d").cast(pl.Utf8))
+                share_frame = flex_data.p_period_share.frame.select(
+                    "d", pl.col("value").alias("share"),
+                ).with_columns(pl.col("d").cast(pl.Utf8))
+
+                # Resolve scale_the_objective via the per-solve CSV.
+                # Defaults to 1.0 when missing — the native input writer
+                # emits ``key,value\nscale_the_objective,1.0`` so the
+                # disk path is always present in normal solves.
+                scale_val = 1.0
+                scale_path = sd / "scale_the_objective.csv"
+                if scale_path.exists():
+                    try:
+                        scale_df = pl.read_csv(scale_path)
+                        if scale_df.height > 0 and "value" in scale_df.columns:
+                            v0 = scale_df["value"][0]
+                            if v0 is not None and float(v0) > 0:
+                                scale_val = float(v0)
+                    except Exception:
+                        scale_val = 1.0
+
+                normalized = (picked
+                    .join(infl_frame, on="d", how="left")
+                    .join(share_frame, on="d", how="left")
+                    .with_columns(
+                        infl=pl.col("infl").fill_null(1.0),
+                        share=pl.col("share").fill_null(1.0),
+                    )
+                    .with_columns(
+                        p_fix_storage_price=(
+                            -pl.col("dual") / pl.col("infl")
+                            * pl.col("share") / pl.lit(scale_val)
+                        ),
+                    )
+                    .select(
+                        alias_to_axis("n", "node"),
+                        alias_to_axis("d", "period"),
+                        alias_to_axis("t", "step"),
+                        pl.col("p_fix_storage_price"),
+                    ))
+                if normalized.height > 0:
+                    fix_storage_price_df = normalized
 
     return SolveHandoff(
         realized_invest=pl.DataFrame(
