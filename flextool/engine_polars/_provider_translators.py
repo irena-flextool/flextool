@@ -74,6 +74,9 @@ def translate_handoff_to_provider(
         ("cumulative_co2",      K.HANDOFF_CUMULATIVE_CO2),
         ("cumulative_commodity", K.HANDOFF_CUMULATIVE_COMMODITY),
         ("cum_sim_hours",       K.HANDOFF_CUM_SIM_HOURS),
+        ("fix_storage_quantity", K.HANDOFF_FIX_STORAGE_QUANTITY),
+        ("fix_storage_price",    K.HANDOFF_FIX_STORAGE_PRICE),
+        ("fix_storage_usage",    K.HANDOFF_FIX_STORAGE_USAGE),
     )
     for field_name, key in field_to_key:
         frame = getattr(handoff, field_name, None) if handoff is not None else None

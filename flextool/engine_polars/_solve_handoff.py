@@ -39,6 +39,9 @@ carriers, named metric columns for multi-value):
     divest_cumulative      [entity, value]
     roll_end_state         [node, value]
     fix_storage            [node, period, time, quantity, price, usage]
+    fix_storage_quantity   [node, period, step, p_fix_storage_quantity]
+    fix_storage_price      [node, period, step, p_fix_storage_price]
+    fix_storage_usage      [node, period, step, p_fix_storage_usage]
     cumulative_co2         [group, period, value]
     cumulative_commodity   [commodity, tier, period, p_ladder_cum_realized_mwh]
     cum_sim_hours          [period, p_ladder_cum_sim_hours]
@@ -119,6 +122,15 @@ class SolveHandoff:
     # File equivalents: solve_data/fix_storage_{quantity,price,usage}.csv
     fix_storage: pl.DataFrame | None = None
 
+    # Phase 4.1c — narrow per-metric carriers (canonical column schema).
+    # Populated alongside the wide ``fix_storage`` field; consumers will
+    # be migrated to read these in later phases, then the wide field is
+    # retired.
+    # Each schema: ``[node, period, step, p_fix_storage_<metric>]``.
+    fix_storage_quantity: pl.DataFrame | None = None
+    fix_storage_price: pl.DataFrame | None = None
+    fix_storage_usage: pl.DataFrame | None = None
+
     # Running CO2 totals carried across rolls for cumulative-cap constraint.
     # File equivalent: solve_data/co2_cum_realized_tonnes.csv.
     cumulative_co2: pl.DataFrame | None = None
@@ -135,6 +147,7 @@ class SolveHandoff:
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
         "roll_end_state", "fix_storage",
+        "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
     )
 

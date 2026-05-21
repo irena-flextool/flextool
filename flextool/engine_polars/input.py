@@ -5404,6 +5404,38 @@ def build_handoff_from_flexpy(
                 "node", "period", "time", "quantity", "price", "usage"
             )
 
+    # Phase 4.1c — narrow per-metric carriers, sliced from the wide
+    # ``fix_storage_df`` that has already been fully assembled above.
+    # Mirrors :func:`_native_run_model._fan_out_fix_storage` (same rename,
+    # same NULL filter, same column projection) so the iteration-start
+    # translator can route each metric straight through to
+    # ``handoff/fix_storage_{quantity,price,usage}`` without a per-iter
+    # rename.  The wide ``fix_storage_df`` is preserved for back-compat
+    # consumers; they are migrated to read the narrow carriers in
+    # Phases 4.1d-4.1e and the wide field is retired in 4.1f.
+    fix_storage_quantity_df = None
+    fix_storage_price_df = None
+    fix_storage_usage_df = None
+    if fix_storage_df is not None and fix_storage_df.height > 0:
+        for metric, col, target in (
+            ("quantity", "p_fix_storage_quantity", "fix_storage_quantity_df"),
+            ("price",    "p_fix_storage_price",    "fix_storage_price_df"),
+            ("usage",    "p_fix_storage_usage",    "fix_storage_usage_df"),
+        ):
+            if metric not in fix_storage_df.columns:
+                continue
+            narrow = (fix_storage_df
+                .filter(pl.col(metric).is_not_null())
+                .rename({"time": "step", metric: col})
+                .select("node", "period", "step", col))
+            if narrow.height > 0:
+                if target == "fix_storage_quantity_df":
+                    fix_storage_quantity_df = narrow
+                elif target == "fix_storage_price_df":
+                    fix_storage_price_df = narrow
+                else:
+                    fix_storage_usage_df = narrow
+
     return SolveHandoff(
         realized_invest=pl.DataFrame(
             inv_rows, schema=["entity", "period", "value"], orient="row",
@@ -5416,6 +5448,9 @@ def build_handoff_from_flexpy(
         ) if div_rows else None,
         roll_end_state=roll_end_state_df,
         fix_storage=fix_storage_df,
+        fix_storage_quantity=fix_storage_quantity_df,
+        fix_storage_price=fix_storage_price_df,
+        fix_storage_usage=fix_storage_usage_df,
         cumulative_co2=cumulative_co2_df,
         cumulative_commodity=cumulative_commodity_df,
         cum_sim_hours=cum_sim_hours_df,
