@@ -82,17 +82,16 @@ def test_solve_handoff_reexport_shim() -> None:
 
 
 def test_solve_handoff_capture_helpers_reexported() -> None:
-    """``capture_post_solve`` and ``write_fix_storage_files_from_handoff``
-    must also re-export from the legacy path."""
+    """``write_fix_storage_files_from_handoff`` must re-export from the
+    legacy path so external callers that import from
+    ``flextool.flextoolrunner.solve_handoff`` keep resolving to the
+    same function."""
     from flextool.engine_polars._solve_handoff import (
-        capture_post_solve as native_capture,
         write_fix_storage_files_from_handoff as native_write,
     )
     from flextool.flextoolrunner.solve_handoff import (
-        capture_post_solve as legacy_capture,
         write_fix_storage_files_from_handoff as legacy_write,
     )
-    assert native_capture is legacy_capture
     assert native_write is legacy_write
 
 

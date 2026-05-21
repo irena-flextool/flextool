@@ -1,150 +1,22 @@
-"""Tests for the in-memory ``SolveHandoff`` carrier + its CSV bridges.
+"""Tests for ``write_fix_storage_files_from_handoff`` — the wide-frame
+fan-out that turns ``SolveHandoff.fix_storage`` back into the three
+per-metric ``fix_storage_{quantity,price,usage}.csv`` files.
 
-Two surfaces:
-
-* :func:`flextool.flextoolrunner.solve_handoff.capture_post_solve` —
-  reads each carrier file from ``solve_data/`` after a solve completes
-  and parks a :class:`SolveHandoff` into ``state.handoffs[solve_name]``.
-* :func:`flextool.flextoolrunner.solve_handoff.write_fix_storage_files_from_handoff`
-  — fans the wide ``fix_storage`` carrier back out to the three on-disk
-  files, with NULL-aware per-metric independence.
-
-These tests build a skeleton ``RunnerState`` (PathConfig + MagicMock for
-unused fields) the same way ``tests/test_solver_options.py`` does, so
-no solver runs.  Critically, ``state.handoffs = {}`` opts in — without
-it ``capture_post_solve`` short-circuits at ``solve_handoff.py:137``.
+(The legacy ``capture_post_solve`` round-trip tests were retired
+alongside the function in Phase 3 of
+``specs/provider_consolidation.md``; the cascade builds
+``SolveHandoff`` directly from the flexpy ``Solution`` via
+``build_handoff_from_flexpy``.)
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import polars as pl
-import pytest
 
-from flextool.flextoolrunner.runner_state import PathConfig, RunnerState
 from flextool.flextoolrunner.solve_handoff import (
-    capture_post_solve,
     write_fix_storage_files_from_handoff,
 )
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-def _make_state(tmp_path: Path) -> RunnerState:
-    """Skeleton ``RunnerState`` with handoffs opted-in (``{}``).
-
-    Mirrors the pattern from ``tests/test_solver_options.py:218-245`` —
-    only ``state.paths.work_folder`` and ``state.handoffs`` are read by
-    the SolveHandoff hooks; everything else is a placeholder.
-    """
-    wf = tmp_path / "work"
-    wf.mkdir(parents=True)
-    (wf / "solve_data").mkdir()
-    paths = PathConfig(
-        flextool_dir=tmp_path,
-        bin_dir=tmp_path,
-        root_dir=tmp_path,
-        output_path=tmp_path,
-        work_folder=wf,
-    )
-    state = RunnerState(
-        paths=paths,
-        solve=MagicMock(),
-        timeline=MagicMock(),
-        logger=logging.getLogger("test_solve_handoff"),
-    )
-    # Opt in to in-memory handoffs (the default ``None`` short-circuits
-    # capture_post_solve at line 137).
-    state.handoffs = {}
-    return state
-
-
-# ---------------------------------------------------------------------------
-# capture_post_solve — cum_sim_hours (lines 257-265)
-# ---------------------------------------------------------------------------
-
-
-def test_capture_post_solve_cum_sim_hours(tmp_path: Path) -> None:
-    """``ladder_cum_sim_hours.csv`` → ``handoff.cum_sim_hours`` with schema
-    ``(period, value)``.  Missing file → field stays ``None``."""
-    state = _make_state(tmp_path)
-    sd = state.paths.work_folder / "solve_data"
-    (sd / "ladder_cum_sim_hours.csv").write_text(
-        "period,p_ladder_cum_sim_hours\n"
-        "p2020,8760\n"
-        "p2025,17520\n"
-    )
-
-    capture_post_solve(state, "s1")
-    h = state.handoffs["s1"]
-    assert h.cum_sim_hours is not None
-    assert h.cum_sim_hours.columns == ["period", "value"]
-    assert h.cum_sim_hours.to_dicts() == [
-        {"period": "p2020", "value": 8760.0},
-        {"period": "p2025", "value": 17520.0},
-    ]
-
-    # Missing file path: a fresh state with no CSV → field is None.
-    state2 = _make_state(tmp_path / "second")
-    capture_post_solve(state2, "s1")
-    assert state2.handoffs["s1"].cum_sim_hours is None
-
-
-# ---------------------------------------------------------------------------
-# capture_post_solve — cumulative_commodity (lines 239-255)
-# ---------------------------------------------------------------------------
-
-
-def test_capture_post_solve_cumulative_commodity(tmp_path: Path) -> None:
-    """``commodity_ladder_cumulative.csv`` → ``handoff.cumulative_commodity``;
-    accepts either ``mwh`` or ``p_ladder_cum_realized_mwh`` as the value
-    column (the dual-column tolerance is the bug surface)."""
-    # Variant A: value column named ``mwh``.
-    state_a = _make_state(tmp_path / "a")
-    (state_a.paths.work_folder / "solve_data" / "commodity_ladder_cumulative.csv").write_text(
-        "commodity,tier,period,mwh\n"
-        "gas,t1,p2020,100\n"
-        "gas,t2,p2020,50\n"
-    )
-    capture_post_solve(state_a, "s1")
-    cc_a = state_a.handoffs["s1"].cumulative_commodity
-    assert cc_a is not None
-    assert cc_a.columns == ["commodity", "tier", "period", "mwh"]
-    assert cc_a.to_dicts() == [
-        {"commodity": "gas", "tier": "t1", "period": "p2020", "mwh": 100.0},
-        {"commodity": "gas", "tier": "t2", "period": "p2020", "mwh": 50.0},
-    ]
-
-    # Variant B: same data, value column named ``p_ladder_cum_realized_mwh``.
-    state_b = _make_state(tmp_path / "b")
-    (state_b.paths.work_folder / "solve_data" / "commodity_ladder_cumulative.csv").write_text(
-        "commodity,tier,period,p_ladder_cum_realized_mwh\n"
-        "gas,t1,p2020,100\n"
-        "gas,t2,p2020,50\n"
-    )
-    capture_post_solve(state_b, "s1")
-    cc_b = state_b.handoffs["s1"].cumulative_commodity
-    assert cc_b is not None
-    # Despite the different on-disk column name, the in-memory schema is
-    # identical — ``mwh`` is the canonical name in the carrier.
-    assert cc_b.columns == ["commodity", "tier", "period", "mwh"]
-    assert cc_b.to_dicts() == cc_a.to_dicts()
-
-
-# ---------------------------------------------------------------------------
-# Δ.1 — periods_already_emitted relocation
-# ---------------------------------------------------------------------------
-# The legacy ``capture_post_solve`` test for the
-# ``periods_already_emitted`` field on :class:`SolveHandoff` was retired
-# because the field moved to
-# :class:`flextool.engine_polars._output_writer.OutputWriterState`.  The
-# new home + its accumulation across a cascade is exercised by
-# ``tests/engine_polars/test_output_writer.py::test_output_writer_state_periods_already_emitted``.
 
 
 # ---------------------------------------------------------------------------

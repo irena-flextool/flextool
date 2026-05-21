@@ -1,10 +1,22 @@
-"""In-memory carrier of state passed between solves — Γ.8.D port.
+"""In-memory carrier of state passed between solves.
 
-This module is a 1:1 port of
-``flextool/flextoolrunner/solve_handoff.py`` (304 LOC) into the
-``engine_polars`` subpackage.  It owns the canonical
-:class:`SolveHandoff` dataclass + post-solve capture function for the
-native flexpy orchestrator (``_orchestration.py``).
+Home of the canonical :class:`SolveHandoff` dataclass — the typed
+record of "what one solve produced that the next solve(s) consume".
+Built post-solve by :func:`flextool.engine_polars.input.build_handoff_from_flexpy`
+directly from the flexpy ``Solution`` object; consumed by the next
+sub-solve via the orchestrator's iteration-start translator
+(:func:`_provider_translators.translate_handoff_to_provider`) which
+fans each field into the Provider under a ``handoff/<field>`` key.
+
+Phase 3 of ``specs/provider_consolidation.md`` retired the legacy
+``capture_post_solve()`` disk-read constructor — the cascade was
+already using ``build_handoff_from_flexpy`` exclusively; the
+capture-from-disk function was dead code and has been removed,
+together with the three carrier fields it was the only populator
+for (``fix_storage_timesteps``, ``ed_history_realized_first``,
+``edd_history``).  Consumers of those fields already fell through
+to Provider/CSV reads when the carrier was ``None`` (the universal
+state in the cascade path).
 
 R-O2 mitigation
 ---------------
@@ -56,8 +68,6 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from ._input_source import _read_csv_file
-from ._solve_context import FlexDataError, _provider_fetch_or_raise
 
 
 @dataclass
@@ -116,236 +126,15 @@ class SolveHandoff:
     # File equivalent: solve_data/ladder_cum_sim_hours.csv.
     cum_sim_hours: pl.DataFrame | None = None
 
-    # Gap F final — (period, step) set of fix_storage timesteps for the
-    # CURRENT solve.  Sibling to the price/usage metrics that already
-    # ride ``fix_storage``; this carrier is the underlying index set.
-    # File equivalent: solve_data/fix_storage_timesteps.csv.
-    fix_storage_timesteps: pl.DataFrame | None = None
-
-    # Gap F final — cross-solve invest history (first-realized periods).
-    # Mirrors ``ed_history_realized`` seed from the prior solve's
-    # ``ed_history_realized_first.csv`` (used by
-    # ``_overlay_handoff`` for ``p_entity_previously_invested_capacity``).
-    # File equivalent: solve_data/ed_history_realized_first.csv.
-    ed_history_realized_first: pl.DataFrame | None = None
-
-    # Gap F final — cross-solve invest-period-period history.
-    # ``[entity, period_history, period]`` rows: for each current period
-    # ``d``, the historical periods ``d_h`` whose realized invest feeds
-    # ``p_entity_previously_invested_capacity[e, d]``.
-    # File equivalent: solve_data/edd_history.csv.
-    edd_history: pl.DataFrame | None = None
-
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
         "roll_end_state", "fix_storage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
-        "fix_storage_timesteps", "ed_history_realized_first", "edd_history",
     )
 
     def is_empty(self) -> bool:
         """True when no carrier is populated."""
         return all(getattr(self, f) is None for f in self._FIELDS)
-
-
-def capture_post_solve(state, solve_name: str) -> None:
-    """Populate ``state.handoffs[solve_name]`` from the just-completed
-    solve's outputs.
-
-    Called from the orchestration loop immediately after the solver
-    returns successfully, but only when ``state.handoffs is not None``
-    (the opt-in flag).  The capture is **additive** — existing
-    post-solve CSV writes (e.g. ``p_entity_period_existing_capacity.csv``)
-    continue unchanged, so file-based downstream consumers see the
-    same bytes they always did.  This hook merely records the same
-    data in memory for future in-memory consumers.
-
-    Carriers not exercised by the current solve (file missing or
-    empty) leave their slot at ``None``.
-
-    Mirrors :func:`flextool.flextoolrunner.solve_handoff.capture_post_solve`.
-    """
-    if state.handoffs is None:
-        return  # opt-in flag is off — no-op
-
-    sd = state.paths.work_folder / "solve_data"
-    handoff = state.handoffs.setdefault(solve_name, SolveHandoff())
-    provider = getattr(state, "provider", None)
-
-    def _read(name: str) -> "pl.DataFrame | None":
-        """Provider-first carrier fetch for the post-solve capture.
-
-        Strict semantics when *provider* is available on the state:
-        a missing carrier raises :class:`FlexDataError`.  When the
-        Provider does carry the carrier but the body is empty (height
-        0), returns ``None`` so the per-field assignment branches skip
-        cleanly — mirrors the legacy "empty CSV → leave field None"
-        behaviour.
-
-        Legacy disk path remains only when state has no provider —
-        the path that goes away once Phase 4 makes Provider mandatory
-        at orchestration construction.
-        """
-        p = sd / name
-        if provider is not None:
-            # Note: capture_post_solve must run AFTER the post-solve
-            # emitters have populated the Provider with the freshly-
-            # computed handoff carriers.  A miss here is a wiring bug:
-            # the producer didn't run for this iteration.
-            try:
-                df = _provider_fetch_or_raise(
-                    provider, p, "capture_post_solve",
-                )
-            except FlexDataError:
-                # Treat absence as "carrier not applicable to this
-                # solve" — the per-field code below already tolerates
-                # ``None`` for every carrier.  capture_post_solve is
-                # additive across solves with heterogenous shapes
-                # (e.g. some solves have no fix_storage, no co2).  A
-                # hard raise here would break that contract.  The
-                # strict-on-miss policy applies to the SolveContext
-                # loaders (single consumer) — this capture is the
-                # union over many independent metrics.
-                return None
-            return df if df.height > 0 else None
-        if not p.exists():
-            return None
-        df = _read_csv_file(p)
-        return df if df.height > 0 else None
-
-    # realized_invest + realized_existing: two columns of the same file.
-    # ``p_entity_period_invested_capacity`` is what was built in *this*
-    # solve.  ``p_entity_period_existing_capacity`` is the resolved
-    # existing-capacity history (pre-existing decay + divest enter
-    # this column and aren't reconstructible from realized_invest alone).
-    ppec = _read("p_entity_period_existing_capacity.csv")
-    if ppec is not None:
-        if "p_entity_period_invested_capacity" in ppec.columns:
-            handoff.realized_invest = (
-                ppec.with_columns(
-                    value=pl.col("p_entity_period_invested_capacity")
-                            .cast(pl.Float64, strict=False)
-                            .fill_null(0.0))
-                    .select("entity", "period", "value"))
-        if "p_entity_period_existing_capacity" in ppec.columns:
-            handoff.realized_existing = (
-                ppec.with_columns(
-                    value=pl.col("p_entity_period_existing_capacity")
-                            .cast(pl.Float64, strict=False)
-                            .fill_null(0.0))
-                    .select("entity", "period", "value"))
-
-    # divest_cumulative: per-entity scalar.  Column name on disk is
-    # ``p_entity_divested``; rename to canonical ``value``.
-    div = _read("p_entity_divested.csv")
-    if div is not None and "p_entity_divested" in div.columns:
-        handoff.divest_cumulative = (
-            div.with_columns(
-                value=pl.col("p_entity_divested")
-                        .cast(pl.Float64, strict=False)
-                        .fill_null(0.0))
-               .select("entity", "value"))
-
-    # roll_end_state: per-node scalar (end-of-roll storage state).
-    rcs = _read("p_roll_continue_state.csv")
-    if rcs is not None and "p_roll_continue_state" in rcs.columns:
-        handoff.roll_end_state = (
-            rcs.with_columns(
-                value=pl.col("p_roll_continue_state")
-                        .cast(pl.Float64, strict=False)
-                        .fill_null(0.0))
-               .select("node", "value"))
-
-    # fix_storage: outer-join the three independent files (quantity /
-    # price / usage) into one wide row keyed by (node, period, time).
-    # NULL columns mark inactive metrics — the trio is independent so
-    # any combination may be set per (n, d, t).
-    def _fix_one(name: str, value_col: str) -> "pl.DataFrame | None":
-        df = _read(name)
-        if df is None or value_col not in df.columns:
-            return None
-        return df.rename({"step": "time", value_col: value_col}) \
-                 .select("node", "period", "time", value_col)
-
-    fq = _fix_one("fix_storage_quantity.csv", "p_fix_storage_quantity")
-    fp = _fix_one("fix_storage_price.csv", "p_fix_storage_price")
-    fu = _fix_one("fix_storage_usage.csv", "p_fix_storage_usage")
-
-    if fq is not None or fp is not None or fu is not None:
-        # Outer-join on (node, period, time) so each metric independently
-        # contributes its own rows.
-        merged = None
-        for src, col, out_col in [(fq, "p_fix_storage_quantity", "quantity"),
-                                    (fp, "p_fix_storage_price", "price"),
-                                    (fu, "p_fix_storage_usage", "usage")]:
-            if src is None:
-                continue
-            r = src.rename({col: out_col})
-            merged = r if merged is None else merged.join(
-                r, on=["node", "period", "time"], how="full", coalesce=True)
-        # Ensure all three metric columns exist (NULL where not provided).
-        for c in ("quantity", "price", "usage"):
-            if c not in merged.columns:
-                merged = merged.with_columns(pl.lit(None).cast(pl.Float64).alias(c))
-        handoff.fix_storage = merged.select(
-            "node", "period", "time", "quantity", "price", "usage")
-
-    # cumulative_co2: per-(group, period) running total.
-    co2 = _read("co2_cum_realized_tonnes.csv")
-    if co2 is not None and "p_co2_cum_realized_tonnes" in co2.columns:
-        handoff.cumulative_co2 = (
-            co2.with_columns(
-                value=pl.col("p_co2_cum_realized_tonnes")
-                        .cast(pl.Float64, strict=False)
-                        .fill_null(0.0))
-               .select("group", "period", "value"))
-
-    # cumulative_commodity: per-(commodity, tier, period) running mwh.
-    # Schema not exercised by current fixtures; capture leniently.
-    cc = _read("commodity_ladder_cumulative.csv")
-    if cc is not None:
-        # Tolerate either ``mwh`` or ``p_ladder_cum_realized_mwh`` as the
-        # value column name — the file's writer may use either.
-        if "mwh" in cc.columns:
-            value_col = "mwh"
-        elif "p_ladder_cum_realized_mwh" in cc.columns:
-            value_col = "p_ladder_cum_realized_mwh"
-        else:
-            value_col = None
-        if value_col is not None and {"commodity", "tier", "period"}.issubset(cc.columns):
-            handoff.cumulative_commodity = (
-                cc.with_columns(
-                    mwh=pl.col(value_col).cast(pl.Float64, strict=False).fill_null(0.0))
-                  .select("commodity", "tier", "period", "mwh"))
-
-    # cum_sim_hours: per-period running simulated-hour total.
-    csh = _read("ladder_cum_sim_hours.csv")
-    if csh is not None and "p_ladder_cum_sim_hours" in csh.columns:
-        handoff.cum_sim_hours = (
-            csh.with_columns(
-                value=pl.col("p_ladder_cum_sim_hours")
-                        .cast(pl.Float64, strict=False)
-                        .fill_null(0.0))
-               .select("period", "value"))
-
-    # Gap F final — fix_storage_timesteps / ed_history_realized_first /
-    # edd_history.  Populated leniently: file missing → field stays None.
-    fst = _read("fix_storage_timesteps.csv")
-    if fst is not None and {"period", "step"}.issubset(fst.columns):
-        handoff.fix_storage_timesteps = fst.select("period", "step")
-    ehrf = _read("ed_history_realized_first.csv")
-    if ehrf is not None and {"entity", "period"}.issubset(ehrf.columns):
-        handoff.ed_history_realized_first = ehrf.select("entity", "period")
-    edd = _read("edd_history.csv")
-    if edd is not None and {"entity", "period_history", "period"}.issubset(edd.columns):
-        handoff.edd_history = edd.select("entity", "period_history", "period")
-
-    # Δ.1 — ``periods_already_emitted`` removed from SolveHandoff (lived
-    # at the wrong layer; relocated to OutputWriterState in the writer
-    # adapter).  The file ``solve_data/period_capacity.csv`` is still
-    # the on-disk source of truth, populated by
-    # ``handoff_writers._bump_period_capacity`` and read by the writer
-    # adapter (``_output_writer.write_outputs_for_solve``).
 
 
 def write_fix_storage_files_from_handoff(
@@ -383,6 +172,5 @@ def write_fix_storage_files_from_handoff(
 
 __all__ = [
     "SolveHandoff",
-    "capture_post_solve",
     "write_fix_storage_files_from_handoff",
 ]

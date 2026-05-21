@@ -5315,15 +5315,12 @@ def build_handoff_from_flexpy(
         sd, prior_handoff=prior_handoff, flex_data=flex_data,
         provider=provider)
     if cum_sim_hours_df is None:
-        # Phase 4 (Gap F) — disk fallback retired.  ``_extract_cum_sim_hours``
-        # returns None only when this solve has zero realized timesteps
-        # AND ``prior_handoff`` carries no prior hours.  At that moment
-        # the post-solve ``write_ladder_rolling_accumulators`` has not yet
-        # run, so ``solve_data/ladder_cum_sim_hours.csv`` still holds the
-        # PRIOR running total — i.e. exactly what ``prior_handoff``
-        # already carries in memory.  Re-reading the disk file would be a
-        # round-trip through bytes that ``capture_post_solve`` has already
-        # absorbed for us.
+        # Disk fallback retired.  ``_extract_cum_sim_hours`` returns
+        # None only when this solve has zero realized timesteps AND
+        # ``prior_handoff`` carries no prior hours.  Propagate the
+        # prior carrier as-is when present — the post-solve writer
+        # hasn't run yet, so re-reading disk would just round-trip
+        # data we already hold in memory.
         if (prior_handoff is not None
                 and prior_handoff.cum_sim_hours is not None):
             cum_sim_hours_df = prior_handoff.cum_sim_hours

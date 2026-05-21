@@ -20,15 +20,11 @@ Design decisions
   :class:`flextool.engine_polars._recursive_solve.RecursiveSolveBuilder`
   + :class:`._stochastic.StochasticSolver` — direct ports of the
   flextoolrunner equivalents.
-* **No ``capture_post_solve`` call.**  Legacy ``run_model`` called
-  ``solve_handoff.capture_post_solve`` after every per-solve invocation,
-  and the cascade monkey-patched it to a no-op (see
-  ``_orchestration.py:704``) to keep flexpy-derived handoffs from being
-  overwritten by the legacy CSV-based capture.  In the native cascade we
-  simply omit the call — semantically identical to the patched no-op,
-  but cleaner.  The monkey-patch is still applied in ``_drive_cascade``
-  as a belt-and-suspenders guard for any other consumer that might
-  still reference ``capture_post_solve`` via this module's globals.
+* **Direct handoff construction.**  The post-solve ``SolveHandoff`` is
+  built by ``build_handoff_from_flexpy`` directly from the flexpy
+  ``Solution`` object — no CSV round-trip.  (The legacy disk-reading
+  ``capture_post_solve`` constructor was retired in Phase 3 of
+  ``specs/provider_consolidation.md``.)
 * **Optional state fields tolerated.**  Native :class:`RunnerState`
   lacks ``timing_recorder`` / ``auto_scale``.  The few legacy paths that
   consume those guard with ``getattr(state, name, default)`` so the
@@ -1103,18 +1099,12 @@ def native_run_model(state, solver) -> int:
                         f"{complete_solve[solve]}: {_exc}"
                     )
 
-        # In-memory handoff bookkeeping.  We deliberately skip the
-        # legacy ``capture_post_solve(state, complete_solve[solve])``
-        # call here — the cascade has already deposited a
-        # flexpy-derived ``SolveHandoff`` into ``state.handoffs`` from
-        # inside ``solver.run``, and re-running the file-based capture
-        # would overwrite ``realized_invest`` (and friends) with values
-        # read from the prior-handoff-seeded preprocessing CSVs (i.e.
-        # the previous solve's state).  Legacy ``run_model`` called
-        # ``capture_post_solve`` unconditionally; the cascade then
-        # monkey-patched it to a no-op for the same reason
-        # (``_orchestration.py:704``).  Omitting the call here is
-        # semantically identical to that patch.
+        # In-memory handoff bookkeeping.  ``solver.run`` deposits a
+        # flexpy-derived ``SolveHandoff`` into ``state.handoffs`` via
+        # ``build_handoff_from_flexpy``.  Phase 3 of
+        # specs/provider_consolidation.md deleted the legacy
+        # ``capture_post_solve`` constructor — nothing reads from disk
+        # to overwrite that handoff.
         if state.handoffs is not None:
             last_captured_solve = complete_solve[solve]
             state.last_captured_solve = last_captured_solve

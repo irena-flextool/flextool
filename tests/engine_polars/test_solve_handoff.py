@@ -1,11 +1,9 @@
 """Unit-level tests for the cascade's in-memory ``SolveHandoff`` consume helpers.
 
-Δ.22 retired the legacy PoC handoff mechanism (``FlexToolRunner.run_model``
-populating ``RunnerState.handoffs`` via ``capture_post_solve``).  The
-9 cascade-integration tests that exercised that PoC path have been
-removed (per ``specs/model_bugs.md`` Pre-work 0a) — the native cascade's
-in-memory handoff via :class:`flextool.flextoolrunner.solve_handoff.SolveHandoff`
-is exercised end-to-end by ``test_chain_handoff_writers.py``.
+Phase 3 of ``specs/provider_consolidation.md`` deleted the disk-reading
+``capture_post_solve`` constructor; the cascade builds ``SolveHandoff``
+directly from the flexpy ``Solution`` via ``build_handoff_from_flexpy``.
+End-to-end coverage lives in ``test_chain_handoff_writers.py``.
 
 The 2 unit-level tests preserved here verify the consume helpers in
 isolation:
@@ -92,7 +90,7 @@ def test_write_fix_storage_files_from_handoff(tmp_path):
     sd.mkdir()
 
     # Wide row with mixed NULLs — the producer's natural output shape
-    # per ``capture_post_solve``.
+    # from ``build_handoff_from_flexpy``.
     fix_storage = pl.DataFrame({
         "node":     ["battery", "battery", "tank"],
         "period":   ["p2025",   "p2025",   "p2030"],

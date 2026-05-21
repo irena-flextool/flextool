@@ -775,9 +775,8 @@ def _drive_cascade(
             "flextool_runner_constructed", _drive_logger,
             user_label="FlexToolRunner constructed (legacy DB fetch_all)",
         )
-    # Push our state's handoff slot onto the runner's state so flextool's
-    # consume hooks (preprocessing_solve_time + capture_post_solve) read
-    # from the same dict.
+    # Push our state's handoff slot onto the runner's state so the
+    # cascade and any consume hooks share the same dict.
     runner.state.handoffs = state.handoffs
     # Step 2.5 — forward the cascade-input Provider seeded in
     # ``run_chain_from_db`` onto runner.state so the per-sub-solve hook
@@ -1283,22 +1282,8 @@ def _drive_cascade(
                     seconds=time.perf_counter() - _t_bhf_start,
                     t_start=_t_bhf_start,
                 )
-            # Deposit so flextool's consume side picks it up on the next
-            # iteration's preprocessing AND so we have it for the result
-            # dict.
-            #
-            # IMPORTANT: flextool's ``orchestration.run_model`` also
-            # calls ``capture_post_solve(state, complete_solve[solve])``
-            # immediately after ``solver.run`` returns.  That helper
-            # reads the current ``solve_data/*.csv`` files and OVERWRITES
-            # the carriers on the same handoff object — which would
-            # silently replace our flexpy-derived ``realized_invest``
-            # with whatever the prior-handoff-seeded preprocessing
-            # wrote to disk for THIS solve (i.e., the prior solve's
-            # state, not our actual flexpy result).  We monkey-patch
-            # ``capture_post_solve`` to a no-op for the duration of
-            # this loop in ``_drive_cascade`` below — the override
-            # restores it on exit.
+            # Deposit so the next iteration's translator picks it up
+            # AND we have it for the result dict.
             self.state.handoffs[complete_solve_name] = handoff
             # Un-scale the objective value back to user-facing units.
             # ``build_flextool`` multiplied the objective coefficients by
@@ -1360,8 +1345,7 @@ def _drive_cascade(
             return 0
 
     # Drive the cascade via the native ``native_run_model``.  Native
-    # emitters thread ``sub_solve_provider`` through every emit_* call;
-    # the legacy ``capture_post_solve`` hook is no longer reachable.
+    # emitters thread ``sub_solve_provider`` through every emit_* call.
     native_run_model(runner.state, _FlexpyCascadeSolver(runner.state))
     # Mirror the in-memory handoff dict back onto our state in case
     # callers want to inspect it.

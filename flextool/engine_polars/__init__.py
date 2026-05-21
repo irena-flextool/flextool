@@ -73,7 +73,7 @@ from flextool.engine_polars._input_source import FlexInputSource, CsvSource, Inp
 from flextool.engine_polars._spinedb_reader import SpineDbReader
 from flextool.engine_polars._inmemory_reader import InMemoryReader
 from flextool.engine_polars._solve_handoff import (
-    SolveHandoff, capture_post_solve, write_fix_storage_files_from_handoff,
+    SolveHandoff, write_fix_storage_files_from_handoff,
 )
 from flextool.engine_polars._orchestration import (
     OrchestrationStep, run_chain_from_db, run_orchestration,
@@ -89,7 +89,7 @@ __all__ = [
     "FlexInputSource", "CsvSource",
     "InputSource", "SpineDbReader", "InMemoryReader",
     # Γ.8.D — native orchestrator + handoff carrier.
-    "SolveHandoff", "capture_post_solve",
+    "SolveHandoff",
     "write_fix_storage_files_from_handoff",
     "OrchestrationStep", "run_chain_from_db", "run_orchestration",
     # Δ.25 — surgical fast single-solve path.
