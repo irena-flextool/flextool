@@ -443,53 +443,32 @@ def emit_p_entity_divest_cumulative_max(
 # ---------------------------------------------------------------------------
 
 
-def _load_handoff_or_csv_realized(
-    solve_data_dir: Path,
+def _load_realized_from_handoff(
     *, provider: "object | None" = None,
-) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float], bool]:
-    """Resolve (realized_existing, realized_invest) from either the
-    Provider's ``handoff/realized_*`` carriers (populated by the
-    iteration-start translator) or the file-based
-    ``p_entity_period_existing_capacity.csv`` left by the parent
-    solve's output writer.
+) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float]]:
+    """Resolve ``(realized_existing, realized_invest)`` from the
+    Provider's ``handoff/realized_*`` carriers, populated by the
+    iteration-start translator.
 
-    Returns ``(ppec, ppic, used_handoff)`` where ``ppec`` maps
+    Returns ``(ppec, ppic)`` where ``ppec`` maps
     ``(entity, period) → realized_existing`` and ``ppic`` maps
-    ``(entity, period) → realized_invest``.  ``used_handoff`` is true
-    when at least one of the two carriers held populated rows (i.e.
-    ``height > 0``) — empty/None handoff frames fall through to the
-    CSV path, matching the legacy ``prior_handoff is not None`` check.
+    ``(entity, period) → realized_invest``.  An empty/None handoff
+    frame yields an empty mapping — the translator pipeline always
+    primes these carriers (header-only frame when no prior handoff
+    exists, populated frame otherwise), so this is the sole source of
+    truth.
     """
     ppec: dict[tuple[str, str], float] = {}
     ppic: dict[tuple[str, str], float] = {}
     realized_existing = read_handoff_frame(provider, K.HANDOFF_REALIZED_EXISTING)
     realized_invest = read_handoff_frame(provider, K.HANDOFF_REALIZED_INVEST)
-    used_handoff = realized_existing is not None or realized_invest is not None
-    if used_handoff:
-        if realized_existing is not None:
-            for r in realized_existing.iter_rows(named=True):
-                ppec[(str(r["entity"]), str(r["period"]))] = float(r["value"])
-        if realized_invest is not None:
-            for r in realized_invest.iter_rows(named=True):
-                ppic[(str(r["entity"]), str(r["period"]))] = float(r["value"])
-        return ppec, ppic, True
-
-    # CSV path: p_entity_period_existing_capacity.csv carries both
-    # ``existing`` (col 2) and ``invested`` (col 3) for every (e, d).
-    ppe_path = solve_data_dir / "p_entity_period_existing_capacity.csv"
-    ppe_seeded = _provider_open(provider, _provider_key(ppe_path), ppe_path)
-    if ppe_seeded is not None:
-        with ppe_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for r in reader:
-                if len(r) >= 4 and r[0] and r[1]:
-                    try:
-                        ppec[(r[0], r[1])] = float(r[2])
-                        ppic[(r[0], r[1])] = float(r[3])
-                    except ValueError:
-                        continue
-    return ppec, ppic, False
+    if realized_existing is not None:
+        for r in realized_existing.iter_rows(named=True):
+            ppec[(str(r["entity"]), str(r["period"]))] = float(r["value"])
+    if realized_invest is not None:
+        for r in realized_invest.iter_rows(named=True):
+            ppic[(str(r["entity"]), str(r["period"]))] = float(r["value"])
+    return ppec, ppic
 
 
 def _compute_p_entity_existing_chain(
@@ -530,9 +509,7 @@ def _compute_p_entity_existing_chain(
     ):
         edd_by_ed.setdefault((e, d), []).append(d_h)
 
-    ppec, ppic, _ = _load_handoff_or_csv_realized(
-        solve_data_dir, provider=provider,
-    )
+    ppec, ppic = _load_realized_from_handoff(provider=provider)
 
     ed_history_realized: set[tuple[str, str]] = set(ppec.keys())
     for e_, d_ in _read_pairs(
@@ -548,10 +525,6 @@ def _compute_p_entity_existing_chain(
     if divest_cumulative is not None:
         for r in divest_cumulative.iter_rows(named=True):
             p_divested[str(r["entity"])] = float(r["value"])
-    else:
-        p_divested = _load_e_value_csv(
-            solve_data_dir / "p_entity_divested.csv", provider=provider,
-        )
 
     later_existing: dict[tuple[str, str], float] = {}
     later_invested: dict[tuple[str, str], float] = {}
