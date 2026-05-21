@@ -2800,6 +2800,46 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             Where(v_startup_int, d.pdt_online_integer)
             * d.p_startup_cost * d.p_unitsize * startup_factor)
 
+    # ─── §10.1 Storage-state reference-price revenue (mod:2107-2111) ─────
+    # For nodes with method ``use_reference_price`` (and also any node for
+    # which a fix_storage_price handoff dual has populated the parameter
+    # — both routes funnel through ``p_storage_state_reference_price``),
+    # value v_state at the last (d, t) of every period_last by the
+    # reference price:
+    #
+    #   - Σ_{n ∈ nodeState, (d, t) ∈ period__time_last : d ∈ period_last}
+    #         p_storage_state_reference_price[n, d]
+    #         * v_state[n, d, t] * unitsize[n]
+    #         * rp_cost_weight[d, t] * inflation_op[d] / period_share[d]
+    #         * pdt_branch_weight[d, t]
+    #
+    # The minus sign makes this a revenue term: a higher terminal state
+    # reduces the objective.  No step_duration (terminal valuation is a
+    # point event, not duration-weighted) — mirrors startup_factor.
+    if (has_storage
+            and d.p_storage_state_reference_price is not None
+            and d.nodeState_last_dt is not None
+            and d.nodeState_last_dt.height > 0
+            and d.period_last is not None
+            and d.period_last.height > 0):
+        # Domain: (n, d, t) ∈ nodeState_last_dt where d ∈ period_last and
+        # (n, d) is populated in p_storage_state_reference_price.  Zero-
+        # valued rows contribute nothing but are kept (the loader does
+        # not filter zeros and the multiplier is exact).
+        ssrp_over = (d.nodeState_last_dt
+            .join(d.period_last, on="d", how="inner")
+            .join(d.p_storage_state_reference_price.frame.select("n", "d"),
+                  on=["n", "d"], how="inner")
+            .select("n", "d", "t").unique())
+        if ssrp_over.height > 0:
+            ref_price_factor = (d.p_rp_cost_weight * d.p_inflation_op
+                                / d.p_period_share)
+            if d.pdt_branch_weight is not None:
+                ref_price_factor = ref_price_factor * d.pdt_branch_weight
+            obj = obj - Sum(
+                Where(v_state, ssrp_over) * d.p_unitsize
+                * d.p_storage_state_reference_price * ref_price_factor)
+
     # Invest / divest objective contributions.
     # NOTE: per .mod:2116-2119 — investment / divestment objective terms
     # are explicitly NOT weighted by pd_branch_weight under the current

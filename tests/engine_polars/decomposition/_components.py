@@ -840,15 +840,46 @@ def storage_state_reference_price_obj(data, sol) -> float:
     storage_state_reference_price * rp_cost_weight * inflation_op
     / period_share.  Sign is **negative** — terminal state is rewarded.
 
-    Currently NOT wired in flexpy (the audit lists §10.1 as MISSING).
-    Returns 0 because no input loader populates the reference price
-    today.
+    Mirrors ``flextool/engine_polars/model.py`` §10.1 (B1b).  The term
+    fires when ``p_storage_state_reference_price`` is populated for at
+    least one (n, d), and only at the last (d, t) of every period_last.
+    No ``step_duration`` (terminal valuation is a point event — mirrors
+    startup_factor).
     """
     p_ref = getattr(data, "p_storage_state_reference_price", None)
     if p_ref is None:
         return 0.0
-    # Wiring is deferred — return 0 to match flexpy's current behaviour.
-    return 0.0
+    v_state = _sol_value_or_empty(sol, "v_state")
+    if (_is_empty(v_state) or data.p_state_unitsize is None
+            or data.nodeState_last_dt is None
+            or data.nodeState_last_dt.height == 0
+            or data.period_last is None
+            or data.period_last.height == 0):
+        return 0.0
+    # Domain: (n, d, t) ∈ nodeState_last_dt with d ∈ period_last and
+    # (n, d) populated in p_storage_state_reference_price.
+    over = (data.nodeState_last_dt
+            .join(data.period_last, on="d", how="inner")
+            .join(p_ref.frame.select("n", "d"), on=["n", "d"], how="inner")
+            .select("n", "d", "t").unique())
+    if over.height == 0:
+        return 0.0
+    ref = p_ref.frame.rename({"value": "ref"})
+    us = data.p_state_unitsize.frame.rename({"value": "us"})
+    rp = data.p_rp_cost_weight.frame.rename({"value": "rp"})
+    infl = data.p_inflation_op.frame.rename({"value": "infl"})
+    ps = data.p_period_share.frame.rename({"value": "ps"})
+    df = (over
+          .join(v_state.rename({"value": "vs"}), on=["n", "d", "t"])
+          .join(us, on="n")
+          .join(ref, on=["n", "d"])
+          .join(rp, on=["d", "t"])
+          .join(infl, on="d")
+          .join(ps, on="d"))
+    return -float(df.select(
+        (pl.col("vs") * pl.col("us") * pl.col("ref")
+         * pl.col("rp") * pl.col("infl") / pl.col("ps")
+        ).sum()).item())
 
 
 # ---------------------------------------------------------------------------
