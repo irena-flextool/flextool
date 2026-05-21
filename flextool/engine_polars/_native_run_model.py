@@ -357,39 +357,22 @@ def native_run_model(state, solver) -> int:
         # Per-sub-solve Provider.  Emit writers thread it via
         # ``provider=sub_solve_provider``; the Provider is the sole
         # in-memory carrier across the cascade.  Pre-seeded from the
-        # cascade-input frames, the cross-sub-solve carriers (rolling-
-        # cascade fix_storage_* propagation), and the nesting-parent
-        # archive so the data-flow surface is identical to the legacy
-        # disk-based handoff.
+        # cascade-input frames; cross-iteration data arrives later via
+        # the typed ``handoff/*`` translator pipeline (sequential prior
+        # + nesting-parent), which is the sole mechanism for crossing
+        # sub-solve boundaries.
         sub_solve_provider = FlexDataProvider()
         # Seed cascade-wide ``input/*.csv`` frames so per-iter readers
         # find them via ``provider.get`` (e.g. ``input/timesets_in_use.csv``).
         for _key, _frame in cascade_input_provider.items():
             sub_solve_provider.put(_key, _frame)
-        # Seed cross-sub-solve carriers from the prior tail.  Used for
-        # the rolling-cascade fix_storage_* propagation which previously
-        # depended on ``dump_csvs`` having written the prior solve's
-        # ``solve_data/fix_storage_*.csv`` to disk.
-        carriers = getattr(state, "cross_solve_carriers", None)
-        if carriers is None:
-            carriers = {}
-            state.cross_solve_carriers = carriers
-        for _key, _frame in carriers.get("__last__", {}).items():
-            sub_solve_provider.put(_key, _frame)
-        # Per-parent archive — pull the parent's tail frames keyed under
-        # ``parent_complete``.  Used by nested cascades that consume an
-        # upper-level parent's fix_storage_*.
+        # Resolve nesting parent's complete-solve name; reused below by
+        # the parent-handoff translator call (see Phase 4.1e).
         _parent_solve_for_carriers = parent_roll.get(solve)
         _parent_complete_for_carriers = (
             complete_solve.get(_parent_solve_for_carriers)
             if _parent_solve_for_carriers else None
         )
-        if (
-            _parent_complete_for_carriers
-            and _parent_complete_for_carriers in carriers
-        ):
-            for _key, _frame in carriers[_parent_complete_for_carriers].items():
-                sub_solve_provider.put(_key, _frame)
 
         # S1-g-3 — expose the per-sub-solve Provider to writer entry
         # points BEFORE preprocessing runs, so native writers threaded
@@ -857,17 +840,16 @@ def native_run_model(state, solver) -> int:
         _provider_translators.translate_handoff_to_provider(
             prior_handoff, sub_solve_provider,
         )
-        # Phase 4.1e — when nested, parent solve's handoff shadows sequential
-        # prior in handoff/* keys.  Matches today's carriers["__last__"]
-        # (sequential) + carriers[parent_complete] (parent) seed precedence:
-        # both write the same Provider keys; parent's call lands after
+        # Phase 4.1e — when nested, parent solve's handoff shadows the
+        # sequential prior in ``handoff/*`` keys: both translator calls
+        # write the same Provider keys, and parent's call lands after
         # sequential's so parent's values win where both are populated.
-        # Reuses ``_parent_complete_for_carriers`` resolved earlier in the
-        # same iteration (lines 415-419) — same loop scope, same value.
-        # Guarded by ``if parent_handoff is not None`` so non-nested
-        # cascades skip the second call entirely; calling the translator
-        # with ``None`` writes empty frames via its empty-schema fallback,
-        # which would obliterate the sequential prior's just-written data.
+        # Reuses ``_parent_complete_for_carriers`` resolved earlier in
+        # the same iteration scope.  Guarded by ``if parent_handoff is
+        # not None`` so non-nested cascades skip the second call
+        # entirely; calling the translator with ``None`` would write
+        # empty frames via its empty-schema fallback, obliterating the
+        # sequential prior's just-written data.
         parent_handoff = (
             state.handoffs.get(_parent_complete_for_carriers)
             if state.handoffs is not None and _parent_complete_for_carriers is not None
@@ -901,21 +883,6 @@ def native_run_model(state, solver) -> int:
         # ``build_handoff_from_flexpy``.  Replaces any prior
         # sub-solve's Provider (per-sub-solve memory discipline).
         state.current_provider = sub_solve_provider
-        # Step 1-f — refresh cross-sub-solve carriers from this
-        # iteration's tail Provider.  ONLY the slim cross-solve carrier
-        # basenames are retained; the ``__last__`` slot is overwritten
-        # so memory never grows beyond the latest sub-solve's carriers.
-        # The per-parent slot (keyed by complete-solve name) is also
-        # refreshed for nested cascades whose child solves consume an
-        # upper-level parent's fix_storage_*.
-        _last_carriers: dict[str, "pl.DataFrame"] = {}
-        for _key in _provider_keys.CROSS_SOLVE_KEYS:
-            _frame = sub_solve_provider.get(_key)
-            if _frame is not None:
-                _last_carriers[_key] = _frame
-        if _last_carriers:
-            carriers["__last__"] = _last_carriers
-            carriers[complete_solve[solve]] = _last_carriers
         if _phase_timing:
             timing_recorder.record(
                 "per_iter",

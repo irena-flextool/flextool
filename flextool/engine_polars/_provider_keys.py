@@ -51,13 +51,6 @@ without changing semantics.
 from __future__ import annotations
 
 
-# ---------------------------------------------------------------------------
-# Cross-solve carriers — frames that persist from one sub-solve into the
-# next.  Listed verbatim in ``_native_run_model._CROSS_SOLVE_KEYS``;
-# kept here so the seeding / extraction loops and any external
-# inspectors share one source of truth.
-# ---------------------------------------------------------------------------
-
 SOLVE_DATA_FIX_STORAGE_QUANTITY = "solve_data/fix_storage_quantity"
 SOLVE_DATA_FIX_STORAGE_PRICE = "solve_data/fix_storage_price"
 SOLVE_DATA_FIX_STORAGE_USAGE = "solve_data/fix_storage_usage"
@@ -77,20 +70,6 @@ SOLVE_DATA_LADDER_CUM_REALIZED_MWH = "solve_data/ladder_cum_realized_mwh"
 SOLVE_DATA_ED_HISTORY_REALIZED = "solve_data/ed_history_realized"
 SOLVE_DATA_ED_HISTORY_REALIZED_FIRST = "solve_data/ed_history_realized_first"
 SOLVE_DATA_EDD_HISTORY = "solve_data/edd_history"
-
-
-CROSS_SOLVE_KEYS: tuple[str, ...] = (
-    SOLVE_DATA_FIX_STORAGE_QUANTITY,
-    SOLVE_DATA_FIX_STORAGE_PRICE,
-    SOLVE_DATA_FIX_STORAGE_USAGE,
-    SOLVE_DATA_P_ENTITY_INVESTED,
-    SOLVE_DATA_P_ENTITY_DIVESTED,
-    SOLVE_DATA_P_ENTITY_PERIOD_EXISTING_CAPACITY,
-    SOLVE_DATA_P_ROLL_CONTINUE_STATE,
-    SOLVE_DATA_CO2_CUM_REALIZED_TONNES,
-    SOLVE_DATA_LADDER_CUM_SIM_HOURS,
-    SOLVE_DATA_LADDER_CUM_REALIZED_MWH,
-)
 
 
 # ---------------------------------------------------------------------------
