@@ -594,6 +594,13 @@ class FlexData:
     n_fix_storage_quantity: pl.DataFrame | None = None  # (n,)
     ndt_fix_storage_quantity: pl.DataFrame | None = None  # (n, d_upper, t_upper)
     p_fix_storage_quantity: Param | None = None       # (n, d_upper, t_upper)
+    # Phase B4-pre — fix_storage_usage loader (constraint added in B4).
+    # Mirrors the fix_storage_quantity triplet above; populated from the
+    # canonical handoff key ``handoff/fix_storage_usage`` (schema
+    # ``[node, period, step, p_fix_storage_usage]``).
+    n_fix_storage_usage: pl.DataFrame | None = None     # (n,)
+    ndt_fix_storage_usage: pl.DataFrame | None = None   # (n, d, t)
+    p_fix_storage_usage: Param | None = None            # (n, d, t)
     dtt_timeline_matching: pl.DataFrame | None = None  # (d, t, t_upper) — lower→upper step map
     period_branch: pl.DataFrame | None = None         # (d_upper, d) — period→branch map
     period_last: pl.DataFrame | None = None           # (d,)
@@ -2292,6 +2299,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         n_fix_storage_quantity = None,
         ndt_fix_storage_quantity = None,
         p_fix_storage_quantity = None,
+        n_fix_storage_usage = None,
+        ndt_fix_storage_usage = None,
+        p_fix_storage_usage = None,
         dtt_timeline_matching = None,
         period_branch = None,
         period_last = None,
@@ -2644,6 +2654,34 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         n_fix_storage_quantity = fsq_frame.select("n").unique()
         ndt_fix_storage_quantity = fsq_frame.select("n", "d", "t").unique()
 
+    # Phase B4-pre — read the rolling-handoff fix_storage_usage carrier
+    # from the canonical handoff Provider key
+    # (``handoff/fix_storage_usage``, schema
+    # ``[node, period, step, p_fix_storage_usage]``).  Populated by B3's
+    # extractor; consumed by the B4 constraint (added in the next commit).
+    # Loader-only at this commit — fields exist on FlexData but are not
+    # yet referenced by any LP block, so zero LP effect.
+    p_fix_storage_usage = None
+    df_fsu = read_handoff_frame(provider, K.HANDOFF_FIX_STORAGE_USAGE)
+    if df_fsu is not None and df_fsu.height > 0:
+        df_fsu = (df_fsu
+                  .pipe(rename_to_axis, {"node": "n", "period": "d",
+                                         "step": "t",
+                                         "p_fix_storage_usage": "value"})
+                  .with_columns(value=pl.col("value")
+                                          .cast(pl.Float64, strict=False)
+                                          .fill_null(0.0))
+                  .select("n", "d", "t", "value"))
+        if df_fsu.height > 0:
+            p_fix_storage_usage = Param(("n", "d", "t"), df_fsu)
+
+    n_fix_storage_usage = None
+    ndt_fix_storage_usage = None
+    if p_fix_storage_usage is not None:
+        fsu_frame = p_fix_storage_usage.frame
+        n_fix_storage_usage = fsu_frame.select("n").unique()
+        ndt_fix_storage_usage = fsu_frame.select("n", "d", "t").unique()
+
     # ``dtt_timeline_matching`` (d, t, t_upper) and ``period_branch``
     # (d_upper, d) — seed from the snapshot CSVs.  ``apply_derived_e``
     # (the override-chain producer) is bypassed entirely for
@@ -2760,6 +2798,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         n_fix_storage_quantity = n_fix_storage_quantity,
         ndt_fix_storage_quantity = ndt_fix_storage_quantity,
         p_fix_storage_quantity = p_fix_storage_quantity,
+        n_fix_storage_usage = n_fix_storage_usage,
+        ndt_fix_storage_usage = ndt_fix_storage_usage,
+        p_fix_storage_usage = p_fix_storage_usage,
         dtt_timeline_matching = dtt_timeline_matching,
         period_branch = period_branch,
         period_last = period_last_df,
