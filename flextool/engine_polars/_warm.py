@@ -240,6 +240,7 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     "p_state_start", "p_roll_continue_state",
     "p_fix_storage_quantity", "p_state_existing_capacity",
     "p_state_unitsize", "p_state_self_discharge", "p_state_upper",
+    "p_storage_state_reference_price",
     # Invest handoff — RHS of multiple invest/divest cstrs.
     "p_entity_previously_invested_capacity",
     "p_entity_invested", "p_entity_divested",

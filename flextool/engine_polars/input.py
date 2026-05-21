@@ -645,6 +645,14 @@ class FlexData:
     # competing fix_end / fix_start_end / bind_within_solve method.
     storage_use_reference_value: pl.DataFrame | None = None  # (n,)
     p_storage_state_reference_value: Param | None = None     # (n, d, t)
+    # ─── Storage end-state binding (use_reference_price) ─────────────────
+    # B1a — per-(node, period) reference price emitted by
+    # ``_emit_arc_unions.emit_p_storage_state_reference_price`` into
+    # ``solve_data/p_storage_state_reference_price.csv``.  Consumed by
+    # the use_reference_price objective term (B1b) for nodes whose
+    # ``storage_solve_horizon_method=use_reference_price``.  Loaded but
+    # unused at the B1a commit; B1b wires it into model.py.
+    p_storage_state_reference_price: Param | None = None     # (n, d)
     # ─── State-profile bounds (node__profile__profile_method) ────────────
     # (n, f) tuples for nodes with a profile-method state bound.  Mirrors
     # ``process_profile_*`` (process side) but for ``v_state``.
@@ -2269,6 +2277,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_fix_start = None,
         storage_use_reference_value = None,
         p_storage_state_reference_value = None,
+        p_storage_state_reference_price = None,
         dtttdt = dtttdt,
         dtttdt_forward_only = None,
         nodeStateBlock = None,
@@ -2516,6 +2525,34 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # — kept here as None so the override path takes ownership.
     p_ssrv = None
 
+    # B1a — load ``p_storage_state_reference_price`` (n, d) from the canonical
+    # ``solve_data/p_storage_state_reference_price.csv`` emitted by
+    # ``_emit_arc_unions.emit_p_storage_state_reference_price``.  Schema is
+    # ``(node, period, value)``; per-(node, period) parameter consumed by
+    # B1b's ``use_reference_price`` objective term.  Field is loaded but
+    # unused at this commit; B1b adds the consumer.
+    p_storage_state_reference_price = None
+    psrp_path = sd / "p_storage_state_reference_price.csv"
+    if _provider_has(provider, "solve_data/p_storage_state_reference_price",
+                     psrp_path):
+        df_psrp = _provider_read(
+            provider, "solve_data/p_storage_state_reference_price", psrp_path,
+        )
+        if df_psrp.height > 0:
+            value_col = ("p_storage_state_reference_price"
+                         if "p_storage_state_reference_price" in df_psrp.columns
+                         else "value")
+            df_psrp = (df_psrp
+                       .pipe(rename_to_axis,
+                             {"node": "n", "period": "d",
+                              value_col: "value"})
+                       .with_columns(value=pl.col("value")
+                                              .cast(pl.Float64, strict=False)
+                                              .fill_null(0.0))
+                       .select("n", "d", "value"))
+            if df_psrp.height > 0:
+                p_storage_state_reference_price = Param(("n", "d"), df_psrp)
+
     # ─── Intraperiod-block (bind_intraperiod_blocks) sets ────────────────
     # Used by ``stateConstantWithinBlock_eq`` and ``nodeBalanceBlock_eq``
     # in model.py for nodes whose binding method is ``bind_intraperiod_blocks``.
@@ -2708,6 +2745,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_fix_start = fix_start,
         storage_use_reference_value = use_reference_value,
         p_storage_state_reference_value = p_ssrv,
+        p_storage_state_reference_price = p_storage_state_reference_price,
         dtttdt = dtttdt,
         dtttdt_forward_only = dtttdt_forward_only_df,
         nodeStateBlock = nodeStateBlock,
