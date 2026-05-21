@@ -38,6 +38,9 @@ _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
     K.HANDOFF_CUMULATIVE_COMMODITY: ("commodity", "tier", "period",
                                       "p_ladder_cum_realized_mwh"),
     K.HANDOFF_CUM_SIM_HOURS:      ("period", "p_ladder_cum_sim_hours"),
+    K.HANDOFF_FIX_STORAGE_QUANTITY: ("node", "period", "step", "p_fix_storage_quantity"),
+    K.HANDOFF_FIX_STORAGE_PRICE:    ("node", "period", "step", "p_fix_storage_price"),
+    K.HANDOFF_FIX_STORAGE_USAGE:    ("node", "period", "step", "p_fix_storage_usage"),
 }
 
 
