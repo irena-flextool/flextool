@@ -786,6 +786,13 @@ def _drive_cascade(
     _cip = getattr(state, "cascade_input_provider", None)
     if _cip is not None:
         runner.state.cascade_input_provider = _cip
+    # Phase 5c — forward the engine_polars-side ``override_provider``
+    # callable onto ``runner.state`` so the per-sub-solve hook in
+    # :mod:`flextool.engine_polars._native_run_model` (Phase 5b) picks
+    # it up.  ``None`` keeps the no-override default.
+    _op = getattr(state, "override_provider", None)
+    if _op is not None:
+        runner.state.override_provider = _op
     runner.state.logger.setLevel(logger_level := logging.ERROR)
     # Forward the opt-in memory recorder (no-op when env var unset) so
     # ``_FlexpyCascadeSolver.run`` can fire the first-iter checkpoints.
@@ -1386,6 +1393,7 @@ def run_chain_from_db(
     warm: bool = False,
     keep_solutions: bool = False,
     csv_dump: bool = False,
+    override_provider: "Callable[[], dict[str, pl.DataFrame]] | None" = None,
 ) -> dict[str, OrchestrationStep]:
     """Run a flextool multi-solve scenario end-to-end natively.
 
@@ -1593,6 +1601,12 @@ def run_chain_from_db(
     # per-sub-solve Provider hook in
     # :mod:`flextool.engine_polars._native_run_model` consults).
     state.cascade_input_provider = cascade_input_provider  # type: ignore[attr-defined]
+    # Phase 5c — attach the optional external override provider onto
+    # the cascade ``RunnerState``.  ``_drive_cascade`` forwards it onto
+    # the underlying ``runner.state``; the per-sub-solve hook in
+    # :mod:`flextool.engine_polars._native_run_model` (Phase 5b) invokes
+    # it after the parent-handoff translator at every iteration.
+    state.override_provider = override_provider
 
     return run_orchestration(
         state, work_folder, runner_factory=_runner_factory,
