@@ -340,12 +340,24 @@ def load_data(
                .select("d", "value"))
         p_f_d_k = Param(("d",), fdk)
 
+    # Phase 4.1a — the cross-roll cumulative-realized MWh accumulator
+    # rides on ``handoff/cumulative_commodity`` (written by the
+    # iteration-start translator from the prior solve's SolveHandoff).
+    # Empty/missing handoff (first solve or no prior carrier) leaves
+    # ``p_realized`` ``None`` so the mod default of 0 applies.  The
+    # ``solve_data/ladder_cum_realized_mwh`` key is no longer populated
+    # in-cascade; mid-cascade test fixtures that pre-seed the legacy
+    # key are kept working via the explicit fallback below.
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
     p_realized = None
-    rel = _provider_get(
-        provider,
-        "solve_data/ladder_cum_realized_mwh.csv",
-        sd / "ladder_cum_realized_mwh.csv",
-    )
+    rel = read_handoff_frame(provider, K.HANDOFF_CUMULATIVE_COMMODITY)
+    if rel is None:
+        rel = _provider_get(
+            provider,
+            "solve_data/ladder_cum_realized_mwh.csv",
+            sd / "ladder_cum_realized_mwh.csv",
+        )
     if rel is not None and rel.height > 0:
         value_col = "p_ladder_cum_realized_mwh" if "p_ladder_cum_realized_mwh" in rel.columns else "value"
         rel = (rel.rename({"commodity": "c", "tier": "i", "period": "d",

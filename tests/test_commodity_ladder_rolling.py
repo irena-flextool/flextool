@@ -340,13 +340,23 @@ def _run(
 def _ladder_csv_path(workdir: Path, filename: str) -> Path:
     """Locate a ladder-accumulator CSV after a native-cascade run.
 
-    The cascade keeps the cross-solve carrier frame as a bare Provider
-    key (no ``solve_data/`` prefix); ``snapshot_processed_inputs`` thus
-    materialises it under ``workdir/<filename>``, NOT ``workdir/
-    solve_data/<filename>``.  The legacy preprocessing pipeline wrote
-    these CSVs under ``solve_data/``; we accept either location for
-    forward compatibility, preferring the cascade-native bare layout.
+    Phase 4.1a of ``specs/provider_consolidation.md`` moved the cross-
+    sub-solve accumulator carriers to the handoff translator's
+    ``handoff/cumulative_commodity`` and ``handoff/cum_sim_hours``
+    Provider keys (no ``solve_data/`` indirection).
+    ``snapshot_processed_inputs`` materialises those at
+    ``workdir/handoff/<basename>.csv``.  The legacy bare /
+    ``solve_data/`` locations are retained as fallbacks for fixtures
+    that pre-seed the old keys directly.
     """
+    handoff_basename = {
+        "ladder_cum_realized_mwh.csv": "cumulative_commodity.csv",
+        "ladder_cum_sim_hours.csv": "cum_sim_hours.csv",
+    }.get(filename)
+    if handoff_basename is not None:
+        handoff_path = workdir / "handoff" / handoff_basename
+        if handoff_path.exists():
+            return handoff_path
     bare = workdir / filename
     if bare.exists():
         return bare

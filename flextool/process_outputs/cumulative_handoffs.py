@@ -226,11 +226,13 @@ def _load_prior_cum_realized_mwh(
     otherwise read from ``path`` (file fallback).
     """
     if prior_handoff is not None and prior_handoff.cumulative_commodity is not None:
+        # Canonical schema: [commodity, tier, period, p_ladder_cum_realized_mwh]
+        # (Phase 4.1a).
         out: dict[tuple[str, int, str], float] = {}
         for r in prior_handoff.cumulative_commodity.iter_rows(named=True):
             try:
                 tier = int(r["tier"])
-                val = float(r["mwh"])
+                val = float(r["p_ladder_cum_realized_mwh"])
             except (ValueError, TypeError):
                 continue
             out[(str(r["commodity"]), tier, str(r["period"]))] = val
@@ -260,8 +262,9 @@ def _load_prior_cum_sim_hours(
 
     Reads ``prior_handoff.cum_sim_hours`` when populated; else file fallback."""
     if prior_handoff is not None and prior_handoff.cum_sim_hours is not None:
+        # Canonical schema: [period, p_ladder_cum_sim_hours] (Phase 4.1a).
         return {
-            str(r["period"]): float(r["value"])
+            str(r["period"]): float(r["p_ladder_cum_sim_hours"])
             for r in prior_handoff.cum_sim_hours.iter_rows(named=True)
         }
     if not path.exists():

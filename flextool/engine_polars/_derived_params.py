@@ -8728,17 +8728,25 @@ def p_f_d_k_from_source(
                   .with_columns(pl.col("value").cast(pl.Float64, strict=False)
                                       .alias("share")))
     # ladder_cum_sim_hours — default 0.0 when absent.
-    cum_path = sd / "ladder_cum_sim_hours.csv"
-    if _provider_has_key(provider, cum_path):  # Phase E-j — seed-aware
-        cum_raw = _provider_read(provider, cum_path)
-        if cum_raw.height > 0 and "p_ladder_cum_sim_hours" in cum_raw.columns:
-            cum_lf = (cum_raw.lazy()
-                       .pipe(rename_to_axis, {"period": "d",
-                                "p_ladder_cum_sim_hours": "cum"})
-                       .with_columns(pl.col("cum")
-                                       .cast(pl.Float64, strict=False)))
-        else:
-            cum_lf = None
+    # Phase 4.1a — the cross-roll cumulative-sim-hours accumulator rides
+    # on ``handoff/cum_sim_hours`` (canonical schema
+    # ``[period, p_ladder_cum_sim_hours]``).  The legacy
+    # ``solve_data/ladder_cum_sim_hours`` key is retained as a fallback
+    # for fixtures that pre-seed it directly.
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
+    cum_raw = read_handoff_frame(provider, K.HANDOFF_CUM_SIM_HOURS)
+    if cum_raw is None:
+        cum_path = sd / "ladder_cum_sim_hours.csv"
+        if _provider_has_key(provider, cum_path):  # Phase E-j — seed-aware
+            cum_raw = _provider_read(provider, cum_path)
+    if cum_raw is not None and cum_raw.height > 0 and \
+            "p_ladder_cum_sim_hours" in cum_raw.columns:
+        cum_lf = (cum_raw.lazy()
+                   .pipe(rename_to_axis, {"period": "d",
+                            "p_ladder_cum_sim_hours": "cum"})
+                   .with_columns(pl.col("cum")
+                                   .cast(pl.Float64, strict=False)))
     else:
         cum_lf = None
     # period_in_use as the output domain — Path B Cat B: prefer
@@ -8798,10 +8806,19 @@ def p_ladder_cum_realized_mwh_from_workdir(
     """
     if workdir is None:
         return None
-    rel_path = Path(workdir) / "solve_data" / "ladder_cum_realized_mwh.csv"
-    if not _provider_has_key(provider, rel_path):  # Phase E-j — seed-aware
-        return None
-    raw = _provider_read(provider, rel_path)
+    # Phase 4.1a — prior-roll accumulator now rides on
+    # ``handoff/cumulative_commodity`` (canonical schema
+    # ``[commodity, tier, period, p_ladder_cum_realized_mwh]``).  The
+    # legacy ``solve_data/ladder_cum_realized_mwh`` Provider key remains
+    # as a fallback for fixtures that pre-seed it directly.
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
+    raw = read_handoff_frame(provider, K.HANDOFF_CUMULATIVE_COMMODITY)
+    if raw is None:
+        rel_path = Path(workdir) / "solve_data" / "ladder_cum_realized_mwh.csv"
+        if not _provider_has_key(provider, rel_path):
+            return None
+        raw = _provider_read(provider, rel_path)
     if raw.height == 0:
         return None
     value_col = ("p_ladder_cum_realized_mwh"

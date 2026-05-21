@@ -129,7 +129,11 @@ def test_chain_cumulative_handoffs_accumulate_monotonically() -> None:
             f"{sub}: cum_sim_hours height {csh.height} did not exceed "
             f"prior solve's {prev_csh_height} — one row should be added "
             f"per newly realised period.")
-        assert (csh["value"].to_list() == sorted(csh["value"].to_list())
+        # Phase 4.1a — canonical column is ``p_ladder_cum_sim_hours``
+        # (matches the ``solve_data/`` Provider key schema; was ``value``
+        # before the handoff carriers were migrated to canonical names).
+        cum_col = "p_ladder_cum_sim_hours"
+        assert (csh[cum_col].to_list() == sorted(csh[cum_col].to_list())
                 or csh.height == 1), (
             f"{sub}: cum_sim_hours per-period values not monotone")
         prev_csh_height = csh.height

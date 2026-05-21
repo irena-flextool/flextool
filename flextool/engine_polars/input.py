@@ -4691,13 +4691,16 @@ def _extract_cum_sim_hours(
                             continue
     prior_hrs: dict[str, float] = {}
     if prior_handoff is not None and prior_handoff.cum_sim_hours is not None:
+        # Canonical schema is [period, p_ladder_cum_sim_hours] (Phase 4.1a).
         for r in prior_handoff.cum_sim_hours.iter_rows(named=True):
-            prior_hrs[str(r["period"])] = float(r["value"])
+            prior_hrs[str(r["period"])] = float(r["p_ladder_cum_sim_hours"])
     if not this_roll_hrs and not prior_hrs:
         return None
     keys = sorted(set(prior_hrs) | set(this_roll_hrs))
     rows = [(d, prior_hrs.get(d, 0.0) + this_roll_hrs.get(d, 0.0)) for d in keys]
-    return pl.DataFrame(rows, schema=["period", "value"], orient="row")
+    return pl.DataFrame(
+        rows, schema=["period", "p_ladder_cum_sim_hours"], orient="row",
+    )
 
 
 def _extract_cumulative_commodity(
@@ -4910,12 +4913,14 @@ def _extract_cumulative_commodity(
             this_roll[key] = this_roll.get(key, 0.0) + v * us * (rz / hz)
 
     # Prior accumulator (carry across solves).
+    # Canonical schema is [commodity, tier, period, p_ladder_cum_realized_mwh]
+    # (Phase 4.1a).
     prior: dict[tuple[str, int, str], float] = {}
     if prior_handoff is not None and prior_handoff.cumulative_commodity is not None:
         for r in prior_handoff.cumulative_commodity.iter_rows(named=True):
             try:
                 key = (str(r["commodity"]), int(r["tier"]), str(r["period"]))
-                prior[key] = float(r["mwh"])
+                prior[key] = float(r["p_ladder_cum_realized_mwh"])
             except (TypeError, ValueError, KeyError):
                 continue
 
@@ -4925,9 +4930,11 @@ def _extract_cumulative_commodity(
     keys = sorted(set(prior) | set(this_roll))
     rows = [(c, i, d, prior.get((c, i, d), 0.0) + this_roll.get((c, i, d), 0.0))
                 for (c, i, d) in keys]
-    return pl.DataFrame(rows,
-                          schema=["commodity", "tier", "period", "mwh"],
-                          orient="row")
+    return pl.DataFrame(
+        rows,
+        schema=["commodity", "tier", "period", "p_ladder_cum_realized_mwh"],
+        orient="row",
+    )
 
 
 def build_handoff_from_flexpy(

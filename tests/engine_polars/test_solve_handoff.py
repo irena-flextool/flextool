@@ -48,15 +48,18 @@ def test_cumulative_loaders_consume_from_handoff(tmp_path):
             "period": ["p2025", "p2025"],
             "value":  [12.5, 99.0],
         }),
+        # Phase 4.1a — handoff carrier schemas match the canonical
+        # ``solve_data/`` column names so the iteration-start translator
+        # can route them through unchanged.
         cumulative_commodity=pl.DataFrame({
-            "commodity": ["coal"],
-            "tier":      [1],
-            "period":    ["p2025"],
-            "mwh":       [42.0],
+            "commodity":                 ["coal"],
+            "tier":                      [1],
+            "period":                    ["p2025"],
+            "p_ladder_cum_realized_mwh": [42.0],
         }),
         cum_sim_hours=pl.DataFrame({
-            "period": ["p2025", "p2030"],
-            "value":  [8760.0, 4380.0],
+            "period":                 ["p2025", "p2030"],
+            "p_ladder_cum_sim_hours": [8760.0, 4380.0],
         }),
     )
 

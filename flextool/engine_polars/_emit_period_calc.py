@@ -378,20 +378,40 @@ def emit_period_calculated_params(
     _emit_keyed(provider, "solve_data/p_inflation_factor_operations_yearly.csv",
                 ("period", "value"), ops_yearly)
 
-    ladder_df = _read_csv(
-        solve_data_dir / "ladder_cum_sim_hours.csv",
-        ["period", "value"],
-        provider=provider,
-    )
+    # Phase 4.1a — read the cross-roll sim-hour accumulator from the
+    # handoff translator's ``handoff/cum_sim_hours`` Provider key
+    # (canonical schema ``[period, p_ladder_cum_sim_hours]``).  Empty /
+    # missing handoff (first solve) collapses ``p_ladder_cum`` to {}
+    # so ``f_d_k`` reduces to ``sum_step_dur / (share * 8760)``.  The
+    # legacy ``solve_data/ladder_cum_sim_hours`` Provider key is kept
+    # as a fallback for fixtures that pre-seed it directly.
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
     p_ladder_cum: dict[str, float] = {}
-    for d, v in zip(ladder_df["period"].to_list(),
-                    ladder_df["value"].to_list()):
-        if not d:
-            continue
-        try:
-            p_ladder_cum[d] = float(v)
-        except (ValueError, TypeError):
-            continue
+    handoff_df = read_handoff_frame(provider, K.HANDOFF_CUM_SIM_HOURS)
+    if handoff_df is not None and "p_ladder_cum_sim_hours" in handoff_df.columns:
+        for d, v in zip(handoff_df["period"].to_list(),
+                        handoff_df["p_ladder_cum_sim_hours"].to_list()):
+            if not d:
+                continue
+            try:
+                p_ladder_cum[d] = float(v)
+            except (ValueError, TypeError):
+                continue
+    else:
+        ladder_df = _read_csv(
+            solve_data_dir / "ladder_cum_sim_hours.csv",
+            ["period", "value"],
+            provider=provider,
+        )
+        for d, v in zip(ladder_df["period"].to_list(),
+                        ladder_df["value"].to_list()):
+            if not d:
+                continue
+            try:
+                p_ladder_cum[d] = float(v)
+            except (ValueError, TypeError):
+                continue
     complete_share_lookup = dict(complete_share)
     f_d_k_rows: list[tuple[str, float]] = []
     for d in period_in_use:

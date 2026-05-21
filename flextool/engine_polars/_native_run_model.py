@@ -119,66 +119,6 @@ def _fan_out_fix_storage(fix_storage):
     return out
 
 
-def _fan_out_ladder_accumulators(handoff):
-    """B1 — fan ``SolveHandoff.cumulative_commodity`` / ``cum_sim_hours``
-    back into the on-disk schema expected by the next sub-solve's
-    ``_commodity_ladder.load_data`` / ``_derived_params`` consumers.
-
-    Returns ``{qualified_key: pl.DataFrame}`` for the two ladder
-    rolling accumulators; entries with no populated handoff field are
-    omitted.  The in-memory schema (``[commodity, tier, period, mwh]``
-    for ``cumulative_commodity``; ``[period, value]`` for
-    ``cum_sim_hours``) is renamed to the on-disk schema
-    (``[commodity, tier, period, p_ladder_cum_realized_mwh]`` /
-    ``[period, p_ladder_cum_sim_hours]``) so loaders that consult the
-    Provider under the canonical
-    ``solve_data/ladder_cum_*_*.csv`` key (Phase 0a single-key
-    convention) receive the populated cross-roll carrier instead of
-    the empty header-only seed written at the start of the cascade by
-    ``write_empty_cumulative_files``.
-
-    Without this fan-out the SolveHandoff carries the right
-    cumulative_commodity but it never reaches the next roll's
-    preprocessing — the Provider only holds the empty seed, and
-    ``p_ladder_cum_realized_mwh`` collapses to its mod default of 0
-    every roll.  Tests in ``tests/test_commodity_ladder_rolling.py``
-    exercise this carry-through.
-    """
-    import polars as pl
-    out: dict[str, "pl.DataFrame"] = {}
-    cc = getattr(handoff, "cumulative_commodity", None)
-    if cc is not None and cc.height > 0:
-        # Tolerate both the carrier schema (``mwh``) and the on-disk
-        # schema (``p_ladder_cum_realized_mwh``) — the canonical one is
-        # the carrier's ``mwh``; the on-disk variant only appears when a
-        # caller already pre-renamed.
-        if "mwh" in cc.columns:
-            out["solve_data/ladder_cum_realized_mwh.csv"] = (
-                cc.rename({"mwh": "p_ladder_cum_realized_mwh"})
-                  .select(
-                      "commodity", "tier", "period",
-                      "p_ladder_cum_realized_mwh",
-                  )
-            )
-        elif "p_ladder_cum_realized_mwh" in cc.columns:
-            out["solve_data/ladder_cum_realized_mwh.csv"] = cc.select(
-                "commodity", "tier", "period",
-                "p_ladder_cum_realized_mwh",
-            )
-    csh = getattr(handoff, "cum_sim_hours", None)
-    if csh is not None and csh.height > 0:
-        if "value" in csh.columns:
-            out["solve_data/ladder_cum_sim_hours.csv"] = (
-                csh.rename({"value": "p_ladder_cum_sim_hours"})
-                   .select("period", "p_ladder_cum_sim_hours")
-            )
-        elif "p_ladder_cum_sim_hours" in csh.columns:
-            out["solve_data/ladder_cum_sim_hours.csv"] = csh.select(
-                "period", "p_ladder_cum_sim_hours",
-            )
-    return out
-
-
 def native_run_model(state, solver) -> int:
     """Drive the per-solve cascade natively.
 
@@ -1108,6 +1048,21 @@ def native_run_model(state, solver) -> int:
         if state.handoffs is not None:
             last_captured_solve = complete_solve[solve]
             state.last_captured_solve = last_captured_solve
+            # Phase 4.1a — refresh ``handoff/*`` Provider keys from the
+            # post-solve ``SolveHandoff`` so the current iteration's
+            # Provider exposes the FINAL cumulative state of this roll
+            # (not just the prior-roll state seeded at iteration start).
+            # ``csv_dump`` snapshots the Provider after the last roll;
+            # without this refresh the on-disk
+            # ``handoff/cumulative_commodity.csv`` would reflect the
+            # second-to-last roll instead of the final one.  The next
+            # iteration's iteration-start translator is unaffected: it
+            # reads from ``state.handoffs[last_captured_solve]`` directly.
+            _latest_handoff = state.handoffs.get(last_captured_solve)
+            if _latest_handoff is not None:
+                _provider_translators.translate_handoff_to_provider(
+                    _latest_handoff, sub_solve_provider,
+                )
 
         # ---- Scaling report (Agent 10) ----
         # The diagnostic TXT report is gated behind
@@ -1192,32 +1147,12 @@ def native_run_model(state, solver) -> int:
                 _per_metric.update(_fan_out_fix_storage(_hf.fix_storage))
                 carriers["__last__"] = _per_metric
 
-        # B1 — refresh the in-memory cross-solve ladder rolling
-        # accumulator carriers from the post-solve SolveHandoff.  The
-        # SolveHandoff carries ``cumulative_commodity`` (built in
-        # ``build_handoff_from_flexpy``) but its only outlet was the
-        # in-memory handoff dict; the next iteration's Provider only
-        # saw the empty header-only seed from
-        # ``write_empty_cumulative_files``.  Fan it back out into the
-        # on-disk schema basenames so the next iteration's Provider
-        # seed (via ``carriers["__last__"]``) and the current
-        # iteration's ``state.current_provider`` both expose the
-        # populated frame to ``_commodity_ladder.load_data`` and
-        # ``_derived_params``.
-        _hf_ladder = (
-            state.handoffs.get(complete_solve[solve])
-            if state.handoffs is not None else None
-        )
-        if _hf_ladder is not None:
-            _ladder_carriers = _fan_out_ladder_accumulators(_hf_ladder)
-            if _ladder_carriers:
-                _per_solve = carriers.setdefault(complete_solve[solve], {})
-                _per_solve.update(_ladder_carriers)
-                carriers["__last__"] = _per_solve
-                _provider_tail = getattr(state, "current_provider", None)
-                if _provider_tail is not None:
-                    for _basename, _frame in _ladder_carriers.items():
-                        _provider_tail.put(_basename, _frame)
+        # Phase 4.1a — the ladder rolling accumulators
+        # (``cumulative_commodity`` / ``cum_sim_hours``) cross sub-solves
+        # via the iteration-start handoff translator
+        # (``translate_handoff_to_provider``).  No fan-out needed here:
+        # the next iteration reads ``handoff/cumulative_commodity`` /
+        # ``handoff/cum_sim_hours`` directly from the typed SolveHandoff.
 
     if len(state.solve.model_solve) > 1:
         message = (

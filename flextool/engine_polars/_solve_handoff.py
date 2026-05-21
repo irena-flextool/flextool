@@ -40,8 +40,14 @@ carriers, named metric columns for multi-value):
     roll_end_state         [node, value]
     fix_storage            [node, period, time, quantity, price, usage]
     cumulative_co2         [group, period, value]
-    cumulative_commodity   [commodity, tier, period, mwh]
-    cum_sim_hours          [period, value]
+    cumulative_commodity   [commodity, tier, period, p_ladder_cum_realized_mwh]
+    cum_sim_hours          [period, p_ladder_cum_sim_hours]
+
+Phase 4.1a moved ``cumulative_commodity`` and ``cum_sim_hours`` to their
+canonical column names (matching the ``solve_data/`` Provider key
+schemas) so the iteration-start handoff translator can route the
+frames straight through to ``handoff/cumulative_commodity`` /
+``handoff/cum_sim_hours`` without a per-iteration rename.
 
 (Δ.1 — ``periods_already_emitted`` was previously listed here; it
 moved to ``_output_writer.OutputWriterState`` since it gates writer-
