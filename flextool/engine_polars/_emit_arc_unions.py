@@ -82,6 +82,10 @@ from flextool.engine_polars._emit_provider_io import (  # noqa: E402
     _provider_key,
     _provider_open,
 )
+from flextool.engine_polars import _provider_keys as K  # noqa: E402
+from flextool.engine_polars._provider_translators import (  # noqa: E402
+    read_handoff_frame,
+)
 
 
 def _read_csv(path: Path, columns: list[str],
@@ -1695,20 +1699,29 @@ def derive_ed_history_realized(solve_data_dir: Path,
                                  *,
                                  provider: "object | None" = None,
                                  ) -> pl.DataFrame:
-    """Order-preserving union of
-    ``p_entity_period_existing_capacity`` + ``ed_history_realized_first``,
-    projected to (entity, period).
+    """Order-preserving union of realized-existing pair set +
+    ``ed_history_realized_first``, projected to (entity, period).
+
+    Phase 4.2-1c — the realized-existing pair set is now sourced from
+    the ``handoff/realized_existing`` carrier (cross-solve handoff
+    translator pipeline) rather than ``solve_data/
+    p_entity_period_existing_capacity``.  The handoff carries the
+    cumulative realized existing capacity per (entity, period); its
+    unique pairs are the realized history.  Legacy parity: no value
+    filter — every row contributes its (entity, period) pair, matching
+    ``_read_pairs_csv`` behaviour on the legacy CSV.
+
+    ``ed_history_realized_first`` stays sourced from ``solve_data/``
+    (per-iter input, not a cross-iter handoff carrier).
     """
-    ed_read = _read_pairs_csv(
-        solve_data_dir / "p_entity_period_existing_capacity.csv",
-        provider=provider,
-    )
+    seen_ed: dict[tuple[str, str], None] = {}
+    realized_existing = read_handoff_frame(provider, K.HANDOFF_REALIZED_EXISTING)
+    if realized_existing is not None and realized_existing.height > 0:
+        for row in realized_existing.iter_rows(named=True):
+            seen_ed.setdefault((row["entity"], row["period"]), None)
     ed_first = _read_pairs_csv(
         solve_data_dir / "ed_history_realized_first.csv", provider=provider,
     )
-    seen_ed: dict[tuple[str, str], None] = {}
-    for r in ed_read:
-        seen_ed.setdefault(r, None)
     for r in ed_first:
         seen_ed.setdefault(r, None)
     return _rows_to_frame(list(seen_ed.keys()), ("entity", "period"))
