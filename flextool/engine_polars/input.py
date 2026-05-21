@@ -236,68 +236,33 @@ def _read_capacity(path: Path,
                     all_existing_path: Path | None = None,
                     *,
                     provider: "object | None" = None) -> pl.DataFrame:
-    # Prefer ``p_entity_all_existing.csv`` if available — it's the
-    # cumulative existing capacity per period (reflecting lifetime,
-    # carried over across periods within a solve), which is what the
-    # .mod's ``p_entity_dispatch_capacity_max`` formula uses.
-    if all_existing_path is not None and _provider_has(
-            provider, "solve_data/p_entity_all_existing", all_existing_path):
-        df = _provider_read(
-            provider, "solve_data/p_entity_all_existing", all_existing_path)
-        if "solve" in df.columns: df = df.drop("solve")
-        # Long-format variant: columns are (entity, period, value).
-        if {"entity", "period", "value"}.issubset(df.columns):
-            return (df.pipe(rename_to_axis, {"entity": "e", "period": "d"})
-                      .with_columns(value=pl.col("value")
-                                            .cast(pl.Float64, strict=False)
-                                            .fill_null(0.0))
-                      .select("e", "d", "value"))
-        # Wide-format variant: columns are (period, entity1, entity2, …).
-        val_cols = [c for c in df.columns if c != "period"]
-        if df.height == 0 or not val_cols:
-            return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
-        out = (df.unpivot(on=val_cols, index=["period"], variable_name="e",
-                          value_name="value")
-                 .pipe(rename_to_axis, {"period": "d"})
-                 .with_columns(value=pl.col("value")
-                                       .cast(pl.Float64, strict=False)
-                                       .fill_null(0.0))
-                 .select("e", "d", "value"))
-        return out
-
-    # Legacy fallback: derive from per-period existing/invested fields.
-    # ``p_entity_period_existing_capacity`` (post-solve snapshot) =
-    #   base + prior-solve invest + current-solve invest realized.
-    # ``p_entity_period_invested_capacity`` = sum of all realized invest.
-    # ``p_entity_previously_invested_capacity`` = prior-solve invest only.
-    #
-    #   effective_existing = existing − invested + previously_invested
-    #                      = (base + prior + current) − (prior + current) + prior
-    #                      = base + prior
+    # ``p_entity_all_existing`` is the cumulative existing capacity per
+    # period (reflecting lifetime, carried over across periods within a
+    # solve), which is what the .mod's ``p_entity_dispatch_capacity_max``
+    # formula uses.  ``_emit_chain_params.emit_p_entity_existing_chain``
+    # (called per-iter by ``_emit_solve_time.run`` batch 59,
+    # unconditionally) populates ``solve_data/p_entity_all_existing`` in
+    # the Provider, so the cascade always has this key available.
     df = _provider_read(
-        provider, "solve_data/p_entity_period_existing_capacity", path,
-    ).with_columns(
-        pl.col("p_entity_period_existing_capacity").cast(pl.Float64, strict=False),
-        pl.col("p_entity_period_invested_capacity").cast(pl.Float64, strict=False),
-    )
-    base_plus_prior = (
-        pl.col("p_entity_period_existing_capacity").fill_null(0.0)
-        - pl.col("p_entity_period_invested_capacity").fill_null(0.0)
-    )
-    df = df.with_columns(value=base_plus_prior)
-    if previously_invested_path is not None and _provider_has(
-            provider, "solve_data/p_entity_previously_invested_capacity",
-            previously_invested_path):
-        prior_df = _provider_read(
-            provider, "solve_data/p_entity_previously_invested_capacity",
-            previously_invested_path)
-        rename = ({"value": "prior"} if "value" in prior_df.columns
-                  else {"p_entity_previously_invested_capacity": "prior"})
-        prior = prior_df.rename(rename)
-        df = (df.join(prior, on=["entity", "period"], how="left")
-                .with_columns(prior=pl.col("prior").fill_null(0.0))
-                .with_columns(value=pl.col("value") + pl.col("prior")))
-    return (df.pipe(rename_to_axis, {"entity": "e", "period": "d"})
+        provider, "solve_data/p_entity_all_existing", all_existing_path)
+    if "solve" in df.columns: df = df.drop("solve")
+    # Long-format variant: columns are (entity, period, value).
+    if {"entity", "period", "value"}.issubset(df.columns):
+        return (df.pipe(rename_to_axis, {"entity": "e", "period": "d"})
+                  .with_columns(value=pl.col("value")
+                                        .cast(pl.Float64, strict=False)
+                                        .fill_null(0.0))
+                  .select("e", "d", "value"))
+    # Wide-format variant: columns are (period, entity1, entity2, …).
+    val_cols = [c for c in df.columns if c != "period"]
+    if df.height == 0 or not val_cols:
+        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
+    return (df.unpivot(on=val_cols, index=["period"], variable_name="e",
+                       value_name="value")
+              .pipe(rename_to_axis, {"period": "d"})
+              .with_columns(value=pl.col("value")
+                                    .cast(pl.Float64, strict=False)
+                                    .fill_null(0.0))
               .select("e", "d", "value"))
 
 
