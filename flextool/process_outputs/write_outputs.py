@@ -56,27 +56,46 @@ from spinedb_api import DatabaseMapping, from_database, Array
 import warnings
 
 
-def _backfill_group_indicator_sets(s, output_dir):
-    """Populate ``nodeGroupDispatch`` / ``*Indicators`` from input CSVs.
+def _provider_lookup_df(provider, parent: str, stem: str):
+    """Return the polars frame for ``<parent>/<stem>`` from *provider*,
+    or ``None`` when the Provider doesn't carry it.
+
+    Provider key convention matches the emit_* writers' ``_emit(...)``
+    callsites — ``"<parent>/<basename-without-csv>"`` (see
+    :mod:`flextool.engine_polars._emit_provider_io`).
+    """
+    if provider is None:
+        return None
+    name = f"{parent}/{stem}" if parent else stem
+    if provider.has(name):
+        return provider.get(name)
+    return None
+
+
+def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
+    """Populate ``nodeGroupDispatch`` / ``*Indicators`` from cascade outputs.
 
     These three sets are derived from per-group user parameters
     (``output_nodeGroup_dispatch`` / ``output_nodeGroup_indicators`` /
     ``output_flowGroup_indicators``).  No FlexData field carries them
-    today; ``read_sets`` therefore hardcodes them empty.  The legacy
-    input-writer (``flextool/flextoolrunner/input_writer.py``) still
-    emits the CSVs to ``<workdir>/input/`` ahead of every solve, so we
-    backfill from there.  Without this, every ``nodeGroup_flows`` /
-    ``flowGroup_indicators`` writer short-circuits to "empty" and the
-    group_flows__dt / group_flows__d / flowGroup CSVs go missing.
+    today; ``read_sets`` therefore hardcodes them empty.  Without this
+    backfill, every ``nodeGroup_flows`` / ``flowGroup_indicators`` writer
+    short-circuits to "empty" and the group_flows__dt / group_flows__d /
+    flowGroup CSVs go missing.
 
     Also backfills the 12 ``nodeGroupDispatch__*`` arc-union MultiIndex
-    sets from the polars-LP writer's ``solve_data/*.csv`` artefacts
-    (see ``flextool/engine_polars/_emit_arc_unions.py``).  Without
-    these, ``calc_group_flows`` finds zero rows for the unit / connection
-    aggregator joins, and ``out_group.nodeGroup_flows`` emits only the
-    slack/inflow/loss column families — group_flows__dt loses its
-    ``from_unitGroup`` / ``from_unit`` / ``from_connectionGroup`` /
+    sets emitted by ``flextool/engine_polars/_emit_arc_unions.py``.
+    Without these, ``calc_group_flows`` finds zero rows for the unit /
+    connection aggregator joins, and ``out_group.nodeGroup_flows`` emits
+    only the slack/inflow/loss column families — group_flows__dt loses
+    its ``from_unitGroup`` / ``from_unit`` / ``from_connectionGroup`` /
     ``to_connectionGroup`` / per-connection ``internal_losses`` columns.
+
+    Provider-aware: when ``provider`` is supplied (the per-sub-solve
+    ``FlexDataProvider`` from the orchestration step), reads come from
+    the Provider keyed under ``"input/<basename>"`` / ``"solve_data/
+    <basename>"``.  Falls back to the legacy on-disk CSVs for callers
+    that still write them (``--csv-dump``).
     """
     raw_dir = output_dir or 'output_raw'
     work_dir = os.path.dirname(raw_dir) or '.'
@@ -86,6 +105,17 @@ def _backfill_group_indicator_sets(s, output_dir):
         ('nodeGroupIndicators', 'nodeGroupIndicators.csv'),
         ('flowGroupIndicators', 'flowGroupIndicators.csv'),
     ):
+        stem = fname[:-4]
+        df_pl = _provider_lookup_df(provider, "input", stem)
+        if df_pl is not None:
+            if df_pl.is_empty() or df_pl.width == 0:
+                continue
+            col0 = df_pl.columns[0]
+            vals = df_pl.select(col0).to_series().drop_nulls().to_list()
+            if not vals:
+                continue
+            setattr(s, attr, pd.Index(vals, name='group'))
+            continue
         path = os.path.join(input_dir, fname)
         if not os.path.exists(path):
             continue
@@ -162,16 +192,24 @@ def _backfill_group_indicator_sets(s, output_dir):
          (('group', 'group'), ('group_aggregate', 'group_aggregate'))),
     )
     for attr, fname, col_map in dispatch_specs:
-        path = os.path.join(solve_data_dir, fname)
-        if not os.path.exists(path):
-            continue
-        try:
-            df = pd.read_csv(path)
-        except pd.errors.EmptyDataError:
-            continue
-        if df.empty:
-            continue
-        # Skip if CSV is missing any required source column.
+        stem = fname[:-4]
+        df = None
+        df_pl = _provider_lookup_df(provider, "solve_data", stem)
+        if df_pl is not None:
+            if df_pl.is_empty():
+                continue
+            df = df_pl.to_pandas()
+        else:
+            path = os.path.join(solve_data_dir, fname)
+            if not os.path.exists(path):
+                continue
+            try:
+                df = pd.read_csv(path)
+            except pd.errors.EmptyDataError:
+                continue
+            if df.empty:
+                continue
+        # Skip if frame is missing any required source column.
         csv_cols = [c for c, _ in col_map]
         if not all(c in df.columns for c in csv_cols):
             continue
@@ -188,6 +226,7 @@ def _read_outputs(
     solution=None,
     solve_name=None,
     solve_steps=None,
+    flex_data_provider=None,
 ):
     """Read solver output files and return (par, s, v).
 
@@ -210,7 +249,7 @@ def _read_outputs(
             )
         p = read_parameters_multi(solve_steps, solution)
         s = read_sets_multi(solve_steps, solution)
-        _backfill_group_indicator_sets(s, output_dir)
+        _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
         v = read_variables(output_dir)
         return p, s, v
     if flex_data is None or solution is None:
@@ -588,7 +627,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -625,6 +664,15 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             (d, t) rows while ``v`` carries the union from per-sub-
             solve parquet aggregation, and pandas joins/muls would
             mismatch.  Single-solve scenarios can ignore.
+        flex_data_provider: optional per-sub-solve
+            :class:`flextool.engine_polars._flex_data_provider.FlexDataProvider`
+            from the orchestration step (typically ``last_step.flex_data_provider``).
+            Used by :func:`_backfill_group_indicator_sets` to read the
+            ``input/nodeGroup*`` + ``solve_data/nodeGroupDispatch__*``
+            frames in-memory — the writer→emitter refactor no longer
+            flushes these to disk on the default cascade path, so
+            without a Provider here the ``group_flows__dt.csv`` /
+            ``flowGroup__*.csv`` outputs would silently disappear.
     """
     write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format = _resolve_settings(
         write_methods, output_config_path, active_configs, plot_rows,
@@ -709,6 +757,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             solution=solution,
             solve_name=solve_name or scenario_name,
             solve_steps=solve_steps,
+            flex_data_provider=flex_data_provider,
         )
         start = log_time("Read flextool outputs", start, timing_recorder)
 

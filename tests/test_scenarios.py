@@ -254,6 +254,14 @@ def test_scenario(
             (s.solve_name, s.flex_data, s.solution)
             for s in steps.values()
         ],
+        # SCEN-1 #11 — the writer→emitter refactor keeps
+        # ``input/nodeGroup*`` + ``solve_data/nodeGroupDispatch__*``
+        # in the per-sub-solve Provider rather than on disk.  The
+        # last step's Provider carries them; pass it through so
+        # ``_backfill_group_indicator_sets`` can populate the sets
+        # that ``out_group.nodeGroup_flows`` needs for
+        # ``group_flows__dt.csv`` / ``flowGroup__*.csv``.
+        flex_data_provider=last_step.flex_data_provider,
     )
     elapsed_seconds = time.perf_counter() - t_start
 
