@@ -859,6 +859,29 @@ def native_run_model(state, solver) -> int:
             _provider_translators.translate_handoff_to_provider(
                 parent_handoff, sub_solve_provider,
             )
+        # Phase 5b — external overrides shadow handoff via the
+        # ``override/*`` Provider layer.  The callable is set by
+        # external code wrapping the runner (file-watch / ZeroMQ /
+        # etc.); default is None (no overrides).  Lands AFTER the
+        # sequential + parent handoff translators so override values
+        # take precedence in ``read_handoff_frame`` consumers
+        # (Phase 5a infrastructure).  If the callable raises, the
+        # exception propagates — external code owns clean error
+        # reporting.
+        _override_provider = getattr(state, "override_provider", None)
+        if _override_provider is not None:
+            overrides = _override_provider()
+            if overrides:
+                _provider_translators.translate_overrides_to_provider(
+                    overrides, sub_solve_provider,
+                )
+                state.logger.info(
+                    f"[override] applied {len(overrides)} keys at "
+                    f"iter={i} solve={complete_solve[solve]}"
+                )
+                state.logger.debug(
+                    f"[override] keys: {sorted(overrides.keys())}"
+                )
         _phase_timing = (
             os.environ.get("FLEXTOOL_PHASE_TIMING") == "1"
             and timing_recorder is not None
