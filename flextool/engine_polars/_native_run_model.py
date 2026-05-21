@@ -933,6 +933,26 @@ def native_run_model(state, solver) -> int:
         _provider_translators.translate_handoff_to_provider(
             prior_handoff, sub_solve_provider,
         )
+        # Phase 4.1e — when nested, parent solve's handoff shadows sequential
+        # prior in handoff/* keys.  Matches today's carriers["__last__"]
+        # (sequential) + carriers[parent_complete] (parent) seed precedence:
+        # both write the same Provider keys; parent's call lands after
+        # sequential's so parent's values win where both are populated.
+        # Reuses ``_parent_complete_for_carriers`` resolved earlier in the
+        # same iteration (lines 415-419) — same loop scope, same value.
+        # Guarded by ``if parent_handoff is not None`` so non-nested
+        # cascades skip the second call entirely; calling the translator
+        # with ``None`` writes empty frames via its empty-schema fallback,
+        # which would obliterate the sequential prior's just-written data.
+        parent_handoff = (
+            state.handoffs.get(_parent_complete_for_carriers)
+            if state.handoffs is not None and _parent_complete_for_carriers is not None
+            else None
+        )
+        if parent_handoff is not None:
+            _provider_translators.translate_handoff_to_provider(
+                parent_handoff, sub_solve_provider,
+            )
         _phase_timing = (
             os.environ.get("FLEXTOOL_PHASE_TIMING") == "1"
             and timing_recorder is not None
