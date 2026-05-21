@@ -346,12 +346,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "delay_duration.csv",
     "dtt__delay_duration.csv",
     "rp_weights.csv",
-    "rp_base_chain.csv",
-    "rp_base_first.csv",
-    "rp_base_last.csv",
-    "rp_block_first.csv",
-    "rp_block_last.csv",
-    "rp_block_start_last.csv",
     "rp_cost_weight.csv",
     # _emit_period_calc — Phase E-b8 (12 + 2 CSVs)
     "p_inflation_factor_operations_yearly.csv",

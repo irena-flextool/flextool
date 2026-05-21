@@ -22,10 +22,8 @@ This module owns the ~36 ``emit_*`` functions that build the
   ``timesets__timeline``, ``solve_hole_multiplier``.
 * Scaling / delay / RP: ``p_use_row_scaling``,
   ``scale_the_objective``, ``scale_the_state``, ``delay_duration``,
-  ``dtt__delay_duration``, and the eight representative-period CSVs
-  (``rp_weights``, ``rp_base_chain``, ``rp_base_first``,
-  ``rp_base_last``, ``rp_block_first``, ``rp_block_last``,
-  ``rp_block_start_last``, ``rp_cost_weight``).
+  ``dtt__delay_duration``, and the two representative-period CSVs
+  (``rp_weights``, ``rp_cost_weight``).
 
 Each emitter builds an all-``Utf8`` polars frame via a companion
 ``derive_*`` helper and registers it on the Provider with the dual
@@ -1167,35 +1165,7 @@ def _compute_rp_frames(
         ("base_start", "rep_start", "weight"), rp_weights_rows,
     )
 
-    # 2. rp_base_chain.csv — predecessor chain (excludes first).
-    out["rp_base_chain.csv"] = _to_utf8_frame(
-        ("base_start", "prev_base_start"),
-        [(base_starts[i], base_starts[i - 1]) for i in range(1, n_base)],
-    )
-
-    # 3. rp_base_first.csv / rp_base_last.csv
-    out["rp_base_first.csv"] = _to_utf8_frame(
-        ("base_start",), [(base_starts[0],)] if n_base > 0 else [],
-    )
-    out["rp_base_last.csv"] = _to_utf8_frame(
-        ("base_start",), [(base_starts[-1],)] if n_base > 0 else [],
-    )
-
-    # 4. rp_block_first.csv / rp_block_last.csv
-    out["rp_block_first.csv"] = _to_utf8_frame(
-        ("period", "step"), [(period_name, s) for s in rp_starts],
-    )
-    out["rp_block_last.csv"] = _to_utf8_frame(
-        ("period", "step"), [(period_name, lst) for lst in rp_lasts],
-    )
-
-    # 5. rp_block_start_last.csv
-    out["rp_block_start_last.csv"] = _to_utf8_frame(
-        ("rep_start", "last_step"),
-        [(s, lst) for s, lst in zip(rp_starts, rp_lasts)],
-    )
-
-    # 6. rp_cost_weight.csv — normalised per-timestep weight.
+    # 2. rp_cost_weight.csv — normalised per-timestep weight.
     w_r: dict[str, float] = {r: 0.0 for r in rp_starts}
     for base_weights in rp_weights.values():
         for rep, weight in base_weights.items():
@@ -1226,19 +1196,6 @@ def derive_rp_weights(
     return _compute_rp_frames(
         rp_weights, timeset_duration_entries, period_name,
     )["rp_weights.csv"]
-
-
-def derive_rp_base_chain(
-    rp_weights: dict[str, dict[str, float]],
-    timeset_duration_entries: list[tuple[str, float]],
-    period_name: str,
-) -> pl.DataFrame:
-    """Build the ``rp_base_chain`` frame
-    (base_start, prev_base_start).
-    """
-    return _compute_rp_frames(
-        rp_weights, timeset_duration_entries, period_name,
-    )["rp_base_chain.csv"]
 
 
 def emit_rp_data(
@@ -1317,12 +1274,6 @@ def emit_timeset_cost_weight(
 
 _EMPTY_RP_HEADERS: dict[str, tuple[str, ...]] = {
     "rp_weights.csv": ("base_start", "rep_start", "weight"),
-    "rp_base_chain.csv": ("base_start", "prev_base_start"),
-    "rp_base_first.csv": ("base_start",),
-    "rp_base_last.csv": ("base_start",),
-    "rp_block_first.csv": ("period", "step"),
-    "rp_block_last.csv": ("period", "step"),
-    "rp_block_start_last.csv": ("rep_start", "last_step"),
     "rp_cost_weight.csv": ("period", "time", "weight"),
 }
 
