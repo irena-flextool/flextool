@@ -445,15 +445,25 @@ def emit_per_solve_sets(solve_data_dir: Path, *, provider) -> None:
     _emit_tuples(provider, "solve_data/dtdt_next_set.csv",
                  ("period_prev", "time_prev_solve", "period", "time"), quads)
 
-    for src, dst in (
-        ("fix_storage_quantity.csv", "n_fix_storage_quantity_set.csv"),
-        ("fix_storage_price.csv",    "n_fix_storage_price_set.csv"),
-        ("fix_storage_usage.csv",    "n_fix_storage_usage_set.csv"),
+    # Phase 4.1g — derive ``n_fix_storage_{quantity,price,usage}_set`` from
+    # the canonical handoff Provider keys (``handoff/fix_storage_<metric>``,
+    # schema ``[node, period, step, p_fix_storage_<metric>]``).  Only the
+    # ``node`` column is consumed; the translator seeds these keys at
+    # iteration start, replacing the legacy ``solve_data/fix_storage_*``
+    # Provider read path ahead of the wide-field deletion in 4.1k.
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
+    for handoff_key, dst in (
+        (K.HANDOFF_FIX_STORAGE_QUANTITY, "n_fix_storage_quantity_set.csv"),
+        (K.HANDOFF_FIX_STORAGE_PRICE,    "n_fix_storage_price_set.csv"),
+        (K.HANDOFF_FIX_STORAGE_USAGE,    "n_fix_storage_usage_set.csv"),
     ):
-        df = _read_csv(solve_data_dir / src,
-                       ["period", "step", "node", "value"], provider=provider)
-        _emit_singles(provider, f"solve_data/{dst}", "node",
-                      _project_column(df, 2))
+        df = read_handoff_frame(provider, handoff_key)
+        if df is None:
+            nodes: list[str] = []
+        else:
+            nodes = _project_column(df, 0)
+        _emit_singles(provider, f"solve_data/{dst}", "node", nodes)
 
     proc_online = frozenset(
         v for v in _read_csv(solve_data_dir / "process_online.csv",
