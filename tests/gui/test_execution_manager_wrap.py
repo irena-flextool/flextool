@@ -1,4 +1,9 @@
-"""Tests for `_wrap_for_memory_cap` — the per-job memory cap shim.
+"""Tests for `_wrap_for_memory_cap` — the per-platform subprocess wrap shim.
+
+Post-3751be70 (2026-05-07), OS-level memory caps were removed: Linux
+keeps the `systemd-run --scope` wrapper purely for cgroup slice isolation
+(`FLEXTOOL_SLICE`), and Windows / macOS are no-ops. `MemoryWatchdog`
+(in-process polling) is the sole memory enforcer on all platforms.
 
 These tests are hermetic: they mock `sys.platform`, `shutil.which`, the
 slice-probe `subprocess.run`, and the `FLEXTOOL_SLICE` env var. No real
@@ -8,9 +13,7 @@ subprocess runs, so they are safe on Linux/Windows/macOS CI runners.
 from __future__ import annotations
 
 import subprocess
-import sys
-import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -55,23 +58,6 @@ class TestLinuxBranch:
             "--", "python", "x.py",
         ]
         assert extras == {} and post is None
-
-    def test_no_slice_with_estimate_sets_high_and_max(self):
-        with patch.object(em.sys, "platform", "linux"), \
-             patch.object(em.shutil, "which", return_value="/usr/bin/systemd-run"), \
-             patch.dict(em.os.environ, {}, clear=False):
-            em.os.environ.pop("FLEXTOOL_SLICE", None)
-            cmd, _, _ = em._wrap_for_memory_cap(["python", "x.py"], 10.0)
-        # 10 GB → 10240 MB cap, MemoryHigh = 90% = 9216 MB
-        assert "-p" in cmd
-        assert "MemoryHigh=9216M" in cmd
-        assert "MemoryMax=10240M" in cmd
-        # MemoryMax must come AFTER its -p flag
-        i = cmd.index("MemoryMax=10240M")
-        assert cmd[i - 1] == "-p"
-        # And the actual command follows the -- separator
-        sep = cmd.index("--")
-        assert cmd[sep + 1:] == ["python", "x.py"]
 
     def test_slice_loaded_is_appended(self):
         with patch.object(em.sys, "platform", "linux"), \
@@ -127,114 +113,28 @@ class TestUnknownPlatform:
 
 
 class TestWindowsBranch:
-    """Windows branch — uses pywin32 Job Object. Tests run on any platform
-    by injecting a fake `win32job` / `win32api` / `win32con` module trio."""
+    """Windows branch — no OS-level memory cap; MemoryWatchdog is the sole
+    enforcer. The wrap call must pass argv through unchanged with no Popen
+    extras and no post-spawn callable. Tests removed at WF-2 fix:
+    `test_pywin32_missing_falls_back`, `test_post_spawn_assigns_to_job_with_cap`,
+    `test_post_spawn_swallows_exceptions` exercised the pywin32 Job Object
+    cap path retired in 3751be70 (2026-05-07)."""
 
-    @pytest.fixture
-    def fake_win32(self, monkeypatch):
-        """Install fake pywin32 modules in sys.modules; return the mocks."""
-        fake_job = MagicMock(name="win32job")
-        fake_job.JobObjectExtendedLimitInformation = 9
-        fake_job.JOB_OBJECT_LIMIT_JOB_MEMORY = 0x200
-        # CreateJobObject returns an opaque sentinel handle
-        fake_job.CreateJobObject.return_value = "JOB_HANDLE"
-        fake_job.QueryInformationJobObject.return_value = {
-            "BasicLimitInformation": {"LimitFlags": 0},
-            "JobMemoryLimit": 0,
-        }
-        fake_api = MagicMock(name="win32api")
-        fake_api.OpenProcess.return_value = "PROC_HANDLE"
-        fake_con = types.SimpleNamespace(
-            PROCESS_SET_QUOTA=0x0100, PROCESS_TERMINATE=0x0001,
-        )
-        monkeypatch.setitem(sys.modules, "win32job", fake_job)
-        monkeypatch.setitem(sys.modules, "win32api", fake_api)
-        monkeypatch.setitem(sys.modules, "win32con", fake_con)
-        return fake_job, fake_api, fake_con
-
-    def test_zero_estimate_no_post_spawn(self, fake_win32):
+    def test_zero_estimate_no_post_spawn(self):
         with patch.object(em.sys, "platform", "win32"):
             cmd, extras, post = em._wrap_for_memory_cap(["python", "x.py"], 0.0)
         assert cmd == ["python", "x.py"]
         assert extras == {} and post is None
 
-    def test_pywin32_missing_falls_back(self, monkeypatch, caplog):
-        # Force `import win32job` to fail
-        monkeypatch.setitem(sys.modules, "win32job", None)
-        with caplog.at_level("WARNING", logger=em.logger.name), \
-             patch.object(em.sys, "platform", "win32"):
-            cmd, extras, post = em._wrap_for_memory_cap(["python", "x.py"], 4.0)
-        assert cmd == ["python", "x.py"]
-        assert extras == {} and post is None
-        assert any("pywin32" in r.message for r in caplog.records)
-
-    def test_post_spawn_assigns_to_job_with_cap(self, fake_win32):
-        fake_job, fake_api, _ = fake_win32
-        with patch.object(em.sys, "platform", "win32"):
-            cmd, extras, post = em._wrap_for_memory_cap(["python", "x.py"], 2.0)
-        assert cmd == ["python", "x.py"]
-        assert extras == {}
-        assert callable(post)
-
-        fake_proc = MagicMock(spec=subprocess.Popen)
-        fake_proc.pid = 12345
-        handle = post(fake_proc)
-
-        assert handle == "JOB_HANDLE"
-        fake_job.CreateJobObject.assert_called_once()
-        # Limit info written with cap_bytes = 2 GiB and JOB_MEMORY flag
-        set_call = fake_job.SetInformationJobObject.call_args
-        info = set_call.args[2]
-        assert info["JobMemoryLimit"] == 2 * (1024 ** 3)
-        assert info["BasicLimitInformation"]["LimitFlags"] & 0x200
-        # Process opened by pid and assigned to job
-        fake_api.OpenProcess.assert_called_once_with(
-            0x0100 | 0x0001, False, 12345,
-        )
-        fake_job.AssignProcessToJobObject.assert_called_once_with(
-            "JOB_HANDLE", "PROC_HANDLE",
-        )
-        fake_api.CloseHandle.assert_called_once_with("PROC_HANDLE")
-
-    def test_post_spawn_swallows_exceptions(self, fake_win32, caplog):
-        fake_job, _, _ = fake_win32
-        fake_job.AssignProcessToJobObject.side_effect = RuntimeError("boom")
-        with caplog.at_level("ERROR", logger=em.logger.name), \
-             patch.object(em.sys, "platform", "win32"):
-            _, _, post = em._wrap_for_memory_cap(["python", "x.py"], 2.0)
-            handle = post(MagicMock(pid=99))
-        assert handle is None
-        assert any("JobObject" in r.message for r in caplog.records)
-
 
 class TestMacosBranch:
+    """macOS branch — no OS-level memory cap; MemoryWatchdog is the sole
+    enforcer. Tests removed at WF-2 fix: `test_sets_preexec_with_rlimit_as`
+    and `test_preexec_swallows_setrlimit_failure` exercised the RLIMIT_AS
+    preexec_fn path retired in 3751be70 (2026-05-07)."""
+
     def test_zero_estimate_no_preexec(self):
         with patch.object(em.sys, "platform", "darwin"):
             cmd, extras, post = em._wrap_for_memory_cap(["python", "x.py"], 0.0)
         assert cmd == ["python", "x.py"]
         assert extras == {} and post is None
-
-    def test_sets_preexec_with_rlimit_as(self, monkeypatch):
-        fake_resource = MagicMock(name="resource")
-        fake_resource.RLIMIT_AS = 99
-        monkeypatch.setitem(sys.modules, "resource", fake_resource)
-        with patch.object(em.sys, "platform", "darwin"):
-            cmd, extras, post = em._wrap_for_memory_cap(["python", "x.py"], 3.0)
-        assert cmd == ["python", "x.py"]
-        assert post is None
-        assert "preexec_fn" in extras and callable(extras["preexec_fn"])
-
-        extras["preexec_fn"]()
-        cap_bytes = 3 * (1024 ** 3)
-        fake_resource.setrlimit.assert_called_once_with(99, (cap_bytes, cap_bytes))
-
-    def test_preexec_swallows_setrlimit_failure(self, monkeypatch):
-        fake_resource = MagicMock(name="resource")
-        fake_resource.RLIMIT_AS = 99
-        fake_resource.setrlimit.side_effect = OSError("EPERM")
-        monkeypatch.setitem(sys.modules, "resource", fake_resource)
-        with patch.object(em.sys, "platform", "darwin"):
-            _, extras, _ = em._wrap_for_memory_cap(["python", "x.py"], 3.0)
-        # Must not raise — preexec failure leaves child running uncapped,
-        # caught by MemoryWatchdog
-        extras["preexec_fn"]()
