@@ -297,6 +297,14 @@ def test_b18_7_vq_capacity_margin_no_step_duration_scaling(toy_group_reserve):
     vq = sb.value("vq_capacity_margin").sort(["g", "d"])["value"].to_list()
     assert vq == pytest.approx([150.0], rel=1e-7), (
         f"vq_capacity_margin {vq} != 150 — capacity_margin RHS or LHS off")
-    # Hand-calc: Δ = 150 · 1(scale) · (1400-1000) · 1(infl) = 60000.
-    # A regression that mis-applies op_factor would yield 60000·8 = 480000.
-    assert float(sp.obj) - float(sb.obj) == pytest.approx(60000.0, rel=1e-7)
+    # Hand-calc: Δ = 150 · 1(scale) · (1400-1000) · 1(infl) · 1000 = 60_000_000.
+    # The trailing ×1000 is the BUG A4 unit conversion (CUR/kW → CUR/MW)
+    # added in commit 3a4b2aa5 to ``_group_slack.py`` and the parity
+    # emitter ``calc_slacks.py`` — capacity-margin slack penalties are
+    # stored as CUR/kW in the DB and the LP coefficient lifts them to
+    # CUR/MW.  The test's original 60_000.0 expectation predates that
+    # commit and was bit-rotted by it.
+    # A regression that mis-applies op_factor would yield 60_000_000·8
+    # = 480_000_000 (the 8× step_duration/rp_cost_weight/period_share
+    # composition); we still catch that here at rel=1e-7.
+    assert float(sp.obj) - float(sb.obj) == pytest.approx(60_000_000.0, rel=1e-7)
