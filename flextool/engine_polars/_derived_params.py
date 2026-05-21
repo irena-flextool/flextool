@@ -7212,25 +7212,29 @@ def p_roll_continue_state_from_workdir(workdir: Path | None,
     return Param(("n",), df)
 
 
-def p_fix_storage_quantity_from_workdir(workdir: Path | None,
-                                              *,
-                                              provider: "object | None" = None,
-                                              ) -> "Param | None":
-    """Read the rolling-handoff ``p_fix_storage_quantity`` from
-    ``solve_data/fix_storage_quantity.csv``.
+def p_fix_storage_quantity_from_handoff(
+    *,
+    provider: "object | None" = None,
+) -> "Param | None":
+    """Read the rolling-handoff ``p_fix_storage_quantity`` from the
+    canonical ``handoff/fix_storage_quantity`` Provider key
+    (schema ``[node, period, step, p_fix_storage_quantity]``).
+
+    Phase 4.1d — the legacy ``solve_data/fix_storage_quantity`` read
+    path is gone; the translator populates the handoff key from
+    :pyattr:`SolveHandoff.fix_storage_quantity` at iteration start.
     """
-    if workdir is None:
-        return None
-    p = Path(workdir) / "solve_data" / "fix_storage_quantity.csv"
-    if not _provider_has_key(provider, p):  # Phase E-h — seed-aware
-        return None
-    df = _provider_read(provider, p)
-    if df.height == 0:
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
+    df = read_handoff_frame(provider, K.HANDOFF_FIX_STORAGE_QUANTITY)
+    if df is None or df.height == 0:
         return None
     df = (df.pipe(rename_to_axis, {"period": "d", "step": "t", "node": "n",
                        "p_fix_storage_quantity": "value"})
             .with_columns(value=pl.col("value").cast(pl.Float64))
             .select("n", "d", "t", "value"))
+    if df.height == 0:
+        return None
     return Param(("n", "d", "t"), df)
 
 
@@ -7601,7 +7605,7 @@ def apply_derived_e(
         if getattr(flex_data, "p_roll_continue_state", None) is None:
             flex_data.p_roll_continue_state = p_roll_continue_state_from_workdir(workdir, provider=provider)
         if getattr(flex_data, "p_fix_storage_quantity", None) is None:
-            flex_data.p_fix_storage_quantity = p_fix_storage_quantity_from_workdir(workdir, provider=provider)
+            flex_data.p_fix_storage_quantity = p_fix_storage_quantity_from_handoff(provider=provider)
         flex_data.dtt_timeline_matching = dtt_timeline_matching_from_workdir(workdir, provider=provider)
         flex_data.period_branch = period_branch_from_source(source, workdir, ctx=ctx, provider=provider)
 

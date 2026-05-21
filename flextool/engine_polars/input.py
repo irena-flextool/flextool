@@ -2617,34 +2617,28 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                 if df_rcs.height > 0:
                     p_roll_continue_state = Param(("n",), df_rcs)
 
+    # Phase 4.1d — read the rolling-handoff fix_storage_quantity carrier
+    # from the canonical handoff Provider key
+    # (``handoff/fix_storage_quantity``, schema
+    # ``[node, period, step, p_fix_storage_quantity]``).  The translator
+    # populates the key from ``SolveHandoff.fix_storage_quantity`` at
+    # iteration start; the legacy ``solve_data/fix_storage_quantity``
+    # read path is gone.
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
     p_fix_storage_quantity = None
-    fsq_path = sd / "fix_storage_quantity.csv"
-    if _provider_has(provider, "solve_data/fix_storage_quantity", fsq_path):
-        df_fsq = _provider_read(provider, "solve_data/fix_storage_quantity", fsq_path)
+    df_fsq = read_handoff_frame(provider, K.HANDOFF_FIX_STORAGE_QUANTITY)
+    if df_fsq is not None and df_fsq.height > 0:
+        df_fsq = (df_fsq
+                  .pipe(rename_to_axis, {"node": "n", "period": "d",
+                                         "step": "t",
+                                         "p_fix_storage_quantity": "value"})
+                  .with_columns(value=pl.col("value")
+                                          .cast(pl.Float64, strict=False)
+                                          .fill_null(0.0))
+                  .select("n", "d", "t", "value"))
         if df_fsq.height > 0:
-            ren = {}
-            if "period" in df_fsq.columns: ren["period"] = "d"
-            if "step" in df_fsq.columns: ren["step"] = "t"
-            if "time" in df_fsq.columns: ren["time"] = "t"
-            if "node" in df_fsq.columns: ren["node"] = "n"
-            value_col = None
-            for c in df_fsq.columns:
-                if c.strip() == "p_fix_storage_quantity":
-                    value_col = c
-                    break
-            if value_col is None and "value" in df_fsq.columns:
-                value_col = "value"
-            if value_col is not None:
-                ren[value_col] = "value"
-            df_fsq = df_fsq.pipe(rename_to_axis, ren)
-            if {"n", "d", "t", "value"}.issubset(df_fsq.columns):
-                df_fsq = (df_fsq
-                          .with_columns(value=pl.col("value")
-                                                  .cast(pl.Float64, strict=False)
-                                                  .fill_null(0.0))
-                          .select("n", "d", "t", "value"))
-                if df_fsq.height > 0:
-                    p_fix_storage_quantity = Param(("n", "d", "t"), df_fsq)
+            p_fix_storage_quantity = Param(("n", "d", "t"), df_fsq)
 
     # ``n_fix_storage_quantity`` / ``ndt_fix_storage_quantity`` are
     # derived from ``p_fix_storage_quantity`` after the helper assigns it
