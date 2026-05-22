@@ -124,27 +124,51 @@ def _load_pre_existing(
     *,
     provider: "object | None" = None,
 ) -> dict[tuple[str, str], float]:
-    """Return ``{(period, entity): value}`` from ``solve__p_entity_pre_existing.csv``.
+    """Return ``{(period, entity): value}`` for ``p_entity_pre_existing``.
 
-    CSV layout: rows indexed by (solve, period); entity columns.  Solve
-    level is collapsed — the same value applies for any solve.
+    Provider-first: the canonical in-memory frame at
+    ``solve_data/p_entity_pre_existing`` (populated by
+    ``_emit_chain_params.emit_p_entity_pre_existing``) is tall —
+    ``(entity, period, value)`` — and is what every consumer should
+    use on the in-memory cascade.
+
+    Falls back to the legacy per-solve appendage CSV
+    ``solve_data/solve__p_entity_pre_existing.csv`` (wide
+    ``(solve, period) × entity_columns``) when the Provider doesn't
+    have it.  That CSV was written by the pre-Δ.31 GMPL pipeline; on
+    the current in-memory cascade it is typically absent — in which
+    case we silently return ``{}`` rather than raising
+    ``FileNotFoundError``.  ``write_p_entity_period_existing_capacity``
+    treats an empty pre_existing as "no pre-existing capacity recorded
+    for this solve", which is the correct semantics when nothing
+    upstream produced it.
     """
+    if provider is not None and provider.has("solve_data/p_entity_pre_existing"):
+        df_pl = provider.get("solve_data/p_entity_pre_existing")
+        if df_pl is None or df_pl.is_empty():
+            return {}
+        # Tall ``(entity, period, value)`` schema — ``value`` is a
+        # repr-encoded string per ``_ed_value_frame``.  Convert
+        # directly to the ``{(period, entity): float}`` dict the
+        # downstream consumers expect.
+        out: dict[tuple[str, str], float] = {}
+        for row in df_pl.iter_rows(named=True):
+            period_v = row.get("period")
+            entity_v = row.get("entity")
+            value_v = row.get("value")
+            if period_v is None or entity_v is None or value_v is None:
+                continue
+            try:
+                out[(str(period_v), str(entity_v))] = float(value_v)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    # Disk fallback — legacy pre-Δ.31 CSV.
     path = work_folder / "solve_data" / "solve__p_entity_pre_existing.csv"
-    # Provider-first: when the per-sub-solve Provider has the frame, use
-    # it; otherwise read from disk.
-    fh = None
-    if provider is not None and provider.has("solve_data/solve__p_entity_pre_existing"):
-        import io
-        df_pl = provider.get("solve_data/solve__p_entity_pre_existing")
-        buf = io.StringIO()
-        df_pl.write_csv(buf)
-        buf.seek(0)
-        fh = buf
-    if fh is None:
-        df = pd.read_csv(path, index_col=[0, 1])
-    else:
-        df = pd.read_csv(fh, index_col=[0, 1])
-        fh.close()
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path, index_col=[0, 1])
     if df.empty:
         return {}
     df = df.droplevel(0)  # drop solve level → period only
