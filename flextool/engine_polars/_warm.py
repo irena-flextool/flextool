@@ -110,6 +110,12 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "nodeState_last_dt",
     "nodeStateBlock", "period_block", "period_block_succ",
     "period_block_time", "dtttdt_block_interior",
+    # RP-blended-weights (bind_using_blended_weights) sets / params —
+    # per-solve constants that don't change across iterations within a
+    # level; same carry-over kind as the intraperiod-block family above.
+    "nodeState_rp", "rp_base_period_set",
+    "rp_base_chain", "rp_base_first", "rp_base_last",
+    "rp_block_first", "p_rp_last_step", "rp_base__rep",
     "arc_sink_block_dt", "arc_source_block_dt",
     "flow_from_nodeBalance_eff", "flow_from_nodeBalance_noEff",
     "node_profile_upper", "node_profile_lower", "node_profile_fixed",

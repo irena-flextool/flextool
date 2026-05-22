@@ -100,6 +100,7 @@ SOLVE_DATA_RP_BASE_PERIOD_SET = "solve_data/rp_base_period_set"
 SOLVE_DATA_RP_BLOCK_FIRST = "solve_data/rp_block_first"
 SOLVE_DATA_RP_BLOCK_LAST = "solve_data/rp_block_last"
 SOLVE_DATA_RP_BLOCK_START_LAST = "solve_data/rp_block_start_last"
+SOLVE_DATA_RP_WEIGHTS = "solve_data/rp_weights"
 
 
 # ---------------------------------------------------------------------------

@@ -1035,7 +1035,7 @@ def derive_rp_weights(
 # restored RP basenames + the two pre-existing ones land under the
 # named ``K.SOLVE_DATA_*`` constants.
 _RP_BASENAME_TO_PROVIDER_KEY: dict[str, str] = {
-    "rp_weights.csv": "solve_data/rp_weights",
+    "rp_weights.csv": K.SOLVE_DATA_RP_WEIGHTS,
     "rp_base_chain.csv": K.SOLVE_DATA_RP_BASE_CHAIN,
     "rp_base_first.csv": K.SOLVE_DATA_RP_BASE_FIRST,
     "rp_base_last.csv": K.SOLVE_DATA_RP_BASE_LAST,

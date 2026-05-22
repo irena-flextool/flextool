@@ -476,6 +476,14 @@ def _build_region_data(
     new.storage_bind_within_solve = _filter_frame(src.storage_bind_within_solve, "n", keep_nodes)
     new.storage_fix_start = _filter_frame(src.storage_fix_start, "n", keep_nodes)
     new.nodeStateBlock = _filter_frame(src.nodeStateBlock, "n", keep_nodes)
+    new.nodeState_rp = _filter_frame(
+        getattr(src, "nodeState_rp", None), "n", keep_nodes,
+    )
+    # The remaining RP-blended-weights fields (rp_base_period_set,
+    # rp_base_chain, rp_base_first, rp_base_last, rp_block_first,
+    # p_rp_last_step, rp_base__rep) are solve-data-keyed (period / step
+    # / base / rep) — not entity-keyed — so the ``dataclasses.replace``
+    # shallow copy above already carries them through unchanged.
     new.nodeState_last_dt = _filter_frame(src.nodeState_last_dt, "n", keep_nodes)
     new.p_state_upper = _filter_param(src.p_state_upper, "n", keep_nodes)
     new.p_state_unitsize = _filter_param(src.p_state_unitsize, "n", keep_nodes)

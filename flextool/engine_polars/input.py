@@ -618,6 +618,28 @@ class FlexData:
     period_block_succ: pl.DataFrame | None = None          # set: (d, b_first, b_next)
     period_block_time: pl.DataFrame | None = None          # set: (d, b_first, t)
     dtttdt_block_interior: pl.DataFrame | None = None      # dtttdt rows where t_previous_within_timeset == t_previous (interior-of-block jump=1)
+    # ─── RP-blended-weights storage (bind_using_blended_weights) ─────────
+    # Eight per-solve sets / params that drive the intra-period state-change
+    # branch for ``nodeState_rp`` plus the three ``rp_inter_period_*``
+    # constraints (.mod:2197-2200, .mod:2965-2997).  Populated by
+    # ``_load_storage`` from the Phase-1 Provider keys (see
+    # ``_provider_keys.SOLVE_DATA_NODE_STATE_RP`` + siblings).  Loader-only
+    # at this commit — model.py wiring lands in Phase 5+.  When
+    # ``nodeState_rp`` is non-empty the loader enforces that the four
+    # tightly-coupled fields (``rp_base_period_set``, ``rp_base__rep``,
+    # ``rp_block_first``, ``p_rp_last_step``) are also non-empty.
+    nodeState_rp: pl.DataFrame | None = None               # set: (n,)
+    rp_base_period_set: pl.DataFrame | None = None         # set: (b,)
+    rp_base_chain: pl.DataFrame | None = None              # set: (b, b_prev)
+    rp_base_first: pl.DataFrame | None = None              # set: (b,)
+    rp_base_last: pl.DataFrame | None = None               # set: (b,)
+    rp_block_first: pl.DataFrame | None = None             # set: (d, t)
+    # Relation r → last_step (DataFrame, not Param — see audit §6 Risk #1:
+    # the .mod's ``p_rp_last_step`` is a symbolic-Param-keyed-by-value
+    # pattern; Phase 7 implements ``v_state[n, d, p_rp_last_step[r]]`` as
+    # a relational join on ``r → last_step``).
+    p_rp_last_step: pl.DataFrame | None = None             # set: (r, last_step)
+    rp_base__rep: Param | None = None                      # (b, r) → weight
     # ─── Per-arc effective block step durations (M-matrix collapsed) ──
     # Indexed (p, source, sink, d, t) with value = block_step_duration of
     # the arc's relevant side block at fine step (d, t).  Drives the daily
@@ -2292,6 +2314,14 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         period_block_succ = None,
         period_block_time = None,
         dtttdt_block_interior = None,
+        nodeState_rp = None,
+        rp_base_period_set = None,
+        rp_base_chain = None,
+        rp_base_first = None,
+        rp_base_last = None,
+        rp_block_first = None,
+        p_rp_last_step = None,
+        rp_base__rep = None,
         flow_from_nodeBalance_eff = flow_from_nb_eff,
         flow_from_nodeBalance_noEff = flow_from_nb_noEff,
         p_nested_solve_first = None,
@@ -2581,6 +2611,172 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     period_block_time = None
     dtttdt_block_interior = None
 
+    # ─── RP-blended-weights (bind_using_blended_weights) sets / params ───
+    # Eight per-solve frames driving the .mod's intra-period state-change
+    # branch for ``nodeState_rp`` plus the three ``rp_inter_period_*``
+    # constraints (.mod:2197-2200, .mod:2965-2997).  Emitted by
+    # ``_emit_leaf_sets.emit_node_state_subsets`` (nodeState_rp),
+    # ``_emit_per_solve`` (rp_base_period_set), and
+    # ``_emit_solve_writers._compute_rp_frames`` (chain / first / last /
+    # block_first / block_start_last / weights).  Loaded here; model.py
+    # wiring lands in Phase 5+.
+    from flextool.engine_polars import _provider_keys as _K_rp
+    nodeState_rp = None
+    nsrp_path = sd / "nodeState_rp.csv"
+    if _provider_has(provider, _K_rp.SOLVE_DATA_NODE_STATE_RP, nsrp_path):
+        df_nsrp = _provider_read(
+            provider, _K_rp.SOLVE_DATA_NODE_STATE_RP, nsrp_path,
+        )
+        if df_nsrp.height > 0 and "node" in df_nsrp.columns:
+            nodeState_rp = (df_nsrp
+                            .pipe(rename_to_axis, {"node": "n"})
+                            .select("n").unique())
+            if nodeState_rp.height == 0:
+                nodeState_rp = None
+
+    rp_base_period_set = None
+    rpbps_path = sd / "rp_base_period_set.csv"
+    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BASE_PERIOD_SET,
+                     rpbps_path):
+        df_rpbps = _provider_read(
+            provider, _K_rp.SOLVE_DATA_RP_BASE_PERIOD_SET, rpbps_path,
+        )
+        if df_rpbps.height > 0:
+            # Emitter writes a single column ``period`` (see
+            # ``_emit_per_solve`` line ~169 via ``_emit_singles``).
+            col = "period" if "period" in df_rpbps.columns else df_rpbps.columns[0]
+            rp_base_period_set = (df_rpbps
+                                  .rename({col: "b"})
+                                  .select("b").unique())
+            if rp_base_period_set.height == 0:
+                rp_base_period_set = None
+
+    rp_base_chain = None
+    rpbc_path = sd / "rp_base_chain.csv"
+    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BASE_CHAIN, rpbc_path):
+        df_rpbc = _provider_read(
+            provider, _K_rp.SOLVE_DATA_RP_BASE_CHAIN, rpbc_path,
+        )
+        if df_rpbc.height > 0:
+            # Emitter columns: ``(base_start, prev_base_start)``.
+            rp_base_chain = (df_rpbc
+                             .rename({"base_start": "b",
+                                      "prev_base_start": "b_prev"})
+                             .select("b", "b_prev").unique())
+            if rp_base_chain.height == 0:
+                rp_base_chain = None
+
+    rp_base_first = None
+    rpbf_path = sd / "rp_base_first.csv"
+    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BASE_FIRST, rpbf_path):
+        df_rpbf = _provider_read(
+            provider, _K_rp.SOLVE_DATA_RP_BASE_FIRST, rpbf_path,
+        )
+        if df_rpbf.height > 0:
+            rp_base_first = (df_rpbf
+                             .rename({"base_start": "b"})
+                             .select("b").unique())
+            if rp_base_first.height == 0:
+                rp_base_first = None
+
+    rp_base_last = None
+    rpbl_path = sd / "rp_base_last.csv"
+    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BASE_LAST, rpbl_path):
+        df_rpbl = _provider_read(
+            provider, _K_rp.SOLVE_DATA_RP_BASE_LAST, rpbl_path,
+        )
+        if df_rpbl.height > 0:
+            rp_base_last = (df_rpbl
+                            .rename({"base_start": "b"})
+                            .select("b").unique())
+            if rp_base_last.height == 0:
+                rp_base_last = None
+
+    rp_block_first = None
+    rpblkf_path = sd / "rp_block_first.csv"
+    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BLOCK_FIRST,
+                     rpblkf_path):
+        df_rpblkf = _provider_read(
+            provider, _K_rp.SOLVE_DATA_RP_BLOCK_FIRST, rpblkf_path,
+        )
+        if df_rpblkf.height > 0:
+            # Emitter columns: ``(period, step)``.
+            rp_block_first = (df_rpblkf
+                              .pipe(rename_to_axis,
+                                    {"period": "d", "step": "t"})
+                              .select("d", "t").unique())
+            if rp_block_first.height == 0:
+                rp_block_first = None
+
+    # ``p_rp_last_step`` — stored as a DataFrame relation [r, last_step]
+    # (NOT a numeric Param) — see audit §6 Risk #1.  Source basename is
+    # ``rp_block_start_last.csv`` with header ``(rep_start, last_step)``;
+    # we rename ``rep_start → r`` so the .mod's symbol ``r`` is the join
+    # key.  Phase 7 implements ``v_state[n, d, p_rp_last_step[r]]`` as a
+    # join on ``r → last_step``.
+    p_rp_last_step = None
+    prpls_path = sd / "rp_block_start_last.csv"
+    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BLOCK_START_LAST,
+                     prpls_path):
+        df_prpls = _provider_read(
+            provider, _K_rp.SOLVE_DATA_RP_BLOCK_START_LAST, prpls_path,
+        )
+        if df_prpls.height > 0:
+            p_rp_last_step = (df_prpls
+                              .rename({"rep_start": "r"})
+                              .select("r", "last_step").unique())
+            if p_rp_last_step.height == 0:
+                p_rp_last_step = None
+
+    # ``rp_base__rep`` — Param keyed by (b, r) with weight value.  Source
+    # basename ``rp_weights.csv`` carries ``(base_start, rep_start,
+    # weight)`` rows with weight as a stringified float (see
+    # ``_compute_rp_frames``).
+    rp_base__rep = None
+    rpw_path = sd / "rp_weights.csv"
+    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_WEIGHTS, rpw_path):
+        df_rpw = _provider_read(
+            provider, _K_rp.SOLVE_DATA_RP_WEIGHTS, rpw_path,
+        )
+        if df_rpw.height > 0:
+            df_rpw = (df_rpw
+                      .rename({"base_start": "b",
+                               "rep_start": "r",
+                               "weight": "value"})
+                      .with_columns(value=pl.col("value")
+                                              .cast(pl.Float64, strict=False)
+                                              .fill_null(0.0))
+                      .select("b", "r", "value"))
+            if df_rpw.height > 0:
+                rp_base__rep = Param(("b", "r"), df_rpw)
+
+    # ─── Invariant: when nodeState_rp is non-empty, the four tightly
+    # coupled fields below must also be non-empty.  Silent absence has no
+    # graceful degradation — the model just emits no inter-period state
+    # constraint and the LP solves the wrong problem.  Mirrors the
+    # ``_fast_load.py:686-690`` block invariant pattern.
+    if nodeState_rp is not None and nodeState_rp.height > 0:
+        _rp_required = (
+            ("rp_base_period_set", rp_base_period_set),
+            ("rp_base__rep", rp_base__rep),
+            ("rp_block_first", rp_block_first),
+            ("p_rp_last_step", p_rp_last_step),
+        )
+        for _name, _field in _rp_required:
+            _frame = (_field.frame if hasattr(_field, "frame") else _field)
+            if _frame is None or _frame.height == 0:
+                raise ValueError(
+                    f"FlexData loader: nodeState_rp is non-empty "
+                    f"({nodeState_rp.height} node(s)) but the tightly-"
+                    f"coupled field `{_name}` is missing or empty.  The "
+                    f"RP-blended-weights set family (nodeState_rp, "
+                    f"rp_base_period_set, rp_base__rep, rp_block_first, "
+                    f"p_rp_last_step) must be emitted together — check "
+                    f"_emit_leaf_sets.emit_node_state_subsets, "
+                    f"_emit_per_solve, and "
+                    f"_emit_solve_writers._compute_rp_frames upstream."
+                )
+
     # ─── Multi-resolution block synthesis ───────────────────────────────
     # Δ.17b Gap A: synthesis is performed end-to-end by the override chain
     # (``period_block_family_from_source`` + ``nodeStateBlock_from_source``
@@ -2791,6 +2987,14 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         period_block_succ = period_block_succ,
         period_block_time = period_block_time,
         dtttdt_block_interior = dtttdt_block_interior,
+        nodeState_rp = nodeState_rp,
+        rp_base_period_set = rp_base_period_set,
+        rp_base_chain = rp_base_chain,
+        rp_base_first = rp_base_first,
+        rp_base_last = rp_base_last,
+        rp_block_first = rp_block_first,
+        p_rp_last_step = p_rp_last_step,
+        rp_base__rep = rp_base__rep,
         flow_from_nodeBalance_eff = flow_from_nb_eff,
         flow_from_nodeBalance_noEff = flow_from_nb_noEff,
         p_nested_solve_first = p_nested_solve_first,
