@@ -5466,15 +5466,13 @@ def build_handoff_from_flexpy(
                     "d", pl.col("value").alias("share"),
                 ).with_columns(pl.col("d").cast(pl.Utf8))
 
-                # Resolve scale_the_objective via the per-solve CSV.
-                # Defaults to 1.0 when missing — the native input writer
-                # emits ``key,value\nscale_the_objective,1.0`` so the
-                # disk path is always present in normal solves.
                 scale_val = 1.0
                 scale_path = sd / "scale_the_objective.csv"
-                if scale_path.exists():
+                if _provider_has(provider, _provider_key(scale_path), scale_path):
                     try:
-                        scale_df = pl.read_csv(scale_path)
+                        scale_df = _provider_read(
+                            provider, _provider_key(scale_path), scale_path,
+                        )
                         if scale_df.height > 0 and "value" in scale_df.columns:
                             v0 = scale_df["value"][0]
                             if v0 is not None and float(v0) > 0:
