@@ -27,6 +27,7 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine_polars import _provider_keys as K
 from flextool.engine_polars._emit_provider_io import _emit
 
 
@@ -165,7 +166,7 @@ def emit_per_solve_sets(solve_data_dir: Path, *, provider) -> None:
 
     df = _read_csv(solve_data_dir / "rp_weights.csv",
                    ["base", "rep", "weight"], provider=provider)
-    _emit_singles(provider, "solve_data/rp_base_period_set.csv", "period",
+    _emit_singles(provider, K.SOLVE_DATA_RP_BASE_PERIOD_SET, "period",
                   _project_column(df, 0))
     _emit_singles(provider, "solve_data/rp_rep_period_set.csv", "period",
                   _project_column(df, 1))

@@ -23,7 +23,9 @@ This module owns the ~36 ``emit_*`` functions that build the
 * Scaling / delay / RP: ``p_use_row_scaling``,
   ``scale_the_objective``, ``delay_duration``,
   ``dtt__delay_duration``, and the two representative-period CSVs
-  (``rp_weights``, ``rp_cost_weight``).
+  (``rp_weights``, ``rp_base_chain``, ``rp_base_first``,
+  ``rp_base_last``, ``rp_block_first``, ``rp_block_last``,
+  ``rp_block_start_last``, ``rp_cost_weight``).
 
 Each emitter builds an all-``Utf8`` polars frame via a companion
 ``derive_*`` helper and registers it on the Provider with the dual
@@ -49,6 +51,7 @@ from typing import Any
 
 import polars as pl
 
+from flextool.engine_polars import _provider_keys as K
 from flextool.engine_polars._emit_provider_io import _emit
 
 
@@ -932,6 +935,11 @@ def _compute_rp_frames(
 
     Returns a dict keyed by output basename — used by both the
     ``derive_*`` accessors and the wrapper writer.
+
+    Output basenames: ``rp_weights.csv``, ``rp_base_chain.csv``,
+    ``rp_base_first.csv``, ``rp_base_last.csv``, ``rp_block_first.csv``,
+    ``rp_block_last.csv``, ``rp_block_start_last.csv``,
+    ``rp_cost_weight.csv``.
     """
     # RP block boundaries from the timeset_duration entries.
     rp_starts: list[str] = []
@@ -959,7 +967,35 @@ def _compute_rp_frames(
         ("base_start", "rep_start", "weight"), rp_weights_rows,
     )
 
-    # 2. rp_cost_weight.csv — normalised per-timestep weight.
+    # 2. rp_base_chain.csv — predecessor chain (excludes first).
+    out["rp_base_chain.csv"] = _to_utf8_frame(
+        ("base_start", "prev_base_start"),
+        [(base_starts[i], base_starts[i - 1]) for i in range(1, n_base)],
+    )
+
+    # 3. rp_base_first.csv / rp_base_last.csv
+    out["rp_base_first.csv"] = _to_utf8_frame(
+        ("base_start",), [(base_starts[0],)] if n_base > 0 else [],
+    )
+    out["rp_base_last.csv"] = _to_utf8_frame(
+        ("base_start",), [(base_starts[-1],)] if n_base > 0 else [],
+    )
+
+    # 4. rp_block_first.csv / rp_block_last.csv
+    out["rp_block_first.csv"] = _to_utf8_frame(
+        ("period", "step"), [(period_name, s) for s in rp_starts],
+    )
+    out["rp_block_last.csv"] = _to_utf8_frame(
+        ("period", "step"), [(period_name, lst) for lst in rp_lasts],
+    )
+
+    # 5. rp_block_start_last.csv
+    out["rp_block_start_last.csv"] = _to_utf8_frame(
+        ("rep_start", "last_step"),
+        [(s, lst) for s, lst in zip(rp_starts, rp_lasts)],
+    )
+
+    # 6. rp_cost_weight.csv — normalised per-timestep weight.
     w_r: dict[str, float] = {r: 0.0 for r in rp_starts}
     for base_weights in rp_weights.values():
         for rep, weight in base_weights.items():
@@ -992,6 +1028,24 @@ def derive_rp_weights(
     )["rp_weights.csv"]
 
 
+# Map from the basename keys produced by :func:`_compute_rp_frames`
+# to the canonical Provider keys (no ``.csv`` suffix, per the Phase 3b
+# convention in :mod:`flextool.engine_polars._provider_keys`).  Used by
+# both :func:`emit_rp_data` and :func:`emit_empty_rp_data` so the six
+# restored RP basenames + the two pre-existing ones land under the
+# named ``K.SOLVE_DATA_*`` constants.
+_RP_BASENAME_TO_PROVIDER_KEY: dict[str, str] = {
+    "rp_weights.csv": "solve_data/rp_weights",
+    "rp_base_chain.csv": K.SOLVE_DATA_RP_BASE_CHAIN,
+    "rp_base_first.csv": K.SOLVE_DATA_RP_BASE_FIRST,
+    "rp_base_last.csv": K.SOLVE_DATA_RP_BASE_LAST,
+    "rp_block_first.csv": K.SOLVE_DATA_RP_BLOCK_FIRST,
+    "rp_block_last.csv": K.SOLVE_DATA_RP_BLOCK_LAST,
+    "rp_block_start_last.csv": K.SOLVE_DATA_RP_BLOCK_START_LAST,
+    "rp_cost_weight.csv": "solve_data/rp_cost_weight",
+}
+
+
 def emit_rp_data(
     rp_weights: dict[str, dict[str, float]],
     timeset_duration_entries: list[tuple[str, float]],
@@ -1003,7 +1057,7 @@ def emit_rp_data(
         rp_weights, timeset_duration_entries, period_name,
     )
     for basename, df in frames.items():
-        _emit(provider, f"solve_data/{basename}", df)
+        _emit(provider, _RP_BASENAME_TO_PROVIDER_KEY[basename], df)
 
 
 def _compute_timeset_cost_weight_rows(
@@ -1068,6 +1122,12 @@ def emit_timeset_cost_weight(
 
 _EMPTY_RP_HEADERS: dict[str, tuple[str, ...]] = {
     "rp_weights.csv": ("base_start", "rep_start", "weight"),
+    "rp_base_chain.csv": ("base_start", "prev_base_start"),
+    "rp_base_first.csv": ("base_start",),
+    "rp_base_last.csv": ("base_start",),
+    "rp_block_first.csv": ("period", "step"),
+    "rp_block_last.csv": ("period", "step"),
+    "rp_block_start_last.csv": ("rep_start", "last_step"),
     "rp_cost_weight.csv": ("period", "time", "weight"),
 }
 
@@ -1076,5 +1136,5 @@ def emit_empty_rp_data(
     *, provider) -> None:
     """Emit ``empty_rp_data`` to the Provider."""
     for filename, headers in _EMPTY_RP_HEADERS.items():
-        _emit(provider, f"solve_data/{filename}",
+        _emit(provider, _RP_BASENAME_TO_PROVIDER_KEY[filename],
                        _empty_frame(headers))

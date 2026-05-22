@@ -30,6 +30,7 @@ from pathlib import Path
 
 import polars as pl
 
+from . import _provider_keys as K
 from ._axis_enums import alias_to_axis
 from ._emit_provider_io import _emit
 
@@ -555,7 +556,7 @@ def emit_node_state_subsets(solve_data_dir: Path,
                                   provider=provider)
     block = derive_node_state_subset(solve_data_dir, "bind_intraperiod_blocks",
                                      provider=provider)
-    _emit(provider, "solve_data/nodeState_rp.csv", rp)
+    _emit(provider, K.SOLVE_DATA_NODE_STATE_RP, rp)
     _emit(provider, "solve_data/nodeStateBlock.csv", block)
 
 

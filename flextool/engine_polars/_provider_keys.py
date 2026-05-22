@@ -86,6 +86,23 @@ SOLVE_DATA_REGION_COUPLING = "solve_data/region_coupling"
 
 
 # ---------------------------------------------------------------------------
+# RP-blended-weights keys — populated by ``_emit_solve_writers._compute_rp_frames``
+# (the six derived sets/params) plus the node-state RP subset (``_emit_leaf_sets``)
+# and the per-solve base-period set (``_emit_per_solve``).  Consumed by the
+# storage-binding-method machinery once the model-side wiring lands.
+# ---------------------------------------------------------------------------
+
+SOLVE_DATA_NODE_STATE_RP = "solve_data/nodeState_rp"
+SOLVE_DATA_RP_BASE_CHAIN = "solve_data/rp_base_chain"
+SOLVE_DATA_RP_BASE_FIRST = "solve_data/rp_base_first"
+SOLVE_DATA_RP_BASE_LAST = "solve_data/rp_base_last"
+SOLVE_DATA_RP_BASE_PERIOD_SET = "solve_data/rp_base_period_set"
+SOLVE_DATA_RP_BLOCK_FIRST = "solve_data/rp_block_first"
+SOLVE_DATA_RP_BLOCK_LAST = "solve_data/rp_block_last"
+SOLVE_DATA_RP_BLOCK_START_LAST = "solve_data/rp_block_start_last"
+
+
+# ---------------------------------------------------------------------------
 # input/ keys — populated by ``seed_provider_from_dir(kind="input")`` and
 # the input_derivation modules.  Subset listed; expand as call sites grow.
 # ---------------------------------------------------------------------------
