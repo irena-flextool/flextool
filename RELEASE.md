@@ -188,14 +188,16 @@ those walks resolved to ``site-packages/`` and broke.  Layout
 changes:
 
 - **Ships in the wheel:**
-  `flextool/textual_templates/{default_plots,default_colors,flextool_location}.yaml`,
-  `flextool/textual_templates/canonical_databases/*.json`,
-  `flextool/version/*.json`,
+  `flextool/schemas/{default_plots,default_colors}.yaml`,
+  `flextool/schemas/flextool_location.txt`,
+  `flextool/schemas/canonical_databases/*.json`,
+  `flextool/schemas/*.json` (incl. `spinedb_schema.json`),
+  `flextool/schemas/pre_v26/*.json`,
   `flextool/bin/highs.opt.template`.
 - **Gitignored, materialised in CWD at first run** (Spine Toolbox
   refs + user-editable files):
-  `./templates/*.sqlite` (from `version/*.json` +
-  `canonical_databases/*.json`),
+  `./templates/*.sqlite` (from `schemas/spinedb_schema.json` +
+  `schemas/canonical_databases/*.json`),
   `./templates/*.xlsx` (NEW — derived via `export_to_tabular`),
   `./how to example databases/*.sqlite`,
   `./bin/highs.opt` (seeded from package template).
