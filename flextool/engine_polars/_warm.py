@@ -817,7 +817,7 @@ def _build_warm_problem(
     """
     from flextool.engine_polars.model import build_flextool
 
-    pb = Problem()
+    pb = Problem(auto_user_bound_scale=True)
     build_flextool(pb, data, scale_the_objective=scale_the_objective)
     if solver_options:
         pb.set_solver_options(solver_options)

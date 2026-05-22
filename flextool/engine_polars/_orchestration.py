@@ -1112,7 +1112,7 @@ def _drive_cascade(
                 self._prior_data = data
                 self._prior_fp = fp
             else:
-                pb = Problem()
+                pb = Problem(auto_user_bound_scale=True)
                 build_flextool(pb, data, scale_the_objective=effective_obj_scale)
                 if (
                     _memrec_local is not None
@@ -1869,7 +1869,7 @@ def run_single_solve_from_db(
     )
 
     _t0 = _time.perf_counter()
-    problem = Problem()
+    problem = Problem(auto_user_bound_scale=True)
     build_flextool(problem, flex_data, scale_the_objective=effective_obj_scale)
     print(f"Input: LP build: {_time.perf_counter() - _t0:.3f}s")
 
