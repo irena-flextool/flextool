@@ -1,3 +1,93 @@
+## Release 3.44.0 (22.5.2026) — auto user_bound_scale + scaling cleanup
+
+Minor release on top of 3.43.2.  Bumps the `polar-high` dependency to
+**v1.4.0** (breaking removal of `Problem.peek_lp_ranges`) and rewires
+flextool's `user_bound_scale` handling around the new stream-time
+scaling path.  Five flextool commits + two polar-high commits land
+together.
+
+**polar-high opt-in auto-scaling (new default for flextool)**
+
+- `polar-high` v1.4.0 adds `Problem(auto_user_bound_scale=True)`:
+  during the streaming feed to HiGHS, accumulate LP coefficient
+  ranges over the per-family arrays we already build (matrix, cost,
+  col-bound, row-bound) and apply a `user_bound_scale` recommendation
+  via `setOptionValue` before `Highs.run()`.  The embedded heuristic
+  is col-bound-only with a 6-decade gate and `[-10, 0]` clamp —
+  identical policy to flextool's Rivendell-bug-1+5+6 fix, deliberately
+  ignoring row-bound spread to avoid crushing tight column bounds on
+  energy-system LPs with wide cumulative-resource RHS magnitudes.
+  Ranges are exposed on `Solution.streamed_lp_ranges` for callers
+  that want to inspect.
+- All three real flextool `Problem()` construction sites opt in to
+  `auto_user_bound_scale=True`: the cascade cold-build branch in
+  `_orchestration._drive_cascade`, the standalone single-solve in
+  `_orchestration.run_single_solve_from_db`, and the warm-LP
+  first-build in `_warm._build_warm_problem`.
+
+**Input-data heuristic disabled by default**
+
+- `recommended_highs_options(apply_user_bound_scale=...)` defaults to
+  `False`.  The legacy input-data heuristic was firing on every solve
+  and clamping to `N=-10` on DES-class scenarios because RHS family
+  ranges routinely reach 1e+6 — producing the "User-scaled problem
+  has some excessively small bounds" warning chain on energy-system
+  LPs (the exact failure mode flagged in the
+  `project_user_bound_scale_geo_midpoint` design note).
+- The new resolution order is:
+  1. `--user-bound-scale N` CLI flag (env var
+     `FLEXTOOL_USER_BOUND_SCALE`).
+  2. DB `solve.user_bound_scale` parameter.
+  3. polar-high stream-time recommendation
+     (`Problem(auto_user_bound_scale=True)`).
+  4. No `user_bound_scale` emitted — HiGHS does its own internal
+     scaling and prints `"Consider setting the user_bound_scale
+     option to <N>"` when its own analysis recommends one.
+
+**Dead-code cleanup (test coverage migrated, then code deleted)**
+
+- Deleted from `flextool/engine_polars/scaling.py`:
+  `recommend_user_bound_scale` (input-data heuristic),
+  `recommend_user_bound_scale_from_lp`,
+  `recommended_highs_options.apply_user_bound_scale` /
+  `lp_ranges` parameters and their branches, and the now-orphaned
+  constants (`BOUND_SPREAD_THRESHOLD`,
+  `BOUND_ABS_MIN_EFFECTIVE_ZERO`,
+  `BOUND_ABS_MIN_FLOOR_RATIO`,
+  `USER_BOUND_SCALE_TRIGGER_DECADES`).
+- Deleted from `flextool/engine_polars/_orchestration.py`: the three
+  `FLEXTOOL_PEEK_LP_RANGES` env-var-gated `peek_lp_ranges()` call
+  sites (cascade warm path, cascade cold path,
+  `run_single_solve_from_db`).
+- Test reorganisation:
+  - `tests/model/test_invest_chain_regression.py` now reads
+    `step.solution.streamed_lp_ranges` and calls
+    `polar_high.engine._recommend_user_bound_scale` directly, instead
+    of rebuilding the LP via `Problem()` + `build_flextool()` +
+    `pb.peek_lp_ranges()`.
+  - New `tests/engine_polars/test_polar_high_recommend_user_bound_scale.py`
+    — Rivendell-bug-1+5+6 unit tests now live against polar-high's
+    helper.  Replaces the deleted
+    `tests/engine_polars/scaling/test_user_bound_scale_recommendation.py`.
+
+Net diff across both repos: −452 lines of code with full test coverage
+preserved (`tests/engine_polars/test_solve_config_parity.py` 80/80,
+the migrated `test_invest_chain_regression.py` 6/6, the new
+`test_polar_high_recommend_user_bound_scale.py` 4/4,
+`tests/test_streaming_parity.py` 16/16 on polar-high).
+
+**Memory-checkpoint metric**
+
+- `[mem]` checkpoints in `_orchestration._MemoryRecorder` now report
+  `RssAnon + VmSwap` (anonymous resident set plus the same anonymous
+  pages that have been swapped out) instead of total `VmRSS`.  This
+  excludes evictable file-backed pages — including the polars/Arrow
+  memory-mapped buffers — which were overstating the process's true
+  memory commitment by tens of GB on a typical run.  The new number
+  is closer to what `systemd-oomd`'s PSI signal effectively responds
+  to and what the system monitor's "Used" line shows.  Display
+  labels are now `mem=` / `Δmem=` (previously `rss=` / `Δrss=`).
+
 ## Release 3.43.2 (22.5.2026) — per-level Provider memory fix
 
 Patch release on top of 3.43.1.  Five-commit fix for the cascade peak-RSS
