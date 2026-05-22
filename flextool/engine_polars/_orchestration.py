@@ -101,6 +101,34 @@ def _ensure_flextool_importable() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Whitelist of ``user_label`` strings that are emitted to the log in
+# regular (non-verbose) mode.  Set ``FLEXTOOL_MEMORY_VERBOSE=1`` to emit
+# every checkpoint (the full pre-cleanup trace).
+#
+# ``Solve start`` may include a bracketed solve name suffix (e.g.
+# ``"Solve start [invest_5weeks_p2020]"``); the whitelist check matches
+# on the prefix before the first ``" ["``.
+_MEM_WHITELIST_LABELS: frozenset[str] = frozenset({
+    "Solve start",
+    "Read inputs",
+    "Process inputs",
+    "LP problem built",
+    "Solver",
+})
+
+
+def _is_whitelisted_mem_label(user_label: str | None) -> bool:
+    """True when ``user_label`` matches a whitelisted phase label.
+
+    Strips an optional ``" [..]"`` suffix before comparing so the
+    "Solve start [<solve_name>]" variant matches.
+    """
+    if not user_label:
+        return False
+    head = user_label.split(" [", 1)[0]
+    return head in _MEM_WHITELIST_LABELS
+
+
 class _MemoryRecorder:
     """Opt-in tracemalloc + RSS checkpoint recorder.
 
@@ -205,8 +233,10 @@ class _MemoryRecorder:
             pass
         return (anon_kb + swap_kb) / 1024.0
 
-    # Fixed widths used to align the [mem] output into a table.
-    _LABEL_W = 42      # label column (left-aligned)
+    # Fixed widths used to align the mem output into a table.
+    # Label column is wide enough to fit the longest whitelisted label
+    # plus a bracketed solve-name suffix without truncation.
+    _LABEL_W = 50      # label column (left-aligned)
     _SIZE_W = 10       # MB/GB column (right-aligned)
 
     @classmethod
@@ -269,12 +299,19 @@ class _MemoryRecorder:
             peak_mb = peak / (1024.0 * 1024.0)
         rss_mb = self._read_rss_mb()
         t_elapsed = time.perf_counter() - self.t0
-        # Section deltas relative to previous checkpoint.
+        # Section deltas relative to previous *emitted* checkpoint.  When
+        # we suppress an emission we leave ``_t_prev`` /
+        # ``_rss_prev_mb`` / ``_peak_prev_mb`` alone, so the next
+        # emitted line shows the cumulative delta covering all the
+        # suppressed activity in between — exactly what the user wants
+        # to see in the compact mode.
         t_section = t_elapsed - (self._t_prev - self.t0)
         delta_rss = rss_mb - self._rss_prev_mb
         delta_peak = (peak_mb - self._peak_prev_mb) if peak_mb is not None else None
         # CSV row — only when full diagnostics is enabled and a path was
-        # configured.
+        # configured.  Always written for every checkpoint (independent
+        # of the log-line whitelist) so the CSV remains a complete
+        # trace.
         if self.enabled and self._path is not None and peak_mb is not None:
             row = (
                 str(label),
@@ -289,45 +326,56 @@ class _MemoryRecorder:
                     _csv.writer(f).writerow(row)
             except OSError:
                 pass
-        # Log line — emitted unconditionally so users following the run
-        # see phase progress.  Aligned into a fixed-column table so a
-        # column of these stacks visually even when interspersed with
-        # other log lines.  Emitted via ``print`` only (not
-        # ``logger.info``) to avoid the doubled output most logger
-        # configs produce alongside the print stream.
-        if self.verbose:
+        # Decide whether to emit the log line.  Regular mode shows only
+        # the whitelisted phase labels; ``FLEXTOOL_MEMORY_VERBOSE=1``
+        # restores the full per-checkpoint trace.
+        verbose_mode = bool(os.environ.get("FLEXTOOL_MEMORY_VERBOSE"))
+        emit = self.verbose and (
+            verbose_mode or _is_whitelisted_mem_label(user_label or label)
+        )
+        if emit:
             display = user_label or label
             label_col = f"{display:<{self._LABEL_W}}"
-            if self._t_prev == self.t0:
-                # First checkpoint — no prior section to report, but
-                # still emit at the same column shape so subsequent
-                # lines align below.
+            is_first = self._t_prev == self.t0
+            # Section-delta block (Δmem / optional Δpeak).
+            if is_first:
+                d_rss_str = self._fmt_size(None)
+            else:
+                d_rss_str = self._fmt_delta(delta_rss)
+            # Cumulative block (mem / optional peak).
+            mem_str = self._fmt_size(rss_mb)
+            if peak_mb is not None:
+                if is_first:
+                    d_peak_str = self._fmt_size(None)
+                else:
+                    d_peak_str = self._fmt_delta(delta_peak)
+                peak_str = self._fmt_size(peak_mb)
                 line = (
-                    f"[mem] {label_col}  "
-                    f"section= {t_elapsed:5.1f}s  "
-                    f"Δmem={self._fmt_size(None)}  "  # n/a
-                    f"Δpeak={self._fmt_size(None)}  "  # n/a
-                    f"(mem={self._fmt_size(rss_mb)}, "
-                    f"peak={self._fmt_size(peak_mb)})"
+                    f"{label_col}  "
+                    f"{t_elapsed:5.1f}s  "
+                    f"Δmem: {d_rss_str}  "
+                    f"Δpeak: {d_peak_str}  "
+                    f"| mem: {mem_str}  "
+                    f"peak: {peak_str}"
                 )
             else:
                 line = (
-                    f"[mem] {label_col}  "
-                    f"section= {t_section:5.1f}s  "
-                    f"Δmem={self._fmt_delta(delta_rss)}  "
-                    f"Δpeak={self._fmt_delta(delta_peak)}  "
-                    f"(mem={self._fmt_size(rss_mb)}, "
-                    f"peak={self._fmt_size(peak_mb)})"
+                    f"{label_col}  "
+                    f"{t_elapsed:5.1f}s  "
+                    f"Δmem: {d_rss_str}  "
+                    f"| mem: {mem_str}"
                 )
             try:
                 print(line, flush=True)
             except OSError:
                 pass
-        # Update prev-section bookkeeping for the next call.
-        self._t_prev = time.perf_counter()
-        self._rss_prev_mb = rss_mb
-        if peak_mb is not None:
-            self._peak_prev_mb = peak_mb
+            # Advance prev-section bookkeeping ONLY on actual emission so
+            # the next emitted line's delta covers all the suppressed
+            # activity since the last visible checkpoint.
+            self._t_prev = time.perf_counter()
+            self._rss_prev_mb = rss_mb
+            if peak_mb is not None:
+                self._peak_prev_mb = peak_mb
 
 
 class _NoopMemoryRecorder:
@@ -853,7 +901,7 @@ def _drive_cascade(
         if _drive_rec is not None:
             _drive_rec.checkpoint(
                 "cascade_spinedb_reader_constructed", _drive_logger,
-                user_label="cascade SpineDbReader constructed",
+                user_label="Read inputs",
             )
 
     class _FlexpyCascadeSolver(SolverRunner):
@@ -946,7 +994,7 @@ def _drive_cascade(
             if _memrec_local is not None and not self._mem_first_load_done:
                 _memrec_local.checkpoint(
                     "first_load_flextool_end", self.state.logger,
-                    user_label="Model cascade built",
+                    user_label="Process inputs",
                 )
 
             # --- LP scaling -------------------------------------------------
@@ -1145,7 +1193,7 @@ def _drive_cascade(
             if _memrec_local is not None and not self._mem_first_load_done:
                 _memrec_local.checkpoint(
                     "first_solve_end", self.state.logger,
-                    user_label="Solver finished",
+                    user_label="Solver",
                 )
                 self._mem_first_load_done = True
             # Emit per-iter lp_build / solve / warm_used rows now that

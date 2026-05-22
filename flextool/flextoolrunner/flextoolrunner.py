@@ -58,7 +58,11 @@ class FlexToolRunner:
                         logger.error(message)
                         raise FlexToolConfigError(message)
                     scenario_name=scen_names[0]['name']
-                logger.info(" Work dir: " + str(paths.root_dir) + "\nDB URL: " + str(db.sa_url) + "\nScenario name: " + scenario_name + "\nOutput path: " + str(paths.output_path))
+                # The Work dir / DB URL / Scenario / Output header is
+                # now printed once by ``cmd_run_flextool.main`` before
+                # the cascade starts.  The previous multi-line INFO
+                # here duplicated the Scenario line and split related
+                # metadata across the startup log; drop it.
                 if len(db.get_scenario_alternative_items(scenario_name=scenario_name)) == 0:
                     message = "No alternatives in the scenario, i.e. empty scenario."
                     logger.error(message)

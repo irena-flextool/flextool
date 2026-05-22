@@ -125,7 +125,6 @@ def _run_native_solve(args, scenario_name, work_folder, timing_recorder):
     surgical single-solve path that bypasses
     ``write_input``/``run_chain_from_db`` entirely.  Experimental.
     """
-    print(f'Scenario: {scenario_name}')
     if scenario_name:
         timing_recorder.set_scenario(scenario_name)
 
@@ -395,9 +394,19 @@ def main():
     work_folder.mkdir(parents=True, exist_ok=True)
     wf = work_folder
 
+    # Default formatter strips the ``INFO:<file>:<line>:`` preamble so
+    # user-facing INFO lines (license status, solver progress, etc.)
+    # read as plain prose.  WARNING / ERROR carry their level via the
+    # message body of the ``logging.warning(...)`` calls themselves
+    # ("Failed to ...", etc.), so dropping ``%(levelname)s`` here
+    # doesn't hide the severity.  ``--debug`` restores the full
+    # prefix for diagnosis.
     logging.basicConfig(
         level=logging.DEBUG if DEBUG else logging.INFO,
-        format='%(levelname)s:%(filename)s:%(lineno)d:%(message)s',
+        format=(
+            '%(levelname)s:%(filename)s:%(lineno)d:%(message)s'
+            if DEBUG else '%(message)s'
+        ),
         handlers=[logging.StreamHandler(sys.stdout)]
     )
 
@@ -580,6 +589,25 @@ def main():
             _filters = db_map.get_filter_configs()
             if _filters:
                 scenario_name = name_from_dict(_filters[0])
+
+    # Header block — one aligned key/value pair per line, blank lines
+    # before and after, so the user has a self-contained summary of
+    # what's being run.  Replaces the previous split between
+    # ``flextoolrunner.py``'s ``" Work dir:..." `` multi-line info log
+    # and the duplicate ``print(f'Scenario: ...')`` in
+    # ``_run_native_solve``.
+    _header_pairs = [
+        ("Work dir", str(work_folder)),
+        ("DB URL", str(input_db_url)),
+        ("Scenario", scenario_name if scenario_name else "(unresolved)"),
+        ("Output", str(args.output_location or output_path)),
+    ]
+    _header_keyw = max(len(k) for k, _ in _header_pairs) + 2
+    print("")
+    for _k, _v in _header_pairs:
+        print(f"{(_k + ':').ljust(_header_keyw)}{_v}")
+    print("")
+
     try:
         return_code, last_step = _run_native_solve(
             args, scenario_name, work_folder, timing_recorder,

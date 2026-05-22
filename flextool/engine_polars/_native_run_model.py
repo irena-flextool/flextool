@@ -324,6 +324,21 @@ def native_run_model(state, solver) -> int:
     for i, solve in enumerate(all_solves):
         timer_in_solve = time.perf_counter()
 
+        # Per-sub-solve memory checkpoint — first whitelisted phase label
+        # for each iteration of the cascade.  Includes the
+        # ``complete_solve_name`` (e.g. ``invest_5weeks_p2020``) in a
+        # bracketed suffix so the user can see which sub-solve a given
+        # progress line belongs to.  ``user_label`` carries the suffix
+        # so the regular-mode whitelist still recognises it (the
+        # whitelist matches on the prefix before ``" ["``).
+        _memrec_iter = getattr(state, "_memory_recorder", None)
+        if _memrec_iter is not None:
+            _memrec_iter.checkpoint(
+                "solve_start",
+                state.logger,
+                user_label=f"Solve start [{complete_solve[solve]}]",
+            )
+
         state.logger.debug(
             f"Creating timelines for solve {solve} ({i})"
         )

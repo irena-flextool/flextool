@@ -242,8 +242,10 @@ def probe_solver_licenses() -> dict[str, str]:
 
     Status values:
 
-    - ``"licensed"`` — wrapper installed, license check passed, trivial
-      solve completed.
+    - ``"installed"`` — wrapper installed, license check passed (with
+      either a free test license or a commercial one), trivial solve
+      completed.  Neutral wording — does not imply the user holds a
+      full commercial entitlement; a free trial license counts too.
     - ``"no-license"`` — wrapper installed but the solver refused on
       license grounds (commercial trial expired, no licence file, etc.).
     - ``"not-installed"`` — Python wrapper isn't on this system.
@@ -303,7 +305,11 @@ def probe_solver_licenses() -> dict[str, str]:
                 os.dup2(devnull_fd, 2)
                 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     polar_solve(p, solver_name=solver_name)
-                statuses[solver_name] = "licensed"
+                # The probe only confirms that a license file (free
+                # test license or commercial) is *installed* — not that
+                # the user holds a full commercial entitlement.  Use
+                # the neutral "installed" wording to avoid overstating.
+                statuses[solver_name] = "installed"
             except LicenseError:
                 statuses[solver_name] = "no-license"
             except SolverNotAvailableError:
