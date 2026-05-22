@@ -1,6 +1,8 @@
 """Phase E.3 — on-demand cross-join helpers for the persistent scratch
 frames ``pss_dt`` / ``nodeBalance_dt`` / ``nodeState_dt`` /
-``nodeState_first_dt`` / ``process_indirect_dt``.
+``nodeState_first_dt`` / ``process_indirect_dt`` (plus the
+RP-blended-weights ``nodeState_rp_dt`` / ``nodeState_rp_block_first_dt``
+helpers added by Phase 4 of the RP-blended-weights restoration).
 
 Pre-E.3, :class:`FlexData` carried these as eager DataFrames built
 up-front in :mod:`flextool.engine_polars._fast_load` (fast path) and in
@@ -36,6 +38,8 @@ __all__ = (
     "compute_nodeBalance_dt",
     "compute_nodeState_dt",
     "compute_nodeState_first_dt",
+    "compute_nodeState_rp_dt",
+    "compute_nodeState_rp_block_first_dt",
     "compute_process_indirect_dt",
 )
 
@@ -108,6 +112,47 @@ def compute_nodeState_first_dt(flex_data: "FlexData") -> pl.DataFrame | None:
         .select("n", "d", "t")
         .collect()
     )
+
+
+def compute_nodeState_rp_dt(flex_data: "FlexData") -> pl.DataFrame | None:
+    """Lazy-build the ``(n, d, t)`` cross-product from
+    ``flex_data.nodeState_rp`` × ``flex_data.dt``.
+
+    Index frame for the RP-blended-weights ``v_state_inter``-family
+    variables (Phase 5+) and the intra-period state-change branch
+    (Phase 6).  Mirrors :func:`compute_nodeState_dt` but restricted to
+    nodes participating in ``bind_using_blended_weights``.
+
+    Returns ``None`` when either constituent is missing / empty.
+    """
+    nsrp = getattr(flex_data, "nodeState_rp", None)
+    dt = getattr(flex_data, "dt", None)
+    if nsrp is None or dt is None or nsrp.height == 0 or dt.height == 0:
+        return None
+    return nsrp.lazy().join(dt.lazy(), how="cross").collect()
+
+
+def compute_nodeState_rp_block_first_dt(
+    flex_data: "FlexData",
+) -> pl.DataFrame | None:
+    """Lazy-build the ``(n, d, t)`` cross-product from
+    ``flex_data.nodeState_rp`` × ``flex_data.rp_block_first``.
+
+    Index frame for the RP-blended-weights ``v_state_rp_start``
+    variable (Phase 5+): one variable per (n, d, t) with t restricted
+    to the first step of each RP block.  ``rp_block_first`` already
+    carries the ``(d, t)`` schema (Phase 2), so a straight cross-join
+    with the ``(n,)`` ``nodeState_rp`` set yields the desired index.
+
+    Returns ``None`` when ``nodeState_rp`` or ``rp_block_first`` is
+    missing / empty.
+    """
+    nsrp = getattr(flex_data, "nodeState_rp", None)
+    rpbf = getattr(flex_data, "rp_block_first", None)
+    if (nsrp is None or rpbf is None
+            or nsrp.height == 0 or rpbf.height == 0):
+        return None
+    return nsrp.lazy().join(rpbf.lazy(), how="cross").collect()
 
 
 def compute_process_indirect_dt(flex_data: "FlexData") -> pl.DataFrame | None:
