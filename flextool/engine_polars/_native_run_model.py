@@ -492,12 +492,6 @@ def native_run_model(state, solver) -> int:
             solve, str(wf / "solve_data/solve_current.csv"),
             provider=sub_solve_provider,
         )
-        solve_writers.emit_hole_multiplier(
-            solve,
-            state.solve.hole_multipliers,
-            str(wf / "solve_data/solve_hole_multiplier.csv"),
-            provider=sub_solve_provider,
-        )
 
         if _mem_cp is not None:
             _mem_cp("prep_period_writers_done",
@@ -537,17 +531,8 @@ def native_run_model(state, solver) -> int:
                 scale_table.scale_the_objective,
                 provider=sub_solve_provider,
             )
-            solve_writers.emit_scale_the_state(
-                wf / "solve_data",
-                scale_table.scale_the_state,
-                provider=sub_solve_provider,
-            )
         else:
             solve_writers.emit_scale_the_objective_header_only(
-                wf / "solve_data",
-                provider=sub_solve_provider,
-            )
-            solve_writers.emit_scale_the_state_header_only(
                 wf / "solve_data",
                 provider=sub_solve_provider,
             )
@@ -563,13 +548,6 @@ def native_run_model(state, solver) -> int:
         solve_writers.emit_last_steps(
             active_time_lists[solve],
             str(wf / "solve_data/last_timesteps.csv"),
-            provider=sub_solve_provider,
-        )
-        solve_writers.emit_last_realized_step(
-            active_time_lists[solve],
-            complete_solve[solve],
-            state.solve.realized_periods.get(complete_solve[solve], []),
-            str(wf / "solve_data/last_realized_timestep.csv"),
             provider=sub_solve_provider,
         )
 
@@ -601,13 +579,6 @@ def native_run_model(state, solver) -> int:
         solve_writers.emit_branch__period_relationship(
             period__branch_lists[solve],
             str(wf / "solve_data/period__branch.csv"),
-            provider=sub_solve_provider,
-        )
-        solve_writers.emit_all_branches(
-            period__branch_lists,
-            solve_branch__time_branch_lists[solve],
-            state.logger,
-            work_folder=wf,
             provider=sub_solve_provider,
         )
         solve_writers.emit_branch_weights_and_map(

@@ -11,17 +11,17 @@ This module owns the ~36 ``emit_*`` functions that build the
   ``invest_periods_of_current_solve``, ``period_last``,
   ``period_first_of_solve``, ``period_first``, ``p_model``,
   ``p_nested_model``, ``solve_current``, ``first_timesteps``,
-  ``last_timesteps``, ``last_realized_timestep``,
+  ``last_timesteps``,
   ``realized_dispatch``, ``fix_storage_timesteps``.
-* Branch: ``period__branch``, ``branch_all``, ``time_branch_all``,
+* Branch: ``period__branch``,
   ``solve_branch_weight``, ``solve_branch__time_branch``.
 * Empty / seed: ``p_entity_invested``, ``p_entity_divested``,
   ``p_entity_period_existing_capacity``, the three
   rolling-accumulator seeds, the four fix-storage seeds.
 * Headers / timesets: header-only seeds, ``timesets_in_use``,
-  ``timesets__timeline``, ``solve_hole_multiplier``.
+  ``timesets__timeline``.
 * Scaling / delay / RP: ``p_use_row_scaling``,
-  ``scale_the_objective``, ``scale_the_state``, ``delay_duration``,
+  ``scale_the_objective``, ``delay_duration``,
   ``dtt__delay_duration``, and the two representative-period CSVs
   (``rp_weights``, ``rp_cost_weight``).
 
@@ -529,38 +529,6 @@ def get_first_steps(
 # ---------------------------------------------------------------------------
 
 
-def derive_last_realized_step(
-    realized_timeline: dict[str, list[tuple[str, ...]]],
-    solve: str,
-    realized_periods: list[tuple[str, str]],
-) -> pl.DataFrame:
-    """Build the ``last_realized_timestep`` frame (period, step)."""
-    rows: list[tuple[Any, ...]] = []
-    has_realized_period = False
-    last_realized_period: tuple[str, list[tuple[str, ...]]] | None = None
-    for period_name, period in realized_timeline.items():
-        if any(t[1] == period_name for t in realized_periods):
-            last_realized_period = (period_name, period)
-            has_realized_period = True
-    if has_realized_period and last_realized_period is not None:
-        for item in last_realized_period[1][-1:]:
-            rows.append((last_realized_period[0], item.timestep))
-    return _to_utf8_frame(("period", "step"), rows)
-
-
-def emit_last_realized_step(
-    realized_timeline: dict[str, list[tuple[str, ...]]],
-    solve: str,
-    realized_periods: list[tuple[str, str]],
-    filename: str,
-    *, provider,
-) -> None:
-    """Emit ``last_realized_step`` to the Provider."""
-    _emit_path(provider, filename,
-               derive_last_realized_step(realized_timeline, solve,
-                                           realized_periods))
-
-
 def derive_realized_dispatch(
     realized_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,
@@ -640,104 +608,6 @@ def emit_branch__period_relationship(
     """Emit ``branch__period_relationship`` to the Provider."""
     _emit_path(provider, filename,
                derive_branch__period_relationship(period__branch))
-
-
-def derive_branch_all(
-    period__branch_list: dict[str, list[tuple[str, str]]],
-) -> pl.DataFrame:
-    """Build the ``branch_all`` frame — union of all branches across
-    solves (single column ``branch``).
-    """
-    branches: list[str] = []
-    for solve in period__branch_list:
-        for row in period__branch_list[solve]:
-            if row[1] not in branches:
-                branches.append(row[1])
-    return _to_utf8_frame(("branch",), [(b,) for b in branches])
-
-
-_TIME_BRANCH_TIMESERIES_NAMES: tuple[str, ...] = (
-    "pbt_node_inflow.csv",
-    "pbt_node.csv",
-    "pbt_process.csv",
-    "pbt_profile.csv",
-    "pbt_process_source.csv",
-    "pbt_process_sink.csv",
-    "pbt_reserve__upDown__group.csv",
-)
-
-
-def derive_time_branch_all(
-    solve_branch__time_branch_list: list[tuple[str, str]],
-    logger: logging.Logger,
-    work_folder: Path,
-    *,
-    provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Build the ``time_branch_all`` frame from the seven ``pbt_*`` input
-    CSVs (under ``<work>/input/``) plus any extra time-branches from
-    ``solve_branch__time_branch_list``.
-
-    Aborts with ``sys.exit(-1)`` if any ``pbt_*`` row has an empty
-    branch name (matches legacy fatal behaviour).
-
-    Reads pbt_* frames via :func:`_provider_open`: the cascade-input
-    Provider supplies the seven frames in-cascade; the disk-fallback
-    arm serves the off-cascade test harness only.
-    """
-    from flextool.engine_polars._emit_provider_io import (
-        _provider_key, _provider_open,
-    )
-    time_branches: list[str] = []
-    for filename in _TIME_BRANCH_TIMESERIES_NAMES:
-        in_path = work_folder / "input" / filename
-        handle = _provider_open(provider, _provider_key(in_path), in_path)
-        if handle is None:
-            continue
-        with handle as blk:
-            filereader = csv.reader(blk, delimiter=",")
-            next(filereader, None)  # header
-            for datain in filereader:
-                if len(datain) < 2:
-                    continue
-                if datain[1] == "":
-                    logger.error(
-                        "Empty branch name in timeseries: " + filename
-                        + " , check that there is no empty row at the"
-                          " end of the array"
-                    )
-                    sys.exit(-1)
-                if datain[1] not in time_branches:
-                    time_branches.append(datain[1])
-
-    for solve__branch in solve_branch__time_branch_list:
-        if solve__branch[1] not in time_branches:
-            time_branches.append(solve__branch[1])
-    return _to_utf8_frame(("time_branch",), [(tb,) for tb in time_branches])
-
-
-def emit_all_branches(
-    period__branch_list: dict[str, list[tuple[str, str]]],
-    solve_branch__time_branch_list: list[tuple[str, str]],
-    logger: logging.Logger,
-    work_folder: Path | None = None,
-    *, provider,
-) -> None:
-    """Emit ``all_branches`` to the Provider.
-    *work_folder* is still needed because :func:`derive_time_branch_all`
-    walks the ``<work>/input/`` directory for ``pbt_*`` CSVs via the
-    Provider.
-    """
-    wf = work_folder if work_folder is not None else Path.cwd()
-    _emit(provider, "solve_data/branch_all.csv",
-                   derive_branch_all(period__branch_list))
-    _emit(
-        provider, "solve_data/time_branch_all.csv",
-        derive_time_branch_all(
-            solve_branch__time_branch_list, logger, wf,
-            provider=provider,
-        ),
-    )
 
 
 def derive_solve_branch_weight(
@@ -899,30 +769,6 @@ def emit_timesets(
                    derive_timesets__timeline(timeset__timeline))
 
 
-def derive_hole_multiplier(
-    solve: str,
-    hole_multipliers: dict[str, str],
-) -> pl.DataFrame:
-    """Build the ``solve_hole_multiplier`` frame
-    (solve, p_hole_multiplier).  Empty body when multiplier is falsy.
-    """
-    rows: list[tuple[Any, ...]] = []
-    if hole_multipliers[solve]:
-        rows.append((solve, hole_multipliers[solve]))
-    return _to_utf8_frame(("solve", "p_hole_multiplier"), rows)
-
-
-def emit_hole_multiplier(
-    solve: str,
-    hole_multipliers: dict[str, str],
-    filename: str,
-    *, provider,
-) -> None:
-    """Emit ``hole_multiplier`` to the Provider."""
-    _emit_path(provider, filename,
-               derive_hole_multiplier(solve, hole_multipliers))
-
-
 # ---------------------------------------------------------------------------
 # Sub-dispatch 7 — scaling writers
 # ---------------------------------------------------------------------------
@@ -974,22 +820,8 @@ def derive_scale_the_objective(value: float) -> pl.DataFrame:
     )
 
 
-def derive_scale_the_state(value: float) -> pl.DataFrame:
-    """Build the ``scale_the_state`` keyed-value frame — companion to
-    :func:`derive_scale_the_objective`.
-    """
-    return _to_utf8_frame(
-        ("key", "value"), [("v", f"{float(value):.17g}")],
-    )
-
-
 def derive_scale_the_objective_header_only() -> pl.DataFrame:
     """Build the header-only ``scale_the_objective`` frame."""
-    return _empty_frame(("key", "value"))
-
-
-def derive_scale_the_state_header_only() -> pl.DataFrame:
-    """Build the header-only ``scale_the_state`` frame."""
     return _empty_frame(("key", "value"))
 
 
@@ -1005,18 +837,6 @@ def emit_scale_the_objective(
     return path
 
 
-def emit_scale_the_state(
-    solve_data_dir: Path | str,
-    value: float,
-    *, provider,
-) -> Path:
-    """Emit ``scale_the_state`` to the Provider."""
-    path = Path(solve_data_dir) / "scale_the_state.csv"
-    _emit(provider, "solve_data/scale_the_state.csv",
-                   derive_scale_the_state(value))
-    return path
-
-
 def emit_scale_the_objective_header_only(
     solve_data_dir: Path | str,
     *, provider,
@@ -1025,15 +845,6 @@ def emit_scale_the_objective_header_only(
     path = Path(solve_data_dir) / "scale_the_objective.csv"
     _emit(provider, "solve_data/scale_the_objective.csv",
                    derive_scale_the_objective_header_only())
-    return path
-
-
-def emit_scale_the_state_header_only(solve_data_dir: Path | str,
-                                       *, provider) -> Path:
-    """Emit ``scale_the_state_header_only`` to the Provider."""
-    path = Path(solve_data_dir) / "scale_the_state.csv"
-    _emit(provider, "solve_data/scale_the_state.csv",
-                   derive_scale_the_state_header_only())
     return path
 
 
