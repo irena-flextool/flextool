@@ -1046,6 +1046,125 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 rhs_terms = {},
             )
 
+    # ─── Phase 9: capacity bounds on v_state_inter + v_state_rp_start ─────
+    #   .mod:2991-2997   rp_inter_period_max_state:
+    #     v_state_inter[n, b] * unitsize ≤ existing[n, d]
+    #                                       + Σ invest[n, d_inv≤d] · unitsize
+    #                                       − Σ divest[n, d_div≤d] · unitsize
+    #     over (n, b, d) ∈ nodeState_rp × rp_base_period × period_in_use.
+    #
+    #   .mod:1691         maxState_rp_start (lifted from per-row Var.upper):
+    #     v_state_rp_start[n, d, t] * unitsize ≤ same RHS at (n, d)
+    #     over (n, d, t) ∈ nodeState_rp × rp_block_first.
+    #
+    # Both share the maxState shape (model.py:2627-2675): with p_state_upper
+    # = existing / unitsize, divide through by unitsize and move invest /
+    # divest to the LHS so the constraint reads
+    #     v + Σ divest_n − Σ invest_n  ≤  p_state_upper[n, d]
+    # where the invest/divest contributions are (n, d)-keyed sums of the
+    # (n, d_invest) / (n, d_divest) Vars joined against edd_invest_set /
+    # edd_divest_active.  Factored into a closure since both new
+    # constraints want the same (n, d) tightening; maxState itself stays
+    # untouched to keep this commit narrow.
+    if (has_storage and has_rp
+            and d.storage_bind_using_blended_weights is not None
+            and d.storage_bind_using_blended_weights.height > 0):
+        bind_set_rp = d.storage_bind_using_blended_weights
+
+        def _rp_state_id_tighten() -> dict:
+            """Build ``{"divest": ..., "invest_neg": ...}`` (n,d)-keyed.
+            Mirrors maxState (model.py:2632-2668) but restricted to
+            nodes in ``bind_set_rp``; returns ``{}`` if invest/divest
+            features are inactive.  Each piece is summed over its
+            d_invest / d_divest axis so the result has dims (n, d) and
+            broadcasts cleanly against the outer index frames.
+            """
+            terms: dict = {}
+            if has_divest_n and d.edd_divest_active is not None:
+                v_div_n_at = Var(
+                    name=v_divest_n.name + "__at_divest_rp",
+                    dims=("n", "d_divest"),
+                    frame=v_divest_n.frame.pipe(
+                        rename_to_axis, {"d": "d_divest"}),
+                    lower=v_divest_n.lower, upper=v_divest_n.upper,
+                )
+                _p_dt = d.edd_divest_active.schema["p"]
+                _n_in_p = (bind_set_rp
+                           .select(pl.col("n").cast(_p_dt, strict=False)
+                                   .alias("p"))
+                           .unique())
+                edd_div_n = (d.edd_divest_active
+                             .join(_n_in_p, on="p", how="semi")
+                             .pipe(rename_to_axis, {"p": "n"}))
+                if edd_div_n.height > 0:
+                    terms["divest"] = Sum(
+                        Where(v_div_n_at, edd_div_n), over=("d_divest",))
+            if has_invest_n and d.edd_invest_set is not None:
+                v_inv_n_at = Var(
+                    name=v_invest_n.name + "__at_invest_rp",
+                    dims=("n", "d_invest"),
+                    frame=v_invest_n.frame.pipe(
+                        rename_to_axis, {"d": "d_invest"}),
+                    lower=v_invest_n.lower, upper=v_invest_n.upper,
+                )
+                _e_dt = d.edd_invest_set.schema["e"]
+                _n_in_e = (bind_set_rp
+                           .select(pl.col("n").cast(_e_dt, strict=False)
+                                   .alias("e"))
+                           .unique())
+                edd_inv_n = (d.edd_invest_set
+                             .join(_n_in_e, on="e", how="semi")
+                             .pipe(rename_to_axis, {"e": "n"}))
+                if edd_inv_n.height > 0:
+                    terms["invest_neg"] = -Sum(
+                        Where(v_inv_n_at, edd_inv_n), over=("d_invest",))
+            return terms
+
+        # rp_inter_period_max_state (.mod:2991-2997).  Index (n, b, d):
+        # bind_set_rp × rp_base_period_set × period_universe.  The .mod
+        # ranges d over ``period_in_use``; we use ``period_in_use_set``
+        # when populated, otherwise fall back to the distinct ``d``s in
+        # ``dt`` (matches the .mod literal universe in non-stochastic /
+        # non-rolling setups).  LHS = v_state_inter[n,b]; RHS varies in d.
+        if (d.rp_base_period_set is not None
+                and d.rp_base_period_set.height > 0):
+            if d.period_in_use_set is not None and d.period_in_use_set.height > 0:
+                period_universe = d.period_in_use_set.select("d").unique()
+            else:
+                period_universe = d.dt.select("d").unique()
+            if period_universe.height > 0:
+                # (n, b, d) = bind_set_rp × rp_base_period_set × period_universe.
+                nbd_idx = (bind_set_rp
+                           .join(d.rp_base_period_set, how="cross")
+                           .join(period_universe, how="cross"))
+                # LHS term 1: v_state_inter[n, b] projected to (n, b, d).
+                v_inter_nbd = Where(
+                    v_state_inter, nbd_idx.select("n", "b", "d"))
+                rp_max_lhs: dict = {"state_inter": v_inter_nbd}
+                rp_max_lhs.update(_rp_state_id_tighten())
+                m.add_cstr(
+                    "rp_inter_period_max_state",
+                    over      = nbd_idx.select("n", "b", "d"),
+                    sense     = "<=",
+                    lhs_terms = rp_max_lhs,
+                    rhs_terms = {"upper": d.p_state_upper},
+                )
+
+        # maxState_rp_start — mirrors the per-row Var.upper at .mod:1691.
+        # Index (n, d, t) ∈ nodeState_rp × rp_block_first comes directly
+        # from ``rp_start_idx`` computed at v_state_rp_start's add_var
+        # site (model.py:505).  Same (n,d) tightening as above.
+        if rp_start_idx is not None and rp_start_idx.height > 0:
+            rp_start_lhs: dict = {"state_rp_start": v_state_rp_start}
+            rp_start_lhs.update(_rp_state_id_tighten())
+            m.add_cstr(
+                "maxState_rp_start",
+                over      = rp_start_idx,
+                sense     = "<=",
+                lhs_terms = rp_start_lhs,
+                rhs_terms = {"upper": d.p_state_upper},
+            )
+
     # ``bind_forward_only`` + ``fix_start`` start binding —
     # flextool.mod:2197-2203.  At (n, period_first_of_solve, t_first)
     # the state-change term is omitted (handled by dropping that row
