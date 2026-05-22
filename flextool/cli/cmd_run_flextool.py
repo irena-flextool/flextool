@@ -606,7 +606,9 @@ def main():
     print("")
     for _k, _v in _header_pairs:
         print(f"{(_k + ':').ljust(_header_keyw)}{_v}")
-    print("")
+    # No trailing blank line here -- the "Available solvers:" log emits
+    # its own trailing newline so the blank lands AFTER the licence line,
+    # not before it.
 
     try:
         return_code, last_step = _run_native_solve(

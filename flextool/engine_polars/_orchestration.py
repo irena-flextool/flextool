@@ -109,6 +109,7 @@ def _ensure_flextool_importable() -> None:
 # ``"Solve start [invest_5weeks_p2020]"``); the whitelist check matches
 # on the prefix before the first ``" ["``.
 _MEM_WHITELIST_LABELS: frozenset[str] = frozenset({
+    "Run start",
     "Solve start",
     "Read inputs",
     "Process inputs",
@@ -236,7 +237,7 @@ class _MemoryRecorder:
     # Fixed widths used to align the mem output into a table.
     # Label column is wide enough to fit the longest whitelisted label
     # plus a bracketed solve-name suffix without truncation.
-    _LABEL_W = 50      # label column (left-aligned)
+    _LABEL_W = 38      # label column (left-aligned)
     _SIZE_W = 10       # MB/GB column (right-aligned)
 
     @classmethod
@@ -353,7 +354,7 @@ class _MemoryRecorder:
                 line = (
                     f"{label_col}  "
                     f"{t_elapsed:5.1f}s  "
-                    f"Δmem: {d_rss_str}  "
+                    f"| Δmem: {d_rss_str}  "
                     f"Δpeak: {d_peak_str}  "
                     f"| mem: {mem_str}  "
                     f"peak: {peak_str}"
@@ -362,7 +363,7 @@ class _MemoryRecorder:
                 line = (
                     f"{label_col}  "
                     f"{t_elapsed:5.1f}s  "
-                    f"Δmem: {d_rss_str}  "
+                    f"| Δmem: {d_rss_str}  "
                     f"| mem: {mem_str}"
                 )
             try:
@@ -1598,7 +1599,9 @@ def run_chain_from_db(
         statuses = probe_solver_licenses()
         if statuses:
             formatted = ", ".join(f"{n}={s}" for n, s in statuses.items())
-            logger.info("Solver license status: %s", formatted)
+            # Trailing blank line so the mem-checkpoint table that
+            # follows visually separates from the header block.
+            logger.info("Available solvers: %s\n", formatted)
     except ImportError:  # pragma: no cover — older polar_high without dispatch
         pass
 

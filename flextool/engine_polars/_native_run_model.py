@@ -354,14 +354,16 @@ def native_run_model(state, solver) -> int:
             solve_config=state.solve,
             timeline_config=state.timeline,
         )
-        # NOTE: ``runner.state.logger`` is forced to ERROR level by the
-        # orchestration driver (see ``_orchestration.py``).  Log the
-        # level_key at the active level so the per-iter cascade trace
-        # remains visible for verification of the Provider sharing.
-        state.logger.error(
-            "level_key for solve %r (complete=%r): %r",
-            solve, complete_solve[solve], _level_key,
-        )
+        # level_key is debug-only output (verbose mem mode):
+        # ``runner.state.logger`` is forced to ERROR level by the
+        # orchestration driver, so the regular ERROR-level print would
+        # always escape.  Gate behind the same env var that surfaces
+        # the full mem-checkpoint trace.
+        if os.environ.get("FLEXTOOL_MEMORY_VERBOSE") == "1":
+            state.logger.error(
+                "level_key for solve %r (complete=%r): %r",
+                solve, complete_solve[solve], _level_key,
+            )
 
         # Per-level boundary (Design A, step A3): when the level_key
         # changes from the previous iter, drop any warm-LP carry-over
