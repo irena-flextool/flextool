@@ -286,7 +286,8 @@ class SolveConfig:
             scale_the_objective if scale_the_objective is not None else {}
         )
         # solve-name → integer user_bound_scale override.  When set, overrides
-        # the heuristic in scaling.recommend_user_bound_scale().  Pass the
+        # polar-high's stream-time auto-pick
+        # (``polar_high.engine._recommend_user_bound_scale``).  Pass the
         # value HiGHS recommends in its "user-scaled problem has some
         # excessively large row bounds — Consider setting the user_bound_scale
         # option to <N>" warning for the most reliable result.

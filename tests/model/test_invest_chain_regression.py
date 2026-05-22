@@ -49,21 +49,20 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from polar_high import Problem
-
 _TESTS_DIR = Path(__file__).resolve().parent.parent
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
 
 from flextool.engine_polars import (  # noqa: E402
-    build_flextool,
     run_chain_from_db,
 )
-from flextool.engine_polars.scaling import (  # noqa: E402
-    USER_BOUND_SCALE_MAX,
-    USER_BOUND_SCALE_MIN,
-    recommend_user_bound_scale_from_lp,
-)
+from polar_high.engine import _recommend_user_bound_scale  # noqa: E402
+
+# polar-high's geo-midpoint heuristic clamps to [-10, 0].  Mirror the
+# constants here so the smoke assertions stay readable; both ends are
+# baked into ``_recommend_user_bound_scale`` itself.
+USER_BOUND_SCALE_MIN = -10
+USER_BOUND_SCALE_MAX = 0
 
 
 SCENARIO = "5weeks_invest_fullYear_dispatch_coal_wind"
@@ -213,7 +212,7 @@ def test_invest_chain_pae_frame_equality(invest_chain_steps, sub_solve):
 # HiGHS' practical precision (~1e-8).  Current heuristic uses
 # geometric-midpoint centering with a clamp at
 # ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX] = [-10, 0]`` — see
-# ``flextool/engine_polars/scaling.py::recommend_user_bound_scale_from_lp``.
+# ``polar_high.engine._recommend_user_bound_scale``.
 #
 # This smoke asserts:
 #
@@ -268,26 +267,28 @@ def test_invest_chain_lp_bound_range_smoke(invest_chain_steps, sub_solve):
     """R7 — LP bound range fits in <= 10 decades and recommended
     ``user_bound_scale`` is within the post-clamp range.
 
-    Rebuilds the LP in a fresh ``polar_high.Problem`` from the
-    step's ``flex_data`` so we can call ``peek_lp_ranges`` post-build
-    (the recommendation API the cascade itself uses at
-    ``_orchestration.py:873``).
+    Reads the streamed coefficient ranges populated by the cascade's
+    ``auto_user_bound_scale=True`` Problem (flextool cd6cec19 +
+    polar-high d8cb34d).  No Problem rebuild — the ranges HiGHS saw
+    are already on ``step.solution.streamed_lp_ranges``.
     """
     step = invest_chain_steps[sub_solve]
-    assert step.flex_data is not None, (
-        f"sub-solve {sub_solve!r}: flex_data unexpectedly None "
+    assert step.solution is not None, (
+        f"sub-solve {sub_solve!r}: solution unexpectedly None "
         f"(keep_solutions=True should retain it)"
     )
-
-    pb = Problem()
-    build_flextool(pb, step.flex_data)
-    lp_ranges = pb.peek_lp_ranges()
+    lp_ranges = step.solution.streamed_lp_ranges
+    assert lp_ranges is not None, (
+        f"sub-solve {sub_solve!r}: solution.streamed_lp_ranges is None — "
+        f"the cascade should have built the Problem with "
+        f"auto_user_bound_scale=True; check that path stays cold-build"
+    )
 
     positive_bounds: list[float] = []
     for key in ("row_bound", "col_bound"):
         positive_bounds.extend(_finite_positive(lp_ranges.get(key)))
     assert positive_bounds, (
-        f"sub-solve {sub_solve!r}: peek_lp_ranges returned no finite "
+        f"sub-solve {sub_solve!r}: streamed_lp_ranges has no finite "
         f"positive bounds — LP appears unbounded or malformed: "
         f"{lp_ranges!r}"
     )
@@ -302,12 +303,19 @@ def test_invest_chain_lp_bound_range_smoke(invest_chain_steps, sub_solve):
         f"col_bound={lp_ranges.get('col_bound')!r}"
     )
 
-    scale = recommend_user_bound_scale_from_lp(lp_ranges)
+    col_bound = lp_ranges.get("col_bound")
+    if col_bound is None:
+        # No column bounds reported — the recommendation is trivially 0
+        # (the heuristic only fires off col bounds).  Assert this directly
+        # so a future regression that drops col_bound altogether is loud.
+        scale = 0
+    else:
+        scale = _recommend_user_bound_scale(col_bound[0], col_bound[1])
     assert USER_BOUND_SCALE_MIN <= scale <= USER_BOUND_SCALE_MAX, (
-        f"sub-solve {sub_solve!r}: recommend_user_bound_scale_from_lp "
-        f"returned {scale}, outside the post-clamp range "
+        f"sub-solve {sub_solve!r}: _recommend_user_bound_scale returned "
+        f"{scale}, outside the post-clamp range "
         f"[{USER_BOUND_SCALE_MIN}, {USER_BOUND_SCALE_MAX}]. "
-        f"The geometric-midpoint heuristic in scaling.py is supposed "
+        f"The geometric-midpoint heuristic in polar_high.engine is supposed "
         f"to enforce this clamp — a breach here means either the "
         f"clamp regressed or the recommender bypassed it."
     )
@@ -340,21 +348,26 @@ def test_work_base_lp_bound_range_smoke(base_steps):
     canary; the LP-bound smoke applies here too so any future
     seed-funnel-style regression that distorts even the simplest LP
     surfaces at the formulation layer instead of HiGHS-presolve.
+    Reads ``solution.streamed_lp_ranges`` populated by the cascade's
+    ``auto_user_bound_scale=True`` Problem rather than rebuilding.
     """
     last = next(reversed(base_steps.values()))
-    assert last.flex_data is not None, (
-        "work_base last step has flex_data=None (keep_solutions=True "
+    assert last.solution is not None, (
+        "work_base last step has solution=None (keep_solutions=True "
         "should retain it)"
     )
-    pb = Problem()
-    build_flextool(pb, last.flex_data)
-    lp_ranges = pb.peek_lp_ranges()
+    lp_ranges = last.solution.streamed_lp_ranges
+    assert lp_ranges is not None, (
+        "work_base last step: solution.streamed_lp_ranges is None — "
+        "the cascade should have built the Problem with "
+        "auto_user_bound_scale=True"
+    )
 
     positive_bounds: list[float] = []
     for key in ("row_bound", "col_bound"):
         positive_bounds.extend(_finite_positive(lp_ranges.get(key)))
     assert positive_bounds, (
-        f"work_base: peek_lp_ranges returned no finite positive "
+        f"work_base: streamed_lp_ranges has no finite positive "
         f"bounds: {lp_ranges!r}"
     )
     spread = math.log10(max(positive_bounds)) - math.log10(min(positive_bounds))
@@ -365,9 +378,13 @@ def test_work_base_lp_bound_range_smoke(base_steps):
         f"col_bound={lp_ranges.get('col_bound')!r}"
     )
 
-    scale = recommend_user_bound_scale_from_lp(lp_ranges)
+    col_bound = lp_ranges.get("col_bound")
+    if col_bound is None:
+        scale = 0
+    else:
+        scale = _recommend_user_bound_scale(col_bound[0], col_bound[1])
     assert USER_BOUND_SCALE_MIN <= scale <= USER_BOUND_SCALE_MAX, (
-        f"work_base: recommend_user_bound_scale_from_lp returned "
+        f"work_base: _recommend_user_bound_scale returned "
         f"{scale}, outside the post-clamp range "
         f"[{USER_BOUND_SCALE_MIN}, {USER_BOUND_SCALE_MAX}]"
     )

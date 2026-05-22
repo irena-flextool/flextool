@@ -562,259 +562,52 @@ def _recommend_scale_the_objective(
 USER_BOUND_SCALE_MIN = -10
 USER_BOUND_SCALE_MAX = 0
 
-# Threshold (decades) above which we apply ``user_bound_scale``.
-# Below this the LP bounds are tight enough that HiGHS' own scaling is
-# sufficient.
-USER_BOUND_SCALE_TRIGGER_DECADES = 6.0
-
-# Geometric-midpoint policy constants — mirror Agent-18e additions in
-# :mod:`flextool.flextoolrunner.scaling`.  See
-# :func:`recommend_user_bound_scale_from_lp`.
-BOUND_SPREAD_THRESHOLD = 6.0
-"""Decades (base 10).  When the variable-bound spread
-``log10(abs_max) − log10(abs_min)`` across finite, non-zero LP bounds
-is at or below this, no ``user_bound_scale`` is recommended."""
-
-BOUND_ABS_MIN_EFFECTIVE_ZERO = 1e-30
-"""Below this, a measured ``abs_min`` is treated as zero (e.g. slack
-variables with no explicit lower cap register near float64 denormal).
-``sqrt(abs_max × abs_min)`` would underflow / drag the geometric
-midpoint to nothing; we fall back to the floor below instead."""
-
-BOUND_ABS_MIN_FLOOR_RATIO = 1e-6
-"""Floor for ``abs_min`` when missing or effectively zero: use
-``abs_max × BOUND_ABS_MIN_FLOOR_RATIO`` (i.e. treat the range as no
-wider than 6 decades for centering purposes)."""
-
-
-def _max_input_bound_proxy(family_stats: dict[str, FamilyStats]) -> Optional[float]:
-    """Estimate the largest absolute bound the LP will see, from input stats.
-
-    The LP's column bounds come mostly from ``entity_unitsize`` (× max
-    units) and the row bounds come mostly from inflows / annual flows.
-    We can't know the actual LP RHS without inspecting the built LP,
-    but the *largest* parameter across these families gives a reasonable
-    lower bound on the expected LP coefficient magnitude.
-
-    Returns ``None`` when no usable family stats exist.
-    """
-    candidates: list[float] = []
-    for name in ("entity_unitsize", "node_inflow", "node_annual_flow"):
-        stats = family_stats.get(name)
-        if stats is None:
-            continue
-        if stats.abs_max is not None and stats.abs_max > 0.0:
-            candidates.append(stats.abs_max)
-    if not candidates:
-        return None
-    return max(candidates)
-
-
-def recommend_user_bound_scale(
-    family_stats: dict[str, FamilyStats],
-    rough_obj: float,
-) -> int:
-    """Heuristic ``user_bound_scale`` based on input parameter ranges.
-
-    HiGHS' ``user_bound_scale`` option scales every column / row bound
-    by ``2**N`` *during LP loading* (so it composes with our
-    ``scale_the_objective``).  A negative ``N`` shrinks bounds toward 1,
-    which helps when a model has large physical capacities or annual
-    flows.
-
-    Heuristic:
-
-    * If ``rough_obj`` is enormous (≥ 1e+12) we expect the LP RHS to be
-      similarly large (energy balances aggregate inflows × duration).
-      Pick ``N`` so ``2**N × bound_proxy ≈ 1`` — i.e.
-      ``N = -round(log2(bound_proxy))`` — clamped to
-      ``[USER_BOUND_SCALE_MIN, 0]``.
-    * Otherwise return ``0`` (let HiGHS' own scaling handle it).
-
-    This is intentionally a *coarse* heuristic — proper bound-stat
-    analysis requires the built LP, which the polars engine path does
-    not currently expose.  When the input data underestimates LP
-    coefficient magnitudes (common with annual aggregations), HiGHS'
-    own warning will still suggest a more aggressive value.
-    """
-    if not math.isfinite(rough_obj) or rough_obj < 1e12:
-        return 0  # below trigger — leave HiGHS alone
-    bound_proxy = _max_input_bound_proxy(family_stats)
-    if bound_proxy is None:
-        return 0
-    try:
-        n = -int(round(math.log2(bound_proxy)))
-    except ValueError:
-        return 0
-    if n > USER_BOUND_SCALE_MAX:
-        n = USER_BOUND_SCALE_MAX
-    if n < USER_BOUND_SCALE_MIN:
-        n = USER_BOUND_SCALE_MIN
-    return n
-
-
-def recommend_user_bound_scale_from_lp(
-    lp_ranges: dict,
-) -> int:
-    """Like :func:`recommend_user_bound_scale`, but uses actual built-LP
-    ranges instead of input-data heuristics.
-
-    The dict comes from :meth:`polar_high.Problem.peek_lp_ranges`; it
-    has the form ``{'matrix': (lo, hi)|None, 'cost': ..., 'col_bound':
-    ..., 'row_bound': ...}``.  Algorithm (geometric-midpoint centering,
-    mirrors the Agent-18e policy in :func:`flextool.flextoolrunner.scaling.
-    decide_user_bound_scale`):
-
-    1. If the post-build *column* bound spread (``log10(abs_max) −
-       log10(abs_min)`` across finite, non-zero column bounds) is ≤ 6
-       decades, the LP bounds are already tight enough — return ``0``
-       and let HiGHS' own scaling handle it.
-
-    2. Otherwise pick ``N`` so the *geometric midpoint* of the column
-       bound range lands at ``2^N × geo_mid ≈ 1``, i.e.
-       ``N = -round(log2(sqrt(abs_max × abs_min)))``.  This centers the
-       column bound range around ``O(1)`` rather than collapsing its
-       upper end (the older anchored-to-max heuristic).
-
-    3. Clamp to ``[USER_BOUND_SCALE_MIN, 0]`` (= ``[-10, 0]``).
-
-    **IMPORTANT — column bounds only.**  HiGHS' ``user_bound_scale``
-    option multiplies BOTH column bounds AND the RHS (row bounds) by
-    ``2^N``, but the matrix coefficients are NOT scaled.  Because the
-    matrix is unchanged, scaling a Rivendell-shaped LP where column
-    bounds already sit at ``[1, 1]`` (slack indicators) by ``2^-10``
-    drives column bounds to ``~1e-3`` while the matrix still has
-    coefficients up to ``1e+3``; presolve then declares the model
-    infeasible because every constrained column variable, with upper
-    bound ``1e-3``, cannot carry the unscaled-magnitude flows the
-    constraints expect.  Pooling row bounds into the spread calculation
-    (an earlier mistake fixed by Rivendell bug 1+5+6) inflates the
-    spread on every realistic energy model — RHS values for annual
-    flows or cumulative resource limits routinely reach ``1e+6`` —
-    producing a spurious ``N=-10`` recommendation that breaks presolve.
-    The flextoolrunner counterpart (:func:`flextool.flextoolrunner.
-    scaling.decide_user_bound_scale`) is fed column bounds only via
-    :func:`compute_bound_stats(col_lower, col_upper)`; this function
-    matches that contract.
-
-    Agent 18e rationale (from python-preprocessing's
-    ``decide_user_bound_scale``): the anchored-to-max heuristic picks
-    ``N=-20`` on rivendell S19, which compresses bounds by 2^-20 ≈ 1e-6
-    × — small bounds fall below HiGHS' practical precision and the
-    crossover simplex can no longer represent them.  Capping at ``-10``
-    (compression ~1000×) is enough to tame HiGHS' coefficient-ratio
-    reporting without crushing the bottom end.
-
-    Returns an integer in
-    ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]``.  ``0`` means
-    "leave HiGHS' own scaling alone".
-    """
-    if not lp_ranges:
-        return 0
-    # Column bounds only — see "IMPORTANT" note in the docstring.  HiGHS
-    # scales col + row bounds by 2^N while leaving the matrix alone, so
-    # including row bounds in the spread inflates the recommendation on
-    # any model with large cumulative-resource or annual-flow RHS values
-    # and causes presolve-time infeasibility (Rivendell bug 1+5+6).
-    rng = lp_ranges.get("col_bound")
-    if rng is None:
-        return 0
-    try:
-        lo, hi = rng
-    except (TypeError, ValueError):
-        return 0
-    if not (math.isfinite(hi) and hi > 0.0):
-        return 0
-    abs_max = float(hi)
-    if math.isfinite(lo) and lo > 0.0:
-        abs_min = float(lo)
-    else:
-        abs_min = abs_max * BOUND_ABS_MIN_FLOOR_RATIO
-    try:
-        spread = math.log10(abs_max) - math.log10(abs_min)
-    except ValueError:
-        return 0
-    if spread <= BOUND_SPREAD_THRESHOLD:
-        return 0
-    # Geometric-midpoint centering.  Effectively-zero ``abs_min`` (e.g.
-    # 1e-300 from a slack with no lower cap) would collapse log2(geo_mid)
-    # to -inf; fall back to the 6-decade floor relative to abs_max.
-    if abs_min <= BOUND_ABS_MIN_EFFECTIVE_ZERO:
-        effective_min = abs_max * BOUND_ABS_MIN_FLOOR_RATIO
-    else:
-        effective_min = abs_min
-    try:
-        geo_mid = math.sqrt(abs_max * effective_min)
-        if geo_mid <= 0.0 or not math.isfinite(geo_mid):
-            return 0
-        n = -int(round(math.log2(geo_mid)))
-    except ValueError:
-        return 0
-    if n > USER_BOUND_SCALE_MAX:
-        n = USER_BOUND_SCALE_MAX
-    if n < USER_BOUND_SCALE_MIN:
-        n = USER_BOUND_SCALE_MIN
-    return n
-
 
 def recommended_highs_options(
     table: ScaleTable,
     *,
-    apply_user_bound_scale: bool = False,
     user_bound_scale_override: Optional[int] = None,
-    lp_ranges: dict | None = None,
 ) -> dict[str, object]:
     """Build the HiGHS solver-options dict from a :class:`ScaleTable`.
 
-    Currently sets:
+    Sets:
 
     * ``simplex_scale_strategy = SIMPLEX_SCALE_STRATEGY_ADVANCED`` —
       always.  HiGHS' default (1) is a basic equilibration; (2) adds
       Curtis–Reid which costs negligibly more but handles wide
       coefficient spreads much better.
-    * ``user_bound_scale`` — only when explicitly requested.
-      Resolution order:
-        1. If ``user_bound_scale_override`` is provided (typically the
-           value HiGHS itself recommends in its scaling warning), use it.
-        2. Otherwise, when ``apply_user_bound_scale`` is True, fall back
-           to :func:`recommend_user_bound_scale` (input-data heuristic).
-        3. Default: no ``user_bound_scale`` is emitted.  HiGHS's
-           own internal scaling handles the LP; user_bound_scale is a
-           per-LP numerical tweak that the heuristic frequently gets
-           wrong (on DES-class scenarios it clamps to -10 from the
-           input-data RHS spread, producing "excessively small bounds"
-           warnings).  Set ``--user-bound-scale N`` on the CLI when
-           HiGHS's "Consider setting the user_bound_scale option to
-           <N>" warning is worth acting on.
+    * ``user_bound_scale`` — only when an explicit override is supplied
+      (CLI ``--user-bound-scale N`` or DB ``solve.user_bound_scale``).
+      The col_bound-only geo-midpoint heuristic that used to fire here
+      from a post-build ``Problem.peek_lp_ranges()`` snapshot now lives
+      inside polar-high's ``Problem(auto_user_bound_scale=True)``
+      stream-time path (see
+      ``polar_high.engine._recommend_user_bound_scale``) — flextool no
+      longer needs to plumb LP ranges through this function.
+    * :data:`DETERMINISM_OPTIONS` — random_seed / parallel / solver /
+      presolve pins for byte-deterministic LP solutions.
 
-    Note: ``user_cost_scale`` is intentionally NOT set — we already
-    scale costs via ``scale_the_objective`` inside the LP build, and
-    layering two cost-scale shifts compounds confusingly without a
-    proven benefit.
+    ``user_cost_scale`` is intentionally NOT set — we already scale
+    costs via ``scale_the_objective`` inside the LP build, and layering
+    two cost-scale shifts compounds confusingly without a proven benefit.
 
     Parameters
     ----------
     table:
         Per-solve :class:`ScaleTable` from :func:`analyze_solve`.
-    apply_user_bound_scale:
-        Default ``False`` — skip the input-data heuristic.  Set
-        ``True`` only when a caller wants the legacy auto-pick (the
-        explicit override and CLI flag still win regardless).
+        Kept in the signature for symmetry / future per-solve knobs;
+        no field of the table is currently consulted.
     user_bound_scale_override:
         Explicit per-solve override, typically loaded from the DB
-        ``solve.user_bound_scale`` parameter.  HiGHS' scaling warning
+        ``solve.user_bound_scale`` parameter or the
+        ``FLEXTOOL_USER_BOUND_SCALE`` env var.  HiGHS' scaling warning
         prints a recommended value in the form ``"Consider setting the
         user_bound_scale option to <N>"`` — passing that ``N`` here is
         the most reliable way to silence the warning.  ``None`` (or 0)
-        defers to the heuristic.
-    lp_ranges:
-        Optional coefficient-range dict from
-        :meth:`polar_high.Problem.peek_lp_ranges`.  When supplied (and
-        no explicit override is set), use
-        :func:`recommend_user_bound_scale_from_lp` instead of the
-        input-data heuristic — the post-build ranges are what HiGHS
-        actually sees, so the recommendation matches HiGHS' own
-        "Consider setting the user_bound_scale option to <N>" advice.
+        emits no ``user_bound_scale``, deferring entirely to either
+        polar-high's stream-time auto-pick (when the Problem was built
+        with ``auto_user_bound_scale=True``) or HiGHS' own internal
+        scaling.
     """
     # Determinism pin — see DETERMINISM_OPTIONS below.
     options: dict[str, object] = {
@@ -822,7 +615,7 @@ def recommended_highs_options(
         **DETERMINISM_OPTIONS,
     }
     if user_bound_scale_override is not None and user_bound_scale_override != 0:
-        # Clamp to the same range the heuristic uses.  HiGHS itself
+        # Clamp to the same range polar-high's helper uses.  HiGHS itself
         # rejects values outside [-30, 30].  ``user_bound_scale`` is a
         # power of 2 (× 2^N), not a power of 10, so [-30, 30] covers
         # roughly 9 decades each way — plenty for any realistic LP.
@@ -832,14 +625,6 @@ def recommended_highs_options(
         if n < USER_BOUND_SCALE_MIN:
             n = USER_BOUND_SCALE_MIN
         options["user_bound_scale"] = n
-    elif lp_ranges is not None:
-        n = recommend_user_bound_scale_from_lp(lp_ranges)
-        if n != 0:
-            options["user_bound_scale"] = n
-    elif apply_user_bound_scale:
-        n = recommend_user_bound_scale(table.family_ranges, table.rough_obj_estimate)
-        if n != 0:
-            options["user_bound_scale"] = n
     return options
 
 

@@ -974,14 +974,15 @@ def _drive_cascade(
             # ``user_bound_scale`` resolution priority:
             # ``FLEXTOOL_USER_BOUND_SCALE`` env var (set by
             # ``--user-bound-scale`` CLI flag) > DB ``solve.user_bound_scale``
-            # > (default) leave unset and let HiGHS' internal scaling
-            # handle it.  The legacy input-data heuristic
-            # (``recommend_user_bound_scale``) is no longer the default
-            # because it clamps to -10 on energy-system scenarios with
-            # wide RHS spread, producing "excessively small bounds"
-            # warnings.  HiGHS' own scaling warning ("Consider setting
-            # the user_bound_scale option to <N>") prints the value to
-            # pass via ``--user-bound-scale``.
+            # > polar-high's stream-time auto-pick (the Problem is built
+            # with ``auto_user_bound_scale=True``) > HiGHS' own internal
+            # scaling.  The legacy input-data and post-build LP-range
+            # heuristics in ``flextool.engine_polars.scaling`` were
+            # deleted once the polar-high stream-time path covered
+            # every real construction site; HiGHS' "Consider setting
+            # the user_bound_scale option to <N>" warning still prints
+            # a value if any case slips through, pass it via
+            # ``--user-bound-scale``.
             _cli_ubs = os.environ.get("FLEXTOOL_USER_BOUND_SCALE")
             user_bound_scale_override = _scaling.resolve_user_bound_scale_override(
                 _cli_ubs if _cli_ubs is not None
@@ -1079,20 +1080,10 @@ def _drive_cascade(
                             user_label="LP problem built",
                         )
                     inner_pb = self._warm_problem.problem
-                    # peek_lp_ranges() materialises the full LP arrays in numpy
-                    # form a second time, costing ~30 GB on a 1-week SouthAfrica
-                    # run.  Its only consumer (recommend_user_bound_scale_from_lp)
-                    # inspects only col_bound and returns 0 for FlexTool LPs in
-                    # practice.  Skip by default; gate behind env var for diags.
-                    if os.environ.get("FLEXTOOL_PEEK_LP_RANGES") == "1":
-                        lp_ranges = inner_pb.peek_lp_ranges()
-                    else:
-                        lp_ranges = None
                     highs_options = _finalise_highs_options(
                         _scaling.recommended_highs_options(
                             scale_table,
                             user_bound_scale_override=user_bound_scale_override,
-                            lp_ranges=lp_ranges,
                         )
                     )
                     inner_pb.set_solver_options(highs_options)
@@ -1122,22 +1113,10 @@ def _drive_cascade(
                         "first_lp_build_end", self.state.logger,
                         user_label="LP problem built",
                     )
-                # peek_lp_ranges() materialises the full LP arrays in numpy
-                # form a second time (after the streaming solve already does
-                # it once), which costs ~30 GB on a 1-week SouthAfrica run.
-                # Its only consumer, recommend_user_bound_scale_from_lp,
-                # intentionally inspects only col_bound (see scaling.py
-                # docstring) and returns 0 for FlexTool LPs in practice.
-                # Skip by default; gate behind an env var for diagnostics.
-                if os.environ.get("FLEXTOOL_PEEK_LP_RANGES") == "1":
-                    lp_ranges = pb.peek_lp_ranges()
-                else:
-                    lp_ranges = None
                 highs_options = _finalise_highs_options(
                     _scaling.recommended_highs_options(
                         scale_table,
                         user_bound_scale_override=user_bound_scale_override,
-                        lp_ranges=lp_ranges,
                     )
                 )
                 pb.set_solver_options(highs_options)
@@ -1874,24 +1853,13 @@ def run_single_solve_from_db(
     print(f"Input: LP build: {_time.perf_counter() - _t0:.3f}s")
 
     # HiGHS solver options (always-on advanced row scaling + explicit
-    # ``user_bound_scale`` override OR LP-coefficient-range based
-    # recommendation from ``problem.peek_lp_ranges()`` — the actual
-    # arrays HiGHS will see — falling back to the input-data heuristic
-    # when LP introspection isn't available).
-    # peek_lp_ranges() materialises the full LP arrays in numpy form a
-    # second time (after the streaming solve already does it once), which
-    # costs ~30 GB on a 1-week SouthAfrica run.  Its only consumer,
-    # recommend_user_bound_scale_from_lp, intentionally inspects only
-    # col_bound (see scaling.py docstring) and returns 0 for FlexTool LPs
-    # in practice.  Skip by default; gate behind an env var for diagnostics.
-    if os.environ.get("FLEXTOOL_PEEK_LP_RANGES") == "1":
-        lp_ranges = problem.peek_lp_ranges()
-    else:
-        lp_ranges = None
+    # ``user_bound_scale`` override when present).  Stream-time
+    # col_bound-only auto-scaling lives inside polar-high's
+    # ``Problem(auto_user_bound_scale=True)`` — no flextool-side
+    # LP-range introspection needed.
     highs_options = _scaling.recommended_highs_options(
         scale_table,
         user_bound_scale_override=user_bound_scale_override,
-        lp_ranges=lp_ranges,
     )
     # ``FLEXTOOL_HIGHS_PRESOLVE`` env var (set by --presolve CLI flag)
     # overrides DETERMINISM_OPTIONS' baked-in ``presolve = "on"``.
