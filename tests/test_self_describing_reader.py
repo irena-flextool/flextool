@@ -1,5 +1,7 @@
 """Tests for the self-describing Excel reader using the user's example sheets."""
 
+import os
+
 import pytest
 import openpyxl
 
@@ -20,6 +22,12 @@ EXAMPLE_FILE = "projects/africa2/converted/example_input_template.xlsx"
 
 @pytest.fixture(scope="module")
 def workbook():
+    if not os.path.exists(EXAMPLE_FILE):
+        pytest.skip(
+            f"External example workbook {EXAMPLE_FILE!r} is not checked in; "
+            f"set the file at this path or convert to a committed synthetic "
+            f"fixture to exercise these tests."
+        )
     wb = openpyxl.load_workbook(EXAMPLE_FILE, data_only=True)
     yield wb
     wb.close()
