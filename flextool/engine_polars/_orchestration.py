@@ -847,6 +847,17 @@ def _drive_cascade(
             self._warm_problem: "WarmProblem | None" = None
             self._prior_data = None
             self._prior_fp: "tuple | None" = None
+            # Per-iter slim of the PRIOR step's parked Solution — see the
+            # block just before ``self._all_steps[step_key] = ...`` in
+            # :meth:`run`.  Tracks the step_key parked on the previous
+            # iter so we can null its heavy ``_vars`` + ``highs`` once the
+            # per-iter writers and ``build_handoff_from_flexpy`` have
+            # finished consuming it.  Bounds peak RSS during the cascade
+            # — without this, every iter's full ``Var.frame`` dataframe
+            # set stays parked until the post-loop slim at the bottom of
+            # :func:`_native_run_model`, which on multi-roll runs is too
+            # late (storage→dispatch OOMs).
+            self._prev_step_key: "str | None" = None
             # Per-base-solve gating for the scaling CSV + diagnostic report.
             # The CSV value (effective_obj_scale) is invariant across rolls
             # of the same base solve — and the TXT report is diagnostic
@@ -1350,6 +1361,40 @@ def _drive_cascade(
                 self.state.paths.work_folder, complete_solve_name,
                 provider=getattr(self.state, "current_provider", None),
             )
+            # Slim the PRIOR iter's parked Solution before parking this
+            # iter's.  The prior iter's per-iter writers
+            # (``write_outputs_for_solve``) and
+            # ``build_handoff_from_flexpy`` ran before its
+            # ``self._all_steps[...] = OrchestrationStep(...)`` deposit
+            # — so by the time we get here on iter N, the iter-(N-1)
+            # Solution's heavy ``_vars`` dict (one ``Var.frame``
+            # polars DataFrame per LP variable) and its ``highs`` C++
+            # instance are no longer needed.  Drop those; keep the
+            # cheap 1-D arrays (``col_value``, ``col_dual``,
+            # ``row_dual``), the small scalars (``optimal``, ``obj``,
+            # ``col_names``, ``row_names``) — leaves the door open for
+            # a future level-warm-start optimisation that seeds the
+            # next cold-built LP's initial col_value from the prior
+            # solution without paying the GB-scale frame cost.  The
+            # post-loop slim at the bottom of ``_native_run_model``
+            # still runs and nulls the whole ``step.solution`` on
+            # non-last steps; this block only bounds the in-cascade
+            # peak.  See
+            # ``/tmp/highs-memory-investigation/`` HiGHS attribution
+            # logs for the per-iter ~5.6 KB * ~400 vars * 80 iter =
+            # 172 MB climb this addresses.
+            if self._prev_step_key is not None:
+                _prev = self._all_steps.get(self._prev_step_key)
+                if _prev is not None and _prev.solution is not None:
+                    _prev_sol = _prev.solution
+                    try:
+                        _prev_sol._vars = {}
+                    except Exception:  # noqa: BLE001
+                        pass
+                    try:
+                        _prev_sol.highs = None
+                    except Exception:  # noqa: BLE001
+                        pass
             self._all_steps[step_key] = OrchestrationStep(
                 solve_name=step_key,
                 solution=sol,
@@ -1362,6 +1407,9 @@ def _drive_cascade(
                     self.state, "current_provider", None,
                 ),
             )
+            # Track the just-parked step_key so the next iter can slim
+            # THIS iter's Solution (see block above).
+            self._prev_step_key = step_key
             if _phase_timing:
                 _tr.record(
                     "per_iter",
