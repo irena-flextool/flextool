@@ -1033,7 +1033,15 @@ def _drive_cascade(
                             user_label="LP problem built",
                         )
                     inner_pb = self._warm_problem.problem
-                    lp_ranges = inner_pb.peek_lp_ranges()
+                    # peek_lp_ranges() materialises the full LP arrays in numpy
+                    # form a second time, costing ~30 GB on a 1-week SouthAfrica
+                    # run.  Its only consumer (recommend_user_bound_scale_from_lp)
+                    # inspects only col_bound and returns 0 for FlexTool LPs in
+                    # practice.  Skip by default; gate behind env var for diags.
+                    if os.environ.get("FLEXTOOL_PEEK_LP_RANGES") == "1":
+                        lp_ranges = inner_pb.peek_lp_ranges()
+                    else:
+                        lp_ranges = None
                     highs_options = _finalise_highs_options(
                         _scaling.recommended_highs_options(
                             scale_table,
@@ -1068,7 +1076,17 @@ def _drive_cascade(
                         "first_lp_build_end", self.state.logger,
                         user_label="LP problem built",
                     )
-                lp_ranges = pb.peek_lp_ranges()
+                # peek_lp_ranges() materialises the full LP arrays in numpy
+                # form a second time (after the streaming solve already does
+                # it once), which costs ~30 GB on a 1-week SouthAfrica run.
+                # Its only consumer, recommend_user_bound_scale_from_lp,
+                # intentionally inspects only col_bound (see scaling.py
+                # docstring) and returns 0 for FlexTool LPs in practice.
+                # Skip by default; gate behind an env var for diagnostics.
+                if os.environ.get("FLEXTOOL_PEEK_LP_RANGES") == "1":
+                    lp_ranges = pb.peek_lp_ranges()
+                else:
+                    lp_ranges = None
                 highs_options = _finalise_highs_options(
                     _scaling.recommended_highs_options(
                         scale_table,
@@ -1773,7 +1791,16 @@ def run_single_solve_from_db(
     # recommendation from ``problem.peek_lp_ranges()`` — the actual
     # arrays HiGHS will see — falling back to the input-data heuristic
     # when LP introspection isn't available).
-    lp_ranges = problem.peek_lp_ranges()
+    # peek_lp_ranges() materialises the full LP arrays in numpy form a
+    # second time (after the streaming solve already does it once), which
+    # costs ~30 GB on a 1-week SouthAfrica run.  Its only consumer,
+    # recommend_user_bound_scale_from_lp, intentionally inspects only
+    # col_bound (see scaling.py docstring) and returns 0 for FlexTool LPs
+    # in practice.  Skip by default; gate behind an env var for diagnostics.
+    if os.environ.get("FLEXTOOL_PEEK_LP_RANGES") == "1":
+        lp_ranges = problem.peek_lp_ranges()
+    else:
+        lp_ranges = None
     highs_options = _scaling.recommended_highs_options(
         scale_table,
         user_bound_scale_override=user_bound_scale_override,
