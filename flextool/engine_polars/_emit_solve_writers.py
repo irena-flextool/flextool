@@ -939,6 +939,7 @@ def _compute_rp_frames(
     Output basenames: ``rp_weights.csv``, ``rp_base_chain.csv``,
     ``rp_base_first.csv``, ``rp_base_last.csv``, ``rp_block_first.csv``,
     ``rp_block_last.csv``, ``rp_block_start_last.csv``,
+    ``rp_base_period_set.csv``, ``rp_rep_period_set.csv``,
     ``rp_cost_weight.csv``.
     """
     # RP block boundaries from the timeset_duration entries.
@@ -995,6 +996,20 @@ def _compute_rp_frames(
         [(s, lst) for s, lst in zip(rp_starts, rp_lasts)],
     )
 
+    # 5b. rp_base_period_set.csv / rp_rep_period_set.csv —
+    # ordered-unique projections of the rp_weights base/rep columns.
+    # Owned by _compute_rp_frames because emit_per_solve_sets runs
+    # BEFORE emit_rp_data in the cascade, so the per-solve emit can't
+    # see ``rp_weights`` yet.  Column header ``period`` matches the
+    # convention used by ``_emit_singles``-style set frames; the
+    # FlexData loader renames to its axis name on load.
+    out["rp_base_period_set.csv"] = _to_utf8_frame(
+        ("period",), [(b,) for b in base_starts],
+    )
+    out["rp_rep_period_set.csv"] = _to_utf8_frame(
+        ("period",), [(r,) for r in rp_starts],
+    )
+
     # 6. rp_cost_weight.csv — normalised per-timestep weight.
     w_r: dict[str, float] = {r: 0.0 for r in rp_starts}
     for base_weights in rp_weights.values():
@@ -1042,6 +1057,8 @@ _RP_BASENAME_TO_PROVIDER_KEY: dict[str, str] = {
     "rp_block_first.csv": K.SOLVE_DATA_RP_BLOCK_FIRST,
     "rp_block_last.csv": K.SOLVE_DATA_RP_BLOCK_LAST,
     "rp_block_start_last.csv": K.SOLVE_DATA_RP_BLOCK_START_LAST,
+    "rp_base_period_set.csv": K.SOLVE_DATA_RP_BASE_PERIOD_SET,
+    "rp_rep_period_set.csv": K.SOLVE_DATA_RP_REP_PERIOD_SET,
     "rp_cost_weight.csv": "solve_data/rp_cost_weight",
 }
 
@@ -1128,6 +1145,8 @@ _EMPTY_RP_HEADERS: dict[str, tuple[str, ...]] = {
     "rp_block_first.csv": ("period", "step"),
     "rp_block_last.csv": ("period", "step"),
     "rp_block_start_last.csv": ("rep_start", "last_step"),
+    "rp_base_period_set.csv": ("period",),
+    "rp_rep_period_set.csv": ("period",),
     "rp_cost_weight.csv": ("period", "time", "weight"),
 }
 

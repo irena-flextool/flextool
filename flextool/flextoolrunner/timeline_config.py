@@ -117,10 +117,21 @@ class TimelineConfig:
                         }
                 rp_weights[timeset_name] = weight_dict
             elif isinstance(nested_map, list):
-                # params_to_dict may return list of tuples for nested maps
-                weight_dict = {}
+                # ``params_to_dict`` returns one of two list shapes when the
+                # nested Map is converted to a table:
+                #   (a) Flat triples [base, rep, weight] — when the full
+                #       Map-of-Map is flattened.
+                #   (b) [(base, inner_map_or_list), ...] — when only the
+                #       outer Map is flattened.
+                # Both decode to {base: {rep: weight}}.
+                weight_dict: dict[str, dict[str, float]] = {}
                 for entry in nested_map:
-                    if len(entry) >= 2:
+                    if len(entry) >= 3 and not isinstance(entry[1], (list, api.Map)):
+                        base_key = str(entry[0])
+                        rep_key = str(entry[1])
+                        weight = float(entry[2])
+                        weight_dict.setdefault(base_key, {})[rep_key] = weight
+                    elif len(entry) >= 2:
                         base_key = str(entry[0])
                         inner_data = entry[1]
                         if isinstance(inner_data, list):

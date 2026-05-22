@@ -924,10 +924,23 @@ def _decode_rp_weights(rp_weights_raw: dict) -> dict:
                     }
             rp_weights[timeset_name] = weight_dict
         elif isinstance(nested_map, list):
-            # ``convert_map_to_table`` shape: [(base, inner_data), ...]
-            weight_dict = {}
+            # Two list-of-entry shapes coming from ``params_to_dict``:
+            #   (a) Flat triples [base, rep, weight] — what
+            #       ``convert_map_to_table`` produces when a 2-level Map
+            #       is flattened.
+            #   (b) Nested [(base, inner_map_or_list), ...] — emitted when
+            #       only the outer Map is flattened.
+            # Both decode to {base: {rep: weight}}.
+            weight_dict: dict[str, dict[str, float]] = {}
             for entry in nested_map:
-                if len(entry) >= 2:
+                if len(entry) >= 3 and not isinstance(entry[1], (list, api.Map)):
+                    # (a) flat triple
+                    base_key = str(entry[0])
+                    rep_key = str(entry[1])
+                    weight = float(entry[2])
+                    weight_dict.setdefault(base_key, {})[rep_key] = weight
+                elif len(entry) >= 2:
+                    # (b) [base, inner]
                     base_key = str(entry[0])
                     inner_data = entry[1]
                     if isinstance(inner_data, list):

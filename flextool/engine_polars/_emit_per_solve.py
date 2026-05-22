@@ -164,12 +164,13 @@ def emit_per_solve_sets(solve_data_dir: Path, *, provider) -> None:
     _emit_singles(provider, "solve_data/complete_time_in_use_set.csv", "time",
                   _project_column(df, 1))
 
-    df = _read_csv(solve_data_dir / "rp_weights.csv",
-                   ["base", "rep", "weight"], provider=provider)
-    _emit_singles(provider, K.SOLVE_DATA_RP_BASE_PERIOD_SET, "period",
-                  _project_column(df, 0))
-    _emit_singles(provider, "solve_data/rp_rep_period_set.csv", "period",
-                  _project_column(df, 1))
+    # rp_base_period_set / rp_rep_period_set used to be derived here from
+    # rp_weights.csv, but emit_per_solve_sets runs BEFORE emit_rp_data in
+    # the cascade — the Provider doesn't yet hold ``rp_weights`` at this
+    # point, so the derivation always wrote empty frames.  Both sets are
+    # now emitted by ``_emit_solve_writers._compute_rp_frames`` (which
+    # owns the rp_weights data) so they land populated for the RP path
+    # and empty under ``emit_empty_rp_data`` for the non-RP path.
 
     df = _read_csv(solve_data_dir / "period_block_time.csv",
                    ["period", "block_first", "step"], provider=provider)
@@ -452,7 +453,6 @@ def emit_per_solve_sets(solve_data_dir: Path, *, provider) -> None:
     # ``node`` column is consumed; the translator seeds these keys at
     # iteration start, replacing the legacy ``solve_data/fix_storage_*``
     # Provider read path ahead of the wide-field deletion in 4.1k.
-    from flextool.engine_polars import _provider_keys as K
     from flextool.engine_polars._provider_translators import read_handoff_frame
     for handoff_key, dst in (
         (K.HANDOFF_FIX_STORAGE_QUANTITY, "n_fix_storage_quantity_set.csv"),
