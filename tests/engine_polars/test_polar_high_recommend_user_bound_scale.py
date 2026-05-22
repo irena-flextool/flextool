@@ -1,89 +1,100 @@
 """Unit tests for ``polar_high.engine._recommend_user_bound_scale``.
 
-Regression coverage for the Rivendell S17_horizon2035_slice failure where
-the polars port's anchored-to-max heuristic picked ``N=-19`` on a
-Rivendell-shaped LP (``abs_min=1.0``, ``abs_max≈6e5``), crushing all
-bounds to ~2e-6 and causing HiGHS' presolve to declare the user-scaled
-model infeasible.
+The helper is now a direct port of HiGHS' own ``suggestScaling`` lambda
+at ``HighsSolve.cpp:570-607`` — it pulls ``max(bound_max, rhs_max)`` into
+HiGHS' ``[kExcessivelySmallBoundValue, kExcessivelyLargeBoundValue]`` =
+``[1e-4, 1e+6]`` comfort zone using outer-rounded log2, and reproduces
+the integer that HiGHS prints in its ``"Consider setting the
+user_bound_scale option to <N>"`` recommendation byte-for-byte.
 
-The fix ports the geometric-midpoint policy + 6-decade spread threshold
-from ``flextool.flextoolrunner.scaling.decide_user_bound_scale``
-(Agent 18e), and Rivendell bug 1+5+6 restricted the heuristic to
-*column bounds only* (matching the flextoolrunner contract which is fed
-col_lower/col_upper via ``compute_bound_stats``).  HiGHS scales col + row
-bounds by ``2^N`` but leaves the constraint matrix alone; including row
-bounds in the spread inflates the recommendation on every realistic
-energy model — cumulative-resource and annual-flow RHS values routinely
-reach 1e+6 while column bounds are typically O(1) — and the resulting
-``N=-10`` recommendation broke HiGHS presolve on Rivendell B0/S17/S22.
-
-These tests pin the col_bound-only contract on the polar-high helper
-(``flextool.engine_polars.scaling.recommend_user_bound_scale_from_lp``
-is being deleted in the same change; its behaviour has been ported
-into the polar-high helper since polar-high d8cb34d).
+These tests pin the two key empirical cases (DES and Rivendell pre-fix)
+plus the surrounding behaviour: comfort-zone short-circuit, empty
+ranges, ``min`` is deliberately ignored, scale-up direction is
+supported, and the result stays inside the clamp.
 """
 from __future__ import annotations
-
-import math
 
 from polar_high.engine import _recommend_user_bound_scale
 
 
-# polar-high's clamp range — baked into the helper, mirrored here for
-# readability.  See ``polar_high.engine._recommend_user_bound_scale``.
-USER_BOUND_SCALE_MIN = -10
-USER_BOUND_SCALE_MAX = 0
+# polar-high's defensive clamp range — see
+# ``polar_high.engine._USER_BOUND_SCALE_CLAMP_LO/HI``.
+USER_BOUND_SCALE_CLAMP_LO = -30
+USER_BOUND_SCALE_CLAMP_HI = 30
 
 
-def test_rivendell_shape_below_spread_threshold_returns_zero():
-    """Rivendell B0/S17/S22: col_bound=(1.0, 1.0).
+def test_des_shape_reproduces_highs_printed_recommendation():
+    """DES: ``bound=(1, 1)``, ``rhs=(2e-5, 4e+7)``.
 
-    Pre-fix, recommend_user_bound_scale_from_lp pooled row + col bounds
-    and picked N=-10 on this LP because row_bound reached ~3.3e6;
-    column bounds were (1.0, 1.0) — 0 decades — so the col-only helper
-    must return 0 regardless of how wide the row bounds are.
+    ``max=4e+7`` > ``1e+6`` -> ratio=1e+6/4e+7=0.025, log2=-5.32,
+    floor=-6.  HiGHS prints exactly this recommendation on the DES
+    scenario.
     """
-    assert _recommend_user_bound_scale(1.0, 1.0) == 0
+    assert _recommend_user_bound_scale((1.0, 1.0), (2e-5, 4e+7)) == -6
 
 
-def test_wide_col_spread_returns_negative_n_clamped():
-    """Column-bound spread > 6 decades: the recommender picks N centered
-    on the geometric midpoint of the col-bound range, clamped to [-10, 0].
+def test_rivendell_prefix_shape_returns_minus_two():
+    """Rivendell pre-fix LP: ``bound=(1, 1)``, ``rhs=(0.82, 3.07e+6)``.
+
+    ``max=3.07e+6`` > ``1e+6`` -> ratio=1e+6/3.07e+6=0.326,
+    log2=-1.617, floor=-2.  The historical ``N=-10`` came from a
+    different (broken) heuristic — HiGHS' own formula was always
+    conservative enough to keep Rivendell solving on this LP.
     """
-    n = _recommend_user_bound_scale(1e-3, 1e7)
-    # geo_mid = sqrt(1e7 * 1e-3) = sqrt(1e4) = 100,
-    # N = -round(log2(100)) ≈ -7, well within [-10, 0].
-    assert USER_BOUND_SCALE_MIN <= n <= USER_BOUND_SCALE_MAX
-    assert n < 0  # non-trivial
-    # Verify the small bound survives: 1e-3 * 2^n >= a reasonable floor.
-    assert 1e-3 * (2 ** n) >= 1e-6
+    assert _recommend_user_bound_scale((1.0, 1.0), (0.82, 3.07e+6)) == -2
 
 
-def test_inf_sentinels_return_zero():
-    """The stream-time accumulator initialises ``col_bound`` to
-    ``(inf, -inf)``; if a Param batch sets it but nothing later updates
-    it (e.g. an LP with no finite column bounds at all), the helper may
-    see ``(math.inf, math.inf)``.  Returning 0 there means "leave HiGHS'
-    own scaling alone", which is the correct default when there's no
-    information to act on.
+def test_in_comfort_zone_returns_zero():
+    """``max(bound, rhs)`` already in ``[1e-4, 1e+6]`` -> 0."""
+    assert _recommend_user_bound_scale((1.0, 1.0), (1.0, 100.0)) == 0
+
+
+def test_both_ranges_none_returns_zero():
+    """No finite entries on either side -> 0 (HiGHS' default)."""
+    assert _recommend_user_bound_scale(None, None) == 0
+
+
+def test_only_min_below_threshold_does_not_trigger_scaling():
+    """HiGHS' formula deliberately ignores ``min``.
+
+    With ``rhs=(1e-10, 1.0)`` the max is 1.0 — well inside the comfort
+    zone — so the recommendation is 0 even though the min is far below
+    ``1e-4``.  This documents the known behaviour: a small min on an
+    otherwise in-zone model never triggers ``user_bound_scale``
+    (matrix scaling, not bound scaling, is the right tool for that).
     """
-    assert _recommend_user_bound_scale(math.inf, math.inf) == 0
-    assert _recommend_user_bound_scale(-math.inf, math.inf) == 0
+    assert _recommend_user_bound_scale((1.0, 1.0), (1e-10, 1.0)) == 0
+
+
+def test_max_below_small_threshold_scales_up():
+    """``max=1e-8`` < ``1e-4`` -> ratio=1e+4, log2=13.29, ceil=14."""
+    assert _recommend_user_bound_scale(None, (1e-8, 1e-8)) == 14
+
+
+def test_bound_range_alone_drives_recommendation():
+    """If only ``bound`` is supplied and it's outside the zone, scale."""
+    # bound_max=1e+8 > 1e+6 -> ratio=0.01, log2=-6.64, floor=-7.
+    assert _recommend_user_bound_scale((1.0, 1e+8), None) == -7
+
+
+def test_current_user_bound_scale_is_added():
+    """The recommendation is delta-on-top of an existing scale."""
+    # Same DES inputs, but caller already has user_bound_scale=2.
+    # Delta is -6, so result is -4.
+    assert _recommend_user_bound_scale(
+        (1.0, 1.0), (2e-5, 4e+7), current_user_bound_scale=2
+    ) == -4
 
 
 def test_returned_n_is_always_in_clamp():
-    """For a sweep of col-bound ranges, the result is always in clamp.
-
-    Catches pathological values like ``(1e-300, 1e15)`` where naive
-    ``log2(sqrt(abs_max * abs_min))`` could collapse to inf / nan.
-    """
-    for max_b in (1e2, 1e6, 1e10, 1e15):
-        for min_b in (1e-15, 1e-6, 1e-3, 1.0):
-            if min_b > max_b:
+    """Sweep of bound/rhs ranges: result stays inside the clamp."""
+    for max_v in (1e-30, 1e-10, 1e-4, 1.0, 1e+6, 1e+15, 1e+30):
+        for min_v in (1e-30, 1e-15, 1.0):
+            if min_v > max_v:
                 continue
-            n = _recommend_user_bound_scale(min_b, max_b)
-            assert USER_BOUND_SCALE_MIN <= n <= USER_BOUND_SCALE_MAX, (
-                f"col_bound=({min_b!r}, {max_b!r}) returned N={n}, "
-                f"outside the clamp [{USER_BOUND_SCALE_MIN}, "
-                f"{USER_BOUND_SCALE_MAX}]"
+            n = _recommend_user_bound_scale(None, (min_v, max_v))
+            assert USER_BOUND_SCALE_CLAMP_LO <= n <= USER_BOUND_SCALE_CLAMP_HI, (
+                f"rhs=({min_v!r}, {max_v!r}) returned N={n}, "
+                f"outside the clamp "
+                f"[{USER_BOUND_SCALE_CLAMP_LO}, {USER_BOUND_SCALE_CLAMP_HI}]"
             )
