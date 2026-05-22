@@ -418,7 +418,10 @@ def _load_realized_set(
             seeded[time_col].cast(str).to_list(),
         ))
     if not path.exists():
-        _logger.warning("realized_dispatch file missing, writing all timesteps: %s", path)
+        # Expected fallback path on every solve where the previous
+        # iteration didn't realise any timesteps yet -- write all.
+        # Not a warning; just informational.
+        _logger.debug("realized_dispatch file missing, writing all timesteps: %s", path)
         return None
     realized = pd.read_csv(path)
     period_col = "period"
@@ -480,7 +483,7 @@ def _load_realized_periods(
     if seeded is not None:
         return set(seeded["period"].cast(str).to_list())
     if not path.exists():
-        _logger.warning("realized periods file missing, writing all periods: %s", path)
+        _logger.debug("realized periods file missing, writing all periods: %s", path)
         return None
     realized = pd.read_csv(path)
     return set(realized["period"].astype(str).to_list())

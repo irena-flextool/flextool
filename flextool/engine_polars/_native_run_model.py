@@ -324,6 +324,13 @@ def native_run_model(state, solver) -> int:
     for i, solve in enumerate(all_solves):
         timer_in_solve = time.perf_counter()
 
+        # Blank line between sub-solves so each solve's progress block
+        # visually separates from the previous one's writer/handoff
+        # output.  Skipped on the first iteration (the header block +
+        # the "Read inputs" line already provide separation).
+        if i > 0:
+            print("", flush=True)
+
         # Per-sub-solve memory checkpoint — first whitelisted phase label
         # for each iteration of the cascade.  Includes the
         # ``complete_solve_name`` (e.g. ``invest_5weeks_p2020``) in a

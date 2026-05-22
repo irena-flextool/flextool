@@ -409,6 +409,20 @@ def main():
         ),
         handlers=[logging.StreamHandler(sys.stdout)]
     )
+    if not DEBUG:
+        # Silence routine "wrote …" / "Wrote N output variables" INFO
+        # chatter from the per-solve output + handoff writers in regular
+        # mode.  These fire on every sub-solve and tell the user
+        # nothing they can't infer from "Solver" + the parquet
+        # contents.  WARNINGs (failed writes, missing files, etc.)
+        # still surface because we only raise the writer-module
+        # thresholds to WARNING.  --debug restores the full chatter.
+        for _noisy in (
+            "flextool.process_outputs.handoff_writers",
+            "flextool.process_outputs.read_highs_solution",
+            "flextool.engine_polars.handoff_writers",
+        ):
+            logging.getLogger(_noisy).setLevel(logging.WARNING)
 
     # Self-heal missing lightweight settings DBs so fresh clones don't
     # fail opaquely when the user forgot to run `flextool-update`. Only
