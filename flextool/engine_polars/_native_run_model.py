@@ -348,6 +348,24 @@ def native_run_model(state, solver) -> int:
             solve, complete_solve[solve], _level_key,
         )
 
+        # Per-level boundary (Design A, step A3): when the level_key
+        # changes from the previous iter, drop any warm-LP carry-over
+        # on the cascade solver so we don't accidentally reuse
+        # structures keyed on the prior level's matrix shape.  The
+        # warm-LP fingerprint check inside ``_FlexpyCascadeSolver.run``
+        # will ALSO null these on shape change (a level transition
+        # always changes the FlexData shape in practice), but doing
+        # it explicitly at the level boundary makes the intent
+        # explicit and gives subprocess-per-chain work a clean
+        # lifecycle hook.
+        _last_level_key = getattr(state, "_last_level_key_seen", None)
+        if _last_level_key is not None and _last_level_key != _level_key:
+            if hasattr(solver, "_warm_problem"):
+                solver._warm_problem = None
+            if hasattr(solver, "_prior_data"):
+                solver._prior_data = None
+        state._last_level_key_seen = _level_key
+
         if cs not in cached_complete_active_time_lists:
             cached_complete_active_time_lists[cs] = get_active_time(
                 cs,
