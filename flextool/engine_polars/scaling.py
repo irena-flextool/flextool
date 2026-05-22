@@ -760,7 +760,7 @@ def recommend_user_bound_scale_from_lp(
 def recommended_highs_options(
     table: ScaleTable,
     *,
-    apply_user_bound_scale: bool = True,
+    apply_user_bound_scale: bool = False,
     user_bound_scale_override: Optional[int] = None,
     lp_ranges: dict | None = None,
 ) -> dict[str, object]:
@@ -772,12 +772,20 @@ def recommended_highs_options(
       always.  HiGHS' default (1) is a basic equilibration; (2) adds
       Curtis–Reid which costs negligibly more but handles wide
       coefficient spreads much better.
-    * ``user_bound_scale`` — when set.  Resolution order:
+    * ``user_bound_scale`` — only when explicitly requested.
+      Resolution order:
         1. If ``user_bound_scale_override`` is provided (typically the
            value HiGHS itself recommends in its scaling warning), use it.
         2. Otherwise, when ``apply_user_bound_scale`` is True, fall back
            to :func:`recommend_user_bound_scale` (input-data heuristic).
-        3. ``0`` is omitted from the returned dict (HiGHS no-op).
+        3. Default: no ``user_bound_scale`` is emitted.  HiGHS's
+           own internal scaling handles the LP; user_bound_scale is a
+           per-LP numerical tweak that the heuristic frequently gets
+           wrong (on DES-class scenarios it clamps to -10 from the
+           input-data RHS spread, producing "excessively small bounds"
+           warnings).  Set ``--user-bound-scale N`` on the CLI when
+           HiGHS's "Consider setting the user_bound_scale option to
+           <N>" warning is worth acting on.
 
     Note: ``user_cost_scale`` is intentionally NOT set — we already
     scale costs via ``scale_the_objective`` inside the LP build, and
@@ -789,8 +797,9 @@ def recommended_highs_options(
     table:
         Per-solve :class:`ScaleTable` from :func:`analyze_solve`.
     apply_user_bound_scale:
-        When False, skip the heuristic entirely (the explicit override
-        still wins if provided).
+        Default ``False`` — skip the input-data heuristic.  Set
+        ``True`` only when a caller wants the legacy auto-pick (the
+        explicit override and CLI flag still win regardless).
     user_bound_scale_override:
         Explicit per-solve override, typically loaded from the DB
         ``solve.user_bound_scale`` parameter.  HiGHS' scaling warning

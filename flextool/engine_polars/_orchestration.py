@@ -956,22 +956,25 @@ def _drive_cascade(
             # ``user_bound_scale`` resolution priority:
             # ``FLEXTOOL_USER_BOUND_SCALE`` env var (set by
             # ``--user-bound-scale`` CLI flag) > DB ``solve.user_bound_scale``
-            # > input-data heuristic in ``recommended_highs_options``.
-            # HiGHS's scaling warning ("Consider setting the
-            # user_bound_scale option to <N>") prints the value to pass.
+            # > (default) leave unset and let HiGHS' internal scaling
+            # handle it.  The legacy input-data heuristic
+            # (``recommend_user_bound_scale``) is no longer the default
+            # because it clamps to -10 on energy-system scenarios with
+            # wide RHS spread, producing "excessively small bounds"
+            # warnings.  HiGHS' own scaling warning ("Consider setting
+            # the user_bound_scale option to <N>") prints the value to
+            # pass via ``--user-bound-scale``.
             _cli_ubs = os.environ.get("FLEXTOOL_USER_BOUND_SCALE")
             user_bound_scale_override = _scaling.resolve_user_bound_scale_override(
                 _cli_ubs if _cli_ubs is not None
                 else state.solve.user_bound_scale.get(complete_solve_name)
             )
 
-            # HiGHS solver options are picked AFTER the LP is built so we
-            # can read the actual coefficient ranges off the assembled
-            # numpy arrays (via ``Problem.peek_lp_ranges``) instead of
-            # guessing from input-data ranges.  ``simplex_scale_strategy``
-            # = advanced (Curtis-Reid) is always-on; ``user_bound_scale``
-            # comes from the explicit DB override → LP-range
-            # recommendation → input-data heuristic (in priority order).
+            # HiGHS solver options.  ``simplex_scale_strategy`` =
+            # advanced (Curtis-Reid) is always-on; ``user_bound_scale``
+            # is only emitted when explicitly requested via
+            # ``--user-bound-scale`` CLI / DB override (see priority
+            # block above).  Default: HiGHS does its own scaling.
             # Cap solve time via env var if the operator requested it.
             _diag_tlim = os.environ.get("FLEXTOOL_HIGHS_TIME_LIMIT")
             # Allow operator to override HiGHS ``presolve`` via
