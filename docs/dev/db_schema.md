@@ -18,7 +18,7 @@ overall data flow, see [`architecture.md`](architecture.md).
 The canonical, fully-populated snapshot is:
 
 ```
-version/flextool_template_master.json
+schemas/spinedb_schema.json
 ```
 
 It lists every entity class, parameter definition, default value, value
@@ -79,7 +79,7 @@ Re-running on an already-current DB is safe — every step is a no-op.
 
 `flextool/update_flextool/initialize_database.py` creates a fresh empty
 database from a JSON template (defaults to
-`version/flextool_template_master.json`). Used by:
+`schemas/spinedb_schema.json`). Used by:
 
 - the GUI's *Add empty input DB* action,
 - `update_flextool` when `input_data.sqlite` is missing,
@@ -105,7 +105,7 @@ A typical workflow when introducing a new parameter or entity class:
 
 1. Pick the next free version number `N` (one above the current
    `FLEXTOOL_DB_VERSION`).
-2. Either add a small `version/flextool_template_v<N>.json` snapshot
+2. Either add a small `schemas/pre_v26/flextool_template_v<N>.json` snapshot
    that imports cleanly via `spinedb_api.import_data`, or write a
    hand-coded `add_parameters_manual` / `remove_parameters_manual` /
    `add_value_list_manual` / `add_relationships_manual` step. Recent
@@ -114,7 +114,7 @@ A typical workflow when introducing a new parameter or entity class:
    chain in `migrate_database`.
 4. Bump `FLEXTOOL_DB_VERSION` in
    `flextool/update_flextool/__init__.py`.
-5. Mirror the change into `flextool_template_master.json` so freshly
+5. Mirror the change into `schemas/spinedb_schema.json` so freshly
    initialised DBs land at the new schema directly. The
    `sync_master_json_template.py` helper (CI runs it with `--verify`)
    checks that master is consistent with the migration chain.

@@ -246,7 +246,7 @@ def create_flextool_db_from_matpower(
         Name for the alternative (default ``base``).
     template_json : str or None
         Path to the FlexTool template JSON. If None, uses the default
-        ``version/flextool_template_master.json`` relative to the project root.
+        ``schemas/spinedb_schema.json`` relative to the project root.
 
     Returns
     -------
@@ -255,7 +255,7 @@ def create_flextool_db_from_matpower(
     """
     if template_json is None:
         from flextool._resources import package_data_path
-        template_json = str(package_data_path("version/flextool_template_master.json"))
+        template_json = str(package_data_path("schemas/spinedb_schema.json"))
 
     # Step 1: Initialize from template and migrate to latest schema
     initialize_database(template_json, db_path)

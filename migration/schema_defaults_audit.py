@@ -1,7 +1,7 @@
 """Audit defaults declared in the FlexTool DB schema vs. the .mod file.
 
 Phase 1 of the migration moves all ``default X`` clauses from
-``flextool.mod`` to the DB schema (``flextool_template_master.json``).
+``flextool.mod`` to the DB schema (``schemas/spinedb_schema.json``).
 This script catalogs:
 
 - Every ``parameter_definition`` in the master template, with its current
@@ -38,7 +38,7 @@ input_writer code path.
 
 CLI:
     python -m migration.schema_defaults_audit
-        [--template version/flextool_template_master.json]
+        [--template schemas/spinedb_schema.json]
         [--mod flextool/flextool.mod]
         [--out migration/schema_defaults.csv]
 """
@@ -156,7 +156,7 @@ def mod_default_rows(mod_path: Path) -> list[dict]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--template", type=Path,
-                        default=Path("version/flextool_template_master.json"))
+                        default=Path("flextool/schemas/spinedb_schema.json"))
     parser.add_argument("--mod", type=Path,
                         default=Path("flextool/flextool.mod"))
     parser.add_argument("--out", type=Path,

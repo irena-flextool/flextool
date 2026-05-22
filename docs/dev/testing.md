@@ -109,7 +109,7 @@ CSVs into `tests/expected/coal/`, and lets you commit the diff.
 A separate workflow `.github/workflows/tests.yml` runs the full
 `pytest tests/` matrix on Linux + Windows + macOS for the canonical
 3.12 Python, plus a `sync_master_json_template --verify` step that
-asserts `flextool_template_master.json` matches the migration chain
+asserts `schemas/spinedb_schema.json` matches the migration chain
 (see [`db_schema.md`](db_schema.md)).
 
 ## Determinism guards

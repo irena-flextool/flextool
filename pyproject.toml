@@ -111,17 +111,22 @@ exclude = ["flextool*.__pycache__"]
 [tool.setuptools.package-data]
 # Static data files bundled with the wheel and accessed at runtime via
 # ``flextool._resources.package_data_path``:
-#   * version/*.json         — schema templates and migration sources
-#   * textual_templates/...  — YAML configs and canonical-DB JSON sources
-#   * bin/highs.opt.template — HiGHS options template (seeded into bin/highs.opt
-#                              on first run)
-#   * export_to_tabular/*.yaml — export settings (sheet config etc.)
+#   * schemas/*.json                    — schema templates (spinedb_schema.json, axis
+#                                         contract, output/comparison-settings seeds)
+#   * schemas/*.md                      — schema docs (AXIS_CONTRACT.md)
+#   * schemas/*.yaml, schemas/*.txt     — YAML configs (default plots/colors) + flextool_location.txt
+#   * schemas/canonical_databases/*.json — canonical example/template DB sources
+#   * schemas/pre_v26/*.json            — pre-v26 migration-step template snapshots
+#   * bin/highs.opt.template            — HiGHS options template (seeded into bin/highs.opt
+#                                         on first run)
+#   * export_to_tabular/*.yaml          — export settings (sheet config etc.)
 flextool = [
-    "version/*.json",
-    "version/*.md",
-    "textual_templates/*.yaml",
-    "textual_templates/*.txt",
-    "textual_templates/canonical_databases/*.json",
+    "schemas/*.json",
+    "schemas/*.md",
+    "schemas/*.yaml",
+    "schemas/*.txt",
+    "schemas/canonical_databases/*.json",
+    "schemas/pre_v26/*.json",
     "bin/highs.opt.template",
     "export_to_tabular/*.yaml",
 ]

@@ -572,7 +572,7 @@ class AddDialog(tk.Toplevel):
             return
 
         json_template = (
-            package_data_path("version/flextool_template_master.json")
+            package_data_path("schemas/spinedb_schema.json")
         )
         if not json_template.exists():
             messagebox.showerror(
@@ -661,7 +661,7 @@ class AddDialog(tk.Toplevel):
             return
 
         json_template = (
-            package_data_path("version/flextool_template_master.json")
+            package_data_path("schemas/spinedb_schema.json")
         )
         if not json_template.exists():
             messagebox.showerror(
@@ -752,7 +752,7 @@ class AddDialog(tk.Toplevel):
                 return
 
         json_template = (
-            package_data_path("version/flextool_template_master.json")
+            package_data_path("schemas/spinedb_schema.json")
         )
         if not json_template.exists():
             messagebox.showerror(

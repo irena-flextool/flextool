@@ -82,11 +82,11 @@ _AXIS_SYNONYMS: dict[str, str] = {
     # Mixed-vocab columns (per axis contract).  source/sink columns
     # carry a union of node + process names and must be cast against
     # the 'e' (entity) union axis, not against a same-named single-class
-    # axis.  See version/flextool_axis_contract.json mixed_vocab_columns.
+    # axis.  See schemas/flextool_axis_contract.json mixed_vocab_columns.
     "source": "e",
     "sink": "e",
     # Renamed-axis short forms surfaced during Phase 1's column-letter
-    # de-collision work (see version/flextool_axis_contract.json
+    # de-collision work (see schemas/flextool_axis_contract.json
     # _review_notes.c_collision / b_collision).
     "cn": "constraint",
     "bk": "block",

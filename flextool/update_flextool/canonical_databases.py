@@ -1,7 +1,7 @@
 """Canonical FlexTool databases stored as JSON in the package.
 
 Each entry in :data:`CANONICAL_DATABASES` pairs a JSON resource — the
-source of truth, shipped inside ``flextool/textual_templates/canonical_databases/``
+source of truth, shipped inside ``flextool/schemas/canonical_databases/``
 in the wheel — with the on-disk ``.sqlite`` path it materialises into
 relative to the user's current working directory.
 
@@ -37,7 +37,7 @@ from flextool.update_flextool.initialize_database import initialize_database
 
 
 # ``json_name`` is resolved against the bundled
-# ``flextool/textual_templates/canonical_databases/`` directory via
+# ``flextool/schemas/canonical_databases/`` directory via
 # ``importlib.resources``.  ``sqlite_path`` is interpreted relative to
 # the user's current working directory — Spine Toolbox project files and
 # scenario references still see the same layout they always have.
@@ -62,7 +62,7 @@ CANONICAL_DATABASES: tuple[CanonicalDatabase, ...] = (
 
 
 def _json_source(db: CanonicalDatabase) -> Path:
-    return package_data_path(f"textual_templates/canonical_databases/{db.json_name}")
+    return package_data_path(f"schemas/canonical_databases/{db.json_name}")
 
 
 def materialize(overwrite: bool = False) -> None:

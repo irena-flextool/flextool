@@ -24,7 +24,7 @@ def initialize_database(json_template, database_name="new_database.sqlite"):
                 pass
         # ``keep_serialized_unparse`` handles both author styles:
         #   * raw scalars (``"no_method"``, ``None``, ``5``) used by the
-        #     hand-maintained ``version/flextool_template_master.json`` and
+        #     hand-maintained ``schemas/spinedb_schema.json`` and
         #     other static templates.
         #   * ``[json_str, type_str]`` pairs emitted by ``export_database``
         #     for canonical databases that carry full parameter values.

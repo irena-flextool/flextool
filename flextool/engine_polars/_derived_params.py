@@ -2212,7 +2212,7 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
 
     The constraint axis column is ``cn`` (not ``c``) to avoid collision
     with the commodity axis — see the c_collision review note in
-    ``version/flextool_axis_contract.json``.
+    ``schemas/flextool_axis_contract.json``.
 
     Algorithm (audit §3.5.1, input.py:1005-1019):
       1. Pull unit__inputNode / unit__outputNode /

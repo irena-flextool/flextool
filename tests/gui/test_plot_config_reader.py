@@ -15,9 +15,9 @@ from flextool.gui.plot_config_reader import (
 )
 
 # After commit ``ec3c95af`` the YAML templates were moved into the
-# ``flextool`` package (``flextool/textual_templates/``) and are reached
+# ``flextool`` package (``flextool/schemas/``) and are reached
 # via :mod:`importlib.resources`; the historical repo-root location is gone.
-_DEFAULT_PLOTS = package_data_path("textual_templates/default_plots.yaml")
+_DEFAULT_PLOTS = package_data_path("schemas/default_plots.yaml")
 
 
 class TestParseDefaultPlots:

@@ -1638,7 +1638,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     # constraint emission and isn't produced by an override-chain helper.
     # The constraint axis column is ``cn`` (not ``c``) to disambiguate
     # from the commodity axis — see the c_collision review note in
-    # ``version/flextool_axis_contract.json``.
+    # ``schemas/flextool_axis_contract.json``.
     flow_cstr_coef = None
     if _provider_has(provider,
                       "input/p_process_node_constraint_flow_coefficient",
@@ -2733,7 +2733,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # block_period_time_last (bk, d, t) × entity_block (e=n, bk) × nodeState.
     # The block-axis column is ``bk`` (not ``b``) to disambiguate from the
     # branch axis — see the b_collision review note in
-    # ``version/flextool_axis_contract.json``.
+    # ``schemas/flextool_axis_contract.json``.
     # Δ.2: consume frames from in-memory ``BlockLayout``.
     nodeState_last_dt = None
     if (nodeState is not None and nodeState.height > 0

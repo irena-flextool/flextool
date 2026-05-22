@@ -1,7 +1,7 @@
 """Locate bundled FlexTool package data files.
 
-Static FlexTool resources — schema JSONs (``flextool/version/``),
-YAML/text templates (``flextool/textual_templates/``), and the HiGHS
+Static FlexTool resources — schema JSONs, YAML/text templates, and
+canonical-database sources (all under ``flextool/schemas/``), plus the HiGHS
 options template (``flextool/bin/``) — must be reached through
 :mod:`importlib.resources` rather than ``Path(__file__).resolve()``
 walks.  After ``pip install flextool`` the package is the only thing
@@ -13,7 +13,7 @@ Two helpers are exposed:
 ``package_data_path(relative)``
     Returns a :class:`pathlib.Path` to a resource inside the
     ``flextool`` package, e.g.
-    ``package_data_path("textual_templates/default_plots.yaml")``.
+    ``package_data_path("schemas/default_plots.yaml")``.
     Editable installs return the real on-disk path; wheel installs
     return the unpacked site-packages path (importlib.resources
     materialises zipped data on demand, but we never ship zipped so

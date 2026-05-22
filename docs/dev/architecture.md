@@ -69,9 +69,9 @@ templates/                         Example databases and configuration
 ├── default_plots.yaml             Default plot configuration
 └── default_comparison_plots.yaml  Default comparison plot configuration
 
-version/                           Database schema templates (JSON)
-├── flextool_template_master.json  Master template for new input DBs
-├── flextool_template_*.json       Schema migration step templates
+schemas/                           Database schema templates (JSON)
+├── spinedb_schema.json            Master template for new input DBs
+├── pre_v26/flextool_template_*.json  Pre-v26 schema migration step templates
 ├── output_settings_template.json  Output settings DB template
 ├── output_info_template.json      Output info DB template
 └── comparison_settings_template.json  Comparison settings template

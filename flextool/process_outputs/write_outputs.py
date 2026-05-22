@@ -588,7 +588,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
 
     # Apply hardcoded defaults for anything still unset
     from flextool._resources import package_data_path
-    _default_plots = str(package_data_path("textual_templates/default_plots.yaml"))
+    _default_plots = str(package_data_path("schemas/default_plots.yaml"))
     if write_methods is None:
         write_methods = ['plot', 'parquet', 'excel']
     if output_config_path is None:

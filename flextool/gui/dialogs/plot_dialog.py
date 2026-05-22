@@ -536,7 +536,7 @@ def _resolve_config_path(config_file: str) -> Path:
     Absolute paths are returned as-is.  A bare name like
     ``default_plots.yaml`` or the legacy
     ``templates/default_plots.yaml`` is resolved against the bundled
-    ``textual_templates/`` package data.  Any other relative path is
+    ``schemas/`` package data.  Any other relative path is
     resolved against the user's CWD.
     """
     p = Path(config_file)
@@ -544,7 +544,7 @@ def _resolve_config_path(config_file: str) -> Path:
         return p
     if p.name in {"default_plots.yaml", "default_colors.yaml"}:
         from flextool._resources import package_data_path
-        return package_data_path(f"textual_templates/{p.name}")
+        return package_data_path(f"schemas/{p.name}")
     return Path.cwd() / p
 
 

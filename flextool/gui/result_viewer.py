@@ -597,11 +597,11 @@ class ResultViewer(tk.Toplevel):
 
         # ``default_relative`` historically pointed at the repo-root
         # ``templates/`` dir; the canonical YAML now lives inside the
-        # package as ``textual_templates/`` and is fetched via
+        # package as ``schemas/`` and is fetched via
         # ``package_data_path`` so wheel installs find it too.
         from flextool._resources import package_data_path
         basename = Path(default_relative).name
-        return package_data_path(f"textual_templates/{basename}")
+        return package_data_path(f"schemas/{basename}")
 
     # ------------------------------------------------------------------
     # Scenario discovery

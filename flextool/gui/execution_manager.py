@@ -898,7 +898,7 @@ class ExecutionManager:
                 if not config_path.is_absolute():
                     config_path = Path.cwd() / config_path
             else:
-                config_path = package_data_path("textual_templates/default_plots.yaml")
+                config_path = package_data_path("schemas/default_plots.yaml")
             active = parse_plot_configs(config_path) or ["default"]
         cmd.extend(["--active-configs", *active])
 
@@ -995,7 +995,7 @@ class ExecutionManager:
                 if not config_path.is_absolute():
                     config_path = Path.cwd() / config_path
             else:
-                config_path = package_data_path("textual_templates/default_plots.yaml")
+                config_path = package_data_path("schemas/default_plots.yaml")
             active = parse_plot_configs(config_path) or ["default"]
         cmd.extend(["--active-configs", *active])
 

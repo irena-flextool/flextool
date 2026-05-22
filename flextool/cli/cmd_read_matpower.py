@@ -36,7 +36,7 @@ def main() -> None:
         "--template-json",
         default=None,
         help="Path to FlexTool master template JSON "
-        "(default: version/flextool_template_master.json relative to cwd)",
+        "(default: schemas/spinedb_schema.json relative to cwd)",
     )
     args = parser.parse_args()
 

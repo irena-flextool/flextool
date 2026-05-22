@@ -1,7 +1,7 @@
 """Build axis enums from the canonical contract + a SpineDBBackend.
 
 This module is the EAV → axis-vocabulary bridge for the pl.Enum dtype
-refactor. It reads the contract at version/flextool_axis_contract.json,
+refactor. It reads the contract at schemas/flextool_axis_contract.json,
 queries SpineDBBackend for entity-class vocabularies and parameter-map
 keys, and emits a dict[str, pl.Enum] keyed by axis name.
 
@@ -50,13 +50,13 @@ import polars as pl
 
 
 def _default_contract_path() -> Path:
-    """Return the bundled ``flextool/version/flextool_axis_contract.json``.
+    """Return the bundled ``flextool/schemas/flextool_axis_contract.json``.
 
     Resolved via :mod:`importlib.resources` so the lookup works in both
     editable and wheel installs.
     """
     from flextool._resources import package_data_path
-    return package_data_path("version/flextool_axis_contract.json")
+    return package_data_path("schemas/flextool_axis_contract.json")
 
 
 # ---------------------------------------------------------------------------
@@ -185,13 +185,13 @@ class AxisContract:
 
 
 def load_axis_contract(path: Path | None = None) -> AxisContract:
-    """Parse ``version/flextool_axis_contract.json`` into an :class:`AxisContract`.
+    """Parse ``schemas/flextool_axis_contract.json`` into an :class:`AxisContract`.
 
     Parameters
     ----------
     path : Path | None
         Override the default contract path (used for testing).  When
-        ``None``, defaults to ``<repo>/version/flextool_axis_contract.json``.
+        ``None``, defaults to ``<repo>/schemas/flextool_axis_contract.json``.
 
     Raises
     ------

@@ -1428,7 +1428,7 @@ class BlockLayout:
 
         The block axis column is named ``bk`` (not ``b``) to disambiguate
         from the branch axis — see the b_collision review note in
-        ``version/flextool_axis_contract.json``.  ``b_f`` is the
+        ``schemas/flextool_axis_contract.json``.  ``b_f`` is the
         block-fine companion column (also block vocabulary, but distinct
         column name so it doesn't collide).
 

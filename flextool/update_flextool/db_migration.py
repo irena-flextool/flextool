@@ -6,6 +6,12 @@ from spinedb_api.exception import NothingToCommit
 import logging
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
+from flextool._resources import package_data_path
+
+
+def _pre_v26_template(name: str) -> str:
+    """Return the absolute filesystem path of a bundled pre-v26 template JSON."""
+    return str(package_data_path(f"schemas/pre_v26/{name}"))
 
 
 def _commit_step(db, message):
@@ -60,27 +66,27 @@ def migrate_database(database_path, up_to: int | None = None):
             if next_version == 0:
                 add_version(db)
             elif next_version == 1:
-                add_new_parameters(db, './version/flextool_template_v2.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_v2.json'))
             elif next_version == 2:
-                add_new_parameters(db, './version/flextool_template_rolling_window.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_rolling_window.json'))
             elif next_version == 3:
-                add_new_parameters(db, './version/flextool_template_lifetime_method.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_lifetime_method.json'))
             elif next_version == 4:
-                add_new_parameters(db, './version/flextool_template_drop_down.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_drop_down.json'))
             elif next_version == 5:
-                add_new_parameters(db, './version/flextool_template_optional_outputs.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_optional_outputs.json'))
             elif next_version == 6:
-                add_new_parameters(db, './version/flextool_template_default_value.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_default_value.json'))
             elif next_version == 7:
-                add_new_parameters(db, './version/flextool_template_rolling_start_remove.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_rolling_start_remove.json'))
             elif next_version == 8:
-                add_new_parameters(db, './version/flextool_template_output_node_flows.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_output_node_flows.json'))
             elif next_version == 9:
-                add_new_parameters(db, './version/flextool_template_constant_default.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_constant_default.json'))
             elif next_version == 10:
-                add_new_parameters(db, './version/flextool_template_storage_binding_defaults.json')
+                add_new_parameters(db, _pre_v26_template('flextool_template_storage_binding_defaults.json'))
             elif next_version == 11:
-                change_optional_output_type(db,'./version/flextool_template_default_optional_output.json')
+                change_optional_output_type(db, _pre_v26_template('flextool_template_default_optional_output.json'))
             elif next_version == 12:
                 new_parameters = [["group", "output_aggregate_flows", None, "output_node_flows", "Used with group_unit_node or group_connection_node to combine the flows when producing the output_node_flows of a node group."],
                                   ["group", "output_node_flows", None, "output_node_flows" ,"Creates the timewise flow output for this node group (group_flow_t)"]]

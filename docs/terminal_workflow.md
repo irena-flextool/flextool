@@ -455,7 +455,7 @@ Comparison plots are saved to `output_plot_comparisons/`.
 
 ```bash
 # Create a target database from the template
-python -c "from flextool import initialize_database; initialize_database('version/flextool_template_master.json', 'converted.sqlite')"
+python -c "from flextool import initialize_database; initialize_database('schemas/spinedb_schema.json', 'converted.sqlite')"
 
 # Import the old-format file
 python -m flextool.cli.cmd_read_old_flextool old_model.xlsm sqlite:///converted.sqlite

@@ -23,10 +23,10 @@ def test_template_files_exist(basename: str) -> None:
     """Each mapped JSON template must actually be present in the package.
 
     After commit ``ec3c95af`` the JSON templates were moved into the
-    ``flextool`` package (``flextool/version/``) and are reached via
+    ``flextool`` package (``flextool/schemas/``) and are reached via
     :mod:`importlib.resources`; the historical repo-root location is gone.
     """
-    template = package_data_path(f"version/{SETTINGS_TEMPLATES[basename]}")
+    template = package_data_path(f"schemas/{SETTINGS_TEMPLATES[basename]}")
     assert template.is_file(), f"Template {template} is missing"
 
 

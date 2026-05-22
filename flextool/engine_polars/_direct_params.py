@@ -67,7 +67,7 @@ def p_constraint_constant_from_source(source: "InputSource") -> Param | None:
 
     The constraint axis uses the column name ``cn`` (not ``c``) to avoid
     collision with the commodity axis — see
-    ``version/flextool_axis_contract.json`` review note ``c_collision``.
+    ``schemas/flextool_axis_contract.json`` review note ``c_collision``.
     """
     df = source.parameter("constraint", "constant")
     if df.height == 0:

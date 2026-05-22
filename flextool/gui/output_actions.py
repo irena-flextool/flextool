@@ -183,11 +183,11 @@ class OutputActionManager:
         else:
             # Bundled default — ``default_config`` is the historical
             # repo-relative path (``templates/default_plots.yaml``);
-            # we resolve it against ``textual_templates/`` in the
+            # we resolve it against ``schemas/`` in the
             # package so wheel installs work.
             from flextool._resources import package_data_path
             basename = Path(default_config).name
-            config_path = package_data_path(f"textual_templates/{basename}")
+            config_path = package_data_path(f"schemas/{basename}")
         return parse_plot_configs(config_path) or ["default"]
 
     # ------------------------------------------------------------------

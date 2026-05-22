@@ -94,10 +94,10 @@ def update_flextool(skip_git):
     os.remove("./.spinetoolbox/project_temp.json")
 
     # Locate bundled JSON templates from the installed flextool package.
-    master_json = str(package_data_path("version/flextool_template_master.json"))
-    output_settings_json = str(package_data_path("version/output_settings_template.json"))
-    output_info_json = str(package_data_path("version/output_info_template.json"))
-    comparison_settings_json = str(package_data_path("version/comparison_settings_template.json"))
+    master_json = str(package_data_path("schemas/spinedb_schema.json"))
+    output_settings_json = str(package_data_path("schemas/output_settings_template.json"))
+    output_info_json = str(package_data_path("schemas/output_info_template.json"))
+    comparison_settings_json = str(package_data_path("schemas/comparison_settings_template.json"))
 
     # Create input databases if they do not exist.
     os.makedirs("templates", exist_ok=True)
@@ -125,7 +125,7 @@ def update_flextool(skip_git):
         initialize_database(json_src, sqlite_rel)
 
     # Materialize canonical example/template SQLites from their JSON
-    # sources (``flextool/textual_templates/canonical_databases/*.json``).
+    # sources (``flextool/schemas/canonical_databases/*.json``).
     # Skips files that already exist so user edits in the working tree
     # survive.  The canonical JSONs are kept current by
     # ``python -m flextool.update_flextool.canonical_databases migrate-all``
@@ -180,7 +180,7 @@ def update_flextool(skip_git):
     for i in db_to_update:
         migrate_database(i)
 
-    result_template_path = str(package_data_path("version/flextool_template_results_master.json"))
+    result_template_path = str(package_data_path("schemas/pre_v26/flextool_template_results_master.json"))
     #replace the template sqlite
     if os.path.exists('templates/results_template.sqlite'):
         os.remove('templates/results_template.sqlite')

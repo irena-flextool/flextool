@@ -20,7 +20,7 @@ from flextool._resources import package_data_path
 FLEXTOOL_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_DB = FLEXTOOL_ROOT / "templates" / "examples.sqlite"
 EXAMPLE_DB_URL = f"sqlite:///{EXAMPLE_DB}"
-MASTER_TEMPLATE = package_data_path("version/flextool_template_master.json")
+MASTER_TEMPLATE = package_data_path("schemas/spinedb_schema.json")
 
 # Parameters on split_params classes that are intentionally not surfaced in the
 # Excel whitelist (e.g. handled by a dedicated writer or never user-editable).

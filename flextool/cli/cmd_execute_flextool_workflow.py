@@ -56,7 +56,7 @@ Examples:
                         help='Output formats to generate (default: plot parquet csv)')
     parser.add_argument('--output-subdir', help='Subdirectory for output files (default: scenario_name)')
     parser.add_argument('--output-config', default=None,
-                        help='Path to output configuration YAML file (default: bundled textual_templates/default_plots.yaml)')
+                        help='Path to output configuration YAML file (default: bundled schemas/default_plots.yaml)')
 
     # Skip flags for individual phases
     parser.add_argument('--skip-input-prep', action='store_true',
@@ -161,7 +161,7 @@ Examples:
         if not output_config or Path(output_config).name in {
             'default_plots.yaml', 'default_comparison_plots.yaml'
         }:
-            output_config = str(package_data_path("textual_templates/default_plots.yaml"))
+            output_config = str(package_data_path("schemas/default_plots.yaml"))
 
         print(f"\n{'='*70}")
         print("PHASE 3: WRITING OUTPUTS")

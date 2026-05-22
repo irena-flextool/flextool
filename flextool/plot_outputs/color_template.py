@@ -35,7 +35,7 @@ _TEMPLATE_CACHE: dict[tuple[str, int], dict] = {}
 
 def _default_path() -> Path:
     from flextool._resources import package_data_path
-    return package_data_path("textual_templates/default_colors.yaml")
+    return package_data_path("schemas/default_colors.yaml")
 
 
 def load_color_template(path: Path | None = None) -> dict:

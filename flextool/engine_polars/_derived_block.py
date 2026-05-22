@@ -147,7 +147,7 @@ class BlockBundle:
 
         The block axis column is named ``bk`` (not ``b``) to disambiguate
         from the branch axis — see the b_collision review note in
-        ``version/flextool_axis_contract.json``.
+        ``schemas/flextool_axis_contract.json``.
         """
         f = self.layout.entity_block_frame
         if f.height == 0:

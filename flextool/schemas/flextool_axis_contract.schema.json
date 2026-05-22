@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://irena-flextool.github.io/flextool/schemas/flextool_axis_contract.schema.json",
   "title": "FlexTool axis contract",
-  "description": "Schema validating the structure of version/flextool_axis_contract.json. See version/AXIS_CONTRACT.md.",
+  "description": "Schema validating the structure of schemas/flextool_axis_contract.json. See schemas/AXIS_CONTRACT.md.",
   "type": "object",
   "required": ["axes"],
   "properties": {

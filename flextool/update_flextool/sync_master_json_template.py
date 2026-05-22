@@ -1,9 +1,9 @@
-"""Regenerate flextool_template_master.json from itself + migrations.
+"""Regenerate schemas/spinedb_schema.json from itself + migrations.
 
 Workflow:
-  1. Create a temporary DB from the current flextool_template_master.json
+  1. Create a temporary DB from the current schemas/spinedb_schema.json
   2. Run db_migration.py on it (applies any new migration steps)
-  3. Export the migrated DB back to flextool_template_master.json
+  3. Export the migrated DB back to schemas/spinedb_schema.json
 
 This ensures the master template always reflects the latest schema
 after db_migration.py has been updated.
@@ -28,8 +28,8 @@ from flextool.update_flextool.db_migration import migrate_database
 
 from flextool._resources import package_data_path
 
-VERSION_DIR = package_data_path("version")
-MASTER_TEMPLATE = VERSION_DIR / "flextool_template_master.json"
+SCHEMAS_DIR = package_data_path("schemas")
+SPINEDB_SCHEMA = SCHEMAS_DIR / "spinedb_schema.json"
 
 
 def _create_db_from_template(template_path: Path, db_path: Path) -> None:
@@ -62,15 +62,15 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
 
     Returns True if the template is up to date, False if it needed updating.
     """
-    if not MASTER_TEMPLATE.exists():
-        print(f"ERROR: Master template not found: {MASTER_TEMPLATE}", file=sys.stderr)
+    if not SPINEDB_SCHEMA.exists():
+        print(f"ERROR: Master template not found: {SPINEDB_SCHEMA}", file=sys.stderr)
         sys.exit(2)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         db_path = Path(tmp_dir) / "template.sqlite"
 
         # Step 1: Create DB from current master template
-        _create_db_from_template(MASTER_TEMPLATE, db_path)
+        _create_db_from_template(SPINEDB_SCHEMA, db_path)
 
         # Step 2: Run all migrations
         migrate_database(str(db_path))
@@ -81,7 +81,7 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
     # Step 4: Compare or overwrite
     new_json = json.dumps(new_data, indent=2, ensure_ascii=False) + "\n"
 
-    with open(MASTER_TEMPLATE) as f:
+    with open(SPINEDB_SCHEMA) as f:
         old_json = f.read()
 
     if new_json == old_json:
@@ -99,15 +99,15 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
         print("Master template is OUT OF DATE. Run without --verify to regenerate.")
         return False
 
-    with open(MASTER_TEMPLATE, "w") as f:
+    with open(SPINEDB_SCHEMA, "w") as f:
         f.write(new_json)
-    print(f"Regenerated {MASTER_TEMPLATE}")
+    print(f"Regenerated {SPINEDB_SCHEMA}")
     return True
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Regenerate flextool_template_master.json after migration changes."
+        description="Regenerate schemas/spinedb_schema.json after migration changes."
     )
     parser.add_argument(
         "--verify",

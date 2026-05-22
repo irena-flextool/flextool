@@ -13,9 +13,9 @@ The contract is consumed by `flextool/spinedb_backend/_axis_enums.py`
 (landing in Phase 1) at runtime to build the per-axis `pl.Enum` dtypes
 that the Backend and the cascade cast against.
 
-## Coupling with `flextool_template_master.json`
+## Coupling with `spinedb_schema.json`
 
-The contract migrates **hand-in-hand** with `flextool_template_master.json`.
+The contract migrates **hand-in-hand** with `spinedb_schema.json`.
 Any schema change that adds, renames, or removes an entity class or a
 parameter definition referenced by an axis row REQUIRES updating both
 files in the same commit:
@@ -38,7 +38,7 @@ edit lands.
 
 `tests/spinedb_backend/test_axis_contract.py` validates the contract
 against its own schema and cross-checks that every entity class /
-parameter referenced by an axis row exists in `flextool_template_master.json`.
+parameter referenced by an axis row exists in `spinedb_schema.json`.
 Run it after every contract edit:
 
 ```bash

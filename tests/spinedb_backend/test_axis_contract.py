@@ -1,13 +1,13 @@
 """Phase 0 verification tests for the FlexTool axis contract.
 
-The contract (`version/flextool_axis_contract.json`) declares which
+The contract (`schemas/flextool_axis_contract.json`) declares which
 entity classes / parameter maps each cascade axis sources its vocabulary
 from.  These tests gate every contract edit:
 
 1. The contract validates against its own JSON Schema
-   (`version/flextool_axis_contract.schema.json`).
+   (`schemas/flextool_axis_contract.schema.json`).
 2. Every `entity_class` / `entity_class_union` axis references a class
-   that actually exists in `flextool_template_master.json`.
+   that actually exists in `schemas/spinedb_schema.json`.
 3. Every `parameter_keys` / `parameter_value_list` axis references a
    parameter definition (and its parent entity class) that exists in
    the schema.
@@ -17,7 +17,7 @@ from.  These tests gate every contract edit:
    includes the entity-union axis ('e') against which those columns are
    cast.
 
-See `version/AXIS_CONTRACT.md` for the editor-facing documentation.
+See `schemas/AXIS_CONTRACT.md` for the editor-facing documentation.
 """
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ import pytest
 
 from flextool._resources import package_data_path
 
-CONTRACT_PATH = package_data_path("version/flextool_axis_contract.json")
-CONTRACT_SCHEMA_PATH = package_data_path("version/flextool_axis_contract.schema.json")
-TEMPLATE_MASTER_PATH = package_data_path("version/flextool_template_master.json")
+CONTRACT_PATH = package_data_path("schemas/flextool_axis_contract.json")
+CONTRACT_SCHEMA_PATH = package_data_path("schemas/flextool_axis_contract.schema.json")
+TEMPLATE_MASTER_PATH = package_data_path("schemas/spinedb_schema.json")
 
 
 @pytest.fixture(scope="module")
@@ -50,7 +50,7 @@ def contract_schema() -> dict:
 
 @pytest.fixture(scope="module")
 def template_master() -> dict:
-    """Parsed `flextool_template_master.json`."""
+    """Parsed `schemas/spinedb_schema.json`."""
     with TEMPLATE_MASTER_PATH.open() as fh:
         return json.load(fh)
 
@@ -78,7 +78,7 @@ def parameter_definitions(template_master: dict) -> set[tuple[str, str]]:
 
     `parameter_definitions` is a list of rows whose first two columns
     are entity_class and parameter_name (per `inventory.csv` conventions
-    and direct inspection of `flextool_template_master.json`).
+    and direct inspection of `schemas/spinedb_schema.json`).
     """
     rows = template_master.get("parameter_definitions", [])
     pairs: set[tuple[str, str]] = set()
@@ -113,7 +113,7 @@ def test_axes_referencing_entity_classes_exist(
     contract: dict, entity_class_names: set[str]
 ) -> None:
     """Every `entity_class` and `entity_class_union` axis references an
-    entity class that exists in `flextool_template_master.json`."""
+    entity class that exists in `schemas/spinedb_schema.json`."""
     missing: list[str] = []
     for axis in contract["axes"]:
         st = axis["source_type"]

@@ -163,7 +163,7 @@ def main() -> None:
 
     # Apply hardcoded defaults for anything still unset
     from flextool._resources import package_data_path
-    _default_plots = str(package_data_path("textual_templates/default_plots.yaml"))
+    _default_plots = str(package_data_path("schemas/default_plots.yaml"))
     if output_config_path is None:
         output_config_path = _default_plots
     elif not os.path.isabs(output_config_path):

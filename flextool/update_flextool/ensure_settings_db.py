@@ -9,7 +9,7 @@ had to remember to run at least once.  On a fresh clone, forgetting
 this leads to opaque "file not found" errors from ``spinedb_api``.
 
 This module lets the main runtime paths seed them on demand from their
-tracked JSON templates under ``version/``.  The logic is intentionally
+tracked JSON templates under ``schemas/``.  The logic is intentionally
 conservative:
 
 * Only file basenames in :data:`SETTINGS_TEMPLATES` are auto-seeded.
@@ -43,7 +43,7 @@ SETTINGS_TEMPLATES: dict[str, str] = {
 }
 """Mapping from settings-DB basename to the JSON template that seeds it.
 
-Templates are looked up under ``flextool/version/`` via
+Templates are looked up under ``flextool/schemas/`` via
 ``importlib.resources`` (see :func:`ensure_settings_db`).  Keys are
 compared case-sensitively against ``Path.name`` of the target path, not
 full paths — so a user-custom name like ``my_config.sqlite`` is
@@ -97,7 +97,7 @@ def ensure_settings_db(
 
     ``target`` may be a filesystem path or an ``sqlite://...`` URL.
     The JSON template ships inside the ``flextool`` package
-    (``flextool/version/<template>``); ``repo_root`` is accepted for
+    (``flextool/schemas/<template>``); ``repo_root`` is accepted for
     backward compatibility but ignored — templates are always read from
     package data via :mod:`importlib.resources`.
     """
@@ -118,7 +118,7 @@ def ensure_settings_db(
         return None
 
     from flextool._resources import package_data_path
-    template_path = package_data_path(f"version/{template_name}")
+    template_path = package_data_path(f"schemas/{template_name}")
     if not template_path.is_file():
         log.warning(
             "Cannot auto-seed %s: template %s is missing.",

@@ -23,7 +23,7 @@ import pytest
 
 from flextool._resources import package_data_path
 
-MASTER_TEMPLATE = package_data_path("version/flextool_template_master.json")
+MASTER_TEMPLATE = package_data_path("schemas/spinedb_schema.json")
 
 _GROUP_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 

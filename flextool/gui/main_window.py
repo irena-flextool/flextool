@@ -2201,12 +2201,12 @@ class MainWindow(tk.Tk):
             info.version is None or info.version >= CURRENT_FLEXTOOL_DB_VERSION
         ):
             # Current version — import directly against the current schema
-            template = package_data_path("version/flextool_template_master.json")
+            template = package_data_path("schemas/spinedb_schema.json")
         else:
             # Older Excel (SPECIFICATION or older SELF_DESCRIBING):
             # init from v25 base, migrate to the Excel's version, import, then
             # migrate the rest of the way to current after import.
-            template = package_data_path("version/flextool_template_v25.json")
+            template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             needs_migration = True
 
         if not template.exists():
@@ -2314,7 +2314,7 @@ class MainWindow(tk.Tk):
                 pass
             return
         elif info.format == ExcelFormat.SELF_DESCRIBING:
-            template = package_data_path("version/flextool_template_v25.json")
+            template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             import_cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
@@ -2322,7 +2322,7 @@ class MainWindow(tk.Tk):
             ]
         else:
             # SPECIFICATION format
-            template = package_data_path("version/flextool_template_v25.json")
+            template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             import_cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_tabular_input",
@@ -2655,7 +2655,7 @@ class MainWindow(tk.Tk):
             info.version is None or info.version >= CURRENT_FLEXTOOL_DB_VERSION
         ):
             # Current version — import directly against the current schema
-            template = package_data_path("version/flextool_template_master.json")
+            template = package_data_path("schemas/spinedb_schema.json")
             cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
@@ -2664,7 +2664,7 @@ class MainWindow(tk.Tk):
         elif info.format == ExcelFormat.SELF_DESCRIBING:
             # Older self-describing: init from v25 base, pre-migrate to
             # the Excel's version, import, then migrate to current.
-            template = package_data_path("version/flextool_template_v25.json")
+            template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
@@ -2672,7 +2672,7 @@ class MainWindow(tk.Tk):
             ]
             migrate_db_path = str(db_path)
         else:
-            template = package_data_path("version/flextool_template_v25.json")
+            template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_tabular_input",

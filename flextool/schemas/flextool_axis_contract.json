@@ -1,12 +1,12 @@
 {
-  "_comment": "Canonical axis contract for FlexTool's pl.Enum dtype activation. Migrates hand-in-hand with flextool_template_master.json. See specs/enum_dtype_refactor_plan.md and version/AXIS_CONTRACT.md.",
-  "_doc": "version/AXIS_CONTRACT.md",
+  "_comment": "Canonical axis contract for FlexTool's pl.Enum dtype activation. Migrates hand-in-hand with schemas/spinedb_schema.json. See specs/enum_dtype_refactor_plan.md and schemas/AXIS_CONTRACT.md.",
+  "_doc": "schemas/AXIS_CONTRACT.md",
   "_schema_version": "1.0.0",
   "_template_master_version_compat": {
-    "path": "version/flextool_template_master.json",
+    "path": "schemas/spinedb_schema.json",
     "git_commit": "52df156c631443814246918051f68f8ae4d36571",
     "git_commit_date": "2026-05-12 20:40:54 +0300",
-    "note": "Verified during Phase 0. Bump these fields when flextool_template_master.json changes in a way that affects axes (new/renamed/removed entity classes or parameter definitions referenced below)."
+    "note": "Verified during Phase 0. Bump these fields when schemas/spinedb_schema.json changes in a way that affects axes (new/renamed/removed entity classes or parameter definitions referenced below)."
   },
   "axes": [
     {
