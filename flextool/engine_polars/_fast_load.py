@@ -465,6 +465,12 @@ def _run_preprocessing_for_single_solve(
     # post-solve hook in ``native_run_model`` doesn't crash on a None
     # ``state.handoffs``.
     runner.state.handoffs = {}
+    # Per-level Provider cache (Design A).  ``native_run_model`` lazily
+    # initialises this on first iter, but seeding it here makes the
+    # invariant ``state._level_providers is dict`` explicit on every
+    # entry point (cascade + fast_load) instead of relying on hasattr
+    # probes downstream.  Single-solve populates exactly one entry.
+    runner.state._level_providers = {}
 
     # 3. Capture the per-sub-solve Provider from inside the loop.
     # ``native_run_model`` stashes the live Provider onto

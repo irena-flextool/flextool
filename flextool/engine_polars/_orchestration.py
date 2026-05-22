@@ -778,6 +778,12 @@ def _drive_cascade(
     # Push our state's handoff slot onto the runner's state so the
     # cascade and any consume hooks share the same dict.
     runner.state.handoffs = state.handoffs
+    # Per-level Provider cache (Design A).  ``native_run_model`` lazily
+    # initialises this on first iter, but seeding it here makes the
+    # invariant ``state._level_providers is dict`` explicit at every
+    # entry point (cascade + fast_load) instead of relying on hasattr
+    # probes downstream.
+    runner.state._level_providers = {}
     # Step 2.5 — forward the cascade-input Provider seeded in
     # ``run_chain_from_db`` onto runner.state so the per-sub-solve hook
     # at :mod:`flextool.engine_polars._native_run_model` (line 365-370)
