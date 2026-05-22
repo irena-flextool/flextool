@@ -129,7 +129,6 @@ _DOCUMENTED_OUT_OF_SCOPE_SOLVE_DATA: frozenset[str] = frozenset({
     "ladder_cum_sim_hours.csv",
     "ladder_cum_realized_mwh.csv",
     "scale_the_objective.csv",
-    "scale_the_state.csv",
     "period_capacity.csv",
     "costs_discounted.csv",
     "co2.csv",

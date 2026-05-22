@@ -128,7 +128,6 @@ class TestWorkdirEmptyByDefault:
         "p_entity_period_existing_capacity.csv",
         "period_capacity.csv",
         "scale_the_objective.csv",
-        "scale_the_state.csv",
     })
 
     def test_writer_port_manifest_csvs_stay_in_memory(
