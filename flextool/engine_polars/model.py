@@ -34,6 +34,7 @@ from ._pdt_join import (
     compute_pss_dt,
     compute_nodeBalance_dt,
     compute_nodeState_dt,
+    compute_nodeState_rp_block_first_dt,
     compute_process_indirect_dt,
 )
 
@@ -487,6 +488,22 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # below; the var-level upper stays at +inf to avoid having to
         # carry per-row Var bounds (which the engine doesn't support yet).
         v_state = m.add_var("v_state", ("n","d","t"), nodeState_dt, lower=0.0)
+    # ── RP-blended-weights variables (Phase 5) ────────────────────────
+    # ``v_state_inter[n, b]``  : long-run state at base-period boundaries
+    # ``v_state_rp_start[n,d,t]`` : free starting state at RP-block-first
+    # steps.  Both gated on ``has_rp`` (``nodeState_rp`` non-empty) and
+    # mirror ``v_state`` in pushing the per-row upper bound onto Phase-9
+    # sibling constraints (``rp_inter_period_max_state`` /
+    # ``maxState_rp_start``) — the engine doesn't support per-row
+    # ``Var.upper`` yet.
+    has_rp = (d.nodeState_rp is not None and d.nodeState_rp.height > 0)
+    if has_rp:
+        nb_idx = d.nodeState_rp.join(d.rp_base_period_set, how="cross")
+        v_state_inter = m.add_var("v_state_inter", ("n","b"), nb_idx,
+                                  lower=0.0)
+        rp_start_idx = compute_nodeState_rp_block_first_dt(d)
+        v_state_rp_start = m.add_var("v_state_rp_start", ("n","d","t"),
+                                     rp_start_idx, lower=0.0)
     if has_online_lin:
         # v_online / v_startup / v_shutdown only exist at (p, d, t) tuples
         # in p_online_dt for processes in process_online_linear.
