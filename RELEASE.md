@@ -1,3 +1,114 @@
+## Release 3.45.0 (22.5.2026) — RP-blended-weights state coupling + logging polish
+
+Minor release on top of 3.44.0.  Closes the long-standing
+`bind_using_blended_weights` gap in `engine_polars` — the
+representative-period storage binding declared by the schema and used
+by `flextool.representative_periods.preprocess` had no constraint
+emission, so any node with that binding silently lost state-continuity
+and the RP cost diverged from the full-model reference.  Twelve
+commits land the full mechanism end-to-end, matching the deleted
+Pyomo `flextool.mod` reference (blob `c04afa59`, lines 1689, 1691,
+2197-2200, 2965-2997).  Three smaller commits polish run-log /
+memory-checkpoint output.
+
+**Representative-period state coupling — full implementation**
+
+- New LP variables (`flextool/engine_polars/model.py`):
+  - `v_state_inter[n, b]` — long-run state at each base-period
+    boundary, indexed over `nodeState_rp × rp_base_period_set`.
+  - `v_state_rp_start[n, d, t]` — free starting state at each
+    RP-block-first step, indexed over `nodeState_rp × rp_block_first`.
+- Intra-period state change inside `nodeBalance` (mirrors .mod:2197-
+  2200): for `n ∈ nodeState_rp`, within-timeset lag for `(d, t) ∉
+  rp_block_first`, and `(v_state_rp_start − v_state) · unitsize` for
+  the first step of each RP block.
+- Inter-period constraints:
+  - `rp_inter_period_balance` (.mod:2965-2975) — couples
+    `v_state_inter` along `rp_base_chain` via the weighted sum of
+    intra-block state changes.
+  - `rp_inter_period_cyclic` (.mod:2978-2988) — closes the chain by
+    equating the first-to-last `v_state_inter` delta to the same
+    weighted sum keyed at `b_first`.
+  - `rp_inter_period_max_state` (.mod:2991-2997) — capacity bound on
+    `v_state_inter` at every `(n, b, d)`.
+  - `maxState_rp_start` — sibling of `maxState` that bounds
+    `v_state_rp_start` (the .mod expressed this as a per-row
+    `Var.upper`, which the polars engine doesn't yet support).
+- New `storage_bind_using_blended_weights` projection helper +
+  `SIMPLE_PROJECTIONS` mapping entry in `_projection_params.py` —
+  mirrors `storage_bind_within_timeset` /
+  `storage_bind_within_solve`.
+- Eight new FlexData attributes (`nodeState_rp`, `rp_base_period_set`,
+  `rp_base_chain`, `rp_base_first`, `rp_base_last`, `rp_block_first`,
+  `p_rp_last_step`, `rp_base__rep`) wired through the loader, the
+  warm-carry list, and the region filter.  Load-time invariant fires
+  a `ValueError` naming the missing field when `nodeState_rp` is
+  non-empty but any of its tightly-coupled siblings is empty.
+
+**Supporting RP-set restoration**
+
+- Reverses the relevant parts of `752dff3f` to bring back six derived
+  RP sets/params (`rp_base_chain`, `rp_base_first`, `rp_base_last`,
+  `rp_block_first`, `rp_block_last`, `rp_block_start_last`) inside
+  `_compute_rp_frames` and moves the `rp_base_period_set` /
+  `rp_rep_period_set` derivation into the same place so it can see
+  `rp_weights` (the previous derivation lived in
+  `emit_per_solve_sets` which runs BEFORE `emit_rp_data` in the
+  cascade — always wrote empty frames).
+- Adds nine `K.SOLVE_DATA_RP_*` / `K.SOLVE_DATA_NODE_STATE_RP`
+  constants to `_provider_keys.py` (no `.csv` suffix, per the
+  Phase 3b convention) and migrates the three existing RP emit sites
+  to use them.
+
+**Decoder fix (`_decode_rp_weights`)**
+
+- The DB-side `params_to_dict` returns
+  `representative_period_weights` as flat triples
+  `[base, rep, weight]` when the 2-level nested Map is flattened
+  via `convert_map_to_table`, not as `[base, inner_map_or_list]`.
+  Both copies of `_decode_rp_weights`
+  (`engine_polars/_timeline.py` and `flextoolrunner/timeline_config.py`)
+  now detect and decode the flat-triple shape; the nested-list shape
+  stays in place.  Without this fix `state.timeline.rp_weights` was
+  silently empty, the RP gate in `_native_run_model` fell through to
+  `emit_empty_rp_data`, and `bind_using_blended_weights` silently
+  degraded to no state-continuity.
+
+**Tests**
+
+- `tests/test_representative_periods.py::TestRPAllRepresented::test_all_represented_matches_full`
+  — was strict-`xfail` at the original +5.84% cost gap; now passes
+  within the 1% tolerance.
+- New hand-calculable toy fixture
+  `tests/engine_polars/test_rp_blended_weights_minimal.py`: 2 base
+  periods (`b1 → b2` chain), 1 rep block, 1 storage node, inflow
+  configured so the cyclic constraint forces exactly 2 units of
+  unavoidable slack.  Cost golden 2.0 derived by hand and matched by
+  HiGHS to 1e-6.  Capacity-binding probe confirmed: dropping the
+  storage cap from 100 → 0.5 raises cost 2.0 → 7.0, proving
+  `maxState_rp_start` binds.
+
+**Logging / memory-checkpoint polish**
+
+- `Solve start:` lines now include a sub-solve counter
+  `[name, N/total]` so cascade progress is visible at a glance.
+- `[mem]` checkpoint table is narrower and uses a two-column
+  process/system layout with a descriptive header.  Adds
+  system-swap column; drops the redundant HiGHS-internal column
+  that was always zero outside the solve.
+- Run-log entry gets "Run start" / "Available solvers" banner,
+  blank line between solves, and several routine writer chatter
+  lines moved to debug level.
+
+**`UnboundLocalError` fix in `_emit_per_solve`**
+
+- Drops a dead function-local
+  `from flextool.engine_polars import _provider_keys as K` inside
+  `emit_per_solve_sets`.  Phase 1 of this release added a
+  module-level `K` import whose use at line ~169 tripped
+  `UnboundLocalError` because the dead function-local re-binding made
+  `K` function-local across the whole body.
+
 ## Release 3.44.0 (22.5.2026) — auto user_bound_scale + scaling cleanup
 
 Minor release on top of 3.43.2.  Bumps the `polar-high` dependency to
