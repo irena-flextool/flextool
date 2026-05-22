@@ -308,7 +308,8 @@ class _MemoryRecorder:
     # Fixed widths used to align the mem output into a table.
     # Label column is wide enough to fit the longest whitelisted label
     # plus a bracketed solve-name suffix without truncation.
-    _LABEL_W = 38      # label column (left-aligned)
+    _LABEL_W = 45      # label column (left-aligned); fits
+                       # "Solve start [<long_solve_name>, NN/NN]"
     _TIME_W = 15       # cumulative-time column (right-aligned)
     _SIZE_W = 12       # MB/GB column (right-aligned); fits "system total"
 

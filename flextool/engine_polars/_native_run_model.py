@@ -343,7 +343,11 @@ def native_run_model(state, solver) -> int:
             _memrec_iter.checkpoint(
                 "solve_start",
                 state.logger,
-                user_label=f"Solve start [{complete_solve[solve]}]",
+                user_label=(
+                    f"Solve start "
+                    f"[{complete_solve[solve]}, "
+                    f"{i + 1}/{len(all_solves)}]"
+                ),
             )
 
         state.logger.debug(
