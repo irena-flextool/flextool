@@ -189,6 +189,8 @@ class _MemoryRecorder:
         self._t_prev = self.t0
         self._rss_prev_mb: float = 0.0
         self._peak_prev_mb: float = 0.0
+        self._sys_prev_mb: float = 0.0
+        self._header_emitted: bool = False
         self._path = Path(csv_path) if csv_path is not None else None
         self._started = False
         if self.enabled and self._path is not None:
@@ -233,6 +235,48 @@ class _MemoryRecorder:
         except OSError:
             pass
         return (anon_kb + swap_kb) / 1024.0
+
+    @staticmethod
+    def _read_sys_used_mb() -> float:
+        """System-level used memory (MB), matching what most monitors
+        ("htop", KSysGuard, GNOME) show as "Used".
+
+        Computed as ``MemTotal - MemAvailable`` from ``/proc/meminfo``.
+        ``MemAvailable`` is the kernel's own estimate of how much
+        memory could be allocated to a new process without swapping —
+        it already accounts for evictable page-cache + reclaimable
+        slab + lazily-freed anonymous pages (MADV_FREE).  Subtracting
+        from total gives the closest single-number match to what the
+        user sees in their desktop's system monitor.
+
+        Includes contributions from every process on the host, not
+        just this one — which is the right metric for desktop-crash
+        awareness (the desktop crashes when total ``MemAvailable``
+        approaches zero, regardless of which process is consuming the
+        pages).
+
+        Returns 0.0 if /proc isn't available.
+        """
+        total_kb = 0.0
+        avail_kb = 0.0
+        try:
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            total_kb = float(parts[1])
+                    elif line.startswith("MemAvailable:"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            avail_kb = float(parts[1])
+                    if total_kb and avail_kb:
+                        break
+        except OSError:
+            pass
+        if total_kb <= 0:
+            return 0.0
+        return (total_kb - avail_kb) / 1024.0
 
     # Fixed widths used to align the mem output into a table.
     # Label column is wide enough to fit the longest whitelisted label
@@ -299,15 +343,17 @@ class _MemoryRecorder:
             current_mb = current / (1024.0 * 1024.0)
             peak_mb = peak / (1024.0 * 1024.0)
         rss_mb = self._read_rss_mb()
+        sys_mb = self._read_sys_used_mb()
         t_elapsed = time.perf_counter() - self.t0
         # Section deltas relative to previous *emitted* checkpoint.  When
         # we suppress an emission we leave ``_t_prev`` /
-        # ``_rss_prev_mb`` / ``_peak_prev_mb`` alone, so the next
-        # emitted line shows the cumulative delta covering all the
-        # suppressed activity in between — exactly what the user wants
-        # to see in the compact mode.
+        # ``_rss_prev_mb`` / ``_sys_prev_mb`` / ``_peak_prev_mb`` alone,
+        # so the next emitted line shows the cumulative delta covering
+        # all the suppressed activity in between — exactly what the
+        # user wants to see in the compact mode.
         t_section = t_elapsed - (self._t_prev - self.t0)
         delta_rss = rss_mb - self._rss_prev_mb
+        delta_sys = sys_mb - self._sys_prev_mb
         delta_peak = (peak_mb - self._peak_prev_mb) if peak_mb is not None else None
         # CSV row — only when full diagnostics is enabled and a path was
         # configured.  Always written for every checkpoint (independent
@@ -338,34 +384,38 @@ class _MemoryRecorder:
             display = user_label or label
             label_col = f"{display:<{self._LABEL_W}}"
             is_first = self._t_prev == self.t0
-            # Section-delta block (Δmem / optional Δpeak).
+            # Emit the column header once, immediately before the first
+            # data line.  Inline labels are dropped from data lines
+            # (cleaner, narrower); the header is the legend.
+            if not self._header_emitted:
+                blank_label = " " * self._LABEL_W
+                tw = self._SIZE_W
+                header = (
+                    f"{blank_label}    time  "
+                    f"| {'Δmem':>{tw}}  {'Δsys':>{tw}}  "
+                    f"| {'mem':>{tw}}  {'sys':>{tw}}"
+                )
+                try:
+                    print(header, flush=True)
+                except OSError:
+                    pass
+                self._header_emitted = True
+            # Section-delta block (Δmem / Δsys).
             if is_first:
                 d_rss_str = self._fmt_size(None)
+                d_sys_str = self._fmt_size(None)
             else:
                 d_rss_str = self._fmt_delta(delta_rss)
-            # Cumulative block (mem / optional peak).
+                d_sys_str = self._fmt_delta(delta_sys)
+            # Cumulative block.
             mem_str = self._fmt_size(rss_mb)
-            if peak_mb is not None:
-                if is_first:
-                    d_peak_str = self._fmt_size(None)
-                else:
-                    d_peak_str = self._fmt_delta(delta_peak)
-                peak_str = self._fmt_size(peak_mb)
-                line = (
-                    f"{label_col}  "
-                    f"{t_elapsed:5.1f}s  "
-                    f"| Δmem: {d_rss_str}  "
-                    f"Δpeak: {d_peak_str}  "
-                    f"| mem: {mem_str}  "
-                    f"peak: {peak_str}"
-                )
-            else:
-                line = (
-                    f"{label_col}  "
-                    f"{t_elapsed:5.1f}s  "
-                    f"| Δmem: {d_rss_str}  "
-                    f"| mem: {mem_str}"
-                )
+            sys_str = self._fmt_size(sys_mb)
+            line = (
+                f"{label_col}  "
+                f"{t_elapsed:5.1f}s  "
+                f"| {d_rss_str}  {d_sys_str}  "
+                f"| {mem_str}  {sys_str}"
+            )
             try:
                 print(line, flush=True)
             except OSError:
@@ -375,6 +425,7 @@ class _MemoryRecorder:
             # activity since the last visible checkpoint.
             self._t_prev = time.perf_counter()
             self._rss_prev_mb = rss_mb
+            self._sys_prev_mb = sys_mb
             if peak_mb is not None:
                 self._peak_prev_mb = peak_mb
 
