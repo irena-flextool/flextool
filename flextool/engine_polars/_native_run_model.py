@@ -72,6 +72,7 @@ from flextool.engine_polars import _provider_keys
 from flextool.engine_polars import _provider_translators
 
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine_polars._solve_state import compute_level_key
 
 # Native solve-tree expansion + stochastic branching + timeline helpers.
 from flextool.engine_polars._recursive_solve import (
@@ -327,6 +328,30 @@ def native_run_model(state, solver) -> int:
             f"Creating timelines for solve {solve} ({i})"
         )
         cs = complete_solve[solve]
+
+        # Per-level Provider detection (Design A, step A1).  Log the
+        # level_key for each sub-solve iteration so we can verify that
+        # detection matches the cascade structure.  No Provider
+        # sharing here — that lands in A2.
+        _level_key = compute_level_key(
+            solve_name=solve,
+            complete_solve_name=complete_solve[solve],
+            solve_config=state.solve,
+            timeline_config=state.timeline,
+        )
+        # NOTE: ``runner.state.logger`` is forced to ERROR level by the
+        # orchestration driver (see ``_orchestration.py``).  Use
+        # ``error`` for the A1 verification log so it is visible at
+        # the active level; A2 will drop this to ``debug`` (or remove
+        # entirely) once Provider sharing is wired and tested.
+        state.logger.error(
+            "level_key for solve %r (complete=%r): %r",
+            solve, complete_solve[solve], _level_key,
+        )
+        if not hasattr(state, "_seen_level_keys"):
+            state._seen_level_keys = []
+        state._seen_level_keys.append((complete_solve[solve], _level_key))
+
         if cs not in cached_complete_active_time_lists:
             cached_complete_active_time_lists[cs] = get_active_time(
                 cs,

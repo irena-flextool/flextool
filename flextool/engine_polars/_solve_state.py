@@ -125,6 +125,54 @@ class RunnerState:
     override_provider: Callable[[], "dict[str, pl.DataFrame]"] | None = None
 
 
+# ---------------------------------------------------------------------------
+# Per-level Provider — level-key helper (Design A, step A1).
+# ---------------------------------------------------------------------------
+
+
+def compute_level_key(
+    *,
+    solve_name: str,
+    complete_solve_name: str,
+    solve_config,
+    timeline_config,
+) -> tuple:
+    """Compute a cheap level identifier for a sub-solve.
+
+    Two sub-solves with the same level_key share LP matrix shape and
+    can share a :class:`FlexDataProvider` (per the user's per-level
+    Provider intent).  Two sub-solves with different keys must not
+    share.
+
+    Composition (in order):
+
+    1. Tuple of timesets used by ``complete_solve_name``
+       (``solve_config.timesets_used_by_solves[complete_solve_name]``,
+       sorted for determinism).
+    2. ``timeline_config.new_step_durations.get(complete_solve_name)``
+       — the explicit step-size override (1h, 3h, …).  ``None`` when
+       absent.
+    3. ``solve_config.rolling_times.get(complete_solve_name)`` — the
+       rolling-window triple ``[jump, horizon, duration]``, coerced to
+       a tuple.  ``None`` when not rolling.
+    4. ``solve_config.solve_modes.get(complete_solve_name)``.
+
+    Returns a hashable tuple.  Same key on consecutive iterations
+    means "same level — reuse Provider"; different key means "level
+    transition — fresh Provider".
+    """
+    timesets = solve_config.timesets_used_by_solves.get(
+        complete_solve_name, ()
+    )
+    timesets = tuple(sorted(timesets)) if timesets else ()
+    step_dur = timeline_config.new_step_durations.get(complete_solve_name)
+    rolling = solve_config.rolling_times.get(complete_solve_name)
+    if rolling is not None:
+        rolling = tuple(rolling)
+    mode = solve_config.solve_modes.get(complete_solve_name)
+    return (timesets, step_dur, rolling, mode)
+
+
 __all__ = [
     "FlexToolError",
     "FlexToolConfigError",
@@ -133,4 +181,5 @@ __all__ = [
     "SolveResult",
     "PathConfig",
     "RunnerState",
+    "compute_level_key",
 ]
