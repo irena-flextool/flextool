@@ -936,13 +936,16 @@ def _drive_cascade(
                     scale_table, user_row_scaling, user_obj_scale,
                 )
             )
-            # ``user_bound_scale`` resolution: explicit DB override wins
-            # (typically the value HiGHS recommends in its "user-scaled
-            # problem has some excessively large row bounds" warning);
-            # otherwise fall back to the input-data heuristic in
-            # ``recommended_highs_options``.
+            # ``user_bound_scale`` resolution priority:
+            # ``FLEXTOOL_USER_BOUND_SCALE`` env var (set by
+            # ``--user-bound-scale`` CLI flag) > DB ``solve.user_bound_scale``
+            # > input-data heuristic in ``recommended_highs_options``.
+            # HiGHS's scaling warning ("Consider setting the
+            # user_bound_scale option to <N>") prints the value to pass.
+            _cli_ubs = os.environ.get("FLEXTOOL_USER_BOUND_SCALE")
             user_bound_scale_override = _scaling.resolve_user_bound_scale_override(
-                state.solve.user_bound_scale.get(complete_solve_name)
+                _cli_ubs if _cli_ubs is not None
+                else state.solve.user_bound_scale.get(complete_solve_name)
             )
 
             # HiGHS solver options are picked AFTER the LP is built so we
@@ -954,6 +957,9 @@ def _drive_cascade(
             # recommendation → input-data heuristic (in priority order).
             # Cap solve time via env var if the operator requested it.
             _diag_tlim = os.environ.get("FLEXTOOL_HIGHS_TIME_LIMIT")
+            # Allow operator to override HiGHS ``presolve`` via
+            # ``--presolve {on,off,choose}`` CLI flag (env-var-plumbed).
+            _cli_presolve = os.environ.get("FLEXTOOL_HIGHS_PRESOLVE")
 
             def _finalise_highs_options(opts: dict) -> dict:
                 if _diag_tlim:
@@ -961,6 +967,8 @@ def _drive_cascade(
                         opts["time_limit"] = float(_diag_tlim)
                     except ValueError:
                         pass
+                if _cli_presolve in ("on", "off", "choose"):
+                    opts["presolve"] = _cli_presolve
                 return opts
 
             # --- LP build & solve ------------------------------------------
@@ -1777,8 +1785,12 @@ def run_single_solve_from_db(
             scale_table, user_row_scaling, user_obj_scale,
         )
     )
+    # ``FLEXTOOL_USER_BOUND_SCALE`` env var (set by --user-bound-scale CLI
+    # flag) takes priority over the DB ``solve.user_bound_scale`` value.
+    _cli_ubs = os.environ.get("FLEXTOOL_USER_BOUND_SCALE")
     user_bound_scale_override = _scaling.resolve_user_bound_scale_override(
-        sc.user_bound_scale.get(scenario_name)
+        _cli_ubs if _cli_ubs is not None
+        else sc.user_bound_scale.get(scenario_name)
     )
 
     _t0 = _time.perf_counter()
@@ -1806,6 +1818,11 @@ def run_single_solve_from_db(
         user_bound_scale_override=user_bound_scale_override,
         lp_ranges=lp_ranges,
     )
+    # ``FLEXTOOL_HIGHS_PRESOLVE`` env var (set by --presolve CLI flag)
+    # overrides DETERMINISM_OPTIONS' baked-in ``presolve = "on"``.
+    _cli_presolve = os.environ.get("FLEXTOOL_HIGHS_PRESOLVE")
+    if _cli_presolve in ("on", "off", "choose"):
+        highs_options["presolve"] = _cli_presolve
 
     problem.set_solver_options(highs_options)
 

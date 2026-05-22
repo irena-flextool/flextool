@@ -319,6 +319,24 @@ def main():
                              'currently a no-op on the native path until '
                              'thread-count plumbing reaches '
                              '``polar_high.Problem.solve``.  Default 1.')
+    parser.add_argument('--user-bound-scale', type=int, default=None,
+                        metavar='N',
+                        help='HiGHS ``user_bound_scale`` override (power of '
+                             'two: multiplies all col bounds and RHS by '
+                             '2**N).  When HiGHS prints '
+                             '"Consider setting the user_bound_scale option '
+                             'to <N>" in its scaling warning, pass that '
+                             '<N> here.  Clamped to [-10, 0].  Overrides '
+                             'any DB value; falls through to the '
+                             'input-data heuristic when unset.')
+    parser.add_argument('--presolve', choices=['on', 'off', 'choose'],
+                        default=None,
+                        help='HiGHS ``presolve`` override.  Default '
+                             '(unset) keeps the determinism-pinned '
+                             '"on" setting from '
+                             '``DETERMINISM_OPTIONS``.  ``off`` disables '
+                             'presolve entirely (much slower but useful '
+                             'for memory or numerical diagnostics).')
     parser.add_argument('--csv-dump', action='store_true',
                         default=False,
                         help='Phase E-c — opt-in debug visibility for '
@@ -351,6 +369,16 @@ def main():
                              'default path remains ``run_chain_from_db``.')
 
     args = parser.parse_args()
+    # --user-bound-scale / --presolve are surfaced through env vars
+    # read by ``_orchestration._finalise_highs_options`` and the
+    # cascade's user_bound_scale resolution.  Env vars keep the
+    # threading shallow: no new kwargs on run_chain_from_db /
+    # run_orchestration / _drive_cascade required.
+    if args.user_bound_scale is not None:
+        os.environ['FLEXTOOL_USER_BOUND_SCALE'] = str(args.user_bound_scale)
+    if args.presolve is not None:
+        os.environ['FLEXTOOL_HIGHS_PRESOLVE'] = args.presolve
+
     input_db_url = args.input_db_url
     settings_db_url = args.settings_db_url
     scenario_name = args.scenario_name
