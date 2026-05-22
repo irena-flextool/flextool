@@ -579,6 +579,7 @@ class FlexData:
     storage_bind_within_timeset: pl.DataFrame | None = None
     storage_bind_forward_only: pl.DataFrame | None = None    # set: (n,)
     storage_bind_within_solve: pl.DataFrame | None = None    # set: (n,)
+    storage_bind_using_blended_weights: pl.DataFrame | None = None  # set: (n,)
     storage_fix_start: pl.DataFrame | None = None
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped

@@ -1165,6 +1165,10 @@ def storage_bind_within_solve(source: "InputSource") -> pl.DataFrame:
     return storage_bind_filter(source, "bind_within_solve")
 
 
+def storage_bind_using_blended_weights(source: "InputSource") -> pl.DataFrame:
+    return storage_bind_filter(source, "bind_using_blended_weights")
+
+
 def storage_fix_start(source: "InputSource") -> pl.DataFrame:
     """Nodes with ``storage_start_end_method='fix_start'``.  Schema: ``[n]``."""
     df = _try_param(source, "node", "storage_start_end_method")
@@ -1855,6 +1859,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "storage_bind_within_timeset": storage_bind_within_timeset,
     "storage_bind_forward_only": storage_bind_forward_only,
     "storage_bind_within_solve": storage_bind_within_solve,
+    "storage_bind_using_blended_weights": storage_bind_using_blended_weights,
     "storage_fix_start": storage_fix_start,
     "n_fix_storage_quantity": n_fix_storage_quantity,
     "groupCapacityMargin": groupCapacityMargin,
