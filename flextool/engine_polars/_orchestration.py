@@ -170,22 +170,40 @@ class _MemoryRecorder:
 
     @staticmethod
     def _read_rss_mb() -> float:
-        """Read VmRSS (kB) from /proc/self/status and return MB.
+        """Read committed memory (anon RSS + swap, in MB) from
+        ``/proc/self/status``.
 
-        Returns 0.0 if /proc isn't available (non-Linux) or the line
-        isn't found.  We never want diagnostics to raise.
+        We deliberately don't report ``VmRSS`` (= ``RssAnon`` +
+        ``RssFile`` + ``RssShmem``) because file-backed pages are
+        evictable cache from the kernel's POV and don't reflect the
+        process's true memory commitment.  ``RssAnon`` (anonymous
+        resident, i.e. heap + private mappings) plus ``VmSwap`` (the
+        same anonymous pages that have been swapped out) gives the
+        right picture of "memory this process actually needs" —
+        what systemd-oomd's PSI signal effectively responds to, and
+        what tracks the system monitor's "Used" number more closely
+        than raw ``VmRSS``.
+
+        Returns 0.0 if /proc isn't available (non-Linux) or the
+        relevant lines aren't found.  We never want diagnostics to
+        raise.
         """
+        anon_kb = 0.0
+        swap_kb = 0.0
         try:
             with open("/proc/self/status", "r") as f:
                 for line in f:
-                    if line.startswith("VmRSS:"):
-                        # "VmRSS:    123456 kB"
+                    if line.startswith("RssAnon:"):
                         parts = line.split()
                         if len(parts) >= 2:
-                            return float(parts[1]) / 1024.0
+                            anon_kb = float(parts[1])
+                    elif line.startswith("VmSwap:"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            swap_kb = float(parts[1])
         except OSError:
             pass
-        return 0.0
+        return (anon_kb + swap_kb) / 1024.0
 
     # Fixed widths used to align the [mem] output into a table.
     _LABEL_W = 42      # label column (left-aligned)
@@ -287,18 +305,18 @@ class _MemoryRecorder:
                 line = (
                     f"[mem] {label_col}  "
                     f"section= {t_elapsed:5.1f}s  "
-                    f"Δrss={self._fmt_size(None)}  "  # n/a
+                    f"Δmem={self._fmt_size(None)}  "  # n/a
                     f"Δpeak={self._fmt_size(None)}  "  # n/a
-                    f"(rss={self._fmt_size(rss_mb)}, "
+                    f"(mem={self._fmt_size(rss_mb)}, "
                     f"peak={self._fmt_size(peak_mb)})"
                 )
             else:
                 line = (
                     f"[mem] {label_col}  "
                     f"section= {t_section:5.1f}s  "
-                    f"Δrss={self._fmt_delta(delta_rss)}  "
+                    f"Δmem={self._fmt_delta(delta_rss)}  "
                     f"Δpeak={self._fmt_delta(delta_peak)}  "
-                    f"(rss={self._fmt_size(rss_mb)}, "
+                    f"(mem={self._fmt_size(rss_mb)}, "
                     f"peak={self._fmt_size(peak_mb)})"
                 )
             try:
