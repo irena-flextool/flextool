@@ -113,7 +113,7 @@ _MEM_WHITELIST_LABELS: frozenset[str] = frozenset({
     "Solve start",
     "Read inputs",
     "Process inputs",
-    "LP problem built",
+    "Build the problem in polar-high",
     "Solver",
 })
 
@@ -237,6 +237,33 @@ class _MemoryRecorder:
         return (anon_kb + swap_kb) / 1024.0
 
     @staticmethod
+    def _read_sys_swap_used_mb() -> float:
+        """System-level used swap (MB) = ``SwapTotal - SwapFree`` from
+        ``/proc/meminfo``.  Returns 0.0 when there's no swap configured
+        (``SwapTotal == 0``) or ``/proc`` isn't available.
+        """
+        total_kb = 0.0
+        free_kb = 0.0
+        try:
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("SwapTotal:"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            total_kb = float(parts[1])
+                    elif line.startswith("SwapFree:"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            free_kb = float(parts[1])
+                    if total_kb and free_kb:
+                        break
+        except OSError:
+            pass
+        if total_kb <= 0:
+            return 0.0
+        return max(0.0, (total_kb - free_kb) / 1024.0)
+
+    @staticmethod
     def _read_sys_used_mb() -> float:
         """System-level used memory (MB), matching what most monitors
         ("htop", KSysGuard, GNOME) show as "Used".
@@ -282,7 +309,8 @@ class _MemoryRecorder:
     # Label column is wide enough to fit the longest whitelisted label
     # plus a bracketed solve-name suffix without truncation.
     _LABEL_W = 38      # label column (left-aligned)
-    _SIZE_W = 10       # MB/GB column (right-aligned)
+    _TIME_W = 15       # cumulative-time column (right-aligned)
+    _SIZE_W = 12       # MB/GB column (right-aligned); fits "system total"
 
     @classmethod
     def _fmt_size(cls, mb: float | None) -> str:
@@ -344,6 +372,7 @@ class _MemoryRecorder:
             peak_mb = peak / (1024.0 * 1024.0)
         rss_mb = self._read_rss_mb()
         sys_mb = self._read_sys_used_mb()
+        swap_mb = self._read_sys_swap_used_mb()
         t_elapsed = time.perf_counter() - self.t0
         # Section deltas relative to previous *emitted* checkpoint.  When
         # we suppress an emission we leave ``_t_prev`` /
@@ -390,31 +419,36 @@ class _MemoryRecorder:
             if not self._header_emitted:
                 blank_label = " " * self._LABEL_W
                 tw = self._SIZE_W
+                tcol = self._TIME_W
                 header = (
-                    f"{blank_label}    time  "
-                    f"| {'Δmem':>{tw}}  {'Δsys':>{tw}}  "
-                    f"| {'mem':>{tw}}  {'sys':>{tw}}"
+                    f"{blank_label}  {'cumulative time':>{tcol}}  "
+                    f"| {'ΔRSS memory':>{tw}}  {'Δsystem':>{tw}}  "
+                    f"| {'RSS memory':>{tw}}  {'system total':>{tw}}  "
+                    f"{'system swap':>{tw}}"
                 )
                 try:
                     print(header, flush=True)
                 except OSError:
                     pass
                 self._header_emitted = True
-            # Section-delta block (Δmem / Δsys).
+            # Section-delta block (ΔRSS memory / Δsystem).
             if is_first:
                 d_rss_str = self._fmt_size(None)
                 d_sys_str = self._fmt_size(None)
             else:
                 d_rss_str = self._fmt_delta(delta_rss)
                 d_sys_str = self._fmt_delta(delta_sys)
-            # Cumulative block.
+            # Cumulative block: process RSS + swap, system used,
+            # system swap.
             mem_str = self._fmt_size(rss_mb)
             sys_str = self._fmt_size(sys_mb)
+            swap_str = self._fmt_size(swap_mb)
+            time_col = f"{t_elapsed:.1f}s"
             line = (
                 f"{label_col}  "
-                f"{t_elapsed:5.1f}s  "
+                f"{time_col:>{self._TIME_W}}  "
                 f"| {d_rss_str}  {d_sys_str}  "
-                f"| {mem_str}  {sys_str}"
+                f"| {mem_str}  {sys_str}  {swap_str}"
             )
             try:
                 print(line, flush=True)
@@ -1177,8 +1211,12 @@ def _drive_cascade(
                     ):
                         _memrec_local.checkpoint(
                             "first_lp_build_end", self.state.logger,
-                            user_label="LP problem built",
+                            user_label="Build the problem in polar-high",
                         )
+                        # Blank line so the next phase (HiGHS' banner +
+                        # scaling block) visually separates from the
+                        # LP-build summary.
+                        print("", flush=True)
                     inner_pb = self._warm_problem.problem
                     highs_options = _finalise_highs_options(
                         _scaling.recommended_highs_options(
@@ -1211,8 +1249,12 @@ def _drive_cascade(
                 ):
                     _memrec_local.checkpoint(
                         "first_lp_build_end", self.state.logger,
-                        user_label="LP problem built",
+                        user_label="Build the problem in polar-high",
                     )
+                    # Blank line so HiGHS' "Running HiGHS …" banner and
+                    # its scaling-warning block visually separate from
+                    # the LP-build phase summary above.
+                    print("", flush=True)
                 highs_options = _finalise_highs_options(
                     _scaling.recommended_highs_options(
                         scale_table,
@@ -1648,6 +1690,11 @@ def run_chain_from_db(
             probe_solver_licenses,
         )
         statuses = probe_solver_licenses()
+        # HiGHS is an open-source dependency that's always present and
+        # always usable -- nothing to opt in to.  Drop it from the
+        # "Available solvers" line so it only reports the commercial
+        # adapters whose installation status actually varies.
+        statuses = {n: s for n, s in (statuses or {}).items() if n != "highs"}
         if statuses:
             formatted = ", ".join(f"{n}={s}" for n, s in statuses.items())
             # Trailing blank line so the mem-checkpoint table that
