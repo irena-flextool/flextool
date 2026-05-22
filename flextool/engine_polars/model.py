@@ -912,6 +912,140 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 rhs_terms = {},
             )
 
+    # ─── rp_inter_period_cyclic (.mod:2978-2988) ──────────────────────────
+    #   v_state_inter[n, b_first] - v_state_inter[n, b_last]
+    #     ==  Σ_{(b_first, r) ∈ rp_base__rep, d ∈ period_in_use :
+    #             (d, r) ∈ rp_block_first}
+    #            p_rp_weight[b_first, r] · (v_state[n, d, p_rp_last_step[r]]
+    #                                       - v_state_rp_start[n, d, r])
+    #            · p_state_unitsize[n]
+    # Indexed over (n, b_first, b_last) ∈ nodeState_rp × rp_base_first ×
+    # rp_base_last.  Both ``rp_base_first`` and ``rp_base_last`` are
+    # typically singletons (one row each per solve), so the cross-join
+    # collapses to ``nodeState_rp.height × 1 × 1`` rows.
+    #
+    # Same RHS shape as ``rp_inter_period_balance`` above with one
+    # subtle difference: ``p_rp_weight`` is consulted at ``b_first``
+    # (NOT at the "current" b).  Implementation is a paste-and-rename
+    # of Phase 7's RHS with ``b → b_first`` in every join / Param /
+    # Where key — the "duplicate" choice from the audit; factoring
+    # Phase 7's ~50-line RHS into a helper would require lifting it
+    # out of its own ``if``-block, more cross-phase churn than this
+    # commit warrants.
+    if (has_storage
+            and has_rp
+            and d.storage_bind_using_blended_weights is not None
+            and d.storage_bind_using_blended_weights.height > 0
+            and d.rp_base_first is not None
+            and d.rp_base_first.height > 0
+            and d.rp_base_last is not None
+            and d.rp_base_last.height > 0
+            and d.rp_base__rep is not None
+            and d.rp_block_first is not None
+            and d.rp_block_first.height > 0
+            and d.p_rp_last_step is not None
+            and d.p_rp_last_step.height > 0):
+        bind_set_rp = d.storage_bind_using_blended_weights
+        # LHS index: nodeState_rp × rp_base_first × rp_base_last.
+        # Cast b_first / b_last to v_state_inter's b dtype so the
+        # renamed-axis Var views compose cleanly.
+        _b_dt = v_state_inter.frame.schema["b"]
+        rp_first = (d.rp_base_first
+                    .rename({"b": "b_first"})
+                    .with_columns(pl.col("b_first").cast(_b_dt, strict=False)))
+        rp_last = (d.rp_base_last
+                   .rename({"b": "b_last"})
+                   .with_columns(pl.col("b_last").cast(_b_dt, strict=False)))
+        nbfl_idx = (bind_set_rp
+                    .join(rp_first, how="cross")
+                    .join(rp_last, how="cross"))
+        # LHS term 1: + v_state_inter[n, b_first] — rename Var's b → b_first.
+        v_inter_at_bfirst = Var(
+            name=v_state_inter.name + "__bfirst",
+            dims=("n", "b_first"),
+            frame=v_state_inter.frame.rename({"b": "b_first"}),
+            lower=v_state_inter.lower, upper=v_state_inter.upper,
+        )
+        v_inter_bfirst = Where(
+            v_inter_at_bfirst, nbfl_idx.select("n", "b_first", "b_last"))
+        # LHS term 2: - v_state_inter[n, b_last] — rename Var's b → b_last.
+        v_inter_at_blast = Var(
+            name=v_state_inter.name + "__blast",
+            dims=("n", "b_last"),
+            frame=v_state_inter.frame.rename({"b": "b_last"}),
+            lower=v_state_inter.lower, upper=v_state_inter.upper,
+        )
+        v_inter_blast = Where(
+            v_inter_at_blast, nbfl_idx.select("n", "b_first", "b_last"))
+
+        # RHS sum-index frame keyed by b_first.  Build the (b_first, r,
+        # d, last_step) cohort the same way Phase 7 builds (b, r, d,
+        # last_step), with b renamed to b_first at the source.
+        _t_dt = d.rp_block_first.schema["t"]
+        _v_state_t_dt = v_state.frame.schema["t"]
+        rbf = (d.rp_block_first
+               .rename({"t": "r"})
+               .with_columns(pl.col("r").cast(_t_dt, strict=False)))
+        rep_pair_first = (d.rp_base__rep.frame
+                          .rename({"b": "b_first"})
+                          .with_columns(
+                              pl.col("r").cast(_t_dt, strict=False),
+                              pl.col("b_first").cast(_b_dt, strict=False)))
+        prpls = (d.p_rp_last_step
+                 .with_columns(pl.col("r").cast(_t_dt, strict=False),
+                               pl.col("last_step")
+                                 .cast(_v_state_t_dt, strict=False)))
+        rep_dr_first = (rep_pair_first
+                        .join(rbf, on="r", how="inner")
+                        .join(prpls, on="r", how="inner"))
+        if d.period_in_use_set is not None:
+            rep_dr_first = rep_dr_first.join(
+                d.period_in_use_set, on="d", how="inner")
+        if rep_dr_first.height > 0:
+            # p_rp_weight[b_first, r] over (b_first, r, d, last_step).
+            p_rp_weight_bfrdl = Param(
+                ("b_first", "r", "d", "last_step"),
+                rep_dr_first.select(
+                    "b_first", "r", "d", "last_step", "value"),
+            )
+            v_state_at_last = Var(
+                name=v_state.name + "__rp_last_cyc",
+                dims=("n", "d", "last_step"),
+                frame=v_state.frame.rename({"t": "last_step"}),
+                lower=v_state.lower, upper=v_state.upper,
+            )
+            v_state_rp_start_at_r = Var(
+                name=v_state_rp_start.name + "__at_r_cyc",
+                dims=("n", "d", "r"),
+                frame=v_state_rp_start.frame.rename({"t": "r"}),
+                lower=v_state_rp_start.lower, upper=v_state_rp_start.upper,
+            )
+            # Cohort (n, b_first, r, d, last_step):
+            # bind_set_rp[n] × rep_dr_first[b_first, r, d, last_step].
+            n_bfrdl = (bind_set_rp.select("n").unique()
+                       .join(rep_dr_first.select(
+                                 "b_first", "r", "d", "last_step"),
+                             how="cross"))
+            v_last_at = Where(v_state_at_last, n_bfrdl)
+            v_start_at = Where(v_state_rp_start_at_r, n_bfrdl)
+            rhs_inner = ((v_last_at - v_start_at)
+                         * p_rp_weight_bfrdl
+                         * d.p_state_unitsize)
+            # Sum out (r, d, last_step), leaving (n, b_first).
+            # Then Where against nbfl_idx broadcasts to
+            # (n, b_first, b_last).
+            rhs_sum_nbf = Sum(rhs_inner, over=("r", "d", "last_step"))
+            rhs_sum_nbfl = Where(
+                rhs_sum_nbf, nbfl_idx.select("n", "b_first", "b_last"))
+            m.add_cstr(
+                "rp_inter_period_cyclic",
+                over      = nbfl_idx.select("n", "b_first", "b_last"),
+                sense     = "==",
+                lhs_terms = {"d_cyclic": v_inter_bfirst - v_inter_blast,
+                             "neg_rp_drift_first": -rhs_sum_nbfl},
+                rhs_terms = {},
+            )
+
     # ``bind_forward_only`` + ``fix_start`` start binding —
     # flextool.mod:2197-2203.  At (n, period_first_of_solve, t_first)
     # the state-change term is omitted (handled by dropping that row
