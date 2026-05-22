@@ -34,6 +34,7 @@ from ._pdt_join import (
     compute_pss_dt,
     compute_nodeBalance_dt,
     compute_nodeState_dt,
+    compute_nodeState_rp_dt,
     compute_nodeState_rp_block_first_dt,
     compute_process_indirect_dt,
 )
@@ -741,6 +742,37 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         v_state_lag_ws = Where(
             _state_lag_cross_period(d.dtttdt), bind_set_ws)
         nb_terms["state_change_ws"] = (v_state_lag_ws - v_state_now_ws) * d.p_state_unitsize
+
+    if (has_storage
+            and has_rp
+            and d.storage_bind_using_blended_weights is not None
+            and d.storage_bind_using_blended_weights.height > 0):
+        # ``bind_using_blended_weights`` — intra-period state tracking
+        # (flextool.mod:2197-2200).  Within each RP block the
+        # state-change uses the ordinary within-timeset lag (mirrors
+        # ``bind_within_timeset``); at the first step of each RP block
+        # the lag is replaced by ``v_state_rp_start`` so each block has
+        # a free starting state (Phase 5 variable).  Cross-block /
+        # inter-period coupling lives in Phases 7-9.
+        bind_set_rp = d.storage_bind_using_blended_weights
+        # Interior: dtttdt restricted to (d, t) NOT in rp_block_first.
+        dtttdt_interior = d.dtttdt.join(
+            d.rp_block_first.select("d", "t"),
+            on=["d", "t"], how="anti")
+        interior_dt = dtttdt_interior.select("d", "t").unique()
+        v_state_now_rp_int = Where(Where(v_state, interior_dt), bind_set_rp)
+        v_state_lag_rp_int = Where(
+            Lag(v_state, dtttdt_interior, "t", "t_previous_within_timeset"),
+            bind_set_rp)
+        nb_terms["state_change_rp_interior"] = (
+            (v_state_lag_rp_int - v_state_now_rp_int) * d.p_state_unitsize)
+        # First step of each RP block: replace lag with v_state_rp_start.
+        rp_first_dt = d.rp_block_first.select("d", "t").unique()
+        v_state_now_rp_first = Where(Where(v_state, rp_first_dt), bind_set_rp)
+        v_state_rp_start_at_first = Where(v_state_rp_start, bind_set_rp)
+        nb_terms["state_change_rp_start"] = (
+            (v_state_rp_start_at_first - v_state_now_rp_first)
+            * d.p_state_unitsize)
 
     # ``bind_forward_only`` + ``fix_start`` start binding —
     # flextool.mod:2197-2203.  At (n, period_first_of_solve, t_first)
