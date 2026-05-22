@@ -34,10 +34,9 @@ here — ``v_state_inter`` has no coupling beyond the chain, defaults to
 0, and the capacity bound (100) is non-binding.  See ``specs/`` for
 the surfaced Phase-9 verification gap.
 
-xfail-strict: this test is currently expected to FAIL (cost = 0.0 vs
-expected 2.0) since Phases 7-8 aren't wired.  When the constraints
-land, the test PASSES → strict-xfail flips to XPASSED-fail → Phase 10
-removes the ``xfail`` mark.
+Phases 7-9 are now landed (HEAD `1f445528`), so this test PASSES with
+the hand-derived golden ``sol.obj == 2.0``.  Phase 10 stripped the
+strict-xfail mark and deleted the Phase-6-only baseline canary.
 
 The full derivation is in
 ``specs/rp_blended_weights_test_design.md`` §B.1.
@@ -141,21 +140,6 @@ def _build_toy_rp_2base_1rep() -> FlexData:
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Phases 7-8 not yet implemented in engine_polars/model.py: "
-        "rp_inter_period_balance (.mod:2965-2975) and "
-        "rp_inter_period_cyclic (.mod:2978-2988) are missing.  "
-        "Without them, the +2 intra-RP surplus accumulates in "
-        "v_state_rp_start at no slack cost, so sol.obj == 0.0 "
-        "instead of the expected 2.0 (one unit of vq_down × penalty "
-        "1.0 × qty 2 absorbs the cyclic-mismatch).  Phase 10 strips "
-        "this xfail when 7+8 land.  See "
-        "specs/rp_blended_weights_test_design.md §B.1 for the "
-        "hand-derivation."
-    ),
-    strict=True,
-)
 def test_rp_2base_1rep_cyclic_forces_two_unit_spill():
     """Phase 7+8: cyclic forces Δs = 0, slack absorbs the +2 surplus.
 
@@ -184,31 +168,4 @@ def test_rp_2base_1rep_cyclic_forces_two_unit_spill():
         f"Cost 0.0 ⇒ constraints missing (Phase 6 only).  Other "
         f"value ⇒ partial/incorrect constraint emission — inspect "
         f"the LP build."
-    )
-
-
-def test_rp_2base_1rep_phase6_only_baseline_is_zero():
-    """Sanity canary: without Phases 7-8 the LP costs 0.0.
-
-    This test is the *passing* sibling of the strict-xfail above.  It
-    documents the current (Phase 6) baseline so a regression that
-    breaks Phase 6's intra-period state-change (and silently changes
-    the baseline cost) trips this assertion instead of being absorbed
-    into the xfail mark.
-
-    When Phases 7-8 land, this test MUST be updated (or deleted) since
-    the optimum changes from 0.0 to 2.0.  Phase 10 should remove this
-    canary at the same time as it strips the xfail above.
-    """
-    d = _build_toy_rp_2base_1rep()
-    pb = Problem()
-    build_flextool(pb, d)
-    sol = pb.solve(options={"random_seed": 42, "parallel": "off"})
-    assert sol.optimal, "LP did not solve to optimum"
-    # Phase-6-only optimum: storage absorbs the +2 surplus into
-    # v_state_rp_start growth, no slack needed.
-    assert abs(sol.obj - 0.0) < 1e-9, (
-        f"Phase 6 baseline drift: obj = {sol.obj!r}, expected 0.0.  "
-        f"If Phases 7-8 are now wired this canary needs updating "
-        f"(see test_rp_2base_1rep_cyclic_forces_two_unit_spill)."
     )

@@ -370,37 +370,6 @@ class TestRPAllRepresented:
     """When ALL periods are selected as representatives, the result should
     match the full model very closely."""
 
-    # TODO(rp-parity): bind_using_blended_weights has no constraint emission
-    # in engine_polars/model.py. The full model defaults batteries to
-    # storage_binding_method = "bind_within_solve" (set by build_model.py via
-    # the YAML→DB import path); the test overrides them to
-    # "bind_using_blended_weights", which is matched by none of the storage-
-    # binding filters in flextool/engine_polars/_projection_params.py
-    # (lines 1156–1165 only know about bind_within_timeset / forward_only /
-    # bind_within_solve). The override therefore silently disables
-    # state-continuity for those nodes, decoupling v_state from the energy
-    # balance and yielding a different optimum. With ALL 7 days selected as
-    # representatives + identity weights this should reduce to the full-model
-    # constraint set, but the RP cyclic-binding term (the .mod's per-RP
-    # state-cycle that the test premise relies on) has not been re-implemented
-    # in the polars engine. Observed: full=155567.263859,
-    # rp_with_binding=164645.229244 (+5.84%), rp_without_binding=155567.263859
-    # (+0.00%) — confirming the gap is entirely the binding override.
-    # Fix requires implementing RP-blended-weights state coupling
-    # (nodeState_rp constraint emission) in engine_polars/model.py — load-
-    # bearing solver semantics, deferred to a dedicated change.
-    @pytest.mark.xfail(
-        reason=(
-            "bind_using_blended_weights has no constraint emission in "
-            "engine_polars/model.py (no filter in _projection_params.py "
-            "lines 1156-1165 matches it); the override silently disables "
-            "state-continuity. Observed gap with all-7-selected + identity "
-            "weights: cost_rp=164645.23 vs cost_full=155567.26 (+5.84%); "
-            "asserting <1%. Re-implementing the RP-blended-weights state "
-            "coupling is load-bearing solver work, deferred."
-        ),
-        strict=True,
-    )
     def test_all_represented_matches_full(self, small_yaml, tmp_path):
         db_full = str(tmp_path / "full.sqlite")
         db_rp = str(tmp_path / "rp.sqlite")
