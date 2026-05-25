@@ -89,21 +89,64 @@ def _coerce_user_bound_scale(raw: Any) -> Optional[int]:
     )
 
 
+def _coerce_cli_auto_scale(raw: Any) -> Optional[bool]:
+    """Coerce an ``args.auto_scale`` value to ``bool | None``.
+
+    Accepts ``"on"`` / ``"off"`` strings (the CLI ``choices=[...]``
+    surface), already-typed ``bool``, and ``None`` (CLI unset →
+    fall through to env / default).  Unrecognised values raise so a
+    typo in caller code surfaces loudly rather than silently flipping
+    the master switch.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        v = raw.strip().lower()
+        if v == "on":
+            return True
+        if v == "off":
+            return False
+        if v == "":
+            return None
+        raise ValueError(
+            f"auto_scale must be 'on', 'off', bool, or None; got {raw!r}"
+        )
+    raise ValueError(
+        f"auto_scale must be 'on', 'off', bool, or None; got {raw!r}"
+    )
+
+
 def resolve_auto_scale_config(cli_args: Any = None) -> AutoScaleConfig:
     """Build an :class:`AutoScaleConfig` from CLI args + environment.
 
-    The CLI hasn't been wired yet (Phase 1f); for Phase 1b we read:
+    Precedence for the master switch is **CLI > env > default-on**:
 
-    * ``FLEXTOOL_AUTO_SCALE`` env var (``on`` / ``off``, default ``on``)
-      for the master switch.  Phase 1f will swap this for a proper
-      ``--auto-scale`` flag, but the env var stays as the override.
-    * ``FLEXTOOL_USER_BOUND_SCALE`` env var (already plumbed through
-      ``--user-bound-scale``) for the manual override.  We read it the
-      same way ``_orchestration.py`` does so existing CLI behaviour is
-      preserved.
-    * ``cli_args`` itself: when it carries the attributes
-      (``auto_scale``, ``user_bound_scale``, ``autoscale_report_yaml``),
-      those win over the env values.
+    * ``cli_args.auto_scale`` (``"on"`` / ``"off"`` / ``bool`` / ``None``)
+      wins when set.  The ``cmd_run_flextool`` CLI defines this via
+      ``--auto-scale`` and, when set, also exports
+      ``FLEXTOOL_AUTO_SCALE`` so subprocess / cascade-internal call
+      sites that resolve config with ``cli_args=None`` still observe
+      the operator's choice.
+    * ``FLEXTOOL_AUTO_SCALE`` env var (``on`` / ``off``) provides the
+      fallback for callers that don't have access to the parsed
+      ``args`` (e.g. cascade-internal helpers, tests that pre-set the
+      env).
+    * Default ``True`` (autoscaler enabled).
+
+    ``user_bound_scale`` and the optional YAML report path follow the
+    same CLI-wins-over-env layering:
+
+    * ``cli_args.user_bound_scale`` (int / decimal str / ``None``) wins.
+      When set, Layer 3 forces this exponent and surfaces
+      ``reasoning="manual override user_bound_scale=N"`` in its plan
+      (see :func:`flextool.engine_polars.autoscale.recommend_layer3`).
+    * ``FLEXTOOL_USER_BOUND_SCALE`` env var (already plumbed by
+      ``--user-bound-scale`` on the CLI surface) is the fallback.
+    * ``cli_args.autoscale_report_yaml`` overrides the default YAML
+      report path; otherwise ``_orchestration`` picks
+      ``work_folder/solve_data/autoscale_<solve>.yaml``.
 
     Returns a frozen :class:`AutoScaleConfig`.
     """
@@ -119,9 +162,11 @@ def resolve_auto_scale_config(cli_args: Any = None) -> AutoScaleConfig:
     report_yaml_path: Optional[Path] = None
 
     if cli_args is not None:
-        cli_enabled = getattr(cli_args, "auto_scale", None)
+        cli_enabled = _coerce_cli_auto_scale(
+            getattr(cli_args, "auto_scale", None),
+        )
         if cli_enabled is not None:
-            enabled = bool(cli_enabled)
+            enabled = cli_enabled
         cli_ubs = getattr(cli_args, "user_bound_scale", None)
         if cli_ubs is not None:
             user_bound_scale = _coerce_user_bound_scale(cli_ubs)

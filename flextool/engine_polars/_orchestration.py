@@ -97,6 +97,14 @@ def _autoscale_emit_layer1(
     commercial-solver / LiteSolution path) skips the layer with a
     debug-level note rather than breaking the solve.
     """
+    # ``cli_args=None`` is intentional: the CLI surface
+    # (``cmd_run_flextool``) mirrors ``--auto-scale`` /
+    # ``--user-bound-scale`` into the ``FLEXTOOL_AUTO_SCALE`` /
+    # ``FLEXTOOL_USER_BOUND_SCALE`` env vars before invoking the
+    # orchestrator, matching the existing env-threading convention
+    # documented on the ``run_chain_from_db`` call site.  Cascade-
+    # internal hops therefore observe operator intent without
+    # plumbing the parsed ``args`` namespace through every helper.
     cfg = _autoscale_resolve_config(None)
     if not cfg.enabled:
         return

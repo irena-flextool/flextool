@@ -229,6 +229,17 @@ def main():
                              'determinism for wall-clock speedup; goldens are '
                              'not guaranteed to reproduce across runs in that '
                              'mode.')
+    parser.add_argument(
+        '--auto-scale',
+        choices=['on', 'off'],
+        default=None,
+        help=(
+            'Enable/disable the autoscaler (Layer 1 detect, Layer 2 semantic per-type, '
+            'Layer 3 HiGHS-native). Default: on. Env fallback: FLEXTOOL_AUTO_SCALE. '
+            'Use --user-bound-scale N to force a manual bound-scale value (disables '
+            'Layer 3 auto for bounds but keeps Layers 1 and 2 active).'
+        ),
+    )
     parser.add_argument('--user-bound-scale', type=int, default=None,
                         metavar='N',
                         help='HiGHS ``user_bound_scale`` override (power of '
@@ -288,6 +299,15 @@ def main():
         os.environ['FLEXTOOL_HIGHS_PRESOLVE'] = args.presolve
     if args.highs_threads is not None and args.highs_threads >= 1:
         os.environ['FLEXTOOL_HIGHS_THREADS'] = str(args.highs_threads)
+    # ``--auto-scale`` (on/off) — CLI > env > default-on.  Surfacing via
+    # the same ``FLEXTOOL_AUTO_SCALE`` env var that
+    # ``resolve_auto_scale_config`` already consults keeps the threading
+    # shallow (no new kwargs on run_chain_from_db / run_orchestration /
+    # _drive_cascade).  When the flag is unset (``args.auto_scale is None``)
+    # the existing env value — if any — survives untouched, preserving
+    # the env-fallback contract.
+    if args.auto_scale is not None:
+        os.environ['FLEXTOOL_AUTO_SCALE'] = args.auto_scale
 
     input_db_url = args.input_db_url
     settings_db_url = args.settings_db_url
