@@ -1,0 +1,375 @@
+# Entity classes that need an Entity Alternative column (active_by_default=False).
+entity_alternative_classes:
+  - node
+  - unit
+  - connection
+  - constraint
+  - reserve__upDown__unit__node
+  - reserve__upDown__connection__node
+
+# Parameters that must appear before the Entity Alternative column.
+# Ensures roundtrip compatibility with the position-based importer.
+pre_entity_alternative_params:
+  node: ["node_type"]
+
+# Column width settings (unit ≈ width of character '0' in Calibri 11, ~7px).
+minimum_parameter_column_width: 10
+width_non_parameter_columns: 22
+definition_column_width: 11
+index_column_width: 12
+
+# Default index column names per layout type (replaces 'x' from the DB).
+index_name_defaults:
+  periodic: "period"
+  timeseries: "time"
+  nested_periodic: "period"
+
+# Default index names for stochastic (nested Map) dimensions.
+# Applied when the DB index_name is empty or 'x'.
+stochastic_index_names:
+  - "forecast"
+  - "branch_time"
+  - "time"
+  - "is_realized"
+
+# Entity classes that define time structure.  Their Map parameters use timestep
+# names as indexes but should NOT be filtered out by the time-indexed check.
+time_structure_classes:
+  - timeline
+  - timeset
+
+# Merge two entity classes onto one sheet set, adding a direction column.
+merge_classes:
+  unit_node:
+    classes:
+      unit__inputNode: "input"
+      unit__outputNode: "output"
+    direction_column: "input_output"
+
+# Unpack a Map parameter's indexes as an extra row-identifier column.
+# Creates a separate sheet from the main entity class sheet.
+unpack_map_params:
+  unit_node_constraint:
+    source_classes: ["unit__inputNode", "unit__outputNode"]
+    direction_column: "input_output"
+    params: ["constraint_flow_coefficient"]
+    index_column: "constraint"
+  connection_node_constraint:
+    source_classes: ["connection__node"]
+    params: ["constraint_flow_coefficient"]
+    index_column: "constraint"
+  node_constraint:
+    source_classes: ["node"]
+    params: ["constraint_invested_capacity_coefficient", "constraint_cumulative_pre_built_capacity_coefficient", "constraint_state_coefficient"]
+    index_column: "constraint"
+  unit_constraint:
+    source_classes: ["unit"]
+    params: ["constraint_invested_capacity_coefficient", "constraint_cumulative_pre_built_capacity_coefficient"]
+    index_column: "constraint"
+  connection_constraint:
+    source_classes: ["connection"]
+    params: ["constraint_invested_capacity_coefficient", "constraint_cumulative_pre_built_capacity_coefficient"]
+    index_column: "constraint"
+
+# Add columns from a related multi-dim entity class to a sheet.
+add_entity_elements:
+  connection:
+    from_class: "connection__node__node"
+    columns: ["left_node", "right_node"]
+
+# Split an entity class across multiple sheet groups with different param subsets.
+split_params:
+  solve:
+    solve:
+      params: ["solve_mode", "solver", "highs_method", "highs_parallel",
+               "highs_presolve", "contains_solves", "solver_precommand",
+               "solver_arguments", "new_stepduration", "use_row_scaling",
+               "solver_io_api", "solver_log_level", "solver_mip_gap",
+               "solver_options", "solver_threads", "solver_time_limit",
+               "timeline_hole_multiplier"]
+    solve_period:
+      params: ["period_timeset", "years_represented", "realized_periods",
+               "invest_periods", "realized_invest_periods", "fix_storage_periods"]
+    rolling_parameters:
+      params: ["rolling_solve_jump", "rolling_solve_horizon", "rolling_duration"]
+    solve_s_stochastic_branches:
+      params: ["stochastic_branches"]
+  model:
+    model:
+      params: ["inflation_rate",
+               "inflation_offset_investment", "inflation_offset_operations",
+               "max_flow_for_unconstrained_variables",
+               "debug", "output_horizon",
+               "output_node_balance_t", "output_unit__node_flow_t",
+               "output_unit__node_ramp_t", "output_connection__node__node_flow_t",
+               "output_ramp_envelope", "output_connection_flow_separate",
+               "exclude_entity_outputs"]
+    model_solve_sequence:
+      params: ["solves"]
+    model_periods_available:
+      params: ["periods_available"]
+  timeline:
+    timeline:
+      params: ["timestep_duration"]
+  timeset:
+    timeset_c:
+      params: ["timeline"]
+    timeset_t:
+      params: ["timeset_duration", "timeset_weights"]
+
+# Dimensions to drop from generated sheet names (always-present relationship dims).
+drop_dimensions: ["upDown"]
+
+# Rename generated base sheet names to match template conventions.
+rename_sheets:
+  constraint: "constraint_sense"
+
+# Sheet ordering
+sheet_order:
+  - navigate
+  - scenario
+  - model
+  - model_solve_sequence
+  - model_periods_available
+  - solve
+  - solve_period
+  - solve_period_period
+  - rolling_parameters
+  - timeline
+  - timeset_c
+  - timeset_t
+  - node_c
+  - node_p
+  - node_t
+  - node_s_inflow
+  - node_s_availability
+  - commodity_c
+  - commodity_p
+  - commodity_node
+  - connection_c
+  - connection_p
+  - connection_t
+  - unit_c
+  - unit_p
+  - unit_t
+  - unit_s_availability
+  - unit_s_efficiency
+  - unit_s_min_load
+  - unit_node_c
+  - unit_node_p
+  - unit_node_t
+  - unit_node_s
+  - profile_t
+  - profile_s
+  - node_profile_c
+  - connection_profile_c
+  - unit_node_profile_c
+  - group_c
+  - group_p
+  - group_connection
+  - group_connection_node
+  - group_node
+  - group_unit
+  - group_unit_node
+  - reserve_connection_node_c
+  - reserve_group_c
+  - reserve_group_p
+  - reserve_group_t
+  - reserve_group_s
+  - reserve_unit_node_c
+  - solve_s_stochastic_branches
+  - constraint_sense_c
+  - unit_node_constraint_c
+  - connection_node_constraint_c
+  - node_constraint_c
+  - unit_constraint_c
+  - connection_constraint_c
+  - connection_node
+
+# Navigate sheet: groups of related sheets, each row lists sheet names
+# placed across columns A (Constants), B (Periodic), C (Timeseries), D (Stochastic).
+navigate_groups:
+  - name: "Configuration"
+    color: "D9D9D9"
+    rows:
+      - [scenario]
+      - [model]
+      - [model_solve_sequence]
+      - [model_periods_available]
+      - [solve, solve_period, solve_period_period, solve_s_stochastic_branches]
+      - [rolling_parameters]
+  - name: "Time"
+    color: "D9D9D9"
+    rows:
+      - [timeline]
+      - [timeset_c, timeset_t]
+  - name: "Core entities"
+    color: "D5C2EE"
+    rows:
+      - [node_c, node_p, node_t, node_s_inflow]
+      - ["", "", "", node_s_availability]
+      - [commodity_c, commodity_p]
+      - [commodity_node]
+      - [connection_c, connection_p, connection_t]
+      - [connection_node]
+      - [unit_c, unit_p, unit_t, unit_s_availability]
+      - ["", "", "", unit_s_efficiency]
+      - ["", "", "", unit_s_min_load]
+      - [unit_node_c, unit_node_p, unit_node_t, unit_node_s]
+  - name: "Profiles"
+    color: "C5E0B4"
+    rows:
+      - [profile_t, "", "", profile_s]
+      - [node_profile_c]
+      - [connection_profile_c]
+      - [unit_node_profile_c]
+  - name: "Groups"
+    color: "BDD7EE"
+    rows:
+      - [group_c, group_p]
+      - [group_connection]
+      - [group_connection_node]
+      - [group_node]
+      - [group_unit]
+      - [group_unit_node]
+  - name: "Reserves"
+    color: "F8CBAD"
+    rows:
+      - [reserve_connection_node_c, reserve_group_p, reserve_group_t, reserve_group_s]
+      - [reserve_group_c]
+      - [reserve_unit_node_c]
+  - name: "Constraints"
+    color: "FFE699"
+    rows:
+      - [constraint_sense_c]
+      - [unit_node_constraint_c]
+      - [connection_node_constraint_c]
+      - [node_constraint_c]
+      - [unit_constraint_c]
+      - [connection_constraint_c]
+
+# Sheets that require the --include-advanced flag.
+# Omitted by default; included when advanced features are needed or when the
+# database contains data that requires them.
+advanced_sheets:
+  - model_periods_available
+  - solve_period_period
+
+# Parameter groups required for a functioning FlexTool model.  The GUI
+# group picker highlights these and ships them pre-checked.  A user can
+# still produce a valid input file without them by combining data from
+# multiple input sources in Spine Toolbox.  Order here is the display
+# order in the picker (most foundational first).
+required_groups:
+  - timeline
+  - model
+  - solve_basics
+  - basics
+
+# When --groups is used, sheets listed here are kept even if all their
+# parameters were filtered out, provided one of the listed parent groups
+# is in the selection.  Use this for structural sheets whose presence is
+# needed to wire up a group's data even when the columns themselves live
+# in another group.
+#
+# Example:
+#   solve_basics:
+#     - solve_period
+always_include_with_groups: {}
+
+# INFO rows: optional information text shown at the top of specific sheets.
+# The reader ignores rows starting with "INFO:".
+info_rows:
+  model: "INFO: There can be only one model per scenario - best to just use same model name always."
+  model_solve_sequence: "INFO: FlexTool can define one or more solves to be executed in sequence. They will be executed in top to down order from the column the model uses."
+
+# Data type overrides for parameters where the DB type_list doesn't capture
+# the full convention.  Spine DB uses 2d-map with string "yes" values as a
+# workaround for map-of-arrays (which it doesn't support natively).
+data_type_overrides:
+  nested_periodic:
+    invest_periods: "string (2d-map)"
+    realized_invest_periods: "string (2d-map)"
+    realized_periods: "string (2d-map)"
+    fix_storage_periods: "string (2d-map)"
+
+# Parameters that are ONLY period-indexed (never time-indexed).
+# Used to filter them out of _t sheets.  Derived from parameter descriptions.
+# Parameters not listed here but having 1d_map in type_list are assumed to be
+# usable on both _p and _t sheets.
+period_only_params:
+  node:
+    - constraint_invested_capacity_coefficient
+    - constraint_cumulative_pre_built_capacity_coefficient
+    - constraint_state_coefficient
+    - annual_flow
+    - cumulative_max_capacity
+    - cumulative_min_capacity
+    - existing
+    - fixed_cost
+    - interest_rate
+    - invest_cost
+    - invest_forced
+    - invest_max_period
+    - invest_min_period
+    - lifetime
+    - peak_inflow
+    - retire_max_period
+    - retire_min_period
+    - penalty_down
+    - penalty_up
+    - salvage_value
+    - self_discharge_loss
+    - storage_state_reference_price
+    - storage_state_reference_value
+  unit:
+    - constraint_invested_capacity_coefficient
+    - constraint_cumulative_pre_built_capacity_coefficient
+    - cumulative_max_capacity
+    - cumulative_min_capacity
+    - existing
+    - fixed_cost
+    - interest_rate
+    - invest_cost
+    - invest_max_period
+    - invest_min_period
+    - lifetime
+    - retire_max_period
+    - retire_min_period
+    - salvage_value
+  connection:
+    - constraint_invested_capacity_coefficient
+    - constraint_cumulative_pre_built_capacity_coefficient
+    - cumulative_max_capacity
+    - cumulative_min_capacity
+    - existing
+    - fixed_cost
+    - interest_rate
+    - invest_cost
+    - invest_max_period
+    - invest_min_period
+    - lifetime
+    - retire_max_period
+    - retire_min_period
+    - salvage_value
+  group:
+    - co2_max_period
+    - inertia_limit
+    - invest_max_period
+    - invest_min_period
+    - max_cumulative_flow
+    - max_instant_flow
+    - min_cumulative_flow
+    - min_instant_flow
+    - non_synchronous_limit
+    - penalty_capacity_margin
+    - penalty_inertia
+    - penalty_non_synchronous
+  solve:
+    - years_represented
+  unit__inputNode:
+    - constraint_flow_coefficient
+  unit__outputNode:
+    - constraint_flow_coefficient
+  connection__node:
+    - constraint_flow_coefficient

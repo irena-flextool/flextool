@@ -1,0 +1,17 @@
+{
+    "name": "rename_param_flexTool3",
+    "item_type": "Data Transformer",
+    "description": "",
+    "filter": {
+        "type": "parameter_rename",
+        "settings": {
+            "node": {
+                "penalty_down": "pq_down",
+                "penalty_up": "pq_up"
+            },
+            "reserve__nodeGroup": {
+                "penalty_reserve": "pq_reserve"
+            }
+        }
+    }
+}

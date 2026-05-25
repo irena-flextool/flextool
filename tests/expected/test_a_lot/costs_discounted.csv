@@ -1,0 +1,19 @@
+category,0
+unit investment & retirement,2529.2378
+connection investment & retirement,0.0
+storage investment & retirement,212.0498
+fixed cost pre-existing,692.9734
+fixed cost invested,0.0
+fixed cost reduction of divestments,0.0
+capacity margin penalty,0.0
+commodity_cost,1292.4157
+commodity_sales,30.3522
+co2,1098.5533
+other operational,-163.9021
+starts,135.2632
+upward slack penalty,15187.284
+downward slack penalty,333.8666
+inertia slack penalty,0.0
+non-synchronous slack penalty,0.0
+upward reserve slack penalty,0.0
+downward reserve slack penalty,0.0

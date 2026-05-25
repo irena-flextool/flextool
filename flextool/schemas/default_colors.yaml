@@ -1,0 +1,160 @@
+# Global color template for FlexTool plots.
+#
+# Keys are labels as they appear in plot legends.  Each section is applied
+# only to plots whose entry in templates/default_plots.yaml declares a
+# matching hint:
+#
+#   color_category: <name>       → looked up in the `category` section
+#                                   (exact match on the label string — these
+#                                   are usually parameter / result names).
+#   color_entity_class: <name>   → looked up in the `entity_class` section
+#                                   (case-insensitive match on the label,
+#                                   since entity names can be mixed-case in
+#                                   data but canonical in the template).
+#
+# Values may be either a ``#RRGGBB`` hex string or an ``[r, g, b]`` list.
+# RGB components are accepted as floats in ``0..1`` or ints in ``0..255``.
+#
+# Labels that don't have an entry here fall back to the tab10/tab20
+# matplotlib palette, which is the original behaviour.
+#
+# Sections start empty; real values are filled in subsequent refactor
+# chunks (F = node_flows, G = flowGroup entities).
+
+category:
+  # Cost components produced by flextool/process_outputs/out_costs.py.
+  # Semantic grouping:
+  #   - Investment / capex   → saturated blues
+  #   - Fixed O&M            → teals / light blues
+  #   - Fuel / commodities   → warm browns / oranges / greens (sales)
+  #   - Emissions (CO2)      → dark gray / near-black
+  #   - Variable O&M         → purples
+  #   - Startup              → amber / yellow
+  #   - Slack / penalties    → reds / magentas (visually alarming)
+  costs:
+    # Investment / capex (saturated blues)
+    unit investment & retirement:          '#1f4ea8'   # strong blue
+    connection investment & retirement:    '#3b6fc4'   # medium blue
+    storage investment & retirement:       '#6691d8'   # lighter blue
+    # Fixed O&M (teal family — "keep the lights on, recurring")
+    fixed cost pre-existing:               '#0f8a7a'   # teal
+    fixed cost invested:                   '#3bb0a0'   # brighter teal
+    fixed cost reduction of divestments:   '#8ed2c9'   # pale teal
+    # Commodity / fuel (warm browns / oranges for input, green for sales)
+    commodity_cost:                        '#a0522d'   # sienna (fuel "energy input")
+    commodity_sales:                       '#2ca02c'   # green (revenue / negative cost)
+    # Emissions (gray/near-black — instantly reads as "emissions")
+    co2:                                   '#4d4d4d'   # dark gray
+    # Variable O&M (purple)
+    other operational:                     '#8856a7'   # purple
+    # Startup (amber/yellow — "ignition")
+    starts:                                '#e6a41a'   # amber
+    # Slack / penalties (red / magenta family — alarming)
+    upward slack penalty:                  '#d62728'   # strong red
+    downward slack penalty:                '#ff7f7f'   # light red
+    inertia slack penalty:                 '#b5179e'   # magenta
+    non-synchronous slack penalty:         '#e147b7'   # pink-magenta
+    upward reserve slack penalty:          '#c1272d'   # dark red
+    downward reserve slack penalty:        '#ff9896'   # salmon
+    capacity margin penalty:               '#7b0828'   # deep wine red
+  # Node balance components produced by
+  # flextool/process_outputs/out_node.py::node_summary().  The plot shows
+  # stacked contributions to a node's energy balance: supply-side labels
+  # sit above the zero line (From units, From connections, Inflow, Loss
+  # of load), draw-side labels below it (To units, To connections, Self
+  # discharge, Excess load).  Colors are chosen so:
+  #   - supply / generation / imports → greens and teals
+  #   - load / exports / storage charge → blues
+  #   - storage self-discharge losses → neutral gray
+  #   - slacks (infeasibility) → reds, matching the cost-slack hues so
+  #     users learn a single "slack = red" vocabulary across plots
+  node_flows:
+    # Supply side (positive contributions to the node)
+    From units:         '#2ca02c'   # green — generation delivered to node
+    From connections:   '#17a2b8'   # teal — imports from neighbouring nodes
+    Inflow:             '#7dd87a'   # light green — exogenous inflow (wind, hydro)
+    # Draw side (negative contributions to the node)
+    To units:           '#1f77b4'   # strong blue — consumption / storage charge
+    To connections:     '#5b8fbf'   # steel blue — exports to neighbouring nodes
+    Self discharge:     '#808080'   # gray — storage self-discharge loss
+    # Slacks (infeasibility; red family matches costs-category slacks)
+    Loss of load:       '#d62728'   # strong red — upward slack (unmet demand)
+    Excess load:        '#ff7f7f'   # light red — downward slack (spill / dump)
+
+  # NodeGroup flow components emitted by
+  # flextool/process_outputs/out_group.py::nodeGroup_flows().  The column
+  # index there has two levels, ``type`` and ``item``; legend labels arrive
+  # as either ``"<type> | <item>"`` (bar plans, via _format_legend_labels)
+  # or Python tuple repr ``"('<type>', '<item>')"`` (time-series stacks).
+  # The resolver splits both forms and looks up, in order:
+  #   1. ``<type>_<item>`` (e.g. ``slack_upward``)
+  #   2. ``<type>`` alone (e.g. ``unit``)
+  # If neither hits, the label falls back to the tab10/tab20 palette.  The
+  # palette for the fixed ``type`` vocabulary keeps the node_flows
+  # semantics: supply side (units, inflow) greens, draw side blues,
+  # losses gray, slacks red — so dashboards that mix a node-balance plot
+  # and a nodegroup-flows plot share a visual vocabulary.
+  nodegroup_flows:
+    # Supply side (positive contributions to the group)
+    from_unitGroup:              '#1f9c1f'   # dark green — unit aggregates into group
+    from_unit:                   '#2ca02c'   # green — individual unit flows in
+    from_connectionGroup:        '#0d7a8a'   # dark teal — connection aggregates in
+    from_connection:             '#17a2b8'   # teal — individual connections in
+    inflow:                      '#7dd87a'   # light green — exogenous node inflow
+    # Draw side (negative contributions to the group)
+    to_unitGroup:                '#144a7a'   # dark blue — unit aggregates out
+    to_unit:                     '#1f77b4'   # strong blue — individual unit flows out
+    to_connectionGroup:          '#3c5e8a'   # dark steel blue — connection aggregates out
+    to_connection:               '#5b8fbf'   # steel blue — individual connections out
+    # Internal losses (neutral grays — "energy dissipated inside the group")
+    internal_losses:             '#808080'   # gray — generic losses fallback
+    internal_losses_connections: '#9e9e9e'   # lighter gray — connection losses
+    internal_losses_units:       '#6b6b6b'   # darker gray — unit losses
+    internal_losses_storages:    '#5c5c5c'   # darkest gray — storage self-discharge
+    # Slacks (red family; aligned with costs.upward/downward slack penalty
+    # and node_flows.Loss of load / Excess load)
+    slack:                       '#d62728'   # strong red — generic slack fallback
+    slack_upward:                '#d62728'   # strong red — upward slack (unmet demand)
+    slack_downward:              '#ff7f7f'   # light red — downward slack (spill)
+
+entity_class:
+  # Recommended colors for user-named flowGroup entities.  A flowGroup is a
+  # ``group`` entity whose membership is ``group__unit__node`` or
+  # ``group__connection__node`` (i.e. it aggregates flows, not nodes) and
+  # that carries ``output_flowGroup_indicators = yes``.  The labels below
+  # are a *convention*: if different projects happen to name a flow group
+  # "solar" or "Wind", they get the same color across dashboards.
+  #
+  # Lookup is case-insensitive (see color_template.resolve_label_color), so
+  # "Solar", "solar", and "SOLAR" all resolve to the same entry.  Labels
+  # that aren't listed fall back to the tab10/tab20 palette, so this list
+  # is purely additive — there's no penalty for a project using a name
+  # that isn't here.
+  #
+  # Palette rationale: semantic colors users already associate with the
+  # technology / fuel (yellow for solar, sky blue for wind, black for
+  # coal, …), paired across related pairs (coal/lignite both dark, two
+  # blues for hydro vs pumped hydro) so stacked plots read naturally.
+  group:
+    # Renewables — bright, warm-to-cool gradient
+    solar:          '#F4B400'   # gold / sun
+    wind:           '#4FC3F7'   # sky blue
+    hydro:          '#1565C0'   # deep blue (flowing water)
+    biomass:        '#33691E'   # forest green
+    geothermal:     '#8D6E63'   # burnt-orange brown (earth heat)
+    ocean:          '#006064'   # teal (deep sea — tidal / wave)
+    # Conventional — dark, muted (carbon-heavy "reads as dirty")
+    coal:           '#212121'   # near-black
+    lignite:        '#4E342E'   # dark brown (lower-grade coal)
+    gas:            '#FB8C00'   # orange-red (flame)
+    oil:            '#6A1B9A'   # dark purple (heavy fuel)
+    nuclear:        '#7B1FA2'   # purple (convention in energy atlases)
+    # Storage — greens / teals (shifts energy in time, not a generator)
+    battery:        '#43A047'   # bright green (electrochemistry)
+    pumped_hydro:   '#00838F'   # teal (water-based storage)
+    h2_storage:     '#BA68C8'   # light purple (hydrogen)
+    # Other flows
+    chp:            '#E64A19'   # orange-red (combined heat & power)
+    import:         '#90CAF9'   # light blue (external supply)
+    export:         '#EF9A9A'   # light red (outbound)
+    demand_response: '#FFB300'  # amber (flexible load)

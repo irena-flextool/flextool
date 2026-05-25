@@ -1,0 +1,129 @@
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flextool"
+# 4.0.0 semantic bump is held until the new engine demonstrates full
+# parity with the old one across the test suite.
+version = "3.45.0"
+description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
+readme = "README.md"
+license = { file = "LICENSE.txt" }
+requires-python = ">=3.9"
+authors = [
+    { name = "IRENA FlexTool contributors" },
+]
+keywords = [
+    "energy-systems",
+    "optimization",
+    "linear-programming",
+    "mixed-integer-programming",
+    "power-systems",
+    "investment-planning",
+    "highs",
+    "spine",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    # Solver backend — pure-Python; replaces the retired glpsol pipeline.
+    "polar-high>=1.4.0",
+    "highspy>=1.14",
+    "polars",
+    # Core data + I/O.
+    "pandas",
+    "spinedb-api",
+    "openpyxl",
+    "odfpy",
+    "python-calamine",
+    "xlsxwriter",
+    "pyyaml",
+    "matplotlib",
+    "psutil",
+    # GUI runtime — sv-ttk pulls tkinter theming.  Headless installs that
+    # never import flextool.gui won't actually load this, but it's
+    # listed as core to keep the existing CLI ↔ GUI installs symmetric.
+    # Move to an optional [gui] extra in a future release if headless
+    # users complain about the install size.
+    "sv-ttk",
+    "pywin32; sys_platform == 'win32'",
+]
+
+[project.urls]
+Documentation = "https://irena-flextool.github.io/flextool/"
+Repository = "https://github.com/irena-flextool/flextool"
+Issues = "https://github.com/irena-flextool/flextool/issues"
+
+[project.optional-dependencies]
+toolbox = ["spinetoolbox"]
+viewer = ["tsdownsample>=0.1.3", "networkx>=3.0"]
+# Backward-compat alias — engine-polars is now the only engine and its
+# dependencies are part of the core install.  Empty list kept so any
+# automation pinned to ``pip install flextool[engine-polars]`` keeps
+# working.
+engine-polars = []
+
+[project.scripts]
+# Primary entry points — kept hyphen-cased for `flextool-*` CLI uniformity.
+flextool-run = "flextool.cli.cmd_run_flextool:main"
+flextool-update = "flextool.cli.cmd_update_flextool:main"
+flextool-write-outputs = "flextool.cli.cmd_write_outputs:main"
+flextool-migrate-database = "flextool.cli.cmd_migrate_database:main"
+flextool-scenario-results = "flextool.cli.cmd_scenario_results:main"
+flextool-execute-workflow = "flextool.cli.cmd_execute_flextool_workflow:main"
+flextool-export-to-tabular = "flextool.cli.cmd_export_to_tabular:main"
+flextool-read-tabular-input = "flextool.cli.cmd_read_tabular_input:main"
+flextool-read-self-describing-tabular-input = "flextool.cli.cmd_read_self_describing_tabular_input:main"
+# Existing entry points retained.
+flextool-gui = "flextool.gui.__main__:main"
+flextool-read-old = "flextool.cli.cmd_read_old_flextool:main"
+flextool-import-sensitivities = "flextool.cli.cmd_import_sensitivities:main"
+flextool-read-matpower = "flextool.cli.cmd_read_matpower:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "--import-mode=importlib"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "solver: marks tests that invoke a real solver (5-60s each); deselect with '-m \"not solver\"'",
+    "smoke: fast Layer-1 scenarios for the per-commit gate",
+]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+# Auto-discover all flextool subpackages.  Excludes test/scratch dirs.
+where = ["."]
+include = ["flextool*"]
+exclude = ["flextool*.__pycache__"]
+
+[tool.setuptools.package-data]
+# Static data files bundled with the wheel and accessed at runtime via
+# ``flextool._resources.package_data_path``:
+#   * schemas/*.json                    — schema templates (spinedb_schema.json, axis
+#                                         contract, output/comparison-settings seeds)
+#   * schemas/*.md                      — schema docs (AXIS_CONTRACT.md)
+#   * schemas/*.yaml, schemas/*.txt     — YAML configs (default plots/colors) + flextool_location.txt
+#   * schemas/canonical_databases/*.json — canonical example/template DB sources
+#   * schemas/pre_v26/*.json            — pre-v26 migration-step template snapshots
+#   * solver_config/highs.opt.template — HiGHS options template (seeded into solver_config/highs.opt on first run)
+#   * export_to_tabular/*.yaml          — export settings (sheet config etc.)
+flextool = [
+    "schemas/*.json",
+    "schemas/*.md",
+    "schemas/*.yaml",
+    "schemas/*.txt",
+    "schemas/canonical_databases/*.json",
+    "schemas/pre_v26/*.json",
+    "solver_config/highs.opt.template",
+    "export_to_tabular/*.yaml",
+]

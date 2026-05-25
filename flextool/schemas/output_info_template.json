@@ -1,0 +1,48 @@
+{
+    "entity_classes": [
+        [
+            "scenario",
+            [],
+            null,
+            280806649362137,
+            true
+        ]
+    ],
+    "parameter_definitions": [
+        [
+            "scenario",
+            "finish_time",
+            null,
+            null,
+            "Datetime stapm when scenario execution was finished"
+        ],
+        [
+            "scenario",
+            "folder",
+            null,
+            null,
+            "Full path to the working directory"
+        ],
+        [
+            "scenario",
+            "output_location",
+            null,
+            null,
+            "Full path to the directory that contains the processed outputs"
+        ]
+    ],
+    "parameter_types": [
+        [
+            "scenario",
+            "finish_time",
+            "date_time",
+            0
+        ],
+        [
+            "scenario",
+            "output_location",
+            "str",
+            0
+        ]
+    ]
+}

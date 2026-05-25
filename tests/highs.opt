@@ -1,0 +1,27 @@
+# HiGHS options for test runs
+# Deterministic and tight precision for reproducible golden file comparisons.
+# Rounding in test harness (4 decimal places) is set one order of magnitude
+# above the feasibility tolerances here.
+#
+# NOTE: ``engine_polars`` (the cascade used by tests/test_scenarios.py)
+# drives HiGHS through ``polar_high.Problem.set_solver_options`` and does
+# NOT read this options file — the authoritative determinism pin lives in
+# ``flextool/engine_polars/scaling.py::DETERMINISM_OPTIONS``.  The keys
+# below are kept aligned with that pin so CLI-style invocations
+# (``bin/highs`` with this file passed on the command line) stay
+# consistent with the engine.
+write_solution_to_file=true
+solution_file=flextool.sol
+write_solution_style=2
+mip_report_level=2
+mip_heuristic_effort=0.0
+mip_detect_symmetry=false
+mip_rel_gap=0.0001
+threads=1
+parallel=off
+random_seed=0
+solver=simplex
+presolve=on
+log_to_console=true
+primal_feasibility_tolerance=1e-8
+dual_feasibility_tolerance=1e-8

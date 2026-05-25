@@ -1,0 +1,71 @@
+site_name:        IRENA FlexTool
+repo_url:         https://github.com/irena-flextool/flextool
+site_description: IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.
+site_author: Juha Kiviluoma, VTT Technical Centre of Finland
+copyright: IRENA
+
+docs_dir: 'docs'
+
+theme:
+  name: material
+  logo: img/irena_flextool_favicon.png
+  favicon: img/irena_flextool_favicon.png
+  features:
+    - content.code.copy
+    - navigation.expand
+
+extra_javascript:
+  - https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML
+  - assets/mathjaxhelper.js
+
+plugins:
+  - search
+  - mermaid2
+
+markdown_extensions:
+  - extra
+  - tables
+  - fenced_code
+  - admonition
+  - pymdownx.details
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - docs
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:mermaid2.fence_mermaid_custom
+
+nav:
+  - Introduction: index.md
+  - Getting started:
+    - 'Choosing an interface': interface_overview.md
+    - 'Install with FlexTool GUI': install_gui.md
+    - 'Install with Spine Toolbox': install_toolbox.md
+  - Tutorial: tutorial.md
+  - Concepts:
+    - 'Model parameters': reference.md
+    - 'Model outputs': results.md
+    - 'How-to recipes': how_to.md
+    - 'Advanced concepts': advanced_concepts.md
+  - Interfaces:
+    - 'FlexTool GUI': flextool_gui_interface.md
+    - 'Spine Toolbox': spine_toolbox.md
+    - 'Spine database editor': spine_database.md
+    - 'Excel as input/output': excel_interface.md
+    - 'Terminal / CLI': terminal_workflow.md
+  - 'Developer guide':
+    - 'Architecture overview': dev/architecture.md
+    - 'The engine_polars pipeline': dev/engine_polars.md
+    - 'LP scaling pipeline': dev/scaling.md
+    - 'Slack convention': dev/slack_convention.md
+    - 'Decomposition': dev/decomposition.md
+    - 'Database schema and migration': dev/db_schema.md
+    - 'Testing': dev/testing.md
+  - 'Release notes': release.md
+  - Archived:
+    - 'Web interface (deprecated)': archived/browser_interface.md
+    - 'Web interface install (deprecated)': archived/install_web_interface.md

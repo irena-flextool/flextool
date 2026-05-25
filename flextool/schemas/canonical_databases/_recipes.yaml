@@ -1,0 +1,81 @@
+# Recipes for generating canonical_databases/*.json from tests/fixtures/*.json.
+#
+# Each top-level key names an output file under canonical_databases/.
+# Run:
+#   python -m flextool.update_flextool.generate_canonical                    # generate all
+#   python -m flextool.update_flextool.generate_canonical templates_examples # generate one
+#   python -m flextool.update_flextool.generate_canonical --verify           # CI mode
+#
+# Architecture: multiple authoritative source JSONs, each with its own scope
+# --------------------------------------------------------------------------
+# Some canonical_databases files are GENERATED here (subset / projection of
+# a tests/fixtures source); others are AUTHORITATIVE for themselves
+# (purpose-specific minimal example per how-to doc, with no overlap into
+# tests/fixtures).  Both paths get schema-migration coverage via
+# ``canonical_databases.migrate_all`` and CI verification.
+#
+# Generated (recipes in this file):
+#   templates_examples.json   from tests/fixtures/tests.json (broad subset)
+#   howto_stochastics.json    from tests/fixtures/stochastics.json (full)
+#
+# Authoritative (hand-maintained or SpineDB-editor-driven; this is fine —
+# their scenarios are deliberately distinct from tests.json content):
+#   howto_aggregate_output.json            (scenario: simple_scenario)
+#   howto_connections.json                 (scenario: network)
+#   howto_demand.json                      (5 scenarios, all unique)
+#   howto_hydro_reservoir.json             (4 scenarios, all unique)
+#   howto_hydro_reservoir_with_pump.json   (3 unique + 1 also in tests.json)
+#   howto_non_sync_and_curtailment.json    (3 unique + 1 also in tests.json)
+#   howto_ramp_and_start_up.json           (4 scenarios, all unique)
+#   templates_time_settings_only.json      (1 unique scenario)
+#
+# Why multi-authoritative rather than merging everything into tests.json:
+# the how-to scenarios are curated for *teaching one concept*, while
+# tests.json scenarios are curated for *test coverage*.  Mixing the
+# two would force tests.json to grow whenever a how-to lands and would
+# muddy both curation goals.  Add a generator recipe only when a
+# canonical file is a true derivation of a tests/fixtures source.
+#
+# Recipe fields:
+#   source              relative path (from repo root) of the source JSON
+#   exclude_scenarios   scenarios to drop from the source before exporting
+#   exclude_alternatives alternatives exclusive to those scenarios — dropped
+#                       so entity_alternatives / parameter_values bound to
+#                       them cascade away.  Listing the alternatives keeps
+#                       the filter explicit and auditable; orphan-sweeping
+#                       heuristics drop too much (naked structural entities
+#                       like `reserve primary` legitimately have no values
+#                       and only appear as dimensions).
+#   exclude_entities    entities exclusive to the dropped scenarios that
+#                       carry no parameter_value or entity_alternative
+#                       (so are not cleaned up by the alternative cascade).
+#                       Listed as ``[class_name, entity_name]``.  Removing
+#                       a 1-dim parent cascade-removes its multi-dim
+#                       children automatically via spinedb_api.
+
+templates_examples:
+  source: tests/fixtures/tests.json
+  exclude_scenarios:
+    - hyphenated_entity_names
+    - unidirectional_connection
+    - years_represented_2_5
+    - years_represented_half
+  exclude_alternatives:
+    - hyphenated
+    - unidirectional
+    - half_year
+    - two_and_half_year
+  exclude_entities:
+    # west-east-aux is the only "hyphenated" connection; its multi-dim
+    # connection__node__node child cascades when the parent is removed.
+    - [connection, west-east-aux]
+    # y2020_2_5_year and y2020_half_year solves only exist for the
+    # years_represented_* edge-case scenarios.
+    - [solve, y2020_2_5_year]
+    - [solve, y2020_half_year]
+
+# howto_stochastics.json — generated from the stochastics fixture.
+howto_stochastics:
+  source: tests/fixtures/stochastics.json
+  # All scenarios from the source are user-facing examples here.
+  # (No exclude_scenarios / no exclude_entities needed.)

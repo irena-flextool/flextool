@@ -1,0 +1,639 @@
+{
+    "project": {
+        "version": 13,
+        "description": "",
+        "settings": {
+            "enable_execute_all": false,
+            "store_external_paths_as_relative": false
+        },
+        "specifications": {
+            "Importer": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Importer/import_flex3.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Importer/flextool3_excel_input.json"
+                }
+            ],
+            "Exporter": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Exporter/results_to_excel.json"
+                }
+            ],
+            "Tool": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/flextool3.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/migrate_database.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/scenario_comparison.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/read_tabular_data.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/process_outputs.json"
+                }
+            ]
+        },
+        "connections": [
+            {
+                "name": "from Examples to Replace with examples",
+                "from": [
+                    "Examples",
+                    "right"
+                ],
+                "to": [
+                    "Replace with examples",
+                    "left"
+                ],
+                "filter_settings": {
+                    "auto_online": false,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Replace with examples to Input data",
+                "from": [
+                    "Replace with examples",
+                    "right"
+                ],
+                "to": [
+                    "Input data",
+                    "left"
+                ],
+                "options": {
+                    "purge_before_writing": true,
+                    "purge_settings": {
+                        "alternative": true,
+                        "scenario": true,
+                        "scenario_alternative": true,
+                        "entity_class": false,
+                        "display_mode": false,
+                        "entity_class_display_mode": false,
+                        "superclass_subclass": false,
+                        "entity": true,
+                        "entity_group": true,
+                        "entity_alternative": true,
+                        "parameter_value_list": false,
+                        "list_value": false,
+                        "parameter_definition": false,
+                        "parameter_type": false,
+                        "parameter_value": true,
+                        "metadata": true,
+                        "entity_metadata": true,
+                        "parameter_value_metadata": true
+                    },
+                    "write_index": 1
+                },
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Input data to FlexTool",
+                "from": [
+                    "Input data",
+                    "right"
+                ],
+                "to": [
+                    "FlexTool",
+                    "left"
+                ],
+                "options": {
+                    "require_scenario_filter": true
+                },
+                "filter_settings": {
+                    "auto_online": false,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Migrate database version to Input data",
+                "from": [
+                    "Migrate database version",
+                    "right"
+                ],
+                "to": [
+                    "Input data",
+                    "bottom"
+                ],
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from FlexTool to Output info",
+                "from": [
+                    "FlexTool",
+                    "right"
+                ],
+                "to": [
+                    "Output info",
+                    "left"
+                ],
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Output info to Scenario comparison",
+                "from": [
+                    "Output info",
+                    "right"
+                ],
+                "to": [
+                    "Scenario comparison",
+                    "left"
+                ],
+                "options": {
+                    "require_scenario_filter": true
+                },
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": true,
+                        "scenario_filter": false
+                    }
+                }
+            },
+            {
+                "name": "from Excel input to Read input spreadsheet",
+                "from": [
+                    "Excel input",
+                    "right"
+                ],
+                "to": [
+                    "Read input spreadsheet",
+                    "left"
+                ],
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Read input spreadsheet to Input data",
+                "from": [
+                    "Read input spreadsheet",
+                    "right"
+                ],
+                "to": [
+                    "Input data",
+                    "left"
+                ],
+                "options": {
+                    "purge_before_writing": true,
+                    "purge_settings": {
+                        "alternative": true,
+                        "scenario": true,
+                        "scenario_alternative": true,
+                        "entity_class": false,
+                        "display_mode": false,
+                        "entity_class_display_mode": false,
+                        "superclass_subclass": false,
+                        "entity": true,
+                        "entity_group": true,
+                        "entity_alternative": true,
+                        "parameter_value_list": false,
+                        "list_value": false,
+                        "parameter_definition": false,
+                        "parameter_type": false,
+                        "parameter_value": true,
+                        "metadata": true,
+                        "entity_metadata": true,
+                        "parameter_value_metadata": true,
+                        "entity_location": true
+                    }
+                },
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from FlexTool location to FlexTool",
+                "from": [
+                    "FlexTool location",
+                    "right"
+                ],
+                "to": [
+                    "FlexTool",
+                    "left"
+                ],
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Output info to Re-create results",
+                "from": [
+                    "Output info",
+                    "right"
+                ],
+                "to": [
+                    "Re-create results",
+                    "right"
+                ],
+                "options": {
+                    "require_scenario_filter": true
+                },
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": true,
+                        "scenario_filter": false
+                    }
+                }
+            },
+            {
+                "name": "from Output settings to Re-create results",
+                "from": [
+                    "Output settings",
+                    "right"
+                ],
+                "to": [
+                    "Re-create results",
+                    "right"
+                ],
+                "options": {
+                    "require_scenario_filter": true
+                },
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Output settings to FlexTool",
+                "from": [
+                    "Output settings",
+                    "left"
+                ],
+                "to": [
+                    "FlexTool",
+                    "left"
+                ],
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Comparison settings to Scenario comparison",
+                "from": [
+                    "Comparison settings",
+                    "bottom"
+                ],
+                "to": [
+                    "Scenario comparison",
+                    "left"
+                ],
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            }
+        ],
+        "jumps": [
+            {
+                "name": "from Re-create results to Output info",
+                "from": [
+                    "Re-create results",
+                    "left"
+                ],
+                "to": [
+                    "Output info",
+                    "left"
+                ],
+                "condition": {
+                    "type": "python-script",
+                    "script": "exit(1)",
+                    "specification": ""
+                },
+                "cmd_line_args": []
+            }
+        ]
+    },
+    "items": {
+        "Excel input": {
+            "type": "Data Connection",
+            "description": "",
+            "x": -456.90027674301587,
+            "y": -85.37030662052553,
+            "file_references": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "example_input.xlsx"
+                }
+            ],
+            "file_patterns": [],
+            "directory_references": [],
+            "db_references": []
+        },
+        "Examples": {
+            "type": "Data Store",
+            "description": "",
+            "x": -452.9208822432676,
+            "y": 54.367780394163894,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": null,
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": "templates/examples.sqlite"
+                },
+                "schema": ""
+            }
+        },
+        "Replace with examples": {
+            "type": "Merger",
+            "description": "",
+            "x": -326.0926391913017,
+            "y": 55.66555114285506,
+            "cancel_on_error": true
+        },
+        "FlexTool": {
+            "type": "Tool",
+            "description": "",
+            "x": 11.3153090269304,
+            "y": -50.64666336795588,
+            "specification": "FlexTool3",
+            "execute_in_work": true,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "db_url@Input data"
+                },
+                {
+                    "type": "resource",
+                    "arg": "db_url@Output info"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--settings-db-url"
+                },
+                {
+                    "type": "resource",
+                    "arg": "db_url@Output settings"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--flextool-location"
+                },
+                {
+                    "type": "resource",
+                    "arg": "<project>/templates/flextool_location.txt"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Migrate database version": {
+            "type": "Tool",
+            "description": "",
+            "x": -184.35330402127616,
+            "y": 78.95609996367143,
+            "specification": "migrate_database",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "db_url@Input data"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Read input spreadsheet": {
+            "type": "Tool",
+            "description": "",
+            "x": -322.6082958349802,
+            "y": -85.3407554373215,
+            "specification": "Read tabular data",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "db_url@Input data"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--tabular-file-path"
+                },
+                {
+                    "type": "resource",
+                    "arg": "<project>/example_input.xlsx"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Re-create results": {
+            "type": "Tool",
+            "description": "",
+            "x": 149.5520209256511,
+            "y": -83.29811605946422,
+            "specification": "Process outputs",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "literal",
+                    "arg": "--output-locations-db-url"
+                },
+                {
+                    "type": "resource",
+                    "arg": "db_url@Output info"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--settings-db-url"
+                },
+                {
+                    "type": "resource",
+                    "arg": "db_url@Output settings"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--plot-file-format"
+                },
+                {
+                    "type": "literal",
+                    "arg": "png"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Output settings": {
+            "type": "Data Store",
+            "description": "",
+            "x": 61.25916756087045,
+            "y": -218.95027571670272,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": null,
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": "output_settings.sqlite"
+                },
+                "schema": ""
+            }
+        },
+        "Output info": {
+            "type": "Data Store",
+            "description": "",
+            "x": 151.78909396116228,
+            "y": 31.866423728190313,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": null,
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": "output_info.sqlite"
+                },
+                "schema": ""
+            }
+        },
+        "Scenario comparison": {
+            "type": "Tool",
+            "description": "",
+            "x": 362.2325082714022,
+            "y": 33.19274664107564,
+            "specification": "scenario comparison",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "db_url@Output info"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--settings-db-url"
+                },
+                {
+                    "type": "resource",
+                    "arg": "db_url@Comparison settings"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--dispatch-plots"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "FlexTool location": {
+            "type": "Data Connection",
+            "description": "",
+            "x": -180.23956600265151,
+            "y": -168.71705999666122,
+            "file_references": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "templates/flextool_location.txt"
+                }
+            ],
+            "file_patterns": [],
+            "directory_references": [],
+            "db_references": []
+        },
+        "Comparison settings": {
+            "type": "Data Store",
+            "description": "",
+            "x": 301.2745945616581,
+            "y": -93.39512431411403,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": null,
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": "comparison_settings.sqlite"
+                },
+                "schema": ""
+            }
+        },
+        "Input data": {
+            "type": "Data Store",
+            "description": "",
+            "x": -149.79217856650007,
+            "y": -51.79573902179642,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": null,
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": "projects/Rivendell/input_sources/rivendell.sqlite"
+                },
+                "schema": ""
+            }
+        }
+    }
+}

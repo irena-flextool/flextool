@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://irena-flextool.github.io/flextool/schemas/flextool_axis_contract.schema.json",
+  "title": "FlexTool axis contract",
+  "description": "Schema validating the structure of schemas/flextool_axis_contract.json. See schemas/AXIS_CONTRACT.md.",
+  "type": "object",
+  "required": ["axes"],
+  "properties": {
+    "_comment": { "type": "string" },
+    "_doc": { "type": "string" },
+    "_schema_version": { "type": "string" },
+    "_template_master_version_compat": {
+      "type": "object",
+      "required": ["path", "git_commit"],
+      "properties": {
+        "path": { "type": "string" },
+        "git_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "git_commit_date": { "type": "string" },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "axes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/axis" }
+    },
+    "synthetic_token_allowlist": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["axis", "tokens"],
+        "properties": {
+          "axis": { "type": "string" },
+          "tokens": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1
+          },
+          "introduced_by": { "type": "string" },
+          "note": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "mixed_vocab_columns": {
+      "type": "object",
+      "required": ["confirmed", "pending_audit"],
+      "properties": {
+        "_comment": { "type": "string" },
+        "confirmed": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pending_audit": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "non_dim_columns": {
+      "type": "object",
+      "required": ["confirmed"],
+      "properties": {
+        "_comment": { "type": "string" },
+        "confirmed": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "_review_notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "summary"],
+        "properties": {
+          "id": { "type": "string" },
+          "summary": { "type": "string" },
+          "code_sites": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "options": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "recommendation_for_phase_1": { "type": "string" },
+          "resolution": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "axis": {
+      "type": "object",
+      "required": ["name", "label", "source_type", "source"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": { "type": "string" },
+        "source_type": {
+          "type": "string",
+          "enum": [
+            "entity_class",
+            "entity_class_union",
+            "parameter_keys",
+            "parameter_value_list",
+            "synthetic",
+            "union"
+          ]
+        },
+        "source": {},
+        "filter": { "type": ["string", "null"] },
+        "tokens": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "tokens_default_extension": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "column_synonyms": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "source_type": { "const": "entity_class" } }, "required": ["source_type"] },
+          "then": { "properties": { "source": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "if": { "properties": { "source_type": { "const": "entity_class_union" } }, "required": ["source_type"] },
+          "then": {
+            "properties": {
+              "source": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "minItems": 2
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "source_type": { "const": "parameter_keys" } }, "required": ["source_type"] },
+          "then": {
+            "properties": {
+              "source": {
+                "type": "object",
+                "properties": {
+                  "entity_class": { "type": "string" },
+                  "parameter": { "type": "string" },
+                  "parameters": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "parameter_prefix": { "type": "string" },
+                  "depth": {},
+                  "key_kind": { "type": "string" },
+                  "carrier": { "type": "string" },
+                  "column": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "source_type": { "const": "parameter_value_list" } }, "required": ["source_type"] },
+          "then": {
+            "properties": {
+              "source": {
+                "type": "object",
+                "required": ["entity_class", "parameter"],
+                "properties": {
+                  "entity_class": { "type": "string" },
+                  "parameter": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "source_type": { "const": "synthetic" } }, "required": ["source_type"] },
+          "then": {
+            "properties": {
+              "source": { "type": "null" },
+              "tokens": {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 1
+              }
+            },
+            "required": ["tokens"]
+          }
+        },
+        {
+          "if": { "properties": { "source_type": { "const": "union" } }, "required": ["source_type"] },
+          "then": {
+            "properties": {
+              "source": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "minItems": 2
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

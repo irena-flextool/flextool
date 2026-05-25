@@ -1,0 +1,14 @@
+{
+    "name": "FlexTool3",
+    "tooltype": "python",
+    "includes": [
+        "cmd_run_flextool.py",
+        "bin/highs.opt"
+    ],
+    "description": "",
+    "inputfiles": [],
+    "inputfiles_opt": [],
+    "outputfiles": [],
+    "cmdline_args": [],
+    "includes_main_path": "../../../flextool/cli"
+}

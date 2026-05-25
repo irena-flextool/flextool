@@ -1,0 +1,104 @@
+name: CI
+
+# Three-tier CI gate:
+#   smoke  — every push and pull_request; <1 min, blocks merge
+#   full   — push to master + nightly; full Layer-1 + Layer-2 parity (<30 min)
+#   slow   — nightly only; xlsx workflow + other slow integration tests
+#
+# All jobs use the in-repo HiGHS / glpsol binaries under bin/ (no external
+# secrets). The `chmod +x` step makes them executable after checkout.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    # 03:00 UTC nightly
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Smoke (per-commit gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pyyaml matplotlib
+
+      - name: Set solver binary permissions
+        run: |
+          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
+          if [ -f bin/highs ]; then chmod +x bin/highs; fi
+
+      - name: Run smoke gate
+        run: pytest -m "smoke or (not slow and not solver)" -v --tb=short
+
+  full:
+    name: Full (Layer-1 + Layer-2 parity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Run on push to master and on nightly schedule (skip pull_request to
+    # keep PR feedback fast — smoke is the PR gate).
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pyyaml matplotlib
+
+      - name: Set solver binary permissions
+        run: |
+          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
+          if [ -f bin/highs ]; then chmod +x bin/highs; fi
+
+      - name: Run full Layer-1 (excluding slow)
+        run: pytest tests/ -v --tb=short --ignore=tests/test_xlsx_workflow.py
+
+      - name: Run Layer-2 MPS parity (if present)
+        run: |
+          if [ -f tests/test_mps_parity.py ]; then
+            pytest tests/test_mps_parity.py -v --tb=short
+          else
+            echo "tests/test_mps_parity.py not present yet — skipping Layer-2 parity job"
+          fi
+
+  slow:
+    name: Slow (nightly only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pyyaml matplotlib
+
+      - name: Set solver binary permissions
+        run: |
+          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
+          if [ -f bin/highs ]; then chmod +x bin/highs; fi
+
+      - name: Run slow tests
+        run: pytest tests/ -v --tb=short -m slow

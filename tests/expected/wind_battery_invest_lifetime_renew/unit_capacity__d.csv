@@ -1,0 +1,5 @@
+unit,solve,period,existing,invested,divested,total
+wind_plant,y2020_2035_5week,p2020,1000,782.4469,,1782.4469
+wind_plant,y2020_2035_5week,p2025,1000,253.6145,,2036.0614
+wind_plant,y2020_2035_5week,p2030,1000,253.6336,,2289.695
+wind_plant,y2020_2035_5week,p2035,1000,253.6336,,2543.3285

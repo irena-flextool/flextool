@@ -1,0 +1,134 @@
+from dataclasses import dataclass, field
+
+# Dimension rule characters come from templates/default_plots.yaml and must remain unchanged.
+# This dict documents their meaning for readability in code (e.g. DIMENSION_RULES['t'] → 'time axis (x)').
+DIMENSION_RULES: dict[str, str] = {
+    't': 'time axis (x, datetime)',
+    'i': 'time-like axis (x, chunk-average)',
+    'b': 'bar/line column stack',
+    'e': 'expand (separate y-axes)',
+    'g': 'group (grouped bars)',
+    's': 'stack (stacked segments)',
+    'u': 'subplot (separate plot panel)',
+    'l': 'line series',
+    'f': 'file (separate file per member)',
+    'm': 'merge (sum and collapse)',
+    'a': 'average and collapse',
+    'y': 'weight by years_represented, then sum and collapse (period row only)',
+    'z': 'years_represented weighted average and collapse (period row only)',
+}
+
+# Field names for plot settings — used by _is_single_config() to detect config dicts.
+PLOT_FIELD_NAMES = {
+    'plot_name', 'map_dimensions_for_plots', 'subplots_per_row', 'legend',
+    'bar_orientation', 'base_length', 'max_subplots_per_file', 'max_items_per_plot',
+    'max_items_per_subplot_column',
+    'time_average_duration', 'xlabel', 'ylabel', 'value_label', 'axis_bounds',
+    'axis_scale_min_max',  # backward compat alias for axis_bounds
+    'axis_tick_format', 'always_include_zero_in_axis', 'skip_data_with_only_zeroes',
+    'multiply_by', 'full_timeline', 'subplots_by_magnitudes',
+    'variant',  # used by plot_config_reader to override variant letter derivation
+    'color_category', 'color_entity_class',  # color-template hints (chunk D)
+    'scenario_rule', 'comparison_overrides',  # comparison-mode add-ons
+}
+
+
+@dataclass
+class PlotConfig:
+    """Typed, default-carrying wrapper for a single plot's settings dict.
+
+    Callers that pass raw dicts (e.g. scenario_results.py) need no change:
+    ``PlotConfig(**raw_dict)`` works as long as the dict only contains known fields.
+    """
+    plot_name: str = ''
+    map_dimensions_for_plots: dict = field(default_factory=dict)
+    subplots_per_row: int = 2
+    legend: str = 'right'  # 'right', 'all', or 'shared'
+    bar_orientation: str = 'horizontal'
+    base_length: float = 4.0
+    max_subplots_per_file: int = 6
+    max_items_per_plot: int = 10
+    max_items_per_subplot_column: int = 40
+    time_average_duration: str | None = None
+    xlabel: str | None = None
+    ylabel: str | None = None
+    value_label: str | None = None
+    axis_bounds: dict | list | str | None = None
+    axis_tick_format: str = 'dynamic'
+    always_include_zero_in_axis: bool = True
+    skip_data_with_only_zeroes: bool = False
+    multiply_by: float | None = None
+    full_timeline: bool = False
+    subplots_by_magnitudes: bool = False
+    # Hints for the color-template resolver (see flextool.plot_outputs.color_template).
+    # Default None means "no hint" — fall back to the tab10/tab20 palette as today.
+    color_category: str | None = None
+    color_entity_class: str | None = None
+
+    # --- Comparison-mode add-ons ---
+    # The unioned plan parquet at comparison-view time has the post-single-rules
+    # shape with `scenario` prepended as the outermost column-MultiIndex level.
+    # `scenario_rule` is the dim-rule character applied to that scenario level
+    # when building the comparison PlotPlan (see
+    # flextool.scenario_comparison.plan_union.compute_comparison_plan_from_single).
+    # Common choices: 'g' (grouped/coloured bars), 'l' (line series), 'u'
+    # (subplot per scenario), 'f' (file per scenario), 's' (stack — rare).
+    # When None, the config has no comparison rendering — comparison view
+    # surfaces "no comparison rule defined" for this plot.
+    scenario_rule: str | None = None
+    # Optional per-mode overrides applied on top of the single-mode values when
+    # rendering the comparison view (e.g. fewer ``max_subplots_per_file``
+    # because each subplot now has scenario-many more bars).  Any field listed
+    # in PLOT_FIELD_NAMES is allowed.  Plain dict so the YAML stays terse.
+    comparison_overrides: dict | None = None
+
+
+def _is_single_config(d: dict) -> bool:
+    """Return True if *d* is a single-plot config (has known field names), not a named-config dict."""
+    return any(k in PLOT_FIELD_NAMES for k in d)
+
+
+def _is_new_format_entry(d: dict) -> bool:
+    """Return True if *d* is an entry-name-based config (has 'group' and 'order' keys)."""
+    return 'group' in d and 'order' in d
+
+
+def flatten_new_format(plots: dict) -> dict:
+    """Convert entry-name-based format to flat result_key-based format.
+
+    Entries have ``group`` and ``order`` keys; result_keys are nested
+    underneath.  The flattened output maps each result_key directly to
+    its sub-config dict (same shape the orchestrator/plan code expects).
+
+    When the same result_key appears under multiple entry names (e.g.
+    ``costs_dt_p`` under both "Costs" and "Costs lines"), the sub-configs
+    from each entry are merged into a single dict for that result_key.
+
+    Sub-configs that lack an explicit ``plot_name`` get the entry name
+    (e.g. "Node flows") injected as ``_entry_name`` so the orchestrator
+    can use it as a filename fallback instead of the raw result_key.
+
+    Already-flat entries (result_key → config dict without group/order)
+    pass through unchanged for programmatic callers.
+    """
+    flat: dict = {}
+    for key, value in plots.items():
+        if not isinstance(value, dict):
+            continue
+        if _is_new_format_entry(value):
+            for rk, rk_val in value.items():
+                if rk in ('group', 'order') or not isinstance(rk_val, dict):
+                    continue
+                # Inject entry name into sub-configs that lack plot_name
+                enriched = dict(rk_val)
+                for setting_name, setting in enriched.items():
+                    if isinstance(setting, dict) and 'plot_name' not in setting:
+                        setting['_entry_name'] = key
+                if rk in flat:
+                    flat[rk].update(enriched)
+                else:
+                    flat[rk] = enriched
+        else:
+            # Already flat (result_key → config dict) — pass through
+            flat[key] = value
+    return flat
