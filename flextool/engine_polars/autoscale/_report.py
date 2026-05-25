@@ -17,6 +17,29 @@ from ._layer3 import Layer3Plan
 from ._ranges import RangeReport
 
 
+def _decades(span: tuple[float, float]) -> Any:
+    """Return the spread of a range as decades (log10(hi/lo)).
+
+    ``(nan, nan)`` (empty group) returns ``None`` — the caller renders
+    that as ``"empty"`` in the console line.
+    """
+    lo, hi = span
+    if math.isnan(lo) or math.isnan(hi):
+        return None
+    if lo <= 0.0:
+        return None
+    if hi <= 0.0:
+        return None
+    return math.log10(hi / lo)
+
+
+def _fmt_decades(value: Any) -> str:
+    """Render a decade spread as ``"7.1d"`` or ``"empty"``."""
+    if value is None:
+        return "empty"
+    return f"{value:.1f}d"
+
+
 def _coerce_range(span: tuple[float, float]) -> dict[str, Any]:
     """Render a ``(lo, hi)`` tuple as a small YAML dict.
 
@@ -193,4 +216,112 @@ def write_report(result: Mapping[str, Any], path: Path | str) -> Path:
     return path
 
 
-__all__ = ["render_layer2", "render_layer3", "write_report"]
+def format_console_summary(
+    *,
+    ranges_pre: RangeReport,
+    ranges_post: "RangeReport | None",
+    layer2_plan: "Layer2Plan | None",
+    layer3_plan: "Layer3Plan | None",
+    threshold_decades: float,
+) -> str:
+    """Compose the one-line console summary surfaced when autoscale fires.
+
+    Renders the four pre-Layer-1 spreads in decades, the per-type Layer 2
+    exponents, the Layer 3 ``user_*_scale`` + ``simplex_scale_strategy``
+    values, and the post-action four-range spreads so the operator sees
+    "before → after" at a glance.
+
+    When ``ranges_pre.trigger`` is False the function returns the quieter
+    "within comfort zone" confirmation — callers can branch on that path
+    by inspecting the report themselves, but exposing the message here
+    keeps the format definition in one place.
+    """
+    if not ranges_pre.trigger:
+        return (
+            "autoscale: LP within HiGHS comfort zone "
+            f"(spreads <= {threshold_decades:g} decades) — no scaling applied"
+        )
+
+    pre_matrix = _fmt_decades(_decades(ranges_pre.matrix))
+    pre_cost = _fmt_decades(_decades(ranges_pre.cost))
+    pre_bound = _fmt_decades(_decades(ranges_pre.bound))
+    pre_rhs = _fmt_decades(_decades(ranges_pre.rhs))
+
+    parts: list[str] = [
+        f"autoscale: ranges pre Matrix={pre_matrix} Cost={pre_cost} "
+        f"Bound={pre_bound} RHS={pre_rhs}"
+    ]
+
+    if layer2_plan is not None:
+        exps = ", ".join(
+            f"{t.value}:{e:+d}" for t, e in layer2_plan.type_exponents.items()
+        )
+        skipped = len(layer2_plan.skipped_rows)
+        parts.append(
+            f"L2 exponents {{{exps}}}"
+            + (f" skipped_rows={skipped}" if skipped else "")
+        )
+    else:
+        parts.append("L2 skipped")
+
+    if layer3_plan is not None:
+        parts.append(
+            f"L3 user_obj={layer3_plan.user_objective_scale} "
+            f"user_bnd={layer3_plan.user_bound_scale} "
+            f"simplex={layer3_plan.simplex_scale_strategy}"
+        )
+    else:
+        parts.append("L3 skipped")
+
+    if ranges_post is not None:
+        post_matrix = _fmt_decades(_decades(ranges_post.matrix))
+        post_cost = _fmt_decades(_decades(ranges_post.cost))
+        post_bound = _fmt_decades(_decades(ranges_post.bound))
+        post_rhs = _fmt_decades(_decades(ranges_post.rhs))
+        parts.append(
+            f"ranges post Matrix={post_matrix} Cost={post_cost} "
+            f"Bound={post_bound} RHS={post_rhs}"
+        )
+
+    return " → ".join(parts)
+
+
+def format_nonoptimal_hint(ranges_pre: RangeReport) -> str:
+    """Compose the non-optimal scaling-related hint string.
+
+    Triggers ONLY when the LP was poorly scaled (``ranges_pre.trigger``
+    is ``True``).  Returns the empty string when the LP was inside
+    HiGHS' comfort zone — printing scaling advice on a well-conditioned
+    LP would be misleading.
+    """
+    if not ranges_pre.trigger:
+        return ""
+
+    def _span_decades(span: tuple[float, float]) -> str:
+        d = _decades(span)
+        if d is None:
+            return "empty"
+        return f"{d:.1f} decades"
+
+    rhs_span = _span_decades(ranges_pre.rhs)
+    cost_span = _span_decades(ranges_pre.cost)
+
+    return (
+        "HiGHS reported non-optimal on a poorly-scaled LP "
+        f"(RHS spans {rhs_span}, Cost spans {cost_span}). Suggestions:\n"
+        "  - Check unit conventions on commodity-ladder entities "
+        "(set unitsize so quantity/unitsize <= 1e+6)\n"
+        "  - Re-run with --highs-threads 1 to bypass parallel-mode "
+        "brittleness\n"
+        "  - Re-run with --auto-scale=off if you suspect the autoscaler "
+        "interferes"
+    )
+
+
+__all__ = [
+    "format_console_summary",
+    "format_nonoptimal_hint",
+    "render_layer2",
+    "render_layer3",
+    "write_report",
+]

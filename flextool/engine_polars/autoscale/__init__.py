@@ -41,7 +41,7 @@ from ._ranges import (
     ranges_from_arrays,
     ranges_from_streamed,
 )
-from ._report import write_report
+from ._report import format_console_summary, format_nonoptimal_hint, write_report
 
 __all__ = [
     "AutoScaleConfig",
@@ -58,6 +58,8 @@ __all__ = [
     "bucket_coefficients",
     "choose_scale_powers",
     "compute_ranges",
+    "format_console_summary",
+    "format_nonoptimal_hint",
     "lookup",
     "lookup_cstr",
     "lookup_var",

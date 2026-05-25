@@ -63,9 +63,12 @@ from flextool.engine_polars import scaling as _scaling
 from flextool.engine_polars.autoscale import (
     Layer2Plan as _AutoscaleLayer2Plan,
     Layer3Plan as _AutoscaleLayer3Plan,
+    RangeReport as _AutoscaleRangeReport,
     apply_layer2 as _autoscale_apply_layer2,
     apply_layer3 as _autoscale_apply_layer3,
     compute_ranges as _autoscale_compute_ranges,
+    format_console_summary as _autoscale_format_console_summary,
+    format_nonoptimal_hint as _autoscale_format_nonoptimal_hint,
     recommend_layer3 as _autoscale_recommend_layer3,
     resolve_auto_scale_config as _autoscale_resolve_config,
     unscale_solution as _autoscale_unscale_solution,
@@ -242,7 +245,7 @@ def _autoscale_apply_layer2_pre_solve(
     *,
     solve_name: str,
     logger: logging.Logger,
-) -> "_AutoscaleLayer2Plan | None":
+) -> "tuple[_AutoscaleLayer2Plan | None, _AutoscaleRangeReport | None]":
     """Layer 2 (semantic per-type scaling) pre-solve apply.
 
     Runs only when the autoscaler is enabled AND the pre-solve Layer-1
@@ -251,8 +254,16 @@ def _autoscale_apply_layer2_pre_solve(
     that ``_autoscale_unscale_post_solve`` consumes immediately after
     ``pb.solve(...)``.
 
-    Returns ``None`` when Layer 2 was skipped (config off or
-    no-trigger) so the caller can branch on ``plan is not None``.
+    Returns ``(plan, ranges_pre)`` where:
+
+    * ``plan`` is ``None`` when Layer 2 was skipped (config off or the
+      Layer-1 trigger did not fire).
+    * ``ranges_pre`` is the pre-Layer-2 :class:`RangeReport` (always
+      present when the autoscaler is enabled and the readout succeeded;
+      ``None`` only when disabled or the readout itself failed).  The
+      caller threads it into the console summary and the non-optimal
+      hint so both reports describe the LP the autoscaler *decided on*
+      rather than re-reading after Layer 2 mutated the arrays.
 
     The detector here uses :func:`_autoscale_compute_ranges` on the
     pre-solve ``Problem`` — :mod:`_ranges` falls back to
@@ -263,7 +274,7 @@ def _autoscale_apply_layer2_pre_solve(
     """
     cfg = _autoscale_resolve_config(None)
     if not cfg.enabled:
-        return None
+        return None, None
     try:
         ranges_pre = _autoscale_compute_ranges(pb, cfg)
     except Exception:  # pragma: no cover — guard against future API drift
@@ -272,9 +283,9 @@ def _autoscale_apply_layer2_pre_solve(
             "skipping Layer 2 (Layer 1 post-solve still fires)",
             solve_name,
         )
-        return None
+        return None, None
     if not ranges_pre.trigger:
-        return None
+        return None, ranges_pre
     try:
         plan = _autoscale_apply_layer2(pb, cfg)
     except Exception:  # pragma: no cover
@@ -283,7 +294,7 @@ def _autoscale_apply_layer2_pre_solve(
             "un-scaled LP (Layer 1 post-solve still fires)",
             solve_name,
         )
-        return None
+        return None, ranges_pre
     logger.info(
         "autoscale Layer 2 [%s]: exponents=%s, rows=%d, skipped_rows=%d, "
         "integer_cols=%d",
@@ -293,7 +304,68 @@ def _autoscale_apply_layer2_pre_solve(
         len(plan.skipped_rows),
         len(plan.skipped_integer_cols),
     )
-    return plan
+    return plan, ranges_pre
+
+
+def _autoscale_emit_console_summary(
+    *,
+    ranges_pre: "_AutoscaleRangeReport | None",
+    ranges_post: "_AutoscaleRangeReport | None",
+    layer2_plan: "_AutoscaleLayer2Plan | None",
+    layer3_plan: "_AutoscaleLayer3Plan | None",
+    solve_name: str,
+    already_emitted: set[str],
+) -> None:
+    """Emit the one-line user-visible autoscale summary.
+
+    Uses ``print(...)`` rather than ``logger.info`` so the line surfaces
+    at the default log level in the same stream where FlexTool's other
+    phase-progress lines (``Input: …``, the HiGHS banner) appear.  We
+    de-duplicate by solve name so a rolling solve emits the line once
+    per base-solve, not once per roll — Layer 1/2/3 decisions are
+    identical across rolls of the same base solve when the autoscaler
+    is enabled.
+    """
+    cfg = _autoscale_resolve_config(None)
+    if not cfg.enabled:
+        return
+    if ranges_pre is None:
+        return
+    if solve_name in already_emitted:
+        return
+    line = _autoscale_format_console_summary(
+        ranges_pre=ranges_pre,
+        ranges_post=ranges_post,
+        layer2_plan=layer2_plan,
+        layer3_plan=layer3_plan,
+        threshold_decades=cfg.threshold_decades,
+    )
+    print(line, flush=True)
+    already_emitted.add(solve_name)
+
+
+def _autoscale_emit_nonoptimal_hint(
+    *,
+    ranges_pre: "_AutoscaleRangeReport | None",
+    sol: "Solution | None",
+) -> None:
+    """Emit the scaling-related hint when HiGHS reports non-optimal.
+
+    Only fires when (a) the solve genuinely returned non-optimal AND
+    (b) the autoscaler's Layer-1 detector had flagged poor scaling on
+    the pre-solve LP.  Printing scaling advice on a well-conditioned
+    LP that simply happened to be infeasible would be misleading, so
+    we keep the trigger conjunctive.
+    """
+    if sol is None:
+        return
+    if ranges_pre is None:
+        return
+    if sol.optimal:
+        return
+    hint = _autoscale_format_nonoptimal_hint(ranges_pre)
+    if hint:
+        print(hint, flush=True)
 
 
 def _autoscale_unscale_post_solve(
@@ -1337,6 +1409,10 @@ def _drive_cascade(
             # always emit it once for actionable diagnostics).
             self._scale_csv_written: set[str] = set()
             self._scale_report_written: set[str] = set()
+            # Autoscale console summary dedup: one line per base solve.
+            # Layer 1/2/3 decisions are identical across rolls of the
+            # same base solve, so the operator-facing summary fires once.
+            self._autoscale_summary_emitted: set[str] = set()
         def run(self, complete_solve_name: str) -> int:
             # Optional per-iter phase-timing (opt-in via env var).  Emits
             # `per_iter` rows to the workdir's timings.csv covering
@@ -1597,7 +1673,10 @@ def _drive_cascade(
                 # consumed by ``_autoscale_unscale_post_solve`` once the
                 # solve returns so downstream output writers see the
                 # un-scaled solution.
-                _autoscale_layer2_plan = _autoscale_apply_layer2_pre_solve(
+                (
+                    _autoscale_layer2_plan,
+                    _autoscale_ranges_pre,
+                ) = _autoscale_apply_layer2_pre_solve(
                     pb,
                     solve_name=complete_solve_name,
                     logger=self.state.logger,
@@ -1613,6 +1692,39 @@ def _drive_cascade(
                     layer2_plan=_autoscale_layer2_plan,
                     solve_name=complete_solve_name,
                     logger=self.state.logger,
+                )
+                # Console summary: one user-visible line per base solve
+                # describing the autoscaler's pre/post ranges and the
+                # Layer 2 / Layer 3 decisions.  Read post-Layer-2 ranges
+                # from the (mutated) Problem so the "after" view reflects
+                # what HiGHS will see; Layer 3 acts inside HiGHS so its
+                # values are surfaced separately in the same line.
+                _autoscale_ranges_post: "_AutoscaleRangeReport | None" = None
+                if (
+                    _autoscale_ranges_pre is not None
+                    and _autoscale_ranges_pre.trigger
+                ):
+                    try:
+                        _autoscale_cfg_for_post = _autoscale_resolve_config(
+                            None,
+                        )
+                        _autoscale_ranges_post = _autoscale_compute_ranges(
+                            pb, _autoscale_cfg_for_post,
+                        )
+                    except Exception:  # pragma: no cover — non-fatal
+                        self.state.logger.exception(
+                            "autoscale post-Layer-2 range readout failed "
+                            "for %s; console summary will omit the "
+                            "'ranges post' segment",
+                            complete_solve_name,
+                        )
+                _autoscale_emit_console_summary(
+                    ranges_pre=_autoscale_ranges_pre,
+                    ranges_post=_autoscale_ranges_post,
+                    layer2_plan=_autoscale_layer2_plan,
+                    layer3_plan=_autoscale_layer3_plan,
+                    solve_name=base_solve_name,
+                    already_emitted=self._autoscale_summary_emitted,
                 )
                 # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
                 # ``pb.solve(keep_solver=True)`` for the default HiGHS path
@@ -1745,6 +1857,14 @@ def _drive_cascade(
             if not sol.optimal:
                 self.state.logger.error(
                     f"non-optimal solve for {complete_solve_name}"
+                )
+                # When poor scaling was detected on the pre-solve LP,
+                # surface an actionable hint explaining the suspected
+                # cause and three concrete remediation paths (unit
+                # conventions, single-thread HiGHS, disable autoscaler).
+                _autoscale_emit_nonoptimal_hint(
+                    ranges_pre=locals().get("_autoscale_ranges_pre"),
+                    sol=sol,
                 )
                 return 1
 
