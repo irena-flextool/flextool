@@ -338,42 +338,6 @@ def _reset_global_axis_enums() -> None:
     set_global_axis_enums(None)
 
 
-@pytest.fixture(autouse=True)
-def _reset_flextool_module_caches() -> None:
-    """Clear FlexTool module-level caches before every test.
-
-    Agent 15 (LP-scaling): the legacy runner-side
-    ``flextoolrunner.scaling`` (retired in Tier 4 Commit 4) kept a
-    module-level ``_scale_cache`` keyed by solve name.  Scenario tests
-    frequently share solve names (e.g. multiple scenarios with
-    ``y2020_5week``) but feed the analyser different input CSVs.  Left
-    to its own devices the cache hands the second scenario the first
-    scenario's ``scale_the_objective`` and ``use_row_scaling``
-    recommendation, which then writes a wrong-by-10x objective scalar
-    into ``solve_data/scale_the_objective.csv`` and cascades into an
-    MPS with the wrong penalty coefficients.  Clearing per-test makes
-    the full-suite ordering irrelevant.
-
-    Cheap: the cache is a plain dict, and scenarios that don't share
-    solve names were never caching-sensitive anyway.
-
-    Δ.41 (test-order flake): ``flextool.engine_polars.scaling`` has its
-    own ``_scale_cache`` (the polars/in-memory port that the engine
-    actually consults post-cascade-refactor) — this is the cache that
-    fed ``capacity_margin``'s ``user_bound_scale=-19`` into the
-    subsequent ``coal_co2_limit`` solve (both share the
-    ``dispatch_y2020_5week`` solve name → same cache key → same
-    recommended scalar applied to a problem with a different LP range,
-    yielding alt-optima column residuals against the golden).  The
-    legacy ``flextoolrunner.scaling._scale_cache`` was removed in
-    Tier 4 Commit 4.
-    """
-    from flextool.engine_polars import scaling as _engine_scaling
-    _engine_scaling.clear_cache()
-    yield
-    _engine_scaling.clear_cache()
-
-
 @pytest.fixture
 def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Per-test isolated working directory.
