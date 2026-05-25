@@ -16,7 +16,13 @@ This module exposes only the names the rest of FlexTool needs to call.
 The leading-underscore submodules hold the implementation; their public
 names are re-exported here.
 """
-from ._config import AutoScaleConfig, resolve_auto_scale_config
+from ._config import (
+    AutoScaleConfig,
+    USER_BOUND_SCALE_MAX,
+    USER_BOUND_SCALE_MIN,
+    resolve_auto_scale_config,
+    resolve_user_bound_scale_override,
+)
 from ._layer2 import (
     Layer2Plan,
     apply_layer2,
@@ -51,6 +57,8 @@ __all__ = [
     "Layer3Plan",
     "QuantityType",
     "RangeReport",
+    "USER_BOUND_SCALE_MAX",
+    "USER_BOUND_SCALE_MIN",
     "VARIABLE_FAMILIES",
     "VarFamily",
     "apply_layer2",
@@ -69,6 +77,7 @@ __all__ = [
     "resolve_auto_scale_config",
     "resolve_cstr_rhs_type",
     "resolve_group_capacity_type",
+    "resolve_user_bound_scale_override",
     "unscale_solution",
     "write_report",
 ]

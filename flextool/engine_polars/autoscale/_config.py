@@ -8,6 +8,7 @@ later layers land.
 """
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +20,16 @@ from typing import Any, Optional
 # nine decades is the conservative "definitely scale" line.  This matches
 # the rule the operator ran by hand in the handoff.
 _DEFAULT_THRESHOLD_DECADES = 9.0
+
+
+# Clamp range for the HiGHS ``user_bound_scale`` exponent (power of 2).  HiGHS
+# itself accepts ``[-30, 30]``; we cap at ``[-10, 0]`` because (a) positive
+# scales are nearly always harmful — they expand already-large coefficients,
+# and (b) ``2**-10`` ≈ ``1e-3`` is plenty to neutralise the LP shapes FlexTool
+# produces.  Centralised here so both the legacy DB-override coercion and
+# Layer 3's autoscaler use the same bounds.
+USER_BOUND_SCALE_MIN: int = -10
+USER_BOUND_SCALE_MAX: int = 0
 
 
 @dataclass(frozen=True)
@@ -182,4 +193,52 @@ def resolve_auto_scale_config(cli_args: Any = None) -> AutoScaleConfig:
     )
 
 
-__all__ = ["AutoScaleConfig", "resolve_auto_scale_config"]
+def resolve_user_bound_scale_override(
+    user_value: Any,
+) -> Optional[int]:
+    """Coerce a raw DB ``user_bound_scale`` value to a clamped int (or None).
+
+    Accepts ``None``, integers, floats, or numeric strings and returns:
+
+    * an integer in ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]`` when
+      the user provided a non-zero, finite, parseable value;
+    * ``None`` when the user provided no value, ``0``, or anything
+      unparseable — caller should then fall back to the heuristic (Layer 3's
+      automatic recommendation, or polar-high's stream-time auto-pick).
+
+    Truncates non-integer floats toward zero (e.g. ``-3.7`` → ``-3``) rather
+    than rounding, mirroring the conservative direction (smaller |N| is
+    gentler scaling).
+
+    This helper exists alongside :func:`_coerce_user_bound_scale` because the
+    two have different contracts: ``_coerce_user_bound_scale`` is for
+    CLI / env values where a non-numeric string is a user error worth
+    surfacing as ``ValueError``; this helper is for legacy DB values where a
+    malformed entry should fall back to the heuristic rather than crash a
+    cascade.
+    """
+    if user_value is None:
+        return None
+    try:
+        as_float = float(user_value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(as_float):
+        return None
+    n = int(as_float)  # truncates toward zero
+    if n == 0:
+        return None
+    if n > USER_BOUND_SCALE_MAX:
+        n = USER_BOUND_SCALE_MAX
+    if n < USER_BOUND_SCALE_MIN:
+        n = USER_BOUND_SCALE_MIN
+    return n
+
+
+__all__ = [
+    "AutoScaleConfig",
+    "USER_BOUND_SCALE_MAX",
+    "USER_BOUND_SCALE_MIN",
+    "resolve_auto_scale_config",
+    "resolve_user_bound_scale_override",
+]
