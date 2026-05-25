@@ -66,7 +66,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - *highs_presolve*: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.
   - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence
   - *timeline_hole_multiplier*: [unitless, default 1.0] Multiplier applied to the inverse-step-duration term in the `nodeBalance_eq` for variable-step timelines. Tunes how strongly an unrepresented gap between two timesteps is amortised into the storage state equation. Leave at the default unless investigating large-step / sparse-timeline numerical issues.
-  - *use_row_scaling*: Enable automatic LP row scaling (experimental). Per-solve flag (set to `yes` to enable); see [dev/scaling.md](dev/scaling.md) for what it does and when to use it.
+  - *use_row_scaling*: Per-solve `yes`/`no` flag (default `no`) that toggles the legacy LP row-scaling family (multiplies node-balance and group-balance rows by `node_capacity_for_scaling` / `group_capacity_for_scaling` derived from connected-entity unitsizes). This is **independent** of the `autoscale/` package controlled by `--auto-scale`; enable both for the widest scaling coverage on composite models. See [dev/scaling.md](dev/scaling.md) for details.
   - Rolling window parameters:
 
     - *rolling_solve_jump*: Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Also the output interval. This should be smaller than the horizon
